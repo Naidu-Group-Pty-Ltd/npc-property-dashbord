@@ -1145,6 +1145,28 @@ export function kpis(items: KpiItem[]): FlowItem {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A table in whichever treatment `table_style` declares. */
+/**
+ * Column widths as FRACTIONS, from the point measures a table is laid out in.
+ *
+ * `data-table` renders `columnWidths` as percentages — `width:${w * 100}%` — so
+ * a fraction is what it wants. Four masters passed POINTS instead
+ * (`[c.contentWidth - 330, 90, 70, 70, 100]` is `width:18500%` on the first
+ * column), and it only ever looked right because each array sums to exactly
+ * `contentWidth`, so the browser's proportional normalisation lands on the
+ * ratios a correct fraction array would have produced.
+ *
+ * That is luck holding a layout up: change one number without its partner, or
+ * write an array that does not sum to the measure, and the columns silently
+ * stop meaning what they say. Normalised against the array's own sum, so a
+ * table whose widths do not add up is still drawn in the proportions its author
+ * wrote rather than overflowing the measure. Already-fractional arrays are
+ * unchanged — they sum to 1.
+ */
+export function cols(...points: number[]): number[] {
+  const total = points.reduce((sum, w) => sum + w, 0);
+  return total > 0 ? points.map((w) => w / total) : points;
+}
+
 export function table(opts: {
   headers: string[];
   rows: string[][];
@@ -1171,7 +1193,32 @@ export function table(opts: {
 }): FlowItem {
   const c = ctx();
   const plan = tablePlan(c.manifest.table_style);
-  const flat = plan.tight ? c.spacing.rowHeight - 3 : c.spacing.rowHeight;
+  /*
+   * The row height the renderer actually draws, not the spacing scale's idea
+   * of one.
+   *
+   * `data-table` sets every cell `padding:${cellPad}pt 8pt` at `fontSize`, so a
+   * one-line row is `2 × cellPad + fontSize × lineHeight` and nothing else.
+   * `spacing.rowHeight` is a smaller number that no part of the renderer reads,
+   * and the difference is per row — which is why the overlaps scaled with the
+   * table: measured in Chromium at A4, Chancery draws 19.5pt where the scale
+   * declared 13.25, so an eight-row table ran ~50pt past what `flow()` had
+   * reserved and printed over the block beneath it. The Investment Compass QA
+   * reported exactly that on 45 blocks, 33–52pt on the Commercial Capacity
+   * constraints table alone.
+   *
+   * 1.3 is the line box, measured across the spacing range rather than assumed:
+   * Chancery 19.5pt at 4.5pt padding and 8.5pt type, Grid 17.25 at 3.5/8.25,
+   * Executive Rail 18 at 4/7.75 — a ratio of 1.235, rounded up so the
+   * declaration is never the short side.
+   *
+   * Floored at the old value so no table in the catalogue gets *smaller*: this
+   * may only ever reserve more space than it did.
+   */
+  const cellPad = plan.tight ? Math.max(1.5, c.spacing.cellPadding - 1.5) : c.spacing.cellPadding;
+  const drawnRow = 2 * cellPad + c.scale.cell * 1.3;
+  const scaleRow = plan.tight ? c.spacing.rowHeight - 3 : c.spacing.rowHeight;
+  const flat = Math.max(scaleRow, drawnRow);
   const rowHeight = opts.wraps
     ? Math.max(flat, textHeight(opts.wraps.chars, {
       size: c.scale.cell,
@@ -1180,7 +1227,9 @@ export function table(opts: {
     }))
     : flat;
   const numericColumns = opts.numeric ?? opts.headers.map((_, i) => i).slice(1);
-  const cellPadding = plan.tight ? Math.max(1.5, c.spacing.cellPadding - 1.5) : c.spacing.cellPadding;
+  // Same value as `cellPad` above; kept under its original name for the block
+  // props below, which is what the renderer reads.
+  const cellPadding = cellPad;
 
   return {
     height: 24 + opts.rows.length * rowHeight,

@@ -49,6 +49,7 @@ import {
 import {
   beginCompassTemplate,
   callout,
+  cols,
   contentTop,
   cover,
   disclaimerPage,
@@ -273,7 +274,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           const questionsTable = (n: number) => table({
             headers: ['#', 'Question'],
             rows: Array.from({ length: n }, (_, i) => questionRow(i + 1)),
-            columnWidths: [40, c.contentWidth - 40],
+            columnWidths: cols(40, c.contentWidth - 40),
             numeric: [],
           });
           return oneOf(
@@ -313,7 +314,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           const sourcesTable = (n: number) => table({
             headers: ['Report'],
             rows: Array.from({ length: n }, (_, i) => sourceRow(i)),
-            columnWidths: [c.contentWidth],
+            columnWidths: cols(c.contentWidth),
             numeric: [],
           });
           return oneOf(
@@ -356,7 +357,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
             `{{qa.citations.${i}.locus}}`,
             `{{qa.citations.${i}.match}}`,
           ]),
-          columnWidths: [32, c.contentWidth - 32 - 150, 90, 60],
+          columnWidths: cols(32, c.contentWidth - 32 - 150, 90, 60),
           numeric: [3],
         }),
       ], [
