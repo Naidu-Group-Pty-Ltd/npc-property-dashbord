@@ -98,10 +98,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     console.log(`📊 Importing ${schools.length} schools...`);
 
-    // Initialize Supabase client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    // The client is the one created above, before authentication. A second
+    // `const supabase` here was a redeclaration in the same block scope — a
+    // parse-time SyntaxError, so this module never loaded and every invocation
+    // answered BOOT_ERROR. It was invisible for as long as it was, because the
+    // gateway's JWT check refused the request before the runtime tried to load
+    // the file: the caller saw a CORS failure on the preflight and never got
+    // far enough to see the boot failure underneath it.
 
     // Validate school data
     const validSchools = schools.filter(school => 

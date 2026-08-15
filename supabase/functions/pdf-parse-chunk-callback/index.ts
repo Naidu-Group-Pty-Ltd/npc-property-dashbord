@@ -17,8 +17,18 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { createTokenAuthCorsHeaders } from '../_shared/auth.ts';
 import { validateSidecarOperationalMetricsV1 } from '../_shared/sidecarOperationalMetricsV1.pure.ts';
 // E1 — Source Scene Graph V2 / Page Artifact Contract V3 versions.
-import { SOURCE_SCENE_GRAPH_VERSION } from '../_shared/sourceSceneGraphV2.pure.ts';
-import { PAGE_ARTIFACT_CONTRACT_VERSION as SOURCE_SCENE_PAGE_ARTIFACT_CONTRACT_VERSION } from '../_shared/pageArtifactContractV3.pure.ts';
+//
+// Both constants come from `sourceSceneGraphV2.pure.ts`, which is where
+// `PAGE_ARTIFACT_CONTRACT_VERSION` is declared. It used to be imported from
+// `pageArtifactContractV3.pure.ts`, which imports it for its own use and does
+// not re-export it — so Deno refused this module at load time and every
+// invocation of this function answered BOOT_ERROR. Importing a value from the
+// module that consumes it rather than the one that declares it is the shape to
+// watch for; `check-edge-function-imports.mjs` now fails the build on it.
+import {
+  SOURCE_SCENE_GRAPH_VERSION,
+  PAGE_ARTIFACT_CONTRACT_VERSION as SOURCE_SCENE_PAGE_ARTIFACT_CONTRACT_VERSION,
+} from '../_shared/sourceSceneGraphV2.pure.ts';
 import {
   buildInvocationEnvelope,
   buildEdgeObservation,
