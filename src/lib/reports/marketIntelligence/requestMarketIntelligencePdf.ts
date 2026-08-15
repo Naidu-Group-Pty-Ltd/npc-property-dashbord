@@ -27,6 +27,7 @@
  * naming the button that does.
  */
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { looksUndeployed } from '../undeployedRoute';
 
 export interface MarketIntelligencePdfResult {
   url: string;
@@ -71,23 +72,11 @@ export interface RequestMarketIntelligenceOptions {
   audience?: string | null;
 }
 
-/**
- * True when the failure means "this function does not exist here yet".
- *
- * Deliberately narrow, and used only to choose the *message*. A bare 404 does
- * not count: the route answers 404 for a report that does not exist, and reading
- * that as "not deployed" would send someone to deploy a function that is already
- * there.
- */
-function looksUndeployed(error: { message?: string } | null): boolean {
-  if (!error) return false;
-  const message = (error.message || '').toLowerCase();
-  return message.includes('function not found')
-    || message.includes('requested function')
-    || message.includes('does not exist')
-    || message.includes('failed to fetch')
-    || message.includes('failed to send a request');
-}
+// The predicate is shared (`../undeployedRoute`). Every one of the nine
+// formats carried its own copy and eight were stale in the same way: none
+// could match the message the transport produces for an absent function,
+// so the fallback each of them guards never fired for the case it exists
+// for. See that module's header.
 
 const UNDEPLOYED_MESSAGE =
   'The typeset market intelligence report is not available yet — '

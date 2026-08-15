@@ -112,6 +112,95 @@ then puts the result through the *real* gate;
 production selection actually points at. `docs/reports/COVERAGE.md` makes this
 point about content bindings, and it is just as true of the boundary.
 
+## Three defects the same audit found downstream
+
+Fixing the boundary made the templated path run for the first time, which
+exposed what it produces. An adversarial audit of the whole export chain
+confirmed six defects; three are fixed here.
+
+### 1. The legacy fallback never fired — nine formats, eight of them stale
+
+Every format that keeps an in-browser generator behind its server route decides
+whether to use it with a `looksUndeployed` predicate. **Nine formats carried
+their own copy and eight could not match the message the transport actually
+produces.**
+
+An absent edge function is a 404 from the *gateway*, which carries no
+`Access-Control-Allow-Origin`; the request is preflighted, so the browser never
+surfaces the status or the body. `fetch` rejects, and `invokeSecureFunction`
+rewrites the rejection into `Network/CORS error calling …`. Matching on
+`failed to fetch` therefore missed the only case the fallback existed for — and
+missed it on *every* browser, since Chrome's wording is the one that gets
+rewritten while Firefox says `NetworkError when attempting to fetch resource.`
+and Safari says `Load failed`.
+
+The consequence was not a bad message. `requestCashFlowPdf` is handed a working
+generator as `legacyFallback` and never called it: it threw, the modal turned
+that into a red toast, and **the adviser got no file at all**.
+
+The predicate is now `src/lib/reports/undeployedRoute.ts`, once. Two rules: a
+transport failure IS an absent function, and **a timeout is the opposite of one**
+(it is also `network: true`, but the route exists, answered slowly, and may have
+finished — swapping in the legacy document there hands over a different
+document after a successful render).
+
+### 2. The payload published the series and not the inputs under it
+
+`wireAsProjectionRow` built a pseudo-row of nothing but the ten years, so
+`projectCashFlow` published nine of the fourteen `cashflow.*` groups a master
+binds. The other five printed as labelled tables with empty amount cells:
+**50 of the production master's 133 bound paths resolved to nothing, 35 empty
+cells** — the purchase fee lines, the loan repayments and the entire annual
+holding-cost table, none of which an override of a projection year changes.
+
+The record is now read *alongside* the payload: the payload carries the series,
+the record carries the inputs. The read is best-effort and the render never
+depends on it — that dependency is the original defect — so a refusal costs the
+holding-cost table, not the document. Down to 29 unresolved, 22 cells.
+
+Two things are deliberately **not** derived from the wire, and this is the rule
+to keep. A production row stores `monthlyPayment: 2518.11` on an interest-only
+loan while year one's `interest + principal` implies `2100`, because the store
+records the P&I payment whatever the loan type. And the stored per-year `roi`
+fits `(capitalGain + cumulativeCashFlow) / deposit` in year one and nothing that
+reproduces year ten. Publishing either under the same label as the stored one
+puts a figure in a client's financial document that disagrees with every other
+surface in the product.
+
+What remains withheld is `roi` and the three-scenario comparison, and they are
+withheld because they are properties **of the stored series**: a reviewed series
+is not one of the three. A *proved* series — one `matchStoredScenario` showed
+equals a stored scenario in every field of every year — now takes the stored row
+whole and has none of these gaps.
+
+### 3. The CSRF coverage gate reported on none of the functions it named
+
+`check-csrf-coverage.mjs` tested `/\bverifyAuth\b/`. The `\b` requires a
+non-word character after the name, so it **cannot match
+`verifyAuthOrNativeUser`** — the wrapper twelve cookie-authenticated functions
+use, including nine `render-*-pdf` routes and `render-template-pdf` itself.
+Every one reads the `__Host-session_token` cookie, that cookie is
+`SameSite=None`, `_shared/auth.ts` states that a function accepting it MUST run
+`enforceCsrf`, and none of them did. The gate printed
+*"CSRF coverage check passed"* the entire time, which is worse than not
+existing: it was read as evidence.
+
+The regex is `verifyAuth\w*` now, all twelve carry the guard, and
+`check-security-gate-negatives.mjs` has a case anchored on a
+`verifyAuthOrNativeUser` function so the widening is proven to bite rather than
+believed to.
+
+### Still open
+
+A template whose `image` block binds a remote URL — including the block
+registry's own default `{{property.imageUrl}}` — reaches the boundary
+unnormalised, because `preloadImages` normalises only literal `http(s)` prop
+values and leaves a failed fetch's URL in place. The production route degrades
+to the legacy generator; the Template Builder's export produces no file. The fix
+is to inline or drop it the way `adapters/organisation.ts` already does for
+brand marks ("a logo that could not be fetched is a thinner document, not a
+failed one"), and it is not done here.
+
 ## Where the pieces are
 
 | Concern | Module |
@@ -123,3 +212,6 @@ point about content bindings, and it is just as true of the boundary.
 | The one PDF compiler | `src/lib/reportTemplate/compileTemplateForPdf.ts` |
 | The production route | `src/lib/reportTemplate/routeReportThroughTemplate.ts` |
 | Ledger and error text | `supabase/functions/render-template-pdf/index.ts` |
+| "Is this route deployed?" | `src/lib/reports/undeployedRoute.ts` |
+| The cash flow payload/record merge | `src/lib/reports/cashFlow/liveProjectionRow.ts` |
+| CSRF coverage | `scripts/security/check-csrf-coverage.mjs` |

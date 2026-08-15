@@ -66,6 +66,20 @@ const CASES = [
     all: true,
   },
   {
+    // The case above only ever proved the gate could see a BARE `verifyAuth`.
+    // It could not see `verifyAuthOrNativeUser` — `\bverifyAuth\b` requires a
+    // non-word character after the name — so twelve cookie-authenticated
+    // functions were outside the gate entirely while it printed "passed". This
+    // case is anchored on one of them, so widening the regex to `verifyAuth\w*`
+    // is proven to bite rather than merely believed to.
+    gate: 'check-csrf-coverage.mjs',
+    file: 'supabase/functions/render-template-pdf/index.ts',
+    what: 'a verifyAuthOrNativeUser function stops enforcing CSRF',
+    find: 'enforceCsrf',
+    replace: 'noopCsrf',
+    all: true,
+  },
+  {
     gate: 'check-step-up-session-binding.mjs',
     file: 'supabase/functions/security-step-up/index.ts',
     what: 'a step-up proof is bound to the pre-rotation session again',

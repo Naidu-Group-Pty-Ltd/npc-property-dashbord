@@ -18,6 +18,7 @@
  * that needs deploying.
  */
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { looksUndeployed } from '../undeployedRoute';
 import {
   base64Bytes,
   type ConvertChaptersResponse,
@@ -34,15 +35,11 @@ import type { ReportArchetypeId } from '@/lib/reportDesign/structure.pure';
 /** Shared so the converter page can invalidate the list after a render. */
 export const RECENT_CONVERSIONS_QUERY_KEY = ['template-conversions', 'recent'] as const;
 
-function looksUndeployed(error: { message?: string } | null): boolean {
-  if (!error) return false;
-  const message = (error.message || '').toLowerCase();
-  return message.includes('function not found')
-    || message.includes('requested function')
-    || message.includes('does not exist')
-    || message.includes('failed to fetch')
-    || message.includes('failed to send a request');
-}
+// The predicate is shared (`../undeployedRoute`). Every one of the nine
+// formats carried its own copy and eight were stale in the same way: none
+// could match the message the transport produces for an absent function,
+// so the fallback each of them guards never fired for the case it exists
+// for. See that module's header.
 
 const UNDEPLOYED_MESSAGE =
   'The template converter is not available yet — convert-template-document has not been deployed.';

@@ -22,6 +22,7 @@
  * is finished the moment that is true.
  */
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { looksUndeployed } from '../undeployedRoute';
 
 export interface SnapshotRequest {
   clientId: string;
@@ -50,20 +51,12 @@ export interface SnapshotResult {
  * must surface as one — falling back on it would hide a broken render behind a
  * document that looks fine.
  */
-function looksUndeployed(error: { message?: string; status?: number } | null): boolean {
-  if (!error) return false;
-  const message = (error.message || '').toLowerCase();
-  // A bare 404 is not enough. The route itself answers 404 with `not found`
-  // for a client the caller may not see — deliberately, so it does not confirm
-  // whether that client exists — and treating that as "not deployed" would
-  // hand someone the legacy document for a client they have no access to.
-  // Only a missing *function* counts, and that says so.
-  return message.includes('function not found')
-    || message.includes('requested function')
-    || message.includes('does not exist')
-    || message.includes('failed to fetch')
-    || message.includes('failed to send a request');
-}
+// The predicate is shared (`../undeployedRoute`). This module carried its own
+// copy which could not match the message the transport actually produces for an
+// absent function, so the in-browser generator handed in as `legacyFallback`
+// was never called and the person got an error and NO FILE. The bare-404 rule
+// that comment defended is preserved there: only a missing *function* counts,
+// never a 404 the route itself answered for a client the caller may not see.
 
 /**
  * Request the document.

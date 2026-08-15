@@ -26,6 +26,7 @@
  * the generator this format exists to replace, while telling nobody.
  */
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { looksUndeployed } from '../undeployedRoute';
 
 /** One projected year, exactly as `CashFlowAnalysisModal` computes it. */
 export interface WireProjectionYear {
@@ -79,22 +80,11 @@ export interface CashFlowPdfResult {
   source: 'server' | 'legacy';
 }
 
-/**
- * True when the failure means "this function does not exist here yet".
- *
- * Deliberately narrow, and deliberately not a bare 404 — the route answers 404
- * for a report the caller may not see, and treating that as "not deployed"
- * would hand someone a document for a report they have no access to.
- */
-function looksUndeployed(error: { message?: string; status?: number } | null): boolean {
-  if (!error) return false;
-  const message = (error.message || '').toLowerCase();
-  return message.includes('function not found')
-    || message.includes('requested function')
-    || message.includes('does not exist')
-    || message.includes('failed to fetch')
-    || message.includes('failed to send a request');
-}
+// The predicate is shared (`../undeployedRoute`). This module carried its own
+// copy which could not match the message the transport actually produces for an
+// absent function, so the in-browser generator handed in as `legacyFallback`
+// was never called and the adviser got a red toast and NO FILE. See that
+// module's header for why the substring arms were dead on every browser.
 
 /**
  * Request the document.

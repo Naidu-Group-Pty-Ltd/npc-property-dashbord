@@ -116,8 +116,16 @@ describe('choosing the legacy layout is a choice, not a fallback', () => {
   it('keeps the undeployed-function fallback on the server path', () => {
     const request = read('src/lib/reports/borrowingCapacity/requestSnapshot.ts');
     expect(request).toContain('looksUndeployed');
-    expect(request).toContain('function not found');
+    // Asserted against the shared predicate rather than against this file's own
+    // substring list. That list WAS here, and it was stale: it could not match
+    // the message the transport produces for an absent function, so the
+    // fallback this spec exists to protect never actually fired. The strictness
+    // the comment above describes now lives — and is tested — in
+    // `undeployedRoute.spec.ts`.
+    expect(request).toContain("from '../undeployedRoute'");
+    const shared = read('src/lib/reports/undeployedRoute.ts');
+    expect(shared).toContain('function not found');
     // A 500 from a deployed route must never reach the generator.
-    expect(request).not.toMatch(/message\.includes\('500'\)/);
+    expect(shared).not.toMatch(/message\.includes\('500'\)/);
   });
 });
