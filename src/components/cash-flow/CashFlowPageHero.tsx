@@ -96,14 +96,14 @@ export function CashFlowPageHero({ reports, filteredReports, dateRangeLabel, bui
 
 function HeroMetric({ icon: Icon, label, value, detail, warning = false }: { icon: typeof Calculator; label: string; value: string; detail?: string; warning?: boolean }) {
   return (
-    <div className={`rounded-2xl border p-4 backdrop-blur ${warning ? 'border-brand-300/35 bg-brand-300/10' : 'border-border dark:border-white/10 bg-card/8 dark:bg-white/8'}`}>
+    <div className={`rounded-2xl border p-4 backdrop-blur ${warning ? 'border-warning/30 bg-warning/10' : 'border-border dark:border-white/10 bg-card/8 dark:bg-white/8'}`}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground dark:text-foreground">{label}</span>
-        <span className={`rounded-lg p-2 ${warning ? 'bg-brand-300/15 text-brand-100' : 'bg-card/10 dark:bg-white/10 text-brand-100'}`}>
+        <span className={`rounded-lg p-2 ${warning ? 'bg-warning/15 text-warning' : 'bg-card/10 dark:bg-white/10 text-brand-100'}`}>
           <Icon className="h-4 w-4" />
         </span>
       </div>
-      <p className="text-2xl font-bold capitalize text-foreground dark:text-white">{value}</p>
+      <p className={`text-2xl font-bold capitalize tabular-nums ${warning ? 'text-warning' : 'text-foreground dark:text-white'}`}>{value}</p>
       {detail && <p className="mt-1 text-xs text-muted-foreground dark:text-foreground">{detail}</p>}
     </div>
   );

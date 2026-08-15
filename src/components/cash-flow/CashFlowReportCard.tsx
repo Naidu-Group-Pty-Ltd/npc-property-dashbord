@@ -1,5 +1,5 @@
 import { format } from 'date-fns';
-import { ArrowRight, Building, Calculator, CheckCircle2, FileText, Home, MapPin, ReceiptText } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Building, Calculator, CheckCircle2, FileText, Home, MapPin, ReceiptText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
