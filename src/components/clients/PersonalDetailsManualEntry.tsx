@@ -275,11 +275,30 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
         dependents_count: formData.dependents_count || null,
       };
 
+      // Send only the fields this dialog actually changed. The form snapshot is
+      // taken when the sheet opens, so posting the whole record would revert any
+      // field edited elsewhere in the meantime (the address panel, an import, a
+      // sync) back to the stale snapshot value.
+      const baseline = baselineRef.current;
+      const changedData: Record<string, any> = {};
+      for (const [key, value] of Object.entries(updateData)) {
+        if (!baseline || !(key in baseline)) {
+          changedData[key] = value;
+          continue;
+        }
+        const before = baseline[key] === '' || baseline[key] === undefined ? null : baseline[key];
+        const after = value === '' || value === undefined ? null : value;
+        if (before !== after) changedData[key] = value;
+      }
+
       // Update via secure edge function only — the anon-key fallback would fail RLS and
       // silently mask errors, so we surface the real error instead.
-      const { data: resp, error: edgeErr } = await invokeSecureFunction('manage-client-data', {
-        operation: 'update', table: 'clients', clientId, data: updateData,
-      });
+      const { data: resp, error: edgeErr } = Object.keys(changedData).length === 0
+        ? { data: { success: true } as any, error: null as any }
+        : await invokeSecureFunction('manage-client-data', {
+            operation: 'update', table: 'clients', clientId, data: changedData,
+          });
+
       if (edgeErr) {
         console.error('[client-update] edge function error', edgeErr);
         throw new Error(edgeErr.message || 'Failed to save client details');
