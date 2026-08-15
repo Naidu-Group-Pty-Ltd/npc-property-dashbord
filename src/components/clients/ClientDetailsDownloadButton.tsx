@@ -33,7 +33,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import { useFinanceContacts } from '@/hooks/useFinanceContacts';
+import { FinanceRecipientPicker } from '@/components/clients/FinanceRecipientPicker';
+import type { FinanceReportRecipient } from '@/hooks/useFinanceReportRecipients';
 import { deliverClientDetailsPdf } from '@/lib/reports/clientDetails/deliverClientDetailsPdf';
 
 export interface ClientDetailsDownloadButtonProps {
@@ -69,7 +70,7 @@ export function ClientDetailsDownloadButton({
   className,
 }: ClientDetailsDownloadButtonProps) {
   const [running, setRunning] = useState(false);
-  const { contacts, defaultContact } = useFinanceContacts();
+  const [pickerOpen, setPickerOpen] = useState(false);
   // Which template this comes out in, answered here rather than on the
   // Template Library page a person would have to know to visit.
   const template = useReportTemplateMenu('client_details');
@@ -79,11 +80,17 @@ export function ClientDetailsDownloadButton({
    *
    * Errors surface as a toast with the renderer's own message — which for an
    * undeployed route names the buttons that still work.
+   *
+   * A Finance Portal send carries the partner the picker returned. It is never
+   * defaulted here: the recipient of a client's financial position is a
+   * decision, and the menu that made it silently made it wrong.
    */
   const run = async (
     what: 'download' | 'email' | 'finance',
+    recipient?: FinanceReportRecipient,
   ) => {
     if (running) return;
+    if (what === 'finance' && !recipient) return;
     setRunning(true);
     try {
       const result = await deliverClientDetailsPdf(clientId, { save: what === 'download' });
@@ -108,14 +115,9 @@ export function ClientDetailsDownloadButton({
         return;
       }
 
-      if (!defaultContact) {
-        toast.error('No finance contacts configured. Add contacts in Settings → Finance Agent Contacts.');
-        return;
-      }
-
       const { data, error } = await invokeSecureFunction('share-report-with-finance', {
         client_id: clientId,
-        finance_contact_id: defaultContact.id,
+        finance_contact_id: recipient!.id,
         filename: result.fileName,
         content_base64: await toBase64(result.blob),
         mime_type: 'application/pdf',
@@ -123,7 +125,8 @@ export function ClientDetailsDownloadButton({
       if (error || !data?.success) {
         throw new Error(error?.message || data?.error || 'Finance Portal share failed');
       }
-      toast.success(`Shared with ${defaultContact.name} through the Finance Portal`);
+      setPickerOpen(false);
+      toast.success(`Shared with ${recipient!.name} through the Finance Portal`);
       onShared?.();
     } catch (e) {
       console.error('[ClientDetailsDownloadButton]', e);
@@ -192,18 +195,18 @@ export function ClientDetailsDownloadButton({
             </div>
           </DropdownMenuItem>
           <DropdownMenuItem
-            onSelect={(e) => { e.preventDefault(); run('finance'); }}
-            disabled={!contacts.length}
+            onSelect={(e) => { e.preventDefault(); setPickerOpen(true); }}
             className="cursor-pointer"
           >
             <Send className="mr-2 h-4 w-4 text-info" />
             <div className="flex flex-col">
-              <span>Send to {defaultContact?.name ?? 'finance'}</span>
+              {/* Never a person's name. Who receives it is asked in the picker,
+                  against this client's own partners, and the picker's empty
+                  state names the screens that fix an organisation with none. */}
+              <span>Send to Finance</span>
               {/* The sentence this migration exists for. */}
               <span className="text-xs text-muted-foreground">
-                {contacts.length
-                  ? 'Through the Finance Portal, as selectable text a broker can copy from.'
-                  : 'Add a contact in Settings → Finance Agent Contacts first.'}
+                Through the Finance Portal, as selectable text a broker can copy from.
               </span>
             </div>
           </DropdownMenuItem>
@@ -214,6 +217,16 @@ export function ClientDetailsDownloadButton({
       {/* Outside the menu: Radix unmounts the menu's content when it closes,
           and a dialog rendered inside would go with it. */}
       {template.dialog}
+
+      <FinanceRecipientPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        clientId={clientId}
+        clientName={clientName}
+        documentLabel="the typeset Client Details report"
+        busy={running}
+        onConfirm={(recipient) => { void run('finance', recipient); }}
+      />
     </div>
   );
 }

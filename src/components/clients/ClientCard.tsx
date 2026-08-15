@@ -268,11 +268,10 @@ export function ClientCard({ client, ghlLocationId, onView, onDelete, onSyncComp
                   <MoreVertical className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
+              {/* Secondary actions only. `View details` is the card's own
+                  button now — an overflow copy of a control already on the
+                  card is a second place for the same thing to drift. */}
               <DropdownMenuContent align="end" sideOffset={8} className="w-48 rounded-xl p-1.5 text-sm">
-                <DropdownMenuItem onClick={onView} className="rounded-lg">
-                  <Eye className="mr-2 h-4 w-4" />View details
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleSyncToGHL} className="rounded-lg">
                   <RefreshCw className="mr-2 h-4 w-4" />
                   Sync to GHL
@@ -337,6 +336,25 @@ export function ClientCard({ client, ghlLocationId, onView, onDelete, onSyncComp
         {/* Status footer */}
         <div className="mt-auto space-y-3 pt-1">
           <hr className="glass-divider" />
+
+          {/*
+            Opening a client was three interactions — find the card, open the
+            overflow menu, pick the item — for the most frequent action on the
+            page. It is one now. Same `onView`, so the card has one route into
+            the record rather than two that can disagree; the name above stays
+            clickable because a person who has already learned it will use it.
+          */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onView}
+            className="w-full justify-center gap-2 rounded-lg"
+            aria-label={`View details for ${fullName}`}
+          >
+            <Eye className="h-4 w-4" aria-hidden="true" />
+            View details
+          </Button>
+
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               {showPipeline && (

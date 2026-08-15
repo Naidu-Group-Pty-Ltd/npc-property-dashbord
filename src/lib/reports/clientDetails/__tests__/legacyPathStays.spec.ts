@@ -193,7 +193,9 @@ describe('the control reaches the same places the legacy does', () => {
   it('offers all three destinations', () => {
     expect(control).toContain("run('download')");
     expect(control).toContain("run('email')");
-    expect(control).toContain("run('finance')");
+    // The finance destination now carries the partner the picker returned; it
+    // used to carry whichever contact row `is_default` ordering produced.
+    expect(control).toContain("run('finance', recipient)");
     expect(control).toContain("invokeSecureFunction('share-report-with-finance'");
   });
 
@@ -214,8 +216,16 @@ describe('the control reaches the same places the legacy does', () => {
     expect(read(MODAL)).toContain('onAttachToEmail={handlePdfEmailClick}');
   });
 
+  /**
+   * The email destination still says why it is unavailable from a screen that
+   * cannot attach. The finance destination no longer can: it is always
+   * offerable, because who receives it is now asked rather than defaulted — so
+   * the sentence that named the Settings screen moved to the picker, which is
+   * where somebody reads it with the empty list in front of them.
+   */
   it('says why an unavailable destination is unavailable', () => {
-    expect(control).toContain('Add a contact in Settings');
     expect(control).toContain('Not available from this screen');
+    const picker = read('src/components/clients/FinanceRecipientPicker.tsx');
+    expect(picker).toContain('Settings → Finance Agent Contacts');
   });
 });
