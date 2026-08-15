@@ -459,12 +459,36 @@ function intakeStage(facts: AmlWorkspaceFacts): StageReading {
   if (INTAKE_COMPLETE_PORTAL.has(portal)) {
     completed.push(note("portal", "Client information submitted", "steady"));
   } else if (portal === "not_started") {
-    blockers.push(
-      note("portal_not_started", "The client has not started onboarding", "attention", {
-        detail: "Send or chase the onboarding invitation.",
-      }),
-    );
-    outstanding.push(note("portal", "Client onboarding", "attention"));
+    /*
+     * "Send or chase the onboarding invitation" was one sentence covering
+     * two different situations, and it was wrong in the more urgent one.
+     * `client_portal_status` says how far the client has got; it says
+     * nothing about whether they can log in. On this deployment
+     * AML-2026-00005 was activated, notified at `/client/aml`, and has no
+     * portal account at all — so there was nothing to chase, and the
+     * workspace asked an operator to chase it anyway.
+     *
+     * The portal-access fact is read from the same endpoint that issues
+     * access. Absent, it degrades to the old wording rather than guessing.
+     */
+    const access = facts.portalAccess;
+    if (access && !access.exists) {
+      blockers.push(
+        note("portal_no_access", "The client has no portal login yet", "attention", {
+          detail: "Issue portal access so they can complete their compliance check.",
+        }),
+      );
+      outstanding.push(note("portal", "Client portal access", "attention"));
+    } else {
+      blockers.push(
+        note("portal_not_started", "The client has not started onboarding", "attention", {
+          detail: access?.exists
+            ? "The client can sign in but has not begun. Chase them."
+            : "Send or chase the onboarding invitation.",
+        }),
+      );
+      outstanding.push(note("portal", "Client onboarding", "attention"));
+    }
   } else if (portal === "contact_adviser") {
     blockers.push(
       note("portal_contact", "The client has been asked to contact their adviser", "attention"),

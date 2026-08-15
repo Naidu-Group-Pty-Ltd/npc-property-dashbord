@@ -841,6 +841,57 @@ describe("activation client picker", () => {
   });
 });
 
+/**
+ * The hand-off into the Client Portal.
+ *
+ * Both halves existed and nothing joined them. `activate_client` detects
+ * `has_portal_access === false` and returns a sentence telling the operator
+ * to send an invitation, with no way to send one; `client-portal-invite` can
+ * provision in a single call but was only reachable from the Clients page.
+ */
+describe("AML portal access reuses the one provisioning path", () => {
+  const card = readFileSync(
+    join(repo, "src/components/aml/AmlPortalAccessCard.tsx"), "utf8");
+  const api = readFileSync(
+    join(repo, "src/lib/aml/clientPortalAccessApi.ts"), "utf8");
+  const state = readFileSync(
+    join(repo, "src/lib/aml/portalAccessState.ts"), "utf8");
+
+  /** Prose about the rule must not be what satisfies the rule. */
+  const code = (src: string) =>
+    src.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+
+  it("issues through the existing dialog, never through its own call", () => {
+    // `client_portal_users` carries UNIQUE(client_id): there is only ever
+    // one account, and a second issuing path would be a second set of
+    // semantics over a row the database already makes singular.
+    expect(card).toContain("SendPortalInviteDialog");
+    expect(card).not.toMatch(/invokeSecureFunction|supabase/);
+    // The AML wrapper reads and does not write.
+    expect(code(api)).toContain('action: "check_status"');
+    expect(code(api)).not.toContain("resend_invite");
+    expect(code(api)).not.toMatch(/\.insert\(/);
+  });
+
+  it("adds no clients-portal insert to the AML function", () => {
+    expect(casesSource).not.toMatch(/client_portal_users[\s\S]{0,80}\.insert/);
+  });
+
+  it("never re-issues a live account from beside a case", () => {
+    // The server's `resend_invite` downgrades an ACTIVE account to
+    // `invited` and clears password ownership, has_accepted_terms,
+    // has_completed_onboarding and terms_accepted_at.
+    const live = code(state).slice(code(state).indexOf('code: "issued_not_signed_in"'));
+    expect(live.slice(0, live.indexOf("});"))).toContain('action: "none"');
+    expect(state).toContain("resets their password and acknowledgements");
+  });
+
+  it("treats an unread portal state as unknown, never as 'no account'", () => {
+    expect(state).toContain('code: "unavailable"');
+    expect(api).toContain("return null");
+  });
+});
+
 describe("activation hands the client a portal link", () => {
   const branch = casesSource.slice(
     casesSource.indexOf("case 'activate_client':"),
