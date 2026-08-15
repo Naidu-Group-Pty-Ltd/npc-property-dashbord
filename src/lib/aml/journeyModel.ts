@@ -65,11 +65,27 @@ import {
    1. The ten stages
    ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * Order is the orchestration, not a label.
+ *
+ * `stageNumber()` is `indexOf + 1`, the rail renders in this order, and the
+ * current stage is the first one that is blocking — so this array decides
+ * what an operator is told to do next, not merely what the steps are called.
+ *
+ * Identity precedes Documents. Verifying who somebody is comes before
+ * collecting evidence about them: the identity result determines WHICH
+ * documents are required (a failed or partial verification changes the
+ * requirement set), and collecting documents for an unverified subject
+ * risks gathering evidence about the wrong person. The previous order put
+ * Documents third and left cases sitting on "No requirements set" while
+ * identity had already passed — which is what made the workspace point at
+ * the wrong next action.
+ */
 export const JOURNEY_STAGES = [
   "activation",
   "intake",
-  "documents",
   "identity",
+  "documents",
   "screening",
   "funding",
   "submission",
@@ -194,6 +210,12 @@ interface StageDefinition {
   sections: readonly AmlWorkspaceSection[];
 }
 
+/**
+ * MUST stay in `JOURNEY_STAGES` order — this array is what the rail emits,
+ * and a spec asserts the two agree. They were two independent orderings, so
+ * changing one alone silently produced a rail numbered differently from the
+ * stage numbers everything else quotes.
+ */
 const STAGE_DEFINITIONS: readonly StageDefinition[] = [
   {
     id: "activation",
@@ -210,18 +232,18 @@ const STAGE_DEFINITIONS: readonly StageDefinition[] = [
     sections: ["requests"],
   },
   {
-    id: "documents",
-    label: "Documents & evidence",
-    shortLabel: "Documents",
-    purpose: "What was required, what arrived, and what we accepted or sent back.",
-    sections: ["documents"],
-  },
-  {
     id: "identity",
     label: "Identity verification",
     shortLabel: "Identity",
     purpose: "Verification of every party the case requires, and the evidence behind it.",
     sections: ["identity"],
+  },
+  {
+    id: "documents",
+    label: "Documents & evidence",
+    shortLabel: "Documents",
+    purpose: "What was required, what arrived, and what we accepted or sent back.",
+    sections: ["documents"],
   },
   {
     id: "screening",

@@ -115,6 +115,26 @@ describe("journey structure", () => {
     }
   });
 
+  it("verifies identity before collecting documents", () => {
+    // Not cosmetic. `stageNumber` is `indexOf + 1`, the rail renders in this
+    // order, and the current stage is the first blocking one — so this array
+    // decides what the operator is told to do next. Identity determines
+    // WHICH documents are required, and collecting evidence about an
+    // unverified subject risks gathering it about the wrong person.
+    const ids = [...JOURNEY_STAGES];
+    expect(ids.indexOf("identity")).toBeLessThan(ids.indexOf("documents"));
+    expect(journeyStageNumber("identity")).toBe(3);
+    expect(journeyStageNumber("documents")).toBe(4);
+  });
+
+  it("keeps the two orderings from silently diverging", () => {
+    // `JOURNEY_STAGES` and `STAGE_DEFINITIONS` were independent orderings.
+    // Changing one alone produced a rail numbered differently from the stage
+    // numbers every other surface quotes.
+    const emitted = deriveAmlJourney(bare()).stages.map((s) => s.id);
+    expect(emitted).toEqual([...JOURNEY_STAGES]);
+  });
+
   it("gives every existing section exactly one home — no deep link was orphaned", () => {
     const claimed = JOURNEY_STAGES.flatMap((id) => [...sectionsForStage(id)]);
     // Every section is claimed by exactly one stage, except the record
