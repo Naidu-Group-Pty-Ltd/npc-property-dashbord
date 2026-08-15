@@ -1171,7 +1171,32 @@ export function table(opts: {
 }): FlowItem {
   const c = ctx();
   const plan = tablePlan(c.manifest.table_style);
-  const flat = plan.tight ? c.spacing.rowHeight - 3 : c.spacing.rowHeight;
+  /*
+   * The row height the renderer actually draws, not the spacing scale's idea
+   * of one.
+   *
+   * `data-table` sets every cell `padding:${cellPad}pt 8pt` at `fontSize`, so a
+   * one-line row is `2 × cellPad + fontSize × lineHeight` and nothing else.
+   * `spacing.rowHeight` is a smaller number that no part of the renderer reads,
+   * and the difference is per row — which is why the overlaps scaled with the
+   * table: measured in Chromium at A4, Chancery draws 19.5pt where the scale
+   * declared 13.25, so an eight-row table ran ~50pt past what `flow()` had
+   * reserved and printed over the block beneath it. The Investment Compass QA
+   * reported exactly that on 45 blocks, 33–52pt on the Commercial Capacity
+   * constraints table alone.
+   *
+   * 1.3 is the line box, measured across the spacing range rather than assumed:
+   * Chancery 19.5pt at 4.5pt padding and 8.5pt type, Grid 17.25 at 3.5/8.25,
+   * Executive Rail 18 at 4/7.75 — a ratio of 1.235, rounded up so the
+   * declaration is never the short side.
+   *
+   * Floored at the old value so no table in the catalogue gets *smaller*: this
+   * may only ever reserve more space than it did.
+   */
+  const cellPad = plan.tight ? Math.max(1.5, c.spacing.cellPadding - 1.5) : c.spacing.cellPadding;
+  const drawnRow = 2 * cellPad + c.scale.cell * 1.3;
+  const scaleRow = plan.tight ? c.spacing.rowHeight - 3 : c.spacing.rowHeight;
+  const flat = Math.max(scaleRow, drawnRow);
   const rowHeight = opts.wraps
     ? Math.max(flat, textHeight(opts.wraps.chars, {
       size: c.scale.cell,
@@ -1180,7 +1205,9 @@ export function table(opts: {
     }))
     : flat;
   const numericColumns = opts.numeric ?? opts.headers.map((_, i) => i).slice(1);
-  const cellPadding = plan.tight ? Math.max(1.5, c.spacing.cellPadding - 1.5) : c.spacing.cellPadding;
+  // Same value as `cellPad` above; kept under its original name for the block
+  // props below, which is what the renderer reads.
+  const cellPadding = cellPad;
 
   return {
     height: 24 + opts.rows.length * rowHeight,
