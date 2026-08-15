@@ -89,10 +89,83 @@ export function wireYearsAsStoredSeries(
   return out;
 }
 
+/**
+ * The acquisition, in the vocabulary `projectCashFlow` reads it from.
+ *
+ * ## What is carried, and what deliberately is not
+ *
+ * Only quantities the wire holds that are **the same quantity** the stored blob
+ * holds — the deposit is the deposit, the loan amount is the loan amount, and
+ * `costs[]` carries the same three figures under labels this file's sibling
+ * (`toWireProjection.ts`) chose. LVR is a definition rather than a
+ * recalculation, and it agrees with the store on production rows (420,000 of
+ * 525,000 = 80).
+ *
+ * `monthlyPayment`, `weeklyPayment`, `totalInterest` and `rateSource` are NOT
+ * derived, and that is the point of this comment. The wire carries year one's
+ * `interest` and `principal`, and dividing their sum by twelve looks like the
+ * monthly repayment — but on a production interest-only row the store says
+ * $2,518.11 and that arithmetic says $2,100, because the store records the
+ * P&I payment whatever the loan type. Publishing the second number under the
+ * same label as the first would put a figure in a client's financial document
+ * that disagrees with every other surface in the product. They are read from
+ * the stored record or withheld. Same for every `annualCosts` component: the
+ * wire has one aggregate `expenses` per year and no breakdown at all.
+ */
+function acquisitionAsFinancials(wire: WireProjection): Record<string, unknown> {
+  const a = (wire?.acquisition ?? {}) as Record<string, unknown>;
+  const costOf = (label: string): number | null => {
+    const rows = Array.isArray(a.costs) ? a.costs as Array<Record<string, unknown>> : [];
+    const hit = rows.find((c) => String(c?.label ?? '').trim().toLowerCase() === label);
+    return hit ? finiteOrNull(hit.amount) : null;
+  };
+  const purchasePrice = finiteOrNull(a.purchasePrice);
+  const loanAmount = finiteOrNull(a.loanAmount);
+
+  const initialCosts: Record<string, unknown> = {};
+  const put = (into: Record<string, unknown>, key: string, value: unknown) => {
+    if (value !== null && value !== undefined) into[key] = value;
+  };
+  put(initialCosts, 'deposit', finiteOrNull(a.deposit));
+  put(initialCosts, 'loanAmount', loanAmount);
+  put(initialCosts, 'stampDuty', costOf('stamp duty'));
+  put(initialCosts, 'legalFees', costOf('legal fees'));
+  put(initialCosts, 'lmi', costOf('lenders mortgage insurance'));
+
+  const loanDetails: Record<string, unknown> = {};
+  put(loanDetails, 'loanAmount', loanAmount);
+  put(loanDetails, 'interestRate', finiteOrNull(a.interestRate));
+  const loanType = String(a.loanType ?? '').trim();
+  if (loanType) loanDetails.loanType = loanType;
+  if (loanAmount !== null && purchasePrice !== null && purchasePrice > 0) {
+    loanDetails.lvr = (loanAmount / purchasePrice) * 100;
+  }
+
+  const out: Record<string, unknown> = {};
+  if (Object.keys(initialCosts).length) out.initialCosts = initialCosts;
+  if (Object.keys(loanDetails).length) out.loanDetails = loanDetails;
+  return out;
+}
+
 export interface LiveProjectionSource {
   /** The row the document is about — for its id, address and timestamps. */
   reportId: string;
   propertyAddress?: string | null;
+  /**
+   * The stored `financial_calculations`, when the record could be read.
+   *
+   * The series on screen is the adviser's; the *inputs* underneath it are not.
+   * `annualCosts` (council rates, water, insurance, maintenance, management,
+   * strata) exist nowhere in the payload — the wire carries one aggregate
+   * `expenses` per year — and an override of a projection year does not change
+   * what the council charges. So they are taken from the record when it is
+   * readable and withheld when it is not.
+   *
+   * Optional by rule. The render must never *depend* on this read: a refused
+   * one is what made the whole templated path fall back to the standard
+   * composer before the payload channel existed.
+   */
+  storedFinancials?: Record<string, unknown> | null;
   /**
    * The stored scenario this series was proved to equal, when it was.
    *
@@ -115,12 +188,30 @@ export function wireAsProjectionRow(
 ): Record<string, unknown> | null {
   const series = wireYearsAsStoredSeries(wire);
   if (!series) return null;
+  const stored = (source.storedFinancials ?? {}) as Record<string, unknown>;
+  const derived = acquisitionAsFinancials(wire);
+  const merge = (key: string) => {
+    // The record wins where it has the field, because it is the fuller of the
+    // two — it carries the payments and the fee lines the wire never had. The
+    // wire fills in when the read was refused, so a document produced without
+    // a readable record still states the deposit, the loan and the rate rather
+    // than printing a labelled table of empty cells.
+    const a = stored[key] && typeof stored[key] === 'object' ? stored[key] as Record<string, unknown> : null;
+    const b = derived[key] && typeof derived[key] === 'object' ? derived[key] as Record<string, unknown> : null;
+    if (!a && !b) return undefined;
+    return { ...(b ?? {}), ...(a ?? {}) };
+  };
+  const financials: Record<string, unknown> = {
+    projections: { [CARRIER_SCENARIO]: series },
+  };
+  for (const key of ['initialCosts', 'loanDetails', 'annualCosts']) {
+    const merged = merge(key);
+    if (merged && Object.keys(merged).length) financials[key] = merged;
+  }
   return {
     id: source.reportId,
     property_address: source.propertyAddress ?? null,
-    financial_calculations: {
-      projections: { [CARRIER_SCENARIO]: series },
-    },
+    financial_calculations: financials,
   };
 }
 

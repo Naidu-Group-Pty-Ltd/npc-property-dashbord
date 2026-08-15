@@ -28,6 +28,7 @@
  * naming the exports that do.
  */
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { looksUndeployed } from '../undeployedRoute';
 
 export type ReportQaSubjectName = 'structured' | 'answer' | 'transcript';
 
@@ -91,20 +92,9 @@ export interface RequestReportQaOptions {
  * person who pressed the button was shown a CORS diagnostic for a function that
  * had simply never been deployed.
  */
-function looksUndeployed(error: { message?: string; network?: boolean; code?: string } | null): boolean {
-  if (!error) return false;
-  // A timed-out render is also a `network` failure, and it is the opposite of
-  // an absent one: the route answered slowly, so telling somebody to deploy it
-  // would be wrong. The transcript subject runs to twenty-nine pages.
-  if (error.network === true && error.code !== 'provider_timeout') return true;
-  const message = (error.message || '').toLowerCase();
-  return message.includes('function not found')
-    || message.includes('requested function')
-    || message.includes('does not exist')
-    || message.includes('failed to fetch')
-    || message.includes('network/cors')
-    || message.includes('failed to send a request');
-}
+// The predicate is shared (`../undeployedRoute`). This module is where the
+// `network` arm was worked out; the other two formats carried stale copies
+// that could not match it, so their legacy fallbacks never fired.
 
 const UNDEPLOYED_MESSAGE =
   'The typeset Q&A document is not available yet — render-report-qa-pdf has not been '

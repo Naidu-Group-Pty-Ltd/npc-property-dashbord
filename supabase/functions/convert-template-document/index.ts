@@ -69,6 +69,7 @@ import {
 } from '../_shared/reports/converted/render.pure.ts';
 import { enrichChapters } from '../_shared/reports/converted/enrich.ts';
 import type { ReportArchetypeId } from '../_shared/reportDesign/structure.pure.ts';
+import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   type ConvertChaptersResponse,
   type ConvertExtractResponse,
@@ -246,6 +247,20 @@ function sectionRows(structure: ExtractedStructure): ConvertExtractResponse['sec
 
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  // SEC5-CSRF: reject cross-site cookie-authenticated invocations.
+  //
+  // This function authenticates through `verifyAuthOrNativeUser`, which reads
+  // the `__Host-session_token` cookie and nothing else — and that cookie is
+  // issued `SameSite=None`, so a page on any origin can make the browser send
+  // it. `_shared/auth.ts` states the rule: a function that accepts the cookie
+  // MUST also run `enforceCsrf`. Twelve did not, because
+  // `check-csrf-coverage.mjs` tested `/\bverifyAuth\b/`, which cannot match
+  // `verifyAuthOrNativeUser` — so the gate reported full coverage while
+  // reporting on none of them. No-cookie and GET/HEAD/OPTIONS callers pass
+  // through untouched.
+  const __csrf = enforceCsrf(req);
+  if (!__csrf.ok) return csrfDenied(corsHeaders, __csrf);
+
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
   const supabase = createClient(

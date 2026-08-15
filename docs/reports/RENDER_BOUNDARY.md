@@ -112,6 +112,141 @@ then puts the result through the *real* gate;
 production selection actually points at. `docs/reports/COVERAGE.md` makes this
 point about content bindings, and it is just as true of the boundary.
 
+## Three defects the same audit found downstream
+
+Fixing the boundary made the templated path run for the first time, which
+exposed what it produces. An adversarial audit of the whole export chain
+confirmed six defects; three are fixed here.
+
+### 1. The legacy fallback never fired — nine formats, eight of them stale
+
+Every format that keeps an in-browser generator behind its server route decides
+whether to use it with a `looksUndeployed` predicate. **Nine formats carried
+their own copy and eight could not match the message the transport actually
+produces.**
+
+An absent edge function is a 404 from the *gateway*, which carries no
+`Access-Control-Allow-Origin`; the request is preflighted, so the browser never
+surfaces the status or the body. `fetch` rejects, and `invokeSecureFunction`
+rewrites the rejection into `Network/CORS error calling …`. Matching on
+`failed to fetch` therefore missed the only case the fallback existed for — and
+missed it on *every* browser, since Chrome's wording is the one that gets
+rewritten while Firefox says `NetworkError when attempting to fetch resource.`
+and Safari says `Load failed`.
+
+The consequence was not a bad message. `requestCashFlowPdf` is handed a working
+generator as `legacyFallback` and never called it: it threw, the modal turned
+that into a red toast, and **the adviser got no file at all**.
+
+The predicate is now `src/lib/reports/undeployedRoute.ts`, once. Two rules: a
+transport failure IS an absent function, and **a timeout is the opposite of one**
+(it is also `network: true`, but the route exists, answered slowly, and may have
+finished — swapping in the legacy document there hands over a different
+document after a successful render).
+
+### 2. The payload published the series and not the inputs under it
+
+`wireAsProjectionRow` built a pseudo-row of nothing but the ten years, so
+`projectCashFlow` published nine of the fourteen `cashflow.*` groups a master
+binds. The other five printed as labelled tables with empty amount cells:
+**50 of the production master's 133 bound paths resolved to nothing, 35 empty
+cells** — the purchase fee lines, the loan repayments and the entire annual
+holding-cost table, none of which an override of a projection year changes.
+
+The record is now read *alongside* the payload: the payload carries the series,
+the record carries the inputs. The read is best-effort and the render never
+depends on it — that dependency is the original defect — so a refusal costs the
+holding-cost table, not the document. Down to 29 unresolved, 22 cells.
+
+Two things are deliberately **not** derived from the wire, and this is the rule
+to keep. A production row stores `monthlyPayment: 2518.11` on an interest-only
+loan while year one's `interest + principal` implies `2100`, because the store
+records the P&I payment whatever the loan type. And the stored per-year `roi`
+fits `(capitalGain + cumulativeCashFlow) / deposit` in year one and nothing that
+reproduces year ten. Publishing either under the same label as the stored one
+puts a figure in a client's financial document that disagrees with every other
+surface in the product.
+
+What remains withheld is `roi` and the three-scenario comparison, and they are
+withheld because they are properties **of the stored series**: a reviewed series
+is not one of the three. A *proved* series — one `matchStoredScenario` showed
+equals a stored scenario in every field of every year — now takes the stored row
+whole and has none of these gaps.
+
+### 3. The CSRF coverage gate reported on none of the functions it named
+
+`check-csrf-coverage.mjs` tested `/\bverifyAuth\b/`. The `\b` requires a
+non-word character after the name, so it **cannot match
+`verifyAuthOrNativeUser`** — the wrapper twelve cookie-authenticated functions
+use, including nine `render-*-pdf` routes and `render-template-pdf` itself.
+Every one reads the `__Host-session_token` cookie, that cookie is
+`SameSite=None`, `_shared/auth.ts` states that a function accepting it MUST run
+`enforceCsrf`, and none of them did. The gate printed
+*"CSRF coverage check passed"* the entire time, which is worse than not
+existing: it was read as evidence.
+
+The regex is `verifyAuth\w*` now, all twelve carry the guard, and
+`check-security-gate-negatives.mjs` has a case anchored on a
+`verifyAuthOrNativeUser` function so the widening is proven to bite rather than
+believed to.
+
+### 4. The boundary was refusing documents for their prose
+
+The scan read the whole document as one string and refused any URL-shaped
+substring anywhere in it — including in the visible text of the report.
+
+**808 of the 1,182 investment reports carry a URL in their content.** A Compass
+report citing a planning portal, or an introduction printing the firm's own
+website, was refused at the boundary and fell back to the legacy generator. The
+two model-authored formats are the most exposed of all, because a model writing
+prose cites its sources.
+
+WeasyPrint has no script engine and resolves a URL in exactly three kinds of
+place: an element attribute, a CSS `url()` / `@import`, and the inline `style`
+attribute that is a special case of the second. A URL in a text node is drawn as
+characters. Nothing requests it, so there is nothing to defend against.
+
+The scan is positional now: **attribute values and stylesheet bodies are judged;
+text between tags is not.** It stays deliberately generous about what counts as
+a position — *every* attribute is judged rather than a list of the ones
+WeasyPrint is known to fetch, because being wrong in the narrow direction
+reopens the SSRF while being wrong in the generous direction costs a loud,
+recoverable refusal. `<img data-xmlns="http://169.254.169.254/…">` is still
+refused for exactly that reason.
+
+Two attributes are exempt, and only two: `xmlns`/`xmlns:prefix` (an identifier,
+never fetched — it already had an exemption) and `href` **on `<a>`** (a link
+annotation in the output PDF, not a request; the renderer emits one for every
+link overlay and every contents row). `href` anywhere else — `<link>`, SVG
+`<image>`, `<use>` — is a fetch and is judged.
+
+### 5. An unreachable image failed the whole document
+
+`preloadImages` ran before binding resolution and skipped `{{…}}` by design.
+Correct for text, fatal for assets: an `image` block whose `src` is a binding —
+including the block registry's own default, `{{property.imageUrl}}` — resolved
+to a remote URL at paint time, *after* the only step that could have brought it
+inside the boundary. And a literal remote URL whose fetch failed was left in
+place rather than dropped. Either way the boundary refused the whole document
+for one picture: the production route degraded to the legacy generator, and the
+Template Builder's export produced no file at all.
+
+The resolution step now takes the render data, so an asset named by a binding is
+resolved and **fetched and inlined like any other** — which is the outcome
+everybody actually wanted, since the picture reaches the page. What cannot be
+reached is **dropped**, and named: `compileTemplateHtmlForPdf` returns
+`droppedAssets` and both export surfaces say so. That is the rule
+`adapters/organisation.ts` already stated for brand marks — *a logo that could
+not be fetched is a thinner document, not a failed one* — applied where it was
+missing.
+
+A project-storage URL is never dropped: `reference` mode deliberately leaves a
+page raster as a signed link for WeasyPrint to fetch itself, and the boundary
+admits it. Client and server share one predicate (`isAdmissibleRenderResource`
+/ `refuseRenderResource`) so the two ends cannot disagree about what is
+admissible — a disagreement there shows up as a document that previews cleanly
+and 500s in production.
+
 ## Where the pieces are
 
 | Concern | Module |
@@ -123,3 +258,7 @@ point about content bindings, and it is just as true of the boundary.
 | The one PDF compiler | `src/lib/reportTemplate/compileTemplateForPdf.ts` |
 | The production route | `src/lib/reportTemplate/routeReportThroughTemplate.ts` |
 | Ledger and error text | `supabase/functions/render-template-pdf/index.ts` |
+| Asset normalisation and drops | `src/lib/reportTemplate/imagePreloader.ts` |
+| "Is this route deployed?" | `src/lib/reports/undeployedRoute.ts` |
+| The cash flow payload/record merge | `src/lib/reports/cashFlow/liveProjectionRow.ts` |
+| CSRF coverage | `scripts/security/check-csrf-coverage.mjs` |

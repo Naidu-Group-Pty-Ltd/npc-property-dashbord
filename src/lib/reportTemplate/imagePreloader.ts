@@ -2,7 +2,12 @@
  * Pre-loads remote image URLs referenced by image overlays into base64 data
  * URLs so the synchronous jsPDF renderer can embed them.
  */
-import type { ReportTemplate } from './templateSchema';
+import type { ReportTemplate, Tokens } from './templateSchema';
+import { resolveBindable, type ResolveContext } from './bindingResolver';
+import { isAdmissibleRenderResource } from '../../../supabase/functions/_shared/renderResourcePolicy.pure';
+
+/** Tokens for a resolve context when the caller supplied none. */
+const EMPTY_TOKENS = { colors: {}, fonts: {}, spacing: {} } as unknown as Tokens;
 import {
   invalidateArtifactSignedUrl,
   resolveRasterRefUrl,
@@ -114,23 +119,123 @@ export type ImagePreloadMode = 'inline' | 'reference';
 
 export interface PreloadImagesOptions {
   mode?: ImagePreloadMode;
+  /**
+   * The render data, so an asset named by a BINDING can be normalised too.
+   *
+   * ## Why this had to exist
+   *
+   * This walk ran before binding resolution and skipped `{{…}}` by design,
+   * leaving those to the block renderers. That is correct for text and fatal
+   * for assets: an `image` block whose `src` is a binding — including the block
+   * registry's own default, `{{property.imageUrl}}` — resolved to a remote URL
+   * at paint time, *after* the only step that could have brought it inside the
+   * render boundary. `assertSafeRenderResources` then refused the whole
+   * document. The production route degraded to the legacy generator; the
+   * Template Builder's export produced no file at all.
+   *
+   * Resolving here is cheap (the same `resolveBindable` the renderer uses, over
+   * a handful of props) and it means the picture actually reaches the page,
+   * which is what everybody wanted. Omit it and the previous behaviour stands:
+   * bindings are left alone.
+   */
+  data?: Record<string, unknown>;
+  /** Tokens, so a `token:` reference in an asset prop resolves like any other. */
+  tokens?: Tokens;
+  /**
+   * The project origin the render boundary admits. Supplying it turns on the
+   * one rule this walk could not previously enforce: an asset that cannot be
+   * brought inside the boundary is DROPPED rather than carried.
+   */
+  supabaseUrl?: string;
+}
+
+export interface PreloadImagesResult {
+  template: ReportTemplate;
+  /**
+   * Assets that could not be brought inside the boundary and were dropped.
+   *
+   * Never empty silently: `compileTemplateHtmlForPdf` hands these to the
+   * caller so a person is told the picture is missing, rather than finding out
+   * by looking at the page. Same rule the brand marks already follow — "a logo
+   * that could not be fetched is a thinner document, not a failed one"
+   * (`adapters/organisation.ts`) — which is exactly what this walk did NOT do:
+   * it left the unreachable URL in place and the whole render was refused for
+   * it.
+   */
+  dropped: Array<{ where: string; url: string }>;
 }
 
 /**
  * Walks every image overlay in the template, resolves each remote `src`, and
  * returns a new template with the `src` replaced.
- * Bindings (`{{...}}`) are left untouched and resolved at render time.
  *
  * In `inline` mode the replacement is a base64 data URL; in `reference` mode
- * storage refs become signed URLs and existing remote URLs are left as-is.
+ * storage refs become signed URLs and existing project-storage URLs are left
+ * as-is.
+ *
+ * With `data` supplied, an asset prop that is a binding is resolved first, so
+ * a bound remote URL is normalised like a literal one. With `supabaseUrl`
+ * supplied, anything still outside the render boundary afterwards is dropped.
  */
 export async function preloadImages(
   template: ReportTemplate,
   options: PreloadImagesOptions = {},
 ): Promise<ReportTemplate> {
+  return (await preloadImagesWithReport(template, options)).template;
+}
+
+/** As `preloadImages`, and says what it had to drop. */
+export async function preloadImagesWithReport(
+  template: ReportTemplate,
+  options: PreloadImagesOptions = {},
+): Promise<PreloadImagesResult> {
   const mode: ImagePreloadMode = options.mode ?? 'inline';
   const tasks: Array<Promise<void>> = [];
+  const dropped: Array<{ where: string; url: string }> = [];
   const next: ReportTemplate = JSON.parse(JSON.stringify(template));
+
+  /**
+   * Resolve a binding in an asset prop, so the walk below sees a URL.
+   *
+   * Only asset props go through this. Resolving the whole template here would
+   * duplicate the renderer's job and the two would drift; resolving six prop
+   * names does not.
+   */
+  const bindingCtx: ResolveContext | null = options.data
+    ? { data: options.data, tokens: options.tokens ?? EMPTY_TOKENS }
+    : null;
+  const resolveAsset = (value: unknown): string => {
+    if (typeof value !== 'string') return '';
+    if (!bindingCtx || !value.includes('{{')) return value;
+    try {
+      return resolveBindable(value, bindingCtx);
+    } catch {
+      return '';
+    }
+  };
+
+  /**
+   * Take the normalised value, or drop the asset.
+   *
+   * The drop is the point. Leaving an unreachable remote URL in place is what
+   * turned one missing picture into a refused document — and it refused it at
+   * the trust boundary, where the message named the URL and nothing named the
+   * block. A project-storage URL and a `data:` URI are admissible as they
+   * stand and are never dropped; `reference` mode depends on that, because a
+   * page raster is deliberately left as a signed link.
+   */
+  const applyOrDrop = (
+    where: string,
+    original: string,
+    resolved: string | null,
+    set: (value: string) => void,
+  ): void => {
+    if (resolved) { set(resolved); return; }
+    if (!options.supabaseUrl) return;
+    if (isAdmissibleRenderResource(original, options.supabaseUrl)) return;
+    dropped.push({ where, url: original });
+    set('');
+  };
 
   // Reference mode applies ONLY to page rasters, which are resolved to signed
   // URLs below. Every other remote asset still inlines, in both modes.
@@ -174,40 +279,45 @@ export async function preloadImages(
       );
     }
     // Page background image
-    const bgUrl = page.background?.imageUrl;
-    if (typeof bgUrl === 'string' && /^https?:\/\//i.test(bgUrl) && !isReferenceUnderlay) {
-      tasks.push(resolveRemote(bgUrl).then((d) => { if (d) page.background.imageUrl = d; }));
+    const bgUrl = resolveAsset(page.background?.imageUrl);
+    if (/^https?:\/\//i.test(bgUrl) && !isReferenceUnderlay) {
+      tasks.push(resolveRemote(bgUrl).then((d) => applyOrDrop(
+        `page ${page.id} background`, bgUrl, d, (v) => { page.background.imageUrl = v; },
+      )));
     }
     for (const block of page.blocks) {
       // Block-level image-bearing props
       for (const key of IMAGE_PROP_KEYS) {
-        const v = (block.props as any)?.[key];
-        if (typeof v === 'string' && /^https?:\/\//i.test(v)) {
-          tasks.push(resolveRemote(v).then((d) => { if (d) (block.props as any)[key] = d; }));
+        const v = resolveAsset((block.props as any)?.[key]);
+        if (/^https?:\/\//i.test(v)) {
+          tasks.push(resolveRemote(v).then((d) => applyOrDrop(
+            `${block.type} ${block.id}.${key}`, v, d, (n) => { (block.props as any)[key] = n; },
+          )));
         }
       }
       // Gallery / list-style props with item arrays containing { src }
       const items = (block.props as any)?.items;
       if (Array.isArray(items)) {
-        for (const item of items) {
-          if (item && typeof item.src === 'string' && /^https?:\/\//i.test(item.src)) {
-            tasks.push(resolveRemote(item.src).then((d) => { if (d) item.src = d; }));
+        for (const [index, item] of items.entries()) {
+          const src = resolveAsset(item?.src);
+          if (item && /^https?:\/\//i.test(src)) {
+            tasks.push(resolveRemote(src).then((d) => applyOrDrop(
+              `${block.type} ${block.id}.items[${index}].src`, src, d, (v) => { item.src = v; },
+            )));
           }
         }
       }
       for (const overlay of block.overlays) {
         if (overlay.type !== 'image') continue;
-        const src = overlay.src;
-        if (typeof src !== 'string' || !/^https?:\/\//i.test(src)) continue;
-        tasks.push(
-          resolveRemote(src).then((resolved) => {
-            if (resolved) overlay.src = resolved;
-          }),
-        );
+        const src = resolveAsset(overlay.src);
+        if (!/^https?:\/\//i.test(src)) continue;
+        tasks.push(resolveRemote(src).then((d) => applyOrDrop(
+          `overlay ${overlay.id}`, src, d, (v) => { overlay.src = v; },
+        )));
       }
     }
   }
 
   await Promise.all(tasks);
-  return next;
+  return { template: next, dropped };
 }

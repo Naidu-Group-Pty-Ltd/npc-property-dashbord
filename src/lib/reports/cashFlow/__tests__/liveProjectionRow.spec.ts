@@ -138,20 +138,48 @@ describe('a supplied series needs no database read', () => {
       join(__dirname, '../../../reportTemplate/adapters/cashFlowAdapter.ts'), 'utf8',
     ).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-    // Both entry points serve the live row first and only then fall back to a
-    // read — `liveRowFromPayload` must appear before `loadReport` in each.
-    for (const method of ['resolveRoutingContext', 'buildBindingContext']) {
-      const at = code.indexOf(method);
-      expect(at, `${method} is gone`).toBeGreaterThan(-1);
-      const body = code.slice(at, at + 1400);
-      const live = body.indexOf('liveRowFromPayload');
-      const load = body.indexOf('loadReport');
-      expect(live, `${method} no longer checks the payload`).toBeGreaterThan(-1);
-      expect(
-        live < load || load === -1,
-        `${method} reads the record before serving the supplied series`,
-      ).toBe(true);
-    }
+    // ROUTING reads nothing at all. This is the half that must never be
+    // refused: a routing context that does not resolve is `adapter_declined_
+    // record`, and the caller falls through to the composer before a template
+    // is even looked up. Everything routing needs — the id, the title — is in
+    // the payload.
+    const routingAt = code.indexOf('resolveRoutingContext');
+    expect(routingAt, 'resolveRoutingContext is gone').toBeGreaterThan(-1);
+    const routing = code.slice(routingAt, routingAt + 1400);
+    const live = routing.indexOf('liveRowFromPayload');
+    const load = routing.indexOf('loadReport');
+    expect(live, 'routing no longer checks the payload').toBeGreaterThan(-1);
+    expect(live < load || load === -1,
+      'routing reads the record before serving the supplied series').toBe(true);
+  });
+
+  it('binding reads the record for the inputs, and never depends on it', () => {
+    // BINDING does read, and that is a deliberate change from the first version
+    // of this rule. Serving the payload alone published nine of the fourteen
+    // `cashflow.*` groups a master binds; the other five — the purchase fee
+    // lines, the loan repayments, the annual holding costs — are not in the
+    // payload at all and are not what an override changes. They printed as
+    // labelled tables of empty cells: 50 of the production master's 133 bound
+    // paths resolved to nothing.
+    //
+    // The rule that survives is the one that mattered: the render must not
+    // DEPEND on the read. A refused one costs the holding-cost table, not the
+    // document — so `!live && !row` is the only refusal, never `!row`.
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const code = readFileSync(
+      join(__dirname, '../../../reportTemplate/adapters/cashFlowAdapter.ts'), 'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    const at = code.indexOf('buildBindingContext');
+    expect(at).toBeGreaterThan(-1);
+    const body = code.slice(at, at + 2600);
+    expect(body, 'the stored inputs are no longer merged into the live row')
+      .toMatch(/liveRowFromPayload\(\s*payload,\s*reportId,/);
+    expect(body, 'binding refuses on a missing record — a refused read must not cost the document')
+      .toMatch(/if \(!live && !row\) return null;/);
+    expect(body, 'a bare `if (!row) return null` makes the render depend on the read again')
+      .not.toMatch(/if \(!row\) return null;/);
   });
 
   it('takes the title from the payload, so the title needs no read either', () => {

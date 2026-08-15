@@ -80,9 +80,30 @@ const wire = {
   notes: [],
 } as unknown as WireProjection;
 
-function bindingContext(): Record<string, unknown> {
+/**
+ * The stored inputs, in the shape the broker's `detail` projection returns
+ * them — values taken from a production `investment_reports` row.
+ */
+const STORED_FINANCIALS = {
+  initialCosts: {
+    lmi: 0, deposit: 105_000, legalFees: 1_800, stampDuty: 18_037,
+    loanAmount: 420_000, inspectionFees: 500, totalUpfront: 125_360,
+  },
+  loanDetails: {
+    lvr: 80, loanType: 'interest_only', loanAmount: 420_000,
+    rateSource: 'User specified', interestRate: 6, totalInterest: 486_520,
+    weeklyPayment: 581.1, monthlyPayment: 2_518.11,
+  },
+  annualCosts: {
+    landTax: 0, strataFees: 0, waterRates: 1_100, lettingFees: 550,
+    maintenance: 2_600, councilRates: 2_000, landlordInsurance: 2_200,
+    propertyManagement: 2_002,
+  },
+};
+
+function bindingContext(stored: Record<string, unknown> | null = null): Record<string, unknown> {
   const row = wireAsProjectionRow(wire, {
-    reportId: 'rep-1', propertyAddress: '28 Bligh Street',
+    reportId: 'rep-1', propertyAddress: '28 Bligh Street', storedFinancials: stored,
   });
   expect(row, 'the live projection bridge refused a whole ten-year series').not.toBeNull();
   const data: Record<string, unknown> = {
@@ -112,6 +133,53 @@ describe('the production 10 Year Cash Flow master', () => {
     // An unresolved binding renders as the empty string, never as a visible
     // `{{…}}` — so a leftover brace means the renderer stopped resolving.
     expect(html.match(/\{\{/g) ?? []).toHaveLength(0);
+  });
+
+  it('binds the inputs under the series, not just the series', async () => {
+    // An unresolved binding renders as the empty string, so a context that is
+    // *partly* published prints labelled tables with empty amount cells — and
+    // nothing refuses it: `routeReportThroughTemplate` only declines an
+    // entirely empty context, which this is not.
+    //
+    // Measured on this master with a live payload and no stored inputs: 50 of
+    // its 133 bound `cashflow.*` paths resolved to nothing and the document
+    // carried 35 empty cells — the purchase fee lines, the loan repayments and
+    // the whole annual holding-cost table, none of which an adviser's override
+    // of a projection year changes. They are read from the record now.
+    const schema = parseTemplate(seededSchema());
+    const bound = [...new Set(
+      (JSON.stringify(schema).match(/\{\{\s*cashflow\.[a-zA-Z0-9_.]+/g) ?? [])
+        .map((b) => b.replace(/\{\{\s*/, '')),
+    )];
+    const data = bindingContext(STORED_FINANCIALS);
+    const unresolved = bound.filter((path) => {
+      let cur: unknown = (data as Record<string, any>).cashflow;
+      for (const key of path.split('.').slice(1)) {
+        if (cur == null) return true;
+        cur = /^\d+$/.test(key)
+          ? (cur as Record<number, unknown>)[Number(key)]
+          : (cur as Record<string, unknown>)[key];
+      }
+      return cur === undefined || cur === null;
+    });
+
+    for (const group of ['cashflow.purchase.', 'cashflow.loan.', 'cashflow.costs.']) {
+      expect(unresolved.filter((p) => p.startsWith(group)),
+        `${group}* is unbound again — the stored inputs are not reaching the document`)
+        .toEqual([]);
+    }
+
+    // What remains unresolved is withheld ON PURPOSE, and the list is pinned so
+    // that "withheld" cannot quietly grow. `roi` and the three-scenario
+    // comparison are properties OF the stored series: a reviewed series is not
+    // one of the three, and this repo has no second implementation of the
+    // stored `roi` derivation — production year one fits
+    // (capitalGain + cumulativeCashFlow) / deposit and year ten fits nothing
+    // that reproduces it, so deriving one would print a different number under
+    // the same label. A proved series takes the stored row whole instead and
+    // has none of these gaps.
+    const withheld = unresolved.filter((p) => /\.roi$|^cashflow\.scenario(s|Basis)\./.test(p));
+    expect(unresolved.sort()).toEqual(withheld.sort());
   });
 
   it('is accepted by the boundary the renderer enforces', async () => {

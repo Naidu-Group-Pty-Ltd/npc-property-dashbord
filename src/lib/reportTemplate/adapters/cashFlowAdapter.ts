@@ -101,6 +101,15 @@ function resolveScenario(variant?: string | null): ScenarioName {
 function liveRowFromPayload(
   payload: Record<string, unknown> | null | undefined,
   reportId: string,
+  /**
+   * The stored record's `financial_calculations`, when one could be read.
+   *
+   * The series never comes from here — that is the whole point of the channel,
+   * and a refused read must not cost the document. Only the inputs beneath it
+   * do: the fee lines, the repayments and the annual holding costs, which no
+   * override changes and which the payload does not carry.
+   */
+  storedFinancials?: Record<string, unknown> | null,
 ): Record<string, unknown> | null {
   const wire = payload?.wire as WireProjection | undefined;
   if (!wire) return null;
@@ -110,6 +119,7 @@ function liveRowFromPayload(
     // channel is that a caller holding the document's data can render it
     // without a read that may be refused.
     propertyAddress: (payload?.propertyAddress as string | null) ?? null,
+    storedFinancials: storedFinancials ?? null,
   });
 }
 
@@ -207,12 +217,56 @@ export const cashFlowAdapter: ReportTemplateAdapter = {
       payload?: Record<string, unknown> | null;
     },
   ): Promise<TemplateBindingContext | null> {
-    // Same rule as routing: a supplied series needs no read at all.
-    const live = liveRowFromPayload(payload, reportId);
-    const row = live ? null : await loadReport(reportId);
+    // The record is read alongside the payload, and neither is sufficient
+    // alone.
+    //
+    // The payload carries the series the adviser is looking at, which is the
+    // only thing an override changes. The record carries the *inputs* under
+    // it — the purchase fee lines, the loan repayments, the annual holding
+    // costs — none of which are in the payload at all, and none of which an
+    // override touches. Serving the payload alone published nine of the
+    // fourteen `cashflow.*` groups a master binds, and the other five printed
+    // as labelled tables of empty cells in a client's document: 50 of the
+    // production master's 133 bound paths resolved to nothing, 35 empty table
+    // cells.
+    //
+    // The read is best-effort and the render never depends on it — that
+    // dependency is what made a chosen template fall back to the standard
+    // composer on every download. A refusal costs the holding-cost table, not
+    // the document.
+    const row = await loadReport(reportId);
+    const live = liveRowFromPayload(
+      payload, reportId, (row?.financial_calculations ?? null) as Record<string, unknown> | null,
+    );
     if (!live && !row) return null;
 
     const scenario = resolveScenario(variant);
+
+    // A proved series IS the stored series — `matchStoredScenario` established
+    // that every field agrees in every year — so the record serves it whole,
+    // including the two things the payload can never carry honestly: `roi`,
+    // whose stored derivation this repo has no second implementation of, and
+    // the three-scenario comparison, which is a real comparison only when the
+    // series on screen is one of the three.
+    const proved = provedScenario(payload);
+    if (proved && row && projectCashFlow(row, resolveScenario(proved)).hasProjections) {
+      const data: Record<string, any> = {
+        report: {
+          id: reportId,
+          type: 'cashflow',
+          generated_at: (row.updated_at ?? row.created_at) ?? new Date().toISOString(),
+        },
+        analysis: row,
+        brand: { tokens: brand?.tokens ?? {}, logo: brand?.logoUrl ?? null },
+      };
+      applyCashFlowProjection(data, row, resolveScenario(proved));
+      await applyOrganisationAndBrand(data);
+      return {
+        data,
+        meta: { reportId, reportType: 'cashflow', variant: variant ?? null, tier: null },
+      };
+    }
+
     if (!live && !projectCashFlow(row!, scenario).hasProjections) return null;
 
     const source = live ?? row!;

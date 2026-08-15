@@ -159,6 +159,19 @@ through that compiler rather than its own copy of the step), and **a family the
 image lacks is substituted explicitly, never left to fontconfig** — an unknown
 face prints as the engine default with no warning from anything.
 
+That boundary judges **where the renderer fetches, not where it draws**. It used
+to scan the whole document as one string, so it refused reports for their prose —
+808 of 1,182 investment reports carry a URL in their content, and the two
+model-authored formats are the most exposed because a model cites its sources.
+Attribute values and stylesheet bodies are judged; text between tags is not.
+Every attribute is judged rather than a list of the fetchable ones (guessing
+narrowly reopens the SSRF; guessing widely costs a loud refusal), and exactly two
+are exempt: `xmlns*`, and `href` **on `<a>`** alone. The other half of the same
+rule is that **an asset that cannot be brought inside the boundary is dropped and
+named, never carried into it** — a bound `src` is resolved and inlined like a
+literal one, and what cannot be fetched is left out with a notice rather than
+failing the document.
+
 Read [`.claude/skills/npc-services-design/reports/REPORT_RULES.md`](./.claude/skills/npc-services-design/reports/REPORT_RULES.md)
 before touching any PDF generator — print has different contrast, colour and font
 rules from screen, and most of the repo's "logo" files are email-signature banners

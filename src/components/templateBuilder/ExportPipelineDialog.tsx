@@ -18,7 +18,9 @@ import { downloadTemplateAsHtml } from '@/lib/reportTemplate/htmlExporter';
 import { downloadTemplateAsDocx } from '@/lib/reportTemplate/docxExporter';
 import { downloadTemplateAsPptx } from '@/lib/reportTemplate/pptxExporter';
 import { logTemplateAudit } from '@/lib/reportTemplate/templateAuditLog';
-import { compileTemplateHtmlForPdf, describeUnresolvedRasterPages } from '@/lib/reportTemplate/compileTemplateForPdf';
+import {
+  compileTemplateHtmlForPdf, describeDroppedAssets, describeUnresolvedRasterPages,
+} from '@/lib/reportTemplate/compileTemplateForPdf';
 import { lintTemplate, type LintIssue } from '@/lib/reportTemplate/lintTemplate';
 import { analyzeExportCapability, type ExportCapabilityReport } from '@/lib/reportTemplate/exportCapability';
 import type { ReportTemplate } from '@/lib/reportTemplate/templateSchema';
@@ -246,7 +248,7 @@ export function ExportPipelineDialog({
       setPreloading(true);
       const tplForExport = buildTemplateForExport();
       toast.loading('Compiling HTML…', { id: toastId });
-      const { html, unresolvedRasterPages } = await compileTemplateHtmlForPdf(tplForExport, {
+      const { html, unresolvedRasterPages, droppedAssets } = await compileTemplateHtmlForPdf(tplForExport, {
         data: sampleData,
         title: templateName || 'Template Export',
         customCss: customCss || undefined,
@@ -255,6 +257,11 @@ export function ExportPipelineDialog({
       setPreloading(false);
       const degraded = describeUnresolvedRasterPages(unresolvedRasterPages);
       if (degraded) toast.warning(degraded);
+      // An image that could not be fetched used to fail the whole export at
+      // the render boundary — "Export failed", no file. It is left out now, and
+      // said out loud so nobody has to find the gap by looking at the page.
+      const missing = describeDroppedAssets(droppedAssets);
+      if (missing) toast.warning(missing);
 
       // 3) Call the edge function through the app's one transport, rather
       // than a hand-rolled fetch built on Vite env vars only the hosting build

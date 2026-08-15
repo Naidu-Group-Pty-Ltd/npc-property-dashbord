@@ -88,3 +88,57 @@ Deno.test('render resource policy blocks entity-obfuscated network URLs', () => 
     projectUrl,
   ));
 });
+
+/**
+ * The boundary judges where the renderer FETCHES, not where it draws.
+ *
+ * This scanned the whole document as one string, so a report was refused for
+ * its prose: 808 of 1,182 investment reports carry a URL in their content, and
+ * every one of them failed here — invisibly, because the caller fell back to
+ * its legacy generator and a document still arrived. WeasyPrint has no script
+ * engine and resolves a URL only from an attribute or a stylesheet; a URL in a
+ * text node is drawn as characters.
+ */
+Deno.test('render resource policy permits a URL in the document text', () => {
+  assertSafeRenderResources(
+    '<p>Council planning data is published at https://www.planning.nsw.gov.au/ and was checked.</p>',
+    projectUrl,
+  );
+  assertSafeRenderResources('<td>Source: https://www.abs.gov.au/statistics</td>', projectUrl);
+  assertSafeRenderResources('<p>Contact admin@npcservices.com.au or http://npcservices.com.au</p>', projectUrl);
+  assertEquals(true, true);
+});
+
+/** A hyperlink is a link annotation in the PDF, not a request. */
+Deno.test('render resource policy permits an anchor href', () => {
+  assertSafeRenderResources('<a href="https://npcservices.com.au/disclosure">Disclosure</a>', projectUrl);
+  assertEquals(true, true);
+});
+
+/** Exempting the anchor's href must not exempt the anchor. */
+Deno.test('render resource policy still blocks a fetch beside an anchor href', () => {
+  assertThrows(() => assertSafeRenderResources(
+    '<a href="https://ok.example/x" style="background:url(https://attacker.example/a.png)">x</a>',
+    projectUrl,
+  ));
+  assertThrows(() => assertSafeRenderResources(
+    '<a href="https://ok.example/x" data-src="https://attacker.example/a.png">x</a>',
+    projectUrl,
+  ));
+});
+
+/** Stylesheet bodies are CSS, and CSS fetches. */
+Deno.test('render resource policy blocks stylesheet and inline-style fetches', () => {
+  assertThrows(() => assertSafeRenderResources(
+    '<style>@import url("https://fonts.googleapis.com/css2?family=Lato");</style>',
+    projectUrl,
+  ));
+  assertThrows(() => assertSafeRenderResources(
+    '<style>.x{background:url(https://cdn.example.com/bg.png)}</style>',
+    projectUrl,
+  ));
+  assertThrows(() => assertSafeRenderResources(
+    '<div style="background:url(https://cdn.example.com/bg.png)"></div>',
+    projectUrl,
+  ));
+});
