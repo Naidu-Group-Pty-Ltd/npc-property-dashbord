@@ -22,13 +22,35 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(__dirname, '../..');
 const APPS = join(REPO, 'mobile', 'apps');
 
-/** Which scope each app target is allowed to reach. */
+/**
+ * Which scope each app may reach, and which functions within it.
+ *
+ * The scope alone is too coarse. All four portal apps are `portal` scope, so a
+ * scope-only check happily let the client app call `builder-portal-inventory` —
+ * four separate products, four separate audiences, one shared authority, which
+ * is exactly what this gate exists to prevent. `prefixes` narrows each app to
+ * the functions its own portal owns; `null` means the whole scope (the Command
+ * Centre owns all of `staff`).
+ *
+ * `shared` names the deliberate exceptions — functions more than one caller
+ * reaches, which dispatch on session type inside the function.
+ */
 const APP_SCOPES = {
-  command_centre: 'staff',
-  client: 'portal',
-  finance: 'portal',
-  solicitor: 'portal',
-  builder: 'portal',
+  command_centre: { scope: 'staff', prefixes: null },
+  client: {
+    scope: 'portal',
+    prefixes: [
+      'client-portal-', 'client-legal-', 'get-portal-', 'manage-portal-', 'portal-',
+    ],
+    shared: ['push-subscribe'],
+  },
+  finance: {
+    scope: 'portal',
+    prefixes: ['finance-portal-', 'finance-legal-'],
+    shared: ['manage-partner-referrals'],
+  },
+  solicitor: { scope: 'portal', prefixes: ['solicitor-portal-'] },
+  builder: { scope: 'portal', prefixes: ['builder-portal-'] },
 };
 
 const surface = JSON.parse(
@@ -49,7 +71,7 @@ function dartFiles(dir) {
 }
 
 let failures = 0;
-for (const [app, allowedScope] of Object.entries(APP_SCOPES)) {
+for (const [app, rule] of Object.entries(APP_SCOPES)) {
   const files = dartFiles(join(APPS, app, 'lib'));
   for (const file of files) {
     const source = readFileSync(file, 'utf8');
@@ -61,9 +83,22 @@ for (const [app, allowedScope] of Object.entries(APP_SCOPES)) {
       if (scope === undefined) {
         console.error(`✖ ${rel}: "${name}" is not in the audited registry.`);
         failures++;
-      } else if (scope !== allowedScope && scope !== 'public') {
+        continue;
+      }
+      if (scope === 'public') continue;
+      if (scope !== rule.scope) {
         console.error(
-          `✖ ${rel}: "${name}" is ${scope} scope; ${app} may only call ${allowedScope} or public.`,
+          `✖ ${rel}: "${name}" is ${scope} scope; ${app} may only call ${rule.scope} or public.`,
+        );
+        failures++;
+        continue;
+      }
+      if (rule.prefixes === null) continue;
+      const owned = rule.prefixes.some((prefix) => name.startsWith(prefix))
+        || (rule.shared ?? []).includes(name);
+      if (!owned) {
+        console.error(
+          `✖ ${rel}: "${name}" is ${scope} scope but belongs to another portal, not ${app}.`,
         );
         failures++;
       }

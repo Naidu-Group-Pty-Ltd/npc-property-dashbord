@@ -217,3 +217,93 @@ feature matrix (stage M1) is what decides the app's size, and the default
 answer for heavy authoring tooling — Template Builder, Workflow Playground,
 PDF-import diagnostics, AML administration — is **web-only**. A mobile app
 should make the things somebody needs away from their desk exceptionally good.
+
+## P1 · Two of the four portals need no server change at all
+
+The four portals were audited the same way the Command Centre was, and the
+planning that preceded it was wrong about three of them. It said finance,
+solicitor and builder sessions "live only in HttpOnly `__Host-*` cookies —
+correct for browsers, wrong for a native client". Here is what the code does:
+
+| Portal | Login returns token in body | Session accepted as header | Origin-gated | Native |
+|---|---|---|---|---|
+| **Client** | yes, `session_token` (`client-portal-login:232`) | `x-portal-session-token` | no | **works** |
+| **Finance** | yes, `session_token` (`finance-portal-login:253`) | `x-finance-session-token`, tried **first** | no | **works** |
+| **Solicitor** | no — `session_token: null` (`:169`) | `x-solicitor-session-token` | **yes** | blocked |
+| **Builder** | no — cookie only | none | **yes** | blocked |
+
+`financeSessionToken.ts` orders its reads `x-finance-session-token` →
+`finance_session_token` → `x-session-token` → `session_token` → cookie, and its
+own type comment says the CSRF guard is needed "exactly when the credential is a
+cookie, and applying it to header auth would only break non-browser callers for
+no gain". The finance portal was already built for a non-browser client.
+
+With the Command Centre (A1), **three of the five apps are native-ready today**
+and two are not. That is why `NpcPortalDescriptor.nativeBlockers` is derived
+rather than declared: readiness is a consequence of the audited fields, so a
+hopeful edit cannot assert it.
+
+## P2 · What blocks solicitor and builder is the front door, not the data
+
+`validateSolicitorPortalHeaders` / `validateBuilderPortalHeaders` require an
+`Origin` header that is present **and** allow-listed:
+
+```ts
+// builderSessionToken.ts
+// A missing Origin is rejected rather than tolerated,
+// matching `validateSolicitorPortalHeaders`.
+const origin = headers.get('origin');
+return !!origin && allowedOrigins().includes(origin);
+```
+
+`Origin` is a browser CORS concept; a native app sends none, so it is refused.
+The guard is enforced by **four functions each** — `login`, `forgot-password`,
+`reset-password`, `accept-invite` — and by no data function. So a native
+solicitor or builder client is blocked at sign-in and would work perfectly
+afterwards.
+
+**Sending a forged `Origin` is not the fix.** It is trivially possible, and that
+is the point: the control only ever constrained browsers, so satisfying it from
+Dart buys no security and costs real clarity — native traffic becomes
+indistinguishable from web traffic in logs, and the app asserts an origin it
+does not have. The right answer is an explicit native admission, and `S-2`
+already plans one.
+
+## P3 · The Origin gate and Turnstile are the same kind of control
+
+Both are browser-shaped provenance signals: *this came from our page, driven by
+a human*. `S-2` plans platform attestation (App Attest / Play Integrity /
+Huawei) as the native replacement for Turnstile. The same attestation is the
+correct replacement for the Origin allow-list, so the two blockers collapse into
+one server change rather than two.
+
+Turnstile itself is uniform: all four portal logins read `turnstile_token` from
+the **body**, never a header, and verify it inline against Cloudflare. Omit the
+key entirely when absent — the server treats missing and null identically.
+
+## P4 · Builder's cookie-only login is hardening, not an oversight
+
+`builder-portal-login`'s header states it: *"No raw session token is returned in
+JSON. It exists only in the Set-Cookie header"* — one of three named corrections
+it makes over the solicitor implementation. `extractBuilderSessionToken` takes no
+body parameter at all.
+
+So any native path must be **additive and opt-in**, never a reversal of that for
+browsers. This is A3 restated on the portal side: never weaken the web to serve
+mobile.
+
+A native client *could* run a cookie jar and replay the cookie. It should not:
+that re-arms `enforceCsrf`, requires the forged Origin of P2, and is an app
+pretending to be a browser. `NpcCookieOnlyTransport` therefore reports
+`isNative == false`, and the app says so on screen.
+
+## P5 · The portals differ by data, not by code
+
+Every difference found above is a *value* — a header name, a body field, a
+discriminator, which JSON field carries the token. None is a different
+algorithm. So the five apps share one shell, one authenticator and one API
+client, and differ by an `NpcPortalDescriptor` and their own screens.
+
+`portals_test.dart` pins each descriptor field against this audit. That test is
+the reason the table above cannot rot quietly: the last version of these facts
+was wrong in three places and nothing noticed, because nothing checked.

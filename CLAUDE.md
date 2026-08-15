@@ -528,10 +528,21 @@ design. [`mobile/plan.md`](./mobile/plan.md) is the master plan (five apps,
 Command Centre first, the three-store rule catalog); the Flutter workspace is
 `mobile/` and `mobile/apps/command_centre/plan.md` carries the feature matrix.
 
-Five apps, not one — the Command Centre plus one per portal, sharing six
+Five apps, not one — the Command Centre plus one per portal, sharing seven
 packages. The Command Centre is **privately distributed** (Apple Business
 Manager / Play managed), which is what keeps five binaries clear of Apple
 Guideline 4.3.
+
+**The apps differ by descriptor, not by code.** Every backend difference between
+them is a value — a header name, a body field, which JSON field carries the
+token — so they share one shell, one authenticator and one API client from
+`npc_portal`, and differ by an `NpcPortalDescriptor` plus their own screens.
+Three of the five are native-ready today (Command Centre, client, finance);
+solicitor and builder are refused by an `Origin` allow-list a native client
+cannot satisfy, and by builder's cookie-only session. `nativeBlockers` is derived
+from the audited fields, not declared, and a blocked app says why on screen —
+**never forge an `Origin` to get past that gate**, which only ever constrained
+browsers.
 
 Four rules that bite:
 

@@ -91,6 +91,16 @@ matches it — `staff` (+`public`) for the Command Centre, `portal`/`public` for
 the portals. A call outside scope fails the build. The `mobileScope` field
 exists precisely so this can be mechanical rather than reviewed.
 
+**R-ARCH-8 · The apps differ by descriptor, not by code.**
+Every difference between the five apps' backends is a value — a header name, a
+body field, a discriminator, which JSON field carries the token — and none is a
+different algorithm (`ARCHITECTURE.md` P5). So they share one shell, one
+authenticator and one API client from `npc_portal`, and differ by an
+`NpcPortalDescriptor` and their own screens. `nativeBlockers` is **derived** from
+the descriptor's audited fields rather than declared, so an app cannot claim a
+readiness its own contract contradicts, and an app that is blocked says why on
+screen instead of failing obscurely.
+
 **R-ARCH-5 · Workspace layout.**
 
 ```
@@ -105,7 +115,8 @@ mobile/
     ├── npc_auth/            # A1/A2 — session, refresh, secure storage, device seat
     ├── npc_api/             # generated client over api-surface.json
     ├── npc_design_system/   # design-tokens.json → ThemeData + GlassTheme
-    └── npc_brand/           # A11 — whitelabel_settings → runtime override
+    ├── npc_brand/           # A11 — whitelabel_settings → runtime override
+    └── npc_portal/          # P5 — descriptors, portal auth, the shared shell
 ```
 
 It lives in this repo because the contracts it consumes are **generated here**
@@ -140,9 +151,26 @@ token whose `sid` names a revoked or idle-expired session — tokens without `si
 must behave exactly as they do now. Reuses `_shared/sessionHash.ts` and
 `_shared/jwt.ts` unchanged. Registry entries for each.
 
-**The cookie portals (finance, solicitor, builder) need the same bearer
-response mode**, with their existing rotation and revocation semantics
-preserved. The client portal already issues `portal_session_token`.
+**The portals were audited too, and this rule was wrong about three of the
+four** (`ARCHITECTURE.md` P1). Client and finance both return `session_token` in
+the login body *and* accept it back as their own header — they need **nothing**.
+Solicitor needs its login to return the token to an attested native caller (it
+answers `session_token: null` by choice) and needs admission past the Origin
+gate. Builder needs those two plus a header carrier, since
+`extractBuilderSessionToken` reads no header or body at all.
+
+| Portal | Server change needed |
+|---|---|
+| Client | none |
+| Finance | none |
+| Solicitor | return the token to an attested native caller; admit it past the Origin gate |
+| Builder | the above, plus accept `x-builder-session-token` before the cookie |
+
+**Both blockers are the same change.** The Origin allow-list and Turnstile are
+both browser-shaped provenance signals, so `S-2`'s attestation is the native
+replacement for each (`ARCHITECTURE.md` P3). And the native path must be
+**additive** — builder's "no raw session token in JSON" is deliberate hardening
+for browsers and stays (P4).
 
 **Never weaken the web to serve mobile (A3):** `extractSessionToken` stays
 cookie-only, and no header or body fallback returns.

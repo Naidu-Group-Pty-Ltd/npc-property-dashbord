@@ -1,10 +1,16 @@
-import 'package:npc_core/npc_core.dart';
+import 'package:npc_portal/npc_portal.dart';
 
-import 'src/bootstrap/bootstrap.dart';
+import 'src/features/overview/overview_screen.dart';
 
-/// Entry point for every flavor.
+/// NPC Command Centre — the staff app.
 ///
-/// There is one entry point rather than three, because the flavor is a
-/// `--dart-define` and a flavor that can be selected at build time is one that
-/// cannot drift out of sync with the Gradle/Xcode flavor of the same name.
-void main() => bootstrap(NpcFlavor.fromEnvironment());
+/// One entry point for every flavor: the flavor is a `--dart-define`, so it
+/// cannot drift out of step with the Gradle/Xcode flavor of the same name.
+///
+/// Everything before the signed-in surface — workspace discovery, sign-in,
+/// device seats, theming — comes from `npc_portal` and is identical in all five
+/// apps. What is app-specific starts at [OverviewScreen].
+void main() => bootstrapPortal(
+  descriptor: NpcPortals.commandCentre,
+  home: (_) => const OverviewScreen(),
+);

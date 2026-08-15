@@ -24,3 +24,4 @@ workspace:
   - packages/npc_api
   - packages/npc_design_system
   - packages/npc_brand
+  - packages/npc_portal
