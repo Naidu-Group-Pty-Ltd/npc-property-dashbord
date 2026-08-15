@@ -27,9 +27,16 @@ import {
   buildClientSearchOrFilter,
   sanitizeClientSearchQuery,
   selectActivationMatches,
+  selectActivationPage,
   tokenizeClientSearch,
   toActivationClientResult,
+  isBrowseQuery,
+  isClientPickerStatus,
+  orderBrowsedClients,
+  clampPageSize,
+  clampOffset,
   type ClientSearchRow,
+  type ClientPickerStatus,
 } from "../_shared/aml/clientSearchMatch.pure.ts";
 import {
   isPartyScreeningMissing,
@@ -835,37 +842,112 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // records are offered (clearly labelled) instead of hidden behind a
         // "mark them active somewhere else first" dead end. Matching lives in
         // _shared/aml/clientSearchMatch.pure.ts so it is unit-testable.
+        // ── BROWSE vs SEARCH ────────────────────────────────────────────
+        // This op used to answer `{ clients: [] }` to anything shorter than
+        // two characters, so the picker was an empty box until an operator
+        // typed a name they had to already know and spell. On this
+        // deployment that hid 775 clients — 40 active, 735 inactive — and is
+        // why activation felt like it wanted clients re-entered that the
+        // platform already held.
+        //
+        // Browse is the SAME op, projection and permission gate as search;
+        // only the database filter differs. A separate "list clients"
+        // endpoint would be a second source of truth about which clients an
+        // AML operator may see, and the two would drift.
         if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403);
         const q = sanitizeClientSearchQuery(body.query);
-        const terms = tokenizeClientSearch(q);
-        if (q.length < 2 || terms.length === 0) return jsonResponse({ clients: [] });
+        const status: ClientPickerStatus =
+          isClientPickerStatus(body.status) ? body.status : 'all';
+        const limit = clampPageSize(body.limit);
+        const offset = clampOffset(body.offset);
+        const browsing = isBrowseQuery(body.query);
 
-        const { data: candidates, error: searchErr } = await admin
-          .from('clients')
-          .select(CLIENT_SEARCH_SELECT)
-          .or(buildClientSearchOrFilter(terms))
-          .order('primary_surname', { ascending: true })
-          .limit(200);
-        if (searchErr) return jsonResponse({ error: searchErr.message }, 400);
+        /** Apply the status slice identically to every path. */
+        // deno-lint-ignore no-explicit-any
+        const withStatus = (qb: any): any => {
+          if (status === 'active') return qb.eq('is_active', true);
+          // `is_active` is nullable, and a null is not active. Filtering on
+          // `eq false` alone would silently drop those rows from the inactive
+          // slice — present in neither tab, which reads as a missing client
+          // rather than as a filter.
+          if (status === 'inactive') return qb.or('is_active.eq.false,is_active.is.null');
+          return qb;
+        };
 
-        const matched = selectActivationMatches(
-          (candidates ?? []) as ClientSearchRow[], q);
+        let page: ClientSearchRow[];
+        let total: number;
+
+        if (browsing) {
+          // Count and page are taken in the database: 775 rows is already
+          // past the point where pulling everything to sort it is sensible.
+          const countQuery = withStatus(
+            admin.from('clients').select('id', { count: 'exact', head: true }));
+          const rowsQuery = withStatus(
+            admin.from('clients').select(CLIENT_SEARCH_SELECT))
+            .order('is_active', { ascending: false })
+            .order('primary_surname', { ascending: true })
+            .order('primary_first_name', { ascending: true })
+            .range(offset, offset + limit - 1);
+
+          const [{ count, error: countErr }, { data: rows, error: rowsErr }] =
+            await Promise.all([countQuery, rowsQuery]);
+          if (countErr) return jsonResponse({ error: countErr.message }, 400);
+          if (rowsErr) return jsonResponse({ error: rowsErr.message }, 400);
+          page = orderBrowsedClients((rows ?? []) as ClientSearchRow[]);
+          total = count ?? page.length;
+        } else {
+          const terms = tokenizeClientSearch(q);
+          if (terms.length === 0) {
+            return jsonResponse({ clients: [], total: 0, has_more: false, browsing });
+          }
+          // The `or=` pre-filter is deliberately wide; the strict
+          // all-tokens-on-one-person rule is applied in memory afterwards,
+          // and the page is taken after that rather than before it.
+          const { data: candidates, error: searchErr } = await withStatus(
+            admin.from('clients').select(CLIENT_SEARCH_SELECT))
+            .or(buildClientSearchOrFilter(terms))
+            .order('primary_surname', { ascending: true })
+            .limit(400);
+          if (searchErr) return jsonResponse({ error: searchErr.message }, 400);
+          const result = selectActivationPage(
+            (candidates ?? []) as ClientSearchRow[], q, limit, offset);
+          page = result.rows;
+          total = result.total;
+        }
 
         // Flag clients that already hold an open case so the operator does not
         // start a duplicate (the unique index would reject it at 409 anyway).
-        const ids = matched.map((r) => r.id);
+        const ids = page.map((r) => r.id);
         let openCaseIds = new Set<string>();
+        const openCaseRefs = new Map<string, string>();
         if (ids.length > 0) {
           const { data: openCases } = await admin.schema('aml').from('cases')
-            .select('client_id')
+            .select('client_id, case_reference')
             .in('client_id', ids)
             .not('status', 'in', '("cleared","blocked","closed")');
-          openCaseIds = new Set((openCases ?? []).map((c: any) => String(c.client_id)));
+          for (const c of openCases ?? []) {
+            const cid = String((c as any).client_id);
+            openCaseIds.add(cid);
+            // Naming the case is what turns "you cannot do this" into
+            // "here is the case that already covers it".
+            if ((c as any).case_reference) {
+              openCaseRefs.set(cid, String((c as any).case_reference));
+            }
+          }
         }
 
         return jsonResponse({
-          clients: matched.map((r) =>
-            toActivationClientResult(r, openCaseIds.has(String(r.id)))),
+          clients: page.map((r) => {
+            const id = String(r.id);
+            const projected = toActivationClientResult(r, openCaseIds.has(id));
+            const reference = openCaseRefs.get(id);
+            return reference
+              ? { ...projected, open_case: { case_reference: reference } }
+              : projected;
+          }),
+          total,
+          has_more: offset + page.length < total,
+          browsing,
         });
       }
 

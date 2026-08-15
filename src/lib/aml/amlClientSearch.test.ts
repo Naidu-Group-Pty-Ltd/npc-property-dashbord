@@ -5,8 +5,14 @@ import {
   matchesAllTerms,
   sanitizeClientSearchQuery,
   selectActivationMatches,
+  selectActivationPage,
   toActivationClientResult,
   tokenizeClientSearch,
+  isBrowseQuery,
+  isClientPickerStatus,
+  orderBrowsedClients,
+  clampPageSize,
+  clampOffset,
   type ClientSearchRow,
 } from "../../../supabase/functions/_shared/aml/clientSearchMatch.pure";
 
@@ -149,5 +155,97 @@ describe("AML activation client search — tokenised full-name matching", () => 
       primary_surname: "Naidu",
     }));
     expect(selectActivationMatches(many, "Naidu").length).toBe(20);
+  });
+});
+
+/**
+ * Browse mode — the picker before anybody types.
+ *
+ * The picker returned `[]` for anything shorter than two characters, so
+ * opening the activation dialog showed an empty box. On this deployment that
+ * hid 775 clients (40 active, 735 inactive) behind having to already know a
+ * name and spell it — which is exactly what "clients I already have are not
+ * available here" felt like from the outside.
+ *
+ * These pin the two halves: browse must not fall through the search path, and
+ * a page must always report the true total rather than its own length.
+ */
+describe("browse mode", () => {
+  it("treats an empty or one-character query as browse, not as search", () => {
+    expect(isBrowseQuery("")).toBe(true);
+    expect(isBrowseQuery("   ")).toBe(true);
+    expect(isBrowseQuery("R")).toBe(true);
+    expect(isBrowseQuery("Na")).toBe(false);
+    // Metacharacters are stripped before the length is judged, so a query of
+    // pure punctuation browses rather than searching for nothing.
+    expect(isBrowseQuery("%(),")).toBe(true);
+  });
+
+  it("puts active clients first so 40 do not sit behind 735", () => {
+    const ordered = orderBrowsedClients([rugesh, activeAlex, unrelated]);
+    expect(ordered.map((r) => r.is_active)).toEqual([true, true, false]);
+    // Order within a group is the database's, untouched.
+    expect(ordered.slice(0, 2).map((r) => r.id)).toEqual([activeAlex.id, unrelated.id]);
+  });
+
+  it("clamps a caller-supplied page size and offset", () => {
+    expect(clampPageSize(undefined)).toBe(25);
+    expect(clampPageSize(10)).toBe(10);
+    expect(clampPageSize(5000)).toBe(50);
+    expect(clampPageSize(-3)).toBe(25);
+    expect(clampPageSize("abc")).toBe(25);
+    expect(clampOffset(undefined)).toBe(0);
+    expect(clampOffset(-9)).toBe(0);
+    expect(clampOffset(75)).toBe(75);
+  });
+
+  it("recognises the three register slices and nothing else", () => {
+    expect(isClientPickerStatus("all")).toBe(true);
+    expect(isClientPickerStatus("active")).toBe(true);
+    expect(isClientPickerStatus("inactive")).toBe(true);
+    expect(isClientPickerStatus("archived")).toBe(false);
+    expect(isClientPickerStatus(undefined)).toBe(false);
+  });
+});
+
+describe("a page of search results reports the true total", () => {
+  const many: ClientSearchRow[] = Array.from({ length: 48 }, (_, i) => ({
+    id: `66666666-6666-4666-8666-${String(i).padStart(12, "0")}`,
+    is_active: i < 8,
+    primary_first_name: "Rugesh",
+    primary_surname: "Naidu",
+  }));
+
+  it("counts what matched, never what it returned", () => {
+    const page = selectActivationPage(many, "Naidu", 25, 0);
+    expect(page.rows).toHaveLength(25);
+    // A page size masquerading as a total is how a picker quietly tells an
+    // operator that a client does not exist.
+    expect(page.total).toBe(48);
+  });
+
+  it("pages without losing or repeating a row", () => {
+    const first = selectActivationPage(many, "Naidu", 25, 0);
+    const second = selectActivationPage(many, "Naidu", 25, 25);
+    expect(second.rows).toHaveLength(23);
+    expect(second.total).toBe(48);
+    const ids = [...first.rows, ...second.rows].map((r) => r.id);
+    expect(new Set(ids).size).toBe(48);
+  });
+
+  it("takes the page after the strict match, not before it", () => {
+    // The database pre-filter is deliberately wide and cannot express the
+    // all-tokens-on-one-person rule. Slicing first would page over rows that
+    // were about to be discarded, and drop real matches off the end.
+    const mixed = [unrelated, rugesh, activeAlex];
+    const page = selectActivationPage(mixed, "Naidu", 2, 0);
+    expect(page.total).toBe(2);
+    expect(page.rows.map((r) => r.id)).toEqual([activeAlex.id, rugesh.id]);
+  });
+
+  it("returns nothing for a browse query rather than everything", () => {
+    // Browse is a different database filter; this function must not silently
+    // become "all clients" when the query is empty.
+    expect(selectActivationPage(many, "", 25, 0)).toEqual({ rows: [], total: 0 });
   });
 });

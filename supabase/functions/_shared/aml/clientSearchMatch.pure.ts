@@ -55,6 +55,73 @@ export const CLIENT_SEARCH_SELECT = [
 export const CLIENT_SEARCH_RESULT_LIMIT = 20;
 
 /**
+ * Browse mode — the picker with no query typed into it.
+ *
+ * ── Why this exists ───────────────────────────────────────────────────
+ * The picker used to return `[]` for anything shorter than two characters,
+ * so opening the activation dialog showed an empty box and nothing else. An
+ * operator had to already know a client's name, and spell it, before the
+ * system would admit the client existed. With 775 clients on this
+ * deployment — 40 active, 735 inactive — "type a name to find out what we
+ * hold" is not a picker, it is a guessing game, and it is why activation
+ * felt like it required re-entering clients the platform already had.
+ *
+ * Browse is the SAME op, the SAME projection and the SAME permission gate
+ * as search — only the filter differs. That is deliberate: a second
+ * "list clients" endpoint would be a second source of truth about which
+ * clients an AML operator may see, and those two would drift.
+ */
+export const CLIENT_BROWSE_PAGE_SIZE = 25;
+/** Hard ceiling on a caller-supplied page size. */
+export const CLIENT_BROWSE_MAX_PAGE_SIZE = 50;
+
+/** Which slice of the register the picker is asking for. */
+export type ClientPickerStatus = 'all' | 'active' | 'inactive';
+
+export function isClientPickerStatus(value: unknown): value is ClientPickerStatus {
+  return value === 'all' || value === 'active' || value === 'inactive';
+}
+
+/** Clamp a caller-supplied page size into something the database will enjoy. */
+export function clampPageSize(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return CLIENT_BROWSE_PAGE_SIZE;
+  return Math.min(Math.floor(n), CLIENT_BROWSE_MAX_PAGE_SIZE);
+}
+
+/** Clamp a caller-supplied offset to a non-negative integer. */
+export function clampOffset(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.floor(n);
+}
+
+/**
+ * Does this request mean "browse" rather than "search"?
+ *
+ * An empty or one-character query browses. This is the one place that
+ * decision is made, so the server and the tests cannot disagree about what
+ * a single stray keystroke does.
+ */
+export function isBrowseQuery(raw: unknown): boolean {
+  return sanitizeClientSearchQuery(raw).length < 2;
+}
+
+/**
+ * Order a page of browsed rows: active first, then inactive, surname order
+ * preserved within each group as the database delivered it.
+ *
+ * Active-first matters here in a way it does not in search. A search has a
+ * name behind it; a browse does not, and the 40 clients someone is likely to
+ * be activating against must not sit behind 735 inactive ones.
+ */
+export function orderBrowsedClients(rows: ClientSearchRow[]): ClientSearchRow[] {
+  const active = rows.filter((r) => r.is_active === true);
+  const inactive = rows.filter((r) => r.is_active !== true);
+  return [...active, ...inactive];
+}
+
+/**
  * Strip characters that carry meaning inside a PostgREST `or=` filter
  * (`%`, `,`, `(`, `)`, backslash) and collapse repeated whitespace.
  */
@@ -145,7 +212,27 @@ export function selectActivationMatches(
   const terms = tokenizeClientSearch(sanitizeClientSearchQuery(query));
   if (terms.length === 0) return [];
   const matched = rows.filter((r) => matchesAllTerms(r, terms));
-  const active = matched.filter((r) => r.is_active === true);
-  const inactive = matched.filter((r) => r.is_active !== true);
-  return [...active, ...inactive].slice(0, limit);
+  return orderBrowsedClients(matched).slice(0, limit);
+}
+
+/**
+ * A page of search results, plus how many matched in total.
+ *
+ * The count is the number that MATCHED, not the number returned — the picker
+ * says "12 of 48 shown", and a page size masquerading as a total is how a
+ * picker quietly tells an operator a client does not exist. Matching is
+ * still done in memory (the database pre-filter is deliberately wide and
+ * cannot express the all-tokens-on-one-person rule), so the page is taken
+ * after the strict match rather than before it.
+ */
+export function selectActivationPage(
+  rows: ClientSearchRow[],
+  query: string,
+  limit: number = CLIENT_BROWSE_PAGE_SIZE,
+  offset = 0,
+): { rows: ClientSearchRow[]; total: number } {
+  const terms = tokenizeClientSearch(sanitizeClientSearchQuery(query));
+  if (terms.length === 0) return { rows: [], total: 0 };
+  const matched = orderBrowsedClients(rows.filter((r) => matchesAllTerms(r, terms)));
+  return { rows: matched.slice(offset, offset + limit), total: matched.length };
 }
