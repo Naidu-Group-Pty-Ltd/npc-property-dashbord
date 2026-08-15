@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { format } from 'date-fns';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { PixelPerfectPDFGeneratorHandle } from '@/components/reports/PixelPerfectPDFGenerator';
@@ -20,10 +20,21 @@ import { InvestmentReportOverridePanel } from '@/components/reports/report-view/
 import type { ClientInfo, InvestmentReport } from '@/components/reports/report-view/types';
 import { getHasOverrides, getOverriddenFields, getReportStatusLabel, getReportTierLabel, getReportVariantLabel } from '@/components/reports/report-view/utils';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
+import {
+  CASH_FLOW_ANALYSIS_BACK_LABEL,
+  CASH_FLOW_ANALYSIS_PATH,
+  cameFromCashFlowAnalysis,
+  navigateBackToCashFlowAnalysis,
+} from '@/lib/navigation/cashFlowOrigin';
 
 export default function InvestmentReportView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Set when this report was opened by drilling in from the Cash Flow
+  // Analysis property list. The way back is then a named route rather than a
+  // browser step, so it is right after a refresh or a middle-click too.
+  const fromCashFlowAnalysis = cameFromCashFlowAnalysis(location);
   const [report, setReport] = useState<InvestmentReport | null>(null);
   const [clientInfo, setClientInfo] = useState<ClientInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -150,7 +161,12 @@ export default function InvestmentReportView() {
   }
 
   if (error || !report) {
-    return <InvestmentReportErrorState error={error} onBack={() => navigate(-1)} />;
+    return (
+      <InvestmentReportErrorState
+        error={error}
+        onBack={() => (fromCashFlowAnalysis ? navigateBackToCashFlowAnalysis(navigate, location) : navigate(-1))}
+      />
+    );
   }
 
   return (
@@ -159,12 +175,13 @@ export default function InvestmentReportView() {
         report={report}
         clientInfo={clientInfo}
         isClientReport={isClientReport}
-        onBack={() => navigate(-1)}
+        onBack={() => (fromCashFlowAnalysis ? navigateBackToCashFlowAnalysis(navigate, location) : navigate(-1))}
+        backLabel={fromCashFlowAnalysis ? CASH_FLOW_ANALYSIS_BACK_LABEL : undefined}
         onReportsHome={() => navigate('/generated-reports')}
         onBackToClient={() => navigate('/clients')}
         onNavigateToReport={(rid) => navigate(`/investment-report/${rid}`)}
         onSendToClient={() => setSendToClientOpen(true)}
-        onCashFlow={() => navigate(`/cash-flow-analysis?reportId=${report.id}`)}
+        onCashFlow={() => navigate(`${CASH_FLOW_ANALYSIS_PATH}/${report.id}`)}
         onEdit={() => setEditorOpen(true)}
         onOverride={() => setOverrideModalOpen(true)}
         onManageHeroImages={() => setHeroDialogOpen(true)}
@@ -229,7 +246,7 @@ export default function InvestmentReportView() {
       <InvestmentReportMobileActionBar
         onDownload={handleDownload}
         onSendToClient={() => setSendToClientOpen(true)}
-        onCashFlow={() => navigate(`/cash-flow-analysis?reportId=${report.id}`)}
+        onCashFlow={() => navigate(`${CASH_FLOW_ANALYSIS_PATH}/${report.id}`)}
         onEdit={() => setEditorOpen(true)}
         onOverride={() => setOverrideModalOpen(true)}
         onManageHeroImages={() => setHeroDialogOpen(true)}

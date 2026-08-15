@@ -13,6 +13,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { format } from 'date-fns';
 import { Download, Edit, MapPin, Calendar, FileText, TrendingUp, Link, AlertCircle, Settings, ChevronDown, Maximize, Minimize, PenLine, Calculator, X, Star } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { CASH_FLOW_ANALYSIS_PATH } from '@/lib/navigation/cashFlowOrigin';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { InvestmentReportEditor } from './InvestmentReportEditor';
@@ -402,7 +403,7 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
                       size="sm"
                       onClick={() => {
                         onClose();
-                        navigate(`/cash-flow-analysis?reportId=${report.id}`);
+                        navigate(`${CASH_FLOW_ANALYSIS_PATH}/${report.id}`);
                       }}
                       className="text-xs"
                     >
