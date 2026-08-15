@@ -1,0 +1,343 @@
+/**
+ * Builder stock — the render inside a row's OWN package document.
+ *
+ * THE CASE THIS FILE PINS. Forty-five of the seventy live properties have no
+ * cover on their Notion row, and all forty-five carry the same "Complete
+ * Package Pack" link — one Google Drive folder, shared by forty-four of them.
+ * The link therefore attributes NOTHING on its own, and using anything out of
+ * that folder because it is "the one the row linked" would put an estate
+ * masterplan of fifty other lots on a client's page.
+ *
+ * What makes it deterministic is that the library names its contents:
+ *
+ *     …/Tweed Heads Packages/Lot 43/Lot 43 - Stradbroke 180 - Property Package.pdf
+ *
+ * against a row called "Lot 43 — Tringa Street … [Stradbroke 180]". The folder
+ * names the lot, the file names the lot AND the design, and those two together
+ * are exactly one stock row. Every fixture below is the shape of that live
+ * library, including the three folders it really does call "Lot 53" and the
+ * three documents that really do all name lot 914.
+ */
+import { describe, expect, it } from 'vitest';
+
+import {
+  driveFileId, driveFolderId, isGoogleDriveHost, lotAndDesignFrom,
+  parseDriveFolderListing, selectLotFolder, selectPackageDocument,
+  DRIVE_FOLDER_MIME, type DriveEntry,
+} from '../../../supabase/functions/_shared/builderStock/drivePackage.pure';
+import { firstPageJpegImages } from '../../../supabase/functions/_shared/builderStock/pdfPageImages.pure';
+import {
+  DriveListingCache, recoverPackageImage,
+} from '../../../supabase/functions/_shared/builderStock/packageImages';
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+const PACKAGE_LINK = 'https://drive.google.com/drive/folders/1isIaQ8qqqDUYICn6q9fyVu_z1kl5PvId?usp=sharing';
+const LOT_43_LABEL = 'Lot 43, Lot 43 - Tringa Street, Sandpiper Estate, Tweed Heads South NSW 2486 [Stradbroke 180]';
+
+const folder = (id: string, name: string): DriveEntry =>
+  ({ id, name, mimeType: DRIVE_FOLDER_MIME });
+const pdf = (id: string, name: string): DriveEntry =>
+  ({ id, name, mimeType: 'application/pdf' });
+
+/** A folder page as Drive serves it logged out: the listing, hex-escaped. */
+function driveFolderHtml(entries: DriveEntry[]): string {
+  const rows = entries.map((entry) => [
+    entry.id, ['parent'], entry.name, entry.mimeType, 0, null,
+  ]);
+  const json = JSON.stringify([rows, null, null]);
+  const escaped = json.replace(/[[\]"\\/]/g, (character) =>
+    `\\x${character.charCodeAt(0).toString(16).padStart(2, '0')}`);
+  return `<html><head><title>Tweed Heads - Google Drive</title></head><body>`
+    + `<script nonce="x">window['_DRIVE_ivd'] = '${escaped}';</script></body></html>`;
+}
+
+/** A JPEG: real markers, padded past the "too small to be a photograph" floor. */
+function jpegBytes(size = 4096, fill = 0x42): Uint8Array {
+  const bytes = new Uint8Array(size);
+  bytes.set([0xff, 0xd8, 0xff, 0xe0], 0);
+  bytes.fill(fill, 4, size - 2);
+  bytes.set([0xff, 0xd9], size - 2);
+  return bytes;
+}
+
+function concat(parts: Array<Uint8Array | string>): Uint8Array {
+  const encoder = new TextEncoder();
+  const chunks = parts.map((part) => typeof part === 'string' ? encoder.encode(part) : part);
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
+  return out;
+}
+
+/**
+ * A package PDF shaped like the live ones: a facade render on page 1 and the
+ * ESTATE MASTERPLAN on page 2. The second must never be returned.
+ */
+function packagePdf(page1: Uint8Array, page2: Uint8Array): Uint8Array {
+  return concat([
+    '%PDF-1.4\n',
+    '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n',
+    '2 0 obj<</Type/Pages/Kids[3 0 R 6 0 R]/Count 2>>endobj\n',
+    '3 0 obj<</Type/Page/Parent 2 0 R/Resources<</XObject<</Im0 4 0 R>>>>>>endobj\n',
+    `4 0 obj<</Type/XObject/Subtype/Image/Width 1700/Height 956/Filter/DCTDecode/Length ${page1.length}>>stream\n`,
+    page1,
+    '\nendstream\nendobj\n',
+    '6 0 obj<</Type/Page/Parent 2 0 R/Resources<</XObject<</Im1 7 0 R>>>>>>endobj\n',
+    `7 0 obj<</Type/XObject/Subtype/Image/Width 2000/Height 1414/Filter/DCTDecode/Length ${page2.length}>>stream\n`,
+    page2,
+    '\nendstream\nendobj\n',
+    'trailer<</Root 1 0 R>>\n%%EOF\n',
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Reading a public folder
+// ---------------------------------------------------------------------------
+
+describe('a public Drive folder, read logged out', () => {
+  it('decodes the listing the page embeds', () => {
+    const entries = parseDriveFolderListing(driveFolderHtml([
+      folder('f1', 'Tweed Heads Packages'),
+      pdf('d1', 'Sandpiper Brochure.pdf'),
+    ]));
+    expect(entries).toEqual([
+      { id: 'f1', name: 'Tweed Heads Packages', mimeType: DRIVE_FOLDER_MIME },
+      { id: 'd1', name: 'Sandpiper Brochure.pdf', mimeType: 'application/pdf' },
+    ]);
+  });
+
+  it('yields nothing for a page that carries no listing', () => {
+    // What a folder that is NOT shared publicly returns: a sign-in shell.
+    expect(parseDriveFolderListing('<html><body>Sign in</body></html>')).toEqual([]);
+  });
+
+  it('reads ids out of the link shapes a builder pastes', () => {
+    expect(driveFolderId(PACKAGE_LINK)).toBe('1isIaQ8qqqDUYICn6q9fyVu_z1kl5PvId');
+    expect(driveFileId('https://drive.google.com/file/d/1PQfyfbscQnJPUouTK85fnnAYeMceFvop/view'))
+      .toBe('1PQfyfbscQnJPUouTK85fnnAYeMceFvop');
+    expect(isGoogleDriveHost('drive.google.com')).toBe(true);
+    // Nothing else is a package source.
+    expect(driveFolderId('https://dropbox.com/drive/folders/abcdefghijkl')).toBeNull();
+    expect(isGoogleDriveHost('drive.google.com.evil.test')).toBe(false);
+  });
+
+  it('reads only one folder per id, however many rows ask for it', async () => {
+    let calls = 0;
+    const cache = new DriveListingCache(async () => {
+      calls += 1;
+      return {
+        bytes: new TextEncoder().encode(driveFolderHtml([folder('a', 'Lot 43')])),
+        finalUrl: 'https://drive.google.com/drive/folders/root',
+      };
+    });
+    await cache.list('root');
+    await cache.list('root');
+    await cache.list('root');
+    // 44 live rows share one folder; this is what keeps that to one request.
+    expect(calls).toBe(1);
+    expect(cache.listings).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Naming a property, exactly
+// ---------------------------------------------------------------------------
+
+describe('which document belongs to which property', () => {
+  it('takes the lot and the design off the row itself', () => {
+    expect(lotAndDesignFrom(LOT_43_LABEL)).toEqual({ lot: '43', design: 'stradbroke 180' });
+    // The row writes "Dual Occ"; the document does not.
+    expect(lotAndDesignFrom('Lot 51 - Tringa Street … [Echo 236 Dual Occ]'))
+      .toEqual({ lot: '51', design: 'echo 236' });
+    expect(lotAndDesignFrom('Lot 914 - Covella Estate, Greenbank QLD 4124'))
+      .toEqual({ lot: '914', design: null });
+  });
+
+  it('matches a lot folder on equality, so Lot 5 is not Lot 51', () => {
+    const entries = [folder('a', 'Lot 5'), folder('b', 'Lot 51'), folder('c', 'Lot 512')];
+    expect(selectLotFolder(entries, '5')).toBe('a');
+    expect(selectLotFolder(entries, '51')).toBe('b');
+    expect(selectLotFolder(entries, '7')).toBeNull();
+  });
+
+  it('refuses a lot the library names twice', () => {
+    // The live library really does contain three folders called "Lot 53".
+    const entries = [folder('a', 'Lot 53'), folder('b', 'Lot 53'), folder('c', 'Lot 53')];
+    expect(selectLotFolder(entries, '53')).toBeNull();
+  });
+
+  it('requires the document to name the lot AND the design', () => {
+    const entries = [
+      pdf('p1', 'Lot 43 - Stradbroke 180 - Property Package.pdf'),
+      pdf('p2', 'Lot 43 - Stradbroke 197 - Property Package.pdf'),
+      pdf('p3', 'Lot 43 - Echo 236 - Property Package.pdf'),
+    ];
+    expect(selectPackageDocument(entries, { lot: '43', design: 'stradbroke 180' })?.id).toBe('p1');
+    // A row that named no design cannot pick between seven packages.
+    expect(selectPackageDocument(entries, { lot: '43', design: null })).toBeNull();
+    expect(selectPackageDocument(entries, { lot: '43', design: 'miami 190' })).toBeNull();
+  });
+
+  it('refuses a folder whose documents all name the same lot', () => {
+    // Lot 914's folder: a package, a land contract and a rental appraisal.
+    const entries = [
+      pdf('a', 'LOT 914 • COVELLA • GREENBANK QLD.pdf'),
+      pdf('b', 'OTP_Land_Contract_P1_-_Rana_-_Lot_914_Covella.pdf'),
+      pdf('c', 'Rental Appraisal_ Lot 914, Covella Estate, Greenbank QLD.pdf'),
+    ];
+    expect(selectPackageDocument(entries, { lot: '914', design: null })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Taking the picture out of the document
+// ---------------------------------------------------------------------------
+
+describe('the image a package leads with', () => {
+  it('returns the first page and never a later one', () => {
+    const render = jpegBytes(4096, 0x11);
+    const masterplan = jpegBytes(6000, 0x22);
+    const slices = firstPageJpegImages(packagePdf(render, masterplan));
+
+    expect(slices).toHaveLength(1);
+    expect(slices[0]).toMatchObject({ width: 1700, height: 956, flate: false });
+    const bytes = packagePdf(render, masterplan).slice(slices[0].start, slices[0].end);
+    expect(bytes.length).toBe(render.length);
+    expect(bytes[0]).toBe(0xff);
+    expect(bytes[bytes.length - 1]).toBe(0xd9);
+  });
+
+  it('ignores a page-one logo', () => {
+    const pdfBytes = concat([
+      '%PDF-1.4\n',
+      '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n',
+      '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n',
+      '3 0 obj<</Type/Page/Parent 2 0 R/Resources<</XObject<</Im0 4 0 R>>>>>>endobj\n',
+      '4 0 obj<</Type/XObject/Subtype/Image/Width 240/Height 90/Filter/DCTDecode/Length 4096>>stream\n',
+      jpegBytes(),
+      '\nendstream\nendobj\ntrailer<</Root 1 0 R>>\n',
+    ]);
+    expect(firstPageJpegImages(pdfBytes)).toEqual([]);
+  });
+
+  it('refuses a flattened page scan rather than serving it as a photograph', () => {
+    // What the Covella package actually is: whole pages as raw bitmaps.
+    const pdfBytes = concat([
+      '%PDF-1.4\n',
+      '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n',
+      '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n',
+      '3 0 obj<</Type/Page/Parent 2 0 R/Resources<</XObject<</Im0 4 0 R>>>>>>endobj\n',
+      '4 0 obj<</Type/XObject/Subtype/Image/Width 2480/Height 3506/Filter/FlateDecode/Length 64>>stream\n',
+      new Uint8Array(64),
+      '\nendstream\nendobj\ntrailer<</Root 1 0 R>>\n',
+    ]);
+    expect(firstPageJpegImages(pdfBytes)).toEqual([]);
+  });
+
+  it('says nothing about a file it cannot parse', () => {
+    expect(firstPageJpegImages(new TextEncoder().encode('not a pdf'))).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// End to end, against the live library's shape
+// ---------------------------------------------------------------------------
+
+describe('recovering a row-linked package image', () => {
+  const render = jpegBytes(4096, 0x33);
+
+  function library(options: { lotFolders?: DriveEntry[]; documents?: DriveEntry[] } = {}) {
+    const lotFolders = options.lotFolders ?? [folder('lot43', 'Lot 43'), folder('lot42', 'Lot 42')];
+    const documents = options.documents ?? [
+      pdf('doc-strad', 'Lot 43 - Stradbroke 180 - Property Package.pdf'),
+      pdf('doc-miami', 'Lot 43 - Miami 190 - Property Package.pdf'),
+    ];
+    const requested: string[] = [];
+    const fetchPackage = async (url: string) => {
+      requested.push(url);
+      const encode = (html: string) => ({ bytes: new TextEncoder().encode(html), finalUrl: url });
+      if (url.includes('/folders/1isIaQ8qqqDUYICn6q9fyVu_z1kl5PvId')) {
+        return encode(driveFolderHtml([
+          folder('packages', 'Tweed Heads Packages'),
+          folder('images', 'Project Images'),
+          pdf('brochure', 'Sandpiper Brochure.pdf'),
+        ]));
+      }
+      if (url.includes('/folders/packages')) return encode(driveFolderHtml(lotFolders));
+      if (url.includes('/folders/lot43')) return encode(driveFolderHtml(documents));
+      if (url.includes('/folders/')) return encode(driveFolderHtml([]));
+      if (url.includes('id=doc-strad')) {
+        return { bytes: packagePdf(render, jpegBytes(5000, 0x44)), finalUrl: url };
+      }
+      return { bytes: new TextEncoder().encode('<html>Sign in</html>'), finalUrl: url };
+    };
+    return { fetchPackage, requested };
+  }
+
+  it('walks the row\'s own folder down to its own document and takes page one', async () => {
+    const { fetchPackage, requested } = library();
+    const outcome = await recoverPackageImage(
+      { packageUrl: PACKAGE_LINK, label: LOT_43_LABEL },
+      { fetchPackage },
+    );
+
+    expect(outcome.status).toBe('recovered');
+    if (outcome.status !== 'recovered') return;
+    expect(outcome.image.documentName).toBe('Lot 43 - Stradbroke 180 - Property Package.pdf');
+    expect(outcome.image.reference).toBe('Lot 43 - Stradbroke 180 - Property Package.pdf#page1');
+    expect(outcome.image.contentType).toBe('image/jpeg');
+    expect(outcome.image.bytes.length).toBe(render.length);
+    // Everything fetched stayed inside the folder the row linked.
+    expect(requested.every((url) => url.startsWith('https://drive.google.com/'))).toBe(true);
+    expect(requested.some((url) => url.includes('id=doc-miami'))).toBe(false);
+  });
+
+  it('refuses when the lot folder holds no document for that design', async () => {
+    const { fetchPackage } = library({
+      documents: [pdf('doc-other', 'Lot 43 - Bishop 258 - Property Package.pdf')],
+    });
+    const outcome = await recoverPackageImage(
+      { packageUrl: PACKAGE_LINK, label: LOT_43_LABEL },
+      { fetchPackage },
+    );
+    expect(outcome.status).toBe('not_identified');
+  });
+
+  it('refuses when the library names the lot twice', async () => {
+    const { fetchPackage } = library({
+      lotFolders: [folder('lot43', 'Lot 43'), folder('lot43b', 'Lot 43')],
+    });
+    const outcome = await recoverPackageImage(
+      { packageUrl: PACKAGE_LINK, label: LOT_43_LABEL },
+      { fetchPackage },
+    );
+    expect(outcome.status).toBe('not_identified');
+  });
+
+  it('reports a folder that needs a sign-in rather than inventing a picture', async () => {
+    const outcome = await recoverPackageImage(
+      { packageUrl: PACKAGE_LINK, label: LOT_43_LABEL },
+      {
+        fetchPackage: async (url: string) => ({
+          bytes: new TextEncoder().encode('<html><body>Request access</body></html>'),
+          finalUrl: url,
+        }),
+      },
+    );
+    expect(outcome.status).toBe('unreachable');
+  });
+
+  it('will not follow a package link off Drive', async () => {
+    let called = false;
+    const outcome = await recoverPackageImage(
+      { packageUrl: 'https://packages.example/lot-43', label: LOT_43_LABEL },
+      { fetchPackage: async () => { called = true; throw new Error('must not fetch'); } },
+    );
+    expect(outcome.status).toBe('not_identified');
+    expect(called).toBe(false);
+  });
+});

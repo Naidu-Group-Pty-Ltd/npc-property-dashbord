@@ -277,6 +277,14 @@ export interface StockSourceImageRepair {
   rows_with_imagery: number;
   matched: number;
   images_stored: number;
+  /** Images taken out of a row's own linked package document. */
+  from_package: number;
+  /** Rows whose linked package named nothing for that exact property. */
+  package_not_identified: number;
+  /** Rows whose linked package needs a sign-in we will never do. */
+  package_unreachable: number;
+  /** The run was budgeted out; asking again continues where it stopped. */
+  incomplete: boolean;
   primary_updated: number;
   error: string | null;
 }

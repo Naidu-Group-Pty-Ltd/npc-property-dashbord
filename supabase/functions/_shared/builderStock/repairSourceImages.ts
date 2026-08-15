@@ -32,11 +32,15 @@ import { extractStockFile } from './extract.ts';
 import { keyRowsByHeader } from './table.pure.ts';
 import { isNotionUrl } from './urlSource.pure.ts';
 import {
-  normaliseStockRow, stockMatchKeys, stockRowFingerprint,
+  normaliseStockRow, stockMatchKeys, stockRecordLabel, stockRowFingerprint,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import { SOURCE_ANCHOR_HEADER, type AnchoredAssets, type SourceImageAsset } from './sourceAssets.pure.ts';
-import { storeSourceImages } from './sourceImages.ts';
+import { hasReadySourceImage, storeSourceImageBytes, storeSourceImages } from './sourceImages.ts';
+import { driveFileId, driveFolderId } from './drivePackage.pure.ts';
+import {
+  DriveListingCache, recoverPackageImage, type PackageFetcher,
+} from './packageImages.ts';
 import { attachDocumentMedia } from './importStock.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import type { ExtractedMedia } from './extract.ts';
@@ -51,6 +55,14 @@ export interface RepairOutcome {
   matched: number;
   /** Images stored as bytes in the private bucket. */
   imagesStored: number;
+  /** Rows whose image came out of their own linked package document. */
+  fromPackage: number;
+  /** Rows whose linked package named no image for that exact property. */
+  packageNotIdentified: number;
+  /** Rows whose linked package could not be read without signing in. */
+  packageUnreachable: number;
+  /** True when the wall-clock budget ran out; run it again to continue. */
+  incomplete: boolean;
   /** Properties whose card now shows the builder's own image. */
   primaryUpdated: number;
   /** Safe to show: why a source could not be re-read at all. */
@@ -90,12 +102,24 @@ function developmentUnitKey(item: ExistingItem): string | null {
  */
 export async function repairSourceImagesForUpload(
   db: any,
-  input: { organisationId: string; uploadId: string },
+  input: {
+    organisationId: string;
+    uploadId: string;
+    /**
+     * When to stop. A package document is a couple of megabytes and there can
+     * be one per property, so a repair is budgeted and RESUMABLE rather than
+     * unbounded: a row that already holds a source image is skipped, so
+     * running this again continues where it left off.
+     */
+    deadlineAt?: number;
+  },
+  deps: { fetchPackage?: PackageFetcher } = {},
 ): Promise<RepairOutcome> {
   const outcome: RepairOutcome = {
     uploadId: input.uploadId,
     rowsRead: 0, rowsWithImagery: 0, matched: 0,
-    imagesStored: 0, primaryUpdated: 0, problems: [],
+    imagesStored: 0, fromPackage: 0, packageNotIdentified: 0,
+    packageUnreachable: 0, incomplete: false, primaryUpdated: 0, problems: [],
   };
 
   const { data: upload } = await db
@@ -211,6 +235,17 @@ export async function repairSourceImagesForUpload(
   const assetsByAnchor = new Map<string, SourceImageAsset[]>();
   for (const anchored of rowAssets) assetsByAnchor.set(anchored.anchor, anchored.assets);
 
+  // One listing per folder per run: 44 of the live rows link the SAME folder,
+  // so this is what keeps a repair to a handful of requests instead of one per
+  // property.
+  const cache = new DriveListingCache(
+    deps.fetchPackage ?? (async (url: string) => {
+      const { fetchStockSource } = await import('./fetchSource.ts');
+      const fetched = await fetchStockSource(url);
+      return { bytes: fetched.bytes, finalUrl: fetched.finalUrl };
+    }),
+  );
+
   const itemIdByAnchor = new Map<string, string | null>();
   const itemIdsInOrder: string[] = [];
   const touched = new Set<string>();
@@ -247,18 +282,71 @@ export async function repairSourceImagesForUpload(
       if (!itemIdByAnchor.has(anchor)) itemIdByAnchor.set(anchor, itemId);
       else if (itemIdByAnchor.get(anchor) !== itemId) itemIdByAnchor.set(anchor, null);
     }
-    if (!all.length) continue;
 
+    if (all.length) {
+      outcome.matched += 1;
+      const stored = await storeSourceImages(db, {
+        organisationId: input.organisationId,
+        uploadId: upload.id,
+        stockItemId: itemId,
+        assets: all,
+      });
+      outcome.imagesStored += stored.stored;
+      outcome.problems.push(...stored.problems.slice(0, 5));
+      touched.add(itemId);
+      continue;
+    }
+
+    /**
+     * Nothing on the row itself. Its own linked package is the last place a
+     * builder-supplied photograph can be — and the only one that has to prove
+     * which property it depicts before it is used.
+     */
+    const packageUrl = solePackageUrl(record.unmapped);
+    if (!packageUrl) continue;
+    if (input.deadlineAt && Date.now() > input.deadlineAt) { outcome.incomplete = true; break; }
+    // A property that already holds one is skipped, which is what makes a
+    // budgeted run resumable rather than repetitive.
+    if (await hasReadySourceImage(db, itemId)) continue;
+
+    const recovered = await recoverPackageImage(
+      { packageUrl, label: stockRecordLabel(record) },
+      { fetchPackage: deps.fetchPackage, cache },
+    );
+    if (recovered.status === 'unreachable') {
+      outcome.packageUnreachable += 1;
+      continue;
+    }
+    if (recovered.status !== 'recovered') {
+      outcome.packageNotIdentified += 1;
+      continue;
+    }
+
+    outcome.rowsWithImagery += 1;
     outcome.matched += 1;
-    const stored = await storeSourceImages(db, {
+    const written = await storeSourceImageBytes(db, {
       organisationId: input.organisationId,
       uploadId: upload.id,
       stockItemId: itemId,
-      assets: all,
+      bytes: recovered.image.bytes,
+      contentType: recovered.image.contentType,
+      reference: recovered.image.reference,
+      provider: 'linked_package',
+      origin: 'linked_package_document',
+      pageUrl: packageUrl,
+      position: 0,
+      detail: { document: recovered.image.documentName },
     });
-    outcome.imagesStored += stored.stored;
-    outcome.problems.push(...stored.problems.slice(0, 5));
-    touched.add(itemId);
+    if (written) {
+      outcome.imagesStored += 1;
+      outcome.fromPackage += 1;
+      touched.add(itemId);
+    } else {
+      outcome.problems.push({
+        reference: recovered.image.reference,
+        reason: 'The recovered image could not be stored.',
+      });
+    }
   }
 
   // Media embedded in an uploaded document, attributed the same way an import
@@ -280,6 +368,25 @@ export async function repairSourceImagesForUpload(
   }
 
   return outcome;
+}
+
+/**
+ * The ONE package link a row carries, or nothing.
+ *
+ * Read from the columns the normaliser could not place — the live list calls
+ * it "Complete Package Pack" — rather than from a column name this module
+ * would have to know. Two different package links on one row is a row that
+ * does not say which package is its own, and the answer to that is no image.
+ */
+function solePackageUrl(unmapped: Record<string, string>): string | null {
+  const links = new Set<string>();
+  for (const value of Object.values(unmapped ?? {})) {
+    for (const candidate of String(value).split(/\s+/)) {
+      if (!/^https?:\/\//i.test(candidate)) continue;
+      if (driveFolderId(candidate) || driveFileId(candidate)) links.add(candidate);
+    }
+  }
+  return links.size === 1 ? [...links][0] : null;
 }
 
 async function currentPrimary(db: any, stockItemId: string): Promise<string | null> {

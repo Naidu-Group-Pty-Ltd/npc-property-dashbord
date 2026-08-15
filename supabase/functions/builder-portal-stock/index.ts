@@ -731,6 +731,10 @@ Deno.serve(async (req) => {
         const result = await repairSourceImagesForUpload(supabase, {
           organisationId: activeOrganisationId,
           uploadId: id,
+          // A row's own package document is a couple of megabytes, so the run
+          // is budgeted and resumable: rows that already hold a source image
+          // are skipped, and `incomplete` tells the page to ask again.
+          deadlineAt: startedAt + ENRICHMENT_BUDGET_MS,
         });
         // Server-side only: the problem list can name a source object path.
         if (result.problems.length) {
@@ -744,6 +748,10 @@ Deno.serve(async (req) => {
           rows_with_imagery: result.rowsWithImagery,
           matched: result.matched,
           images_stored: result.imagesStored,
+          from_package: result.fromPackage,
+          package_not_identified: result.packageNotIdentified,
+          package_unreachable: result.packageUnreachable,
+          incomplete: result.incomplete,
           primary_updated: result.primaryUpdated,
           error: result.error ?? null,
         });

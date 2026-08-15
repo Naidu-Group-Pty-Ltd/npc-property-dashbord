@@ -166,6 +166,66 @@ export async function storeSourceImages(
   return outcome;
 }
 
+/**
+ * Store bytes we already hold as this property's source-supplied image.
+ *
+ * The same row shape and the same bucket as a fetched asset — the difference
+ * is only where the bytes came from. Used for an image taken out of the row's
+ * own package document, which has no URL of its own to record.
+ */
+export async function storeSourceImageBytes(
+  db: any,
+  input: {
+    organisationId: string;
+    uploadId: string | null;
+    stockItemId: string;
+    bytes: Uint8Array;
+    contentType: string;
+    /** Names the document and page the image came out of. */
+    reference: string;
+    provider: string;
+    origin: string;
+    pageUrl: string | null;
+    position: number;
+    detail?: Record<string, unknown>;
+  },
+): Promise<boolean> {
+  const check = validateSourceImageBytes(input.bytes);
+  if (check.ok !== true) return false;
+
+  const reference = input.reference.slice(0, 400);
+  const path = sourceImageObjectPath(
+    input.organisationId, input.stockItemId, reference, check.extension);
+
+  const { error: uploadError } = await db.storage
+    .from(STOCK_IMAGE_BUCKET)
+    .upload(path, input.bytes, { contentType: check.contentType, upsert: true });
+  if (uploadError) return false;
+
+  await db.from('builder_stock_item_images').upsert({
+    stock_item_id: input.stockItemId,
+    upload_id: input.uploadId,
+    organisation_id: input.organisationId,
+    source_stage: 'uploaded_document',
+    source_reference: reference,
+    source_provider: input.provider,
+    source_page_url: input.pageUrl,
+    storage_bucket: STOCK_IMAGE_BUCKET,
+    storage_path: path,
+    external_url: null,
+    content_type: check.contentType,
+    byte_size: input.bytes.length,
+    verification_status: 'source_supplied',
+    confidence: 1,
+    processing_status: 'ready',
+    error_message: null,
+    position: input.position,
+    source_detail: { origin: input.origin, snapshotted: true, ...(input.detail ?? {}) },
+  }, { onConflict: 'stock_item_id,source_stage,source_reference' });
+
+  return true;
+}
+
 function hostOf(rawUrl: string): string | null {
   try {
     return new URL(rawUrl).hostname;

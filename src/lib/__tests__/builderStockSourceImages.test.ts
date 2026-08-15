@@ -761,6 +761,158 @@ describe('repairing stock that is already imported', () => {
     expect(db.tables.builder_stock_items[0].primary_image_id).toBeNull();
   });
 
+  it('recovers a render from the row\'s own linked package when the row itself has none', async () => {
+    const packageCsv = [
+      'Deal,Estate Tag,Package Price,Complete Package Pack',
+      '"Lot 43 - Tringa Street, Sandpiper Estate, Tweed Heads South NSW 2486 [Stradbroke 180]",'
+        + 'Sandpiper Estate,1307585,https://drive.google.com/drive/folders/pack-root-0001',
+    ].join('\r\n');
+
+    const jpeg = new Uint8Array(4096);
+    jpeg.set([0xff, 0xd8, 0xff, 0xe0], 0);
+    jpeg.fill(0x42, 4, 4094);
+    jpeg.set([0xff, 0xd9], 4094);
+
+    const encoder = new TextEncoder();
+    const listing = (entries: Array<[string, string, string]>) => {
+      const json = JSON.stringify([entries.map(([id, label, mime]) => [id, ['p'], label, mime]), null]);
+      const escaped = json.replace(/[[\]"\\/]/g, (character) =>
+        `\\x${character.charCodeAt(0).toString(16).padStart(2, '0')}`);
+      return encoder.encode(`<script>window['_DRIVE_ivd'] = '${escaped}';</script>`);
+    };
+    const FOLDER = 'application/vnd.google-apps.folder';
+    const pdfBytes = (() => {
+      const head = encoder.encode('%PDF-1.4\n'
+        + '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n'
+        + '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n'
+        + '3 0 obj<</Type/Page/Parent 2 0 R/Resources<</XObject<</Im0 4 0 R>>>>>>endobj\n'
+        + `4 0 obj<</Type/XObject/Subtype/Image/Width 1700/Height 956/Filter/DCTDecode/Length ${jpeg.length}>>stream\n`);
+      const tail = encoder.encode('\nendstream\nendobj\ntrailer<</Root 1 0 R>>\n');
+      const out = new Uint8Array(head.length + jpeg.length + tail.length);
+      out.set(head, 0); out.set(jpeg, head.length); out.set(tail, head.length + jpeg.length);
+      return out;
+    })();
+
+    const fetchPackage = async (url: string) => {
+      if (url.includes('/folders/pack-root-0001')) {
+        return { bytes: listing([['packages-0001', 'Tweed Heads Packages', FOLDER]]), finalUrl: url };
+      }
+      if (url.includes('/folders/packages-0001')) {
+        return { bytes: listing([['lot43-0001', 'Lot 43', FOLDER]]), finalUrl: url };
+      }
+      if (url.includes('/folders/lot43-0001')) {
+        return {
+          bytes: listing([['doc-strad-0001', 'Lot 43 - Stradbroke 180 - Property Package.pdf', 'application/pdf']]),
+          finalUrl: url,
+        };
+      }
+      if (url.includes('id=doc-strad-0001')) return { bytes: pdfBytes, finalUrl: url };
+      return { bytes: encoder.encode('<html>Sign in</html>'), finalUrl: url };
+    };
+
+    const packUpload = { ...upload, id: 'upload-2', storage_path: 'stock-lists/org-a/upload-2/stock.csv' };
+    const db = fakeDb({
+      uploads: [packUpload],
+      items: [{
+        id: 'item-43', organisation_id: 'org-a', lifecycle_status: 'active',
+        external_reference: null, development_name: 'Sandpiper Estate',
+        project_name: null, unit_number: null, lot_number: null,
+        primary_image_id: 'google-43',
+        source_row: {
+          address_line: 'Lot 43 - Tringa Street, Sandpiper Estate, Tweed Heads South NSW 2486 [Stradbroke 180]',
+          development_name: 'Sandpiper Estate', price: 1307585,
+        },
+      }],
+      images: [{
+        id: 'google-43', stock_item_id: 'item-43', source_stage: 'google_maps',
+        processing_status: 'ready', position: 0, storage_path: 'g.jpg',
+      }],
+      objects: { [packUpload.storage_path]: encoder.encode(packageCsv) },
+    });
+
+    const outcome = await repairSourceImagesForUpload(
+      db, { organisationId: 'org-a', uploadId: 'upload-2' }, { fetchPackage },
+    );
+
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.fromPackage).toBe(1);
+    expect(outcome.imagesStored).toBe(1);
+    expect(outcome.packageNotIdentified).toBe(0);
+
+    const stored = db.tables.builder_stock_item_images
+      .find((row: FakeRow) => row.source_stage === 'uploaded_document');
+    expect(stored).toMatchObject({
+      stock_item_id: 'item-43',
+      verification_status: 'source_supplied',
+      processing_status: 'ready',
+      source_provider: 'linked_package',
+      content_type: 'image/jpeg',
+    });
+    expect(stored!.source_reference)
+      .toBe('Lot 43 - Stradbroke 180 - Property Package.pdf#page1');
+    // The card now shows the builder's render; the property itself is untouched.
+    expect(db.tables.builder_stock_items[0].primary_image_id).toBe(stored!.id);
+    expect(db.tables.builder_stock_items).toHaveLength(1);
+    expect(db.tables.builder_stock_items[0].id).toBe('item-43');
+  });
+
+  it('leaves the fallback alone when the package names nothing for that property', async () => {
+    const packageCsv = [
+      'Deal,Estate Tag,Package Price,Complete Package Pack',
+      '"Lot 914 - Covella Estate, Greenbank QLD 4124",Covella,900000,'
+        + 'https://drive.google.com/drive/folders/covella-folder-01',
+    ].join('\r\n');
+    const encoder = new TextEncoder();
+    const listing = (entries: Array<[string, string, string]>) => {
+      const json = JSON.stringify([entries.map(([id, label, mime]) => [id, ['p'], label, mime]), null]);
+      const escaped = json.replace(/[[\]"\\/]/g, (character) =>
+        `\\x${character.charCodeAt(0).toString(16).padStart(2, '0')}`);
+      return encoder.encode(`<script>window['_DRIVE_ivd'] = '${escaped}';</script>`);
+    };
+
+    const covellaUpload = { ...upload, id: 'upload-3', storage_path: 'stock-lists/org-a/upload-3/stock.csv' };
+    const db = fakeDb({
+      uploads: [covellaUpload],
+      items: [{
+        id: 'item-914', organisation_id: 'org-a', lifecycle_status: 'active',
+        external_reference: null, development_name: 'Covella', project_name: null,
+        unit_number: null, lot_number: null, primary_image_id: 'google-914',
+        source_row: {
+          address_line: 'Lot 914 - Covella Estate, Greenbank QLD 4124',
+          development_name: 'Covella', price: 900000,
+        },
+      }],
+      images: [{
+        id: 'google-914', stock_item_id: 'item-914', source_stage: 'google_maps',
+        processing_status: 'ready', position: 0, storage_path: 'g.jpg',
+      }],
+      objects: { [covellaUpload.storage_path]: encoder.encode(packageCsv) },
+    });
+
+    const outcome = await repairSourceImagesForUpload(
+      db, { organisationId: 'org-a', uploadId: 'upload-3' },
+      {
+        // Three documents, every one of them naming lot 914: the folder does
+        // not say which is the property's photograph, so neither do we.
+        fetchPackage: async (url: string) => ({
+          bytes: listing([
+            ['a', 'LOT 914 • COVELLA • GREENBANK QLD.pdf', 'application/pdf'],
+            ['b', 'OTP_Land_Contract_P1_-_Rana_-_Lot_914_Covella.pdf', 'application/pdf'],
+            ['c', 'Rental Appraisal_ Lot 914, Covella Estate.pdf', 'application/pdf'],
+          ]),
+          finalUrl: url,
+        }),
+      },
+    );
+
+    expect(outcome.fromPackage).toBe(0);
+    expect(outcome.packageNotIdentified).toBe(1);
+    expect(db.tables.builder_stock_item_images
+      .some((row: FakeRow) => row.source_stage === 'uploaded_document')).toBe(false);
+    // The existing location image stays exactly where it was.
+    expect(db.tables.builder_stock_items[0].primary_image_id).toBe('google-914');
+  });
+
   it('refuses a source that belongs to another organisation outright', async () => {
     const db = fakeDb({ uploads: [upload] });
     const outcome = await repairSourceImagesForUpload(db, {
