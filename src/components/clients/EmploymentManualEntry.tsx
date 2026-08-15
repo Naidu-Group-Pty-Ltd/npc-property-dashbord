@@ -117,39 +117,40 @@ export function EmploymentManualEntry({ clientId, contacts, onComplete }: Employ
 
 
   const startEdit = (employment: any) => {
-    setFormData({
-      id: employment.id,
-      contact_type: employment.contact_type,
-      additional_contact_id: employment.additional_contact_id || null,
-      is_current: employment.is_current ?? true,
-      employment_type: employment.employment_type || 'permanent',
-      occupation_role: employment.occupation_role || '',
-      employer_name: employment.employer_name || '',
-      start_date: employment.start_date || '',
-      salary_amount: employment.salary_amount || 0,
-      salary_frequency: employment.salary_frequency || 'annual',
-      gross_annual_salary: employment.gross_annual_salary || 0,
-      bonus: employment.bonus || 0,
-      commission: employment.commission || 0,
-      overtime_essential: employment.overtime_essential || 0,
-      overtime_non_essential: employment.overtime_non_essential || 0,
-      allowance: employment.allowance || 0,
-      other_taxable_income: employment.other_taxable_income || 0,
-      workplace_address_line_1: employment.workplace_address_line_1 || '',
-      workplace_suburb: employment.workplace_suburb || '',
-      workplace_state: employment.workplace_state || '',
-      workplace_postcode: employment.workplace_postcode || '',
-      workplace_country: employment.workplace_country || '',
-      work_arrangement: employment.work_arrangement || '',
-    });
-    setEditingId(employment.id);
-    // Switch to the right tab
-    if (employment.additional_contact_id) {
-      setActiveTab(employment.additional_contact_id);
-    } else {
-      setActiveTab(employment.contact_type);
-    }
+    // The record's own contact決 determines which tab owns this draft.
+    const tabId = employment.additional_contact_id || employment.contact_type;
+    setDrafts(prev => ({
+      ...prev,
+      [tabId]: {
+        id: employment.id,
+        contact_type: employment.contact_type,
+        additional_contact_id: employment.additional_contact_id || null,
+        is_current: employment.is_current ?? true,
+        employment_type: employment.employment_type || 'permanent',
+        occupation_role: employment.occupation_role || '',
+        employer_name: employment.employer_name || '',
+        start_date: employment.start_date || '',
+        salary_amount: employment.salary_amount || 0,
+        salary_frequency: employment.salary_frequency || 'annual',
+        gross_annual_salary: employment.gross_annual_salary || 0,
+        bonus: employment.bonus || 0,
+        commission: employment.commission || 0,
+        overtime_essential: employment.overtime_essential || 0,
+        overtime_non_essential: employment.overtime_non_essential || 0,
+        allowance: employment.allowance || 0,
+        other_taxable_income: employment.other_taxable_income || 0,
+        workplace_address_line_1: employment.workplace_address_line_1 || '',
+        workplace_suburb: employment.workplace_suburb || '',
+        workplace_state: employment.workplace_state || '',
+        workplace_postcode: employment.workplace_postcode || '',
+        workplace_country: employment.workplace_country || '',
+        work_arrangement: employment.work_arrangement || '',
+      },
+    }));
+    setEditingIds(prev => ({ ...prev, [tabId]: employment.id }));
+    setActiveTab(tabId);
   };
+
 
   const saveMutation = useMutation({
     mutationFn: async () => {
