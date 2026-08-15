@@ -245,6 +245,13 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
       rateSource: rateInfo.source,
       borrowerType
     },
+    // Persist the exact rental input used by every projection. Downstream cash-flow
+    // cards and exports read this canonical path, including reports without manual
+    // overrides, so the displayed figure cannot drift from the generated series.
+    income: {
+      weeklyRent,
+      annualRent: weeklyRent * 52,
+    },
     annualCosts,
     keyMetrics: metrics,
     projections: scenarios,
