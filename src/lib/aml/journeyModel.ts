@@ -1253,12 +1253,18 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
 
   // ── The Passport credential. Its state is SERVER-derived and embedded in
   //    the projection; nothing here recomputes it.
+  //
+  //    `enabled` describes PARTNER DISTRIBUTION and nothing else. The server
+  //    returns the real credential state either way, so reading it only when
+  //    distribution is switched on would report "not available" for a
+  //    Passport whose state is perfectly well known — which is what this
+  //    deployment does, and what stage 9 was wrongly saying.
   let passportCode: string | null = null;
   let passportLabel: string | null = null;
   let issuedAt: string | null = null;
 
-  if (loaded(facts.passport) && facts.passport.enabled !== false) {
-    sourceFacts.push("passport distribution status");
+  if (loaded(facts.passport) && facts.passport.state?.code) {
+    sourceFacts.push("passport state (server-derived)");
     passportCode = facts.passport.state?.code ?? null;
     passportLabel = facts.passport.state?.label ?? null;
     issuedAt = facts.passport.issued_at ?? null;
@@ -1290,12 +1296,6 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
     } else if (passportCode === "not_issued") {
       outstanding.push(note("passport_not_issued", "Passport not issued", "waiting"));
     }
-  } else if (loaded(facts.passport)) {
-    // The distribution surface is switched off for this deployment. Saying so
-    // is materially different from saying the Passport is not ready.
-    warnings.push(
-      note("passport_disabled", "Passport distribution is not enabled here", "waiting"),
-    );
   } else {
     unavailableFacts.push("passport state");
   }
@@ -1360,7 +1360,16 @@ function distributionStage(facts: AmlWorkspaceFacts): StageReading {
   let distributionState: AmlEvidenceState = "unknown";
   let summary = "Partner readiness could not be read.";
 
-  if (loaded(facts.passport) && facts.passport.enabled !== false) {
+  if (loaded(facts.passport) && facts.passport.enabled === false) {
+    warnings.push(note("dist_disabled", "Passport distribution is not enabled here", "waiting"));
+    distributionState = "not_applicable";
+    summary = "Passport distribution is not enabled for this deployment.";
+  } else if (loaded(facts.passport) && facts.passport.partners === undefined) {
+    // The credential state was recovered from the projection this role may
+    // read, which carries no partner readiness. Absent is not empty: saying
+    // "no partner is linked" on evidence we never saw would be an invention.
+    unavailableFacts.push("passport distribution readiness");
+  } else if (loaded(facts.passport)) {
     const partners = facts.passport.partners ?? [];
     const s = facts.passport.summary ?? {};
     sourceFacts.push(`passport distribution readiness (${partners.length} partner(s))`);
@@ -1403,10 +1412,6 @@ function distributionStage(facts: AmlWorkspaceFacts): StageReading {
         owner = "partner";
       }
     }
-  } else if (loaded(facts.passport)) {
-    warnings.push(note("dist_disabled", "Passport distribution is not enabled here", "waiting"));
-    distributionState = "not_applicable";
-    summary = "Passport distribution is not enabled for this deployment.";
   } else {
     unavailableFacts.push("passport distribution readiness");
   }
@@ -1511,7 +1516,27 @@ function currentStage(stages: AmlJourneyStage[]): AmlJourneyStageId {
   return open?.id ?? stages[stages.length - 1].id;
 }
 
+/**
+ * A finished case has no next move, and must not be given one.
+ *
+ * Found against the production register: `AML-2026-00002` is closed with a
+ * terminated gate and — because it closed before requirements were ever set
+ * — stage 3 read "No requirements set" as a blocker, which made Documents
+ * the current stage and told an operator to go and chase a customer whose
+ * relationship had ended. The facts on each stage stay exactly as they are;
+ * what changes is that nothing on a closed case shouts, and the rail rests
+ * on the retention end of the journey where the remaining obligations
+ * actually live.
+ *
+ * `deriveAmlNextAction` has always short-circuited on the same two
+ * conditions. This is the journey saying the same thing.
+ */
+function isFinished(facts: AmlWorkspaceFacts): boolean {
+  return caseStage(facts.caseRow) === "closed" || serviceGateStatus(facts.caseRow) === "terminated";
+}
+
 export function deriveAmlJourney(facts: AmlWorkspaceFacts): AmlJourney {
+  const finished = isFinished(facts);
   const stages: AmlJourneyStage[] = STAGE_DEFINITIONS.map((def, index) => {
     const reading = STAGE_READERS[def.id](facts);
     const attention = attentionFor(reading);
@@ -1539,9 +1564,11 @@ export function deriveAmlJourney(facts: AmlWorkspaceFacts): AmlJourney {
       ownerLabel: JOURNEY_OWNER_LABELS[reading.owner],
       attention,
       blocking:
-        reading.blocking ??
-        ((reading.blockers ?? []).length > 0 &&
-          (attention === "critical" || attention === "attention")),
+        finished
+          ? false
+          : (reading.blocking ??
+            ((reading.blockers ?? []).length > 0 &&
+              (attention === "critical" || attention === "attention"))),
       summary: reading.summary,
       blockers: reading.blockers ?? [],
       warnings: reading.warnings ?? [],
@@ -1563,7 +1590,9 @@ export function deriveAmlJourney(facts: AmlWorkspaceFacts): AmlJourney {
 
   return {
     stages,
-    currentStageId: currentStage(stages),
+    currentStageId: finished
+      ? stages[stages.length - 1].id
+      : currentStage(stages),
     completeCount: applicableStages.filter((s) => s.status === "complete").length,
     applicableCount: applicableStages.length,
     attention: highestAttention(stages.map((s) => s.attention)),
@@ -1624,10 +1653,9 @@ export function deriveAmlLivePosition(
     clientStatusLabel: CLIENT_STATUS_LABELS[portal] ?? portal,
     financeStatusLabel: FINANCE_STATUS_LABELS[finance] ?? finance,
     serviceGateLabel: SERVICE_GATE_LABELS[serviceGateStatus(facts.caseRow)],
-    passportLabel:
-      facts.passport && facts.passport.enabled !== false
-        ? (facts.passport.state?.label ?? null)
-        : null,
+    // Again: `enabled` gates distribution, not the credential. The label is
+    // whatever the server derived, or `null` when nothing was readable.
+    passportLabel: facts.passport?.state?.label ?? null,
     passportVersion: facts.passport?.version ?? null,
   };
 }

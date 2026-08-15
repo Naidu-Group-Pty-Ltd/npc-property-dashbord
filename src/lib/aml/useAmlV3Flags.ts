@@ -37,7 +37,18 @@ export interface AmlV3Flags {
 }
 
 
-const CACHE_KEY = "aml:v3_flags:v1";
+/**
+ * Cache key. BUMP THIS whenever a stale reading would be materially wrong.
+ *
+ * v1 → v2: the cache was written once per browser session and never
+ * revalidated, and `sessionStorage` survives a reload. So when
+ * `aml_v3_case_workspace` was finally switched on, every tab that had
+ * already read `false` kept reading `false` — through refreshes — and the
+ * case workspace stayed invisible to exactly the people who had just turned
+ * it on. The key bump clears that once; the revalidation below stops it
+ * happening again.
+ */
+const CACHE_KEY = "aml:v3_flags:v2";
 type Cache = Omit<AmlV3Flags, "loading">;
 
 let memory: Cache | null = null;
@@ -69,7 +80,23 @@ function coerceBool(value: unknown): boolean {
   return false;
 }
 
-export async function refreshAmlV3Flags(): Promise<Cache> {
+/**
+ * One request per page load, however many components ask.
+ *
+ * Four surfaces read these flags (the layout, the register, the case
+ * workspace, the case tabs) and now that every mount revalidates, they would
+ * otherwise fire four identical queries within the same tick. Callers share
+ * whichever request is already in flight.
+ */
+let inFlight: Promise<Cache> | null = null;
+
+export function refreshAmlV3Flags(): Promise<Cache> {
+  if (inFlight) return inFlight;
+  inFlight = fetchAmlV3Flags().finally(() => { inFlight = null; });
+  return inFlight;
+}
+
+async function fetchAmlV3Flags(): Promise<Cache> {
   const keys: AmlV3FlagKey[] = [
     "aml_v3_nav",
     "aml_v3_start_client_compliance",
@@ -133,11 +160,21 @@ export function useAmlV3Flags(): AmlV3Flags {
   useEffect(() => {
     const listener = (f: Cache) => setFlags(f);
     subs.add(listener);
-    if (!memory) {
-      refreshAmlV3Flags().finally(() => setLoading(false));
-    } else {
-      setLoading(false);
-    }
+    /*
+     * Stale-while-revalidate, and the revalidate half is the point.
+     *
+     * A cached reading renders immediately — a flag that gates a whole
+     * surface must not make every AML page wait on a round trip, and a
+     * flicker from "off" to "on" is worse than a beat of staleness. But the
+     * cache is ALWAYS refreshed behind it, so a flag flipped in the cutover
+     * page (or straight in the database, which is how this one was flipped)
+     * reaches every open tab on its next mount instead of surviving until
+     * somebody happens to open a new browser session.
+     *
+     * `writeCache` notifies every subscriber, so a value that actually
+     * changed re-renders; one that did not is a no-op.
+     */
+    void refreshAmlV3Flags().finally(() => setLoading(false));
     return () => { subs.delete(listener); };
   }, []);
 

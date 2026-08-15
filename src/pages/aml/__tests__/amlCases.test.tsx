@@ -41,6 +41,8 @@ let mockAccess = {
   hasAnyRole: true, canWrite: true, isMlro: true, refresh: vi.fn(),
 };
 vi.mock("@/hooks/useAmlAccess", () => ({ useAmlAccess: () => mockAccess }));
+let mockSuperadmin = false;
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ isSuperadmin: mockSuperadmin }) }));
 
 const toast = vi.fn();
 vi.mock("@/hooks/use-toast", () => ({ toast: (...a: unknown[]) => toast(...a) }));
@@ -74,6 +76,7 @@ beforeEach(() => {
   create.mockReset();
   toast.mockReset();
   mockCaseWorkspaceFlag = false;
+  mockSuperadmin = false;
   mockAccess = {
     loading: false, flagEnabled: true, roles: new Set(["analyst", "mlro"]),
     hasAnyRole: true, canWrite: true, isMlro: true, refresh: vi.fn(),
@@ -209,5 +212,57 @@ describe("AmlCases — register shell", () => {
     await screen.findByText("1 case");
     expect(screen.queryByRole("button", { name: /Exception case/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Activate client/ })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The staged-rollout gate must never be silent again.
+ *
+ * `aml_v3_case_workspace` defaults to off, and with it off a case opens in
+ * the legacy dialog while `/admin/aml/cases/:caseId` redirects here — so a
+ * finished journey workspace and an absent one are indistinguishable. That
+ * is exactly how the workspace stayed switched off in production from Phase
+ * 6 until somebody asked why a merged, deployed feature had changed nothing.
+ */
+describe("AmlCases — the rollout gate is visible to whoever can move it", () => {
+  it("tells a superadmin when cases are still opening in the legacy dialog", async () => {
+    mockSuperadmin = true;
+    mockCaseWorkspaceFlag = false;
+    list.mockResolvedValue({ cases: [], total: 0 });
+    render(
+      <MemoryRouter initialEntries={["/admin/aml/cases"]}>
+        <AmlCasesPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Cases are opening in the legacy dialog")).toBeInTheDocument();
+    expect(screen.getByText("aml_v3_case_workspace")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /V3 cutover controls/ }))
+      .toHaveAttribute("href", "/admin/aml-v3-cutover");
+  });
+
+  it("says nothing once the workspace is switched on", async () => {
+    mockSuperadmin = true;
+    mockCaseWorkspaceFlag = true;
+    list.mockResolvedValue({ cases: [], total: 0 });
+    render(
+      <MemoryRouter initialEntries={["/admin/aml/cases"]}>
+        <AmlCasesPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText("Case register");
+    expect(screen.queryByText("Cases are opening in the legacy dialog")).not.toBeInTheDocument();
+  });
+
+  it("never shows rollout plumbing to an ordinary operator", async () => {
+    mockSuperadmin = false;
+    mockCaseWorkspaceFlag = false;
+    list.mockResolvedValue({ cases: [], total: 0 });
+    render(
+      <MemoryRouter initialEntries={["/admin/aml/cases"]}>
+        <AmlCasesPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText("Case register");
+    expect(screen.queryByText("Cases are opening in the legacy dialog")).not.toBeInTheDocument();
   });
 });

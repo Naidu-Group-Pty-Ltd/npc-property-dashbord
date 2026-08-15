@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronRight, Loader2, Plus, Search, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { ChevronRight, Loader2, Plus, Search, ShieldAlert, ShieldCheck, ToggleLeft } from "lucide-react";
 
 import { ActivateClientDialog } from "@/components/aml/ActivateClientDialog";
 import { AmlCaseWorkspaceDialog } from "@/components/aml/AmlCaseWorkspaceDialog";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
+import { useAuth } from "@/hooks/useAuth";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import {
   amlCasesApi, AmlCase, AmlCaseStatus, AmlRiskRating,
@@ -94,7 +95,8 @@ const PAGE_LIMIT = 100;
 export default function AmlCasesPage() {
   const access = useAmlAccess();
   const navigate = useNavigate();
-  const { caseWorkspace: fullPageWorkspace } = useAmlV3Flags();
+  const { isSuperadmin } = useAuth();
+  const { caseWorkspace: fullPageWorkspace, loading: flagsLoading } = useAmlV3Flags();
   const [cases, setCases] = useState<AmlCase[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -319,6 +321,39 @@ export default function AmlCasesPage() {
           </>
         }
       />
+
+      {/*
+        The staged-rollout gate, said out loud — to the one audience that can
+        move it.
+
+        `aml_v3_case_workspace` decides whether a case opens in the full
+        journey workspace or the legacy dialog, and it defaults to off. That
+        is correct for a staged rollout and wrong to keep silent: with the
+        flag off, `/admin/aml/cases/:caseId` redirects here and a row opens
+        the dialog, so a finished workspace and an absent one look exactly
+        the same — which is how it stayed switched off from Phase 6 to now,
+        with the only toggle for it on a page linked from nowhere.
+
+        Shown to superadmins alone, because rollout plumbing is not an
+        operator's concern and the cutover page refuses anyone else.
+      */}
+      {isSuperadmin && !flagsLoading && !fullPageWorkspace && (
+        <Alert>
+          <ToggleLeft aria-hidden="true" className="h-4 w-4" />
+          <AlertTitle>Cases are opening in the legacy dialog</AlertTitle>
+          <AlertDescription className="space-y-2 text-xs">
+            <p>
+              The staged compliance journey workspace is built and deployed, but{" "}
+              <code className="font-mono">aml_v3_case_workspace</code> is switched off, so a case
+              opens in the legacy dialog instead. Nothing is broken — the flag has simply never
+              been turned on.
+            </p>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/admin/aml-v3-cutover">Open the V3 cutover controls</Link>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Saved views */}
       <div className="rounded-xl border border-border/60 bg-card/45 p-2 shadow-sm"><div className="flex flex-wrap gap-2" role="group" aria-label="Saved views">

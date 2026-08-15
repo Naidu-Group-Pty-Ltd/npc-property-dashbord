@@ -163,10 +163,35 @@ export function useAmlCaseSummary(
           : Promise.resolve(null),
         soft(() => amlCasesApi.consentStatus(caseId)),
         // Passport state AND partner readiness in one server-derived read.
-        // Flag-gated and role-gated server-side; a refusal lands as `null`
-        // and reads as "not available", never as "not ready".
+        // Role-gated server-side (MLRO); a refusal lands as `null` and is
+        // recovered below from the projection every AML role may read.
         soft(() => amlRelianceApi.getPassportDistributionStatus(caseId)),
       ]);
+      if (mine !== seq.current) return;
+
+      /*
+       * The Passport state has TWO server-derived sources, and which one a
+       * caller may read depends on their role:
+       *
+       *   get_passport_distribution_status  MLRO only. Carries the state and
+       *                                     partner readiness in one read.
+       *   get_passport_view                 Any AML role, behind
+       *                                     `aml_passport_command_view`.
+       *                                     Carries the state, no partners.
+       *
+       * Both embed the SAME `derivePassportState` result — there is one
+       * derivation and it runs server-side. So when the first read is
+       * unavailable (an analyst, a reviewer, or a transport failure) the
+       * second recovers the credential state rather than leaving an analyst
+       * looking at "Not available" for a Passport whose state is perfectly
+       * well known. Partner readiness stays absent, because it genuinely is.
+       *
+       * Fired only on the fallback path, so the common case still costs one
+       * request and the heavier projection is never fetched speculatively.
+       */
+      const passportFallback = passport
+        ? null
+        : await soft(() => amlRelianceApi.getPassportView(caseId));
       if (mine !== seq.current) return;
 
       const matter = (transactions?.transactions ?? []).find(
@@ -211,7 +236,19 @@ export function useAmlCaseSummary(
               })),
               summary: passport.summary ?? null,
             }
-          : null,
+          : passportFallback?.passport
+            ? {
+                // Recovered from the read this role may make. Partner
+                // readiness is absent — `undefined`, not an empty list, so
+                // stage 10 reads "not available" rather than "no partners".
+                enabled: undefined,
+                state: passportFallback.passport.header?.state ?? null,
+                version: passportFallback.passport.header?.state?.current_version ?? null,
+                issued_at: passportFallback.passport.header?.last_issued_at ?? null,
+                partners: undefined,
+                summary: null,
+              }
+            : null,
         transactions: transactions ? { transactions: transactions.transactions ?? [] } : null,
         matterLabel: matter?.property_address ?? matter?.reference ?? null,
       });
