@@ -29,10 +29,20 @@ export type StockImageStage = 'uploaded_document' | 'google_maps' | 'internet_se
 export type StockSelectionStatus =
   | 'selected' | 'builder_acknowledged' | 'progressed' | 'completed' | 'withdrawn';
 
+export type StockSourceType = 'file' | 'url';
+
 export interface BuilderStockUpload {
   id: string;
   organisation_id: string;
   uploaded_by_builder_user_id: string | null;
+  /** How the bytes reached us. Both end in the same import pipeline. */
+  source_type: StockSourceType;
+  /** URL sources only: what the builder pasted, and where it settled. */
+  source_url: string | null;
+  final_url: string | null;
+  /** A page title or shortened URL. What the history row is labelled with. */
+  source_title: string | null;
+  retrieved_at: string | null;
   original_filename: string;
   declared_content_type: string | null;
   detected_content_type: string | null;
@@ -150,6 +160,20 @@ export interface BuilderStockSelection extends BuilderStockSelectionForBuilder {
 // ---------------------------------------------------------------------------
 // Labels
 // ---------------------------------------------------------------------------
+
+/** What a source row is called in the history. */
+export function stockSourceLabel(upload: Pick<BuilderStockUpload,
+  'source_type' | 'source_title' | 'original_filename' | 'source_url'>): string {
+  if (upload.source_type === 'url') {
+    return upload.source_title || upload.source_url || 'Imported page';
+  }
+  return upload.original_filename;
+}
+
+export const STOCK_SOURCE_TYPE_LABELS: Record<StockSourceType, string> = {
+  file: 'File',
+  url: 'URL',
+};
 
 export const STOCK_UPLOAD_STATUS_LABELS: Record<StockUploadStatus, string> = {
   uploaded: 'Uploaded',

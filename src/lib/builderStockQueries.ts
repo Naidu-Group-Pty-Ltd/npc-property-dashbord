@@ -115,6 +115,13 @@ export interface StockUploadResult {
   summary: StockImportSummary;
 }
 
+/** What deleting a source affected. Counts only — no client is named. */
+export interface StockSourceRemoval {
+  archived: number;
+  retainedBecauseResupplied: number;
+  affectedSelections: number;
+}
+
 /**
  * The whole upload, start to finish.
  *
@@ -178,6 +185,55 @@ export async function uploadBuilderStockFile(
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------
+
+/**
+ * Import a stock list the builder linked to rather than uploaded.
+ *
+ * The browser sends only the URL. The server fetches it — behind the SSRF
+ * guard, with every redirect re-checked — snapshots what it got, and runs the
+ * same import a file goes through. Enrichment then resumes exactly as it does
+ * after an upload.
+ */
+export async function importBuilderStockUrl(
+  url: string,
+  onProgress?: (progress: StockUploadProgress) => void,
+): Promise<StockUploadResult> {
+  onProgress?.({ phase: 'processing' });
+  const imported = await invoke<{
+    upload: BuilderStockUpload; summary: StockImportSummary; enrichment_pending: number;
+  }>({ operation: 'import_url', url });
+
+  try {
+    let guard = 0;
+    let remaining = imported.enrichment_pending ?? 0;
+    while (remaining > 0 && guard < 40) {
+      onProgress?.({ phase: 'enriching', remaining });
+      const batch = await invoke<{ processed: number; remaining: number }>({
+        operation: 'enrich_images', upload_id: imported.upload.id,
+      });
+      remaining = batch.remaining;
+      if (!batch.processed) break;
+      guard += 1;
+    }
+  } catch {
+    /* Images are an enhancement. The import stands without them. */
+  }
+
+  onProgress?.({ phase: 'done' });
+  return { upload: imported.upload, summary: imported.summary };
+}
+
+/** Remove a stock-list source. Requires the inventory DELETE permission. */
+export function useDeleteBuilderStockSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (uploadId: string) =>
+      invoke<{ removed: StockSourceRemoval }>({
+        operation: 'delete_upload', upload_id: uploadId,
+      }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: builderStockKeys.root() }); },
+  });
+}
 
 export function useSetBuilderStockAvailability() {
   const queryClient = useQueryClient();

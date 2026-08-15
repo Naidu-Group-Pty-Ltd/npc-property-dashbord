@@ -19,6 +19,8 @@
  * real failure mode.
  */
 import { keyRowsByHeader, parseDelimited } from './table.pure.ts';
+import { readHtmlSource } from './htmlSource.pure.ts';
+import { readOpenDocument, readPresentation, readRichText, readStructured } from './otherFormats.pure.ts';
 import type { StockFileClassification } from './fileTypes.pure.ts';
 
 export interface ExtractedMedia {
@@ -37,6 +39,8 @@ export interface StockExtraction {
   visionImages: Array<{ base64: string; contentType: string }>;
   media: ExtractedMedia[];
   warnings: string[];
+  /** A document/page title, when the format carries one. */
+  title?: string | null;
 }
 
 const MAX_ROWS = 5000;
@@ -297,6 +301,123 @@ export async function extractStockFile(
     // XObject cannot be tied to a stock row, and a decorative banner presented
     // as a property photograph is worse than no stage-1 image at all.
     result.warnings.push('Images inside a PDF are not extracted; location and search imagery are used instead.');
+    return result;
+  }
+
+  if (classification.kind === 'opendocument') {
+    // ODS and ODT are zip containers like .docx, read with the same JSZip and
+    // the same table-then-prose order.
+    const zipModule = await import('https://esm.sh/jszip@3.10.1') as unknown as
+      { default: { loadAsync(data: Uint8Array): Promise<any> } };
+    const zip = await zipModule.default.loadAsync(bytes);
+    const entry = zip.file('content.xml');
+    if (!entry) {
+      throw new StockExtractionError(
+        'opendocument_unreadable',
+        'That OpenDocument file could not be read. Save it as XLSX, DOCX or PDF and try again.',
+      );
+    }
+    const xml: string = await entry.async('string');
+    const { tables, text } = readOpenDocument(xml);
+
+    for (const matrix of tables) {
+      if (result.rows.length >= MAX_ROWS) break;
+      const keyed = keyRowsByHeader(matrix);
+      if (keyed) result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
+    }
+    result.strategy = result.rows.length ? 'opendocument_table' : 'opendocument_text';
+    if (!result.rows.length && text) result.text = text.slice(0, MAX_TEXT_CHARS);
+
+    try {
+      result.media = await readContainerMedia(bytes, 'Pictures/');
+    } catch {
+      result.warnings.push('Images inside the document could not be read.');
+    }
+    return result;
+  }
+
+  if (classification.kind === 'presentation') {
+    const zipModule = await import('https://esm.sh/jszip@3.10.1') as unknown as
+      { default: { loadAsync(data: Uint8Array): Promise<any> } };
+    const zip = await zipModule.default.loadAsync(bytes);
+
+    // Slides are numbered files; read them in order so a schedule split over
+    // several slides stays in sequence.
+    const slideNames = Object.keys(zip.files)
+      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort((a, b) => (Number(/(\d+)/.exec(a)?.[1] ?? 0) - Number(/(\d+)/.exec(b)?.[1] ?? 0)));
+
+    const slideXml: string[] = [];
+    for (const name of slideNames) slideXml.push(await zip.files[name].async('string'));
+    const { tables, text } = readPresentation(slideXml);
+
+    for (const matrix of tables) {
+      if (result.rows.length >= MAX_ROWS) break;
+      const keyed = keyRowsByHeader(matrix);
+      if (keyed) result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
+    }
+    result.strategy = result.rows.length ? 'presentation_table' : 'presentation_text';
+    if (!result.rows.length && text) result.text = text.slice(0, MAX_TEXT_CHARS);
+
+    try {
+      result.media = await readContainerMedia(bytes, 'ppt/media/');
+    } catch {
+      result.warnings.push('Images inside the presentation could not be read.');
+    }
+    return result;
+  }
+
+  if (classification.kind === 'richtext') {
+    const text = readRichText(decodeText(bytes));
+    result.strategy = 'richtext_text';
+    // An RTF table is a run of \cell control words rather than a grid, so the
+    // deterministic reader is tried on the recovered lines first.
+    const keyed = keyRowsByHeader(parseDelimited(text, '\t'));
+    if (keyed) {
+      result.strategy = 'richtext_table';
+      result.rows = keyed.rows.slice(0, MAX_ROWS);
+    } else {
+      result.text = text.slice(0, MAX_TEXT_CHARS) || null;
+    }
+    if (!result.rows.length && !result.text) {
+      throw new StockExtractionError(
+        'richtext_empty', 'No readable text could be recovered from that RTF file.');
+    }
+    return result;
+  }
+
+  if (classification.kind === 'markup') {
+    const html = decodeText(bytes);
+    const { tables, text, title } = readHtmlSource(html, 'https://example.invalid/');
+    for (const matrix of tables) {
+      if (result.rows.length >= MAX_ROWS) break;
+      const keyed = keyRowsByHeader(matrix);
+      if (keyed) result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
+    }
+    result.strategy = result.rows.length ? 'html_table' : 'html_text';
+    result.title = title;
+    if (!result.rows.length && text) result.text = text.slice(0, MAX_TEXT_CHARS);
+    if (!result.rows.length && !result.text) {
+      throw new StockExtractionError(
+        'html_empty', 'That page had no readable content.');
+    }
+    return result;
+  }
+
+  if (classification.kind === 'structured') {
+    const raw = decodeText(bytes);
+    const { rows, text } = readStructured(raw, classification.extension);
+    if (rows.length) {
+      result.strategy = 'structured_rows';
+      result.rows = rows.slice(0, MAX_ROWS);
+    } else {
+      result.strategy = 'structured_text';
+      result.text = text.slice(0, MAX_TEXT_CHARS) || null;
+      if (!result.text) {
+        throw new StockExtractionError(
+          'structured_empty', 'That file contained no readable records.');
+      }
+    }
     return result;
   }
 
