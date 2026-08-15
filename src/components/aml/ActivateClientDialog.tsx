@@ -137,6 +137,16 @@ export function ActivateClientDialog({
   const selectClient = (c: AmlActivationClient) => {
     setSelected(c);
     if (!nameDirty || !displayName.trim()) setDisplayName(c.label);
+    /*
+     * Put the cursor on the next thing that is actually required. Choosing a
+     * client is the visible half of this form; the activation event is the
+     * half that decides whether the button works, and it sits below the
+     * fold on a short window. Landing there is the difference between "two
+     * steps left" being a hint and being a nudge.
+     */
+    requestAnimationFrame(() => {
+      document.getElementById("ac-event")?.focus();
+    });
   };
 
   const clearSelection = () => {
@@ -144,16 +154,36 @@ export function ActivateClientDialog({
     if (!nameDirty) setDisplayName("");
   };
 
+  /**
+   * What is still missing, in the order the form asks for it.
+   *
+   * ── Why this is a list and not a boolean ──────────────────────────────
+   * `canSubmit` used to be the only expression of this, so the Activate
+   * button was simply disabled — styled as the primary action, giving no
+   * reason, pointing at nothing. An operator who had just created a client
+   * pressed it, nothing happened, and the reasonable conclusion was "I
+   * cannot create a client, and it stays inactive". That happened in
+   * production: four identical clients were created in 45 minutes by
+   * somebody trying to get past a button that never explained itself.
+   *
+   * The requirements are unchanged — a case still opens only after a
+   * human-confirmed activation event (AGENTS.md §2). They are just SAID now.
+   */
+  const missing: string[] = [];
+  if (!selected) missing.push("Select or create a client");
+  else if (selected.has_open_case) missing.push("This client already has an open case");
+  if (selected && !displayName.trim()) missing.push("Enter the subject display name");
+  if (selected && event.trim().length < 3) missing.push("Name the activation event");
+  if (selected && reason.trim().length < 10) {
+    missing.push("Describe the reason and evidence (at least 10 characters)");
+  }
+  if (selected && model === "B" && !modelBReady) {
+    missing.push("Pre-service activation is not approved for this tenant");
+  }
+  if (selected && !confirmed) missing.push("Tick the confirmation");
+
   const canSubmit =
-    !!selected &&
-    !selected.has_open_case &&
-    !routeError &&
-    !routeLoading &&
-    !!displayName.trim() &&
-    event.trim().length >= 3 &&
-    reason.trim().length >= 10 &&
-    confirmed &&
-    (model === "A" || modelBReady);
+    missing.length === 0 && !routeError && !routeLoading;
 
   const handleSubmit = async () => {
     if (!canSubmit || !selected) return;
@@ -442,7 +472,34 @@ export function ActivateClientDialog({
           )}
         </div>
 
-        <DialogFooter className="shrink-0 flex-col-reverse gap-2 border-t border-border/60 bg-background px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:flex-row sm:justify-end sm:px-6 sm:pb-4">
+        <DialogFooter className="shrink-0 flex-col gap-3 border-t border-border/60 bg-background px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:pb-4">
+          {/*
+            The button says why it cannot be pressed, beside the button.
+            Without this it was a primary-styled control that did nothing and
+            explained nothing — which is what made "I still cannot create a
+            client, and it shows inactive" the reasonable conclusion.
+          */}
+          <p
+            id="ac-outstanding"
+            className="order-2 min-w-0 text-xs text-muted-foreground sm:order-1"
+            aria-live="polite"
+          >
+            {formUsable && missing.length > 0 ? (
+              <>
+                <span className="font-medium text-foreground">
+                  {missing.length} step{missing.length === 1 ? "" : "s"} left:
+                </span>{" "}
+                {missing.join(" · ")}
+              </>
+            ) : formUsable ? (
+              <span className="flex items-center gap-1.5 text-success">
+                <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                Ready to activate
+              </span>
+            ) : null}
+          </p>
+
+          <div className="order-1 flex flex-col-reverse gap-2 sm:order-2 sm:flex-row sm:items-center">
           <Button
             variant="outline"
             className="w-full sm:w-auto"
@@ -456,11 +513,13 @@ export function ActivateClientDialog({
               className="w-full sm:w-auto"
               onClick={handleSubmit}
               disabled={!canSubmit || submitting}
+              aria-describedby="ac-outstanding"
             >
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Activate client
             </Button>
           )}
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
