@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { supabase } from '@/integrations/supabase/client';
@@ -193,6 +193,39 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
         marital_status: clientData.marital_status || '',
         dependents_count: clientData.dependents_count || 0,
       });
+      baselineRef.current = {
+        primary_first_name: clientData.primary_first_name ?? null,
+        primary_middle_name: clientData.primary_middle_name ?? null,
+        primary_surname: clientData.primary_surname ?? null,
+        primary_mobile: clientData.primary_mobile ?? null,
+        primary_email: clientData.primary_email ?? null,
+        primary_gender: clientData.primary_gender ?? null,
+        primary_dob: clientData.primary_dob ?? null,
+        secondary_first_name: clientData.secondary_first_name ?? null,
+        secondary_middle_name: clientData.secondary_middle_name ?? null,
+        secondary_surname: clientData.secondary_surname ?? null,
+        secondary_mobile: clientData.secondary_mobile ?? null,
+        secondary_email: clientData.secondary_email ?? null,
+        secondary_gender: clientData.secondary_gender ?? null,
+        secondary_dob: clientData.secondary_dob ?? null,
+        current_address: clientData.current_address ?? null,
+        current_suburb: clientData.current_suburb ?? null,
+        current_state: clientData.current_state ?? null,
+        current_postcode: clientData.current_postcode ?? null,
+        country: clientData.country ?? null,
+        living_situation: clientData.living_situation ?? null,
+        residential_status: clientData.residential_status ?? null,
+        secondary_current_address: (clientData as any).secondary_current_address ?? null,
+        secondary_current_suburb: (clientData as any).secondary_current_suburb ?? null,
+        secondary_current_state: (clientData as any).secondary_current_state ?? null,
+        secondary_current_postcode: (clientData as any).secondary_current_postcode ?? null,
+        secondary_country: (clientData as any).secondary_country ?? null,
+        secondary_living_situation: (clientData as any).secondary_living_situation ?? null,
+        secondary_residential_status: (clientData as any).secondary_residential_status ?? null,
+        secondary_same_address_as_primary: (clientData as any).secondary_same_address_as_primary ?? false,
+        marital_status: clientData.marital_status ?? null,
+        dependents_count: clientData.dependents_count ?? null,
+      };
       setAdditionalContacts(initialAdditionalContacts.map(c => ({ ...c })));
       setDeletedContactIds([]);
     }
