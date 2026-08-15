@@ -377,7 +377,12 @@ export default function ClientManagement() {
       });
       
       if (error) throw new Error(error.message);
-      if (!data?.success) throw new Error(data?.error || 'Failed to delete client');
+      // Surface the server's reason (e.g. a record still referencing this client)
+      // rather than a generic failure the user cannot act on.
+      if (!data?.success) {
+        const detail = (data as any)?.details;
+        throw new Error([data?.error || 'Failed to delete client', detail].filter(Boolean).join(' — '));
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
