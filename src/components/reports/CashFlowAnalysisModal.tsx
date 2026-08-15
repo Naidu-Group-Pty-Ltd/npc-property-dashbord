@@ -6,7 +6,6 @@ import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { useReportTemplateSelection } from '@/hooks/useReportTemplateSelection';
 import { fetchGlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawJsPDFDisclaimerPage } from '@/utils/pdfDisclaimerPage';
-import { Dialog } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -33,7 +32,7 @@ import {
   tryTemplateDocument,
 } from '@/lib/reportTemplate/templateDocument';
 import { SendToClientModal } from '@/components/reports/SendToClientModal';
-import { Calculator, Download, TrendingUp, DollarSign, Percent, Home, Save, RotateCcw, BarChart3, Image, GitCompare, X, FileText, Target, Zap, Building, Award, Printer, ChevronDown, ChevronRight, Send, Search, Check } from 'lucide-react';
+import { ArrowLeft, Calculator, Download, TrendingUp, DollarSign, Percent, Home, Save, RotateCcw, BarChart3, Image, GitCompare, X, FileText, Target, Zap, Building, Award, Printer, ChevronDown, ChevronRight, Send, Search, Check } from 'lucide-react';
 import { ComposedChart, LineChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -44,7 +43,8 @@ import { CashFlowCommandHeader } from '@/components/cash-flow/modal/CashFlowComm
 import { CashFlowControlPanel } from '@/components/cash-flow/modal/CashFlowControlPanel';
 import { CashFlowExportMenu } from '@/components/cash-flow/modal/CashFlowExportMenu';
 import { CashFlowKpiStrip } from '@/components/cash-flow/modal/CashFlowKpiStrip';
-import { CashFlowModalShell } from '@/components/cash-flow/modal/CashFlowModalShell';
+import { CashFlowPresentationShell } from '@/components/cash-flow/modal/CashFlowPresentationShell';
+import type { CashFlowPresentation } from '@/components/cash-flow/modal/types';
 import { CashFlowChartsWorkspace } from '@/components/cash-flow/modal/CashFlowChartsWorkspace';
 import { CashFlowAiPanel } from '@/components/cash-flow/modal/CashFlowAiPanel';
 import { CashFlowConstructionPanel } from '@/components/cash-flow/modal/CashFlowConstructionPanel';
@@ -74,6 +74,15 @@ interface CashFlowAnalysisModalProps {
   isOpen: boolean;
   onClose: () => void;
   onReportUpdated?: () => void;
+  /**
+   * Chrome this workspace is drawn inside. `modal` (the default) keeps the
+   * original dialog for surfaces that open it over themselves; `page` renders
+   * it as the routed drill-down reached from the Cash Flow Analysis list,
+   * where `onClose` is the route back rather than a dismissal.
+   */
+  presentation?: CashFlowPresentation;
+  /** Label for the return control shown in page presentation. */
+  backLabel?: string;
 }
 
 interface YearlyProjection {
@@ -222,7 +231,8 @@ const loadActiveCashFlowTemplate = async (): Promise<CashFlowTemplateConfig> => 
   }
 };
 
-export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated }: CashFlowAnalysisModalProps) {
+export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated, presentation = 'modal', backLabel = 'Back to Cash Flow Analysis' }: CashFlowAnalysisModalProps) {
+  const isPagePresentation = presentation === 'page';
   const { toast } = useToast();
   const isMobile = useIsMobile();
   const [isSaving, setIsSaving] = useState(false);
@@ -4178,10 +4188,15 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
   return (
     <>
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <CashFlowModalShell
-        header={(
+    <CashFlowPresentationShell
+      presentation={presentation}
+      isOpen={isOpen}
+      onClose={onClose}
+      header={(
           <CashFlowCommandHeader
+            presentation={presentation}
+            onBack={isPagePresentation ? onClose : undefined}
+            backLabel={backLabel}
             propertyAddress={report.property_address}
             isNewBuild={isNewBuild}
             hasChanges={hasChanges}
@@ -4208,10 +4223,19 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
             )}
           />
         )}
-        footer={(
-          <div className="px-6 py-4 flex justify-end gap-2">
-            <Button variant="outline" onClick={onClose}>Close</Button>
-          </div>
+      footer={(
+          isPagePresentation ? (
+            <div className="flex justify-end gap-2 py-4">
+              <Button variant="outline" onClick={onClose} className="min-h-10 rounded-xl">
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                {backLabel}
+              </Button>
+            </div>
+          ) : (
+            <div className="px-6 py-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={onClose}>Close</Button>
+            </div>
+          )
         )}
       >
         <div className="space-y-6">
@@ -6187,8 +6211,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
             </Card>
             </CashFlowProjectionTable>
         </div>
-      </CashFlowModalShell>
-    </Dialog>
+    </CashFlowPresentationShell>
 
     {/* Reset Confirmation Dialog */}
     <AlertDialog open={showResetConfirm} onOpenChange={setShowResetConfirm}>

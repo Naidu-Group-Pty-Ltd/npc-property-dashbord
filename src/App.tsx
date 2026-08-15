@@ -55,6 +55,7 @@ import Conversations from './pages/Conversations';
 import Messages from './pages/Messages';
 import Lenders from './pages/Lenders';
 import CashFlowAnalysis from './pages/CashFlowAnalysis';
+import CashFlowAnalysisDetail from './pages/CashFlowAnalysisDetail';
 import ReportQA from './pages/ReportQA';
 import SharedQAAnswer from './pages/SharedQAAnswer';
 import InvestmentReportView from './pages/InvestmentReportView';
@@ -605,6 +606,7 @@ const App = () => (
                 <Route path="email-copilot" element={<ModuleGuard moduleKey="email_copilot"><EmailCopilot /></ModuleGuard>} />
                 <Route path="call-logs" element={<ModuleGuard moduleKey="call_logs"><CallLogs /></ModuleGuard>} />
                 <Route path="cash-flow-analysis" element={<ModuleGuard moduleKey="cash_flow"><CashFlowAnalysis /></ModuleGuard>} />
+                <Route path="cash-flow-analysis/:id" element={<ModuleGuard moduleKey="cash_flow"><CashFlowAnalysisDetail /></ModuleGuard>} />
                 <Route path="report-qa" element={<ModuleGuard moduleKey="report_qa"><ReportQA /></ModuleGuard>} />
                 <Route path="investment-report/:id" element={<ModuleGuard moduleKey="reports"><InvestmentReportView /></ModuleGuard>} />
                 <Route path="templates" element={<ModuleGuard moduleKey="templates"><Templates /></ModuleGuard>} />

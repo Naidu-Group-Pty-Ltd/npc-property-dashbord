@@ -92,7 +92,7 @@ export const NAVIGATION_ITEMS: readonly NavItemDef[] = [
   { title: 'Reports', url: '/reports', icon: BarChart3, moduleKey: 'reports', group: 'Reports & Analysis' },
   { title: 'Quantitative Reports', url: '/quantitative-reports', icon: BarChart3, moduleKey: 'generated_reports', group: 'Reports & Analysis' },
   { title: 'Generated Reports', url: '/generated-reports', icon: FileText, moduleKey: 'generated_reports', group: 'Reports & Analysis' },
-  { title: 'Cash Flow Analysis', url: '/cash-flow-analysis', icon: Activity, moduleKey: 'cash_flow', group: 'Reports & Analysis' },
+  { title: 'Cash Flow Analysis', url: '/cash-flow-analysis', icon: Activity, moduleKey: 'cash_flow', group: 'Reports & Analysis', activePatterns: ['/cash-flow-analysis'] },
   { title: 'Aurixa Intelligence Hub', url: '/report-qa', icon: MessageSquareText, moduleKey: 'report_qa', group: 'Reports & Analysis', keywords: ['ai', 'ask', 'report q&a', 'aurixa'] },
   { title: 'Portfolio Reports', url: '/portfolio-reports', icon: FileText, moduleKey: 'portfolio_reports', group: 'Reports & Analysis' },
   { title: 'Report Requests', url: '/report-requests', icon: Send, moduleKey: 'report_requests', group: 'Reports & Analysis' },

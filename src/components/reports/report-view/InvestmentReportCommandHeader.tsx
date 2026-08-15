@@ -19,6 +19,14 @@ interface Props {
   clientInfo: ClientInfo | null;
   isClientReport: boolean;
   onBack: () => void;
+  /**
+   * Names where "back" goes when the caller knows. Set when the report was
+   * reached by drilling in from another module's list — the Cash Flow
+   * Analysis property list today — where a generic "Back" understates the
+   * journey and the client shortcut below is not the route the adviser came
+   * in on. When set it wins over that shortcut.
+   */
+  backLabel?: string;
   onReportsHome: () => void;
   onBackToClient: () => void;
   onNavigateToReport: (reportId: string) => void;
@@ -36,6 +44,7 @@ export function InvestmentReportCommandHeader({
   clientInfo,
   isClientReport,
   onBack,
+  backLabel,
   onReportsHome,
   onBackToClient,
   onNavigateToReport,
@@ -58,7 +67,12 @@ export function InvestmentReportCommandHeader({
             <span className="hidden sm:inline">Generated Reports</span>
             <span className="sr-only sm:hidden">Generated Reports home</span>
           </Button>
-          {isClientReport && clientInfo ? (
+          {backLabel ? (
+            <Button variant="ghost" size="sm" onClick={onBack} aria-label={backLabel} className="shrink-0 px-2 sm:px-3">
+              <ArrowLeft className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">{backLabel}</span>
+            </Button>
+          ) : isClientReport && clientInfo ? (
             <Button variant="ghost" size="sm" onClick={onBackToClient} className="shrink-0 px-2 sm:px-3">
               <ArrowLeft className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">Back to {clientInfo.primary_first_name} {clientInfo.primary_surname}</span>

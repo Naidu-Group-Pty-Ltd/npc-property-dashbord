@@ -1,34 +1,43 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
-import { CashFlowAnalysisModal } from '@/components/reports/CashFlowAnalysisModal';
 import { useToast } from '@/hooks/use-toast';
-import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { CashFlowEmptyState } from '@/components/cash-flow/CashFlowEmptyState';
 import { CashFlowLoadingState } from '@/components/cash-flow/CashFlowLoadingState';
 import { CashFlowPageHero } from '@/components/cash-flow/CashFlowPageHero';
 import { CashFlowPaginationFooter } from '@/components/cash-flow/CashFlowPaginationFooter';
 import { CashFlowReportGrid } from '@/components/cash-flow/CashFlowReportGrid';
 import { CashFlowToolbar } from '@/components/cash-flow/CashFlowToolbar';
+import {
+  getCashFlowScrollTop,
+  readCashFlowListState,
+  saveCashFlowListState,
+  setCashFlowScrollTop,
+  type CashFlowListState,
+} from '@/components/cash-flow/cashFlowListState';
+import { CASH_FLOW_ANALYSIS_ORIGIN } from '@/lib/navigation/cashFlowOrigin';
 import type { BuildTypeFilter, DateRangeFilter, InvestmentReport } from '@/components/cash-flow/types';
 
 export default function CashFlowAnalysis() {
   useModulePermissions('cash_flow');
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
+
+  // Read once, on the first render: both card actions leave this page, so the
+  // return trip restores the filters, the pagination depth and the scroll
+  // offset the adviser drilled down from.
+  const restoreRef = useRef<CashFlowListState | null>(readCashFlowListState());
+  const pendingScrollRef = useRef<number | null>(restoreRef.current?.scrollTop ?? null);
+
   const [reports, setReports] = useState<InvestmentReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
-  const [backendOffset, setBackendOffset] = useState(0);
-  const [openingReportId, setOpeningReportId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [buildTypeFilter, setBuildTypeFilter] = useState<BuildTypeFilter>('all');
-  const [selectedReport, setSelectedReport] = useState<InvestmentReport | null>(null);
-  const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
-  const [hasHandledDeepLink, setHasHandledDeepLink] = useState(false);
-  const [dateRange, setDateRange] = useState<DateRangeFilter>('30');
+  const [loadedPages, setLoadedPages] = useState(1);
+  const [searchQuery, setSearchQuery] = useState(restoreRef.current?.searchQuery ?? '');
+  const [buildTypeFilter, setBuildTypeFilter] = useState<BuildTypeFilter>(restoreRef.current?.buildTypeFilter ?? 'all');
+  const [dateRange, setDateRange] = useState<DateRangeFilter>(restoreRef.current?.dateRange ?? '30');
 
   const PAGE_SIZE = 50;
   const { toast } = useToast();
@@ -50,80 +59,153 @@ export default function CashFlowAnalysis() {
     }
   }, [dateRange]);
 
+  // ---------------------------------------------------------------------
+  // List state persistence
+  // ---------------------------------------------------------------------
+
+  const listStateRef = useRef<Omit<CashFlowListState, 'scrollTop'>>({
+    searchQuery,
+    buildTypeFilter,
+    dateRange,
+    loadedPages,
+  });
+
   useEffect(() => {
-    fetchReports();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    listStateRef.current = { searchQuery, buildTypeFilter, dateRange, loadedPages };
+  }, [searchQuery, buildTypeFilter, dateRange, loadedPages]);
+
+  /** Snapshot the list exactly as it looks right now, scroll offset included. */
+  const persistListState = useCallback(() => {
+    saveCashFlowListState({ ...listStateRef.current, scrollTop: getCashFlowScrollTop() });
+  }, []);
+
+  // Router unmounts this page on any navigation away from it — sidebar,
+  // browser back, or a drill-down — so this is the one place guaranteed to run.
+  useEffect(() => () => persistListState(), [persistListState]);
+
+  // ---------------------------------------------------------------------
+  // Data
+  // ---------------------------------------------------------------------
+
+  const fetchPage = useCallback(async (pageNumber: number): Promise<InvestmentReport[]> => {
+    const listOptions: Record<string, any> = {
+      status: 'completed',
+      isArchived: false,
+      page: pageNumber,
+      pageSize: PAGE_SIZE,
+    };
+    if (dateRangeCutoff) {
+      listOptions.createdAfter = dateRangeCutoff.toISOString();
+    }
+    const { data, error } = await invokeSecureFunction('get-investment-reports', {
+      listMode: true,
+      projection: 'cashFlowLibrary',
+      listOptions,
+    });
+    if (error) throw new Error(error.message);
+    return (data?.reports || []) as InvestmentReport[];
+  }, [dateRangeCutoff]);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Restoring a deeper list is done in parallel — one round trip per page,
+    // all in flight at once, so coming back does not feel slower than leaving.
+    const pagesToLoad = restoreRef.current?.loadedPages ?? 1;
+    restoreRef.current = null;
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        const pages = await Promise.all(
+          Array.from({ length: pagesToLoad }, (_, index) => fetchPage(index + 1)),
+        );
+        if (cancelled) return;
+        // The list response includes only pre-resolved financial summary scalars;
+        // the full calculation payload remains detail-only and is fetched by the
+        // detail route, which handles missing figures gracefully.
+        setReports(pages.flat());
+        setLoadedPages(pagesToLoad);
+        setHasMore(pages[pages.length - 1].length === PAGE_SIZE);
+      } catch (error: any) {
+        if (cancelled) return;
+        console.error('Error fetching reports:', error);
+        toast({
+          title: 'Error',
+          description: 'Failed to load investment reports',
+          variant: 'destructive',
+        });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    load();
+    return () => { cancelled = true; };
+    // `fetchPage` is recreated by the same `dateRange` change that drives this
+    // effect, so listing it would only double the fetch.
   }, [dateRange]);
 
-  // Handle deep-linking: auto-open analysis from URL params
+  // Scroll is restored after the restored pages have painted, never before —
+  // the document is short until then and the browser clamps the offset to it.
   useEffect(() => {
-    if (loading || hasHandledDeepLink || reports.length === 0) return;
-    
-    const reportId = searchParams.get('reportId');
-    const action = searchParams.get('action'); // 'view' or 'analyze' (default: analyze)
-    
-    if (reportId) {
-      if (action === 'view') {
-        navigate(`/generated-reports?reportId=${reportId}`, { replace: true });
-        setHasHandledDeepLink(true);
-        return;
-      }
-      const summary = reports.find(r => r.id === reportId);
-      // Fetch full payload by ID even if it's not in the loaded list (paginated/older reports)
-      openAnalysisForReport(summary || ({ id: reportId, property_address: '' } as InvestmentReport));
-      setSearchParams({}, { replace: true });
-      setHasHandledDeepLink(true);
+    if (loading) return;
+    const target = pendingScrollRef.current;
+    if (target == null) return;
+    pendingScrollRef.current = null;
+    if (target <= 0) return;
+    const outer = requestAnimationFrame(() => {
+      requestAnimationFrame(() => setCashFlowScrollTop(target));
+    });
+    return () => cancelAnimationFrame(outer);
+  }, [loading]);
+
+  const handleLoadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const nextPage = loadedPages + 1;
+      const fetched = await fetchPage(nextPage);
+      setReports(prev => [...prev, ...fetched]);
+      setLoadedPages(nextPage);
+      setHasMore(fetched.length === PAGE_SIZE);
+    } catch (error: any) {
+      console.error('Error fetching reports:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load investment reports',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoadingMore(false);
     }
-  }, [loading, reports, searchParams, hasHandledDeepLink, navigate]);
+  };
+
+  // ---------------------------------------------------------------------
+  // Legacy deep links
+  // ---------------------------------------------------------------------
+
+  // `?reportId=…` used to open the workspace as an overlay on this page. Both
+  // destinations are routes now, so the link forwards to one — with `replace`,
+  // so the query-string URL never becomes a history entry the back button
+  // would bounce off.
+  useEffect(() => {
+    const reportId = searchParams.get('reportId');
+    if (!reportId) return;
+    const action = searchParams.get('action');
+    if (action === 'view') {
+      navigate(`/generated-reports?reportId=${reportId}`, { replace: true });
+      return;
+    }
+    navigate(`/cash-flow-analysis/${reportId}`, { replace: true });
+  }, [searchParams, navigate]);
+
+  // ---------------------------------------------------------------------
+  // Derived
+  // ---------------------------------------------------------------------
 
   const getBuildType = (report: InvestmentReport): 'new_build' | 'existing_property' | 'land_only' => {
     const buildType = report.manual_overrides?.buildType;
     if (buildType === 'new_build' || buildType === 'land_only') return buildType;
     return 'existing_property';
-  };
-
-  const fetchReports = async (append = false, currentOffset = 0) => {
-    try {
-      if (append) setLoadingMore(true); else setLoading(true);
-      const pageNumber = Math.floor(currentOffset / PAGE_SIZE) + 1;
-      const listOptions: Record<string, any> = {
-        status: 'completed',
-        isArchived: false,
-        page: pageNumber,
-        pageSize: PAGE_SIZE,
-      };
-      if (dateRangeCutoff) {
-        listOptions.createdAfter = dateRangeCutoff.toISOString();
-      }
-      const { data, error } = await invokeSecureFunction('get-investment-reports', {
-        listMode: true,
-        projection: 'cashFlowLibrary',
-        listOptions,
-      });
-
-      if (error) throw new Error(error.message);
-
-      const fetched: InvestmentReport[] = data?.reports || [];
-      // The list response includes only pre-resolved financial summary scalars;
-      // the full calculation payload remains detail-only and is fetched on click.
-      setReports(prev => append ? [...prev, ...fetched] : fetched);
-      setBackendOffset(currentOffset + fetched.length);
-      setHasMore(fetched.length === PAGE_SIZE);
-    } catch (error: any) {
-      console.error('Error fetching reports:', error);
-      toast({
-        title: "Error",
-        description: "Failed to load investment reports",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  };
-
-  const handleLoadMore = () => {
-    fetchReports(true, backendOffset);
   };
 
   const filteredReports = reports.filter(report => {
@@ -135,7 +217,7 @@ export default function CashFlowAnalysis() {
   const getInvestmentGrade = (report: InvestmentReport) => {
     const score = report.investment_score?.overall_score;
     if (!score) return null;
-    
+
     if (score >= 85) return { grade: 'A+', color: 'bg-success' };
     if (score >= 75) return { grade: 'A', color: 'bg-success' };
     if (score >= 65) return { grade: 'B+', color: 'bg-success' };
@@ -146,41 +228,16 @@ export default function CashFlowAnalysis() {
     return { grade: 'F', color: 'bg-destructive' };
   };
 
-  const FULL_REPORT_SELECT = 'id, property_address, property_listing_id, report_content, created_at, current_version, report_scope, status, manual_overrides, financial_calculations, demographics_data, economic_data, investment_score, location_intelligence';
+  // ---------------------------------------------------------------------
+  // Drill-down
+  // ---------------------------------------------------------------------
 
-  const openAnalysisForReport = async (reportSummary: InvestmentReport) => {
-    setOpeningReportId(reportSummary.id);
-    try {
-      const { data, error } = await invokeSecureFunction('get-investment-reports', {
-        reportId: reportSummary.id,
-        listOptions: { select: FULL_REPORT_SELECT },
-      });
-      if (error) throw new Error(error.message);
-      const fullReport = data?.report || reportSummary;
-      setSelectedReport(fullReport);
-      setAnalysisModalOpen(true);
-
-      logActivityDirect({
-        actionType: 'cash_flow_created',
-        entityType: 'cash_flow_analysis',
-        entityId: fullReport.id,
-        entityName: fullReport.property_address,
-        metadata: { action: 'view_analysis' }
-      });
-    } catch (err: any) {
-      console.error('Error loading full report:', err);
-      toast({
-        title: "Error",
-        description: "Failed to load full report data",
-        variant: "destructive",
-      });
-    } finally {
-      setOpeningReportId(null);
-    }
-  };
-
-  const handleViewAnalysis = (report: InvestmentReport) => {
-    openAnalysisForReport(report);
+  // One journey for both actions: list → property → list. The origin travels
+  // in router state so the destination can name the way back precisely rather
+  // than guessing from history.
+  const drillDown = (path: string) => {
+    persistListState();
+    navigate(path, { state: { from: CASH_FLOW_ANALYSIS_ORIGIN } });
   };
 
   const handleClearFilters = () => {
@@ -221,11 +278,11 @@ export default function CashFlowAnalysis() {
       ) : (
         <CashFlowReportGrid
           reports={filteredReports}
-          openingReportId={openingReportId}
+          openingReportId={null}
           getBuildType={getBuildType}
           getInvestmentGrade={getInvestmentGrade}
-          onViewReport={(report) => navigate(`/investment-report/${report.id}`)}
-          onOpenCashFlow={handleViewAnalysis}
+          onViewReport={(report) => drillDown(`/investment-report/${report.id}`)}
+          onOpenCashFlow={(report) => drillDown(`/cash-flow-analysis/${report.id}`)}
         />
       )}
 
@@ -238,29 +295,6 @@ export default function CashFlowAnalysis() {
           onLoadMore={handleLoadMore}
         />
       )}
-
-      <CashFlowAnalysisModal
-        report={selectedReport}
-        isOpen={analysisModalOpen}
-        onClose={() => {
-          setAnalysisModalOpen(false);
-          setSelectedReport(null);
-        }}
-        onReportUpdated={() => {
-          fetchReports();
-          // Also update the selected report if it was modified
-          if (selectedReport) {
-            invokeSecureFunction('get-investment-reports', {
-              reportId: selectedReport.id,
-              listOptions: {
-                select: 'id, property_address, property_listing_id, report_content, created_at, current_version, report_scope, status, manual_overrides, financial_calculations, demographics_data, economic_data, investment_score, location_intelligence'
-              }
-            }).then(({ data }) => {
-              if (data?.report) setSelectedReport(data.report);
-            });
-          }
-        }}
-      />
     </div>
   );
 }

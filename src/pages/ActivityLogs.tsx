@@ -224,7 +224,9 @@ function entityHref(entityType: string, entityId: string | null): string | null 
   switch (entityType) {
     case 'investment_report': return entityId ? `/investment-report/${entityId}` : '/reports/analytics';
     case 'property_comparison': return '/reports/analytics';
-    case 'cash_flow_analysis': return '/cash-flow-analysis';
+    // The workspace has an address of its own now, so a logged analysis
+    // links to the property it was run against rather than to the list.
+    case 'cash_flow_analysis': return entityId ? `/cash-flow-analysis/${entityId}` : '/cash-flow-analysis';
     case 'email': return '/email-copilot';
     case 'call_log':
     case 'call_alert_rule': return '/call-logs';
