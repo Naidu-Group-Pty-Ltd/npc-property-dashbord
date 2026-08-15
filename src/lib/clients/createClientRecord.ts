@@ -83,12 +83,21 @@ export async function createClientRecord(
   );
 
   if (error) throw new Error(error.message || "The client could not be created.");
-  // The multiplexer answers `{ data: <row> }` on success. A response with no
-  // row is not a success we can build on — the caller is about to activate
-  // this client and needs its id.
-  const created = (data as any)?.data ?? (data as any);
+
+  // `manage-client-data` answers `{ success: true, result: <row> }`. Earlier this
+  // read `data.data`, which never exists on that envelope — so every creation
+  // succeeded server-side and reported "the client was not returned". Accept the
+  // canonical `result` first, then the historical shapes, and unwrap arrays
+  // (the create branch can answer with a row array).
+  const body = data as any;
+  if (body && body.success === false) {
+    throw new Error(body.error || "The client could not be created.");
+  }
+  const candidate = body?.result ?? body?.data?.result ?? body?.data ?? body;
+  const created = Array.isArray(candidate) ? candidate[0] : candidate;
   if (!created?.id) {
     throw new Error("The client was not returned by the server, so it cannot be activated yet.");
   }
   return created as CreatedClientRecord;
+
 }
