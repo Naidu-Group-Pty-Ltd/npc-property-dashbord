@@ -29,10 +29,11 @@ export function ComparisonReportCard({ comparison, generatorLabel, onView, onTog
             <Scale className="h-3 w-3" />
             Comparison
           </Badge>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Calendar className="h-3.5 w-3.5" />
-            {format(new Date(comparison.created_at), 'MMM dd, yyyy')}
+          <div className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
+            <Calendar className="h-3.5 w-3.5 shrink-0" />
+            <span className="whitespace-nowrap">{format(new Date(comparison.created_at), "MMM dd, yyyy · h:mm a")}</span>
           </div>
+
         </div>
 
         <div className="space-y-2">
