@@ -14,6 +14,8 @@ import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { extractFinanceCredential, extractFinanceSessionToken } from '../_shared/financeSessionToken.ts';
+import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -44,12 +46,10 @@ function jsonWithHeaders(d: any, responseCorsHeaders: Record<string, string>, st
   });
 }
 
+// Retained for any future caller, but delegating: the hand-rolled chain could
+// not see the session cookie, which is where the client's session actually is.
 function tokenFrom(headers: Headers, body?: any) {
-  return headers.get('x-finance-session-token')
-    || body?.finance_session_token
-    || headers.get('x-session-token')
-    || body?.session_token
-    || null;
+  return extractFinanceSessionToken(headers, body as Record<string, unknown> | undefined);
 }
 
 Deno.serve(async (req) => {
@@ -62,7 +62,18 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
     const body = await req.json().catch(() => ({}));
-    const sessionToken = tokenFrom(req.headers, body);
+    // The session may arrive in the HttpOnly `__Host-finance_session_token`
+    // cookie, which is the only place the client has it from the second page
+    // view onwards. A cookie is ambient on cross-site requests (SameSite=None),
+    // so honouring one requires the origin allow-list; a header or body
+    // credential cannot be forged cross-site and stays unguarded.
+    // See docs/agreements/PARTNER_SESSION_TRANSPORT.md.
+    const credential = extractFinanceCredential(req.headers, body);
+    if (credential.source === 'cookie') {
+      const csrf = enforceCsrf(req);
+      if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+    }
+    const sessionToken = credential.token;
     if (!sessionToken) return json({ error: 'Session token required' }, 401);
 
     const { data: portalUser } = await supabase

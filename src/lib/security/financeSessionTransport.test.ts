@@ -138,7 +138,64 @@ describe('honouring a cookie means guarding against CSRF', () => {
   });
 });
 
+describe('the inline-resolver functions, converted individually', () => {
+  const CONVERTED = [
+    'finance-portal-batch6', 'finance-portal-batch7', 'finance-portal-batch8',
+    'finance-portal-batch9-10', 'finance-portal-client-tasks',
+    'finance-portal-lender-packet', 'finance-portal-messages',
+    'finance-portal-settlement-runway',
+  ];
+
+  it.each(CONVERTED)('%s resolves through the shared reader', (fn) => {
+    const src = repoFile('supabase', 'functions', fn, 'index.ts');
+    expect(src).toMatch(/extractFinanceCredential|extractFinanceSessionToken/);
+    // The hand-rolled chain that could not see a cookie must be gone.
+    expect(src).not.toMatch(
+      /=\s*req\.headers\.get\('x-finance-session-token'\)\s*\|\|\s*body\.finance_session_token/,
+    );
+  });
+
+  it.each(CONVERTED)('%s covers cookie auth with a CSRF guard', (fn) => {
+    // Honouring a SameSite=None cookie without this hands an attacker's page
+    // ambient authority over a signed-in partner. Either form is acceptable:
+    // a per-source guard, or an unconditional one at the top of the handler
+    // (which is what finance-portal-messages already had).
+    const src = repoFile('supabase', 'functions', fn, 'index.ts');
+    expect(src).toContain('enforceCsrf(req)');
+    expect(src).toContain('csrfDenied');
+  });
+});
+
+describe('finance-portal-messages keeps explicit credentials ahead of the cookie', () => {
+  const src = repoFile('supabase', 'functions', 'finance-portal-messages', 'index.ts');
+
+  it('decides the staff branch before the cookie is consulted', () => {
+    // The pre-existing rule: a token deliberately presented for THIS portal
+    // beats an ambiently-attached cookie. The finance cookie is ambient too, so
+    // reading it earlier would re-attribute a staff user to `partner` purely
+    // because a finance cookie rode along — the same class of bug as the
+    // staff-cookie premise this endpoint already had to replace.
+    expect(src).toContain('const isStaffCaller = !explicitFinanceToken');
+    expect(src.indexOf('const isStaffCaller')).toBeLessThan(src.indexOf('financeCookieToken'));
+  });
+
+  it('consults the cookie only with no explicit credential for any portal', () => {
+    expect(src).toContain(
+      '(!explicitFinanceToken && !portalToken && !isStaffCaller)',
+    );
+  });
+
+  it('still prefers the explicitly presented finance token', () => {
+    expect(src).toContain('const financeToken = explicitFinanceToken ?? financeCookieToken;');
+  });
+});
+
 describe('the sweep is enforced mechanically', () => {
+  it('has nothing left unconverted', () => {
+    const guard = repoFile('scripts', 'security', 'check-finance-session-transport.mjs');
+    expect(guard).toContain('const BASELINE = new Set([]);');
+  });
+
   it('ships a guard, and the security suite runs it', () => {
     const pkg = JSON.parse(repoFile('package.json'));
     expect(pkg.scripts['security:finance-session-transport']).toContain(

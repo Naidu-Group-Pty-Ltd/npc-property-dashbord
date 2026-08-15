@@ -24,6 +24,8 @@ import {
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { extractFinanceCredential } from '../_shared/financeSessionToken.ts';
+import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -122,7 +124,18 @@ Deno.serve(async (req) => {
     const operation = body.operation as string | undefined;
     if (!operation) return json({ error: 'operation required' }, 400);
 
-    const token = req.headers.get('x-finance-session-token') || body.finance_session_token || null;
+    // The session may arrive in the HttpOnly `__Host-finance_session_token`
+    // cookie, which is the only place the client has it from the second page
+    // view onwards. A cookie is ambient on cross-site requests (SameSite=None),
+    // so honouring one requires the origin allow-list; a header or body
+    // credential cannot be forged cross-site and stays unguarded.
+    // See docs/agreements/PARTNER_SESSION_TRANSPORT.md.
+    const credential = extractFinanceCredential(req.headers, body);
+    if (credential.source === 'cookie') {
+      const csrf = enforceCsrf(req);
+      if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+    }
+    const token = credential.token;
     if (!token) return json({ error: 'Finance session token required' }, 401);
     const { data: portalUser } = await supabase.from('finance_portal_users')
       .select('id, email, is_active, revoked_at, session_expires_at')

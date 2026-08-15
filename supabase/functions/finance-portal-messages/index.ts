@@ -22,6 +22,7 @@ import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { extractFinanceSessionToken } from '../_shared/financeSessionToken.ts';
 const BUCKET = 'finance-portal-messages';
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const SIGNED_URL_TTL = 60 * 10;
@@ -175,11 +176,31 @@ Deno.serve(async (req) => {
     // in a way an ambiently-attached cookie never can, so it wins. Staff are
     // unaffected: the Command Centre sends neither a finance nor a client
     // portal token, so it still falls through to the staff branch.
-    const financeToken = extractFinancePortalToken(req.headers, body);
+    const explicitFinanceToken = extractFinancePortalToken(req.headers, body);
     const portalToken = req.headers.get('x-portal-session-token') || body?.portal_session_token || null;
     const hasStaffCookie = /(?:^|;\s*)__Host-session_token=/.test(req.headers.get('cookie') || '');
     const commandCentreToken = req.headers.get('x-command-centre-session-token') || body?.command_centre_session_token || null;
-    const isStaffCaller = !financeToken && !portalToken && (hasStaffCookie || !!commandCentreToken);
+    const isStaffCaller = !explicitFinanceToken && !portalToken && (hasStaffCookie || !!commandCentreToken);
+
+    // The finance session may exist ONLY in the HttpOnly
+    // `__Host-finance_session_token` cookie — the client has no other copy from
+    // the second page view onwards, so without this a partner is 401 on every
+    // message once they reload.
+    //
+    // But that cookie is ambient in exactly the way the rule above is written
+    // to defend against, and this endpoint serves three actors. So it is
+    // consulted ONLY when the caller presented no explicit credential for any
+    // portal and is not a staff caller. Reading it any earlier would re-attribute
+    // a signed-in staff user — or a client-portal user — to `partner` purely
+    // because a finance cookie rode along, which is the same class of bug as
+    // the staff-cookie premise this block already replaced.
+    //
+    // CSRF is already enforced unconditionally at the top of this handler, so
+    // honouring a cookie here adds no unguarded ambient authority.
+    const financeCookieToken = (!explicitFinanceToken && !portalToken && !isStaffCaller)
+      ? extractFinanceSessionToken(req.headers, body)
+      : null;
+    const financeToken = explicitFinanceToken ?? financeCookieToken;
     let actor: { type: 'partner'; portalUserId: string; email: string; name: string }
              | { type: 'staff'; userId: string; username: string; authMethod?: string | null }
              | { type: 'client'; portalUserId: string; clientId: string; name: string }

@@ -89,10 +89,30 @@ Header first, then body, then cookie — so every path that worked before still
 works, and the cookie is picked up when they are absent. The Command Centre's
 `__Host-session_token` is still refused as a finance credential.
 
-**The sweep.** 26 `finance-portal-*` functions are now cookie-aware, up from 2.
-Each local `extractToken` keeps its name and signature and delegates its body,
-so no call site moved. `finance-portal-commissions` read `body.finance_session_token`
-only and needed its own change.
+**The sweep.** **34** `finance-portal-*` functions are now cookie-aware, up
+from 2, and the baseline is empty. The first pass converted 26 mechanically —
+each local `extractToken` keeps its name and signature and delegates its body,
+so no call site moved — and `finance-portal-commissions` read
+`body.finance_session_token` only and needed its own change.
+
+The remaining **8 resolved the session inline** rather than through a named
+helper, which is why a pattern-matching sweep could not see them
+(`batch6/7/8/9-10`, `client-tasks`, `lender-packet`, `messages`,
+`settlement-runway`). Each was converted individually after reading its actor
+model, because two are not single-actor:
+
+- **`finance-portal-client-tasks`** also carries a CLIENT portal token
+  (`x-portal-session-token`). Only the finance one was changed. Its branch is
+  chosen by *operation* (`FINANCE_OPS`), not by credential, so the cookie is
+  unambiguous there.
+- **`finance-portal-messages`** serves partner, client **and** staff, and
+  already carried an explicit-credential-first rule — see the CSRF section
+  below for why that made it the delicate one.
+
+Seven of the eight had no CSRF guard at all, because none of them had ever
+honoured a cookie. Each gained the per-source guard. `messages` already
+enforced CSRF unconditionally at the top of its handler, so it needed only the
+cookie read.
 
 **A guard, because review cannot catch this.** A local six-line `extractToken`
 reading two headers looks perfectly reasonable on its own; it is only wrong in
@@ -120,6 +140,33 @@ a signed-in partner's browser.
   callers;
 - `csrfGuard.ts` states the same rule for itself and bypasses when no cookie is
   present.
+
+### The trap in `finance-portal-messages`
+
+That endpoint resolves three actors, and it already carried a hard-won rule: a
+credential **deliberately presented for this portal** outranks an
+**ambiently-attached cookie**. It was written because a broker signed into the
+Command Centre in the same browser had their finance token discarded — the
+staff cookie rode along on `credentials: 'include'` and won.
+
+The finance session cookie is ambient in exactly the same way. Reading it
+alongside the explicit tokens would have re-created that bug with the actors
+reversed: a staff user, or a client-portal user, silently re-attributed to
+`partner` because a finance cookie happened to be attached.
+
+So in that one function the cookie is the **only** credential that is gated,
+and it is gated on every other actor having been ruled out first:
+
+```ts
+const isStaffCaller = !explicitFinanceToken && !portalToken && (hasStaffCookie || !!commandCentreToken);
+const financeCookieToken = (!explicitFinanceToken && !portalToken && !isStaffCaller)
+  ? extractFinanceSessionToken(req.headers, body)
+  : null;
+const financeToken = explicitFinanceToken ?? financeCookieToken;
+```
+
+`crossPortalSessionIsolation.test.ts` pins both halves — the original rule and
+this ordering.
 
 ## Rules
 
