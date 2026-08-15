@@ -185,3 +185,16 @@ export function snapshotFileName(rawUrl: string, extension: string): string {
  */
 export const NOTION_NOT_PUBLIC_MESSAGE =
   'This Notion page is not publicly accessible. Share it publicly or upload/export the stock list instead.';
+
+/**
+ * The message for a Notion page we COULD read and could not get a stock list
+ * out of.
+ *
+ * These two are different findings and must never share wording. The message
+ * above accuses the builder's sharing settings; this one does not, because a
+ * reachable page that yielded no rows is evidence about the CONTENT and none
+ * at all about who may see it.
+ */
+export const NOTION_NO_PROPERTIES_MESSAGE =
+  'No properties could be read from this Notion page. Check that it lists one property per row, '
+  + 'or upload/export the stock list instead.';

@@ -88,7 +88,9 @@ alias('external_reference',
 
 alias('development_name',
   'development', 'development name', 'estate', 'estate name', 'community',
-  'community name', 'subdivision');
+  'community name', 'subdivision',
+  // Notion's own label for the estate column on a database view.
+  'estate tag');
 
 alias('project_name',
   'project', 'project name', 'stage', 'stage name', 'release', 'release name',
@@ -96,7 +98,12 @@ alias('project_name',
 
 alias('address_line',
   'address', 'street address', 'property address', 'full address', 'address line',
-  'address line 1', 'street', 'site address');
+  'address line 1', 'street', 'site address',
+  // A Notion database's TITLE column is what names the row, and on a stock
+  // list that is the lot and its address ("Lot 60434 - Cloverton Estate,
+  // Kalkallo VIC 3064"). Without this every row from a Notion collection
+  // carries nothing identifying and `identifiesAProperty` drops all of them.
+  'deal', 'listing', 'property');
 
 alias('suburb', 'suburb', 'city', 'town', 'locality', 'suburb town');
 alias('state', 'state', 'st', 'state territory', 'region');
@@ -139,7 +146,7 @@ alias('price',
 
 alias('availability_status',
   'status', 'availability', 'available', 'sales status', 'stock status',
-  'availability status');
+  'availability status', 'package status', 'lot status', 'property status');
 
 alias('expected_completion',
   'completion', 'expected completion', 'completion date', 'est completion',

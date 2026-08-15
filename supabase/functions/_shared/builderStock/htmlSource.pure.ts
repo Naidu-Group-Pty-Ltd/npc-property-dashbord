@@ -198,13 +198,13 @@ export function extractHtmlImageUrls(html: string, baseUrl: string, limit = 20):
 // ---------------------------------------------------------------------------
 
 /**
- * Signals that a Notion URL did not give us the page.
+ * Signals that a Notion URL did not give us the page BECAUSE WE MAY NOT HAVE
+ * IT. A private Notion page does not 401 over HTTP — it returns 200 with a
+ * request-access shell — so these are the words that shell says.
  *
- * A private Notion page does not 401 — it returns 200 with a login shell, so
- * "we got HTML" is not the same as "we got the stock list". These are the
- * markers of a shell, checked only after extraction has already failed to find
- * anything, so a public page that happens to mention the word "login" is not
- * refused.
+ * They are the only evidence of an access restriction this module recognises.
+ * "Short" is not on the list and must never be added to it: see the note on
+ * `assessNotionReadability`.
  */
 const NOTION_GATE_MARKERS = [
   'you need access',
@@ -218,23 +218,68 @@ const NOTION_GATE_MARKERS = [
   'page not found',
 ];
 
+/** Accessibility and extraction are different questions. This answers the first. */
+export type NotionAccessState =
+  /** An explicit gate. The page said we may not read it. */
+  | 'gated'
+  /** Readable prose came back. Whether it is a stock list is a later question. */
+  | 'content'
+  /** 200, no gate, no content: Notion's ordinary client-rendering shell. */
+  | 'shell';
+
 export interface NotionReadability {
-  /** True when the page looks like a login/permission shell, not content. */
+  /**
+   * True ONLY when an explicit access marker was found. This is the single
+   * input allowed to produce a "not publicly accessible" answer, and it is
+   * evidence rather than inference.
+   */
   gated: boolean;
+  /** Which marker matched, for the server-side diagnostics. */
   marker: string | null;
+  /**
+   * True when the response was reachable and carried neither a gate nor any
+   * readable text — which is what EVERY public Notion page looks like, because
+   * the content arrives afterwards. Not a permission problem.
+   */
+  clientRendered: boolean;
+  state: NotionAccessState;
+  textLength: number;
 }
 
+/**
+ * Is this Notion response an access gate, real content, or the shell?
+ *
+ * WHAT THIS DELIBERATELY NO LONGER DOES. It used to answer `gated: true` for
+ * any response yielding under 40 characters of text. Every published Notion
+ * page yields under 40 characters of text — the first HTML response is a 19 KB
+ * rendering shell whose `<title>` is the word "Notion" — so that rule reported
+ * "this page is not publicly accessible" about pages that were, in fact,
+ * shared to the whole web. Telling a builder to change a sharing setting that
+ * is already correct is worse than telling them nothing.
+ *
+ * Markers are matched against the CHROME-STRIPPED text, so a script tag that
+ * happens to contain the string "request access" cannot gate a page.
+ */
 export function assessNotionReadability(html: string, extractedText: string): NotionReadability {
-  // A page that produced usable prose is readable whatever else it says.
-  if (extractedText.trim().length >= 200) return { gated: false, marker: null };
+  const text = extractedText.trim();
+  const haystack = `${text}\n${stripTags(stripChrome(html)).slice(0, 40_000)}`.toLowerCase();
 
-  const haystack = `${extractedText}\n${stripTags(html).slice(0, 20_000)}`.toLowerCase();
   for (const marker of NOTION_GATE_MARKERS) {
-    if (haystack.includes(marker)) return { gated: true, marker };
+    if (haystack.includes(marker)) {
+      return { gated: true, marker, clientRendered: false, state: 'gated', textLength: text.length };
+    }
   }
-  // A Notion page that yielded almost nothing is, in practice, a client-rendered
-  // shell we were not given the content for. Treated the same way.
-  return { gated: extractedText.trim().length < 40, marker: null };
+
+  // No gate. Either the page gave us prose, or it gave us its shell — and the
+  // shell is the ordinary case, not a refusal.
+  const clientRendered = text.length < 40;
+  return {
+    gated: false,
+    marker: null,
+    clientRendered,
+    state: clientRendered ? 'shell' : 'content',
+    textLength: text.length,
+  };
 }
 
 /**

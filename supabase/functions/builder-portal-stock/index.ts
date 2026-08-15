@@ -44,7 +44,12 @@ import {
   NOTION_NOT_PUBLIC_MESSAGE, normaliseStockSourceUrl, snapshotFileName,
   stockSourceDisplayName,
 } from '../_shared/builderStock/urlSource.pure.ts';
-import { extractHtmlTitle } from '../_shared/builderStock/htmlSource.pure.ts';
+import {
+  assessNotionReadability, extractHtmlTitle, extractNotionGridTables, readHtmlSource,
+} from '../_shared/builderStock/htmlSource.pure.ts';
+import {
+  recoverNotionPublicContent, type NotionRecovery,
+} from '../_shared/builderStock/notionPublicContent.ts';
 import {
   itemsToArchiveOnSourceDelete,
 } from '../_shared/builderStock/sourceDeletion.pure.ts';
@@ -71,6 +76,19 @@ const ENRICHMENT_MAX_ITEMS = 25;
 
 function cleanText(value: unknown, max = 200): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+/**
+ * The host of a URL, for diagnostics. The HOST and never the URL: a link a
+ * builder pasted can carry a token or a signature in its query string, and a
+ * log line is the wrong place for either.
+ */
+function hostOf(rawUrl: string): string | null {
+  try {
+    return new URL(rawUrl).hostname;
+  } catch {
+    return null;
+  }
 }
 
 Deno.serve(async (req) => {
@@ -421,7 +439,7 @@ Deno.serve(async (req) => {
         || head.startsWith('<?xml') && head.includes('xhtml');
 
       const detection = detectDocumentMime(fetched.bytes);
-      const classification = classifyFetchedSource({
+      let classification = classifyFetchedSource({
         detectedMime: detection.mime,
         detectionReason: detection.reason,
         declaredContentType: fetched.declaredContentType,
@@ -429,18 +447,118 @@ Deno.serve(async (req) => {
         looksLikeHtml,
       });
       if (classification.kind === 'unsupported') {
+        // A content type we cannot read is a statement about the CONTENT. It
+        // used to answer "this Notion page is not publicly accessible", which
+        // is a claim about sharing settings that nothing here has evidence for.
         return json({
-          error: normalised.isNotion ? NOTION_NOT_PUBLIC_MESSAGE
-            : (classification.reason ?? 'That address did not return a stock list we can read.'),
+          error: classification.reason ?? 'That address did not return a stock list we can read.',
           code: 'unsupported_source',
         }, 400);
       }
 
       // A page title makes the history row readable; it is only available for
       // markup, and `stockSourceDisplayName` falls back to a shortened URL.
-      const pageTitle = classification.kind === 'markup'
+      let pageTitle = classification.kind === 'markup'
         ? extractHtmlTitle(new TextDecoder('utf-8', { fatal: false }).decode(fetched.bytes))
         : null;
+
+      /**
+       * What actually gets snapshotted and imported.
+       *
+       * For every source but one these ARE the fetched bytes. The exception is
+       * a published Notion page, whose HTML is a rendering shell that contains
+       * none of the page — see below.
+       */
+      let importBytes = fetched.bytes;
+      let snapshotContentType = fetched.declaredContentType || 'application/octet-stream';
+      let notionDiagnostics: Record<string, unknown> | null = null;
+
+      // =================================================================
+      // Public Notion pages
+      //
+      // ACCESSIBILITY AND EXTRACTION ARE SEPARATE QUESTIONS, and conflating
+      // them is what made this path tell builders their published stock list
+      // was private. Accessibility is settled here, from evidence: the HTTP
+      // status (already handled above), an explicit access-gate marker in the
+      // markup, or a 401/403 from Notion's own endpoints. Nothing else may
+      // produce `notion_not_public`.
+      // =================================================================
+      if (normalised.isNotion && classification.kind === 'markup') {
+        const html = new TextDecoder('utf-8', { fatal: false }).decode(fetched.bytes);
+        const page = readHtmlSource(html, fetched.finalUrl);
+        const readability = assessNotionReadability(html, page.text);
+
+        if (readability.gated) {
+          // Evidence: the page itself said we may not read it.
+          console.warn('[builder-portal-stock] notion access gate', {
+            source_host: normalised.host,
+            final_host: hostOf(fetched.finalUrl),
+            http_status: fetched.status,
+            content_type: fetched.declaredContentType || null,
+            byte_length: fetched.bytes.length,
+            page_title: pageTitle,
+            gate_marker: readability.marker,
+          });
+          return json({ error: NOTION_NOT_PUBLIC_MESSAGE, code: 'notion_not_public' }, 400);
+        }
+
+        // No gate, and the shell carried no table. Recover the page's own
+        // content from Notion's public, unauthenticated endpoints.
+        if (!page.tables.length) {
+          let recovery: NotionRecovery | null = null;
+          try {
+            recovery = await recoverNotionPublicContent(fetched.finalUrl, html);
+          } catch (error) {
+            // A recovery that throws is a retrieval fault, never a permission
+            // finding. The import continues on the shell and reports whatever
+            // the pipeline makes of it.
+            console.error('[builder-portal-stock] notion recovery failed', {
+              source_host: normalised.host,
+              message: String((error as { message?: string })?.message ?? error),
+            });
+          }
+
+          notionDiagnostics = {
+            source_host: normalised.host,
+            final_host: hostOf(fetched.finalUrl),
+            http_status: fetched.status,
+            content_type: fetched.declaredContentType || null,
+            byte_length: fetched.bytes.length,
+            page_title: pageTitle,
+            html_tables: page.tables.length,
+            notion_grids: extractNotionGridTables(html).length,
+            readable_text_chars: readability.textLength,
+            access_gate_marker: readability.marker,
+            client_rendered_shell: readability.clientRendered,
+            recovery_ok: recovery?.ok ?? false,
+            recovery_reason: recovery && !recovery.ok ? recovery.reason : null,
+            ...(recovery?.diagnostics ?? {}),
+          };
+
+          if (recovery && !recovery.ok && recovery.reason === 'access_denied') {
+            console.warn('[builder-portal-stock] notion access denied', notionDiagnostics);
+            return json({ error: NOTION_NOT_PUBLIC_MESSAGE, code: 'notion_not_public' }, 400);
+          }
+
+          if (recovery?.ok) {
+            // The recovered content REPLACES the shell as the snapshot, so the
+            // stored object is what was actually imported rather than a page
+            // of script tags. A table becomes CSV and goes through the
+            // delimited reader; prose stays markup for the model-assisted path.
+            if (recovery.matrix) {
+              importBytes = new TextEncoder().encode(recovery.csv);
+              classification = { kind: 'delimited', extension: 'csv' };
+              snapshotContentType = 'text/csv';
+            } else {
+              importBytes = new TextEncoder().encode(recovery.text);
+              classification = { kind: 'delimited', extension: 'txt' };
+              snapshotContentType = 'text/plain';
+            }
+            pageTitle = recovery.title ?? pageTitle;
+          }
+        }
+      }
+
       const displayName = stockSourceDisplayName(fetched.finalUrl, pageTitle);
       const objectName = safeObjectName(snapshotFileName(fetched.finalUrl, classification.extension));
 
@@ -452,8 +570,8 @@ Deno.serve(async (req) => {
       // third-party URL to show the stock.
       const { error: snapshotError } = await supabase.storage
         .from(STOCK_LIST_BUCKET)
-        .upload(storagePath, fetched.bytes, {
-          contentType: fetched.declaredContentType || 'application/octet-stream',
+        .upload(storagePath, importBytes, {
+          contentType: snapshotContentType,
           upsert: true,
         });
       if (snapshotError) {
@@ -477,8 +595,9 @@ Deno.serve(async (req) => {
           message: snapshotError.message,
           declared_content_type: fetched.declaredContentType || null,
           detected_content_type: detection.mime,
+          snapshot_content_type: snapshotContentType,
           classified_as: classification.kind,
-          byte_length: fetched.bytes.length,
+          byte_length: importBytes.length,
           source_host: normalised.host,
         });
         return json({ error: 'That page could not be saved for import.', code: 'snapshot_failed' }, 502);
@@ -497,7 +616,7 @@ Deno.serve(async (req) => {
           retrieved_at: new Date().toISOString(),
           original_filename: objectName,
           declared_content_type: fetched.declaredContentType || null,
-          byte_size: fetched.bytes.length,
+          byte_size: importBytes.length,
           storage_bucket: STOCK_LIST_BUCKET,
           storage_path: storagePath,
           status: 'parsing',
@@ -524,12 +643,32 @@ Deno.serve(async (req) => {
           organisationName,
           builderUserId: me.id,
           upload: { id: uploadId, original_filename: displayName },
-          bytes: fetched.bytes,
+          bytes: importBytes,
           classification,
           sourceKind: 'url',
           isNotionSource: normalised.isNotion,
         });
-        return await finishImport(uploadId, result, { strategy_source: 'url' });
+
+        /**
+         * A Notion source that produced nothing is the case this whole path
+         * used to get wrong, so it is the case that gets the full record.
+         * Server-side only, and note what is absent: no URL (a link can carry
+         * a token in its query string), no cookie, no header, no key. The HOST
+         * identifies the provider and nothing here identifies a credential.
+         */
+        if (notionDiagnostics && (!result.ok || result.summary.detected === 0)) {
+          console.warn('[builder-portal-stock] notion produced no stock', {
+            ...notionDiagnostics,
+            parse_strategy: result.ok ? result.strategy : null,
+            rows_detected: result.ok ? result.summary.detected : 0,
+            failure_code: result.ok ? null : result.code,
+          });
+        }
+
+        return await finishImport(uploadId, result, {
+          strategy_source: 'url',
+          ...(notionDiagnostics ? { notion_recovery: notionDiagnostics.recovery_ok } : {}),
+        });
       } catch (error) {
         console.error('[builder-portal-stock] url processing failed', error);
         return await failUpload(uploadId, 'processing_failed',

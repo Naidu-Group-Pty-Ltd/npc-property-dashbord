@@ -18,7 +18,7 @@ import type { StockFileClassification } from './fileTypes.pure.ts';
 import { extractStockFile, StockExtractionError } from './extract.ts';
 import { extractStockRowsFromImages, extractStockRowsFromText } from './modelExtract.ts';
 import { importStockRecords } from './importStock.ts';
-import { NOTION_NOT_PUBLIC_MESSAGE } from './urlSource.pure.ts';
+import { NOTION_NO_PROPERTIES_MESSAGE } from './urlSource.pure.ts';
 
 /** Wall clock allowed to the model, leaving room for the import itself. */
 const MODEL_BUDGET_MS = 90_000;
@@ -38,6 +38,11 @@ export interface RunImportInput {
   classification?: StockFileClassification;
   /** Shapes the "nothing readable" message. */
   sourceKind?: 'file' | 'url';
+  /**
+   * Shapes the "nothing readable" message, and NOTHING ELSE. This flag must
+   * never be allowed to imply anything about whether the page could be read —
+   * see the note in the zero-row branch below.
+   */
   isNotionSource?: boolean;
 }
 
@@ -188,11 +193,22 @@ export async function runStockImport(input: RunImportInput): Promise<RunImportRe
   });
 
   if (!outcome.detected) {
-    // A Notion page that yielded nothing is almost always a permission
-    // problem rather than an empty page, and that is the one refusal a
-    // builder can fix themselves.
+    /**
+     * ZERO ROWS IS NOT A PERMISSION FINDING.
+     *
+     * This branch used to answer `notion_not_public` for any Notion source
+     * that produced no rows, which meant the pipeline was reporting on a
+     * page's SHARING STATE from evidence that says nothing about it. A public
+     * page whose columns we did not recognise, a public page that is genuinely
+     * empty, and a private page all reach here identically.
+     *
+     * Accessibility is settled BEFORE the pipeline runs, by the fetch status
+     * and by `assessNotionReadability` looking for an explicit gate; nothing
+     * in here may contradict that. What this branch knows is only that the
+     * content produced no properties, so that is all it says.
+     */
     if (input.isNotionSource) {
-      return fail('notion_not_public', NOTION_NOT_PUBLIC_MESSAGE);
+      return fail('no_properties_found', NOTION_NO_PROPERTIES_MESSAGE);
     }
     return fail('no_properties_found', sourceKind === 'url'
       ? 'No properties could be read from that page. Check that it lists one property per row, or upload the stock list instead.'
