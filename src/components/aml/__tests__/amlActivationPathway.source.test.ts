@@ -125,7 +125,51 @@ describe("AML activation pathway — server contract", () => {
     expect(searchBlock).toContain(".from('clients')");
     expect(searchBlock).not.toContain("marketing");
     expect(searchBlock).not.toMatch(/filter\(.*is_active === true\)\.slice/);
-    expect(searchBlock).toContain("selectActivationMatches");
+    // Matching is the pure module's job either way — the op must not grow a
+    // hand-rolled copy of the all-tokens-on-one-person rule.
+    expect(searchBlock).toContain("selectActivationPage");
+  });
+
+  /**
+   * Browse mode. The picker used to answer `{ clients: [] }` below two
+   * characters, so an operator had to already know a client's name — and
+   * spell it — before the system would admit the client existed. Browsing is
+   * the same op, projection and permission gate; only the filter differs.
+   * A separate "list clients" endpoint would be a second source of truth
+   * about which clients an AML operator may see, and the two would drift.
+   */
+  it("browses the register instead of answering nothing to an empty query", () => {
+    const searchBlock = edgeSource.slice(
+      edgeSource.indexOf("case 'search_clients'"),
+      edgeSource.indexOf("case 'get_client_for_activation'"),
+    );
+    // The browse/search decision is made in one place, shared with the tests.
+    expect(searchBlock).toContain("isBrowseQuery");
+    // The old early return is gone.
+    expect(searchBlock).not.toMatch(/q\.length < 2.*return jsonResponse\(\{ clients: \[\] \}\)/s);
+    // Paging is done by the database on the browse path, not by pulling the
+    // whole register into memory to sort it.
+    expect(searchBlock).toContain(".range(offset, offset + limit - 1)");
+    expect(searchBlock).toContain("count: 'exact'");
+    // A nullable `is_active` is not active — the inactive slice must include
+    // nulls, or those rows appear in neither tab and read as missing clients.
+    expect(searchBlock).toContain("is_active.eq.false,is_active.is.null");
+  });
+
+  it("browse is gated and projected exactly like search", () => {
+    const searchBlock = edgeSource.slice(
+      edgeSource.indexOf("case 'search_clients'"),
+      edgeSource.indexOf("case 'get_client_for_activation'"),
+    );
+    // One permission check covers both paths — it is above the branch.
+    const gate = searchBlock.indexOf("if (!canWrite)");
+    const branch = searchBlock.indexOf("if (browsing)");
+    expect(gate).toBeGreaterThan(-1);
+    expect(branch).toBeGreaterThan(gate);
+    // One projection covers both paths: identification only, never financials.
+    expect(searchBlock).not.toMatch(/select\(['"`][^'"`]*(portfolio|income|debt|cash_flow)/);
+    const selects = searchBlock.match(/\.select\(CLIENT_SEARCH_SELECT\)/g) ?? [];
+    expect(selects.length).toBeGreaterThanOrEqual(2);
   });
 });
 

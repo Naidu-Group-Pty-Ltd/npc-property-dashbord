@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
 import {
   AlertTriangle, CheckCircle2, Loader2, Mail, Phone, ShieldCheck,
 } from "lucide-react";
@@ -20,6 +19,7 @@ import {
   amlCasesApi, type AmlActivationClient, type AmlCase,
 } from "@/lib/aml/amlCasesApi";
 import { amlTenantApi, type AmlActivationProgram } from "@/lib/aml/amlTenantApi";
+import { AmlClientPicker, ClientStatusBadge } from "@/components/aml/AmlClientPicker";
 import { toast } from "@/hooks/use-toast";
 
 /**
@@ -56,18 +56,6 @@ function SectionHeading({ title }: { title: string }) {
   );
 }
 
-function StatusBadge({ active }: { active: boolean }) {
-  return active ? (
-    <Badge variant="outline" className="shrink-0 border-success/40 bg-success/10 text-success">
-      Active
-    </Badge>
-  ) : (
-    <Badge variant="outline" className="shrink-0 border-warning/40 bg-warning/10 text-warning">
-      Inactive
-    </Badge>
-  );
-}
-
 export function ActivateClientDialog({
   open, onOpenChange, clientId, clientName, onActivated,
 }: ActivateClientDialogProps) {
@@ -91,15 +79,9 @@ export function ActivateClientDialog({
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
 
-  // Client picker (no raw UUID entry in the ordinary workflow — directive §13.4).
-  // Search runs server-side through the AML-role-gated `search_clients` op and
-  // returns both active and inactive clients; inactive clients are selectable
-  // and get marked active when this form is confirmed.
-  const [clientSearch, setClientSearch] = useState("");
-  const [clientMatches, setClientMatches] = useState<AmlActivationClient[]>([]);
-  const [searchState, setSearchState] = useState<"idle" | "searching" | "ready" | "error">("idle");
-  const [searchError, setSearchError] = useState<string | null>(null);
-
+  // The client picker owns its own browsing, searching, filtering and paging
+  // (`AmlClientPicker`). It reads the same AML-role-gated `search_clients` op
+  // this dialog always used — the register is never duplicated here.
   const modelBReady = Boolean(program?.legal_approval && program?.program_version?.trim());
 
   useEffect(() => {
@@ -112,10 +94,6 @@ export function ActivateClientDialog({
     setEvent("");
     setReason("");
     setConfirmed(false);
-    setClientSearch("");
-    setClientMatches([]);
-    setSearchState("idle");
-    setSearchError(null);
     setRouteError(null);
 
     let alive = true;
@@ -148,43 +126,9 @@ export function ActivateClientDialog({
     return () => { alive = false; };
   }, [open, clientId, clientName]);
 
-  // Debounced server-side lookup. Failures surface to the operator rather than
-  // being swallowed into a silent "no matches".
-  useEffect(() => {
-    if (!open || selected) return;
-    const q = clientSearch.trim();
-    if (q.length < 2) {
-      setClientMatches([]);
-      setSearchState("idle");
-      setSearchError(null);
-      return;
-    }
-    let alive = true;
-    setSearchState("searching");
-    const timer = setTimeout(() => {
-      amlCasesApi.searchClients(q)
-        .then(({ clients: found }) => {
-          if (!alive) return;
-          setClientMatches(found ?? []);
-          setSearchState("ready");
-          setSearchError(null);
-        })
-        .catch((e: any) => {
-          if (!alive) return;
-          setClientMatches([]);
-          setSearchState("error");
-          setSearchError(e?.message ?? "Client search is unavailable.");
-        });
-    }, 250);
-    return () => { alive = false; clearTimeout(timer); };
-  }, [open, clientSearch, selected]);
-
   const selectClient = (c: AmlActivationClient) => {
     setSelected(c);
     if (!nameDirty || !displayName.trim()) setDisplayName(c.label);
-    setClientSearch("");
-    setClientMatches([]);
-    setSearchState("idle");
   };
 
   const clearSelection = () => {
@@ -312,7 +256,7 @@ export function ActivateClientDialog({
                         )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        <StatusBadge active={selected.is_active} />
+                        <ClientStatusBadge active={selected.is_active} />
                         {!clientId && (
                           <Button
                             type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs"
@@ -350,60 +294,11 @@ export function ActivateClientDialog({
                     )}
                   </div>
                 ) : (
-                  <div className="space-y-1.5">
-                    <Label htmlFor="ac-client-search">Find client</Label>
-                    <Input
-                      id="ac-client-search"
-                      value={clientSearch}
-                      onChange={(e) => setClientSearch(e.target.value)}
-                      placeholder="Search clients by first name, surname or full name…"
-                      autoComplete="off"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Active and inactive clients are shown. Selecting an inactive
-                      client lets you activate them through this form.
-                    </p>
-                    {clientSearch.trim().length >= 2 && (
-                      <ul
-                        className="max-h-56 overflow-y-auto rounded-md border border-border/60 text-sm"
-                        aria-label="Matching clients"
-                      >
-                        {clientMatches.length === 0 ? (
-                          <li className="px-3 py-2.5 text-muted-foreground" role="status">
-                            {searchState === "searching" ? "Searching…"
-                              : searchState === "error"
-                                ? (searchError ?? "Client search is unavailable.")
-                                : "No clients match that name."}
-                          </li>
-                        ) : (
-                          clientMatches.map((c) => (
-                            <li key={c.id}>
-                              <button
-                                type="button"
-                                className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-accent focus:outline-none focus-visible:bg-accent"
-                                onClick={() => selectClient(c)}
-                              >
-                                <span className="min-w-0">
-                                  <span className="block truncate font-medium">{c.label}</span>
-                                  {c.email && (
-                                    <span className="block truncate text-xs text-muted-foreground">
-                                      {c.email}
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="flex shrink-0 items-center gap-2">
-                                  {c.has_open_case && (
-                                    <span className="text-xs text-warning">Open case</span>
-                                  )}
-                                  <StatusBadge active={c.is_active} />
-                                </span>
-                              </button>
-                            </li>
-                          ))
-                        )}
-                      </ul>
-                    )}
-                  </div>
+                  <AmlClientPicker
+                    resetKey={open}
+                    disabled={submitting}
+                    onSelect={selectClient}
+                  />
                 )}
               </section>
 

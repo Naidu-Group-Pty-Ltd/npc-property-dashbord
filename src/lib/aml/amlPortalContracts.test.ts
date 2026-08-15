@@ -170,11 +170,15 @@ describe("client summary is scoped and read-only (Phase 4, §13)", () => {
 describe("activation dialog has no raw-UUID entry (Phase 4, §13.4)", () => {
   const dialogSource = readFileSync(
     join(repo, "src/components/aml/ActivateClientDialog.tsx"), "utf8");
+  const pickerSource = readFileSync(
+    join(repo, "src/components/aml/AmlClientPicker.tsx"), "utf8");
 
   it("uses a client picker instead of a UUID input", () => {
     expect(dialogSource).not.toContain("Client ID (UUID)");
     expect(dialogSource).not.toContain("00000000-0000-0000-0000-000000000000");
-    expect(dialogSource).toContain("Search clients by first name, surname or full name");
+    // The picker is a component now, not a text box inlined in the dialog.
+    expect(dialogSource).toContain("<AmlClientPicker");
+    expect(pickerSource).toContain('aria-label="Search clients"');
   });
 
   it("loads only a slim, non-financial client projection for the picker", () => {
@@ -731,18 +735,44 @@ describe("activation client picker", () => {
   const dialog = readFileSync(
     join(repo, "src/components/aml/ActivateClientDialog.tsx"), "utf8");
 
+  const picker = readFileSync(
+    join(repo, "src/components/aml/AmlClientPicker.tsx"), "utf8");
+
   it("looks clients up through the AML-gated op, not the general client broker", () => {
     // get-client-data listMode narrows to created_by/assigned_team_user_id for
     // anyone who is not a superadmin, which left the picker empty for the
     // compliance officers who actually perform activation.
     expect(dialog).not.toContain("get-client-data");
-    expect(dialog).toContain("amlCasesApi.searchClients");
+    expect(picker).not.toContain("get-client-data");
+    expect(picker).toContain("amlCasesApi.listClientsForActivation");
+    // One register, one reader: the picker holds no client list of its own
+    // and reaches no other source.
+    expect(picker).not.toMatch(/supabase|from\(['"`]clients['"`]\)/);
   });
 
-  it("surfaces search failures instead of showing an empty result", () => {
-    expect(dialog).toContain('setSearchState("error")');
-    expect(dialog).toContain("searchError");
-    expect(dialog).not.toContain(".catch(() => setClients([]))");
+  it("surfaces lookup failures instead of showing an empty result", () => {
+    // "No clients" on a broken read is what sends an operator off to create
+    // a duplicate of a client that already exists.
+    expect(picker).toContain('setState("error")');
+    expect(picker).toContain("The client register could not be reached");
+    expect(picker).not.toContain(".catch(() => setClients([]))");
+  });
+
+  it("distinguishes an empty register from an empty filter and an unmatched search", () => {
+    // Three different nothings. Only one of them means a client needs
+    // creating, and saying the wrong one is how duplicates get made.
+    expect(picker).toContain("No clients yet");
+    expect(picker).toContain("No client matches");
+    expect(picker).toContain("browsing");
+  });
+
+  it("shows a client that already has an open case rather than hiding it", () => {
+    // Hiding it gives the worst answer a picker can give — "that client does
+    // not exist" — when the truth is that they are already covered.
+    expect(picker).toContain("has_open_case");
+    expect(picker).toContain("already has an open case");
+    expect(picker).toContain("case_reference");
+    expect(picker).toMatch(/disabled=\{disabled \|\| blocked\}/);
   });
 
   it("keeps the search narrow and AML-role-gated on the server", () => {
@@ -753,9 +783,13 @@ describe("activation client picker", () => {
     // Candidate fetch is capped; the shared matcher caps offered results at
     // 20 (CLIENT_SEARCH_RESULT_LIMIT) and includes inactive clients so the
     // activation form can confirm them active.
-    expect(branch).toContain(".limit(200)");
-    expect(branch).toContain("selectActivationMatches");
-    expect(branch).not.toContain(".eq('is_active', true)");
+    expect(branch).toContain(".limit(400)");
+    expect(branch).toContain("selectActivationPage");
+    // Inactive clients are never excluded wholesale — the activation form is
+    // where they get confirmed active. `is_active` may only be filtered when
+    // the operator explicitly asks for a slice.
+    expect(branch).not.toMatch(/^\s*\.eq\('is_active', true\)/m);
+    expect(branch).toContain("status === 'active'");
     // Projection must not leak financial data into the picker.
     expect(branch).toContain("select(CLIENT_SEARCH_SELECT)");
     expect(branch).not.toMatch(/portfolio|income|total_debt|cash_flow/i);

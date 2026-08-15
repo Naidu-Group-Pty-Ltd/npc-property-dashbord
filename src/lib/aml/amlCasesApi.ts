@@ -70,8 +70,25 @@ export interface AmlActivationClient {
   mobile: string | null;
   is_active: boolean;
   has_open_case: boolean;
-  /** Present on `get_client_for_activation` when an open case exists. */
-  open_case?: { id: string; case_reference: string } | null;
+  /**
+   * Present when an open case exists. `get_client_for_activation` carries the
+   * id too; the picker's list carries the reference alone, which is all it
+   * needs to say WHICH case already covers this client rather than only that
+   * one does.
+   */
+  open_case?: { id?: string; case_reference: string } | null;
+}
+
+/** Which slice of the client register the picker is asking for. */
+export type AmlClientPickerStatus = "all" | "active" | "inactive";
+
+export interface AmlClientPickerPage {
+  clients: AmlActivationClient[];
+  /** How many clients matched in total — not how many were returned. */
+  total: number;
+  has_more: boolean;
+  /** True when the server answered a browse rather than a search. */
+  browsing: boolean;
 }
 
 async function invoke<T = any>(payload: Record<string, any>): Promise<T> {
@@ -160,9 +177,28 @@ export const amlCasesApi = {
    * Activation client picker — AML-role-gated (§13.4). Tokenised full-name
    * search over the canonical `clients` table; returns active AND inactive
    * clients (inactive ones are activated through the confirmation form).
+   *
+   * With an empty query this BROWSES the register rather than returning
+   * nothing, which is what makes every client the platform already holds
+   * available without anybody having to type a name they must already know.
+   * Same op, same projection, same permission gate — only the filter differs,
+   * so there is no second source of truth about which clients an AML operator
+   * may see.
    */
-  searchClients: (query: string) =>
-    invoke<{ clients: AmlActivationClient[] }>({ op: "search_clients", query }),
+  listClientsForActivation: (opts: {
+    query?: string;
+    status?: AmlClientPickerStatus;
+    limit?: number;
+    offset?: number;
+  } = {}) =>
+    invoke<AmlClientPickerPage>({
+      op: "search_clients",
+      query: opts.query ?? "",
+      status: opts.status ?? "all",
+      limit: opts.limit,
+      offset: opts.offset,
+    }),
+
 
   /**
    * Route-based activation handoff: load and validate the exact client by ID.
