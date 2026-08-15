@@ -1,0 +1,193 @@
+/**
+ * Builder stock — bringing the builder's OWN image inside.
+ *
+ * Stage 1 of the three-stage enrichment, and the only stage that can say
+ * "this is the photograph the builder supplied for this property". Everything
+ * here exists to keep that sentence true after the source has moved on:
+ *
+ *   THE BYTES ARE COPIED, THE LINK IS NOT KEPT. A Notion attachment resolves
+ *   to a signed URL that expires within the hour, and a builder's own site
+ *   reorganises. A marketplace card that depends on either shows a broken
+ *   image to a client weeks later, so the bytes are fetched once, at import,
+ *   and stored in the private `builder-stock-images` bucket. What is recorded
+ *   against the row is the SOURCE's own identity — `attachment:<id>:<name>`,
+ *   the page URL — never the temporary URL we happened to fetch through.
+ *
+ *   THE BYTES ARE CHECKED, NOT THE PROMISE. A content type is a claim by
+ *   whoever served the file. `validateSourceImageBytes` reads the signature,
+ *   which is why an HTML login wall served as `image/jpeg` is refused rather
+ *   than stored and shown to a client.
+ *
+ * SSRF: every retrieval goes through `fetchStockSource` — the existing guard,
+ * applied to the original URL and to every redirect hop, with no cookie, no
+ * Authorization header, no Supabase credential and no builder session
+ * attached. Notion's public image endpoint redirects to its CDN, which is
+ * exactly why the guard has to run per hop rather than once.
+ */
+import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
+import {
+  MAX_SOURCE_IMAGE_BYTES, sourceImageObjectPath, validateSourceImageBytes,
+  type SourceImageAsset,
+} from './sourceAssets.pure.ts';
+
+/** What a retrieval produced. Injected in tests; the default is the guard. */
+export interface FetchedImage {
+  bytes: Uint8Array;
+  /** After redirects. Recorded for diagnosis, never as product data. */
+  finalUrl: string;
+}
+
+export type SourceImageFetcher = (url: string) => Promise<FetchedImage>;
+
+/**
+ * The production fetcher, imported lazily.
+ *
+ * `fetchSource.ts` reaches for `Deno.resolveDns`, so a static import would
+ * make this module unloadable outside the edge runtime — including by the
+ * tests that pin the attribution rules. The guard is still the only thing
+ * production ever uses.
+ */
+const guardedFetch: SourceImageFetcher = async (url: string) => {
+  const { fetchStockSource } = await import('./fetchSource.ts');
+  const fetched = await fetchStockSource(url);
+  return { bytes: fetched.bytes, finalUrl: fetched.finalUrl };
+};
+
+export interface AttachOutcome {
+  stored: number;
+  failed: number;
+  /** Server-side only: one line per asset we could not bring inside. */
+  problems: Array<{ reference: string; reason: string }>;
+}
+
+/**
+ * Fetch, validate, store and record one property's source-supplied imagery.
+ *
+ * `stockItemId` is resolved by the caller from the source's own statement of
+ * which row owns the asset. Nothing in here matches, guesses or reorders.
+ */
+export async function storeSourceImages(
+  db: any,
+  input: {
+    organisationId: string;
+    uploadId: string | null;
+    stockItemId: string;
+    assets: SourceImageAsset[];
+  },
+  deps: { fetchImage?: SourceImageFetcher } = {},
+): Promise<AttachOutcome> {
+  const fetchImage = deps.fetchImage ?? guardedFetch;
+  const outcome: AttachOutcome = { stored: 0, failed: 0, problems: [] };
+
+  for (const asset of input.assets) {
+    const reference = asset.reference.slice(0, 400);
+    try {
+      const { bytes, finalUrl } = await fetchImage(asset.url);
+      if (bytes.length > MAX_SOURCE_IMAGE_BYTES) {
+        throw new Error('That image is larger than the 10 MB limit.');
+      }
+      const check = validateSourceImageBytes(bytes);
+      if (check.ok !== true) throw new Error(check.reason);
+
+      const path = sourceImageObjectPath(
+        input.organisationId, input.stockItemId, reference, check.extension);
+      const { error: uploadError } = await db.storage
+        .from(STOCK_IMAGE_BUCKET)
+        .upload(path, bytes, { contentType: check.contentType, upsert: true });
+      if (uploadError) throw uploadError;
+
+      await db.from('builder_stock_item_images').upsert({
+        stock_item_id: input.stockItemId,
+        upload_id: input.uploadId,
+        organisation_id: input.organisationId,
+        source_stage: 'uploaded_document',
+        source_reference: reference,
+        source_provider: asset.provider,
+        source_page_url: asset.pageUrl,
+        storage_bucket: STOCK_IMAGE_BUCKET,
+        storage_path: path,
+        // The stored copy is what the marketplace serves. The URL we fetched
+        // through is deliberately NOT kept as `external_url`: it expires, and
+        // a card that falls back to it would break silently.
+        external_url: null,
+        content_type: check.contentType,
+        byte_size: bytes.length,
+        verification_status: 'source_supplied',
+        confidence: 1,
+        processing_status: 'ready',
+        error_message: null,
+        position: asset.position,
+        source_detail: {
+          origin: asset.origin,
+          fetched_from_host: hostOf(finalUrl),
+          snapshotted: true,
+        },
+      }, { onConflict: 'stock_item_id,source_stage,source_reference' });
+
+      outcome.stored += 1;
+    } catch (error) {
+      const reason = String((error as { safeMessage?: string; message?: string })?.safeMessage
+        ?? (error as { message?: string })?.message ?? error).slice(0, 300);
+      outcome.failed += 1;
+      outcome.problems.push({ reference, reason });
+
+      /**
+       * Recorded rather than dropped. The source said this property has a
+       * render; that we could not bring it inside is a fact worth keeping.
+       *
+       * An ordinary published URL still stands as a link — a browser can load
+       * what a server-side fetch was refused — but an expiring one never
+       * does, because it would put a broken image on a client's page weeks
+       * later instead of falling back honestly now.
+       */
+      const keepAsLink = asset.linkFallback && /^https?:\/\//i.test(asset.url);
+      await db.from('builder_stock_item_images').upsert({
+        stock_item_id: input.stockItemId,
+        upload_id: input.uploadId,
+        organisation_id: input.organisationId,
+        source_stage: 'uploaded_document',
+        source_reference: reference,
+        source_provider: asset.provider,
+        source_page_url: asset.pageUrl,
+        external_url: keepAsLink ? asset.url : null,
+        verification_status: 'source_supplied',
+        confidence: keepAsLink ? 1 : null,
+        processing_status: keepAsLink ? 'ready' : 'failed',
+        error_message: reason,
+        position: asset.position,
+        source_detail: { origin: asset.origin, snapshotted: false },
+      }, { onConflict: 'stock_item_id,source_stage,source_reference' }).then(
+        () => undefined,
+        () => undefined,
+      );
+    }
+  }
+
+  return outcome;
+}
+
+function hostOf(rawUrl: string): string | null {
+  try {
+    return new URL(rawUrl).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Does this property already hold a usable image the source supplied?
+ *
+ * Asked before stages 2 and 3 run. A property whose builder gave us a render
+ * has nothing to gain from a Street View of the same lot, and every provider
+ * call is billed to somebody.
+ */
+export async function hasReadySourceImage(db: any, stockItemId: string): Promise<boolean> {
+  const { data } = await db
+    .from('builder_stock_item_images')
+    .select('id, storage_path, external_url')
+    .eq('stock_item_id', stockItemId)
+    .eq('source_stage', 'uploaded_document')
+    .eq('processing_status', 'ready')
+    .limit(20);
+  return (data ?? []).some((row: any) => row.storage_path || row.external_url);
+}

@@ -102,19 +102,38 @@ export function stripChrome(html: string): string {
  * `keyRowsByHeader` will simply not find a header in a ragged matrix.
  */
 export function extractHtmlTables(html: string): string[][][] {
+  return extractHtmlTableSections(html, 'https://example.invalid/').map((table) => table.matrix);
+}
+
+/**
+ * A table read as rows AND as the imagery each row contains.
+ *
+ * `rowImageUrls[i]` are the `<img>` sources found inside the same `<tr>` that
+ * produced `matrix[i]`. That containment is the source stating a relationship:
+ * a stock table with a photograph column puts the photograph in the row it
+ * belongs to, and discarding it — which is what stripping the markup to text
+ * did — throws away an attribution nothing downstream can reconstruct.
+ */
+export function extractHtmlTableSections(
+  html: string,
+  baseUrl: string,
+): Array<{ matrix: string[][]; rowImageUrls: string[][] }> {
   const cleaned = stripChrome(html);
-  const tables: string[][][] = [];
+  const tables: Array<{ matrix: string[][]; rowImageUrls: string[][] }> = [];
 
   for (const tableHtml of cleaned.match(/<table\b[\s\S]*?<\/table>/gi) ?? []) {
     const matrix: string[][] = [];
+    const rowImageUrls: string[][] = [];
     for (const rowHtml of tableHtml.match(/<tr\b[\s\S]*?<\/tr>/gi) ?? []) {
       const cells: string[] = [];
       for (const cellHtml of rowHtml.match(/<(t[hd])\b[^>]*>[\s\S]*?<\/\1>/gi) ?? []) {
         cells.push(stripTags(cellHtml));
       }
-      if (cells.length) matrix.push(cells);
+      if (!cells.length) continue;
+      matrix.push(cells);
+      rowImageUrls.push(imageUrlsIn(rowHtml, baseUrl));
     }
-    if (matrix.length > 1) tables.push(matrix);
+    if (matrix.length > 1) tables.push({ matrix, rowImageUrls });
   }
   return tables;
 }
@@ -170,7 +189,17 @@ export function extractHtmlTitle(html: string): string | null {
  * and they are kept against the source rather than pinned to the wrong lot.
  */
 export function extractHtmlImageUrls(html: string, baseUrl: string, limit = 20): string[] {
-  const cleaned = stripChrome(html);
+  return imageUrlsIn(stripChrome(html), baseUrl, limit);
+}
+
+/**
+ * Absolute `<img>` sources inside ONE fragment — a row, a card, a whole page.
+ *
+ * Scoped rather than global on purpose: which fragment is passed in IS the
+ * attribution, so this must never widen its own search.
+ */
+export function imageUrlsIn(fragment: string, baseUrl: string, limit = 20): string[] {
+  const cleaned = fragment;
   const out: string[] = [];
   const seen = new Set<string>();
 
@@ -361,13 +390,22 @@ export function sliceElementsByClass(html: string, classPattern: RegExp): string
  */
 export function readHtmlSource(html: string, baseUrl: string): {
   tables: string[][][];
+  /** The same tables, each carrying the imagery its own rows contain. */
+  tableSections: Array<{ matrix: string[][]; rowImageUrls: string[][] }>;
   text: string;
   title: string | null;
   imageUrls: string[];
 } {
-  const tables = [...extractHtmlTables(html), ...extractNotionGridTables(html)];
+  const tableSections = [
+    ...extractHtmlTableSections(html, baseUrl),
+    ...extractNotionGridTables(html).map((matrix) => ({
+      matrix,
+      rowImageUrls: matrix.map(() => [] as string[]),
+    })),
+  ];
   return {
-    tables,
+    tables: tableSections.map((table) => table.matrix),
+    tableSections,
     text: extractReadableText(html),
     title: extractHtmlTitle(html),
     imageUrls: extractHtmlImageUrls(html, baseUrl),

@@ -25,6 +25,8 @@ import { meteredFetch } from '../meteredFetch.ts';
 import { enforceGlobalDailyQuota, killSwitchActive } from '../publicAbuseControls.ts';
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import { geocodableAddress } from './normalise.pure.ts';
+import { hasReadySourceImage } from './sourceImages.ts';
+import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 
 /**
  * The SAME circuit scope `street-view` uses.
@@ -52,7 +54,13 @@ export interface EnrichableStockItem {
 
 export interface StageOutcome {
   stage: 'google_maps' | 'internet_search';
-  status: 'ready' | 'unavailable' | 'failed';
+  /**
+   * `skipped` is not a failure and not an absence: it is a stage that was not
+   * WORTH running because the builder's own image is already in hand. It is
+   * recorded on the row as `unavailable` — the schema's three statuses are not
+   * being extended — with a message that says which of the two it was.
+   */
+  status: 'ready' | 'unavailable' | 'failed' | 'skipped';
   detail: string;
 }
 
@@ -99,6 +107,43 @@ async function recordStageUnavailable(
     position: 0,
   }, { onConflict: 'stock_item_id,source_stage,source_reference' });
   return { stage, status, detail: message };
+}
+
+/**
+ * Record a stage that was not run because stage 1 already answered.
+ *
+ * A stage that PRODUCED something is left exactly as it is: on an existing
+ * property being repaired, the Street View we already paid for stays on the
+ * record. It simply stops being the picture the marketplace shows.
+ */
+async function recordStageSkipped(
+  db: any,
+  item: EnrichableStockItem,
+  stage: 'google_maps' | 'internet_search',
+): Promise<StageOutcome> {
+  const message = 'Skipped: the builder supplied an image for this property.';
+  const { data: existing } = await db
+    .from('builder_stock_item_images')
+    .select('id')
+    .eq('stock_item_id', item.id)
+    .eq('source_stage', stage)
+    .eq('processing_status', 'ready')
+    .limit(1);
+
+  if (!(existing ?? []).length) {
+    await db.from('builder_stock_item_images').upsert({
+      stock_item_id: item.id,
+      organisation_id: item.organisation_id,
+      source_stage: stage,
+      source_reference: 'stage-status',
+      source_provider: stage === 'google_maps' ? 'google' : 'perplexity',
+      processing_status: 'unavailable',
+      verification_status: stage === 'google_maps' ? 'location_derived' : 'unverified',
+      error_message: message,
+      position: 0,
+    }, { onConflict: 'stock_item_id,source_stage,source_reference' });
+  }
+  return { stage, status: 'skipped', detail: message };
 }
 
 // ---------------------------------------------------------------------------
@@ -485,12 +530,30 @@ export async function enrichStockItem(
     .eq('id', item.id);
 
   const outcomes: StageOutcome[] = [];
-  outcomes.push(await enrichFromGoogle(db, item));
-  outcomes.push(await enrichFromInternetSearch(db, item, builderName));
+
+  /**
+   * STAGE 1 SETTLES IT.
+   *
+   * A property whose builder supplied a photograph has nothing to gain from a
+   * Street View of the same lot or a search for a picture that might be it:
+   * the priority below would discard both anyway, and each is a call billed to
+   * somebody. The three-stage record is still written — stages 2 and 3 say
+   * they were skipped and why — so the audit row reads as three stages, which
+   * is what it is.
+   */
+  if (await hasReadySourceImage(db, item.id)) {
+    for (const stage of ['google_maps', 'internet_search'] as const) {
+      outcomes.push(await recordStageSkipped(db, item, stage));
+    }
+  } else {
+    outcomes.push(await enrichFromGoogle(db, item));
+    outcomes.push(await enrichFromInternetSearch(db, item, builderName));
+  }
 
   const primaryImageId = await chooseAndStorePrimaryImage(db, item.id);
   const anyReady = !!primaryImageId;
-  const anyProblem = outcomes.some((outcome) => outcome.status !== 'ready');
+  const anyProblem = outcomes.some(
+    (outcome) => outcome.status !== 'ready' && outcome.status !== 'skipped');
 
   const enrichmentStatus = anyReady
     ? (anyProblem ? 'partial' : 'complete')
@@ -503,39 +566,4 @@ export async function enrichStockItem(
   return { outcomes, enrichmentStatus };
 }
 
-/**
- * Image priority for the marketplace card.
- *
- * The builder's own image outranks everything: it is the only one that is
- * certainly this property. A search result is used only when nothing else
- * exists, and the UI still labels it unverified.
- */
-const STAGE_PRIORITY: Record<string, number> = {
-  uploaded_document: 0,
-  google_maps: 1,
-  internet_search: 2,
-};
-
-export async function chooseAndStorePrimaryImage(
-  db: any,
-  stockItemId: string,
-): Promise<string | null> {
-  const { data: images } = await db
-    .from('builder_stock_item_images')
-    .select('id, source_stage, position, storage_path, external_url')
-    .eq('stock_item_id', stockItemId)
-    .eq('processing_status', 'ready');
-
-  const usable = (images ?? []).filter((image: any) => image.storage_path || image.external_url);
-  if (!usable.length) return null;
-
-  usable.sort((a: any, b: any) =>
-    (STAGE_PRIORITY[a.source_stage] ?? 9) - (STAGE_PRIORITY[b.source_stage] ?? 9)
-    || (a.position ?? 0) - (b.position ?? 0));
-
-  const primary = usable[0];
-  await db.from('builder_stock_items')
-    .update({ primary_image_id: primary.id })
-    .eq('id', stockItemId);
-  return primary.id;
-}
+export { chooseAndStorePrimaryImage, SOURCE_SUPPLIED_STAGE } from './primaryImage.ts';
