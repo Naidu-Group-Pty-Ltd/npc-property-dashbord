@@ -92,7 +92,7 @@ function relianceCandidate(
     assessment: {
       id: `asm-${orgId}`, status: 'operative', decision: 'suitable',
       assessed_at: '2026-06-01T00:00:00Z', next_review_due: '2027-01-01',
-    } as DistributionCandidate['assessment'],
+    } as unknown as DistributionCandidate['assessment'],
     existingGrant: null,
     manifestPresent: true,
     evidence: {

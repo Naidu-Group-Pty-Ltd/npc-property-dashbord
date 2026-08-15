@@ -82,7 +82,7 @@ describe('the stored-series mapping', () => {
     // An unresolved binding renders as the empty string — a half-shaped series
     // would print blank cells in a client's table, so it must not reach one.
     const missing = wire();
-    (missing.years[4] as Record<string, unknown>).afterTaxAnnual = undefined;
+    (missing.years[4] as unknown as Record<string, unknown>).afterTaxAnnual = undefined;
     expect(wireYearsAsStoredSeries(missing)).toBeNull();
     expect(wireYearsAsStoredSeries(wire({ years: [] }))).toBeNull();
   });

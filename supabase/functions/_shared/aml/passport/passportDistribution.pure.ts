@@ -413,7 +413,7 @@ export function evaluateDistribution(
 
   if (route && RELIANCE_ROUTES.has(route)) {
     if (!linkDecision.ok) {
-      relianceCode = linkDecision.code;
+      relianceCode = (linkDecision as { code?: typeof relianceCode }).code ?? relianceCode;
       add("PARTNER_LINK_REQUIRED");
     }
     // Classification is a s 37A prerequisite and is never inferred.
@@ -446,8 +446,9 @@ export function evaluateDistribution(
       now: ctx.now,
     });
     if (!arrangementDecision.ok) {
-      relianceCode = relianceCode ?? arrangementDecision.code;
-      switch (arrangementDecision.code) {
+      const arrangementCode = (arrangementDecision as { code?: typeof relianceCode }).code;
+      relianceCode = relianceCode ?? arrangementCode;
+      switch (arrangementCode) {
         case "review_overdue":
         case "assessment_overdue":
           add("ARRANGEMENT_REVIEW_OVERDUE");

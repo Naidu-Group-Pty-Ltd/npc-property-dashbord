@@ -750,7 +750,7 @@ const REPORT_QA_SAMPLE = (() => {
     messageId: null,
     preparedOn: '2026-08-02T00:00:00.000Z',
   });
-  if (!built.ok) throw new Error(`REPORT_QA_SAMPLE refused: ${built.error}`);
+  if (!built.ok) throw new Error(`REPORT_QA_SAMPLE refused: ${(built as { error?: string }).error}`);
   return projectReportQa(built.document).qa;
 })();
 
@@ -1131,7 +1131,7 @@ const MARKET_INTELLIGENCE_SAMPLE = (() => {
   if (!(built as { ok: boolean }).ok) {
     throw new Error(`MARKET_INTELLIGENCE_SAMPLE refused: ${(built as { error?: string }).error}`);
   }
-  return projectMarketIntelligence((built as { report: never }).report).marketIntel;
+  return projectMarketIntelligence((built as unknown as { report: never }).report).marketIntel;
 })();
 
 export const SAMPLE_REPORT_DATA: Record<string, unknown> = {

@@ -61,7 +61,7 @@ describe('a request target is a whitelist, never a location', () => {
   });
 
   it('never echoes back an unrecognised key', () => {
-    const out = sanitiseActionTarget({ target_step: 'documents', evil: 'yes', href: 'x' }) as
+    const out = sanitiseActionTarget({ target_step: 'documents', evil: 'yes', href: 'x' }) as unknown as
       Record<string, unknown>;
     expect(out.evil).toBeUndefined();
     expect(out.href).toBeUndefined();
