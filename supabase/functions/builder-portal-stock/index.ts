@@ -298,6 +298,15 @@ Deno.serve(async (req) => {
         .from(STOCK_LIST_BUCKET)
         .createSignedUploadUrl(storagePath);
       if (signError || !signed?.signedUrl) {
+        // Same bucket as the URL snapshot, and it was equally silent when that
+        // bucket was missing — a file upload failed with nothing in the logs at
+        // all. Named here for the same reason.
+        console.error('[builder-portal-stock] signed upload url failed', {
+          bucket: STOCK_LIST_BUCKET,
+          storage_path: storagePath,
+          status: (signError as { statusCode?: string | number } | null)?.statusCode ?? null,
+          message: signError?.message ?? 'no signed url returned',
+        });
         await supabase.from('builder_stock_uploads')
           .update({ status: 'failed', error_code: 'storage_unavailable', error_message: 'Storage could not accept the file.' })
           .eq('id', uploadId);
@@ -448,7 +457,30 @@ Deno.serve(async (req) => {
           upsert: true,
         });
       if (snapshotError) {
-        console.error('[builder-portal-stock] snapshot failed', snapshotError.message);
+        /**
+         * Everything needed to diagnose this WITHOUT another production
+         * repro. The first failure of this path logged only the provider's
+         * message — "Bucket not found" — which named neither the bucket nor
+         * anything else, so the cause (the migration that creates
+         * `builder-stock-lists` had never been applied to the project) was
+         * indistinguishable from a permissions or payload fault.
+         *
+         * Server-side only, and deliberately not the source URL: a link can
+         * carry a token in its query string. The HOST is enough to identify
+         * the provider, and the object path carries no secret.
+         */
+        console.error('[builder-portal-stock] snapshot failed', {
+          bucket: STOCK_LIST_BUCKET,
+          storage_path: storagePath,
+          status: (snapshotError as { statusCode?: string | number }).statusCode ?? null,
+          name: (snapshotError as { name?: string }).name ?? null,
+          message: snapshotError.message,
+          declared_content_type: fetched.declaredContentType || null,
+          detected_content_type: detection.mime,
+          classified_as: classification.kind,
+          byte_length: fetched.bytes.length,
+          source_host: normalised.host,
+        });
         return json({ error: 'That page could not be saved for import.', code: 'snapshot_failed' }, 502);
       }
 
