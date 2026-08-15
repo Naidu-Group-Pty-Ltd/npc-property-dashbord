@@ -106,14 +106,59 @@ describe('get_document_url proves ownership twice', () => {
     expect(Number(ttl)).toBeLessThanOrEqual(300);
   });
 
-  it('serves as an attachment', () => {
+  it('serves as an attachment unless the type is one a browser may render', () => {
     /*
      * `request_upload_url` does not constrain the stored content type, and the
      * storage origin is the same host as this API — so an inline-served HTML
-     * upload would execute there. An attachment disposition removes that and
-     * costs the customer nothing.
+     * upload would execute there. Every document was therefore served as an
+     * attachment, which is safe and is also why pressing "View" on a PDF
+     * downloaded it instead of showing it.
+     *
+     * The type is now checked rather than assumed, and the fallback direction
+     * is unchanged: anything not on the list is still an attachment.
      */
-    expect(documentUrlBranch).toContain('download: doc.filename');
+    expect(documentUrlBranch).toContain(
+      "createSignedUrl(doc.storage_path, 120, inline ? {} : { download: doc.filename })");
+    expect(documentUrlBranch).toContain('INLINE_VIEWABLE_MIME_TYPES.has(servedType)');
+  });
+
+  it('decides the disposition on what storage will SERVE, not on the row', () => {
+    /*
+     * The content type was set on the client's PUT; `mime_type` was sent
+     * afterwards by `confirm_upload`. Same client, different routes, so they
+     * can disagree — and only the served value decides how a browser treats
+     * the response.
+     */
+    expect(documentUrlBranch).toContain("from('aml-documents')\n          .list(objectDir");
+    expect(documentUrlBranch).toContain('?.metadata?.mimetype');
+    // Never the request, and never the row's own declaration.
+    expect(documentUrlBranch).not.toMatch(/INLINE_VIEWABLE_MIME_TYPES\.has\(\s*(doc\.mime_type|body\.)/);
+  });
+
+  it('admits nothing scriptable to the inline list', () => {
+    const list = portal.slice(
+      portal.indexOf('const INLINE_VIEWABLE_MIME_TYPES'),
+      portal.indexOf('function jsonResponse'));
+    for (const safe of ['application/pdf', 'image/jpeg', 'image/png']) {
+      expect(list).toContain(`'${safe}'`);
+    }
+    /*
+     * `image/svg+xml` is the trap: it satisfies the upload control's `image/*`
+     * and it is a document that can carry a script element, so serving one
+     * inline would execute it on the storage origin — the same host as this
+     * API. It is an image everywhere except here.
+     */
+    for (const scriptable of [
+      'image/svg+xml', 'text/html', 'text/xml', 'application/xhtml+xml',
+      'application/octet-stream', 'text/javascript',
+    ]) {
+      expect(list).not.toContain(`'${scriptable}'`);
+    }
+  });
+
+  it('treats an unreadable or unknown type as an attachment', () => {
+    // The failure direction is a download, never an inline render.
+    expect(documentUrlBranch).toMatch(/metadata\?\.mimetype \?\? ''/);
   });
 
   it('never echoes the storage error, which carries the path', () => {
