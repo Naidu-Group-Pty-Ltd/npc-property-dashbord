@@ -1620,12 +1620,32 @@ export function definitions(
   chars?: number,
 ): FlowItem {
   const c = ctx();
-  const rowHeight = chars === undefined
-    ? 26
-    // The definition sets beside its term, on roughly two thirds of the measure.
-    : Math.max(26, textHeight(chars, { size: c.scale.cell, width: c.contentWidth * 0.66, extra: 8 }));
+  /*
+   * Derived from the row `extras.html.ts:364` draws, not from a flat 26.
+   *
+   * That row is `grid-template-columns:160pt 1fr` with a 14pt gutter, 8pt of
+   * padding either side and a hairline under it, and BOTH columns set at 9.5pt
+   * whatever the family's own scale says — the definition on a 1.45 leading.
+   * So one line is already ~30.8pt and the reserved 26 was short on every row
+   * of every definition list in the catalogue. It only showed where the rows
+   * were numerous enough to accumulate: the Borrowing Capacity serviceability
+   * page, six rows deep, printed its last line into the callout beneath it.
+   *
+   * The measure matters as much as the depth. The definition does not get two
+   * thirds of the page — it gets whatever is left after a fixed 160pt term
+   * column, which on a narrow master is closer to half.
+   */
+  const TERM_COLUMN = 160;
+  const GUTTER = 14;
+  const SIZE = 9.5;
+  const LEADING = 1.45;
+  const measure = Math.max(1, c.contentWidth - TERM_COLUMN - GUTTER);
+  const lines = chars === undefined
+    ? 1
+    : Math.max(1, Math.ceil(chars / Math.max(1, Math.floor(measure / (SIZE * 0.5)))));
+  const rowHeight = 8 + Math.max(SIZE * 1.2, lines * SIZE * LEADING) + 8 + 1;
   return {
-    height: 30 + items.length * rowHeight,
+    height: Math.ceil(30 + items.length * rowHeight),
     block: (y) => block('definition-list', {
       title, items, x: c.contentLeft, y, width: c.contentWidth,
     }),
