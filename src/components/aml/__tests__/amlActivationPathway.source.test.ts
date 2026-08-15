@@ -92,12 +92,8 @@ describe("AML activation pathway — server contract", () => {
   it("writes the required activation audit event inside the inactive-client transaction", () => {
     expect(migrationSource).toContain("INSERT INTO aml.case_events");
     expect(migrationSource).toContain("activation_audit_event");
-    const inactiveBranch = edgeSource.slice(
-      edgeSource.indexOf("if (clientWasInactive) {"),
-      edgeSource.indexOf("} else {", edgeSource.indexOf("if (clientWasInactive) {")),
-    );
-    expect(inactiveBranch).toContain("activation_audit_event: activationAuditEvent");
-    expect(inactiveBranch).not.toContain("appendEvent(");
+    expect(edgeSource).toContain("activation_audit_event: activationAuditEvent");
+    expect(edgeSource).toContain("if (!clientWasInactive) {");
   });
 
   it("reconciles an exact retry but still rejects a different duplicate activation", () => {

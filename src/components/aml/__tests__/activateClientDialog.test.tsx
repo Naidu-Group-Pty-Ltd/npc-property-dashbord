@@ -123,7 +123,7 @@ describe("ActivateClientDialog — route/record preselection", () => {
   it("explains the first missing requirement, then submits with the trusted client id", async () => {
     getClientForActivation.mockResolvedValue({ client: inactiveClient });
     activateClient.mockResolvedValue({
-      case: { id: "case-1", case_reference: "AML-2026-00001" },
+      case: { id: "case-1", client_id: CLIENT_ID, case_reference: "AML-2026-00001" },
       client_activation: { was_inactive: true, marked_active: true },
       client_portal: { has_portal_access: true, notified: true, note: "Notified." },
     });
@@ -515,7 +515,11 @@ describe("ActivateClientDialog — create a new client", () => {
 
     // Creating a client is not activating one.
     expect(activateClient).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Activate client" })).toBeDisabled();
+    const activate = screen.getByRole("button", { name: "Activate client" });
+    expect(activate).toBeEnabled();
+    fireEvent.click(activate);
+    expect(await screen.findByTestId("ac-submit-error")).toHaveTextContent("Enter the activation event");
+    expect(activateClient).not.toHaveBeenCalled();
   });
 
   it("activates the newly created client once the event is confirmed", async () => {
@@ -523,7 +527,9 @@ describe("ActivateClientDialog — create a new client", () => {
       id: "new-1", primary_first_name: "Priya", primary_surname: "Raman",
       primary_email: null, primary_mobile: null,
     });
-    activateClient.mockResolvedValue({ case: { id: "c1", case_reference: "AML-2026-00005" } });
+    activateClient.mockResolvedValue({
+      case: { id: "c1", client_id: "new-1", case_reference: "AML-2026-00005" },
+    });
     await openCreate();
     fillNewClient();
     fireEvent.click(screen.getByTestId("ac-create-client-submit"));
