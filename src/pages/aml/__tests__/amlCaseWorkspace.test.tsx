@@ -138,7 +138,7 @@ describe("AmlCaseWorkspace — full-page shell", () => {
     await screen.findByRole("heading", { name: "Avery Client" });
     const rail = screen.getByRole("list", { name: "Compliance journey stages" });
     for (const stage of [
-      "Activation", "Intake", "Documents", "Identity", "Screening",
+      "Activation", "Intake", "Identity", "Documents", "Screening",
       "Funding", "Submission", "Decision", "Gate & Passport", "Partners",
     ]) {
       expect(within(rail).getByText(stage)).toBeInTheDocument();
@@ -199,18 +199,25 @@ describe("AmlCaseWorkspace — full-page shell", () => {
     // Navigation is a page turn: no transition, and no write of any kind.
     expect(transition).not.toHaveBeenCalled();
 
-    // Documents has no requirements on this fixture, so the stage is
-    // unfinished — and the footer says so, so nobody reads "Next" as
-    // "sign off".
+    // Identity is stage 3 — it precedes Documents, because the identity
+    // result determines which documents are required.
     const onIntake = screen.getByRole("navigation", { name: "Journey stage navigation" });
-    fireEvent.click(within(onIntake).getByRole("button", { name: /Documents/ }));
-    expect(screen.getByTestId("location").dataset.search).toBe("?section=documents");
+    fireEvent.click(within(onIntake).getByRole("button", { name: /Identity/ }));
+    expect(screen.getByTestId("location").dataset.search).toBe("?section=identity");
+    // Nothing is verified on this fixture, so the stage is unfinished — and
+    // the footer says so, so nobody reads "Next" as "sign off".
     expect(screen.getByText("Moving on does not complete this stage.")).toBeInTheDocument();
     expect(transition).not.toHaveBeenCalled();
 
+    // ...and Documents follows it, at stage 4.
+    const onIdentity = screen.getByRole("navigation", { name: "Journey stage navigation" });
+    fireEvent.click(within(onIdentity).getByRole("button", { name: /Documents/ }));
+    expect(screen.getByTestId("location").dataset.search).toBe("?section=documents");
+    expect(transition).not.toHaveBeenCalled();
+
     const footerAfter = screen.getByRole("navigation", { name: "Journey stage navigation" });
-    fireEvent.click(within(footerAfter).getByRole("button", { name: /Intake/ }));
-    expect(screen.getByTestId("location").dataset.search).toBe("?section=requests");
+    fireEvent.click(within(footerAfter).getByRole("button", { name: /Identity/ }));
+    expect(screen.getByTestId("location").dataset.search).toBe("?section=identity");
     expect(transition).not.toHaveBeenCalled();
   });
 
