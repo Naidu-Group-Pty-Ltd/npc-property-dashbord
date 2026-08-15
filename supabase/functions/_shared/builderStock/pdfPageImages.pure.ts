@@ -50,6 +50,30 @@ export interface PdfImage {
   bitsPerComponent: number;
 }
 
+/**
+ * A form XObject the page's resources name.
+ *
+ * A form is a content stream of its own with its own resources, and every
+ * serious exporter uses one: the whole of a Canva or InDesign page arrives as
+ * a single `/Fm0 Do`. A reader that looks only at the page's own resources
+ * finds no images at all on such a page and concludes the brochure has no
+ * pictures — which is what the live Donnybrook contract did.
+ */
+export interface PdfForm {
+  name: string;
+  objectNumber: number;
+  /** The form's own content stream. The caller inflates it. */
+  start: number;
+  end: number;
+  flate: boolean;
+  /** `/Matrix`, which maps the form's space into the space that draws it. */
+  matrix: Matrix;
+  /** What the form's OWN resources name. Scoped: names may collide with the
+   *  page's, and two forms may use `/X0` for different pictures. */
+  images: PdfImage[];
+  forms: PdfForm[];
+}
+
 /** Where the content stream actually drew one of them. */
 export interface PdfPlacement {
   name: string;
@@ -59,6 +83,8 @@ export interface PdfPlacement {
   clip: Rect | null;
   /** Order of appearance in the content stream. */
   index: number;
+  /** The full matrix in force at the `Do`, so a form can be descended into. */
+  ctm: Matrix;
 }
 
 export interface PdfFirstPage {
@@ -66,9 +92,14 @@ export interface PdfFirstPage {
   width: number;
   height: number;
   images: PdfImage[];
+  /** Form XObjects the page draws. Their contents are read by the caller. */
+  forms: PdfForm[];
   /** Content stream slices, in order. The caller inflates what needs it. */
   contents: Array<{ start: number; end: number; flate: boolean }>;
 }
+
+/** Anything that can name images and forms: a page, or a form inside one. */
+export interface PdfScope { images: PdfImage[]; forms: PdfForm[] }
 
 const decoder = new TextDecoder('latin1');
 
@@ -144,40 +175,48 @@ function dictionaryFor(
 }
 
 /**
- * The first page, by the catalogue's own page tree.
+ * The pages, in the order the catalogue's own page tree lists them.
  *
- * Not the first `/Type /Page` object in the file: object order and page order
- * are different things, and a brochure whose pages were written out of order
- * would otherwise be read from the middle.
+ * Not the `/Type /Page` objects in file order: object order and page order are
+ * different things, and a brochure whose pages were written out of order would
+ * otherwise be read from the middle. The tree is walked depth-first, which is
+ * what "page 2" means in a document that nests its pages.
  */
-function firstPageObject(objects: Map<number, PdfObject>): PdfObject | null {
-  let node: PdfObject | null = null;
+function pageObjectsInOrder(objects: Map<number, PdfObject>): PdfObject[] {
+  let root: PdfObject | null = null;
   for (const object of objects.values()) {
     if (!/\/Type\s*\/Catalog\b/.test(object.header)) continue;
     const pages = /\/Pages\s+(\d{1,7})\s+\d{1,5}\s+R/.exec(object.header);
-    if (pages) node = objects.get(Number(pages[1])) ?? null;
+    if (pages) root = objects.get(Number(pages[1])) ?? null;
     break;
   }
-  if (!node) {
-    // A catalogue we could not follow: fall back to the lowest-numbered page
-    // object, which is the best available statement of "first".
-    const pages = [...objects.values()]
+  if (!root) {
+    // A catalogue we could not follow: the lowest-numbered page objects, which
+    // is the best available statement of order.
+    return [...objects.values()]
       .filter((object) => /\/Type\s*\/Page\b(?!s)/.test(object.header))
       .sort((a, b) => a.number - b.number);
-    return pages[0] ?? null;
   }
 
-  for (let depth = 0; depth < 16; depth++) {
-    if (/\/Type\s*\/Page\b(?!s)/.test(node.header)) return node;
-    const kids = /\/Kids\s*\[([\s\S]{0,4000}?)\]/.exec(node.header);
-    if (!kids) return null;
-    const first = firstReference(kids[1]);
-    const next = first === null ? null : objects.get(first);
-    if (!next) return null;
-    node = next;
-  }
-  return null;
+  const out: PdfObject[] = [];
+  const seen = new Set<number>();
+  const walk = (node: PdfObject, depth: number): void => {
+    if (depth > 16 || out.length >= MAX_PAGES || seen.has(node.number)) return;
+    seen.add(node.number);
+    if (/\/Type\s*\/Page\b(?!s)/.test(node.header)) { out.push(node); return; }
+    const kids = /\/Kids\s*\[([\s\S]{0,8000}?)\]/.exec(node.header);
+    if (!kids) return;
+    for (const entry of kids[1].matchAll(/(\d{1,7})\s+\d{1,5}\s+R/g)) {
+      const child = objects.get(Number(entry[1]));
+      if (child) walk(child, depth + 1);
+    }
+  };
+  walk(root, 0);
+  return out;
 }
+
+/** A stock list is not a book; nothing beyond this is a property's cover. */
+const MAX_PAGES = 200;
 
 /** `/MediaBox [0 0 594.96 841.92]`, inherited from the page tree if absent. */
 function mediaBoxOf(page: PdfObject, objects: Map<number, PdfObject>): Rect | null {
@@ -219,12 +258,31 @@ const COMPONENTS_BY_COLOUR_SPACE: Record<string, number> = {
   DeviceRGB: 3, DeviceGray: 1, DeviceCMYK: 4, CalRGB: 3, CalGray: 1,
 };
 
-/**
- * The first page: its size, the images its resources name, and the content
- * streams that draw them.
- */
+/** The first page. The overwhelmingly common case, and its own name. */
 export function readFirstPage(bytes: Uint8Array): PdfFirstPage | null {
-  if (bytes.length < 32) return null;
+  return readPdfPage(bytes, 0);
+}
+
+/** How many pages the document's own page tree lists. */
+export function countPdfPages(bytes: Uint8Array): number {
+  if (bytes.length < 32) return 0;
+  try {
+    return pageObjectsInOrder(indexPdfObjects(bytes)).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * One page: its size, the images its resources name, and the content streams
+ * that draw them.
+ *
+ * `pageIndex` is zero-based over the page tree's own order. A directly
+ * uploaded stock PDF can put the property's photograph on any page, so this
+ * takes an index where the brochure path only ever needed the first.
+ */
+export function readPdfPage(bytes: Uint8Array, pageIndex: number): PdfFirstPage | null {
+  if (bytes.length < 32 || pageIndex < 0) return null;
 
   let objects: Map<number, PdfObject>;
   try {
@@ -233,20 +291,90 @@ export function readFirstPage(bytes: Uint8Array): PdfFirstPage | null {
     return null;
   }
 
-  const page = firstPageObject(objects);
+  const page = pageObjectsInOrder(objects)[pageIndex];
   if (!page) return null;
   const box = mediaBoxOf(page, objects);
   if (!box || box.width <= 0 || box.height <= 0) return null;
 
-  const resources = dictionaryFor(page.header, 'Resources', objects);
-  const xobjects = dictionaryFor(resources || page.header, 'XObject', objects);
+  const scope = readScope(page.header, bytes, objects, 0);
+
+  const contents: Array<{ start: number; end: number; flate: boolean }> = [];
+  const contentsRef = /\/Contents\s+(\d{1,7})\s+\d{1,5}\s+R/.exec(page.header);
+  const contentsArray = /\/Contents\s*\[([\s\S]{0,2000}?)\]/.exec(page.header);
+  const numbers: number[] = [];
+  if (contentsRef) numbers.push(Number(contentsRef[1]));
+  if (contentsArray) {
+    for (const entry of contentsArray[1].matchAll(/(\d{1,7})\s+\d{1,5}\s+R/g)) {
+      numbers.push(Number(entry[1]));
+    }
+  }
+  for (const number of numbers) {
+    const object = objects.get(number);
+    const slice = object ? streamSlice(object, bytes) : null;
+    if (slice) contents.push(slice);
+  }
+
+  return {
+    width: box.width, height: box.height,
+    images: scope.images, forms: scope.forms, contents,
+  };
+}
+
+/** How deep a form may nest before we stop looking. Layouts are not fractals. */
+const MAX_FORM_DEPTH = 4;
+/** A ceiling on how many forms one page may contribute, as a cost guard. */
+const MAX_FORMS_PER_SCOPE = 24;
+
+/**
+ * The images and forms ONE dictionary's `/Resources` name.
+ *
+ * Used for a page and, recursively, for every form the page draws — a form
+ * carries its own `/Resources`, and resolving those is how the pictures inside
+ * an exporter's single `/Fm0` are reached at all. Names are kept SCOPED rather
+ * than flattened: `/X0` inside one form and `/X0` inside another are two
+ * different pictures, and merging them would attach the wrong one.
+ */
+function readScope(
+  header: string,
+  bytes: Uint8Array,
+  objects: Map<number, PdfObject>,
+  depth: number,
+): PdfScope {
+  const resources = dictionaryFor(header, 'Resources', objects);
+  const xobjects = dictionaryFor(resources || header, 'XObject', objects);
 
   const images: PdfImage[] = [];
+  const forms: PdfForm[] = [];
   const pattern = /\/([^\s/<>[\]]+)\s+(\d{1,7})\s+\d{1,5}\s+R/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(xobjects)) !== null) {
     const object = objects.get(Number(match[2]));
-    if (!object || !/\/Subtype\s*\/Image\b/.test(object.header)) continue;
+    if (!object) continue;
+
+    if (/\/Subtype\s*\/Form\b/.test(object.header)) {
+      if (depth >= MAX_FORM_DEPTH || forms.length >= MAX_FORMS_PER_SCOPE) continue;
+      const slice = streamSlice(object, bytes);
+      if (!slice) continue;
+      const numbers = /\/Matrix\s*\[\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)/
+        .exec(object.header);
+      const matrix: Matrix = numbers
+        ? numbers.slice(1, 7).map(Number) as Matrix
+        : [...IDENTITY] as Matrix;
+      const inner = readScope(object.header, bytes, objects, depth + 1);
+      forms.push({
+        name: match[1],
+        objectNumber: object.number,
+        start: slice.start,
+        end: slice.end,
+        flate: slice.flate,
+        matrix: matrix.every(Number.isFinite) ? matrix : [...IDENTITY] as Matrix,
+        images: inner.images,
+        forms: inner.forms,
+      });
+      continue;
+    }
+
+    if (!/\/Subtype\s*\/Image\b/.test(object.header)) continue;
 
     const width = Number(/\/Width\s+(\d+)/.exec(object.header)?.[1] ?? 0);
     const height = Number(/\/Height\s+(\d+)/.exec(object.header)?.[1] ?? 0);
@@ -294,32 +422,16 @@ export function readFirstPage(bytes: Uint8Array): PdfFirstPage | null {
     });
   }
 
-  const contents: Array<{ start: number; end: number; flate: boolean }> = [];
-  const contentsRef = /\/Contents\s+(\d{1,7})\s+\d{1,5}\s+R/.exec(page.header);
-  const contentsArray = /\/Contents\s*\[([\s\S]{0,2000}?)\]/.exec(page.header);
-  const numbers: number[] = [];
-  if (contentsRef) numbers.push(Number(contentsRef[1]));
-  if (contentsArray) {
-    for (const entry of contentsArray[1].matchAll(/(\d{1,7})\s+\d{1,5}\s+R/g)) {
-      numbers.push(Number(entry[1]));
-    }
-  }
-  for (const number of numbers) {
-    const object = objects.get(number);
-    const slice = object ? streamSlice(object, bytes) : null;
-    if (slice) contents.push(slice);
-  }
-
-  return { width: box.width, height: box.height, images, contents };
+  return { images, forms };
 }
 
 // ---------------------------------------------------------------------------
 // Where the page actually draws them
 // ---------------------------------------------------------------------------
 
-type Matrix = [number, number, number, number, number, number];
+export type Matrix = [number, number, number, number, number, number];
 
-const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
+export const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
 
 function multiply(a: Matrix, b: Matrix): Matrix {
   return [
@@ -355,11 +467,16 @@ function unitSquareRect(matrix: Matrix): Rect {
  * A minimal interpreter: the operand stack, `q`/`Q`, `cm`, `re … W n` for the
  * clip, and `Do`. Text, paths, shadings and colour are ignored — this is not a
  * renderer, it answers one question, which is how big each picture appears.
+ *
+ * `base` is the matrix already in force when this stream begins. It is the
+ * identity for a page, and the composed matrix for a form drawn inside one, so
+ * a picture nested three forms deep still reports the area it covers ON THE
+ * PAGE rather than inside its own little coordinate system.
  */
-export function parseImagePlacements(content: string): PdfPlacement[] {
+export function parseImagePlacements(content: string, base: Matrix = IDENTITY): PdfPlacement[] {
   const placements: PdfPlacement[] = [];
   const stack: Array<{ ctm: Matrix; clip: Rect | null }> = [];
-  let ctm: Matrix = IDENTITY;
+  let ctm: Matrix = base;
   let clip: Rect | null = null;
   let operands: string[] = [];
   let pendingRect: Rect | null = null;
@@ -418,6 +535,7 @@ export function parseImagePlacements(content: string): PdfPlacement[] {
             drawn: unitSquareRect(ctm),
             clip,
             index: placements.length,
+            ctm,
           });
         }
         break;
@@ -444,12 +562,74 @@ const MIN_PIXELS = { width: 600, height: 400 };
 /** A banner or a spine, not a photograph. */
 const MIN_ASPECT = 0.3;
 const MAX_ASPECT = 4;
+/**
+ * Encoded bytes per pixel, below which the picture carries no detail.
+ *
+ * A DESIGNER'S BACKGROUND IS NOT A PHOTOGRAPH, and it is bigger than one. The
+ * live Donnybrook contract's cover draws a grey faceted wash across the whole
+ * bleed — 1300×698, larger on the page than anything else — and every rule
+ * above admits it: it is a DCT raster of ample size and ordinary shape. What
+ * separates it from a render is that it is nearly empty, and a lossy encoder
+ * says so in the only unit available without decoding the image: 10 KB for
+ * 907,000 pixels, which is 0.011 bytes each.
+ *
+ * Measured, not guessed. Across the builder documents this was fitted to:
+ * decorative washes and repeated banner strips sit at 0.011–0.013, and every
+ * verified property render sits at 0.034 or above — the Donnybrook interiors
+ * at 0.034–0.043, the Stradbroke package's facade at 0.32. The floor is set
+ * between the two, and it fails towards no image rather than towards a grey
+ * rectangle on a client's card.
+ */
+const MIN_ENCODED_DETAIL = 0.02;
 
 export interface PhotographChoice {
   image: PdfImage;
   placement: PdfPlacement;
   /** Share of the page the picture covers, for the provenance record. */
   pageAreaShare: number;
+}
+
+/** One picture, and where on the page it was actually drawn. */
+export interface DrawnImage { image: PdfImage; placement: PdfPlacement }
+
+/**
+ * Match a scope's placements to the images that scope names.
+ *
+ * Scoped deliberately: a name means whatever the resources that drew it say it
+ * means, so this is never called across two scopes at once.
+ */
+export function resolveDrawnImages(scope: PdfScope, placements: PdfPlacement[]): DrawnImage[] {
+  const byName = new Map(scope.images.map((image) => [image.name, image]));
+  const out: DrawnImage[] = [];
+  for (const placement of placements) {
+    const image = byName.get(placement.name);
+    if (image) out.push({ image, placement });
+  }
+  return out;
+}
+
+/**
+ * The matrix a form's own content stream begins under.
+ *
+ * The form's `/Matrix` first, then whatever was in force where it was drawn —
+ * which is what puts a picture nested inside it back on the page.
+ */
+export function formBaseMatrix(form: PdfForm, placement: PdfPlacement): Matrix {
+  return multiply(form.matrix, placement.ctm);
+}
+
+/** The forms a scope's placements actually drew, with their base matrices. */
+export function resolveDrawnForms(
+  scope: PdfScope,
+  placements: PdfPlacement[],
+): Array<{ form: PdfForm; base: Matrix }> {
+  const byName = new Map(scope.forms.map((form) => [form.name, form]));
+  const out: Array<{ form: PdfForm; base: Matrix }> = [];
+  for (const placement of placements) {
+    const form = byName.get(placement.name);
+    if (form) out.push({ form, base: formBaseMatrix(form, placement) });
+  }
+  return out;
 }
 
 /**
@@ -463,19 +643,33 @@ export function selectPropertyPhotograph(
   page: PdfFirstPage,
   placements: PdfPlacement[],
 ): PhotographChoice | null {
-  const byName = new Map(page.images.map((image) => [image.name, image]));
-  const pageArea = page.width * page.height;
+  return selectPropertyPhotographFrom(
+    resolveDrawnImages(page, placements), page.width, page.height);
+}
+
+/**
+ * The same judgement over pictures gathered from the page AND from every form
+ * it draws, which is where a real exporter puts them.
+ */
+export function selectPropertyPhotographFrom(
+  drawn: DrawnImage[],
+  pageWidth: number,
+  pageHeight: number,
+): PhotographChoice | null {
+  const pageArea = pageWidth * pageHeight;
   if (pageArea <= 0) return null;
 
   let best: PhotographChoice | null = null;
-  for (const placement of placements) {
-    const image = byName.get(placement.name);
-    if (!image) continue;
+  for (const { image, placement } of drawn) {
     if (!image.filters.some((filter) => PHOTOGRAPHIC_FILTERS.has(filter))) continue;
     if (image.width < MIN_PIXELS.width || image.height < MIN_PIXELS.height) continue;
 
     const aspect = image.width / image.height;
     if (aspect < MIN_ASPECT || aspect > MAX_ASPECT) continue;
+
+    // Detail, in the only unit available without decoding it. See the header.
+    const detail = (image.end - image.start) / (image.width * image.height);
+    if (detail < MIN_ENCODED_DETAIL) continue;
 
     const drawnArea = placement.drawn.width * placement.drawn.height;
     const share = drawnArea / pageArea;
@@ -499,16 +693,22 @@ export function selectPropertyPhotograph(
 export function flattenedPageImage(
   page: PdfFirstPage,
   placements: PdfPlacement[],
-): { image: PdfImage; placement: PdfPlacement } | null {
-  const byName = new Map(page.images.map((image) => [image.name, image]));
-  const pageArea = page.width * page.height;
+): DrawnImage | null {
+  return flattenedPageImageFrom(
+    resolveDrawnImages(page, placements), page.width, page.height);
+}
+
+/** The same test over pictures gathered from the page and its forms. */
+export function flattenedPageImageFrom(
+  drawn: DrawnImage[],
+  pageWidth: number,
+  pageHeight: number,
+): DrawnImage | null {
+  const pageArea = pageWidth * pageHeight;
   if (pageArea <= 0) return null;
 
-  const covering = placements
-    .map((placement) => ({ placement, image: byName.get(placement.name) }))
-    .filter((entry): entry is { placement: PdfPlacement; image: PdfImage } => !!entry.image)
-    .filter((entry) =>
-      (entry.placement.drawn.width * entry.placement.drawn.height) / pageArea >= 0.9);
+  const covering = drawn.filter((entry) =>
+    (entry.placement.drawn.width * entry.placement.drawn.height) / pageArea >= 0.9);
 
   if (covering.length !== 1) return null;
   const only = covering[0];

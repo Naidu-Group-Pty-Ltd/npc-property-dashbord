@@ -56,8 +56,15 @@ function driveFolderHtml(entries: DriveEntry[]): string {
     + `<script nonce="x">window['_DRIVE_ivd'] = '${escaped}';</script></body></html>`;
 }
 
-/** A JPEG: real markers, padded past the "too small to be a photograph" floor. */
-function jpegBytes(size = 4096, fill = 0x42): Uint8Array {
+/**
+ * A JPEG: real markers, padded past the "too small to be a photograph" floor.
+ *
+ * The default is sized the way a real 1700×956 render is — a lossy encoding
+ * carries roughly a tenth of a byte per pixel, and a picture that carries far
+ * less than that is a flat decorative wash rather than a photograph, which is
+ * a distinction `selectPropertyPhotograph` now makes.
+ */
+function jpegBytes(size = 160_000, fill = 0x42): Uint8Array {
   const bytes = new Uint8Array(size);
   bytes.set([0xff, 0xd8, 0xff, 0xe0], 0);
   bytes.fill(fill, 4, size - 2);
@@ -217,8 +224,8 @@ describe('which document belongs to which property', () => {
 
 describe('the image a package leads with', () => {
   it('returns the first page and never a later one', () => {
-    const render = jpegBytes(4096, 0x11);
-    const masterplan = jpegBytes(6000, 0x22);
+    const render = jpegBytes(160_000, 0x11);
+    const masterplan = jpegBytes(240_000, 0x22);
     const pdf = packagePdf(render, masterplan);
     const { page, placements } = firstPage(pdf);
 
@@ -281,7 +288,7 @@ describe('the image a package leads with', () => {
 // ---------------------------------------------------------------------------
 
 describe('recovering a row-linked package image', () => {
-  const render = jpegBytes(4096, 0x33);
+  const render = jpegBytes(160_000, 0x33);
 
   function library(options: { lotFolders?: DriveEntry[]; documents?: DriveEntry[] } = {}) {
     const lotFolders = options.lotFolders ?? [folder('lot43', 'Lot 43'), folder('lot42', 'Lot 42')];
@@ -304,7 +311,7 @@ describe('recovering a row-linked package image', () => {
       if (url.includes('/folders/lot43')) return encode(driveFolderHtml(documents));
       if (url.includes('/folders/')) return encode(driveFolderHtml([]));
       if (url.includes('id=doc-strad')) {
-        return { bytes: packagePdf(render, jpegBytes(5000, 0x44)), finalUrl: url };
+        return { bytes: packagePdf(render, jpegBytes(240_000, 0x44)), finalUrl: url };
       }
       return { bytes: new TextEncoder().encode('<html>Sign in</html>'), finalUrl: url };
     };

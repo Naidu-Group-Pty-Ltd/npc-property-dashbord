@@ -28,6 +28,7 @@ import {
   relsPathFor, resolveOoxmlPath, sheetRowAnchor, slideAnchor,
 } from './documentAnchors.pure.ts';
 import { SOURCE_ANCHOR_HEADER, type AnchoredAssets } from './sourceAssets.pure.ts';
+import type { PdfPhotoProvenance } from './pdfSourcePhoto.ts';
 
 export interface ExtractedMedia {
   /** Path inside the container, or the filename for a bare image. */
@@ -40,6 +41,13 @@ export interface ExtractedMedia {
    * attribution may fall back to counting.
    */
   anchor?: string | null;
+  /**
+   * How this picture was taken out of the document, when the format can say —
+   * which page, which object, what it hashes to, what was done to it. Recorded
+   * against the stored image so "the builder supplied this" is provable rather
+   * than asserted. Only the PDF reader states it today.
+   */
+  provenance?: PdfPhotoProvenance | null;
 }
 
 export interface StockExtraction {
@@ -56,6 +64,12 @@ export interface StockExtraction {
    * produces. Fetched and stored by `sourceImages.ts`, never linked to.
    */
   rowAssets: AnchoredAssets[];
+  /**
+   * Prose split the way the document paginates it, when the format paginates
+   * at all. `text` is these joined; this is kept alongside so a property read
+   * out of the prose can be tied back to the page it was described on.
+   */
+  pageTexts?: string[];
   warnings: string[];
   /** A document/page title, when the format carries one. */
   title?: string | null;
@@ -419,9 +433,22 @@ export async function extractStockFile(
     result.strategy = 'pdf_text';
     try {
       const { extractText, getDocumentProxy } = await import('https://esm.sh/unpdf@0.12.1');
-      const pdf = await getDocumentProxy(bytes);
-      const { text } = await extractText(pdf, { mergePages: true });
-      const merged = Array.isArray(text) ? text.join('\n') : String(text ?? '');
+      /**
+       * ITS OWN COPY. pdf.js takes ownership of the array it is handed and
+       * leaves the buffer detached, so reading the text used to empty the very
+       * bytes the photographs are then read out of — a page with a render on
+       * it reported no images at all, and said so on the builder's screen.
+       */
+      const pdf = await getDocumentProxy(bytes.slice());
+      // Page by page, not merged: the page number is the only structure a PDF
+      // offers, and it is what a photograph is later attributed by. The merged
+      // string the model reads is joined back from these, so the two cannot
+      // describe different documents.
+      const { text } = await extractText(pdf, { mergePages: false });
+      const pages = (Array.isArray(text) ? text : [String(text ?? '')])
+        .map((page) => String(page ?? ''));
+      result.pageTexts = pages;
+      const merged = pages.join('\n');
       result.text = merged.trim() ? merged.slice(0, MAX_TEXT_CHARS) : null;
     } catch (error) {
       result.warnings.push('The PDF text layer could not be read.');
@@ -438,10 +465,40 @@ export async function extractStockFile(
         'This PDF has no readable text — it looks like a scan. Upload the source spreadsheet or a text-based PDF.',
       );
     }
-    // Extracting embedded raster images from a PDF is not attempted: an image
-    // XObject cannot be tied to a stock row, and a decorative banner presented
-    // as a property photograph is worse than no stage-1 image at all.
-    result.warnings.push('Images inside a PDF are not extracted; location and search imagery are used instead.');
+
+    // The images the builder put in their own document, page by page. Same
+    // extractor a package PDF reached through a Notion row goes through, so a
+    // brochure uploaded here and the same brochure reached through a link
+    // cannot disagree about which picture is the property.
+    try {
+      const { extractPdfPhotosByPage } = await import('./pdfSourcePhoto.ts');
+      const { pdfPageAnchor } = await import('./pdfRowAnchors.pure.ts');
+      const found = await extractPdfPhotosByPage(bytes);
+      for (const { page, photo } of found) {
+        if (result.media.length >= MAX_MEDIA) break;
+        if (photo.bytes.length > MAX_MEDIA_BYTES) continue;
+        const suffix = photo.provenance.method === 'page_crop'
+          ? `crop(${photo.provenance.crop?.top}-${photo.provenance.crop?.bottom})`
+          : photo.provenance.resourceName ?? `obj${photo.provenance.objectNumber}`;
+        result.media.push({
+          name: `page${page}:${suffix}`,
+          bytes: photo.bytes,
+          contentType: photo.contentType,
+          // The page IS the anchor. Attribution is by page number and never by
+          // the order images happen to appear in the file.
+          anchor: pdfPageAnchor(page),
+          provenance: photo.provenance,
+        });
+      }
+    } catch {
+      result.warnings.push('Images inside this PDF could not be read.');
+    }
+
+    if (!result.media.length) {
+      // Accurate, and it promises nothing: no other imagery is displayable, so
+      // saying where a substitute will come from would be a lie.
+      result.warnings.push('No property photograph could be identified in this PDF.');
+    }
     return result;
   }
 

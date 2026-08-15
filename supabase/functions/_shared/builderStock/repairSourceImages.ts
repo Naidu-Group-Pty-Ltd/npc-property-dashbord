@@ -45,6 +45,7 @@ import {
   DriveListingCache, recoverPackageImage, type PackageFetcher,
 } from './packageImages.ts';
 import { attachDocumentMedia } from './importStock.ts';
+import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import type { ExtractedMedia } from './extract.ts';
 
@@ -144,6 +145,7 @@ export async function repairSourceImagesForUpload(
   let rows: Array<Record<string, unknown>> = [];
   let rowAssets: AnchoredAssets[] = [];
   let media: ExtractedMedia[] = [];
+  let pageTexts: string[] = [];
 
   const sourceUrl: string | null = upload.final_url || upload.source_url || null;
 
@@ -192,6 +194,7 @@ export async function repairSourceImagesForUpload(
       rows = extraction.rows;
       rowAssets = extraction.rowAssets;
       media = extraction.media;
+      pageTexts = extraction.pageTexts ?? [];
     }
   } catch (error) {
     return {
@@ -199,6 +202,24 @@ export async function repairSourceImagesForUpload(
       error: String((error as { safeMessage?: string })?.safeMessage
         ?? 'That source could not be read again.'),
     };
+  }
+
+  /**
+   * A PROSE document has no rows to re-read.
+   *
+   * A PDF's properties were read by a model at import time and normalised into
+   * `builder_stock_items`; re-running that model here would be a second import
+   * and could write different values onto a live property. So the properties
+   * this upload ALREADY produced are the rows, and the only thing re-derived
+   * from the stored PDF is its imagery — which is what was missing.
+   */
+  if (!rows.length && pageTexts.length) {
+    return await repairPdfUpload(db, {
+      organisationId: input.organisationId,
+      upload,
+      media,
+      pageTexts,
+    }, outcome);
   }
 
   outcome.rowsRead = rows.length;
@@ -440,6 +461,126 @@ export async function repairSourceImagesForUpload(
   for (const itemId of touched) {
     const previous = await currentPrimary(db, itemId);
     const primary = await chooseAndStorePrimaryImage(db, itemId);
+    if (primary && primary !== previous) outcome.primaryUpdated += 1;
+  }
+
+  return outcome;
+}
+
+/**
+ * Re-read an uploaded PDF's imagery and attach it to the properties that
+ * upload already produced.
+ *
+ * NOTHING IS IMPORTED HERE. The properties are read, not written: no row is
+ * inserted, no price, status or selection is touched, and the model that read
+ * the prose at import time is not run again. The only writes are
+ * `builder_stock_item_images` rows and the `primary_image_id` they earn — which
+ * is what makes this safe to run over stock a builder is already selling from.
+ *
+ * Attribution is the page, exactly as it is at import time: the same
+ * `anchorPdfRowsToPages` over the same page texts, so a repair and an import of
+ * the same document cannot disagree about whose house is on page 3.
+ */
+async function repairPdfUpload(
+  db: any,
+  input: {
+    organisationId: string;
+    upload: { id: string; original_filename: string };
+    media: ExtractedMedia[];
+    pageTexts: string[];
+  },
+  outcome: RepairOutcome,
+): Promise<RepairOutcome> {
+  const { data: items } = await db
+    .from('builder_stock_items')
+    .select('id, external_reference, development_name, project_name, unit_number, lot_number, address_line, suburb, source_row')
+    .eq('organisation_id', input.organisationId)
+    .eq('upload_id', input.upload.id)
+    .eq('lifecycle_status', 'active')
+    .order('created_at', { ascending: true })
+    .limit(5000);
+
+  const existing = (items ?? []) as Array<ExistingItem & {
+    address_line?: string | null; suburb?: string | null;
+  }>;
+  outcome.rowsRead = existing.length;
+  outcome.rowsWithImagery = input.media.length;
+  if (!existing.length || !input.media.length) return outcome;
+
+  // The label the import matched on: the stored normalised record where there
+  // is one, and the property's own columns where there is not.
+  const labels = existing.map((item) => stockRecordLabel(
+    (item.source_row as NormalisedStockRecord | null)
+      ?? (item as unknown as NormalisedStockRecord),
+  ));
+
+  const photoPages = input.media
+    .map((media) => pdfAnchorPage(media.anchor))
+    .filter((page): page is number => page !== null);
+  const anchors = anchorPdfRowsToPages(labels, input.pageTexts, photoPages);
+
+  const itemIdByAnchor = new Map<string, string | null>();
+  anchors.forEach((anchor, index) => {
+    if (!anchor) return;
+    const itemId = existing[index].id;
+    if (!itemIdByAnchor.has(anchor)) { itemIdByAnchor.set(anchor, itemId); return; }
+    // Two properties claiming one page is the document declining to say.
+    if (itemIdByAnchor.get(anchor) !== itemId) itemIdByAnchor.set(anchor, null);
+  });
+
+  const attached = await attachDocumentMedia(
+    db,
+    {
+      organisationId: input.organisationId,
+      uploadId: input.upload.id,
+      media: input.media,
+      filename: input.upload.original_filename,
+    },
+    // Never by order. A page anchor nothing claimed keeps its picture against
+    // the upload, and the property's card stays empty.
+    [],
+    itemIdByAnchor,
+  );
+
+  const provenByItem = new Map<string, Set<string>>();
+  for (const record of attached) {
+    if (record.stored) outcome.imagesStored += 1;
+    if (!record.stockItemId) continue;
+    const set = provenByItem.get(record.stockItemId) ?? new Set<string>();
+    set.add(record.reference);
+    provenByItem.set(record.stockItemId, set);
+  }
+  outcome.matched = provenByItem.size;
+
+  // Same re-audit the row path runs: a stage-1 image on one of these
+  // properties that this run did not re-derive from the builder's own PDF is
+  // not provably theirs, so it is kept and refused for display.
+  for (const item of existing) {
+    const proven = provenByItem.get(item.id) ?? new Set<string>();
+    const { data: rows } = await db
+      .from('builder_stock_item_images')
+      .select('id, source_reference, source_detail, processing_status')
+      .eq('stock_item_id', item.id)
+      .eq('source_stage', 'uploaded_document')
+      .limit(200);
+
+    for (const row of (rows ?? []) as Array<{
+      id: string; source_reference: string | null;
+      source_detail: Record<string, unknown> | null; processing_status: string;
+    }>) {
+      if (row.processing_status !== 'ready') continue;
+      if (proven.has(String(row.source_reference ?? ''))) continue;
+      if (Number((row.source_detail ?? {}).provenance_version ?? 0) >= PROVENANCE_VERSION) continue;
+      await demoteUnprovenSourceImage(db, {
+        stockItemId: item.id,
+        imageId: row.id,
+        reason: 'This image could not be re-derived from the uploaded PDF, so it is not shown.',
+      });
+      outcome.demoted += 1;
+    }
+
+    const previous = await currentPrimary(db, item.id);
+    const primary = await chooseAndStorePrimaryImage(db, item.id);
     if (primary && primary !== previous) outcome.primaryUpdated += 1;
   }
 

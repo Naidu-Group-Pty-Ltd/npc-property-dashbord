@@ -50,8 +50,16 @@ function concat(parts: Array<Uint8Array | string>): Uint8Array {
   return out;
 }
 
-/** A JPEG with real markers, distinguishable by its fill byte. */
-function jpeg(fill: number, size = 8192): Uint8Array {
+/**
+ * A JPEG with real markers, distinguishable by its fill byte.
+ *
+ * Sized the way a real render of these dimensions is. A lossy encoding carries
+ * roughly a tenth of a byte per pixel, and one that carries far less is a flat
+ * decorative wash rather than a photograph — a distinction
+ * `selectPropertyPhotograph` now makes, and a 4 KB "1700×956 render" would not
+ * survive it.
+ */
+function jpeg(fill: number, size = 160_000): Uint8Array {
   const bytes = new Uint8Array(size);
   bytes.set([0xff, 0xd8, 0xff, 0xe0], 0);
   bytes.fill(fill, 4, size - 2);

@@ -27,7 +27,17 @@ import type { ExtractedMedia } from './extract.ts';
 import {
   attributeDocumentMedia, type AnchoredAssets, type SourceImageAsset,
 } from './sourceAssets.pure.ts';
-import { storeSourceImages } from './sourceImages.ts';
+import { PROVENANCE_VERSION, storeSourceImages } from './sourceImages.ts';
+import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
+
+/** What `attachDocumentMedia` did with one picture, for a caller that counts. */
+export interface AttachedMedia {
+  reference: string;
+  /** The property it reached, or null where the document did not say. */
+  stockItemId: string | null;
+  anchor: string | null;
+  stored: boolean;
+}
 
 export interface ImportOutcome {
   detected: number;
@@ -146,6 +156,15 @@ export async function importStockRecords(
     media: ExtractedMedia[];
     /** Imagery the source published against one of its own rows. */
     rowAssets?: AnchoredAssets[];
+    /**
+     * The document's prose, one entry per page, for a format that paginates.
+     * A PDF's properties are read out of prose and carry no anchor of their
+     * own, so the page each one is described on is worked out here — see
+     * `pdfRowAnchors.pure.ts`, which refuses far more often than it answers.
+     */
+    pageTexts?: string[];
+    /** The uploaded document's own name, recorded on every image it yielded. */
+    filename?: string | null;
   },
 ): Promise<ImportOutcome> {
   const outcome: ImportOutcome = {
@@ -175,6 +194,26 @@ export async function importStockRecords(
   }
   outcome.detected = records.length;
   if (!records.length) return outcome;
+
+  /**
+   * A paginated document's own structure, applied to records that arrived
+   * without an anchor. Only records the pages actually name get one; the rest
+   * stay unanchored, which is the whole point — an unanchored record's
+   * photograph is stored against the upload and shown against nobody.
+   */
+  if (input.pageTexts?.length) {
+    const photoPages = input.media
+      .map((media) => pdfAnchorPage(media.anchor))
+      .filter((page): page is number => page !== null);
+    const anchors = anchorPdfRowsToPages(
+      records.map((record) => stockRecordLabel(record)),
+      input.pageTexts,
+      photoPages,
+    );
+    records.forEach((record, index) => {
+      if (!record.source_anchor && anchors[index]) record.source_anchor = anchors[index];
+    });
+  }
 
   const { data: existingRows } = await db
     .from('builder_stock_items')
@@ -334,20 +373,33 @@ export async function importStockRecords(
  */
 export async function attachDocumentMedia(
   db: any,
-  input: { organisationId: string; uploadId: string; media: ExtractedMedia[] },
+  input: {
+    organisationId: string; uploadId: string; media: ExtractedMedia[];
+    /** The document these pictures came out of, recorded on each of them. */
+    filename?: string | null;
+  },
   itemIdsInOrder: string[],
   itemIdByAnchor: Map<string, string | null>,
-): Promise<void> {
-  if (!input.media.length) return;
+): Promise<AttachedMedia[]> {
+  const attached: AttachedMedia[] = [];
+  if (!input.media.length) return attached;
 
   const resolvedAnchors: Record<string, string> = {};
   for (const [anchor, itemId] of itemIdByAnchor.entries()) {
     if (itemId) resolvedAnchors[anchor] = itemId;
   }
+  /**
+   * A PDF's photographs are attributed by the page they were drawn on and by
+   * nothing else. Counting is not the fallback here: a page anchor that no
+   * property claimed is the document DECLINING to say whose house that is, and
+   * the answer to that is an image kept against the upload and shown against
+   * nobody. Other formats keep the counting fallback they always had.
+   */
+  const pageAnchored = input.media.some((media) => pdfAnchorPage(media.anchor) !== null);
   const attributions = attributeDocumentMedia({
     anchors: input.media.map((media) => media.anchor ?? null),
     itemIdByAnchor: resolvedAnchors,
-    itemIdsInOrder,
+    itemIdsInOrder: pageAnchored ? [] : itemIdsInOrder,
   });
 
   for (const [index, media] of input.media.entries()) {
@@ -381,13 +433,52 @@ export async function attachDocumentMedia(
           structural: attribution.structural,
           anchor: media.anchor ?? null,
           reason: attribution.reason,
+          upload_id: input.uploadId,
+          stock_item_id: stockItemId,
+          filename: input.filename ?? null,
+          /**
+           * Where in the builder's own document this came from, and what it
+           * hashes to at both ends. This is the record that makes
+           * "source_supplied" a fact somebody can check rather than a label.
+           */
+          ...(media.provenance
+            ? {
+              page: media.provenance.page,
+              method: media.provenance.method,
+              object_number: media.provenance.objectNumber,
+              resource_name: media.provenance.resourceName,
+              source_width: media.provenance.sourceWidth,
+              source_height: media.provenance.sourceHeight,
+              source_sha256: media.provenance.sourceSha256,
+              stored_sha256: media.provenance.storedSha256,
+              crop: media.provenance.crop,
+              page_area_share: media.provenance.pageAreaShare,
+              transformation: media.provenance.transformation,
+              // Stamped only where the origin is actually recorded, because
+              // this is the version the re-audit trusts.
+              provenance_version: PROVENANCE_VERSION,
+            }
+            : {}),
         },
       }, { onConflict: 'stock_item_id,source_stage,source_reference' });
+      attached.push({
+        reference: media.name.slice(0, 400),
+        stockItemId,
+        anchor: media.anchor ?? null,
+        stored: true,
+      });
     } catch {
       // A document image that will not store must not fail the import. The
       // property is already saved and stages 2 and 3 still run.
+      attached.push({
+        reference: media.name.slice(0, 400),
+        stockItemId: null,
+        anchor: media.anchor ?? null,
+        stored: false,
+      });
     }
   }
+  return attached;
 }
 
 function safeFailureReason(error: unknown): string {

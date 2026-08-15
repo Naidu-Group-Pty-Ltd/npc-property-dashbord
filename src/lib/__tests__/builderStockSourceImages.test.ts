@@ -787,7 +787,7 @@ describe('repairing stock that is already imported', () => {
         + 'Sandpiper Estate,1307585,https://drive.google.com/drive/folders/pack-root-0001',
     ].join('\r\n');
 
-    const jpeg = new Uint8Array(4096);
+    const jpeg = new Uint8Array(160_000);
     jpeg.set([0xff, 0xd8, 0xff, 0xe0], 0);
     jpeg.fill(0x42, 4, 4094);
     jpeg.set([0xff, 0xd9], 4094);
