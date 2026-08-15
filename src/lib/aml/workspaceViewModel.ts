@@ -45,7 +45,6 @@ import {
   type CaseDimensionSource,
 } from "./caseDimensions";
 import type { AmlRiskRating } from "./amlCasesApi";
-import type { AmlPortalAccessFacts } from "./portalAccessState";
 
 /* ══════════════════════════════════════════════════════════════════════
    1. Information architecture — five operator areas over the existing
@@ -324,14 +323,6 @@ export interface AmlWorkspaceFacts {
   consent?: AmlConsentFacts | null;
   transactions?: AmlTransactionFacts | null;
   passport?: AmlPassportFacts | null;
-  /**
-   * Whether the client holds a Client Portal login.
-   *
-   * Distinct from `caseRow.client_portal_status`, which says how far they
-   * have got. Absent (`undefined`/`null`) means the read did not happen, and
-   * every reader degrades rather than guessing that there is no account.
-   */
-  portalAccess?: AmlPortalAccessFacts | null;
 }
 
 /* Small readers that keep the "was this loaded?" question in one place. */
