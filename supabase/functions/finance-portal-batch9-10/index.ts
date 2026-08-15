@@ -21,6 +21,8 @@ import { canAccessFinanceClient, canAccessPurchaseFile } from '../_shared/financ
 import { consumeRateLimit } from '../_shared/requestSecurity.ts';
 import { createCorsHeaders } from '../_shared/auth.ts';
 import { internalError } from '../_shared/errorResponse.ts';
+import { extractFinanceCredential } from '../_shared/financeSessionToken.ts';
+import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 
 const jsonWithHeaders = (d: unknown, responseCorsHeaders: Record<string, string>, s = 200) =>
   new Response(JSON.stringify(d), {
@@ -50,8 +52,18 @@ Deno.serve(async (req) => {
     const operation = body.operation as string | undefined;
     if (!operation) return json({ error: 'operation required' }, 400);
 
-    const token =
-      req.headers.get('x-finance-session-token') || req.headers.get('x-session-token') || body.finance_session_token || body.session_token || null;
+    // The session may arrive in the HttpOnly `__Host-finance_session_token`
+    // cookie, which is the only place the client has it from the second page
+    // view onwards. A cookie is ambient on cross-site requests (SameSite=None),
+    // so honouring one requires the origin allow-list; a header or body
+    // credential cannot be forged cross-site and stays unguarded.
+    // See docs/agreements/PARTNER_SESSION_TRANSPORT.md.
+    const credential = extractFinanceCredential(req.headers, body);
+    if (credential.source === 'cookie') {
+      const csrf = enforceCsrf(req);
+      if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+    }
+    const token = credential.token;
     if (!token) return json({ error: 'Finance session token required' }, 401);
 
     const { data: portalUser } = await supabase

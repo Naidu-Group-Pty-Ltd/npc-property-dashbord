@@ -42,26 +42,22 @@ import { join } from 'node:path';
 const ROOT = 'supabase/functions';
 
 /**
- * Known-unconverted at the time this check was introduced.
+ * Empty, and it must stay that way.
  *
- * These carry the same fault as the agreements function did and are left for a
- * change that can verify each one's own behaviour, rather than swept blind in a
- * fix aimed at the agreement workflow. They are recorded here so the gap is
- * visible and enumerable instead of being discovered one support ticket at a
- * time. Each takes a different shape — several resolve the session inline
- * rather than through a named helper — which is why they were not mechanically
- * rewritten.
+ * It briefly held the eight functions that resolved the session inline rather
+ * than through a named helper, which is why the first mechanical sweep missed
+ * them. They have since been converted individually — each one's actor model
+ * was read before it was touched, because two of them are not single-actor:
+ * `finance-portal-client-tasks` also carries a CLIENT portal token, and
+ * `finance-portal-messages` serves partner, client and staff and has an
+ * explicit "explicit-credential-first" rule that an ambient cookie would
+ * otherwise invert.
+ *
+ * Adding an entry here is not a way to land a function that cannot read the
+ * cookie. Every entry is a surface of the partner portal that goes blank the
+ * moment the partner reloads the page.
  */
-const BASELINE = new Set([
-  'finance-portal-batch6',
-  'finance-portal-batch7',
-  'finance-portal-batch8',
-  'finance-portal-batch9-10',
-  'finance-portal-client-tasks',
-  'finance-portal-lender-packet',
-  'finance-portal-messages',
-  'finance-portal-settlement-runway',
-]);
+const BASELINE = new Set([]);
 
 const COOKIE_AWARE = [
   'financeSessionToken.ts',

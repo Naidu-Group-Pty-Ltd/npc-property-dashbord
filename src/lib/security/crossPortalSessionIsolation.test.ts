@@ -185,12 +185,33 @@ describe('cross-portal credential resolution', () => {
   it('finance-portal-messages prefers an explicit portal token over the staff cookie', () => {
     const source = fn('finance-portal-messages');
     expect(source).toContain(
-      'const isStaffCaller = !financeToken && !portalToken && (hasStaffCookie || !!commandCentreToken);',
+      'const isStaffCaller = !explicitFinanceToken && !portalToken && (hasStaffCookie || !!commandCentreToken);',
     );
-    // The finance/portal tokens must be resolved unconditionally, not gated on
-    // the staff verdict the way they used to be.
-    expect(source).not.toMatch(/const financeToken = isStaffCaller \?/);
+    // The explicitly presented finance/portal tokens must be resolved
+    // unconditionally, not gated on the staff verdict the way they used to be.
+    expect(source).not.toMatch(/const explicitFinanceToken = isStaffCaller \?/);
     expect(source).not.toMatch(/const portalToken = isStaffCaller \?/);
+    // …and the explicit one still wins.
+    expect(source).toContain('const financeToken = explicitFinanceToken ?? financeCookieToken;');
+  });
+
+  /**
+   * The finance session cookie is ambient in exactly the way the staff cookie
+   * above is, so making this endpoint cookie-aware could have re-created the
+   * same bug with the actors reversed: a staff user — or a client-portal user —
+   * silently re-attributed to `partner` because a finance cookie rode along.
+   *
+   * The cookie is therefore the ONE credential here that IS gated, and gated on
+   * every other actor being ruled out first.
+   */
+  it('finance-portal-messages reads the finance cookie only when no other actor is indicated', () => {
+    const source = fn('finance-portal-messages');
+    expect(source).toContain(
+      'const financeCookieToken = (!explicitFinanceToken && !portalToken && !isStaffCaller)',
+    );
+    // Ordering is the whole guarantee: the staff verdict is reached first.
+    expect(source.indexOf('const isStaffCaller'))
+      .toBeLessThan(source.indexOf('const financeCookieToken'));
   });
 });
 
