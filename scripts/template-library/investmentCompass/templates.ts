@@ -218,7 +218,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     // and no market prose anywhere in the row. So the cover said nothing under
     // the address, on every report.
     standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
-    locations: 'Prepared {{report.generatedDate}}',
+    locations: 'Prepared {{report.generatedDate | date}}',
     facts: [
       { label: 'Verdict', value: '{{recommendation.headline}}' },
       { label: 'Grade', value: '{{recommendation.grade}}' },
@@ -588,7 +588,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       // page listed six labelled terms with one value between them.
       definitions('Method', [
         { term: 'Prepared by', definition: '{{org.name}}' },
-        { term: 'Date of preparation', definition: '{{report.generatedDate}}' },
+        { term: 'Date of preparation', definition: '{{report.generatedDate | date}}' },
         { term: 'Property assessed', definition: '{{property.address}}' },
         { term: 'Assessment grade', definition: '{{recommendation.grade}} · {{recommendation.score | fixed:0}} out of 100' },
         { term: 'Interest rate assumed', definition: '{{assumptions.interestRate | percent}}' },

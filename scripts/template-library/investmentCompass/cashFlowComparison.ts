@@ -274,7 +274,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     eyebrow: 'Cash flow comparison analysis',
     title: '{{cashFlowComparison.propertyCount}} properties, side by side',
     standfirst: 'What each one costs to get into, what it returns over the term, and which comes out ahead.',
-    locations: 'Prepared {{report.generatedDate}} · {{cashFlowComparison.reference}}',
+    locations: 'Prepared {{report.generatedDate | date}} · {{cashFlowComparison.reference}}',
     facts: [
       { label: 'Ranked first', value: '{{cashFlowComparison.ranked.0.shortAddress}}' },
       { label: 'Lead over second', value: '{{cashFlowComparison.scoreboard.leadMargin | percent}}' },
@@ -661,7 +661,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         { term: 'Term', definition: '{{cashFlowComparison.termYears}} years, identical for every property' },
         { term: 'Ranked for', definition: '{{cashFlowComparison.investorProfile}}' },
         { term: 'Reference', definition: '{{cashFlowComparison.reference}}' },
-        { term: 'Prepared', definition: '{{report.generatedDate}}' },
+        { term: 'Prepared', definition: '{{report.generatedDate | date}}' },
       ], 90),
       callout(
         'How to read the figures',

@@ -205,7 +205,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     eyebrow: 'Portfolio performance review',
     title: '{{client.name}}',
     standfirst: 'How the holdings are performing, what is carrying them, and what would move them.',
-    locations: 'Prepared {{report.generatedDate}}',
+    locations: 'Prepared {{report.generatedDate | date}}',
     facts: [
       { label: 'Portfolio value', value: '{{portfolio.value | currency}}' },
       { label: 'Properties', value: '{{portfolio.propertyCount}}' },
