@@ -27,12 +27,13 @@ vi.mock("@/components/aml/ActivateClientDialog", () => ({
 }));
 
 let mockCaseWorkspaceFlag = false;
+let mockFlagsUnavailable = false;
 vi.mock("@/lib/aml/useAmlV3Flags", () => ({
   useAmlV3Flags: () => ({
     v3Nav: false, startClientCompliance: false, complianceHome: false,
     caseWorkspace: mockCaseWorkspaceFlag,
     regulatoryHub: false, terminologyEditor: false, metricsRelocation: false,
-    orgSettings: false, loading: false,
+    orgSettings: false, loading: false, unavailable: mockFlagsUnavailable,
   }),
 }));
 
@@ -223,11 +224,20 @@ describe("AmlCases — register shell", () => {
  * finished journey workspace and an absent one are indistinguishable. That
  * is exactly how the workspace stayed switched off in production from Phase
  * 6 until somebody asked why a merged, deployed feature had changed nothing.
+ *
+ * And the notice alone was not enough, which is the second half of this
+ * suite. Underneath the switched-off flag sat a flag reader that could not
+ * read: an anon browser client against a table that grants SELECT `TO
+ * authenticated` returns `[]` with HTTP 200, so every flag coerced to false.
+ * The notice would then have reported a switched-off feature — and sent a
+ * superadmin to a toggle that was already on. "Off" and "unknown" carry the
+ * same eight false values and must not carry the same words.
  */
 describe("AmlCases — the rollout gate is visible to whoever can move it", () => {
   it("tells a superadmin when cases are still opening in the legacy dialog", async () => {
     mockSuperadmin = true;
     mockCaseWorkspaceFlag = false;
+    mockFlagsUnavailable = false;
     list.mockResolvedValue({ cases: [], total: 0 });
     render(
       <MemoryRouter initialEntries={["/admin/aml/cases"]}>
@@ -243,6 +253,7 @@ describe("AmlCases — the rollout gate is visible to whoever can move it", () =
   it("says nothing once the workspace is switched on", async () => {
     mockSuperadmin = true;
     mockCaseWorkspaceFlag = true;
+    mockFlagsUnavailable = false;
     list.mockResolvedValue({ cases: [], total: 0 });
     render(
       <MemoryRouter initialEntries={["/admin/aml/cases"]}>
@@ -256,6 +267,7 @@ describe("AmlCases — the rollout gate is visible to whoever can move it", () =
   it("never shows rollout plumbing to an ordinary operator", async () => {
     mockSuperadmin = false;
     mockCaseWorkspaceFlag = false;
+    mockFlagsUnavailable = false;
     list.mockResolvedValue({ cases: [], total: 0 });
     render(
       <MemoryRouter initialEntries={["/admin/aml/cases"]}>
@@ -264,5 +276,40 @@ describe("AmlCases — the rollout gate is visible to whoever can move it", () =
     );
     await screen.findByText("Case register");
     expect(screen.queryByText("Cases are opening in the legacy dialog")).not.toBeInTheDocument();
+  });
+
+  it("says the flags could not be READ rather than that they are off", async () => {
+    // The distinction the previous reader could not make. Reporting this as
+    // "switched off" points a superadmin at a toggle that will not help —
+    // the flag may already be on and simply unreadable.
+    mockSuperadmin = true;
+    mockCaseWorkspaceFlag = false;
+    mockFlagsUnavailable = true;
+    list.mockResolvedValue({ cases: [], total: 0 });
+    render(
+      <MemoryRouter initialEntries={["/admin/aml/cases"]}>
+        <AmlCasesPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("The rollout flags could not be read")).toBeInTheDocument();
+    expect(screen.queryByText("Cases are opening in the legacy dialog")).not.toBeInTheDocument();
+    // It still names where the answer comes from, so the next step is obvious.
+    expect(screen.getByText("aml-access")).toBeInTheDocument();
+  });
+
+  it("stays quiet about unreadable flags when the workspace is already on", async () => {
+    // A cached-but-stale reading can be `on` while a revalidation fails.
+    // There is nothing to tell anyone: the surface they want is rendering.
+    mockSuperadmin = true;
+    mockCaseWorkspaceFlag = true;
+    mockFlagsUnavailable = true;
+    list.mockResolvedValue({ cases: [], total: 0 });
+    render(
+      <MemoryRouter initialEntries={["/admin/aml/cases"]}>
+        <AmlCasesPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText("Case register");
+    expect(screen.queryByText("The rollout flags could not be read")).not.toBeInTheDocument();
   });
 });

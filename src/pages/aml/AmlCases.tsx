@@ -96,7 +96,11 @@ export default function AmlCasesPage() {
   const access = useAmlAccess();
   const navigate = useNavigate();
   const { isSuperadmin } = useAuth();
-  const { caseWorkspace: fullPageWorkspace, loading: flagsLoading } = useAmlV3Flags();
+  const {
+    caseWorkspace: fullPageWorkspace,
+    loading: flagsLoading,
+    unavailable: flagsUnavailable,
+  } = useAmlV3Flags();
   const [cases, setCases] = useState<AmlCase[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -336,18 +340,40 @@ export default function AmlCasesPage() {
 
         Shown to superadmins alone, because rollout plumbing is not an
         operator's concern and the cutover page refuses anyone else.
+
+        It says which of TWO things happened, and that distinction is the
+        whole reason this notice was not enough on its own. "Switched off"
+        and "could not be read" produce identical flag values — all false —
+        and for months the second wore the first's clothes: the flag was on
+        in the database and the browser could not see the table, so this
+        very notice would have reported a switched-off feature and sent a
+        superadmin to a toggle that was already on.
       */}
       {isSuperadmin && !flagsLoading && !fullPageWorkspace && (
-        <Alert>
+        <Alert variant={flagsUnavailable ? "destructive" : "default"}>
           <ToggleLeft aria-hidden="true" className="h-4 w-4" />
-          <AlertTitle>Cases are opening in the legacy dialog</AlertTitle>
+          <AlertTitle>
+            {flagsUnavailable
+              ? "The rollout flags could not be read"
+              : "Cases are opening in the legacy dialog"}
+          </AlertTitle>
           <AlertDescription className="space-y-2 text-xs">
-            <p>
-              The staged compliance journey workspace is built and deployed, but{" "}
-              <code className="font-mono">aml_v3_case_workspace</code> is switched off, so a case
-              opens in the legacy dialog instead. Nothing is broken — the flag has simply never
-              been turned on.
-            </p>
+            {flagsUnavailable ? (
+              <p>
+                No answer came back for the AML V3 flags, so every one of them is being treated as
+                off. That is the safe reading, not a known one — the workspace may well be switched
+                on. The flags are answered by the <code className="font-mono">aml-access</code>{" "}
+                function; if it has just been redeployed, reload. If this persists, the flags are
+                unreadable rather than disabled and the toggle will not change it.
+              </p>
+            ) : (
+              <p>
+                The staged compliance journey workspace is built and deployed, but{" "}
+                <code className="font-mono">aml_v3_case_workspace</code> is switched off, so a case
+                opens in the legacy dialog instead. Nothing is broken — the flag has simply never
+                been turned on.
+              </p>
+            )}
             <Button asChild size="sm" variant="outline">
               <Link to="/admin/aml-v3-cutover">Open the V3 cutover controls</Link>
             </Button>

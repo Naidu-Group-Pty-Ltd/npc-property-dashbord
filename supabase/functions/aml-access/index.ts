@@ -19,6 +19,52 @@ const json = (payload: unknown, status = 200) =>
 
 const AML_ROLES = new Set(["analyst", "reviewer", "mlro", "auditor"]);
 
+/**
+ * The AML V3 rollout flags, answered here with the service role.
+ *
+ * ── Why they cannot be read from the page ─────────────────────────────
+ * `public.feature_flags` grants SELECT `TO authenticated`, and the Command
+ * Centre's browser client is anon-only: identity here is the custom HttpOnly
+ * cookie session, and `createClient` sets `persistSession: false` precisely
+ * so GoTrue never competes with it. The client therefore never holds an
+ * `authenticated` role — and RLS does not error on a role that matches no
+ * policy, it FILTERS. A `from('feature_flags')` read from the page returned
+ * `[]` with HTTP 200 and a null error, which coerced to "every flag is off".
+ *
+ * So every V3 flag read as off, in every browser, for every user, however the
+ * database was set — and `aml_v3_case_workspace` gates the whole staged case
+ * workspace, which was unreachable from the day it shipped.
+ *
+ * The identical trap is documented on `useBuilderStockMarketplaceFlag` for
+ * `builder_stock_marketplace`; the rule it states is read through the server,
+ * not the table. This endpoint is the natural home: every AML surface already
+ * calls it for roles, it already reads `feature_flags` with the service role
+ * for `aml_ctf`, and answering the V3 flags here costs no extra round trip.
+ *
+ * Rollout flags are presentation state, not secrets, and this response is
+ * already gated on an authenticated Command Centre session.
+ */
+const AML_V3_FLAG_KEYS = [
+  "aml_v3_nav",
+  "aml_v3_start_client_compliance",
+  "aml_v3_compliance_home",
+  "aml_v3_case_workspace",
+  "aml_v3_regulatory_hub",
+  "aml_v3_terminology_editor",
+  "aml_v3_metrics_relocation",
+  "aml_v3_org_settings",
+] as const;
+
+/** `true`, `"true"` and `{ enabled: true }` all mean on. Everything else is off. */
+function coerceFlag(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value === "true";
+  if (value && typeof value === "object") {
+    return (value as { enabled?: unknown }).enabled === true;
+  }
+  return false;
+}
+
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -41,13 +87,25 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       return json({ error: auth.error || "Authentication required" }, 401);
     }
 
-    const [{ data: flag, error: flagError }, { data: roleRows, error: roleError }] = await Promise.all([
+    const [
+      { data: flag, error: flagError },
+      { data: roleRows, error: roleError },
+      { data: v3Rows, error: v3Error },
+    ] = await Promise.all([
       admin.from("feature_flags").select("value").eq("key", "aml_ctf").maybeSingle(),
       admin.rpc("get_aml_roles_for_user", { _user_id: auth.userId }),
+      admin.from("feature_flags").select("key,value").in("key", [...AML_V3_FLAG_KEYS]),
     ]);
 
     if (flagError) throw flagError;
     if (roleError) throw roleError;
+    // A failed V3 read must not answer "everything off" — that silent
+    // equivalence is the whole bug this block exists to end.
+    if (v3Error) throw v3Error;
+
+    const v3Map = new Map((v3Rows ?? []).map((row: any) => [String(row.key), row.value]));
+    const v3Flags: Record<string, boolean> = {};
+    for (const key of AML_V3_FLAG_KEYS) v3Flags[key] = coerceFlag(v3Map.get(key));
 
     const roles: string[] = (roleRows ?? [])
       .map((row: any) => String(row.role ?? ""))
@@ -62,6 +120,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       canWrite: uniqueRoles.some((role: string) => ["analyst", "reviewer", "mlro"].includes(role)),
       isMlro: uniqueRoles.includes("mlro"),
       userId: auth.userId,
+      /**
+       * Rollout state for the V3 surfaces, keyed exactly as the table stores
+       * it. Its ABSENCE is meaningful: it tells the browser it is talking to a
+       * deployment of this function that predates the fix, so the answer is
+       * unknown rather than "off".
+       */
+      v3Flags,
     });
   } catch (error) {
     console.error("[aml-access] failed", error);
