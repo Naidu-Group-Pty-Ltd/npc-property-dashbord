@@ -107,6 +107,28 @@ import { STANDARD_DISCLAIMER } from '../designSystem';
 const FOOTER = '{{client.name}} · Client details';
 const DOCUMENT_LABEL = 'Client Details Form';
 
+/**
+ * The residence rows, and which of them the record may not hold.
+ *
+ * `clientDetailsProjection` publishes with `put`, which omits an absent value
+ * rather than writing an empty string — so an unheld field leaves its path
+ * unresolved and its row prints as a term with no definition.
+ */
+const RESIDENCE_ADDRESS = { term: 'Address', definition: '{{clientDetails.residence.address}}' };
+const RESIDENCE_LOCALITY = {
+  term: 'Suburb',
+  definition: '{{clientDetails.residence.suburb}} {{clientDetails.residence.state}} {{clientDetails.residence.postcode}}',
+};
+const RESIDENCE_LIVING = { term: 'Living situation', definition: '{{clientDetails.residence.livingSituation}}' };
+const RESIDENCE_STATUS = { term: 'Residential status', definition: '{{clientDetails.residence.residentialStatus}}' };
+
+/** Any part of the locality line — the row says "Suburb" but sets three fields. */
+const HAS_LOCALITY_BARE = 'clientDetails && clientDetails.residence && '
+  + '(clientDetails.residence.suburb || clientDetails.residence.state || clientDetails.residence.postcode)';
+const HAS_LOCALITY = '(' + HAS_LOCALITY_BARE + ')';
+const HAS_RESIDENTIAL_STATUS_BARE = '(clientDetails && clientDetails.residence && clientDetails.residence.residentialStatus)';
+const HAS_RESIDENTIAL_STATUS = HAS_RESIDENTIAL_STATUS_BARE;
+
 /** What the pages draw. See `clientDetailsProjection.pure.ts` for the measurements. */
 const ROWS = {
   assets: 8,
@@ -164,7 +186,7 @@ const CLIENT_DETAILS_FORMAT: ReportFormat = {
 
 /** Present on every record, financial or not. */
 const IDENTITY_KPIS: KpiItem[] = [
-  { label: 'Prepared', value: '{{report.generatedDate}}', note: 'From the record as it stands' },
+  { label: 'Prepared', value: '{{report.generatedDate | date}}', note: 'From the record as it stands' },
   { label: 'People', value: '{{clientDetails.contacts.0.name}}', note: 'Primary contact' },
   { label: 'Marital status', value: '{{clientDetails.maritalStatus}}', note: 'As recorded' },
   { label: 'Dependents', value: '{{clientDetails.dependents | fixed:0}}', note: 'As recorded' },
@@ -284,7 +306,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     eyebrow: 'Client details form',
     title: '{{client.name}}',
     standfirst: 'Everything the record holds about this household, as it stands.',
-    locations: 'Prepared {{report.generatedDate}}',
+    locations: 'Prepared {{report.generatedDate | date}}',
     facts: [
       { label: 'Properties', value: '{{clientDetails.propertyCount | fixed:0}}' },
       { label: 'Marital status', value: '{{clientDetails.maritalStatus}}' },
@@ -356,12 +378,43 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           heading: 'Where they live',
           numeral: nextNumeral(),
         }),
-        definitions('Residence', [
-          { term: 'Address', definition: '{{clientDetails.residence.address}}' },
-          { term: 'Suburb', definition: '{{clientDetails.residence.suburb}} {{clientDetails.residence.state}} {{clientDetails.residence.postcode}}' },
-          { term: 'Living situation', definition: '{{clientDetails.residence.livingSituation}}' },
-          { term: 'Residential status', definition: '{{clientDetails.residence.residentialStatus}}' },
-        ], LENGTHS.address),
+        // Four fixed rows became four variants, because two of them are
+        // optional on the record and the projection omits what it does not
+        // hold. `current_suburb` and `residential_status` are both null on the
+        // client behind the 15 Aug 2026 export, so the page printed the words
+        // "Suburb" and "Residential status" against nothing at all — a form
+        // that looks half-filled rather than a record that holds four facts.
+        //
+        // The secondary contact's residence has never had this problem because
+        // its line is *composed in the projection* and omits what is absent
+        // (see `LENGTHS.secondaryResidence`). The primary's is drawn as a
+        // definition list, so the choice has to be made here.
+        oneOf(
+          {
+            when: HAS_LOCALITY + ' && ' + HAS_RESIDENTIAL_STATUS,
+            item: definitions('Residence', [
+              RESIDENCE_ADDRESS, RESIDENCE_LOCALITY, RESIDENCE_LIVING, RESIDENCE_STATUS,
+            ], LENGTHS.address),
+          },
+          {
+            when: HAS_LOCALITY + ' && !' + HAS_RESIDENTIAL_STATUS_BARE,
+            item: definitions('Residence', [
+              RESIDENCE_ADDRESS, RESIDENCE_LOCALITY, RESIDENCE_LIVING,
+            ], LENGTHS.address),
+          },
+          {
+            when: '!(' + HAS_LOCALITY_BARE + ') && ' + HAS_RESIDENTIAL_STATUS,
+            item: definitions('Residence', [
+              RESIDENCE_ADDRESS, RESIDENCE_LIVING, RESIDENCE_STATUS,
+            ], LENGTHS.address),
+          },
+          {
+            when: '!(' + HAS_LOCALITY_BARE + ') && !' + HAS_RESIDENTIAL_STATUS_BARE,
+            item: definitions('Residence', [
+              RESIDENCE_ADDRESS, RESIDENCE_LIVING,
+            ], LENGTHS.address),
+          },
+        ),
       ], [
         // The second contact's residence, where the record carries one. One
         // composed line, because the projection carries both legacy shapes in
@@ -381,8 +434,8 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
             headers: ['Previous address', 'From', 'To'],
             rows: Array.from({ length: n }, (_, i) => [
               `{{clientDetails.addressHistory.${i}.address}}`,
-              `{{clientDetails.addressHistory.${i}.startDate}}`,
-              `{{clientDetails.addressHistory.${i}.endDate}}`,
+              `{{clientDetails.addressHistory.${i}.startDate | date}}`,
+              `{{clientDetails.addressHistory.${i}.endDate | date}}`,
             ]),
             columnWidths: [0.56, 0.22, 0.22],
             numeric: [],

@@ -56,6 +56,9 @@ import {
 import {
   enrichStockItem, type EnrichableStockItem,
 } from '../_shared/builderStock/images.ts';
+import type { AnchoredAssets } from '../_shared/builderStock/sourceAssets.pure.ts';
+import { repairSourceImagesForUpload } from '../_shared/builderStock/repairSourceImages.ts';
+import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 import {
   BUILDER_SELECTION_SELECT, STOCK_AVAILABILITY_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, STOCK_UPLOAD_SELECT, stockPagination,
@@ -472,6 +475,13 @@ Deno.serve(async (req) => {
       let importBytes = fetched.bytes;
       let snapshotContentType = fetched.declaredContentType || 'application/octet-stream';
       let notionDiagnostics: Record<string, unknown> | null = null;
+      /**
+       * The imagery the Notion page tied to its own rows.
+       *
+       * It cannot travel in the CSV — a cover is a file reference, not a cell
+       * — so it is carried beside it, keyed by the anchor the CSV does carry.
+       */
+      let sourceRowAssets: AnchoredAssets[] = [];
 
       // =================================================================
       // Public Notion pages
@@ -549,6 +559,7 @@ Deno.serve(async (req) => {
               importBytes = new TextEncoder().encode(recovery.csv);
               classification = { kind: 'delimited', extension: 'csv' };
               snapshotContentType = 'text/csv';
+              sourceRowAssets = recovery.assets;
             } else {
               importBytes = new TextEncoder().encode(recovery.text);
               classification = { kind: 'delimited', extension: 'txt' };
@@ -647,6 +658,8 @@ Deno.serve(async (req) => {
           classification,
           sourceKind: 'url',
           isNotionSource: normalised.isNotion,
+          baseUrl: fetched.finalUrl,
+          rowAssets: sourceRowAssets,
         });
 
         /**
@@ -679,6 +692,91 @@ Deno.serve(async (req) => {
     // =====================================================================
     // Image enrichment — stages 2 and 3, resumable
     // =====================================================================
+
+    /**
+     * Recover source imagery for stock that is ALREADY imported.
+     *
+     * The smallest thing that repairs the seventy live properties whose cards
+     * show a Street View while their builder's renders sit on the source's own
+     * rows. It re-reads the source and attaches what it finds; it creates
+     * nothing, edits no property field, and leaves every client selection,
+     * availability and audit row exactly where it was. Asking a builder to
+     * delete and re-upload a stock list to fix a picture is not a repair.
+     */
+    if (operation === 'reprocess_source_images') {
+      if (!await can('edit')) {
+        return json({ error: 'You do not have permission to manage stock', code: 'permission_denied' }, 403);
+      }
+
+      const uploadId = cleanText(body.upload_id, 64);
+      let sourceIds: string[] = [];
+      if (uploadId) {
+        const upload = await loadUpload(uploadId);
+        if (!upload || upload.deleted_at) return json({ error: 'Source not found' }, 404);
+        sourceIds = [upload.id];
+      } else {
+        const { data: uploads } = await supabase
+          .from('builder_stock_uploads')
+          .select('id')
+          .eq('organisation_id', activeOrganisationId)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false })
+          .limit(20);
+        sourceIds = (uploads ?? []).map((row: { id: string }) => row.id);
+      }
+
+      const startedAt = Date.now();
+      const results = [];
+      for (const id of sourceIds) {
+        if (Date.now() - startedAt > ENRICHMENT_BUDGET_MS) break;
+        const result = await repairSourceImagesForUpload(supabase, {
+          organisationId: activeOrganisationId,
+          uploadId: id,
+          // A row's own package document is a couple of megabytes, so the run
+          // is budgeted and resumable: rows that already hold a source image
+          // are skipped, and `incomplete` tells the page to ask again.
+          deadlineAt: startedAt + ENRICHMENT_BUDGET_MS,
+        });
+        // Server-side only: the problem list can name a source object path.
+        if (result.problems.length) {
+          console.warn('[builder-portal-stock] source image repair problems', {
+            upload_id: id, problems: result.problems.slice(0, 10),
+          });
+        }
+        results.push({
+          upload_id: result.uploadId,
+          rows_read: result.rowsRead,
+          rows_with_imagery: result.rowsWithImagery,
+          matched: result.matched,
+          images_stored: result.imagesStored,
+          from_package: result.fromPackage,
+          package_not_identified: result.packageNotIdentified,
+          package_unreachable: result.packageUnreachable,
+          incomplete: result.incomplete,
+          demoted: result.demoted,
+          primary_updated: result.primaryUpdated,
+          error: result.error ?? null,
+        });
+      }
+
+      /**
+       * Settle EVERY property, not only the ones this run touched.
+       *
+       * A property whose builder supplied nothing must end the run with no
+       * primary image rather than the Street View it had before the rule
+       * changed — that stale pointer IS the defect being repaired.
+       */
+      const primaries = await enforceStrictPrimaryImages(supabase, activeOrganisationId);
+
+      await logBuilderProjectActivity(supabase, req, {
+        builderUserId: me.id, organisationId: activeOrganisationId,
+        action: 'builder_stock_source_images_reprocessed',
+        entityType: 'stock_upload', entityId: sourceIds[0] ?? null,
+        metadata: { sources: results.length, results, primaries },
+      });
+
+      return json({ success: true, results, primaries });
+    }
 
     if (operation === 'enrich_images') {
       if (!await can('edit')) {

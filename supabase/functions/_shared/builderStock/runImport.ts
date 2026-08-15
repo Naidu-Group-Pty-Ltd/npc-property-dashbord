@@ -19,6 +19,7 @@ import { extractStockFile, StockExtractionError } from './extract.ts';
 import { extractStockRowsFromImages, extractStockRowsFromText } from './modelExtract.ts';
 import { importStockRecords } from './importStock.ts';
 import { NOTION_NO_PROPERTIES_MESSAGE } from './urlSource.pure.ts';
+import type { AnchoredAssets } from './sourceAssets.pure.ts';
 
 /** Wall clock allowed to the model, leaving room for the import itself. */
 const MODEL_BUDGET_MS = 90_000;
@@ -44,6 +45,20 @@ export interface RunImportInput {
    * see the note in the zero-row branch below.
    */
   isNotionSource?: boolean;
+  /**
+   * The address the document was fetched from, when there was one. Used to
+   * resolve a relative `<img src>` against the page that published it — a
+   * source-supplied photograph is usually linked relatively, and resolving it
+   * against a placeholder is how it stopped being fetchable.
+   */
+  baseUrl?: string;
+  /**
+   * Imagery the SOURCE tied to one of its own rows, keyed by the anchor those
+   * rows carry. Supplied by callers that read a source this module cannot
+   * re-read — a Notion collection, whose covers live in the record map rather
+   * than in the CSV it becomes.
+   */
+  rowAssets?: AnchoredAssets[];
 }
 
 export interface RunImportFailure {
@@ -135,7 +150,9 @@ export async function runStockImport(input: RunImportInput): Promise<RunImportRe
 
   let extraction;
   try {
-    extraction = await extractStockFile(bytes, upload.original_filename, classification);
+    extraction = await extractStockFile(bytes, upload.original_filename, classification, {
+      baseUrl: input.baseUrl,
+    });
   } catch (error) {
     if (error instanceof StockExtractionError) {
       return fail(error.code, error.safeMessage, String((error as { underlying?: unknown }).underlying ?? ''));
@@ -190,6 +207,13 @@ export async function runStockImport(input: RunImportInput): Promise<RunImportRe
     builderUserId: input.builderUserId,
     rows,
     media: extraction.media,
+    // The caller's assets first: a Notion collection knows which row owns
+    // which cover, and the CSV it became cannot.
+    rowAssets: [...(input.rowAssets ?? []), ...extraction.rowAssets],
+    // A PDF's properties come out of prose and carry no anchor of their own;
+    // these are what lets one be tied back to the page it was described on.
+    pageTexts: extraction.pageTexts,
+    filename: upload.original_filename,
   });
 
   if (!outcome.detected) {

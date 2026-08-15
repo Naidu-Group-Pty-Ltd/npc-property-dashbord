@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -74,6 +74,8 @@ export function ActivateClientDialog({
   const [program, setProgram] = useState<AmlActivationProgram | null>(null);
   const [loadingProgram, setLoadingProgram] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Route/record handoff: the exact client is loaded and validated
   // server-side from its ID. The browser never supplies name or status.
@@ -101,6 +103,8 @@ export function ActivateClientDialog({
     setEvent("");
     setReason("");
     setConfirmed(false);
+    setSubmitAttempted(false);
+    setSubmitError(null);
     setRouteError(null);
     setMode("pick");
 
@@ -185,8 +189,58 @@ export function ActivateClientDialog({
   const canSubmit =
     missing.length === 0 && !routeError && !routeLoading;
 
-  const handleSubmit = async () => {
-    if (!canSubmit || !selected) return;
+  const firstBlocker = !selected
+    ? { id: "ac-client-section", message: "Select or create a client before activating AML/CTF." }
+    : selected.has_open_case
+      ? { id: "ac-client-section", message: "This client already has an open AML/CTF case." }
+      : !displayName.trim()
+        ? { id: "ac-name", message: "Enter the AML subject's legal display name." }
+        : event.trim().length < 3
+          ? { id: "ac-event", message: "Enter the activation event that has occurred." }
+          : reason.trim().length < 10
+            ? { id: "ac-reason", message: "Record at least 10 characters of reason and evidence." }
+            : model === "B" && !modelBReady
+              ? { id: "ac-timing", message: "Model B requires legal approval and a program version." }
+              : !confirmed
+                ? { id: "ac-confirmation", message: "Confirm the activation event before continuing." }
+                : null;
+
+  const finishActivation = async (created: AmlCase, clientMarkedActive: boolean, note?: string) => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["clients"] }),
+      queryClient.invalidateQueries({ queryKey: ["client-details", selected?.id] }),
+      queryClient.invalidateQueries({ queryKey: ["aml-client-summary", selected?.id] }),
+      queryClient.invalidateQueries({ queryKey: ["secure-client-data", selected?.id] }),
+      queryClient.invalidateQueries({ queryKey: ["secure-client", selected?.id] }),
+    ]);
+
+    const activatedNote = clientMarkedActive
+      ? "The client record has been marked active. " : "";
+    toast({
+      title: "Client activated for AML",
+      description: `${created.case_reference} opened. ${activatedNote}${note ?? ""}`.trim(),
+    });
+    onActivated?.(created);
+    onOpenChange(false);
+  };
+
+  const handleSubmit = async (submitEvent?: FormEvent) => {
+    submitEvent?.preventDefault();
+    setSubmitAttempted(true);
+    setSubmitError(null);
+    if (!canSubmit || !selected) {
+      if (firstBlocker) {
+        setSubmitError(firstBlocker.message);
+        requestAnimationFrame(() => {
+          const target = document.getElementById(firstBlocker.id);
+          if (typeof target?.scrollIntoView === "function") {
+            target.scrollIntoView({ block: "center", behavior: "smooth" });
+          }
+          target?.focus({ preventScroll: true });
+        });
+      }
+      return;
+    }
     setSubmitting(true);
     try {
       const { case: created, client_activation, client_portal } =
@@ -199,34 +253,31 @@ export function ActivateClientDialog({
           reason: reason.trim(),
           human_confirmed: true,
         });
-
-      // The client record, its AML summary and the client list all changed —
-      // refresh them without requiring a page reload.
-      void queryClient.invalidateQueries({ queryKey: ["clients"] });
-      void queryClient.invalidateQueries({ queryKey: ["aml-client-summary", selected.id] });
-      void queryClient.invalidateQueries({ queryKey: ["secure-client-data", selected.id] });
-      void queryClient.invalidateQueries({ queryKey: ["secure-client", selected.id] });
-
-      // A client who cannot reach their portal will never complete screening,
-      // so make that the headline rather than a quiet success toast.
-      const activatedNote = client_activation?.marked_active
-        ? "The client record has been marked active. " : "";
-      toast({
-        title: "Client activated for AML",
-        description: client_portal?.note
-          ? `${created.case_reference} opened. ${activatedNote}${client_portal.note}`
-          : `${created.case_reference} opened. ${activatedNote}`.trim(),
-        variant: client_portal && client_portal.has_portal_access === false
-          ? "destructive" : undefined,
-      });
-      onActivated?.(created);
-      onOpenChange(false);
+      if (!created?.id || created.client_id !== selected.id) {
+        throw new Error("The activation response did not contain the linked AML case.");
+      }
+      await finishActivation(created, Boolean(client_activation?.marked_active), client_portal?.note);
     } catch (e: any) {
-      toast({
-        title: "Activation failed",
-        description: e?.message ?? "Unknown error",
-        variant: "destructive",
-      });
+      // The client+case transaction may have committed even if the response or
+      // a later notification failed. Re-read the authoritative summary before
+      // inviting a retry, otherwise a successful activation becomes a false
+      // failure followed by a confusing duplicate-case error.
+      try {
+        const summary = await amlCasesApi.clientSummary(selected.id);
+        if (summary.has_open_case && summary.case?.client_id === selected.id) {
+          await finishActivation(
+            summary.case,
+            selected.is_active !== true,
+            "The activation was confirmed from the client record after the original response was interrupted.",
+          );
+          return;
+        }
+      } catch {
+        // Preserve and surface the original activation error below.
+      }
+      const message = e?.message ?? "Unknown error";
+      setSubmitError(message);
+      toast({ title: "Activation failed", description: message, variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
@@ -240,6 +291,7 @@ export function ActivateClientDialog({
         data-testid="activate-client-dialog"
         className="flex max-h-[92vh] w-full flex-col gap-0 overflow-hidden p-0 pb-0 sm:max-h-[min(88vh,53rem)] sm:w-[min(calc(100vw-2rem),780px)] sm:max-w-[780px] sm:p-0"
       >
+        <form className="contents" onSubmit={handleSubmit} noValidate>
         <DialogHeader className="shrink-0 border-b border-border/60 px-5 py-4 text-left sm:px-6">
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 shrink-0 text-primary" />
@@ -265,7 +317,7 @@ export function ActivateClientDialog({
           ) : (
             <>
               {/* 1 — Selected client */}
-              <section className="space-y-3" aria-label="Selected client">
+              <section id="ac-client-section" className="space-y-3" aria-label="Selected client" tabIndex={-1}>
                 <SectionHeading title="1 · Selected client" />
                 {routeLoading ? (
                   <div
@@ -359,6 +411,7 @@ export function ActivateClientDialog({
                       value={displayName}
                       onChange={(e) => { setDisplayName(e.target.value); setNameDirty(true); }}
                       placeholder="Full legal name"
+                      aria-invalid={submitAttempted && !displayName.trim()}
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -400,6 +453,7 @@ export function ActivateClientDialog({
                       value={event}
                       onChange={(e) => setEvent(e.target.value)}
                       placeholder="e.g. Signed engagement letter"
+                      aria-invalid={submitAttempted && event.trim().length < 3}
                     />
                   </div>
                 </div>
@@ -435,12 +489,13 @@ export function ActivateClientDialog({
                     onChange={(e) => setReason(e.target.value)}
                     rows={3}
                     placeholder="Describe the trigger, evidence source and why AML activation is warranted."
+                    aria-invalid={submitAttempted && reason.trim().length < 10}
                   />
                 </div>
               </section>
 
               {/* 4 — Confirmation */}
-              <section className="space-y-3" aria-label="Confirmation">
+              <section id="ac-confirmation" className="space-y-3" aria-label="Confirmation" tabIndex={-1}>
                 <SectionHeading title="4 · Confirmation" />
 
                 {selected && !selected.is_active && !selected.has_open_case && (
@@ -467,6 +522,13 @@ export function ActivateClientDialog({
                     record will be written.
                   </span>
                 </label>
+                {submitError && (
+                  <Alert variant="destructive" role="alert" data-testid="ac-submit-error">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Activation needs attention</AlertTitle>
+                    <AlertDescription>{submitError}</AlertDescription>
+                  </Alert>
+                )}
               </section>
             </>
           )}
@@ -501,6 +563,7 @@ export function ActivateClientDialog({
 
           <div className="order-1 flex flex-col-reverse gap-2 sm:order-2 sm:flex-row sm:items-center">
           <Button
+            type="button"
             variant="outline"
             className="w-full sm:w-auto"
             onClick={() => onOpenChange(false)}
@@ -510,6 +573,7 @@ export function ActivateClientDialog({
           </Button>
           {formUsable && (
             <Button
+              type="submit"
               className="w-full sm:w-auto"
               onClick={handleSubmit}
               disabled={!canSubmit || submitting}
@@ -521,6 +585,7 @@ export function ActivateClientDialog({
           )}
           </div>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

@@ -197,7 +197,7 @@ function cashFlowLedger(): SeedTemplate {
       eyebrow: '10-Year Cash Flow Analysis',
       title: '{{property.address}}',
       subtitle: 'Prepared for {{client.name}}',
-      footnote: 'Generated {{report.generatedDate}}',
+      footnote: 'Generated {{report.generatedDate | date}}',
     }),
     // Inputs and costs share a page, as they did in the legacy report: the
     // reader checking an assumption wants the cost base in the same eyeful.
@@ -296,7 +296,7 @@ function cashFlowMatrix(): SeedTemplate {
       eyebrow: '10-Year Cash Flow Matrix',
       title: '{{property.address}}',
       subtitle: 'Full projection · prepared for {{client.name}}',
-      footnote: 'Generated {{report.generatedDate}}',
+      footnote: 'Generated {{report.generatedDate | date}}',
       titleSize: 32,
     }),
     withFurniture(page('Matrix', flow([
@@ -382,7 +382,7 @@ function cashFlowPosition(): SeedTemplate {
       eyebrow: '10-Year Cash Flow',
       title: '{{property.address}}',
       subtitle: 'Prepared for {{client.name}}',
-      footnote: 'Generated {{report.generatedDate}}',
+      footnote: 'Generated {{report.generatedDate | date}}',
     }),
     withFurniture(page('Contents', flow([contents('Contents')])), FOOT),
     withFurniture(page('The position', flow([

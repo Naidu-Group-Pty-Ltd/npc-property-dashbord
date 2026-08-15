@@ -288,29 +288,38 @@ export function stockItemConfiguration(item: Pick<BuilderStockItem,
 }
 
 /**
- * The image a card should show, by stage priority.
+ * The image a Builder Stock card shows — the builder's own, or none.
  *
- * Mirrors `chooseAndStorePrimaryImage` on the server. Both exist because the
- * server's choice is stored on the row and the client still has to pick when
- * it is holding a list of images without one.
+ * ONE RULE, MIRRORING THE SERVER'S `primaryImage.ts`: a card may show the
+ * photograph the builder supplied, or an empty frame. Street View, a satellite
+ * still and a search result are none of them a photograph of the property, and
+ * a card showing one tells a client something untrue about a house.
+ *
+ * There is deliberately NO ordering across stages any more, because there is
+ * nothing to order: `google_maps` and `internet_search` are not candidates.
+ * They stay in the payload — the source panel still reports what each stage
+ * found — they are simply never what the card draws.
  */
-const STAGE_PRIORITY: Record<StockImageStage, number> = {
-  uploaded_document: 0,
-  google_maps: 1,
-  internet_search: 2,
-};
+export function isDisplayableSourceImage(image: BuilderStockImage): boolean {
+  return image.source_stage === 'uploaded_document'
+    && image.verification_status === 'source_supplied'
+    && image.processing_status === 'ready'
+    && !!(image.storage_path || image.external_url);
+}
 
 export function primaryStockImage(item: BuilderStockItem): BuilderStockImage | null {
-  const usable = (item.images ?? []).filter(
-    (image) => image.processing_status === 'ready' && (image.storage_path || image.external_url));
-  if (!usable.length) return null;
+  const displayable = (item.images ?? []).filter(isDisplayableSourceImage);
+  if (!displayable.length) return null;
+
   if (item.primary_image_id) {
-    const chosen = usable.find((image) => image.id === item.primary_image_id);
+    const chosen = displayable.find((image) => image.id === item.primary_image_id);
     if (chosen) return chosen;
   }
-  return [...usable].sort((a, b) =>
-    (STAGE_PRIORITY[a.source_stage] ?? 9) - (STAGE_PRIORITY[b.source_stage] ?? 9)
-    || a.position - b.position)[0] ?? null;
+  // The stored choice is missing or stale. Pick by the order the SOURCE gave
+  // them, with the id as a stable tie-break, so the two never disagree.
+  return [...displayable].sort((a, b) =>
+    (a.position ?? 0) - (b.position ?? 0)
+    || String(a.id).localeCompare(String(b.id)))[0] ?? null;
 }
 
 /** Per-stage state for the enrichment readout. */

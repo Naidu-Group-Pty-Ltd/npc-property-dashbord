@@ -7,6 +7,21 @@ interface BackgroundJob {
   type: 'bulk_generation' | 'comparison_analysis' | 'investment_report';
 }
 
+/**
+ * `localStorage` throws on *property access* where site data is blocked
+ * (Safari private browsing, "block all cookies", enterprise policy) — not just
+ * on write. This component mounts above the router, so an unguarded throw here
+ * took down every page including sign-in. A dropped job list is a lost
+ * convenience; a page that will not render is not.
+ */
+function readStored(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function writeStored(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch { /* jobs not persisted across reloads */ }
+}
+
 export function BackgroundJobTracker() {
   const [jobs, setJobs] = useState<BackgroundJob[]>([]);
   const jobsRef = useRef<BackgroundJob[]>([]);
@@ -21,8 +36,8 @@ export function BackgroundJobTracker() {
 
   // Load jobs from localStorage on mount and also load processed jobs
   useEffect(() => {
-    const stored = localStorage.getItem('background_jobs');
-    const processedStored = localStorage.getItem('processed_jobs');
+    const stored = readStored('background_jobs');
+    const processedStored = readStored('processed_jobs');
     
     if (stored) {
       try {
@@ -45,13 +60,13 @@ export function BackgroundJobTracker() {
 
   // Save jobs to localStorage whenever they change
   useEffect(() => {
-    localStorage.setItem('background_jobs', JSON.stringify(jobs));
+    writeStored('background_jobs', JSON.stringify(jobs));
   }, [jobs]);
 
   // Save processed jobs to localStorage whenever they change
   useEffect(() => {
     const saveProcessedJobs = () => {
-      localStorage.setItem('processed_jobs', JSON.stringify(Array.from(processedJobsRef.current)));
+      writeStored('processed_jobs', JSON.stringify(Array.from(processedJobsRef.current)));
     };
     
     // Debounce saves

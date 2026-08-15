@@ -49,12 +49,29 @@ function textOf(fragment: string): string {
  * expanded — OpenDocument uses it for ordinary runs of empty cells, so
  * ignoring it shifts every column after the first gap.
  */
-export function readOpenDocument(contentXml: string): { tables: string[][][]; text: string } {
+export function readOpenDocument(contentXml: string): {
+  tables: string[][][];
+  /**
+   * The same tables, each carrying the index of the `<table:table>` it came
+   * from and, per row, the index of the `<table:table-row>` that produced it.
+   *
+   * Those indexes are the vocabulary an image anchor is written in, and they
+   * are NOT the matrix's own indexes: empty rows and single-row tables are
+   * dropped from the matrix, so counting positions in the output names the
+   * wrong row of the input.
+   */
+  tableSections: Array<{ matrix: string[][]; tableIndex: number; rowIndexes: number[] }>;
+  text: string;
+} {
   const tables: string[][][] = [];
+  const tableSections: Array<{ matrix: string[][]; tableIndex: number; rowIndexes: number[] }> = [];
 
-  for (const tableXml of contentXml.match(/<table:table\b[\s\S]*?<\/table:table>/g) ?? []) {
+  const tableFragments = contentXml.match(/<table:table\b[\s\S]*?<\/table:table>/g) ?? [];
+  tableFragments.forEach((tableXml, tableIndex) => {
     const matrix: string[][] = [];
-    for (const rowXml of tableXml.match(/<table:table-row\b[\s\S]*?<\/table:table-row>/g) ?? []) {
+    const rowIndexes: number[] = [];
+    const rowFragments = tableXml.match(/<table:table-row\b[\s\S]*?<\/table:table-row>/g) ?? [];
+    rowFragments.forEach((rowXml, rowIndex) => {
       const cells: string[] = [];
       // The attribute run is LAZY. Greedy, it swallows the `/` of a
       // self-closing cell, the `/>` alternative then fails, and the `>` branch
@@ -75,16 +92,19 @@ export function readOpenDocument(contentXml: string): { tables: string[][][]; te
         for (let i = 0; i < repeat; i++) cells.push(value);
       }
       while (cells.length && cells[cells.length - 1] === '') cells.pop();
-      if (cells.length) matrix.push(cells);
+      if (cells.length) { matrix.push(cells); rowIndexes.push(rowIndex); }
+    });
+    if (matrix.length > 1) {
+      tables.push(matrix);
+      tableSections.push({ matrix, tableIndex, rowIndexes });
     }
-    if (matrix.length > 1) tables.push(matrix);
-  }
+  });
 
   const paragraphs = (contentXml.match(/<text:(?:p|h)\b[\s\S]*?<\/text:(?:p|h)>/g) ?? [])
     .map(textOf)
     .filter((line) => line.length > 0);
 
-  return { tables, text: paragraphs.join('\n') };
+  return { tables, tableSections, text: paragraphs.join('\n') };
 }
 
 // ---------------------------------------------------------------------------
@@ -97,11 +117,18 @@ export function readOpenDocument(contentXml: string): { tables: string[][][]; te
  * A stock schedule on a slide is a DrawingML table (`<a:tbl>`); everything
  * else on the slide is text runs (`<a:t>`), which become the prose fallback.
  */
-export function readPresentation(slideXml: string[]): { tables: string[][][]; text: string } {
+export function readPresentation(slideXml: string[]): {
+  tables: string[][][];
+  /** Each table with the slide it was drawn on — the anchor a picture on that
+   *  same slide is recorded under. */
+  tableSections: Array<{ matrix: string[][]; slideIndex: number }>;
+  text: string;
+} {
   const tables: string[][][] = [];
+  const tableSections: Array<{ matrix: string[][]; slideIndex: number }> = [];
   const lines: string[] = [];
 
-  for (const xml of slideXml) {
+  slideXml.forEach((xml, slideIndex) => {
     for (const tableXml of xml.match(/<a:tbl\b[\s\S]*?<\/a:tbl>/g) ?? []) {
       const matrix: string[][] = [];
       for (const rowXml of tableXml.match(/<a:tr\b[\s\S]*?<\/a:tr>/g) ?? []) {
@@ -117,7 +144,10 @@ export function readPresentation(slideXml: string[]): { tables: string[][][]; te
         }
         if (cells.length) matrix.push(cells);
       }
-      if (matrix.length > 1) tables.push(matrix);
+      if (matrix.length > 1) {
+        tables.push(matrix);
+        tableSections.push({ matrix, slideIndex });
+      }
     }
 
     // One line per shape's paragraph, so a slide laid out as a list reads as
@@ -130,9 +160,9 @@ export function readPresentation(slideXml: string[]): { tables: string[][][]; te
         .trim();
       if (line) lines.push(line);
     }
-  }
+  });
 
-  return { tables, text: lines.join('\n') };
+  return { tables, tableSections, text: lines.join('\n') };
 }
 
 // ---------------------------------------------------------------------------

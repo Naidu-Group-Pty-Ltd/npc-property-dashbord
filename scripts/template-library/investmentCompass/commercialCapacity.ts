@@ -38,6 +38,7 @@ import {
 import {
   beginCompassTemplate,
   callout,
+  cols,
   contentTop,
   cover,
   definitions,
@@ -248,7 +249,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         table({
           headers: ['Test', 'Permits', 'Policy', 'This deal', 'Status'],
           rows: Array.from({ length: ROWS.constraints }, (_, i) => constraintRow(i)),
-          columnWidths: [c.contentWidth - 330, 90, 70, 70, 100],
+          columnWidths: cols(c.contentWidth - 330, 90, 70, 70, 100),
           numeric: [1, 2, 3],
         }),
         // The explanation the legacy sets over its table — which test permits
@@ -292,7 +293,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
               `{{capacity.ratioRows.${i}.actualLabel}}`,
               `{{capacity.ratioRows.${i}.policyLabel}}`,
             ]),
-            columnWidths: [c.contentWidth - 250, 110, 140],
+            columnWidths: cols(c.contentWidth - 250, 110, 140),
             numeric: [1],
           });
           return oneOf(
@@ -332,7 +333,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
               `{{capacity.serviceability.rows.${i}.amountLabel}}`,
               `{{capacity.serviceability.rows.${i}.effect}}`,
             ]),
-            columnWidths: [c.contentWidth - 200, 110, 90],
+            columnWidths: cols(c.contentWidth - 200, 110, 90),
             numeric: [1],
             // The longest stored ledger label is 45 characters.
             wraps: { chars: 48, columnWidth: c.contentWidth - 200 },
@@ -370,7 +371,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         table({
           headers: ['Item', 'Amount'],
           rows: Array.from({ length: ROWS.transaction }, (_, i) => costRow('transaction', i)),
-          columnWidths: [c.contentWidth - 120, 120],
+          columnWidths: cols(c.contentWidth - 120, 120),
         }),
         // The legacy funding strip's three figures. A "Funding gap" row used
         // to sit here and rendered an empty band on every fully-funded deal —
@@ -415,7 +416,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         table({
           headers: ['Line', 'Amount'],
           rows: Array.from({ length: ROWS.income }, (_, i) => costRow('propertyIncome', i)),
-          columnWidths: [c.contentWidth - 120, 120],
+          columnWidths: cols(c.contentWidth - 120, 120),
         }),
         definitions('What the income carries', [
           { term: 'Net operating income', definition: '{{capacity.propertyIncome.netOperatingIncome | currency}}' },
@@ -447,7 +448,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
               `{{capacity.propertyIncome.tenancies.${i}.shareLabel}}`,
               `{{capacity.propertyIncome.tenancies.${i}.expiry}}`,
             ]),
-            columnWidths: [c.contentWidth - 320, 70, 90, 70, 90],
+            columnWidths: cols(c.contentWidth - 320, 70, 90, 70, 90),
             numeric: [1, 2, 3],
             wraps: { chars: 44, columnWidth: c.contentWidth - 320 },
           });
@@ -494,7 +495,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
               `{{capacity.businessIncome.periods.${i}.adjustedLabel}}`,
               `{{capacity.businessIncome.periods.${i}.verification}}`,
             ]),
-            columnWidths: [64, 82, 82, 82, 82, c.contentWidth - 392],
+            columnWidths: cols(64, 82, 82, 82, 82, c.contentWidth - 392),
             numeric: [1, 2, 3, 4],
           });
           return oneOf(
@@ -549,7 +550,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
               `{{capacity.portfolio.rows.${i}.changeLabel}}`,
               `{{capacity.portfolio.rows.${i}.effect}}`,
             ]),
-            columnWidths: [c.contentWidth - 330, 85, 85, 75, 85],
+            columnWidths: cols(c.contentWidth - 330, 85, 85, 75, 85),
             numeric: [1, 2, 3],
           });
           return oneOf(
@@ -594,7 +595,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
               `{{capacity.warnings.${i}.category}}`,
               `{{capacity.warnings.${i}.label}}`,
             ]),
-            columnWidths: [90, 100, c.contentWidth - 190],
+            columnWidths: cols(90, 100, c.contentWidth - 190),
             numeric: [],
             wraps: { chars: LENGTHS.warningMessage, columnWidth: c.contentWidth - 190 },
           });
@@ -648,7 +649,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
             `{{capacity.outstanding.${i}.label}}`,
             `{{capacity.outstanding.${i}.blocking}}`,
           ]),
-          columnWidths: [c.contentWidth - 110, 110],
+          columnWidths: cols(c.contentWidth - 110, 110),
           numeric: [],
         }),
         table({
@@ -656,7 +657,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           rows: Array.from({ length: ROWS.nextActions }, (_, i) => [
             `{{capacity.nextActions.${i}.label}}`,
           ]),
-          columnWidths: [c.contentWidth],
+          columnWidths: cols(c.contentWidth),
           numeric: [],
         }),
       ], contentTop()),
@@ -697,7 +698,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
             `{{capacity.analysis.findings.${i}.significance}}`,
             `{{capacity.analysis.findings.${i}.detail}}`,
           ]),
-          columnWidths: [130, 80, c.contentWidth - 210],
+          columnWidths: cols(130, 80, c.contentWidth - 210),
           numeric: [],
         }),
       ], contentTop()),
@@ -758,7 +759,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           rows: Array.from({ length: ROWS.questions }, (_, i) => [
             `{{capacity.analysis.questions.${i}.label}}`,
           ]),
-          columnWidths: [c.contentWidth],
+          columnWidths: cols(c.contentWidth),
           numeric: [],
           wraps: { chars: LENGTHS.question, columnWidth: c.contentWidth },
         }),
@@ -789,7 +790,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
             `{{capacity.method.${i}.formula}}`,
             `{{capacity.method.${i}.value}}`,
           ]),
-          columnWidths: [70, 110, c.contentWidth - 270, 90],
+          columnWidths: cols(70, 110, c.contentWidth - 270, 90),
           numeric: [3],
           wraps: { chars: LENGTHS.formula, columnWidth: c.contentWidth - 270 },
         }),

@@ -447,12 +447,32 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // Duplicate-open guard: one open case per client at a time.
         const { data: existing } = await admin
           .schema('aml').from('cases')
-          .select('id, case_reference, status')
+          .select('*')
           .eq('client_id', clientId)
           .not('status', 'in', '("cleared","closed","blocked")')
           .limit(1)
           .maybeSingle();
         if (existing) {
+          const priorActivation = (existing.metadata as any)?.activation ?? {};
+          const isSameConfirmedActivation =
+            priorActivation.human_confirmed === true
+            && String(priorActivation.model ?? '') === model
+            && String(priorActivation.event ?? '').trim() === event
+            && String(priorActivation.reason ?? '').trim() === reason
+            && String(existing.subject_display_name ?? '').trim() === displayName;
+          if (isSameConfirmedActivation) {
+            return jsonResponse({
+              case: existing,
+              activation: priorActivation,
+              client_activation: { was_inactive: false, marked_active: false },
+              client_portal: {
+                has_portal_access: false,
+                notified: false,
+                note: 'This activation had already completed. The existing AML case has been reopened.',
+              },
+              reconciled: true,
+            });
+          }
           return jsonResponse({
             error: 'An open AML case already exists for this client',
             case: existing,
@@ -521,6 +541,27 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           created_by: userId,
           metadata: { activation },
         };
+        const activationAuditEvent = {
+          category: 'case_created',
+          summary: `Case ${ref} activated (Model ${model}) for ${displayName}` +
+            (clientWasInactive ? ' — client record marked active' : ''),
+          payload: {
+            activation,
+            client_id: clientId,
+            client_activation: {
+              was_inactive: clientWasInactive,
+              marked_active: clientWasInactive,
+            },
+            activation_contract: {
+              activation_timing: dimensionFields.activation_timing,
+              agreement_state: dimensionFields.agreement_state,
+              service_gate_status: dimensionFields.service_gate_status,
+              activation_policy_version: programVersion,
+            },
+          },
+          actor_id: userId,
+          actor_label: userEmail,
+        };
         let created: any = null;
         let clientMarkedActive = false;
 
@@ -539,7 +580,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           // configuration error and mutates nothing.
           const { data: txResult, error: txErr } = await admin.rpc(
             'aml_activate_client_open_case',
-            { p_client_id: clientId, p_case: { ...baseInsert, ...dimensionFields } },
+            {
+              p_client_id: clientId,
+              p_case: {
+                ...baseInsert,
+                ...dimensionFields,
+                activation_audit_event: activationAuditEvent,
+              },
+            },
           );
           if (txErr) {
             if (isMissingFunctionError(txErr)) {
@@ -585,20 +633,20 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           marked_active: clientMarkedActive,
         };
 
-        await appendEvent(admin, created.id, 'case_created',
-          `Case ${ref} activated (Model ${model}) for ${displayName}` +
-            (clientMarkedActive ? ' — client record marked active' : ''),
-          {
-            activation, client_id: clientId,
-            client_activation: clientActivation,
-            activation_contract: {
-              activation_timing: dimensionFields.activation_timing,
-              agreement_state: dimensionFields.agreement_state,
-              service_gate_status: dimensionFields.service_gate_status,
-              activation_policy_version: programVersion,
-            },
-          },
-          userId, userEmail);
+        // The inactive-client RPC writes this required event in the SAME
+        // transaction as the active flag and case. Already-active clients keep
+        // the direct insert path and append their event here.
+        if (!clientWasInactive) {
+          await appendEvent(
+            admin,
+            created.id,
+            activationAuditEvent.category,
+            activationAuditEvent.summary,
+            activationAuditEvent.payload,
+            userId,
+            userEmail,
+          );
+        }
 
         // Hand the client the way in. Activation is meaningless to them until
         // something in their portal points at the screening flow, so post a

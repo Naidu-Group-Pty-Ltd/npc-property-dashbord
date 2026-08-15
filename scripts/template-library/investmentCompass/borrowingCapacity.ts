@@ -220,7 +220,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     // `bandLabel` is derived from `serviceability_band`, set on all 143.
     title: '{{capacity.bandLabel}}',
     standfirst: 'What a lender would advance on the income, commitments and buffer stated inside.',
-    locations: 'Prepared {{report.generatedDate}}',
+    locations: 'Prepared {{report.generatedDate | date}}',
     facts: [
       { label: 'Capacity', value: '{{capacity.borrowing | currency}}' },
       { label: 'Stress tested', value: '{{capacity.stressTested | currency}}' },

@@ -88,6 +88,32 @@ jobs:
               | sed -n 's|^supabase/functions/\([^/]*\)/.*|\1|p' \
               | grep -v '^_shared$' | sort -u | tr '\n' ' ')
           fi
+
+          # A `verify_jwt` change in config.toml only reaches production if the
+          # function it describes is redeployed — and until now nothing made
+          # that happen. `config.toml` is in this workflow's `on.push.paths`, so
+          # editing it TRIGGERS the workflow, but the list above is built
+          # entirely from `supabase/functions/**` paths, so a config-only push
+          # produced an EMPTY list and deployed nothing. The declaration then
+          # sat unapplied until that function's source happened to change for
+          # some unrelated reason.
+          #
+          # That is the mechanism behind the drift found on 15 Aug 2026:
+          # `agreement-centre-render` read `verify_jwt = true` here and was
+          # deployed `false`, and 91 functions had no block at all — which the
+          # CLI reads as `true` — while all 91 ran with the check off.
+          #
+          # So diff the DECLARATIONS, not the file: parse `[functions.X]` →
+          # verify_jwt from both revisions and deploy every function whose value
+          # changed, was added, or was removed. Diffing the file text instead
+          # would redeploy on a comment edit and miss a change made by deleting
+          # a block.
+          config_changed=$(node scripts/deploy/verify-jwt-changed.mjs)
+          if [ -n "$config_changed" ]; then
+            echo "verify_jwt declaration changed for:$config_changed" >&2
+            list=$(printf '%s %s' "$list" "$config_changed" | tr ' ' '\n' \
+              | sed '/^$/d' | sort -u | tr '\n' ' ')
+          fi
           echo "list=${list}" >> "$GITHUB_OUTPUT"
 
       # The `secrets` context is not dependable inside a step-level `if`, so the
@@ -151,28 +177,36 @@ jobs:
             # `verify_jwt` is passed EXPLICITLY, and only ever to turn the
             # gateway check OFF.
             #
-            # The comment here used to say the flag was omitted because
-            # config.toml is the source of truth. It is not: `supabase functions
-            # deploy --project-ref` does not apply the file's `verify_jwt` to an
-            # already-deployed function, so the deployed value is sticky
-            # server-side state that config.toml only describes. Measured on
-            # 15 Aug 2026 — `admin-password-reset` reads `verify_jwt = true` in
-            # the file, was redeployed with all 356 functions, and answers a
-            # preflight 200; `legal-matters-admin` and `import-schools-data`
-            # read the same flag and answer 503.
+            # This comment used to claim the deployed value was sticky
+            # server-side state that config.toml merely described, on the
+            # evidence that `admin-password-reset` reads `verify_jwt = true`,
+            # was redeployed, and still answered a preflight 200 while
+            # `legal-matters-admin` answered 503. That inference was wrong in
+            # both halves, and the Management API settles it: on 15 Aug 2026
+            # `admin-password-reset` is deployed `verify_jwt = true`. The file
+            # is applied.
             #
-            # That mattered because a CORS preflight carries no `Authorization`
-            # header, so a JWT-guarded function is rejected by the gateway
-            # BEFORE it runs — every browser call to those two failed as an
-            # opaque "Network/CORS error", and the Solicitor Portal's admin
-            # panels and the Data Import page had never worked.
+            # The 200 proved nothing because THE GATEWAY EXEMPTS PREFLIGHTS. A
+            # CORS preflight carries no `Authorization` header by specification,
+            # so refusing it would make every guarded function unusable from a
+            # browser; the gateway lets `OPTIONS` through and enforces the JWT
+            # on the real request. Verified by contrast on the same day:
+            # `sqm-rent-service` (deployed `true`) answers its preflight 200
+            # with its own exact-origin headers, and answers an unauthenticated
+            # POST with the gateway's `UNAUTHORIZED_NO_AUTH_HEADER`. All 86
+            # guarded functions answer their preflight.
             #
-            # Only the `false` direction is asserted, deliberately. Sixty-nine
-            # browser-called functions still read `verify_jwt = true` in the
-            # file while running with it off; passing the flag in that direction
-            # would switch the gateway check ON for all of them at once and
-            # break every page. Turning it off is safe, is what the file asks
-            # for, and is what those functions' own `verifyAuth` replaces.
+            # And `legal-matters-admin`'s 503 was not the gateway either — that
+            # function could not boot (see the type-check gate's LOAD_FATAL
+            # set). A preflight is not a `verify_jwt` probe in either direction.
+            #
+            # Only the `false` direction is asserted, deliberately, because that
+            # is the only direction this loop can be sure is safe: it deploys
+            # whatever changed, and switching a browser-called function ON would
+            # break every page that calls it. `false` is what the file asks for
+            # and what those functions' own `verifyAuth` replaces. A function
+            # that should be guarded gets there by being deployed with no flag,
+            # which applies the file.
             jwt_flag=''
             if awk -v fn="[functions.$fn]" '
                  index($0, fn) == 1 { found = 1; next }
@@ -236,28 +270,24 @@ jobs:
             acac=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1)=="access-control-allow-credentials"{print tolower($2)}' | tail -1)
             if [ "$acao" = "$ORIGIN" ] && [ "$acac" = "true" ]; then
               echo "- \`$fn\` CORS verified (exact origin + credentials)" >> "$GITHUB_STEP_SUMMARY"
-            elif awk -v fn="[functions.$fn]" '
-                   index($0, fn) == 1 { found = 1; next }
-                   found && /^\[/ { exit }
-                   found && /verify_jwt[[:space:]]*=[[:space:]]*true/ { print "yes"; exit }
-                 ' supabase/config.toml | grep -q yes; then
-              # Declared gateway-JWT-guarded, so a preflight CANNOT succeed: it
-              # is an unauthenticated OPTIONS by specification and the gateway
-              # rejects it before the function runs. That is not a CORS fault
-              # and there is nothing in the function to fix.
-              #
-              # Excused on FAILURE rather than skipped before the probe, so the
-              # sixty-nine browser-called functions that read `verify_jwt = true`
-              # while running with it off keep being checked — they pass today,
-              # and pre-skipping them would have quietly dropped the coverage
-              # this step exists for.
-              #
-              # This is what failed three consecutive releases naming
-              # `sqm-rent-service`, which is called only by
-              # `generate-investment-report` with an explicit bearer token and is
-              # SUPPOSED to be guarded. Red for a correctly configured function
-              # is how a release check stops being read.
-              echo "- \`$fn\` not browser-reachable (verify_jwt = true) — preflight refusal expected" >> "$GITHUB_STEP_SUMMARY"
+            # NOT excused for declaring `verify_jwt = true`.
+            #
+            # This branch used to excuse exactly that, on the reasoning that a
+            # preflight is an unauthenticated OPTIONS and the gateway must
+            # therefore refuse it. The gateway does not: it exempts preflights
+            # and enforces the JWT on the real request, which is the only way a
+            # guarded function can be callable from a browser at all. Measured
+            # 15 Aug 2026 — all 86 functions deployed `verify_jwt = true` answer
+            # their preflight, `sqm-rent-service` among them, with their own
+            # exact-origin headers; it refuses the POST, not the OPTIONS.
+            #
+            # So a wrong CORS policy is a real fault on a guarded function too,
+            # and excusing it hid one class of defect behind another. The
+            # excuse also mis-attributed the failure that introduced it:
+            # `legal-matters-admin`'s 503 was a BOOT_ERROR, not a gateway
+            # refusal. Removing it fails nothing today — all 425 deployed
+            # functions were probed and every one that this step would check
+            # answers the exact origin with credentials.
             else
               bad="$bad $fn"
               echo "- \`$fn\` **PREFLIGHT REFUSED** — status=\`${status:-<none>}\` origin=\`${acao:-<none>}\` credentials=\`${acac:-<none>}\`" >> "$GITHUB_STEP_SUMMARY"

@@ -22,12 +22,32 @@ import { keyRowsByHeader, parseDelimited } from './table.pure.ts';
 import { readHtmlSource } from './htmlSource.pure.ts';
 import { readOpenDocument, readPresentation, readRichText, readStructured } from './otherFormats.pure.ts';
 import type { StockFileClassification } from './fileTypes.pure.ts';
+import {
+  docxRowAnchor, htmlRowAnchor, odfRowAnchor, parseDocxTableImages, parseDrawingAnchors,
+  parseOdfTableImages, parseRelationships, parseSlideImages, parseWorkbookSheets,
+  relsPathFor, resolveOoxmlPath, sheetRowAnchor, slideAnchor,
+} from './documentAnchors.pure.ts';
+import { SOURCE_ANCHOR_HEADER, type AnchoredAssets } from './sourceAssets.pure.ts';
+import type { PdfPhotoProvenance } from './pdfSourcePhoto.ts';
 
 export interface ExtractedMedia {
   /** Path inside the container, or the filename for a bare image. */
   name: string;
   bytes: Uint8Array;
   contentType: string;
+  /**
+   * Where the CONTAINER said this image sits — a sheet row, a table row, a
+   * slide. Null when the format stated nothing, which is the only case where
+   * attribution may fall back to counting.
+   */
+  anchor?: string | null;
+  /**
+   * How this picture was taken out of the document, when the format can say —
+   * which page, which object, what it hashes to, what was done to it. Recorded
+   * against the stored image so "the builder supplied this" is provable rather
+   * than asserted. Only the PDF reader states it today.
+   */
+  provenance?: PdfPhotoProvenance | null;
 }
 
 export interface StockExtraction {
@@ -38,6 +58,18 @@ export interface StockExtraction {
   /** Images to show a vision model, base64 without the data: prefix. */
   visionImages: Array<{ base64: string; contentType: string }>;
   media: ExtractedMedia[];
+  /**
+   * Imagery the source published as a URL against ONE of its rows — an `<img>`
+   * inside a stock table's row, and the same shape a Notion collection
+   * produces. Fetched and stored by `sourceImages.ts`, never linked to.
+   */
+  rowAssets: AnchoredAssets[];
+  /**
+   * Prose split the way the document paginates it, when the format paginates
+   * at all. `text` is these joined; this is kept alongside so a property read
+   * out of the prose can be tied back to the page it was described on.
+   */
+  pageTexts?: string[];
   warnings: string[];
   /** A document/page title, when the format carries one. */
   title?: string | null;
@@ -86,17 +118,31 @@ function mediaContentType(name: string): string | null {
  * a WMF logo would store a file the browser cannot render, which is worse than
  * having no stage-1 image.
  */
-async function readContainerMedia(bytes: Uint8Array, prefix: string): Promise<ExtractedMedia[]> {
-  // esm.sh types the module as the JSZip class itself, so the default export
-  // has to be reached through the namespace rather than destructured.
+async function readContainerMedia(
+  bytes: Uint8Array,
+  prefix: string,
+  anchors?: Map<string, string | null>,
+): Promise<ExtractedMedia[]> {
+  const zip = await openZip(bytes);
+  return await readZipMedia(zip, prefix, anchors);
+}
+
+/** esm.sh types the module as the JSZip class itself, so the default export
+ *  has to be reached through the namespace rather than destructured. */
+async function openZip(bytes: Uint8Array): Promise<any> {
   const zipModule = await import('https://esm.sh/jszip@3.10.1') as unknown as
     { default: { loadAsync(data: Uint8Array): Promise<any> } };
-  const JSZip = zipModule.default;
-  const zip = await JSZip.loadAsync(bytes);
-  const media: ExtractedMedia[] = [];
+  return await zipModule.default.loadAsync(bytes);
+}
 
+async function readZipMedia(
+  zip: any,
+  prefix: string,
+  anchors?: Map<string, string | null>,
+): Promise<ExtractedMedia[]> {
+  const media: ExtractedMedia[] = [];
   const names = Object.keys(zip.files)
-    .filter((name) => name.startsWith(prefix) && !zip.files[name].dir)
+    .filter((name: string) => name.startsWith(prefix) && !zip.files[name].dir)
     .sort();
 
   for (const name of names) {
@@ -105,21 +151,76 @@ async function readContainerMedia(bytes: Uint8Array, prefix: string): Promise<Ex
     if (!contentType) continue;
     const content: Uint8Array = await zip.files[name].async('uint8array');
     if (!content.length || content.length > MAX_MEDIA_BYTES) continue;
-    media.push({ name, bytes: content, contentType });
+    media.push({ name, bytes: content, contentType, anchor: anchors?.get(name) ?? null });
   }
   return media;
 }
 
+/** Read a part as text, or null when the container does not carry it. */
+async function zipText(zip: any, path: string): Promise<string | null> {
+  const entry = zip.file(path);
+  return entry ? await entry.async('string') as string : null;
+}
+
+/**
+ * Record an anchor for a media part, and REFUSE an ambiguous one.
+ *
+ * One picture reused against two rows — an estate logo dropped beside every
+ * lot — states no relationship at all, so the second sighting demotes it to
+ * null rather than letting the first arbitrarily win.
+ */
+function noteAnchor(map: Map<string, string | null>, path: string, anchor: string): void {
+  if (!map.has(path)) { map.set(path, anchor); return; }
+  if (map.get(path) !== anchor) map.set(path, null);
+}
+
+/** Where each image part of a workbook is anchored: `sheet:<name>#<row>`. */
+async function readSpreadsheetAnchors(zip: any): Promise<Map<string, string | null>> {
+  const anchors = new Map<string, string | null>();
+  const workbookXml = await zipText(zip, 'xl/workbook.xml');
+  const workbookRelsXml = await zipText(zip, 'xl/_rels/workbook.xml.rels');
+  if (!workbookXml || !workbookRelsXml) return anchors;
+
+  const workbookRels = parseRelationships(workbookRelsXml);
+  for (const sheet of parseWorkbookSheets(workbookXml)) {
+    const target = workbookRels[sheet.rid];
+    if (!target) continue;
+    const sheetPart = resolveOoxmlPath('xl/workbook.xml', target);
+    const sheetRelsXml = await zipText(zip, relsPathFor(sheetPart));
+    if (!sheetRelsXml) continue;
+    const sheetRels = parseRelationships(sheetRelsXml);
+
+    for (const [, relTarget] of Object.entries(sheetRels)) {
+      if (!/drawings\/drawing\d*\.xml$/i.test(relTarget)) continue;
+      const drawingPart = resolveOoxmlPath(sheetPart, relTarget);
+      const drawingXml = await zipText(zip, drawingPart);
+      const drawingRelsXml = await zipText(zip, relsPathFor(drawingPart));
+      if (!drawingXml || !drawingRelsXml) continue;
+      const drawingRels = parseRelationships(drawingRelsXml);
+
+      for (const anchor of parseDrawingAnchors(drawingXml)) {
+        const mediaTarget = drawingRels[anchor.rid];
+        if (!mediaTarget) continue;
+        noteAnchor(
+          anchors,
+          resolveOoxmlPath(drawingPart, mediaTarget),
+          sheetRowAnchor(sheet.name, anchor.row),
+        );
+      }
+    }
+  }
+  return anchors;
+}
+
 /** The whole document text of a .docx, plus every table it contains. */
-async function readDocx(bytes: Uint8Array): Promise<{ tables: string[][][]; text: string }> {
-  // esm.sh types the module as the JSZip class itself, so the default export
-  // has to be reached through the namespace rather than destructured.
-  const zipModule = await import('https://esm.sh/jszip@3.10.1') as unknown as
-    { default: { loadAsync(data: Uint8Array): Promise<any> } };
-  const JSZip = zipModule.default;
-  const zip = await JSZip.loadAsync(bytes);
+async function readDocx(zip: any): Promise<{
+  /** Each table with the RAW `<w:tbl>` / `<w:tr>` indexes an image anchor uses. */
+  tables: Array<{ matrix: string[][]; tableIndex: number; rowIndexes: number[] }>;
+  text: string;
+  xml: string;
+}> {
   const entry = zip.file('word/document.xml');
-  if (!entry) return { tables: [], text: '' };
+  if (!entry) return { tables: [], text: '', xml: '' };
   const xml: string = await entry.async('string');
 
   const cellText = (cellXml: string): string =>
@@ -131,15 +232,19 @@ async function readDocx(bytes: Uint8Array): Promise<{ tables: string[][][]; text
       .replace(/\s+/g, ' ')
       .trim();
 
-  const tables: string[][][] = [];
-  for (const tableXml of xml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g) || []) {
+  // Indexes are kept over the RAW `<w:tbl>` / `<w:tr>` order, because that is
+  // the order an image's relationship is anchored in. Tables and rows the
+  // matrix drops would otherwise shift every anchor after them.
+  const tables: Array<{ matrix: string[][]; tableIndex: number; rowIndexes: number[] }> = [];
+  (xml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g) || []).forEach((tableXml, tableIndex) => {
     const matrix: string[][] = [];
-    for (const rowXml of tableXml.match(/<w:tr[\s>][\s\S]*?<\/w:tr>/g) || []) {
+    const rowIndexes: number[] = [];
+    (tableXml.match(/<w:tr[\s>][\s\S]*?<\/w:tr>/g) || []).forEach((rowXml, rowIndex) => {
       const cells = (rowXml.match(/<w:tc>[\s\S]*?<\/w:tc>/g) || []).map(cellText);
-      if (cells.length) matrix.push(cells);
-    }
-    if (matrix.length > 1) tables.push(matrix);
-  }
+      if (cells.length) { matrix.push(cells); rowIndexes.push(rowIndex); }
+    });
+    if (matrix.length > 1) tables.push({ matrix, tableIndex, rowIndexes });
+  });
 
   // Paragraph text, one line per paragraph, so a schedule laid out as prose
   // still reads sensibly to a model.
@@ -147,7 +252,7 @@ async function readDocx(bytes: Uint8Array): Promise<{ tables: string[][][]; text
     .map(cellText)
     .filter((line) => line.length > 0);
 
-  return { tables, text: paragraphs.join('\n') };
+  return { tables, text: paragraphs.join('\n'), xml };
 }
 
 /**
@@ -176,10 +281,22 @@ function readLegacyDocText(bytes: Uint8Array): string {
   return out.join('\n').slice(0, MAX_TEXT_CHARS);
 }
 
+/** Stamp a keyed row with the anchor its source row carries. */
+function anchorRows(
+  rows: Array<Record<string, unknown>>,
+  rowIndexes: number[],
+  anchorFor: (sourceIndex: number) => string,
+): void {
+  rows.forEach((row, index) => {
+    row[SOURCE_ANCHOR_HEADER] = anchorFor(rowIndexes[index]);
+  });
+}
+
 export async function extractStockFile(
   bytes: Uint8Array,
   filename: string,
   classification: StockFileClassification,
+  options: { baseUrl?: string } = {},
 ): Promise<StockExtraction> {
   const result: StockExtraction = {
     strategy: classification.kind,
@@ -187,6 +304,7 @@ export async function extractStockFile(
     text: null,
     visionImages: [],
     media: [],
+    rowAssets: [],
     warnings: [],
   };
 
@@ -213,13 +331,30 @@ export async function extractStockFile(
       if (result.rows.length >= MAX_ROWS) break;
       const sheet = workbook.Sheets[sheetName];
       if (!sheet) continue;
+      /**
+       * BLANK ROWS ARE KEPT, and that is not cosmetic. A drawing is anchored
+       * to an absolute sheet row; drop the blanks and every anchor below the
+       * first gap points at the property one line up. `keyRowsByHeader` skips
+       * them anyway, so the keyed rows are identical — only the indexes change,
+       * and the indexes are the whole point.
+       */
       const matrix = XLSX.utils.sheet_to_json(sheet, {
-        header: 1, raw: false, defval: null, blankrows: false,
+        header: 1, raw: false, defval: null, blankrows: true,
       }) as unknown[][];
       if (!matrix.length) continue;
+      const origin = (() => {
+        try {
+          return XLSX.utils.decode_range(String(sheet['!ref'] ?? 'A1')).s.r;
+        } catch {
+          return 0;
+        }
+      })();
 
-      const keyed = keyRowsByHeader(matrix);
+      // A wider scan than the default: the blank rows now count towards it.
+      const keyed = keyRowsByHeader(matrix, { maxScan: 25 });
       if (keyed) {
+        anchorRows(keyed.rows, keyed.rowIndexes,
+          (sourceIndex) => sheetRowAnchor(sheetName, origin + sourceIndex));
         result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
       } else {
         sheetTexts.push(`# ${sheetName}\n${XLSX.utils.sheet_to_csv(sheet)}`);
@@ -232,10 +367,13 @@ export async function extractStockFile(
       result.warnings.push('No column headings were recognised, so the sheets were read as text.');
     }
 
-    // Embedded renders and facade photographs live here in a .xlsx. A legacy
-    // .xls is not a zip and carries none we can reach.
+    // Embedded renders and facade photographs live here in a .xlsx, anchored
+    // to the cell the builder dropped them on. A legacy .xls is not a zip and
+    // carries none we can reach.
     try {
-      result.media = await readContainerMedia(bytes, 'xl/media/');
+      const zip = await openZip(bytes);
+      const anchors = await readSpreadsheetAnchors(zip).catch(() => new Map<string, string | null>());
+      result.media = await readZipMedia(zip, 'xl/media/', anchors);
     } catch {
       result.warnings.push('Images inside the spreadsheet could not be read.');
     }
@@ -245,17 +383,34 @@ export async function extractStockFile(
   if (classification.kind === 'word') {
     let handled = false;
     try {
-      const { tables, text } = await readDocx(bytes);
+      const zip = await openZip(bytes);
+      const { tables, text, xml } = await readDocx(zip);
       handled = true;
-      for (const matrix of tables) {
+      for (const section of tables) {
         if (result.rows.length >= MAX_ROWS) break;
-        const keyed = keyRowsByHeader(matrix);
-        if (keyed) result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
+        const keyed = keyRowsByHeader(section.matrix);
+        if (!keyed) continue;
+        anchorRows(keyed.rows, keyed.rowIndexes,
+          (sourceIndex) => docxRowAnchor(section.tableIndex, section.rowIndexes[sourceIndex]));
+        result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
       }
       result.strategy = result.rows.length ? 'word_table' : 'word_text';
       if (!result.rows.length && text) result.text = text.slice(0, MAX_TEXT_CHARS);
       try {
-        result.media = await readContainerMedia(bytes, 'word/media/');
+        // A picture in a table cell belongs to that cell's row, and Word says
+        // so through the relationship id inside the `<w:tr>`.
+        const anchors = new Map<string, string | null>();
+        const relsXml = await zipText(zip, 'word/_rels/document.xml.rels');
+        if (relsXml) {
+          const rels = parseRelationships(relsXml);
+          for (const image of parseDocxTableImages(xml)) {
+            const target = rels[image.rid];
+            if (!target) continue;
+            noteAnchor(anchors, resolveOoxmlPath('word/document.xml', target),
+              docxRowAnchor(image.table, image.row));
+          }
+        }
+        result.media = await readZipMedia(zip, 'word/media/', anchors);
       } catch {
         result.warnings.push('Images inside the document could not be read.');
       }
@@ -278,9 +433,22 @@ export async function extractStockFile(
     result.strategy = 'pdf_text';
     try {
       const { extractText, getDocumentProxy } = await import('https://esm.sh/unpdf@0.12.1');
-      const pdf = await getDocumentProxy(bytes);
-      const { text } = await extractText(pdf, { mergePages: true });
-      const merged = Array.isArray(text) ? text.join('\n') : String(text ?? '');
+      /**
+       * ITS OWN COPY. pdf.js takes ownership of the array it is handed and
+       * leaves the buffer detached, so reading the text used to empty the very
+       * bytes the photographs are then read out of — a page with a render on
+       * it reported no images at all, and said so on the builder's screen.
+       */
+      const pdf = await getDocumentProxy(bytes.slice());
+      // Page by page, not merged: the page number is the only structure a PDF
+      // offers, and it is what a photograph is later attributed by. The merged
+      // string the model reads is joined back from these, so the two cannot
+      // describe different documents.
+      const { text } = await extractText(pdf, { mergePages: false });
+      const pages = (Array.isArray(text) ? text : [String(text ?? '')])
+        .map((page) => String(page ?? ''));
+      result.pageTexts = pages;
+      const merged = pages.join('\n');
       result.text = merged.trim() ? merged.slice(0, MAX_TEXT_CHARS) : null;
     } catch (error) {
       result.warnings.push('The PDF text layer could not be read.');
@@ -297,19 +465,47 @@ export async function extractStockFile(
         'This PDF has no readable text — it looks like a scan. Upload the source spreadsheet or a text-based PDF.',
       );
     }
-    // Extracting embedded raster images from a PDF is not attempted: an image
-    // XObject cannot be tied to a stock row, and a decorative banner presented
-    // as a property photograph is worse than no stage-1 image at all.
-    result.warnings.push('Images inside a PDF are not extracted; location and search imagery are used instead.');
+
+    // The images the builder put in their own document, page by page. Same
+    // extractor a package PDF reached through a Notion row goes through, so a
+    // brochure uploaded here and the same brochure reached through a link
+    // cannot disagree about which picture is the property.
+    try {
+      const { extractPdfPhotosByPage } = await import('./pdfSourcePhoto.ts');
+      const { pdfPageAnchor } = await import('./pdfRowAnchors.pure.ts');
+      const found = await extractPdfPhotosByPage(bytes);
+      for (const { page, photo } of found) {
+        if (result.media.length >= MAX_MEDIA) break;
+        if (photo.bytes.length > MAX_MEDIA_BYTES) continue;
+        const suffix = photo.provenance.method === 'page_crop'
+          ? `crop(${photo.provenance.crop?.top}-${photo.provenance.crop?.bottom})`
+          : photo.provenance.resourceName ?? `obj${photo.provenance.objectNumber}`;
+        result.media.push({
+          name: `page${page}:${suffix}`,
+          bytes: photo.bytes,
+          contentType: photo.contentType,
+          // The page IS the anchor. Attribution is by page number and never by
+          // the order images happen to appear in the file.
+          anchor: pdfPageAnchor(page),
+          provenance: photo.provenance,
+        });
+      }
+    } catch {
+      result.warnings.push('Images inside this PDF could not be read.');
+    }
+
+    if (!result.media.length) {
+      // Accurate, and it promises nothing: no other imagery is displayable, so
+      // saying where a substitute will come from would be a lie.
+      result.warnings.push('No property photograph could be identified in this PDF.');
+    }
     return result;
   }
 
   if (classification.kind === 'opendocument') {
     // ODS and ODT are zip containers like .docx, read with the same JSZip and
     // the same table-then-prose order.
-    const zipModule = await import('https://esm.sh/jszip@3.10.1') as unknown as
-      { default: { loadAsync(data: Uint8Array): Promise<any> } };
-    const zip = await zipModule.default.loadAsync(bytes);
+    const zip = await openZip(bytes);
     const entry = zip.file('content.xml');
     if (!entry) {
       throw new StockExtractionError(
@@ -318,18 +514,26 @@ export async function extractStockFile(
       );
     }
     const xml: string = await entry.async('string');
-    const { tables, text } = readOpenDocument(xml);
+    const { tableSections, text } = readOpenDocument(xml);
 
-    for (const matrix of tables) {
+    for (const section of tableSections) {
       if (result.rows.length >= MAX_ROWS) break;
-      const keyed = keyRowsByHeader(matrix);
-      if (keyed) result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
+      const keyed = keyRowsByHeader(section.matrix);
+      if (!keyed) continue;
+      anchorRows(keyed.rows, keyed.rowIndexes,
+        (sourceIndex) => odfRowAnchor(section.tableIndex, section.rowIndexes[sourceIndex]));
+      result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
     }
     result.strategy = result.rows.length ? 'opendocument_table' : 'opendocument_text';
     if (!result.rows.length && text) result.text = text.slice(0, MAX_TEXT_CHARS);
 
     try {
-      result.media = await readContainerMedia(bytes, 'Pictures/');
+      // `<draw:frame>` inside a `<table:table-row>` names the row it sits in.
+      const anchors = new Map<string, string | null>();
+      for (const image of parseOdfTableImages(xml)) {
+        noteAnchor(anchors, image.href, odfRowAnchor(image.table, image.row));
+      }
+      result.media = await readZipMedia(zip, 'Pictures/', anchors);
     } catch {
       result.warnings.push('Images inside the document could not be read.');
     }
@@ -337,30 +541,45 @@ export async function extractStockFile(
   }
 
   if (classification.kind === 'presentation') {
-    const zipModule = await import('https://esm.sh/jszip@3.10.1') as unknown as
-      { default: { loadAsync(data: Uint8Array): Promise<any> } };
-    const zip = await zipModule.default.loadAsync(bytes);
+    const zip = await openZip(bytes);
 
     // Slides are numbered files; read them in order so a schedule split over
     // several slides stays in sequence.
     const slideNames = Object.keys(zip.files)
-      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
-      .sort((a, b) => (Number(/(\d+)/.exec(a)?.[1] ?? 0) - Number(/(\d+)/.exec(b)?.[1] ?? 0)));
+      .filter((name: string) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort((a: string, b: string) =>
+        (Number(/(\d+)/.exec(a)?.[1] ?? 0) - Number(/(\d+)/.exec(b)?.[1] ?? 0)));
 
     const slideXml: string[] = [];
     for (const name of slideNames) slideXml.push(await zip.files[name].async('string'));
-    const { tables, text } = readPresentation(slideXml);
+    const { tableSections, text } = readPresentation(slideXml);
 
-    for (const matrix of tables) {
+    for (const section of tableSections) {
       if (result.rows.length >= MAX_ROWS) break;
-      const keyed = keyRowsByHeader(matrix);
-      if (keyed) result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
+      const keyed = keyRowsByHeader(section.matrix);
+      if (!keyed) continue;
+      // The SLIDE is the anchor: a picture and a schedule on one slide are
+      // about one property, and which row of the slide's table an image sits
+      // beside is not something the format states.
+      anchorRows(keyed.rows, keyed.rowIndexes, () => slideAnchor(section.slideIndex));
+      result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
     }
     result.strategy = result.rows.length ? 'presentation_table' : 'presentation_text';
     if (!result.rows.length && text) result.text = text.slice(0, MAX_TEXT_CHARS);
 
     try {
-      result.media = await readContainerMedia(bytes, 'ppt/media/');
+      const anchors = new Map<string, string | null>();
+      for (const [slideIndex, name] of slideNames.entries()) {
+        const relsXml = await zipText(zip, relsPathFor(name));
+        if (!relsXml) continue;
+        const rels = parseRelationships(relsXml);
+        for (const rid of parseSlideImages(slideXml[slideIndex])) {
+          const target = rels[rid];
+          if (!target) continue;
+          noteAnchor(anchors, resolveOoxmlPath(name, target), slideAnchor(slideIndex));
+        }
+      }
+      result.media = await readZipMedia(zip, 'ppt/media/', anchors);
     } catch {
       result.warnings.push('Images inside the presentation could not be read.');
     }
@@ -388,11 +607,44 @@ export async function extractStockFile(
 
   if (classification.kind === 'markup') {
     const html = decodeText(bytes);
-    const { tables, text, title } = readHtmlSource(html, 'https://example.invalid/');
-    for (const matrix of tables) {
+    const baseUrl = options.baseUrl ?? 'https://example.invalid/';
+    const { tableSections, text, title } = readHtmlSource(html, baseUrl);
+    for (const [tableIndex, section] of tableSections.entries()) {
       if (result.rows.length >= MAX_ROWS) break;
-      const keyed = keyRowsByHeader(matrix);
-      if (keyed) result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
+      const keyed = keyRowsByHeader(section.matrix);
+      if (!keyed) continue;
+      anchorRows(keyed.rows, keyed.rowIndexes,
+        (sourceIndex) => htmlRowAnchor(tableIndex, sourceIndex));
+
+      /**
+       * The images this row CONTAINS, kept with the row.
+       *
+       * The page-wide `imageUrls` list is still gathered for provenance, but
+       * it cannot be attributed to anything — which is why it used to be
+       * dropped and the property fell through to Google. Containment is a
+       * relationship the markup states, so it is honoured.
+       */
+      keyed.rowIndexes.forEach((sourceIndex, rowIndex) => {
+        if (rowIndex >= keyed.rows.length) return;
+        const urls = section.rowImageUrls[sourceIndex] ?? [];
+        if (!urls.length) return;
+        result.rowAssets.push({
+          anchor: htmlRowAnchor(tableIndex, sourceIndex),
+          assets: urls.slice(0, 6).map((url, position) => ({
+            url,
+            reference: url.slice(0, 400),
+            origin: 'html_row_image' as const,
+            provider: 'source_page',
+            pageUrl: options.baseUrl ?? null,
+            position,
+            // An ordinary published URL: if the bytes will not come to us, the
+            // link is still something a browser can load.
+            linkFallback: true,
+          })),
+        });
+      });
+
+      result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));
     }
     result.strategy = result.rows.length ? 'html_table' : 'html_text';
     result.title = title;

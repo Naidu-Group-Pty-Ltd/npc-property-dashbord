@@ -93,6 +93,34 @@ describe("createClientRecord", () => {
       .rejects.toThrow(/cannot be activated/i);
   });
 
+  it("reads the envelope manage-client-data actually returns: { success, result }", async () => {
+    // This is the shape the live function answers with. Reading `data.data`
+    // meant every successful creation reported "the client was not returned",
+    // which is what blocked AML activation for a brand-new client.
+    invokeSecureFunction.mockResolvedValue({
+      data: { success: true, result: { id: "real", primary_first_name: "Priya" } },
+      error: null,
+    });
+    await expect(createClientRecord({ firstName: "P", surname: "R" }))
+      .resolves.toMatchObject({ id: "real" });
+  });
+
+  it("unwraps a row array from the create branch", async () => {
+    invokeSecureFunction.mockResolvedValue({
+      data: { success: true, result: [{ id: "arr" }] }, error: null,
+    });
+    await expect(createClientRecord({ firstName: "P", surname: "R" }))
+      .resolves.toMatchObject({ id: "arr" });
+  });
+
+  it("surfaces success:false with the server's message", async () => {
+    invokeSecureFunction.mockResolvedValue({
+      data: { success: false, error: "Insufficient permissions" }, error: null,
+    });
+    await expect(createClientRecord({ firstName: "P", surname: "R" }))
+      .rejects.toThrow("Insufficient permissions");
+  });
+
   it("accepts the row whether or not it is wrapped", async () => {
     invokeSecureFunction.mockResolvedValue({ data: { id: "bare" }, error: null });
     await expect(createClientRecord({ firstName: "P", surname: "R" }))

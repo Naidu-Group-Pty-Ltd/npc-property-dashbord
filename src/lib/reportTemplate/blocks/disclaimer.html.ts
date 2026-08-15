@@ -14,8 +14,31 @@ function sanitise(text: string): string {
 export function renderDisclaimerHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
   const companyName = resolveBindable(p.companyName ?? 'Property Consulting', ctx).toUpperCase();
-  const text = sanitise(resolveBindable(p.disclaimerText, ctx));
-  const fontSize = p.fontSize === 'medium' ? 10 : p.fontSize === 'large' ? 12 : 8.5;
+  /*
+   * The deployment's disclaimer, falling back to whatever the template baked in.
+   *
+   * `disclaimerText` is now a binding (`{{org.disclaimer}}`) rather than a
+   * literal, so that editing the Report Settings page changes the next document
+   * instead of requiring a re-seed of 543 templates. An unresolved binding
+   * renders as the empty string — that is the rule this whole programme runs on
+   * — so without a fallback a deployment that has set no disclaimer, or has
+   * turned it off, would get a blank foot on every report. `disclaimerFallback`
+   * carries the standard text for exactly that case.
+   *
+   * A template that still sets a literal `disclaimerText` is unaffected: the
+   * resolve returns it unchanged and the fallback is never reached.
+   */
+  const configured = sanitise(resolveBindable(p.disclaimerText, ctx));
+  const text = configured || sanitise(resolveBindable(p.disclaimerFallback ?? '', ctx));
+  /*
+   * Same shape for the size. The setting's vocabulary is small/medium/large and
+   * this block is the only place that decides what each is worth in points.
+   * A numeric prop (the masters used to pass `8`) matched none of the three and
+   * silently fell through to 8.5.
+   */
+  const sizeToken = resolveBindable(p.fontSize ?? '', ctx)
+    || resolveBindable(p.fontSizeFallback ?? '', ctx);
+  const fontSize = sizeToken === 'medium' ? 10 : sizeToken === 'large' ? 12 : 8.5;
   const row = (label: string, raw: unknown) => {
     const v = resolveBindable(raw, ctx);
     if (!v) return '';
@@ -60,6 +83,6 @@ export function renderDisclaimerHtml(block: Block, ctx: HtmlBlockContext): strin
       ${row('Address', p.address)}
       ${row('ABN', p.abn)}
     </div>
-    ${text ? `<div style="position:absolute;left:15pt;right:15pt;bottom:20pt;color:#999;font-size:${fontSize}pt;line-height:1.4;white-space:pre-wrap;">${esc(text)}</div>` : ''}
+    ${text ? `<div style="margin-top:28pt;color:#B9B3A6;font-size:${fontSize}pt;line-height:1.5;white-space:pre-wrap;">${esc(text)}</div>` : ''}
   </div>`;
 }

@@ -109,7 +109,9 @@ const REPO = resolve(__dirname, '../..');
  * | maybe — 40 templates, pre-design-system | `20260802093000_seed_template_library_v2.sql` |
  * | maybe — 40 templates in the NPC voices | `20260803090000_seed_template_library_v3.sql` |
  * | yes — 93: the voices plus 50 Investment Compass masters | `20260811120000_seed_template_library_v4_investment_compass.sql` |
- * | not yet — v4 plus 50 Borrowing Capacity, 50 Portfolio and 50 Comparison masters | the one below |
+ * | yes — 543: every format's masters | `20260812090000_seed_template_library_v5_borrowing_capacity_portfolio.sql` |
+ * | yes — 543, with the date and conditional fixes | `20260815150000_seed_template_library_v6_binding_fixes.sql` |
+ * | not yet — 543, with the voice templates' disclaimer bound too | the one below |
  *
  * v4 was a new file rather than an edit of v3 because it added rows and wrote a
  * column (`design_meta`) that v3 did not know about.
@@ -130,16 +132,44 @@ const REPO = resolve(__dirname, '../..');
  * again, whatever it is called. If v5 has been applied by the time the
  * Comparison masters land, they need a v6 rather than an edit here.
  *
- * It carries **four** of them now — Borrowing Capacity, the Portfolio Review,
- * the Comparison and the 10 Year Cash Flow — because v5 is still unapplied.
- * Checked against the live project each time a format is added, and the check
- * is one query: `20260812090000` is absent from
- * `supabase_migrations.schema_migrations`, so this file has not run and editing
- * it is safe. The moment that prefix appears there, the next format needs a v6.
+ * **That moment arrived, and v6 is it.** On 15 Aug 2026 the check finally came
+ * back the other way: `20260812090000` IS in
+ * `supabase_migrations.schema_migrations` and `template_library_entries` holds
+ * 543 rows, so v5 has run. The binding fixes for the Client Details Form and
+ * the 10 Year Cash Flow — the `| date` filter on every `report.generatedDate`,
+ * the conditionals that stop a master printing a label for data the
+ * adviser-reviewed path withholds, and the residence variants — were
+ * regenerated back into v5 first, which would have left every one of them in
+ * the repository and none of them in the database. The only symptom would have
+ * been that the exported PDFs did not change, which is the hardest kind of
+ * failure to see: nothing is red and the product does not move.
+ *
+ * The generated SQL upserts the whole catalogue on `(slug, version)`, so v6 is
+ * a complete replacement rather than a delta — a fresh database replays v1..v6
+ * and a production one applies only v6, and both land on the same 543 rows.
+ *
+ * **And v7, one hour later, for the same reason.** `apply-migration.yml` ran v6
+ * against production at 15:52 and recorded `20260815150000`, so the one-query
+ * check now answers "applied" for v6 too and editing it would be inert.
+ *
+ * v7 exists because the disclaimer fix was incomplete. `disclaimerPage()` binds
+ * `{{org.disclaimer}}` in `investmentCompass/blocks.ts`, which is 500 of the
+ * 543 — the 43 **voice** templates come from `template-library/blocks.ts` and
+ * kept the baked boilerplate. Measured after v6 applied:
+ *
+ *     disclaimer_bound      500
+ *     still_baked_literal   534     <- 500 fallbacks + 34 voice templates
+ *
+ * Two documents out of one product disagreeing about what the firm's
+ * disclaimer says is worse than both being wrong, which is why this is a
+ * migration rather than a note.
+ *
+ * Run the same one-query check before editing this file: if
+ * `20260815170000` is already recorded, the next change needs a v8.
  */
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20260812090000_seed_template_library_v5_borrowing_capacity_portfolio.sql',
+  'supabase/migrations/20260815170000_seed_template_library_v7_voice_disclaimer.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

@@ -281,7 +281,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     // stored on all 50 comparisons.
     title: '{{comparison.propertyCount}} properties, compared',
     standfirst: 'Every property side by side, ranked, and the one the analysis would buy.',
-    locations: 'Prepared {{report.generatedDate}}',
+    locations: 'Prepared {{report.generatedDate | date}}',
     facts: [
       { label: 'Properties', value: '{{comparison.propertyCount}}' },
       { label: 'Ranked first', value: '{{comparison.ranked.0.shortAddress}}' },
@@ -729,7 +729,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         { term: 'Analysis depth', definition: '{{comparison.basis.depth}}' },
         { term: 'Investor profile', definition: '{{comparison.basis.investorProfile}}' },
         { term: 'Model', definition: '{{comparison.basis.model}}' },
-        { term: 'Analysed', definition: '{{comparison.analysedOn}}' },
+        { term: 'Analysed', definition: '{{comparison.analysedOn | date}}' },
       ]),
     ], [
       // Present only where the record was cut off and salvaged — a note the

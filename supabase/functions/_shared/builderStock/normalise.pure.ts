@@ -11,10 +11,12 @@
  * and a row that carries nothing identifying is dropped rather than imported
  * as an empty property.
  *
- * Pure: no imports, no IO, no clock. It is loaded by the edge function under
- * Deno and by `src/lib/__tests__` under vitest, which is why it has an
- * explicit `.pure.ts` name and no `@/` alias anywhere.
+ * Pure: no IO, no clock, and its one import is another pure module. It is
+ * loaded by the edge function under Deno and by `src/lib/__tests__` under
+ * vitest, which is why it has an explicit `.pure.ts` name and no `@/` alias
+ * anywhere.
  */
+import { SOURCE_ANCHOR_HEADER } from './sourceAssets.pure.ts';
 
 export type StockPropertyType =
   | 'house' | 'townhouse' | 'apartment' | 'duplex' | 'land' | 'terrace'
@@ -49,6 +51,12 @@ export interface NormalisedStockRecord {
   description: string | null;
   /** Image URLs the file itself carried. Provenance stage 1. */
   image_urls: string[];
+  /**
+   * WHICH ROW OF THE SOURCE THIS IS — a Notion block id, a sheet and row, a
+   * table row. Set only when the source stated it, and it is what ties the
+   * builder's own render to this property rather than to the one beside it.
+   */
+  source_anchor: string | null;
   /** Every column we could not place, kept for the audit record. */
   unmapped: Record<string, string>;
 }
@@ -317,7 +325,7 @@ export function emptyStockRecord(): NormalisedStockRecord {
     car_spaces: null, property_type: null, land_size_sqm: null,
     building_size_sqm: null, price: null, price_display: null,
     availability_status: 'unknown', expected_completion: null, description: null,
-    image_urls: [], unmapped: {},
+    image_urls: [], source_anchor: null, unmapped: {},
   };
 }
 
@@ -340,6 +348,20 @@ export function normaliseStockRow(
     const field = fieldForHeader(header);
     const raw = text(value, 4000);
     if (raw === null) continue;
+
+    /**
+     * The reserved anchor column, lifted off the row rather than filed.
+     *
+     * It is NOT evidence that the row describes a property — a row carrying
+     * nothing but its own identity is still an empty row — so it deliberately
+     * does not set `sawAnything`, and it never lands in `unmapped`, where it
+     * would be shown to a builder as a column we failed to understand.
+     */
+    if (normaliseHeader(header) === normaliseHeader(SOURCE_ANCHOR_HEADER)) {
+      record.source_anchor = raw.slice(0, 200);
+      continue;
+    }
+
     sawAnything = true;
 
     if (field === null) {
@@ -444,6 +466,41 @@ export function stockMatchKeys(record: NormalisedStockRecord): StockMatchKeys {
     reference: reference || null,
     developmentUnit: development && unit ? { development, unit } : null,
   };
+}
+
+/**
+ * A fingerprint of everything a row SAID, for re-finding the property it
+ * already became.
+ *
+ * This is NOT a third matching key for the importer, and it must never become
+ * one: two genuinely different lots can agree on every value a thin file
+ * carries, and merging them would be a defect nobody can see. It exists for
+ * re-reading a source whose properties are already imported — attaching an
+ * image to the property this exact row produced — where the alternative is
+ * matching nothing at all.
+ *
+ * The live Notion list is exactly that case: not one of its seventy rows
+ * carries a reference, a lot column or a unit column (the lot is inside the
+ * title, "Lot 60434 - Cloverton Estate…"), so both of the importer's keys are
+ * null for every row and a repair that used them would find nobody.
+ */
+export function stockRowFingerprint(record: Partial<NormalisedStockRecord>): string {
+  const part = (value: unknown) =>
+    String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return [
+    part(record.external_reference),
+    part(record.address_line),
+    part(record.development_name),
+    part(record.project_name),
+    part(record.suburb),
+    part(record.postcode),
+    part(record.lot_number),
+    part(record.unit_number),
+    part(record.price),
+    part(record.land_size_sqm),
+    part(record.building_size_sqm),
+    part(record.property_type),
+  ].join('|');
 }
 
 /** A short human label for a record, for logs and the import summary. */

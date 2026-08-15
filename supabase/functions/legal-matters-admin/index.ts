@@ -1,4 +1,18 @@
 /**
+ * DEPLOYMENT: this function must keep `verify_jwt = false`.
+ *
+ * It is called from the browser, and a CORS preflight is an unauthenticated
+ * OPTIONS by specification. With the gateway check on, the gateway refuses the
+ * preflight before this file runs — 503 with its own wildcard headers — and the
+ * `createCorsHeaders(origin)` below never executes. Every call then fails as an
+ * opaque "Network/CORS error calling <fn>", which is what this function did
+ * from the day it shipped until 15 August 2026.
+ *
+ * Nothing is lost by turning it off: the gateway JWT was never the credential
+ * here. This app authenticates on the HttpOnly `__Host-session_token` cookie,
+ * which `verifyAuth` reads below, after `enforceCsrf`.
+ */
+/**
  * Legal Matters — Command Centre control plane (Solicitor Portal Phase 3)
  *
  * Staff-facing CRUD for `legal_matters`, matter parties and the bidirectional
@@ -40,7 +54,6 @@ import {
   scopeLabel,
   preview,
   notifySolicitors,
-  mirrorToFinancePortal,
   summariseThreads,
   type LegalThreadScope,
 } from "../_shared/legalComms.ts";
@@ -819,13 +832,19 @@ Deno.serve(async (req) => {
 
       const thread = await ensureStaffThread(matter, scope);
 
-      let mirroredFinanceId: string | null = null;
-      if (scope === 'solicitor_finance') {
-        mirroredFinanceId = await mirrorToFinancePortal(supabase, {
-          clientId: matter.client_id, senderName, body: text,
-        });
-      }
-
+      // Cross-portal delivery is enqueued transactionally by the message
+      // trigger — `trg_legal_message_outbox` fires AFTER INSERT on this table
+      // for exactly the `solicitor_client` and `solicitor_finance` scopes, and
+      // `cross-portal-outbox-worker` resolves the assigned finance user, finds
+      // or opens the thread and writes `finance_portal_messages`. This used to
+      // call a `mirrorToFinancePortal` imported from `_shared/legalComms.ts`
+      // that module has never exported and nothing in this repo defines, so
+      // Deno refused the module at load time and EVERY invocation of this
+      // function answered BOOT_ERROR. Reinstating it would be worse than the
+      // import error it replaces: the trigger does not care which function
+      // performed the insert, so an inline mirror delivers the partner's
+      // message twice. `solicitor-portal-comms` posts the same scopes with no
+      // inline mirror for the same reason.
       const { data: message, error } = await supabase.from('legal_matter_messages').insert({
         thread_id: thread.id,
         legal_matter_id: matter.id,
@@ -836,7 +855,6 @@ Deno.serve(async (req) => {
         sender_name: senderName,
         body: text,
         is_internal: false,
-        mirrored_finance_message_id: mirroredFinanceId,
         read_by_staff_at: new Date().toISOString(),
       }).select(MESSAGE_SELECT).maybeSingle();
       if (error) throw error;

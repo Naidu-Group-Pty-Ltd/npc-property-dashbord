@@ -1184,6 +1184,23 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     email: 'advice@meridianproperty.example',
     website: 'meridianproperty.example',
     /*
+     * The deployment's own disclaimer and the point size it chose.
+     *
+     * `disclaimerPage()` used to bake `STANDARD_DISCLAIMER` into the schema, so
+     * all 543 seeded templates carried the same five lines of boilerplate and
+     * the firm's configured `professional_disclaimer` — nine paragraphs,
+     * enabled, written for a Buyers Agent — reached the legacy composer and
+     * nothing else. The block binds `{{org.disclaimer}}` now, with the standard
+     * text as its fallback, so these two leaves need a producer in the sample
+     * exactly as the catalogue specs require of every other bound path.
+     */
+    disclaimer:
+      'As a Professional Property Consultant & Buyers Agent, we provide information and '
+      + 'advice based on our expertise and experience in the real estate market. Please be '
+      + 'aware that the advice and insights offered are for general informational purposes '
+      + 'only and should not be considered financial advice.',
+    disclaimerFontSize: 'medium',
+    /*
      * The brand marks: a drawn "M" monogram for the fictional tenant.
      *
      * Deliberately not the house monogram — this sample belongs to "Meridian

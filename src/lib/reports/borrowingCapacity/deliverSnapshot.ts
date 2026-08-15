@@ -23,8 +23,38 @@
  * the layout they know, and it is offered beside the other on every surface that
  * produces this document.
  */
+import { supabase } from '@/integrations/supabase/client';
 import { tryTemplateDocument } from '@/lib/reportTemplate/templateDocument';
 import { requestBorrowingCapacitySnapshot, type SnapshotRequest } from './requestSnapshot';
+
+/**
+ * The assessment the document would be about, when the caller did not name one.
+ *
+ * The same row the render route resolves for `assessmentId: null` — most recent
+ * for the client — read here because the template adapter renders a record and
+ * cannot be handed "the most recent" as an instruction.
+ *
+ * Best-effort by rule: a refused or empty read answers null and the caller
+ * carries on to the server route exactly as it did before, which resolves the
+ * assessment itself. This must never be able to turn a working download into a
+ * failed one.
+ */
+async function latestAssessmentId(clientId: string | null | undefined): Promise<string | null> {
+  if (!clientId) return null;
+  try {
+    const { data, error } = await supabase
+      .from('borrowing_capacity_assessments')
+      .select('id')
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return (data as { id?: string }).id ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Which renderer produces the document. */
 export type SnapshotVariant = 'server' | 'legacy';
@@ -101,11 +131,20 @@ export async function deliverSnapshot(input: DeliverSnapshotInput): Promise<Deli
   // know — the whole reason that parameter exists is that a renderer should
   // not change under somebody who asked for a particular one.
   //
-  // And only when the request names an assessment. `assessmentId` is optional
-  // here ("omit for the most recent"), and resolving "most recent" is the
-  // render route's job against the server's view of the data; an adapter needs
-  // the row it is rendering.
-  const templated = await tryTemplateDocument('borrowing_capacity', input.request.assessmentId);
+  // `assessmentId` is optional here ("omit for the most recent"), and this used
+  // to hand it straight to `tryTemplateDocument`, which returns null the moment
+  // it has no record id. **No Borrowing Capacity surface in the product fills
+  // it in** — `ResultsPanel`, `BorrowingCapacityCard` and `ClientReportsTab` all
+  // build `{ clientId, clientName }` — so the template path was skipped on every
+  // download, before the "your chosen template was not used" notice could fire.
+  // A template chosen for this format was inert and said nothing about it.
+  //
+  // Resolving "most recent" is the render route's job against the server's view
+  // of the data, and it still is for the legacy path below. The adapter needs
+  // the row it is rendering, so resolve the same thing here rather than give up.
+  const assessmentId = input.request.assessmentId
+    ?? await latestAssessmentId(input.request.clientId);
+  const templated = await tryTemplateDocument('borrowing_capacity', assessmentId);
   if (templated) {
     saveToBrowser(URL.createObjectURL(templated.blob), templated.fileName, true);
     return { source: 'server', fileName: templated.fileName, brandGaps: [], templated: true };

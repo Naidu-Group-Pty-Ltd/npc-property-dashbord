@@ -78,6 +78,13 @@ export interface KeyedRows {
   headerRowIndex: number;
   headers: string[];
   rows: Array<Record<string, unknown>>;
+  /**
+   * `rowIndexes[i]` is the index in the ORIGINAL matrix that `rows[i]` came
+   * from. Blank rows are skipped and a header row sits above them, so the two
+   * indexes are never the same number — and an image anchored to sheet row 12
+   * has to be able to find the property that sheet row 12 became.
+   */
+  rowIndexes: number[];
 }
 
 /**
@@ -113,6 +120,7 @@ export function keyRowsByHeader(
   });
 
   const rows: Array<Record<string, unknown>> = [];
+  const rowIndexes: number[] = [];
   for (let i = bestIndex + 1; i < matrix.length; i++) {
     const cells = matrix[i] ?? [];
     if (!cells.some((cell) => String(cell ?? '').trim() !== '')) continue;
@@ -121,7 +129,8 @@ export function keyRowsByHeader(
       row[headers[column]] = cells[column] ?? null;
     }
     rows.push(row);
+    rowIndexes.push(i);
   }
 
-  return { headerRowIndex: bestIndex, headers, rows };
+  return { headerRowIndex: bestIndex, headers, rows, rowIndexes };
 }

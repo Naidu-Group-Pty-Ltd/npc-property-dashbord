@@ -307,18 +307,24 @@ export function notionCollectionColumns(
 }
 
 /**
- * A collection's rows as a matrix, header row first.
+ * A collection's rows as a matrix, header row first, WITH the block id each
+ * data row came from.
  *
  * `blockIds` is the order the view returned — the same order and the same
  * filtering a reader of the page sees — so a filtered view does not import
  * rows the page hides.
+ *
+ * `rowIds[i]` belongs to `matrix[i + 1]`. That pairing is the whole reason
+ * this function exists next to `notionCollectionMatrix`: a Notion row OWNS its
+ * cover and its attachments, and an import that keeps only the text has thrown
+ * away the one thing that says which property a render depicts.
  */
-export function notionCollectionMatrix(
+export function notionCollectionTable(
   recordMap: NotionRecordMap,
   input: { collectionId: string; viewId?: string | null; blockIds?: string[] | null },
-): string[][] {
+): { matrix: string[][]; rowIds: string[] } {
   const columns = notionCollectionColumns(recordMap, input.collectionId, input.viewId);
-  if (!columns.length) return [];
+  if (!columns.length) return { matrix: [], rowIds: [] };
 
   const blocks = tableOf(recordMap, 'block');
   const ids = input.blockIds?.length
@@ -329,15 +335,47 @@ export function notionCollectionMatrix(
     });
 
   const matrix: string[][] = [columns.map((column) => column.name)];
+  const rowIds: string[] = [];
   for (const id of ids) {
     const block = unwrapNotionRecord(blocks[id]);
     if (!block || block.alive === false) continue;
     const properties = (block.properties && typeof block.properties === 'object')
       ? block.properties as Record<string, unknown> : {};
     const cells = columns.map((column) => notionTextValue(properties[column.key]));
-    if (cells.some((cell) => cell !== '')) matrix.push(cells);
+    if (cells.some((cell) => cell !== '')) {
+      matrix.push(cells);
+      rowIds.push(id);
+    }
   }
-  return matrix.length > 1 ? matrix : [];
+  return matrix.length > 1 ? { matrix, rowIds } : { matrix: [], rowIds: [] };
+}
+
+/** The matrix alone, for callers that do not need the row identity. */
+export function notionCollectionMatrix(
+  recordMap: NotionRecordMap,
+  input: { collectionId: string; viewId?: string | null; blockIds?: string[] | null },
+): string[][] {
+  return notionCollectionTable(recordMap, input).matrix;
+}
+
+/**
+ * Append the reserved anchor column, so each row carries its own block id
+ * through the CSV snapshot and into the normaliser.
+ *
+ * The header cell is the literal `SOURCE_ANCHOR_HEADER`; the normaliser
+ * recognises it and lifts it off the row rather than treating it as an
+ * unmapped column, so it is never stored as a column we failed to understand
+ * and never scores as a heading.
+ */
+export function withNotionRowAnchors(
+  matrix: string[][],
+  rowIds: string[],
+  header: string,
+): string[][] {
+  if (matrix.length < 2) return matrix;
+  return matrix.map((cells, index) => (
+    index === 0 ? [...cells, header] : [...cells, `notion:${rowIds[index - 1] ?? ''}`]
+  ));
 }
 
 /**
@@ -377,6 +415,210 @@ export function notionSimpleTableMatrices(recordMap: NotionRecordMap): string[][
     if (matrix.length > 1) matrices.push(matrix);
   }
   return matrices;
+}
+
+// ---------------------------------------------------------------------------
+// The builder's own imagery
+// ---------------------------------------------------------------------------
+
+/**
+ * One asset a Notion row owns, exactly as the record map states it.
+ *
+ * `source` is Notion's own reference — `attachment:<id>:<name>` for a file
+ * uploaded to Notion, an absolute URL for one hosted elsewhere. `blockId` is
+ * the block it hangs on, and it is NOT decoration: Notion's public image
+ * endpoint refuses to sign an attachment without being told which block claims
+ * it, which is also what makes this deterministic rather than a guess.
+ */
+export interface NotionAssetRef {
+  source: string;
+  blockId: string;
+  origin: 'page_cover' | 'file_property' | 'image_block' | 'link_property';
+  /** The column the asset came out of, when it came out of one. */
+  label: string | null;
+}
+
+/** Notion's own decorative gallery. Chosen from a menu, never of a property. */
+const NOTION_STOCK_COVER_PREFIX = '/images/page-cover/';
+
+/** Hosts whose URLs are signed and expire, so the proxy must re-sign them. */
+const NOTION_FILE_HOST_PATTERN =
+  /(^|\.)(secure\.notion-static\.com|file\.notion\.so|notion-static\.com|img\.notionusercontent\.com)$/i;
+
+function isNotionHostedFileUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (NOTION_FILE_HOST_PATTERN.test(url.hostname)) return true;
+    // `prod-files-secure.s3.us-west-2.amazonaws.com/<space>/<file>/<name>` and
+    // the older `s3-us-west-2.amazonaws.com/secure.notion-static.com/…`.
+    if (/amazonaws\.com$/i.test(url.hostname)) {
+      return /prod-files-secure/i.test(url.hostname)
+        || /secure\.notion-static\.com/i.test(url.pathname);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+const IMAGE_FILE_PATTERN = /\.(jpe?g|png|webp|gif)$/i;
+
+/** True for a reference whose NAME says it is an image we can display. */
+function referenceLooksLikeImage(source: string): boolean {
+  const name = source.startsWith('attachment:')
+    ? source.split(':').slice(2).join(':')
+    : source.split(/[?#]/)[0];
+  return IMAGE_FILE_PATTERN.test(name);
+}
+
+/** Every `['a', url]` link carried by a Notion property value. */
+function propertyLinks(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const segment of value) {
+    if (!Array.isArray(segment) || !Array.isArray(segment[1])) continue;
+    for (const decoration of segment[1]) {
+      if (!Array.isArray(decoration) || decoration[0] !== 'a') continue;
+      const link = typeof decoration[1] === 'string' ? decoration[1] : '';
+      if (link) out.push(link);
+    }
+  }
+  return out;
+}
+
+/**
+ * The imagery ONE database row owns.
+ *
+ * Four places, in the order a reader of the page would rank them:
+ *
+ *   1. the row page's COVER — which is where a stock list actually keeps the
+ *      render, and where 25 of the 70 live properties had theirs while the
+ *      import was reading the text beside it;
+ *   2. a files/media property on the row — the wire format is a rich-text
+ *      array whose visible text is the FILENAME and whose URL is hidden in the
+ *      link decoration, which is exactly why flattening to text lost it;
+ *   3. an image block inside the row's own page;
+ *   4. a URL property that points straight at an image file.
+ *
+ * Every ref carries the block that owns it. Nothing here matches by count, by
+ * order, or by name similarity: the record map already states the relationship
+ * and a weaker one must never be substituted for it.
+ */
+export function notionRowAssetRefs(
+  recordMap: NotionRecordMap,
+  rowId: string,
+): NotionAssetRef[] {
+  const blocks = tableOf(recordMap, 'block');
+  const row = unwrapNotionRecord(blocks[rowId]);
+  if (!row) return [];
+
+  const refs: NotionAssetRef[] = [];
+  const seen = new Set<string>();
+  const push = (ref: NotionAssetRef) => {
+    const key = `${ref.source}|${ref.blockId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    refs.push(ref);
+  };
+
+  const format = (row.format && typeof row.format === 'object')
+    ? row.format as Record<string, unknown> : {};
+  const cover = typeof format.page_cover === 'string' ? format.page_cover.trim() : '';
+  // A Notion gallery texture is a decoration the builder picked from a menu,
+  // not a photograph of this property, so it is not source-supplied imagery.
+  if (cover && !cover.startsWith(NOTION_STOCK_COVER_PREFIX)) {
+    push({ source: cover, blockId: rowId, origin: 'page_cover', label: 'Page cover' });
+  }
+
+  const collectionId = typeof row.parent_id === 'string' ? row.parent_id : null;
+  const collection = collectionId
+    ? unwrapNotionRecord(tableOf(recordMap, 'collection')[collectionId])
+    : null;
+  const schema = (collection?.schema && typeof collection.schema === 'object')
+    ? collection.schema as Record<string, unknown> : {};
+
+  const properties = (row.properties && typeof row.properties === 'object')
+    ? row.properties as Record<string, unknown> : {};
+
+  for (const [key, value] of Object.entries(properties)) {
+    const definition = schema[key];
+    const type = (definition && typeof definition === 'object')
+      ? String((definition as Record<string, unknown>).type ?? '') : '';
+    const label = (definition && typeof definition === 'object')
+      ? String((definition as Record<string, unknown>).name ?? key) : key;
+
+    for (const link of propertyLinks(value)) {
+      const isFileValue = type === 'file' || link.startsWith('attachment:')
+        || isNotionHostedFileUrl(link);
+      // A file property may hold a contract as easily as a render, and a URL
+      // property usually points at a folder. Only something NAMED as an image
+      // is treated as one; the bytes are checked again before anything is
+      // stored.
+      if (!referenceLooksLikeImage(link)) continue;
+      push({
+        source: link,
+        blockId: rowId,
+        origin: isFileValue ? 'file_property' : 'link_property',
+        label,
+      });
+    }
+  }
+
+  // Blocks inside the row's own page. Present only when the page's chunk has
+  // been loaded — an empty `content` means the row has no page body at all,
+  // which is the ordinary case for a stock list and costs no request.
+  const content = Array.isArray(row.content)
+    ? row.content.filter((id): id is string => typeof id === 'string') : [];
+  for (const childId of content) {
+    const child = unwrapNotionRecord(blocks[childId]);
+    if (!child) continue;
+    const type = typeof child.type === 'string' ? child.type : '';
+    if (type !== 'image' && type !== 'embed' && type !== 'bookmark') continue;
+
+    const childProperties = (child.properties && typeof child.properties === 'object')
+      ? child.properties as Record<string, unknown> : {};
+    const childFormat = (child.format && typeof child.format === 'object')
+      ? child.format as Record<string, unknown> : {};
+    const source = notionTextValue(childProperties.source)
+      || (typeof childFormat.display_source === 'string' ? childFormat.display_source : '');
+    if (!source) continue;
+    // An embed or a bookmark is a link to a page far more often than to a
+    // file; it is taken only when it names an image outright.
+    if (type !== 'image' && !referenceLooksLikeImage(source)) continue;
+    push({ source, blockId: childId, origin: 'image_block', label: null });
+  }
+
+  return refs;
+}
+
+/**
+ * The URL to actually fetch, for a reference the record map stated.
+ *
+ * NOTHING IS INVENTED HERE. `attachment:<id>:<name>` and every Notion-hosted
+ * file go back through the SAME public image endpoint on the SAME host the
+ * page was published on — the one a logged-out browser calls to render that
+ * page — because those references are not URLs and the signed URLs they resolve
+ * to expire within the hour. An asset hosted anywhere else is already a URL
+ * and is used as it stands.
+ */
+export function notionAssetUrl(pageOrigin: string, ref: NotionAssetRef): string | null {
+  let origin: string;
+  try {
+    origin = new URL(pageOrigin).origin;
+  } catch {
+    return null;
+  }
+
+  const source = ref.source.trim();
+  if (!source) return null;
+
+  if (source.startsWith('attachment:') || isNotionHostedFileUrl(source)) {
+    const encoded = encodeURIComponent(source);
+    return `${origin}/image/${encoded}?table=block&id=${ref.blockId}&cache=v2`;
+  }
+
+  if (/^https?:\/\//i.test(source)) return source;
+  return null;
 }
 
 /** Block types whose `title` property is prose a reader sees. */

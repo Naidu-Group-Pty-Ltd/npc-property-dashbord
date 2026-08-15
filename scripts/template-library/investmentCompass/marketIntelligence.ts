@@ -45,6 +45,7 @@ import {
 import {
   beginCompassTemplate,
   callout,
+  cols,
   contents,
   contentTop,
   cover,
@@ -374,7 +375,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         table({
           headers: ['Date', 'Event', 'Category', 'Impact'],
           rows: Array.from({ length: EVENTS_FIRST_PAGE }, (_, i) => eventRow('events', i)),
-          columnWidths: [78, c.contentWidth - 256, 100, 78],
+          columnWidths: cols(78, c.contentWidth - 256, 100, 78),
           numeric: [],
           wraps: { chars: LENGTHS.eventName, columnWidth: c.contentWidth - 256 },
         }),
@@ -392,7 +393,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           headers: ['Date', 'Event', 'Category', 'Impact'],
           rows: Array.from({ length: ROWS.events - EVENTS_FIRST_PAGE }, (_, i) =>
             eventRow('events', EVENTS_FIRST_PAGE + i)),
-          columnWidths: [78, c.contentWidth - 256, 100, 78],
+          columnWidths: cols(78, c.contentWidth - 256, 100, 78),
           numeric: [],
           wraps: { chars: LENGTHS.eventName, columnWidth: c.contentWidth - 256 },
         }),
@@ -408,7 +409,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         table({
           headers: ['Date', 'Event', 'Category', 'Impact'],
           rows: Array.from({ length: ROWS.upcoming }, (_, i) => eventRow('upcoming', i)),
-          columnWidths: [78, c.contentWidth - 256, 100, 78],
+          columnWidths: cols(78, c.contentWidth - 256, 100, 78),
           numeric: [],
           wraps: { chars: LENGTHS.eventName, columnWidth: c.contentWidth - 256 },
         }),
@@ -557,7 +558,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           rows: Array.from({ length: ROWS.citations }, (_, i) => [
             `{{marketIntel.citations.${i}.name}}`,
           ]),
-          columnWidths: [c.contentWidth],
+          columnWidths: cols(c.contentWidth),
           numeric: [],
         }),
         {

@@ -126,15 +126,39 @@ function enforceAuthVersion(): void {
   }
 }
 
+// How long a session probe may hold the sign-in form hostage.
+//
+// `fetch` has no default timeout, so a request that is accepted and then never
+// answered — an edge function cold-booting behind a stalled boot, a captive
+// portal, a corporate proxy holding the socket — leaves the promise pending for
+// ever. `checkSession` runs on mount and `loading` only clears in its `finally`,
+// so that pending promise rendered /auth as a permanent "Loading" spinner with
+// no sign-in form and nothing to click. Production answers this call in under
+// 2s for 99.9% of requests (slowest genuine answer measured: 3.7s), so 8s
+// distinguishes "slow" from "never" with room to spare.
+const SESSION_VERIFY_TIMEOUT_MS = 8000;
+
+// Sign-in does bcrypt work and an outbound Turnstile siteverify, so it is
+// legitimately slower than a session probe. It still must not hang for ever:
+// without a bound the Sign In button spins until the tab is closed.
+const AUTH_REQUEST_TIMEOUT_MS = 30000;
+
 /**
  * Invoke edge function with `credentials: 'include'` so the browser sends the
  * HttpOnly `__Host-session_token` cookie. Legacy header/body fallbacks are
  * preserved only for the in-memory session token during rollout.
+ *
+ * Every call is bounded by `timeoutMs`. A timeout is reported as
+ * `error.timeout === true` so callers can tell "the server said no" (which
+ * invalidates a session) from "we never heard back" (which must not).
  */
 async function invokeEdgeFunction(
   functionName: string,
-  body?: Record<string, any>
+  body?: Record<string, any>,
+  timeoutMs: number = AUTH_REQUEST_TIMEOUT_MS,
 ): Promise<{ data: any; error: any }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     // WP-11B/C cookie-only: staff session travels solely in the HttpOnly
     // `__Host-session_token` cookie (`credentials: 'include'`). No raw session
@@ -152,6 +176,7 @@ async function invokeEdgeFunction(
       },
       credentials: 'include',
       body: JSON.stringify(body ?? {}),
+      signal: controller.signal,
     });
 
     const data = await response.json();
@@ -162,7 +187,15 @@ async function invokeEdgeFunction(
 
     return { data, error: null };
   } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      return {
+        data: null,
+        error: { message: `${functionName} did not respond within ${Math.round(timeoutMs / 1000)}s`, timeout: true },
+      };
+    }
     return { data: null, error: { message: error.message || 'Network error' } };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -226,11 +259,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // from JavaScript. Always ask the server; `credentials: 'include'`
       // sends the cookie. If neither the cookie nor a stored access token
       // is available the server returns `valid:false` and we clear state.
-      const { data, error } = await invokeEdgeFunction(COMMAND_CENTRE_AUTH_FUNCTIONS.verify);
+      const { data, error } = await invokeEdgeFunction(
+        COMMAND_CENTRE_AUTH_FUNCTIONS.verify,
+        undefined,
+        SESSION_VERIFY_TIMEOUT_MS,
+      );
 
 
       if (error) {
-        if (error.status === 400 || error.status === 401) {
+        if (error.timeout) {
+          // Same posture as any other transport failure: silence is not proof
+          // the session is invalid, so the cookie and tab JWT are preserved and
+          // the user simply gets the sign-in form. What must NOT happen is the
+          // spinner staying up — `finally` below releases it either way.
+          console.warn('[Auth] Session verification timed out; showing the sign-in form.');
+        } else if (error.status === 400 || error.status === 401) {
           // Definitive auth failure — clear stale tokens so we don't keep retrying
           console.log('[Auth] Session verify failed (status:', error.status, '), clearing stale tokens');
           clearAuthState();

@@ -202,6 +202,39 @@ function referencesOnlyBoundNames(expr: string, bound: string[]): boolean {
   return true;
 }
 
+/**
+ * Whether every unbound name in the expression was guarded by its own author.
+ *
+ * `explanation && explanation.steps` states, in the expression itself, that
+ * `explanation` may not be there. A name that appears only as the left side of
+ * an `&&` — before any property access on it — is a presence check, and its
+ * absence is the case the author wrote it for.
+ *
+ * `explanationX && explanationX.steps` (a typo) is indistinguishable from a
+ * genuine optional namespace and is also silent, which is the cost of this. The
+ * alternative — warning on every render of every master with an optional
+ * section — is what made the real warnings unreadable. A binding that resolves
+ * to nothing is caught by the catalogue specs, which resolve every bound path
+ * against a production row.
+ *
+ * This changes reporting only. The expression is rejected either way.
+ */
+function unboundNamesAreAllGuarded(expr: string, bound: string[]): boolean {
+  const withoutStrings = expr.replace(/'[^']*'|"[^"]*"/g, ' ');
+  const allowed = new Set([...bound, 'tokens', '$']);
+  const unbound = new Set<string>();
+  for (const match of withoutStrings.matchAll(/(?<![.\w$])[A-Za-z_$][\w$]*/g)) {
+    const name = match[0];
+    if (!LITERAL_NAMES.has(name) && !allowed.has(name)) unbound.add(name);
+  }
+  if (!unbound.size) return false;
+  return [...unbound].every((name) => {
+    // `name &&` — the bare name used as a presence test, not dereferenced.
+    const guard = new RegExp(`(?<![.\\w$])${name}\\s*&&`);
+    return guard.test(withoutStrings);
+  });
+}
+
 function evalExpression(expr: string, ctx: ResolveContext): any {
   if (!SAFE_EXPR_RE.test(expr)) {
     console.warn('[binding] Rejected unsafe expression:', expr);
@@ -436,6 +469,19 @@ export function evalConditional(expr: string | undefined, ctx: ResolveContext): 
     // data said. Parameters give the same lexical lookup and keep strict mode.
     const names = dataParameterNames(ctx);
     if (!referencesOnlyBoundNames(expr, names)) {
+      // The rejection is unconditional and stays that way — an unbound name
+      // resolves against the global scope, which is what the allow-list above
+      // exists to stop. Only how loudly it is reported changes.
+      //
+      // `explanation && explanation.steps` is an author GUARDING an optional
+      // namespace, and on the Borrowing Capacity masters that guard is doing
+      // its job: `explanation` and `audit_trail` are columns written only by
+      // calculator runs since the keep-update, so 127 of 128 stored assessments
+      // do not have them and those pages are meant to stay dark. Reporting the
+      // designed path as a warning meant every render of every one of those
+      // masters logged three of these — which is the noise a genuine typo would
+      // hide in, and the typo is the case this check exists to catch.
+      if (unboundNamesAreAllGuarded(expr, names)) return false;
       console.warn('[conditional] Rejected expression referencing unbound name:', expr);
       return false;
     }

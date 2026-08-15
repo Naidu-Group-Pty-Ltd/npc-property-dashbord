@@ -145,10 +145,26 @@ describe('after projection', () => {
   const MARK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1'
     + 'HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
+  /*
+   * The settings row, supplied the way `applyOrganisationAndBrand` supplies it.
+   *
+   * `global_report_settings` is where the ABN and the postal address actually
+   * live — this spec used to record both as having no source, which was true of
+   * `whitelabel_settings` and false of the deployment. Values are the live ones.
+   */
+  const SETTINGS = {
+    contact: {
+      abn: '50 684 555 771',
+      address: 'Level 5 Nexus Norwest, 4 Columbia Ct, Norwest NSW 2153',
+    },
+    disclaimer: { text: 'As a Professional Property Consultant & Buyers Agent…', font_size: 'medium', is_enabled: true },
+  };
+
   const data = applyOrganisationProjection(
     applyInvestmentProjection(rawContext(), ROW),
     ORGANISATION,
     { mark: MARK, markMono: MARK },
+    SETTINGS,
   );
 
   it('resolves every binding the catalogue has, bar the photographs', () => {
@@ -159,9 +175,9 @@ describe('after projection', () => {
     const bindings = catalogueBindings();
     const unresolved = bindings.filter((b) => !resolves(data, b));
     expect(bindings.length).toBeGreaterThanOrEqual(70);
-    // Photographs (6), plus the ABN and postal address the settings row has no
-    // column for. Nothing else.
-    expect(unresolved).toHaveLength(8);
+    // Photographs (6). Nothing else — the ABN and the postal address used to be
+    // here and now resolve, from `global_report_settings.contact_details`.
+    expect(unresolved).toHaveLength(6);
   });
 
   it('leaves exactly the bindings that have no source, and no others', () => {
@@ -175,13 +191,19 @@ describe('after projection', () => {
       // an unfilled one costs no page rather than an empty one.
       'property.images.0', 'property.images.1', 'property.images.2',
       'property.images.3', 'property.images.4', 'property.images.5',
-      // No ABN column exists, and `email_signature_address` is empty on the one
-      // stored settings row. The disclaimer block omits a row whose value is
-      // empty, so both simply do not print. The other four `org.*` bindings now
-      // resolve — see `organisationProjection.pure.ts`, which every adapter
-      // merges; this spec exercises the investment projection alone, so it
-      // supplies the organisation the way an adapter would.
-      'org.abn', 'org.address',
+      // `org.abn` and `org.address` were here, on the finding that
+      // `whitelabel_settings` has no ABN column and an empty
+      // `email_signature_address`. Both were true, and both were the wrong
+      // table: `global_report_settings.contact_details` carries
+      //
+      //     abn      50 684 555 771
+      //     address  Level 5 Nexus Norwest, 4 Columbia Ct, Norwest NSW 2153
+      //
+      // and every render route already selects that row — it reached the legacy
+      // composer and stopped there. `projectReportSettings` publishes both, so
+      // the disclaimer block prints six contact lines where it printed four.
+      // Deleted per this test's own instruction: found a real source, said
+      // where it came from.
     ].sort();
 
     const actualAbsent = catalogueBindings().filter((b) => !resolves(data, b)).sort();

@@ -152,6 +152,21 @@ export interface LiveProjectionSource {
   reportId: string;
   propertyAddress?: string | null;
   /**
+   * The record's timestamps, which is what dates the document.
+   *
+   * `projectCashFlow` publishes `report.generatedDate` from `updated_at ??
+   * created_at`, and the pseudo-row below carried neither — so every document
+   * produced on this path printed the cover word "Prepared" with nothing after
+   * it, and said the same again on the assumptions page. The record has both
+   * (the report behind the 15 Aug 2026 export was created 6 Aug and updated
+   * 11 Aug); only this row was dropping them.
+   *
+   * Optional for the same reason `storedFinancials` is: a refused read must
+   * degrade the document, never fail it.
+   */
+  updatedAt?: string | null;
+  createdAt?: string | null;
+  /**
    * The stored `financial_calculations`, when the record could be read.
    *
    * The series on screen is the adviser's; the *inputs* underneath it are not.
@@ -211,6 +226,13 @@ export function wireAsProjectionRow(
   return {
     id: source.reportId,
     property_address: source.propertyAddress ?? null,
+    // Named exactly as the columns are, because `projectCashFlow` reads
+    // `row.updated_at ?? row.created_at` off a stored row and this pseudo-row
+    // is fed to that same function. Omitted keys leave `report.generatedDate`
+    // unpublished, which prints as the empty string — a cover reading
+    // "Prepared" and then nothing.
+    created_at: source.createdAt ?? null,
+    updated_at: source.updatedAt ?? null,
     financial_calculations: financials,
   };
 }

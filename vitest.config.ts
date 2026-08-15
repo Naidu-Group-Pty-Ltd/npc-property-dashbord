@@ -69,6 +69,16 @@ export default defineConfig({
       // slash.
       { find: /^npm:(@[^/]+\/[^@]+)@.+$/, replacement: "$1" },
       { find: /^npm:([^@][^@]*)@.+$/, replacement: "$1" },
+      // `unpdf` is a Deno-only dependency of the stock-list extractor: it is
+      // imported dynamically inside the PDF branch and is not a browser
+      // dependency of this app, so there is no node_modules copy to map onto.
+      // Vite resolves a literal dynamic specifier at transform time anyway,
+      // which killed collection for every test that imports `extract.ts` for
+      // its HTML or CSV branch. The stub throws if anything ever calls it.
+      {
+        find: /^https:\/\/esm\.sh\/unpdf@.+$/,
+        replacement: path.resolve(__dirname, "./src/test/stubs/unpdf.ts"),
+      },
       { find: /^https:\/\/esm\.sh\/(@[^/]+\/[^@]+)@[^/]+$/, replacement: "$1" },
       { find: /^https:\/\/esm\.sh\/([^@/][^@]*)@[^/]+$/, replacement: "$1" },
     ],

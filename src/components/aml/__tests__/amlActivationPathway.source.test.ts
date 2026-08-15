@@ -8,11 +8,14 @@ const repo = process.cwd();
 const read = (p: string) => readFileSync(join(repo, p), "utf8");
 
 const MIGRATION_PATH = "supabase/migrations/20260804160000_aml_activate_inactive_client.sql";
+const ATOMIC_AUDIT_MIGRATION_PATH =
+  "supabase/migrations/20260815135258_c6cfab57-c04d-483a-9906-c31550a23e5a.sql";
 const OLD_FUTURE_DATED_MIGRATION_PATH =
   "supabase/migrations/20260826000000_aml_activate_inactive_client.sql";
 
 const edgeSource = read("supabase/functions/aml-cases/index.ts");
 const migrationSource = read(MIGRATION_PATH);
+const atomicAuditMigrationSource = read(ATOMIC_AUDIT_MIGRATION_PATH);
 const amlCasesPage = read("src/pages/aml/AmlCases.tsx");
 const dialogSource = read("src/components/aml/ActivateClientDialog.tsx");
 const activateAction = read("src/components/clients/ClientAmlActivateAction.tsx");
@@ -87,6 +90,23 @@ describe("AML activation pathway — server contract", () => {
     // Service-role only; never callable directly from the browser roles.
     expect(migrationSource).toContain("REVOKE ALL ON FUNCTION public.aml_activate_client_open_case(uuid, jsonb) FROM authenticated");
     expect(migrationSource).toContain("GRANT EXECUTE ON FUNCTION public.aml_activate_client_open_case(uuid, jsonb) TO service_role");
+  });
+
+  it("writes the required activation audit event inside the inactive-client transaction", () => {
+    expect(atomicAuditMigrationSource).toContain("INSERT INTO aml.case_events");
+    expect(atomicAuditMigrationSource).toContain("activation_audit_event");
+    expect(edgeSource).toContain("activation_audit_event: activationAuditEvent");
+    expect(edgeSource).toContain("if (!clientWasInactive) {");
+  });
+
+  it("reconciles an exact retry but still rejects a different duplicate activation", () => {
+    const activateBlock = edgeSource.slice(
+      edgeSource.indexOf("case 'activate_client'"),
+      edgeSource.indexOf("case 'update'"),
+    );
+    expect(activateBlock).toContain("const isSameConfirmedActivation");
+    expect(activateBlock).toContain("reconciled: true");
+    expect(activateBlock).toContain("An open AML case already exists for this client");
   });
 
   it("keeps duplicate-open-case prevention on every creation path", () => {

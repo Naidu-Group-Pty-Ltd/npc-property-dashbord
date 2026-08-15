@@ -22,10 +22,32 @@ function getSystemTheme(): 'light' | 'dark' {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
+/**
+ * `localStorage` is not always readable: Safari's private mode, "block all
+ * cookies", enterprise policy and some extensions make the *property access*
+ * itself throw. This one is read from a `useState` initialiser (i.e. during
+ * render) and written from an effect, so an unguarded throw here took down the
+ * entire application — including the sign-in page, which nothing else on it
+ * needs storage for. A remembered theme is a preference; losing it is not worth
+ * a blank page.
+ */
+function readStoredTheme(): ThemeMode | null {
+  try {
+    return localStorage.getItem(BRAND_THEME_STORAGE_KEY) as ThemeMode | null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredTheme(themeMode: ThemeMode): void {
+  try {
+    localStorage.setItem(BRAND_THEME_STORAGE_KEY, themeMode);
+  } catch { /* preference not persisted — not fatal */ }
+}
+
 function getInitialThemeMode(defaultTheme: ThemeMode): ThemeMode {
   if (typeof window === 'undefined') return defaultTheme;
-  const storedTheme = localStorage.getItem(BRAND_THEME_STORAGE_KEY) as ThemeMode | null;
-  return storedTheme || defaultTheme;
+  return readStoredTheme() || defaultTheme;
 }
 
 function mergeThemeConfig(themeConfig: Partial<BrandThemeConfig> | null | undefined): BrandThemeConfig {
@@ -182,7 +204,7 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
           setSettings(mapped);
           setThemeMode((prevTheme) => {
             if (typeof window === 'undefined') return mapped.darkModeDefault;
-            const storedTheme = localStorage.getItem(BRAND_THEME_STORAGE_KEY) as ThemeMode | null;
+            const storedTheme = readStoredTheme();
             return storedTheme || prevTheme || mapped.darkModeDefault;
           });
         }
@@ -213,7 +235,7 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
     };
 
     applyTheme(themeMode);
-    localStorage.setItem(BRAND_THEME_STORAGE_KEY, themeMode);
+    writeStoredTheme(themeMode);
 
     if (themeMode !== 'system') return;
 
