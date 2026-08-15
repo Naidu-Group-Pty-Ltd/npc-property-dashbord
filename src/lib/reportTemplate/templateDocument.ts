@@ -152,7 +152,26 @@ export async function tryTemplateDocument(
     payload?: Record<string, unknown> | null;
   },
 ): Promise<TemplateDocument | null> {
-  if (!reportId) return null;
+  /*
+   * No record, no template — but say so when a choice is being dropped.
+   *
+   * This returned null before reading the selection at all, so a format whose
+   * caller had no id skipped the template path in complete silence: the legacy
+   * composer produced a well-typeset document and nothing anywhere said the
+   * chosen template had not been used. Every Borrowing Capacity surface in the
+   * product builds its request as `{ clientId, clientName }` with no
+   * `assessmentId`, so that format's selector was inert on every download —
+   * which is how it was reported: "the template selector isn't working".
+   *
+   * The notice is the same one every other fall-through gets, and it is still
+   * a warning beside a working file rather than an error in place of one.
+   */
+  if (!reportId) {
+    if (await hasTemplateSelection(reportType)) {
+      notifySelectionNotUsed('This document was produced without naming a saved record');
+    }
+    return null;
+  }
 
   const selectedId = await selectedTemplateFor(reportType);
   // Which gate closed, when one does — so the notice below names the cause

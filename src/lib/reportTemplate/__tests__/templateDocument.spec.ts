@@ -109,9 +109,28 @@ describe("the person's chosen template", () => {
     expect(h.selectionCalls).toBe(2);
   });
 
-  it('is not looked up at all without a report to render', async () => {
+  it('is looked up without a report to render, so a dropped choice is said out loud', async () => {
+    /*
+     * This used to assert the opposite — no lookup, no query, return null. It
+     * was the cheaper call and it hid a live defect for as long as it stood.
+     *
+     * Every Borrowing Capacity surface builds its request as
+     * `{ clientId, clientName }` with no `assessmentId`, so `reportId` was
+     * always null for that format and the template path was skipped on every
+     * download *before* the fall-through notice could fire. The person's chosen
+     * template was inert and nothing said so; the legacy composer produces a
+     * well-typeset document, so an ignored choice looked exactly like an
+     * honoured one. It was reported as "the template selector isn't working".
+     *
+     * One read on a path that is about to produce a PDF is the cheaper side of
+     * that trade — the same reasoning `selectedTemplateFor` already gives for
+     * not caching. No selection, no query beyond the read, and still no route.
+     */
+    h.selections = [{ id: 's1', report_type: 'portfolio', template_id: 'tpl-1' }];
     await tryTemplateDocument('portfolio', null);
-    expect(h.selectionCalls).toBe(0);
+    expect(h.selectionCalls).toBe(1);
+    // Still no render attempt — there is no record to render.
+    expect(h.routeCalls).toHaveLength(0);
   });
 });
 
