@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Boxes, CheckCircle2, ChevronLeft, ChevronRight, FileSpreadsheet,
-  Image as ImageIcon, Loader2, RefreshCw, Search, Sparkles, Upload, UserCheck,
+  Image as ImageIcon, Link2, Loader2, Plus, RefreshCw, Search, Sparkles, Trash2,
+  Upload, UserCheck,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -18,16 +28,19 @@ import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShe
 import { BuilderPortalMetricCard } from '@/components/builder-portal/ui/BuilderPortalMetricCard';
 import { useDebounce } from '@/hooks/useDebounce';
 import {
+  importBuilderStockUrl,
   useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections,
-  useBuilderStockUploads, useEnrichPendingStockImages, useSetBuilderStockAvailability,
-  uploadBuilderStockFile, type StockImportSummary, type StockUploadProgress,
+  useBuilderStockUploads, useDeleteBuilderStockSource, useEnrichPendingStockImages,
+  useSetBuilderStockAvailability, uploadBuilderStockFile,
+  type StockImportSummary, type StockUploadProgress,
 } from '@/lib/builderStockQueries';
 import {
   formatFileSize, primaryStockImage, stockFileAcceptAttribute, stockImageStageSummary,
   stockItemConfiguration, stockItemLocality, stockItemPrice, stockItemTitle,
   MAX_STOCK_FILE_BYTES, STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
   STOCK_IMAGE_STAGE_BADGES, STOCK_SELECTION_STATUS_LABELS, STOCK_UPLOAD_STATUS_CLASSES,
-  STOCK_UPLOAD_STATUS_LABELS, type BuilderStockItem, type StockAvailability,
+  STOCK_UPLOAD_STATUS_LABELS, STOCK_SOURCE_TYPE_LABELS, stockSourceLabel,
+  type BuilderStockItem, type BuilderStockUpload, type StockAvailability,
   type StockUploadStatus,
 } from '@/lib/builderStock';
 
@@ -87,6 +100,9 @@ export default function BuilderStockList() {
 
   const [progress, setProgress] = useState<StockUploadProgress | null>(null);
   const [lastSummary, setLastSummary] = useState<StockImportSummary | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<BuilderStockUpload | null>(null);
 
   useEffect(() => { setPage(1); }, [debounced, availability, uploadFilter]);
 
@@ -103,6 +119,7 @@ export default function BuilderStockList() {
   const setAvailabilityMutation = useSetBuilderStockAvailability();
   const acknowledge = useAcknowledgeStockSelection();
   const enrichPending = useEnrichPendingStockImages();
+  const deleteSource = useDeleteBuilderStockSource();
 
   const records = itemsQuery.data?.records ?? [];
   const pagination = itemsQuery.data?.pagination;
@@ -120,6 +137,26 @@ export default function BuilderStockList() {
     void selectionsQuery.refetch();
   }, [itemsQuery, uploadsQuery, selectionsQuery]);
 
+  const reportImport = useCallback((imported: StockImportSummary) => {
+    setLastSummary(imported);
+    toast({
+      title: 'Stock list imported',
+      description: `${imported.imported} new and ${imported.updated} updated from ${imported.detected} propert${imported.detected === 1 ? 'y' : 'ies'}.`,
+    });
+    refreshAll();
+  }, [refreshAll, toast]);
+
+  const reportImportFailure = useCallback((error: unknown) => {
+    const failure = error as Error & { code?: string };
+    const duplicate = failure.code === 'duplicate_file';
+    toast({
+      title: duplicate ? 'Already imported' : 'The stock list could not be imported',
+      description: failure.message,
+      variant: duplicate ? 'default' : 'destructive',
+    });
+    void uploadsQuery.refetch();
+  }, [toast, uploadsQuery]);
+
   const handleFile = useCallback(async (file: File) => {
     if (file.size > MAX_STOCK_FILE_BYTES) {
       toast({
@@ -133,25 +170,34 @@ export default function BuilderStockList() {
     setLastSummary(null);
     try {
       const result = await uploadBuilderStockFile(file, setProgress);
-      setLastSummary(result.summary);
-      toast({
-        title: 'Stock list imported',
-        description: `${result.summary.imported} new and ${result.summary.updated} updated from ${result.summary.detected} propert${result.summary.detected === 1 ? 'y' : 'ies'}.`,
-      });
-      refreshAll();
+      reportImport(result.summary);
     } catch (error) {
-      const failure = error as Error & { code?: string };
-      toast({
-        title: failure.code === 'duplicate_file' ? 'Already imported' : 'The stock list could not be imported',
-        description: failure.message,
-        variant: failure.code === 'duplicate_file' ? 'default' : 'destructive',
-      });
-      void uploadsQuery.refetch();
+      reportImportFailure(error);
     } finally {
       setProgress(null);
       if (fileInput.current) fileInput.current.value = '';
     }
-  }, [refreshAll, toast, uploadsQuery]);
+  }, [reportImport, reportImportFailure]);
+
+  /**
+   * A linked source. The browser sends the address and nothing else — the
+   * server fetches it, snapshots it and runs the same import a file gets.
+   */
+  const handleUrl = useCallback(async () => {
+    const value = sourceUrl.trim();
+    if (!value) return;
+    setLastSummary(null);
+    try {
+      const result = await importBuilderStockUrl(value, setProgress);
+      reportImport(result.summary);
+      setSourceUrl('');
+      setAddOpen(false);
+    } catch (error) {
+      reportImportFailure(error);
+    } finally {
+      setProgress(null);
+    }
+  }, [reportImport, reportImportFailure, sourceUrl]);
 
   const busy = progress !== null;
 
@@ -176,11 +222,11 @@ export default function BuilderStockList() {
             <RefreshCw className={cn('mr-2 h-4 w-4', itemsQuery.isFetching && 'animate-spin')} aria-hidden />
             Refresh
           </Button>
-          <Button size="sm" onClick={() => fileInput.current?.click()} disabled={busy}>
+          <Button size="sm" onClick={() => setAddOpen(true)} disabled={busy}>
             {busy
               ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-              : <Upload className="mr-2 h-4 w-4" aria-hidden />}
-            Upload stock list
+              : <Plus className="mr-2 h-4 w-4" aria-hidden />}
+            Add stock list
           </Button>
         </>
       }
@@ -192,7 +238,7 @@ export default function BuilderStockList() {
         accept={stockFileAcceptAttribute()}
         onChange={(event) => {
           const file = event.target.files?.[0];
-          if (file) void handleFile(file);
+          if (file) { setAddOpen(false); void handleFile(file); }
         }}
       />
 
@@ -411,9 +457,9 @@ export default function BuilderStockList() {
       <Card>
         <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
           <div>
-            <CardTitle className="text-base">Upload history</CardTitle>
+            <CardTitle className="text-base">Stock list sources</CardTitle>
             <CardDescription>
-              Every stock list you have sent, and what happened to it.
+              Every stock list you have added — uploaded or linked — and what happened to it.
             </CardDescription>
           </div>
           <Button
@@ -445,25 +491,41 @@ export default function BuilderStockList() {
         <CardContent>
           {!uploads.length ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              No stock lists have been uploaded yet.
+              No stock lists have been added yet.
             </p>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>File</TableHead>
-                    <TableHead>Uploaded</TableHead>
+                    <TableHead>Source</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Added</TableHead>
                     <TableHead>Properties</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {uploads.map((upload) => (
                     <TableRow key={upload.id}>
                       <TableCell>
-                        <p className="max-w-[18rem] truncate text-sm font-medium">{upload.original_filename}</p>
-                        <p className="text-xs text-muted-foreground">{formatFileSize(upload.byte_size)}</p>
+                        <p className="max-w-[18rem] truncate text-sm font-medium" title={stockSourceLabel(upload)}>
+                          {stockSourceLabel(upload)}
+                        </p>
+                        <p className="max-w-[18rem] truncate text-xs text-muted-foreground">
+                          {upload.source_type === 'url' && upload.source_url
+                            ? upload.source_url
+                            : formatFileSize(upload.byte_size)}
+                        </p>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="font-medium">
+                          {upload.source_type === 'url'
+                            ? <Link2 className="mr-1 h-3 w-3" aria-hidden />
+                            : <Upload className="mr-1 h-3 w-3" aria-hidden />}
+                          {STOCK_SOURCE_TYPE_LABELS[upload.source_type] ?? upload.source_type}
+                        </Badge>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                         {new Date(upload.created_at).toLocaleString('en-AU')}
@@ -490,6 +552,28 @@ export default function BuilderStockList() {
                             {upload.error_message}
                           </p>
                         ) : null}
+                        {upload.image_stage_summary
+                          && Object.keys(upload.image_stage_summary).length ? (
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            Images: {Object.entries(upload.image_stage_summary)
+                              .map(([stage, states]) =>
+                                `${stage.replace(/_/g, ' ')} ${states.ready ?? 0}`)
+                              .join(' · ')}
+                          </p>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          disabled={deleteSource.isPending || busy}
+                          onClick={() => setPendingDelete(upload)}
+                          aria-label={`Delete ${stockSourceLabel(upload)}`}
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden />
+                          <span className="sr-only sm:not-sr-only sm:ml-2">Delete</span>
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -499,6 +583,148 @@ export default function BuilderStockList() {
           )}
         </CardContent>
       </Card>
+
+      {/* Add a source: a file from this computer, or an address to fetch. */}
+      <Dialog open={addOpen} onOpenChange={(open) => { if (!busy) setAddOpen(open); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add a stock list</DialogTitle>
+            <DialogDescription>
+              Upload a file, or paste a link and we will fetch it for you.
+              Both are read the same way.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Tabs defaultValue="file">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="file">
+                <Upload className="mr-2 h-4 w-4" aria-hidden />
+                Upload file
+              </TabsTrigger>
+              <TabsTrigger value="url">
+                <Link2 className="mr-2 h-4 w-4" aria-hidden />
+                Add from URL
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="file" className="space-y-3 pt-4">
+              <p className="text-sm text-muted-foreground">
+                Spreadsheets (XLSX, XLS, ODS, CSV), documents (DOCX, ODT, RTF, PDF),
+                web pages (HTML), data (JSON, XML), presentations (PPTX) and
+                photographs of a printed schedule.
+              </p>
+              <Button
+                className="w-full"
+                disabled={busy}
+                onClick={() => fileInput.current?.click()}
+              >
+                {busy
+                  ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                  : <Upload className="mr-2 h-4 w-4" aria-hidden />}
+                Choose a file
+              </Button>
+            </TabsContent>
+
+            <TabsContent value="url" className="space-y-3 pt-4">
+              <div className="space-y-2">
+                <Label htmlFor="builder-stock-url">Stock list URL</Label>
+                <Input
+                  id="builder-stock-url"
+                  value={sourceUrl}
+                  onChange={(event) => setSourceUrl(event.target.value)}
+                  placeholder="https://example.com/stock-list"
+                  disabled={busy}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !busy && sourceUrl.trim()) void handleUrl();
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  A web page, a direct link to a spreadsheet or PDF, or a Notion page
+                  you have shared publicly. The page is saved at the moment it is
+                  imported, so later edits do not change what was brought in.
+                </p>
+              </div>
+              <Button
+                className="w-full"
+                disabled={busy || !sourceUrl.trim()}
+                onClick={() => void handleUrl()}
+              >
+                {busy
+                  ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                  : <Link2 className="mr-2 h-4 w-4" aria-hidden />}
+                Import stock list
+              </Button>
+            </TabsContent>
+          </Tabs>
+
+          {progress ? (
+            <div className="space-y-2">
+              <Progress value={PHASE_PERCENT[progress.phase]} />
+              <p className="text-xs text-muted-foreground">{PHASE_LABEL[progress.phase]}</p>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/*
+        Deletion is explicit and says what it will do. A builder removing a
+        source is saying "this should no longer supply stock", not "erase the
+        record" — so the copy names the marketplace consequence and the fact
+        that selections already made are kept.
+      */}
+      <AlertDialog
+        open={!!pendingDelete}
+        onOpenChange={(open) => { if (!open) setPendingDelete(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete “{pendingDelete ? stockSourceLabel(pendingDelete) : ''}”?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Properties this stock list is currently supplying will be removed from
+              the Builder Stock marketplace straight away. Properties a newer stock
+              list also supplies will stay. Any property already selected for a buyer
+              keeps its record.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteSource.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteSource.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!pendingDelete) return;
+                deleteSource.mutate(pendingDelete.id, {
+                  onSuccess: (result) => {
+                    const removed = result.removed;
+                    toast({
+                      title: 'Stock list deleted',
+                      description: removed.archived === 1
+                        ? '1 property was removed from the marketplace.'
+                        : `${removed.archived} properties were removed from the marketplace.`,
+                    });
+                    setPendingDelete(null);
+                    refreshAll();
+                  },
+                  // The source stays visible on failure — the UI never pretends
+                  // a delete happened.
+                  onError: (error) => toast({
+                    title: 'The stock list could not be deleted',
+                    description: (error as Error).message,
+                    variant: 'destructive',
+                  }),
+                });
+              }}
+            >
+              {deleteSource.isPending
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                : <Trash2 className="mr-2 h-4 w-4" aria-hidden />}
+              Delete stock list
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </BuilderPortalShell>
   );
 }

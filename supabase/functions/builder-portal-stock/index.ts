@@ -30,17 +30,24 @@ import {
   builderCan,
   logBuilderProjectActivity,
 } from '../_shared/builderPortalAuth.ts';
-import { detectDocumentMime, sha256Hex } from '../_shared/immutableDocuments.ts';
+import { detectDocumentMime } from '../_shared/immutableDocuments.ts';
 import {
   MAX_STOCK_FILE_BYTES, STOCK_LIST_BUCKET, STOCK_IMAGE_BUCKET,
   STOCK_LIST_STORAGE_PREFIX, STOCK_ALLOWED_DECLARED_MIME,
-  classifyStockFile, isAcceptableStockStoragePath, safeObjectName,
+  classifyFetchedSource, classifyStockFile, isAcceptableStockStoragePath, safeObjectName,
 } from '../_shared/builderStock/fileTypes.pure.ts';
-import { extractStockFile, StockExtractionError } from '../_shared/builderStock/extract.ts';
 import {
-  extractStockRowsFromImages, extractStockRowsFromText,
-} from '../_shared/builderStock/modelExtract.ts';
-import { importStockRecords } from '../_shared/builderStock/importStock.ts';
+  runStockImport, type RunImportResult,
+} from '../_shared/builderStock/runImport.ts';
+import { fetchStockSource, SourceFetchError } from '../_shared/builderStock/fetchSource.ts';
+import {
+  NOTION_NOT_PUBLIC_MESSAGE, normaliseStockSourceUrl, snapshotFileName,
+  stockSourceDisplayName,
+} from '../_shared/builderStock/urlSource.pure.ts';
+import { extractHtmlTitle } from '../_shared/builderStock/htmlSource.pure.ts';
+import {
+  itemsToArchiveOnSourceDelete,
+} from '../_shared/builderStock/sourceDeletion.pure.ts';
 import {
   enrichStockItem, type EnrichableStockItem,
 } from '../_shared/builderStock/images.ts';
@@ -140,6 +147,94 @@ Deno.serve(async (req) => {
       return data;
     };
 
+    /** Mark a source as being read. Shared by the file and URL paths. */
+    const markParsing = async (uploadId: string) => {
+      await supabase.from('builder_stock_uploads').update({
+        status: 'parsing',
+        processing_started_at: new Date().toISOString(),
+        error_code: null, error_message: null, error_detail: null,
+      }).eq('id', uploadId).eq('organisation_id', activeOrganisationId);
+    };
+
+    /**
+     * Record a failure on the source and answer the builder.
+     *
+     * `error_detail` is the internal diagnosis and is written to the row but
+     * never returned — `get_upload` projects it away.
+     */
+    const failUpload = async (
+      uploadId: string, code: string, message: string, detail?: unknown,
+    ) => {
+      await supabase.from('builder_stock_uploads').update({
+        status: 'failed',
+        error_code: code,
+        error_message: message,
+        error_detail: detail ? { detail: String(detail).slice(0, 2000) } : null,
+        processing_completed_at: new Date().toISOString(),
+      }).eq('id', uploadId).eq('organisation_id', activeOrganisationId);
+      return json({ success: false, error: message, code }, 400);
+    };
+
+    /**
+     * Write the outcome of `runStockImport` to the source row and answer.
+     *
+     * One place, so a file import and a URL import cannot report their results
+     * differently.
+     */
+    const finishImport = async (
+      uploadId: string,
+      result: RunImportResult,
+      extraMetadata: Record<string, unknown>,
+    ) => {
+      if (!result.ok) {
+        if (result.code === 'duplicate_file') {
+          await supabase.from('builder_stock_uploads').update({
+            status: 'failed',
+            error_code: result.code,
+            error_message: result.message,
+            processing_completed_at: new Date().toISOString(),
+          }).eq('id', uploadId).eq('organisation_id', activeOrganisationId);
+          return json({
+            success: false, error: result.message, code: result.code,
+            duplicate_upload_id: result.duplicateUploadId,
+          }, result.status);
+        }
+        return await failUpload(uploadId, result.code, result.message, result.detail);
+      }
+
+      const { data: updated } = await supabase.from('builder_stock_uploads').update({
+        status: result.uploadStatus,
+        records_detected: result.summary.detected,
+        records_imported: result.summary.imported,
+        records_updated: result.summary.updated,
+        records_failed: result.summary.failed,
+        error_detail: result.summary.failures.length ? { failures: result.summary.failures } : null,
+        error_message: result.summary.failures.length
+          ? `${result.summary.failed} row(s) could not be saved.` : null,
+        processing_completed_at: new Date().toISOString(),
+      }).eq('id', uploadId).eq('organisation_id', activeOrganisationId)
+        .select(STOCK_UPLOAD_SELECT).single();
+
+      await logBuilderProjectActivity(supabase, req, {
+        builderUserId: me.id, organisationId: activeOrganisationId,
+        action: 'builder_stock_upload_processed',
+        entityType: 'stock_upload', entityId: uploadId,
+        metadata: {
+          detected: result.summary.detected, imported: result.summary.imported,
+          updated: result.summary.updated, failed: result.summary.failed,
+          strategy: result.strategy, ...extraMetadata,
+        },
+      });
+
+      return json({
+        success: true,
+        upload: updated,
+        summary: result.summary,
+        // The page enriches next. Images never block the import.
+        enrichment_pending: result.enrichmentPending,
+      });
+    };
+
     // =====================================================================
     // Upload
     // =====================================================================
@@ -231,6 +326,7 @@ Deno.serve(async (req) => {
 
       const upload = await loadUpload(cleanText(body.upload_id, 64));
       if (!upload) return json({ error: 'Upload not found' }, 404);
+      if (upload.deleted_at) return json({ error: 'Upload not found' }, 404);
       if (!isAcceptableStockStoragePath(upload.storage_path)) {
         return json({ error: 'That file location is not allowed' }, 400);
       }
@@ -244,183 +340,168 @@ Deno.serve(async (req) => {
         }, 409);
       }
 
-      await supabase.from('builder_stock_uploads').update({
-        status: 'parsing',
-        processing_started_at: new Date().toISOString(),
-        error_code: null, error_message: null, error_detail: null,
-      }).eq('id', upload.id);
-
-      const fail = async (code: string, message: string, detail?: unknown) => {
-        await supabase.from('builder_stock_uploads').update({
-          status: 'failed',
-          error_code: code,
-          error_message: message,
-          // Internal. Never returned by any operation on this function.
-          error_detail: detail ? { detail: String(detail).slice(0, 2000) } : null,
-          processing_completed_at: new Date().toISOString(),
-        }).eq('id', upload.id);
-        return json({ success: false, error: message, code }, 400);
-      };
+      await markParsing(upload.id);
 
       try {
         const { data: blob, error: downloadError } = await supabase.storage
           .from(upload.storage_bucket).download(upload.storage_path);
         if (downloadError || !blob) {
-          return await fail('file_missing', 'The uploaded file could not be read. Please upload it again.', downloadError?.message);
+          return await failUpload(upload.id, 'file_missing',
+            'The uploaded file could not be read. Please upload it again.', downloadError?.message);
         }
 
-        const bytes = new Uint8Array(await blob.arrayBuffer());
-        if (!bytes.length) return await fail('empty_file', 'That file is empty.');
-        if (bytes.length > MAX_STOCK_FILE_BYTES) {
-          return await fail('file_too_large', 'That file is larger than the 25 MB limit.');
-        }
-
-        const sha = await sha256Hex(bytes);
-        // Duplicate processing guard. The same bytes from the same
-        // organisation have already produced whatever they were going to.
-        const { data: duplicate } = await supabase
-          .from('builder_stock_uploads')
-          .select('id, original_filename, created_at')
-          .eq('organisation_id', activeOrganisationId)
-          .eq('file_sha256', sha)
-          .neq('id', upload.id)
-          .maybeSingle();
-        if (duplicate) {
-          await supabase.from('builder_stock_uploads').update({
-            status: 'failed',
-            error_code: 'duplicate_file',
-            error_message: `This is the same file as "${duplicate.original_filename}", already imported.`,
-            processing_completed_at: new Date().toISOString(),
-          }).eq('id', upload.id);
-          return json({
-            success: false,
-            error: `This is the same file as "${duplicate.original_filename}", already imported.`,
-            code: 'duplicate_file',
-            duplicate_upload_id: duplicate.id,
-          }, 409);
-        }
-
-        const detection = detectDocumentMime(bytes);
-        if (detection.executable) {
-          return await fail('executable_file', 'That file is a program, not a document.');
-        }
-        const classification = classifyStockFile(
-          upload.original_filename, detection.mime, detection.reason);
-        if (classification.kind === 'unsupported') {
-          return await fail('unsupported_file_type', classification.reason ?? 'That file type cannot be read.');
-        }
-
-        const extraction = await extractStockFile(bytes, upload.original_filename, classification);
-
-        // A table is normalised deterministically. Prose and photographs are
-        // read by a model first, then normalised by exactly the same code.
-        let rows = extraction.rows;
-        let strategy = extraction.strategy;
-        if (!rows.length && extraction.visionImages.length) {
-          const modelResult = await extractStockRowsFromImages(
-            extraction.visionImages,
-            { filename: upload.original_filename, organisationName },
-            { deadlineAt: Date.now() + 90_000 },
-          );
-          rows = modelResult.rows;
-          strategy = `${strategy}+model`;
-        } else if (!rows.length && extraction.text) {
-          const modelResult = await extractStockRowsFromText(
-            extraction.text,
-            { filename: upload.original_filename, organisationName },
-            { deadlineAt: Date.now() + 90_000 },
-          );
-          rows = modelResult.rows;
-          strategy = `${strategy}+model`;
-        }
-
-        const { error: stampError } = await supabase.from('builder_stock_uploads').update({
-          status: 'imported',
-          detected_content_type: detection.mime,
-          file_sha256: sha,
-          byte_size: bytes.length,
-          parse_strategy: strategy,
-        }).eq('id', upload.id);
-        // The unique index on (organisation_id, file_sha256) is the duplicate
-        // guard's second half: if two uploads of the same bytes raced past the
-        // lookup above, this is where the loser finds out.
-        if (stampError && /duplicate key/i.test(stampError.message || '')) {
-          await supabase.from('builder_stock_uploads').update({
-            status: 'failed',
-            error_code: 'duplicate_file',
-            error_message: 'This file has already been imported.',
-            processing_completed_at: new Date().toISOString(),
-          }).eq('id', upload.id);
-          return json({
-            success: false,
-            error: 'This file has already been imported.',
-            code: 'duplicate_file',
-          }, 409);
-        }
-
-        const outcome = await importStockRecords(supabase, {
+        const result = await runStockImport({
+          supabase,
           organisationId: activeOrganisationId,
-          uploadId: upload.id,
+          organisationName,
           builderUserId: me.id,
-          rows,
-          media: extraction.media,
+          upload: { id: upload.id, original_filename: upload.original_filename },
+          bytes: new Uint8Array(await blob.arrayBuffer()),
+          sourceKind: 'file',
         });
-
-        if (!outcome.detected) {
-          return await fail(
-            'no_properties_found',
-            'No properties could be read from that file. Check that it lists one property per row with column headings.',
-          );
-        }
-
-        const status = outcome.failed > 0 ? 'partially_complete' : 'enriching';
-        const { data: updated } = await supabase.from('builder_stock_uploads').update({
-          status,
-          records_detected: outcome.detected,
-          records_imported: outcome.imported,
-          records_updated: outcome.updated,
-          records_failed: outcome.failed,
-          error_detail: outcome.failures.length ? { failures: outcome.failures } : null,
-          error_message: outcome.failures.length
-            ? `${outcome.failed} row(s) could not be saved.` : null,
-          processing_completed_at: new Date().toISOString(),
-        }).eq('id', upload.id).select(STOCK_UPLOAD_SELECT).single();
-
-        await logBuilderProjectActivity(supabase, req, {
-          builderUserId: me.id, organisationId: activeOrganisationId,
-          action: 'builder_stock_upload_processed',
-          entityType: 'stock_upload', entityId: upload.id,
-          metadata: {
-            detected: outcome.detected, imported: outcome.imported,
-            updated: outcome.updated, failed: outcome.failed, strategy,
-          },
-        });
-
-        return json({
-          success: true,
-          upload: updated,
-          summary: {
-            detected: outcome.detected,
-            imported: outcome.imported,
-            updated: outcome.updated,
-            failed: outcome.failed,
-            warnings: extraction.warnings,
-            // Safe by construction: a label and a short reason, no internals.
-            failures: outcome.failures,
-          },
-          // The page enriches next. Images never block the import.
-          enrichment_pending: outcome.itemIds.length,
-        });
+        return await finishImport(upload.id, result, {});
       } catch (error) {
-        if (error instanceof StockExtractionError) {
-          return await fail(error.code, error.safeMessage, error.underlying);
-        }
         console.error('[builder-portal-stock] processing failed', error);
-        return await fail(
-          'processing_failed',
+        return await failUpload(upload.id, 'processing_failed',
           'That file could not be processed. Please check the format and try again.',
-          (error as { message?: string })?.message,
-        );
+          (error as { message?: string })?.message);
+      }
+    }
+
+    // =====================================================================
+    // Import from a URL
+    //
+    // The same pipeline reached a different way. The server does the fetch —
+    // a browser cannot be trusted to hand us the bytes and say where they came
+    // from — snapshots what it got into the same private bucket a file lands
+    // in, and then calls exactly the same `runStockImport`.
+    // =====================================================================
+
+    if (operation === 'import_url') {
+      if (!await can('edit')) {
+        return json({ error: 'You do not have permission to add stock', code: 'permission_denied' }, 403);
+      }
+
+      const normalised = normaliseStockSourceUrl(body.url);
+      if (!normalised.ok) {
+        return json({ error: normalised.reason, code: normalised.code }, 400);
+      }
+
+      // Fetch BEFORE creating the row: a URL that cannot be read should not
+      // leave a failed source in the builder's history for every typo.
+      let fetched;
+      try {
+        fetched = await fetchStockSource(normalised.url);
+      } catch (error) {
+        if (error instanceof SourceFetchError) {
+          // A Notion page that refuses us is a permission problem the builder
+          // can fix, and deserves the wording that says so.
+          const message = normalised.isNotion
+            && ['source_forbidden', 'source_not_found'].includes(error.code)
+            ? NOTION_NOT_PUBLIC_MESSAGE
+            : error.safeMessage;
+          return json({ error: message, code: error.code }, 400);
+        }
+        console.error('[builder-portal-stock] url fetch failed', error);
+        return json({ error: 'That address could not be read.', code: 'source_unreachable' }, 400);
+      }
+
+      const head = new TextDecoder('utf-8', { fatal: false })
+        .decode(fetched.bytes.subarray(0, 1024)).trimStart().toLowerCase();
+      const looksLikeHtml = head.startsWith('<!doctype html') || head.startsWith('<html')
+        || head.startsWith('<?xml') && head.includes('xhtml');
+
+      const detection = detectDocumentMime(fetched.bytes);
+      const classification = classifyFetchedSource({
+        detectedMime: detection.mime,
+        detectionReason: detection.reason,
+        declaredContentType: fetched.declaredContentType,
+        finalUrl: fetched.finalUrl,
+        looksLikeHtml,
+      });
+      if (classification.kind === 'unsupported') {
+        return json({
+          error: normalised.isNotion ? NOTION_NOT_PUBLIC_MESSAGE
+            : (classification.reason ?? 'That address did not return a stock list we can read.'),
+          code: 'unsupported_source',
+        }, 400);
+      }
+
+      // A page title makes the history row readable; it is only available for
+      // markup, and `stockSourceDisplayName` falls back to a shortened URL.
+      const pageTitle = classification.kind === 'markup'
+        ? extractHtmlTitle(new TextDecoder('utf-8', { fatal: false }).decode(fetched.bytes))
+        : null;
+      const displayName = stockSourceDisplayName(fetched.finalUrl, pageTitle);
+      const objectName = safeObjectName(snapshotFileName(fetched.finalUrl, classification.extension));
+
+      const uploadId = crypto.randomUUID();
+      const storagePath = `${STOCK_LIST_STORAGE_PREFIX}${activeOrganisationId}/${uploadId}/${objectName}`;
+
+      // The snapshot is what keeps the import auditable after the page
+      // changes, and it is why the Command Centre never has to re-fetch a
+      // third-party URL to show the stock.
+      const { error: snapshotError } = await supabase.storage
+        .from(STOCK_LIST_BUCKET)
+        .upload(storagePath, fetched.bytes, {
+          contentType: fetched.declaredContentType || 'application/octet-stream',
+          upsert: true,
+        });
+      if (snapshotError) {
+        console.error('[builder-portal-stock] snapshot failed', snapshotError.message);
+        return json({ error: 'That page could not be saved for import.', code: 'snapshot_failed' }, 502);
+      }
+
+      const { data: upload, error: insertError } = await supabase
+        .from('builder_stock_uploads')
+        .insert({
+          id: uploadId,
+          organisation_id: activeOrganisationId,
+          uploaded_by_builder_user_id: me.id,
+          source_type: 'url',
+          source_url: normalised.url,
+          final_url: fetched.finalUrl,
+          source_title: displayName,
+          retrieved_at: new Date().toISOString(),
+          original_filename: objectName,
+          declared_content_type: fetched.declaredContentType || null,
+          byte_size: fetched.bytes.length,
+          storage_bucket: STOCK_LIST_BUCKET,
+          storage_path: storagePath,
+          status: 'parsing',
+          processing_started_at: new Date().toISOString(),
+        })
+        .select(STOCK_UPLOAD_SELECT)
+        .single();
+      if (insertError || !upload) {
+        console.error('[builder-portal-stock] url upload insert failed', insertError?.message);
+        return json({ error: 'The import could not be started.' }, 500);
+      }
+
+      await logBuilderProjectActivity(supabase, req, {
+        builderUserId: me.id, organisationId: activeOrganisationId,
+        action: 'builder_stock_url_source_added',
+        entityType: 'stock_upload', entityId: uploadId,
+        metadata: { host: normalised.host, notion: normalised.isNotion },
+      });
+
+      try {
+        const result = await runStockImport({
+          supabase,
+          organisationId: activeOrganisationId,
+          organisationName,
+          builderUserId: me.id,
+          upload: { id: uploadId, original_filename: displayName },
+          bytes: fetched.bytes,
+          classification,
+          sourceKind: 'url',
+          isNotionSource: normalised.isNotion,
+        });
+        return await finishImport(uploadId, result, { strategy_source: 'url' });
+      } catch (error) {
+        console.error('[builder-portal-stock] url processing failed', error);
+        return await failUpload(uploadId, 'processing_failed',
+          'That page could not be processed.', (error as { message?: string })?.message);
       }
     }
 
@@ -514,6 +595,9 @@ Deno.serve(async (req) => {
         .from('builder_stock_uploads')
         .select(STOCK_UPLOAD_SELECT, { count: 'exact' })
         .eq('organisation_id', activeOrganisationId)
+        // A deleted source leaves the builder's active history. The row stays
+        // for the stock and the selections that reference it.
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .range(from, to);
       return json({
@@ -658,6 +742,115 @@ Deno.serve(async (req) => {
         entityType: 'stock_item', entityId: item.id,
       });
       return json({ success: true, record: data });
+    }
+
+    // =====================================================================
+    // Removing a stock-list source
+    // =====================================================================
+
+    if (operation === 'delete_upload') {
+      // Removing a source is a delete, so it needs the delete level — adding
+      // one only needs edit.
+      if (!await can('delete')) {
+        return json({ error: 'You do not have permission to remove stock lists', code: 'permission_denied' }, 403);
+      }
+
+      // Resolved by id AND active organisation. An upload id from another
+      // organisation is "not found", never "forbidden".
+      const upload = await loadUpload(cleanText(body.upload_id, 64));
+      if (!upload || upload.deleted_at) return json({ error: 'Stock list not found' }, 404);
+
+      // Everything this organisation holds that named the source. Read before
+      // anything changes, so the decision is made against stored state.
+      const { data: items } = await supabase
+        .from('builder_stock_items')
+        .select('id, upload_id, first_upload_id, lifecycle_status')
+        .eq('organisation_id', activeOrganisationId)
+        .or(`upload_id.eq.${upload.id},first_upload_id.eq.${upload.id}`)
+        .limit(20000);
+
+      const rows = (items ?? []) as Array<{
+        id: string; upload_id: string | null;
+        first_upload_id: string | null; lifecycle_status: string | null;
+      }>;
+      // The rule lives in `sourceDeletion.pure.ts`: only stock this source is
+      // CURRENTLY supplying is deactivated. A property re-supplied by a newer
+      // list keeps standing, which is the whole point of storing both ids.
+      const archiveIds = itemsToArchiveOnSourceDelete(rows, upload.id);
+      const retained = rows.length - archiveIds.length;
+
+      // Counted, never touched. A selection an adviser already made for a
+      // buyer survives the builder tidying up their sources.
+      let affectedSelections = 0;
+      if (archiveIds.length) {
+        const { count } = await supabase
+          .from('builder_stock_selections')
+          .select('id', { count: 'exact', head: true })
+          .eq('organisation_id', activeOrganisationId)
+          .in('stock_item_id', archiveIds)
+          .neq('status', 'withdrawn');
+        affectedSelections = count ?? 0;
+
+        // Archived, not deleted. Both marketplace reads filter on
+        // `lifecycle_status = active`, so this is what removes the stock from
+        // the Property Marketplace — through the rules that were already there.
+        const { error: archiveError } = await supabase
+          .from('builder_stock_items')
+          .update({ lifecycle_status: 'archived' })
+          .eq('organisation_id', activeOrganisationId)
+          .in('id', archiveIds);
+        if (archiveError) {
+          console.error('[builder-portal-stock] archive failed', archiveError.message);
+          return json({ error: 'The stock list could not be removed.' }, 400);
+        }
+      }
+
+      const { error: deleteError } = await supabase
+        .from('builder_stock_uploads')
+        .update({
+          deleted_at: new Date().toISOString(),
+          deleted_by_builder_user_id: me.id,
+        })
+        .eq('id', upload.id)
+        .eq('organisation_id', activeOrganisationId)
+        .is('deleted_at', null);
+      if (deleteError) {
+        console.error('[builder-portal-stock] source delete failed', deleteError.message);
+        return json({ error: 'The stock list could not be removed.' }, 400);
+      }
+
+      // The stored copy goes with it. The audit row and its counts remain, so
+      // the history still records what this source once imported.
+      if (isAcceptableStockStoragePath(upload.storage_path)) {
+        const { error: objectError } = await supabase.storage
+          .from(upload.storage_bucket || STOCK_LIST_BUCKET)
+          .remove([upload.storage_path]);
+        if (objectError) {
+          // The source is already gone as far as the builder is concerned;
+          // a stranded object is an operational matter, not a failed delete.
+          console.warn('[builder-portal-stock] snapshot removal failed', objectError.message);
+        }
+      }
+
+      await logBuilderProjectActivity(supabase, req, {
+        builderUserId: me.id, organisationId: activeOrganisationId,
+        action: 'builder_stock_source_deleted',
+        entityType: 'stock_upload', entityId: upload.id,
+        metadata: {
+          archived: archiveIds.length,
+          retained_because_resupplied: retained,
+          affected_selections: affectedSelections,
+        },
+      });
+
+      return json({
+        success: true,
+        removed: {
+          archived: archiveIds.length,
+          retainedBecauseResupplied: retained,
+          affectedSelections,
+        },
+      });
     }
 
     // =====================================================================

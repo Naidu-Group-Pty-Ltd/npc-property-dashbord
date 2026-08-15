@@ -1,0 +1,223 @@
+/**
+ * Builder stock lists — retrieving a source the builder linked to.
+ *
+ * THE SSRF CONTROL IS THE EXISTING ONE. `assertPublicUrl` and
+ * `isPrivateOrReservedAddress` come from `import-from-url/ssrfGuard.ts` — the
+ * guard the link importer already uses, already covered by its own unit tests,
+ * and already the place this deployment states which address space is
+ * off-limits. A second implementation here would be a second thing to keep
+ * right, and the two would drift the first time a range was added to one.
+ *
+ * The fetch itself mirrors `import-from-url`'s `safeFetch`: redirects are
+ * followed MANUALLY so that every hop is re-checked, because a public hostname
+ * that 302s to 169.254.169.254 is the whole attack.
+ *
+ * WHAT IS NEVER SENT: no cookie, no Authorization header, no Supabase key, no
+ * portal session. The request carries a User-Agent and an Accept and nothing
+ * else, and `credentials` never applies because nothing is attached to omit.
+ */
+import { assertPublicUrl, type DnsRecordType } from '../../import-from-url/ssrfGuard.ts';
+
+/** One hop's wall clock. */
+const HOP_TIMEOUT_MS = 15_000;
+/** The whole retrieval, redirects included. */
+const TOTAL_TIMEOUT_MS = 30_000;
+const MAX_REDIRECTS = 5;
+
+/**
+ * 25 MB, the same ceiling `MAX_STOCK_FILE_BYTES` puts on an upload. A linked
+ * source must not be a way to put a bigger object in the bucket.
+ */
+export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
+
+const resolveDns = (hostname: string, recordType: DnsRecordType) =>
+  Deno.resolveDns(hostname, recordType);
+
+export interface FetchedSource {
+  bytes: Uint8Array;
+  /** What the server said it was. A claim, checked against the bytes later. */
+  declaredContentType: string;
+  /** After redirects. This is what gets recorded as `final_url`. */
+  finalUrl: string;
+  status: number;
+}
+
+/** A retrieval failure carrying a message that is safe to show the builder. */
+export class SourceFetchError extends Error {
+  readonly code: string;
+  readonly safeMessage: string;
+  constructor(code: string, safeMessage: string) {
+    super(`${code}: ${safeMessage}`);
+    this.name = 'SourceFetchError';
+    this.code = code;
+    this.safeMessage = safeMessage;
+  }
+}
+
+/**
+ * Retrieve a public URL, or refuse with a reason a builder can act on.
+ *
+ * `startUrl` must already have passed `normaliseStockSourceUrl`, which settles
+ * the scheme. This settles the destination.
+ */
+export async function fetchStockSource(startUrl: string): Promise<FetchedSource> {
+  const deadline = Date.now() + TOTAL_TIMEOUT_MS;
+
+  let current: URL;
+  try {
+    current = await assertPublicUrl(startUrl, resolveDns);
+  } catch (error) {
+    throw refusal(error);
+  }
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (Date.now() >= deadline) {
+      throw new SourceFetchError('source_timeout', 'That address took too long to respond.');
+    }
+
+    const controller = new AbortController();
+    const budget = Math.min(HOP_TIMEOUT_MS, Math.max(1000, deadline - Date.now()));
+    const timer = setTimeout(() => controller.abort(), budget);
+
+    let response: Response;
+    try {
+      response = await fetch(current.toString(), {
+        redirect: 'manual',
+        signal: controller.signal,
+        // Deliberately minimal, and deliberately not credentialed.
+        headers: {
+          'User-Agent': 'NPC-BuilderStock/1.0',
+          Accept: 'text/html,application/xhtml+xml,application/pdf,text/csv,'
+            + 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*;q=0.8',
+          'Accept-Language': 'en-AU,en;q=0.9',
+        },
+      });
+    } catch (error) {
+      const aborted = (error as { name?: string })?.name === 'AbortError';
+      throw new SourceFetchError(
+        aborted ? 'source_timeout' : 'source_unreachable',
+        aborted
+          ? 'That address took too long to respond.'
+          : 'That address could not be reached.',
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const location = response.headers.get('location');
+    if (response.status >= 300 && response.status < 400 && location) {
+      let next: URL;
+      try {
+        next = new URL(location, current);
+      } catch {
+        throw new SourceFetchError('source_bad_redirect', 'That address redirected somewhere unreadable.');
+      }
+      // EVERY hop, not just the first. This is the check that stops a public
+      // hostname from bouncing the fetch into the private network.
+      try {
+        current = await assertPublicUrl(next.toString(), resolveDns);
+      } catch (error) {
+        throw refusal(error);
+      }
+      continue;
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new SourceFetchError(
+        'source_forbidden',
+        'That page is not publicly accessible. Share it publicly, or upload the stock list instead.',
+      );
+    }
+    if (response.status === 404 || response.status === 410) {
+      throw new SourceFetchError('source_not_found', 'Nothing was found at that address.');
+    }
+    if (!response.ok) {
+      throw new SourceFetchError('source_error_status', 'That address returned an error.');
+    }
+
+    // Believe a declared length when it is over the ceiling: it saves
+    // downloading 500 MB to find out.
+    const declaredLength = Number(response.headers.get('content-length') ?? '');
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_SOURCE_BYTES) {
+      throw new SourceFetchError('source_too_large', 'That file is larger than the 25 MB limit.');
+    }
+
+    const bytes = await readCapped(response, deadline);
+    if (!bytes.length) {
+      throw new SourceFetchError('source_empty', 'That address returned an empty document.');
+    }
+
+    return {
+      bytes,
+      declaredContentType: (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase(),
+      finalUrl: current.toString(),
+      status: response.status,
+    };
+  }
+
+  throw new SourceFetchError('source_too_many_redirects', 'That address redirected too many times.');
+}
+
+/**
+ * Read the body, stopping at the ceiling.
+ *
+ * Streamed rather than `arrayBuffer()`d: a server that lies about
+ * `content-length`, or omits it, must not be able to make us buffer an
+ * unbounded response.
+ */
+async function readCapped(response: Response, deadline: number): Promise<Uint8Array> {
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array(0);
+
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      if (Date.now() >= deadline) {
+        throw new SourceFetchError('source_timeout', 'That address took too long to respond.');
+      }
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_SOURCE_BYTES) {
+        throw new SourceFetchError('source_too_large', 'That file is larger than the 25 MB limit.');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try { await reader.cancel(); } catch { /* the stream is already done */ }
+  }
+
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+/**
+ * Translate a guard rejection into a builder-facing refusal.
+ *
+ * The guard's own wording names the address space, which is internal detail;
+ * what the builder needs to know is that the link points somewhere we will not
+ * go.
+ */
+function refusal(error: unknown): SourceFetchError {
+  const message = String((error as { message?: string })?.message ?? '');
+  if (/private|internal/i.test(message)) {
+    return new SourceFetchError(
+      'source_private_address',
+      'That address points inside a private network, so it cannot be read.',
+    );
+  }
+  if (/resolve/i.test(message)) {
+    return new SourceFetchError('source_unresolvable', 'That website could not be found.');
+  }
+  if (/http\(s\)/i.test(message)) {
+    return new SourceFetchError('source_scheme_not_allowed', 'Only http:// and https:// addresses can be read.');
+  }
+  return new SourceFetchError('source_url_invalid', 'That does not look like a web address.');
+}

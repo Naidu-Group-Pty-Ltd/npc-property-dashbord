@@ -29,8 +29,13 @@ export const STOCK_ITEM_SELECT = `
   created_at, updated_at, last_seen_at
 `;
 
+/**
+ * Source columns. `error_detail` and `storage_path` are absent: the first is
+ * the internal diagnosis, the second is a location no browser needs.
+ */
 export const STOCK_UPLOAD_SELECT = `
-  id, organisation_id, uploaded_by_builder_user_id, original_filename,
+  id, organisation_id, uploaded_by_builder_user_id, source_type, source_url,
+  final_url, source_title, retrieved_at, original_filename,
   declared_content_type, detected_content_type, byte_size, status,
   parse_strategy, records_detected, records_imported, records_updated,
   records_failed, image_stage_summary, error_code, error_message,
