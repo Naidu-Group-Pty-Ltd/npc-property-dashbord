@@ -38,6 +38,7 @@ import {
   type ClientSearchRow,
   type ClientPickerStatus,
 } from "../_shared/aml/clientSearchMatch.pure.ts";
+import { sanitiseDocumentName } from "../_shared/aml/documentNaming.pure.ts";
 import {
   isPartyScreeningMissing,
   projectPartyScreeningState,
@@ -1121,11 +1122,65 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
       case 'list_documents': {
         if (!body.case_id) return jsonResponse({ error: 'case_id is required' }, 400);
+        /*
+         * The requirement comes back WITH the document.
+         *
+         * It was always in the row — every client upload carries a correct
+         * `requirement_id` — but this op selected `*` and the reviewer got a
+         * list of camera filenames with no way to tell a passport from a bank
+         * statement without opening each one. The category is read from the
+         * requirement and never inferred from a filename: a filename is a
+         * claim by whoever uploaded it, a requirement is a record of what was
+         * asked for.
+         */
         const { data, error } = await admin.schema('aml').from('documents')
-          .select('*').eq('case_id', body.case_id).neq('status', 'deleted')
+          .select('*, requirement:requirement_id (id, code, label, required)')
+          .eq('case_id', body.case_id).neq('status', 'deleted')
           .order('uploaded_at', { ascending: false });
         if (error) throw error;
         return jsonResponse({ documents: data ?? [] });
+      }
+
+      case 'rename_document': {
+        /*
+         * Renaming is presentation only. `filename` is never touched — it is
+         * the audit record of the bytes the client sent — and no foreign key
+         * moves, so the document's case, requirement, client and Passport
+         * bindings are exactly what they were.
+         */
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        if (!body.document_id) return jsonResponse({ error: 'document_id is required' }, 400);
+        const nextName = sanitiseDocumentName(body.display_name);
+
+        const { data: before, error: beforeErr } = await admin.schema('aml').from('documents')
+          .select('id, case_id, filename, display_name')
+          .eq('id', String(body.document_id)).maybeSingle();
+        if (beforeErr) throw beforeErr;
+        if (!before) return jsonResponse({ error: 'Not found' }, 404);
+
+        const { data: doc, error } = await admin.schema('aml').from('documents')
+          .update({ display_name: nextName })
+          .eq('id', before.id)
+          .select('*, requirement:requirement_id (id, code, label, required)')
+          .single();
+        if (error) throw error;
+
+        // What changed, from what, to what, and by whom — a rename is a
+        // compliance-visible edit and leaves the same trail as any other.
+        await appendEvent(admin, before.case_id, 'document_added',
+          nextName
+            ? `Document renamed to "${nextName}"`
+            : 'Document name cleared — it now shows its requirement',
+          {
+            document_id: before.id,
+            previous_display_name: before.display_name ?? null,
+            new_display_name: nextName,
+            // Preserved so the trail always names the file that arrived.
+            original_filename: before.filename,
+          },
+          userId, userEmail);
+
+        return jsonResponse({ document: doc });
       }
 
       case 'get_document_download_url': {

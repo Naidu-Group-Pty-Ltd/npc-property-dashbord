@@ -17,7 +17,7 @@
  *   - submit_verification          { case_id, ... }     → self-hosted capture path only
  *   - list_requirements            { case_id }
  *   - request_upload_url           { case_id, requirement_id?, filename, mime_type, size_bytes }
- *   - confirm_upload               { case_id, requirement_id?, storage_path, filename, mime_type, size_bytes, checksum? }
+ *   - confirm_upload               { case_id, requirement_id?, storage_path, filename, display_name?, mime_type, size_bytes, checksum? }
  *   - list_documents               { case_id }
  *   - get_document_url             { case_id, document_id }
  *                                                      → 120s signed read URL (never stored)
@@ -71,6 +71,7 @@ import {
 import { DiditApiError, diditConfigured } from "../_shared/aml/providers/diditClient.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
+import { sanitiseDocumentName } from '../_shared/aml/documentNaming.pure.ts';
 import {
   applyDiditDecision, appendDiditCaseEvent, DiditCorrelationError,
 } from "../_shared/aml/diditOutcome.ts";
@@ -2539,9 +2540,21 @@ const __corsWrappedHandler = async (req: Request) => {
             .select('id, case_id').eq('id', reqId).maybeSingle();
           if (!rr || rr.case_id !== c.id) reqId = null;
         }
+        /*
+         * The client may name what they are sending. A phone camera produces
+         * `17868163460724899975067990115218.jpg`, which tells a reviewer
+         * nothing — and three of them in a list tell them nothing three
+         * times over.
+         *
+         * `filename` still records the file that actually arrived; the name
+         * is stored beside it, never over it. An absent or empty name is
+         * fine: the reader derives one from the requirement instead.
+         */
+        const displayName = sanitiseDocumentName(body.display_name);
         const { data: doc, error } = await admin.schema('aml').from('documents').insert({
           case_id: c.id, requirement_id: reqId,
           filename: sanitiseFilename(body.filename),
+          display_name: displayName,
           storage_path: storagePath,
           mime_type: body.mime_type ?? null, size_bytes: body.size_bytes ?? null,
           checksum: body.checksum ?? null,
@@ -2559,7 +2572,7 @@ const __corsWrappedHandler = async (req: Request) => {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ documents: [] });
         const { data } = await admin.schema('aml').from('documents')
-          .select('id, requirement_id, filename, mime_type, size_bytes, status, uploaded_at, rejection_reason')
+          .select('id, requirement_id, filename, display_name, mime_type, size_bytes, status, uploaded_at, rejection_reason, requirement:requirement_id (code, label)')
           .eq('case_id', c.id).neq('status', 'deleted')
           .order('uploaded_at', { ascending: false });
         return jsonResponse({ documents: data ?? [] });
