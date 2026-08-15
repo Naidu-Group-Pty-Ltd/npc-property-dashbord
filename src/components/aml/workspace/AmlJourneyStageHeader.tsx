@@ -1,0 +1,158 @@
+/**
+ * The header of the open journey stage: what this stage is, whose move it
+ * is, and what is stopping it.
+ *
+ * "Whose move is it" is the thing this surface exists to say. A raw status
+ * ("kyc_in_progress") tells an operator what the database holds; "Waiting on
+ * the client — bank statement requested, awaiting upload" tells them whether
+ * to pick the phone up. Both come from the same canonical state; only one is
+ * useful at 9am with forty cases open.
+ *
+ * Nothing here is an authority. The blockers are read from evidence, and the
+ * action button navigates to the section where the existing, server-
+ * authorised control already lives.
+ */
+import { AlertTriangle, ArrowRight, Check, Info } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import type { AmlJourneyOwner, AmlJourneyStage } from "@/lib/aml/journeyModel";
+import {
+  EVIDENCE_STATE_LABELS,
+  type AmlWorkspaceSection,
+} from "@/lib/aml/workspaceViewModel";
+
+import { ATTENTION_TEXT, EVIDENCE_TEXT } from "./attentionTone";
+
+/**
+ * Owner tone. Only "us" and "nobody" are toned; a case waiting on a client
+ * or a partner is the normal state of an open case and must not read as a
+ * problem.
+ */
+const OWNER_TONE: Record<AmlJourneyOwner, string> = {
+  system: "border-border/70 text-muted-foreground",
+  client: "border-border/70 text-muted-foreground",
+  partner: "border-border/70 text-muted-foreground",
+  analyst: "border-primary/40 text-primary",
+  reviewer: "border-primary/40 text-primary",
+  mlro: "border-primary/40 text-primary",
+  none: "border-success/40 text-success",
+};
+
+export interface AmlJourneyStageHeaderProps {
+  stage: AmlJourneyStage;
+  totalStages: number;
+  onOpenSection: (section: AmlWorkspaceSection) => void;
+  className?: string;
+}
+
+export function AmlJourneyStageHeader({
+  stage,
+  totalStages,
+  onOpenSection,
+  className,
+}: AmlJourneyStageHeaderProps) {
+  const readinessTotal = stage.completedItems.length + stage.outstandingItems.length;
+
+  return (
+    <header className={cn("space-y-3", className)}>
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Stage {stage.number} of {totalStages}
+          </p>
+          <h2 className="mt-0.5 text-lg font-semibold tracking-tight sm:text-xl">{stage.label}</h2>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{stage.purpose}</p>
+        </div>
+
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {/* Two readings, kept apart: what state the stage is in, and who
+              has to move. Neither is expressed by colour alone. */}
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+              "border-border/70",
+              EVIDENCE_TEXT[stage.status],
+            )}
+          >
+            {stage.status === "complete" && <Check aria-hidden className="h-3.5 w-3.5" />}
+            {EVIDENCE_STATE_LABELS[stage.status]}
+          </span>
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
+              OWNER_TONE[stage.owner],
+            )}
+          >
+            {stage.ownerLabel}
+          </span>
+        </div>
+      </div>
+
+      <p className="text-sm">{stage.summary}</p>
+
+      {/* ── What is stopping this stage ─────────────────────────────── */}
+      {stage.blockers.length > 0 && (
+        <ul className="space-y-1.5" aria-label="Blocking this stage">
+          {stage.blockers.map((blocker) => (
+            <li
+              key={blocker.key}
+              className={cn(
+                "flex gap-2 rounded-md border px-3 py-2",
+                blocker.attention === "critical"
+                  ? "border-destructive/40 bg-destructive/5"
+                  : "border-warning/40 bg-warning/5",
+              )}
+            >
+              <AlertTriangle
+                aria-hidden
+                className={cn("mt-0.5 h-4 w-4 shrink-0", ATTENTION_TEXT[blocker.attention])}
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-medium leading-snug">{blocker.label}</p>
+                {blocker.detail && (
+                  <p className="mt-0.5 text-xs text-muted-foreground">{blocker.detail}</p>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* ── Advisory, not blocking ──────────────────────────────────── */}
+      {stage.warnings.length > 0 && (
+        <ul className="space-y-1" aria-label="Warnings on this stage">
+          {stage.warnings.map((warning) => (
+            <li key={warning.key} className="flex gap-2 text-xs text-muted-foreground">
+              <Info aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                <span className="text-foreground">{warning.label}</span>
+                {warning.detail ? ` — ${warning.detail}` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {stage.primaryAction && (
+          <Button size="sm" onClick={() => onOpenSection(stage.primaryAction!.section)}>
+            {stage.primaryAction.label}
+            <ArrowRight aria-hidden className="ml-1.5 h-3.5 w-3.5" />
+          </Button>
+        )}
+        {readinessTotal > 0 && (
+          <p className="text-xs text-muted-foreground" aria-live="polite">
+            {stage.completedItems.length} of {readinessTotal} item
+            {readinessTotal === 1 ? "" : "s"} on this stage complete
+          </p>
+        )}
+        {stage.unavailableFacts.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Partial reading — {stage.unavailableFacts.join(", ")} could not be read.
+          </p>
+        )}
+      </div>
+    </header>
+  );
+}

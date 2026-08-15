@@ -1,0 +1,1633 @@
+/**
+ * The AML/CTF compliance journey — ONE derived reading of where a case is.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * READ THIS BEFORE CHANGING ANYTHING IN THIS FILE
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * This module answers a question the workspace could not answer before:
+ * *whose move is it, and what is stopping this case?* It answers it the
+ * same way `workspaceViewModel.ts` answers its questions — by reading
+ * canonical state that already exists — and under the same four rules:
+ *
+ *   • It never fetches. Callers pass facts in; every function is pure.
+ *   • It never persists. There is no `current_stage` column and there must
+ *     not be one. A stored stage is a second truth, and a second truth is
+ *     how "the journey says verified, the passport says pending" happens.
+ *   • It never decides. Navigating to a stage, or reading a stage as
+ *     complete, moves nothing: the service gate is still moved only by
+ *     `aml-risk set_service_gate`, the Passport is still issued only by
+ *     `aml-reliance issue_attestation`, and a partner still receives the
+ *     credential only through server-derived distribution readiness.
+ *   • It never invents. A fact that was not supplied — not loaded, not
+ *     permitted, or a read that failed — produces `unknown` and is named
+ *     in `unavailableFacts`. "Could not read" is never "complete".
+ *
+ * ── Why a tenth stage rather than a sixth phase ────────────────────────
+ * `deriveAmlMacroPhase` already maps the fourteen canonical rail steps onto
+ * five phases, and it stays exactly as it is: it is the coarse "where in
+ * the lifecycle" reading the register and the header use. This module is
+ * the *operational* reading — the ten places work actually happens, each
+ * with its own owner, blockers and readiness. The two never disagree
+ * because both derive from `case_stage` and the same evidence; neither
+ * stores anything.
+ *
+ * ── Vocabulary: reused, not duplicated ─────────────────────────────────
+ * `status` is `AmlEvidenceState`, the vocabulary the compliance summary
+ * already uses (and which `EVIDENCE_STATE_LABELS` / `EVIDENCE_ICON` /
+ * `EVIDENCE_TEXT` already present). A stage that is stopping the case adds
+ * `blocking: true` and `attention: "critical"` rather than a parallel
+ * `blocked` status that would have to be kept in step with the other five.
+ *
+ * What is genuinely new is `owner` — whose move it is. Nothing in the
+ * repository expressed that, and it is the single most useful thing an
+ * operator can be told about a case.
+ */
+
+import {
+  CASE_STAGE_LABELS,
+  SERVICE_GATE_LABELS,
+  caseStage,
+  clientPortalStatus,
+  financePortalStatus,
+  serviceGateStatus,
+} from "./caseDimensions";
+import {
+  EVIDENCE_STATE_LABELS,
+  highestAttention,
+  type AmlAttentionLevel,
+  type AmlEvidenceState,
+  type AmlWorkspaceFacts,
+  type AmlWorkspaceSection,
+} from "./workspaceViewModel";
+
+/* ══════════════════════════════════════════════════════════════════════
+   1. The ten stages
+   ══════════════════════════════════════════════════════════════════════ */
+
+export const JOURNEY_STAGES = [
+  "activation",
+  "intake",
+  "documents",
+  "identity",
+  "screening",
+  "funding",
+  "submission",
+  "decision",
+  "passport",
+  "distribution",
+] as const;
+export type AmlJourneyStageId = (typeof JOURNEY_STAGES)[number];
+
+/**
+ * Whose move it is. This is the one piece of vocabulary this module adds,
+ * because nothing in the repository expressed it and every other reading
+ * left "is Aurixa waiting, or is the customer?" to be worked out by hand.
+ *
+ * `system` means a machine process is running and nobody is being waited
+ * on; `none` means the stage is settled.
+ */
+export const JOURNEY_OWNERS = [
+  "system",
+  "client",
+  "analyst",
+  "reviewer",
+  "mlro",
+  "partner",
+  "none",
+] as const;
+export type AmlJourneyOwner = (typeof JOURNEY_OWNERS)[number];
+
+/** Read aloud, and shown on the stage header. Never colour alone. */
+export const JOURNEY_OWNER_LABELS: Record<AmlJourneyOwner, string> = {
+  system: "Running — nothing to do",
+  client: "Waiting on the client",
+  analyst: "Waiting on the analyst",
+  reviewer: "Waiting on a reviewer",
+  mlro: "Waiting on the MLRO",
+  partner: "Waiting on the partner",
+  none: "Nothing outstanding",
+};
+
+/** One blocker, warning or completed item on a stage. */
+export interface AmlJourneyNote {
+  key: string;
+  /** Short, in the operator's language. */
+  label: string;
+  detail?: string;
+  attention: AmlAttentionLevel;
+  /** Where the work is done, when it is somewhere other than this stage. */
+  section?: AmlWorkspaceSection;
+}
+
+/**
+ * A suggestion, never an authorisation. `section` navigates; the control
+ * that lands there is the same server-authorised control it always was.
+ */
+export interface AmlJourneyAction {
+  key: string;
+  label: string;
+  section: AmlWorkspaceSection;
+  /** Existing action vocabulary where one applies. Never a new mutation. */
+  actionType?: string;
+}
+
+export interface AmlJourneyStage {
+  id: AmlJourneyStageId;
+  /** 1-based position in the journey, for "Stage 4 of 10". */
+  number: number;
+  label: string;
+  shortLabel: string;
+  /** What this stage is for, in one sentence. */
+  purpose: string;
+  status: AmlEvidenceState;
+  owner: AmlJourneyOwner;
+  ownerLabel: string;
+  attention: AmlAttentionLevel;
+  /** True when this stage is what is stopping the case progressing. */
+  blocking: boolean;
+  /** One line of substance — counts, not adjectives. */
+  summary: string;
+  blockers: AmlJourneyNote[];
+  warnings: AmlJourneyNote[];
+  completedItems: AmlJourneyNote[];
+  outstandingItems: AmlJourneyNote[];
+  primaryAction: AmlJourneyAction | null;
+  secondaryActions: AmlJourneyAction[];
+  completedAt: string | null;
+  /** The legacy `?section=` key this stage opens on. Deep links are kept. */
+  targetSection: AmlWorkspaceSection;
+  /** Every section this stage renders, in order. */
+  sections: readonly AmlWorkspaceSection[];
+  applicable: boolean;
+  notApplicableReason: string | null;
+  sourceFacts: string[];
+  unavailableFacts: string[];
+}
+
+export interface AmlJourney {
+  stages: AmlJourneyStage[];
+  /** The stage an operator should be working, derived — never stored. */
+  currentStageId: AmlJourneyStageId;
+  /** Applicable stages that have reached `complete`. */
+  completeCount: number;
+  applicableCount: number;
+  /** Loudest thing across the whole journey. */
+  attention: AmlAttentionLevel;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   2. Stage definitions — labels, purpose and which sections they render
+   ══════════════════════════════════════════════════════════════════════
+
+   `sections` is the whole stage → section mapping and the only place it
+   exists. Every one of the twelve existing section keys appears exactly
+   once across the ten stages plus the case record, so nothing that was
+   reachable before became unreachable, and every `?section=` deep link
+   still resolves to the stage that renders it.                            */
+
+interface StageDefinition {
+  id: AmlJourneyStageId;
+  label: string;
+  shortLabel: string;
+  purpose: string;
+  sections: readonly AmlWorkspaceSection[];
+}
+
+const STAGE_DEFINITIONS: readonly StageDefinition[] = [
+  {
+    id: "activation",
+    label: "Activation",
+    shortLabel: "Activation",
+    purpose: "The recorded trigger that opened this case, and the terms it opened under.",
+    sections: ["overview"],
+  },
+  {
+    id: "intake",
+    label: "Client intake",
+    shortLabel: "Intake",
+    purpose: "Consents, the client's own information, and anything we have asked them for.",
+    sections: ["requests"],
+  },
+  {
+    id: "documents",
+    label: "Documents & evidence",
+    shortLabel: "Documents",
+    purpose: "What was required, what arrived, and what we accepted or sent back.",
+    sections: ["documents"],
+  },
+  {
+    id: "identity",
+    label: "Identity verification",
+    shortLabel: "Identity",
+    purpose: "Verification of every party the case requires, and the evidence behind it.",
+    sections: ["identity"],
+  },
+  {
+    id: "screening",
+    label: "Screening & ownership",
+    shortLabel: "Screening",
+    purpose: "Sanctions, PEP and adverse screening, and who ultimately owns or controls the customer.",
+    sections: ["ownership"],
+  },
+  {
+    id: "funding",
+    label: "Funding & transaction",
+    shortLabel: "Funding",
+    purpose: "The matter, how it is funded, and the counterparties on the other side of it.",
+    sections: ["finance", "counterparty"],
+  },
+  {
+    id: "submission",
+    label: "Submission review",
+    shortLabel: "Submission",
+    purpose: "Whether there is enough evidence to take this case into risk and decision.",
+    sections: ["submission-review"],
+  },
+  {
+    id: "decision",
+    label: "Risk & MLRO decision",
+    shortLabel: "Decision",
+    purpose: "The risk position, the evidence behind it, and the recorded human decision.",
+    sections: ["risk"],
+  },
+  {
+    id: "passport",
+    label: "Service gate & Passport",
+    shortLabel: "Gate & Passport",
+    purpose: "Whether the designated service may proceed, and whether the credential has been issued.",
+    sections: ["passport"],
+  },
+  {
+    id: "distribution",
+    label: "Partners & ongoing CDD",
+    shortLabel: "Partners",
+    purpose: "Who may receive the Passport, who has it, and what keeps the case current afterwards.",
+    sections: ["monitoring"],
+  },
+] as const;
+
+/** The record surface. Not a journey stage — casework does not happen here. */
+export const JOURNEY_RECORD_SECTION: AmlWorkspaceSection = "timeline";
+
+const STAGE_BY_ID = new Map<AmlJourneyStageId, StageDefinition>(
+  STAGE_DEFINITIONS.map((d) => [d.id, d]),
+);
+
+const STAGE_FOR_SECTION: Record<string, AmlJourneyStageId> = (() => {
+  const out: Record<string, AmlJourneyStageId> = {};
+  for (const def of STAGE_DEFINITIONS) {
+    for (const section of def.sections) out[section] = def.id;
+  }
+  return out;
+})();
+
+export function isJourneyStageId(value: string | null | undefined): value is AmlJourneyStageId {
+  return !!value && (JOURNEY_STAGES as readonly string[]).includes(value);
+}
+
+/**
+ * Which stage renders a given `?section=`. The record section deliberately
+ * has no stage — it is reached from the rail's own record link.
+ */
+export function stageForSection(section: AmlWorkspaceSection): AmlJourneyStageId | null {
+  return STAGE_FOR_SECTION[section] ?? null;
+}
+
+export function sectionsForStage(id: AmlJourneyStageId): readonly AmlWorkspaceSection[] {
+  return STAGE_BY_ID.get(id)?.sections ?? [];
+}
+
+export function journeyStageNumber(id: AmlJourneyStageId): number {
+  return JOURNEY_STAGES.indexOf(id) + 1;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   3. Small shared readers
+   ══════════════════════════════════════════════════════════════════════ */
+
+const loaded = <T>(v: T | null | undefined): v is T => v !== null && v !== undefined;
+
+/** Only technical failures may be retried — they are ours, not the customer's. */
+const RETRYABLE_PROCESSING = new Set(["technical_failure", "dead_lettered"]);
+
+const note = (
+  key: string,
+  label: string,
+  attention: AmlAttentionLevel,
+  extra: { detail?: string; section?: AmlWorkspaceSection } = {},
+): AmlJourneyNote => ({ key, label, attention, ...extra });
+
+/**
+ * What a stage's derivation returns before the shared scaffolding (labels,
+ * numbers, sections) is put around it.
+ */
+interface StageReading {
+  status: AmlEvidenceState;
+  owner: AmlJourneyOwner;
+  summary: string;
+  blockers?: AmlJourneyNote[];
+  warnings?: AmlJourneyNote[];
+  completedItems?: AmlJourneyNote[];
+  outstandingItems?: AmlJourneyNote[];
+  primaryAction?: AmlJourneyAction | null;
+  secondaryActions?: AmlJourneyAction[];
+  completedAt?: string | null;
+  applicable?: boolean;
+  notApplicableReason?: string | null;
+  sourceFacts?: string[];
+  unavailableFacts?: string[];
+  /** Overrides the attention derived from the notes. */
+  attention?: AmlAttentionLevel;
+  blocking?: boolean;
+}
+
+/** Attention follows the loudest note unless the reading states otherwise. */
+function attentionFor(reading: StageReading): AmlAttentionLevel {
+  if (reading.attention) return reading.attention;
+  const levels = [
+    ...(reading.blockers ?? []).map((b) => b.attention),
+    ...(reading.warnings ?? []).map((w) => w.attention),
+  ];
+  if (levels.length > 0) return highestAttention(levels);
+  if (reading.status === "complete") return "steady";
+  if (reading.status === "unknown") return "none";
+  if (reading.owner === "client" || reading.owner === "partner" || reading.owner === "system") {
+    return "waiting";
+  }
+  return "none";
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   4. Stage 1 — Activation
+   ══════════════════════════════════════════════════════════════════════ */
+
+function activationStage(facts: AmlWorkspaceFacts): StageReading {
+  const stage = caseStage(facts.caseRow);
+  const activation = facts.activation ?? null;
+  const isDraft = stage === "draft";
+  const sourceFacts = [`case_stage = ${stage}`];
+
+  if (isDraft) {
+    return {
+      status: "in_progress",
+      owner: "analyst",
+      summary: "The case is a draft. Activation records the trigger and opens the client's portal.",
+      blockers: [
+        note("not_activated", "The case has not been activated", "attention", {
+          detail: "Nothing downstream can start until an authorised activation is recorded.",
+        }),
+      ],
+      outstandingItems: [note("activate", "Record the activation event", "attention")],
+      primaryAction: { key: "activate", label: "Record activation", section: "overview" },
+      sourceFacts,
+    };
+  }
+
+  const completed: AmlJourneyNote[] = [
+    note("activated", "Activation recorded", "steady"),
+  ];
+  if (facts.caseRow.activation_timing) {
+    completed.push(note("timing", "Activation timing recorded", "steady"));
+  }
+  if (facts.caseRow.agreement_state) {
+    completed.push(note("agreement", "Agreement state recorded", "steady"));
+  }
+
+  // A legacy case carries no activation metadata. That is a property of when
+  // it was opened, not a gap in the work — say so rather than showing a gap.
+  const warnings = activation
+    ? []
+    : [
+        note("legacy_activation", "No activation metadata on this case", "waiting", {
+          detail: "The case predates the activation contract. Its history is unaffected.",
+        }),
+      ];
+
+  return {
+    status: "complete",
+    owner: "none",
+    summary: activation
+      ? `Activated under ${activation.model ? `Model ${activation.model}` : "the recorded model"}${activation.event ? ` — ${activation.event}` : ""}.`
+      : "Activated. This case predates the activation metadata contract.",
+    completedItems: completed,
+    warnings,
+    completedAt: activation?.activated_at ?? null,
+    sourceFacts,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   5. Stage 2 — Client intake
+   ══════════════════════════════════════════════════════════════════════ */
+
+const INTAKE_COMPLETE_PORTAL = new Set(["submitted", "under_review", "complete"]);
+
+function intakeStage(facts: AmlWorkspaceFacts): StageReading {
+  const stage = caseStage(facts.caseRow);
+  const portal = clientPortalStatus(facts.caseRow);
+  const openRequests = facts.openClientRequests;
+  const sourceFacts = [`client_portal_status = ${portal}`];
+  const unavailableFacts: string[] = [];
+
+  const blockers: AmlJourneyNote[] = [];
+  const warnings: AmlJourneyNote[] = [];
+  const completed: AmlJourneyNote[] = [];
+  const outstanding: AmlJourneyNote[] = [];
+
+  // ── Consents. The catalogue is the authority; an unread catalogue is
+  //    `unknown`, never "accepted".
+  if (loaded(facts.consent)) {
+    sourceFacts.push("consent catalogue");
+    if (facts.consent.satisfied) {
+      completed.push(note("consent", "Required consents accepted", "steady"));
+    } else {
+      const n = facts.consent.outstanding.length;
+      blockers.push(
+        note("consent_outstanding", "Required consents not yet accepted", "attention", {
+          detail: n > 0 ? `${n} outstanding in the current catalogue.` : undefined,
+          section: "identity",
+        }),
+      );
+      outstanding.push(note("consent", "Client consents", "attention"));
+    }
+  } else {
+    unavailableFacts.push("consent catalogue");
+  }
+
+  // ── The client's own progress through their portal.
+  if (INTAKE_COMPLETE_PORTAL.has(portal)) {
+    completed.push(note("portal", "Client information submitted", "steady"));
+  } else if (portal === "not_started") {
+    blockers.push(
+      note("portal_not_started", "The client has not started onboarding", "attention", {
+        detail: "Send or chase the onboarding invitation.",
+      }),
+    );
+    outstanding.push(note("portal", "Client onboarding", "attention"));
+  } else if (portal === "contact_adviser") {
+    blockers.push(
+      note("portal_contact", "The client has been asked to contact their adviser", "attention"),
+    );
+  } else {
+    outstanding.push(note("portal", "Client onboarding in progress", "waiting"));
+  }
+
+  // ── Anything we have explicitly asked for.
+  if (openRequests === undefined) {
+    unavailableFacts.push("client requests");
+  } else if (openRequests > 0) {
+    sourceFacts.push(`open client requests = ${openRequests}`);
+    warnings.push(
+      note(
+        "open_requests",
+        `${openRequests} open request${openRequests === 1 ? "" : "s"} with the client`,
+        "waiting",
+        { section: "requests" },
+      ),
+    );
+    outstanding.push(note("requests", "Client responses", "waiting"));
+  }
+
+  const awaitingUs = stage === "client_submitted" || stage === "staff_review";
+  const settled = blockers.length === 0 && outstanding.length === 0;
+
+  const status: AmlEvidenceState =
+    unavailableFacts.length > 0 && blockers.length === 0 && !settled
+      ? "unknown"
+      : settled
+        ? "complete"
+        : blockers.length > 0
+          ? "attention"
+          : "in_progress";
+
+  const owner: AmlJourneyOwner = settled
+    ? "none"
+    : awaitingUs
+      ? "analyst"
+      : "client";
+
+  return {
+    status,
+    owner,
+    summary: settled
+      ? "Consents accepted and the client's information is in."
+      : blockers.length > 0
+        ? blockers[0].label
+        : "The client is still working through their portal.",
+    blockers,
+    warnings,
+    completedItems: completed,
+    outstandingItems: outstanding,
+    primaryAction: settled
+      ? null
+      : { key: "request", label: "Ask the client for something", section: "requests" },
+    secondaryActions: [{ key: "requests", label: "Open request history", section: "requests" }],
+    sourceFacts,
+    unavailableFacts,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   6. Stage 3 — Documents & evidence
+   ══════════════════════════════════════════════════════════════════════ */
+
+function documentsStage(facts: AmlWorkspaceFacts): StageReading {
+  if (!loaded(facts.documents)) {
+    return {
+      status: "unknown",
+      owner: "none",
+      summary: "Document requirements could not be read.",
+      unavailableFacts: ["document requirements"],
+    };
+  }
+
+  const all = facts.documents.requirements;
+  const sourceFacts = [`document_requirements (${all.length})`];
+  const statusOf = (r: { status?: string | null }) => String(r.status ?? "pending");
+  const required = all.filter((r) => r.required !== false);
+  const awaitingReview = all.filter((r) => statusOf(r) === "uploaded");
+  const rejected = all.filter((r) => statusOf(r) === "rejected");
+  const accepted = required.filter((r) => ["accepted", "waived"].includes(statusOf(r)));
+  const outstandingRequired = required.filter(
+    (r) => !["accepted", "waived", "uploaded", "rejected"].includes(statusOf(r)),
+  );
+
+  if (all.length === 0) {
+    return {
+      status: "not_started",
+      owner: "analyst",
+      summary: "No document requirements have been set for this case.",
+      blockers: [
+        note("no_requirements", "No requirements set", "attention", {
+          detail: "The client sees nothing to upload until the requirement set exists.",
+        }),
+      ],
+      outstandingItems: [note("seed", "Document requirements", "attention")],
+      primaryAction: { key: "requirements", label: "Set requirements", section: "documents" },
+      sourceFacts,
+    };
+  }
+
+  const blockers: AmlJourneyNote[] = [];
+  const warnings: AmlJourneyNote[] = [];
+
+  if (awaitingReview.length > 0) {
+    blockers.push(
+      note(
+        "awaiting_review",
+        `${awaitingReview.length} document${awaitingReview.length === 1 ? "" : "s"} awaiting review`,
+        "attention",
+        { detail: "Uploaded and waiting to be accepted or rejected." },
+      ),
+    );
+  }
+  if (rejected.length > 0) {
+    warnings.push(
+      note(
+        "rejected",
+        `${rejected.length} rejected, replacement requested`,
+        "attention",
+        { detail: "The client has been told what was wrong and what to send instead." },
+      ),
+    );
+  }
+  if (outstandingRequired.length > 0) {
+    warnings.push(
+      note(
+        "outstanding",
+        `${outstandingRequired.length} required document${outstandingRequired.length === 1 ? "" : "s"} not yet supplied`,
+        "waiting",
+      ),
+    );
+  }
+
+  const complete = required.length > 0 && accepted.length === required.length;
+
+  return {
+    status: complete
+      ? "complete"
+      : awaitingReview.length > 0 || rejected.length > 0
+        ? "attention"
+        : accepted.length === 0
+          ? "not_started"
+          : "in_progress",
+    owner: complete
+      ? "none"
+      : awaitingReview.length > 0
+        ? "analyst"
+        : "client",
+    summary: `${accepted.length} of ${required.length} required document${required.length === 1 ? "" : "s"} accepted.`,
+    blockers,
+    warnings,
+    completedItems: accepted.map((r, i) =>
+      note(`doc-ok-${i}`, r.label ?? "Requirement satisfied", "steady"),
+    ),
+    outstandingItems: [
+      ...awaitingReview.map((r, i) => note(`doc-review-${i}`, r.label ?? "Awaiting review", "attention")),
+      ...rejected.map((r, i) => note(`doc-rej-${i}`, r.label ?? "Rejected", "attention")),
+      ...outstandingRequired.map((r, i) => note(`doc-out-${i}`, r.label ?? "Not supplied", "waiting")),
+    ],
+    primaryAction:
+      awaitingReview.length > 0
+        ? { key: "review", label: "Review uploaded documents", section: "documents", actionType: "review_document" }
+        : complete
+          ? null
+          : { key: "request_doc", label: "Request a document", section: "requests" },
+    sourceFacts,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   7. Stage 4 — Identity verification
+   ══════════════════════════════════════════════════════════════════════ */
+
+function identityStage(facts: AmlWorkspaceFacts): StageReading {
+  if (!loaded(facts.identity)) {
+    return {
+      status: "unknown",
+      owner: "none",
+      summary: "Verification checks could not be read.",
+      unavailableFacts: ["verification checks"],
+    };
+  }
+
+  const live = facts.identity.checks.filter((c) => !c.superseded_at);
+  const sourceFacts = [`verification_checks (${live.length} live)`];
+
+  if (live.length === 0) {
+    return {
+      status: "not_started",
+      owner: "analyst",
+      summary: "No verification attempt has been recorded for this case.",
+      blockers: [note("no_idv", "Identity verification not started", "attention")],
+      outstandingItems: [note("start", "Identity verification", "attention")],
+      primaryAction: { key: "start_idv", label: "Start identity verification", section: "identity" },
+      sourceFacts,
+    };
+  }
+
+  const technical = live.filter((c) => RETRYABLE_PROCESSING.has(String(c.processing_status ?? "")));
+  const referred = live.filter((c) => c.status === "referred");
+  const failed = live.filter((c) => c.status === "failed" || c.status === "exhausted");
+  const passed = live.filter((c) => c.status === "passed");
+  const inFlight = live.filter((c) => c.status === "pending" || c.status === "in_progress");
+
+  const blockers: AmlJourneyNote[] = [];
+  const warnings: AmlJourneyNote[] = [];
+
+  // A provider outage is ours, not the customer's, and it is separated from
+  // an identity outcome everywhere else in the system.
+  if (technical.length > 0) {
+    warnings.push(
+      note(
+        "technical",
+        `${technical.length} check${technical.length === 1 ? "" : "s"} stopped on a technical failure`,
+        "attention",
+        { detail: "Retrying runs the provider again and consumes no attempt." },
+      ),
+    );
+  }
+  if (referred.length > 0) {
+    blockers.push(
+      note(
+        "referred",
+        `${referred.length} referred for a human outcome`,
+        "attention",
+      ),
+    );
+  }
+  if (failed.length > 0) {
+    blockers.push(
+      note("failed", `${failed.length} unsuccessful of ${live.length}`, "attention", {
+        detail: "The customer needs a further attempt, or the manual route.",
+      }),
+    );
+  }
+
+  const complete = passed.length === live.length;
+
+  return {
+    status: complete
+      ? "complete"
+      : blockers.length > 0 || technical.length > 0
+        ? "attention"
+        : inFlight.length > 0
+          ? "in_progress"
+          : "in_progress",
+    owner: complete
+      ? "none"
+      : referred.length > 0
+        ? "analyst"
+        : technical.length > 0
+          ? "analyst"
+          : failed.length > 0
+            ? "client"
+            : inFlight.length > 0
+              ? "system"
+              : "analyst",
+    summary: complete
+      ? `${passed.length} of ${live.length} verified.`
+      : `${passed.length} of ${live.length} verified${inFlight.length > 0 ? `, ${inFlight.length} in progress` : ""}.`,
+    blockers,
+    warnings,
+    completedItems: passed.map((c, i) =>
+      note(`idv-ok-${i}`, c.party_label ?? "Party verified", "steady"),
+    ),
+    outstandingItems: live
+      .filter((c) => c.status !== "passed")
+      .map((c, i) => note(`idv-out-${i}`, c.party_label ?? "Verification outstanding", "attention")),
+    primaryAction: complete
+      ? null
+      : { key: "idv", label: "Open identity verification", section: "identity", actionType: "identity_review" },
+    sourceFacts,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   8. Stage 5 — Screening & ownership
+   ══════════════════════════════════════════════════════════════════════
+
+   Two evidence streams, one navigation stage, and never one meaning: a
+   screening outcome and an ownership map answer different questions and
+   are kept as separate readings inside the stage.                          */
+
+function screeningStage(facts: AmlWorkspaceFacts): StageReading {
+  const blockers: AmlJourneyNote[] = [];
+  const warnings: AmlJourneyNote[] = [];
+  const completed: AmlJourneyNote[] = [];
+  const outstanding: AmlJourneyNote[] = [];
+  const sourceFacts: string[] = [];
+  const unavailableFacts: string[] = [];
+
+  let screeningState: AmlEvidenceState = "unknown";
+  let screeningSummary = "Screening could not be read.";
+  let owner: AmlJourneyOwner = "none";
+
+  if (loaded(facts.screening)) {
+    const subjects = facts.screening.subjects.filter((s) => s.state !== "not_required");
+    sourceFacts.push(`party_screening_subjects (${subjects.length})`);
+    const openMatches = subjects.reduce(
+      (n, s) => n + (s.matches ?? []).filter((m) => m.status === "open").length,
+      0,
+    );
+    const confirmed = subjects.filter((s) => s.state === "confirmed_match");
+    const possible = subjects.filter((s) => s.state === "possible_match");
+    const errored = subjects.filter((s) => s.state === "error");
+    const pending = subjects.filter((s) => ["not_started", "queued", "processing"].includes(s.state));
+    const settled = subjects.filter((s) => ["completed", "false_positive"].includes(s.state));
+
+    if (subjects.length === 0) {
+      screeningState = "not_started";
+      screeningSummary = "No screening subjects recorded.";
+      owner = "analyst";
+      blockers.push(note("no_subjects", "Screening has not been run", "attention"));
+    } else if (confirmed.length > 0) {
+      screeningState = "attention";
+      screeningSummary = `${confirmed.length} confirmed match${confirmed.length === 1 ? "" : "es"}.`;
+      owner = "reviewer";
+      blockers.push(
+        note("confirmed", `${confirmed.length} confirmed screening match`, "critical", {
+          detail: "This is a finding, not a candidate. A reviewer must record the outcome.",
+        }),
+      );
+    } else if (possible.length > 0 || openMatches > 0) {
+      const n = Math.max(possible.length, openMatches);
+      screeningState = "attention";
+      screeningSummary = `${n} match${n === 1 ? "" : "es"} awaiting adjudication.`;
+      owner = "analyst";
+      blockers.push(
+        note("possible", `${n} potential match${n === 1 ? "" : "es"} awaiting adjudication`, "attention"),
+      );
+    } else if (errored.length > 0) {
+      screeningState = "attention";
+      screeningSummary = `${errored.length} screening run${errored.length === 1 ? "" : "s"} did not complete.`;
+      owner = "analyst";
+      warnings.push(
+        note("errored", `${errored.length} screening run did not complete`, "attention", {
+          detail: "A technical failure leaves the subject outstanding — it never reads as clear.",
+        }),
+      );
+    } else if (pending.length > 0) {
+      screeningState = "in_progress";
+      screeningSummary = `${settled.length} of ${subjects.length} screened.`;
+      owner = "system";
+      outstanding.push(note("pending_screen", `${pending.length} screening run in progress`, "waiting"));
+    } else {
+      screeningState = "complete";
+      screeningSummary = `${subjects.length} screened, no open matches.`;
+      completed.push(note("screening_done", "Screening completed for every subject", "steady"));
+    }
+  } else {
+    unavailableFacts.push("party screening");
+  }
+
+  // ── Ownership & control. Individual customers genuinely have none — that
+  //    is a property of the case, not an unfinished task.
+  const subjectType = facts.caseRow.subject_type;
+  let ownershipState: AmlEvidenceState = "unknown";
+
+  if (subjectType === "individual") {
+    ownershipState = "not_applicable";
+    completed.push(
+      note("ownership_na", "Ownership & control — not applicable", "steady", {
+        detail: "Individual customer with no entity ownership structure.",
+      }),
+    );
+  } else if (loaded(facts.ownership)) {
+    sourceFacts.push("linked entities");
+    const links = facts.ownership.links.filter((l) => l.entity_id);
+    if (links.length === 0) {
+      ownershipState = "attention";
+      blockers.push(
+        note("no_structure", "No entity structure linked", "attention", {
+          detail: "A non-individual customer needs its ownership and control mapped.",
+        }),
+      );
+      if (owner === "none") owner = "analyst";
+    } else {
+      // Never `complete`: whether a structure is fully mapped depends on the
+      // ownership summary this reading does not load.
+      ownershipState = "in_progress";
+      outstanding.push(
+        note("structure", `${links.length} linked entit${links.length === 1 ? "y" : "ies"} open to review`, "waiting"),
+      );
+      if (owner === "none") owner = "analyst";
+    }
+  } else {
+    unavailableFacts.push("linked entities");
+  }
+
+  const states: AmlEvidenceState[] = [screeningState, ownershipState].filter(
+    (s) => s !== "not_applicable",
+  );
+  const status: AmlEvidenceState = states.includes("attention")
+    ? "attention"
+    : states.includes("unknown")
+      ? "unknown"
+      : states.includes("in_progress")
+        ? "in_progress"
+        : states.includes("not_started")
+          ? "not_started"
+          : "complete";
+
+  return {
+    status,
+    owner: status === "complete" ? "none" : owner,
+    summary:
+      ownershipState === "not_applicable"
+        ? screeningSummary
+        : `${screeningSummary} Ownership: ${EVIDENCE_STATE_LABELS[ownershipState].toLowerCase()}.`,
+    blockers,
+    warnings,
+    completedItems: completed,
+    outstandingItems: outstanding,
+    primaryAction:
+      status === "complete"
+        ? null
+        : {
+            key: "screening",
+            label: blockers.some((b) => b.key === "confirmed" || b.key === "possible")
+              ? "Adjudicate screening"
+              : "Open screening & ownership",
+            section: "ownership",
+            actionType: "screening_adjudication",
+          },
+    sourceFacts,
+    unavailableFacts,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   9. Stage 6 — Funding & transaction
+   ══════════════════════════════════════════════════════════════════════ */
+
+function fundingStage(facts: AmlWorkspaceFacts): StageReading {
+  const blockers: AmlJourneyNote[] = [];
+  const warnings: AmlJourneyNote[] = [];
+  const completed: AmlJourneyNote[] = [];
+  const outstanding: AmlJourneyNote[] = [];
+  const sourceFacts: string[] = [];
+  const unavailableFacts: string[] = [];
+
+  let status: AmlEvidenceState = "unknown";
+  let owner: AmlJourneyOwner = "none";
+  let summary = "Funding evidence could not be read.";
+
+  if (loaded(facts.funding)) {
+    const items = facts.funding.sources;
+    sourceFacts.push(`source_of_funds (${items.length})`);
+    const verified = items.filter((i) => i.verified);
+    if (items.length === 0) {
+      status = "not_started";
+      owner = "analyst";
+      summary = "No source of funds recorded.";
+      blockers.push(note("no_sof", "Source of funds not recorded", "attention"));
+      outstanding.push(note("sof", "Source of funds", "attention"));
+    } else if (verified.length === items.length) {
+      status = "complete";
+      summary = `${verified.length} source${verified.length === 1 ? "" : "s"} verified.`;
+      completed.push(note("sof_done", "Source of funds verified", "steady"));
+    } else {
+      status = "in_progress";
+      owner = "analyst";
+      summary = `${verified.length} of ${items.length} sources verified.`;
+      warnings.push(
+        note("sof_unverified", `${items.length - verified.length} source not verified`, "attention"),
+      );
+      outstanding.push(note("sof_open", "Source of funds evidence", "attention"));
+    }
+  } else {
+    unavailableFacts.push("source of funds");
+  }
+
+  if (loaded(facts.transactions)) {
+    const list = facts.transactions.transactions;
+    sourceFacts.push(`transactions (${list.length})`);
+    if (list.length === 0) {
+      warnings.push(
+        note("no_transaction", "No transaction recorded", "waiting", {
+          detail: "Threshold obligations are driven by the transaction record.",
+        }),
+      );
+    } else {
+      completed.push(
+        note("transaction", `${list.length} transaction${list.length === 1 ? "" : "s"} recorded`, "steady"),
+      );
+    }
+  } else {
+    unavailableFacts.push("transactions");
+  }
+
+  return {
+    status,
+    owner: status === "complete" ? "none" : owner,
+    summary,
+    blockers,
+    warnings,
+    completedItems: completed,
+    outstandingItems: outstanding,
+    primaryAction:
+      status === "complete" ? null : { key: "funding", label: "Open funding & finance", section: "finance" },
+    secondaryActions: [
+      { key: "counterparty", label: "Purchase & counterparty", section: "counterparty" },
+    ],
+    sourceFacts,
+    unavailableFacts,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   10. Stage 7 — Submission review
+   ══════════════════════════════════════════════════════════════════════ */
+
+/** Stages at or beyond which the submission has already been taken in. */
+const PAST_SUBMISSION = new Set([
+  "staff_review",
+  "checks_in_progress",
+  "enhanced_cdd",
+  "decision_pending",
+  "cleared",
+  "cleared_with_conditions",
+  "blocked",
+  "closed",
+]);
+
+function submissionStage(facts: AmlWorkspaceFacts): StageReading {
+  const stage = caseStage(facts.caseRow);
+  const sourceFacts = [`case_stage = ${stage}`];
+
+  if (stage === "client_submitted") {
+    return {
+      status: "attention",
+      owner: "reviewer",
+      summary: "The client has submitted and the case is waiting for review.",
+      blockers: [
+        note("awaiting_review", "Submission awaiting review", "attention", {
+          detail: "Accept it, return it for more information, or escalate.",
+        }),
+      ],
+      outstandingItems: [note("review", "Submission review", "attention")],
+      primaryAction: {
+        key: "review_submission",
+        label: "Review the submission",
+        section: "submission-review",
+        actionType: "review_submission",
+      },
+      sourceFacts,
+    };
+  }
+
+  if (stage === "additional_info_required") {
+    return {
+      status: "attention",
+      owner: "client",
+      summary: "The submission was returned and further information was requested.",
+      warnings: [note("returned", "Further information requested", "attention", { section: "requests" })],
+      outstandingItems: [note("info", "Client response", "waiting")],
+      primaryAction: { key: "requests", label: "Open the open requests", section: "requests" },
+      sourceFacts,
+    };
+  }
+
+  if (PAST_SUBMISSION.has(stage)) {
+    return {
+      status: "complete",
+      owner: "none",
+      summary: "The submission has been taken in; the case is past this checkpoint.",
+      completedItems: [note("accepted", "Submission accepted into review", "steady")],
+      sourceFacts,
+    };
+  }
+
+  return {
+    status: "not_started",
+    owner: "client",
+    summary: "The client has not submitted yet.",
+    outstandingItems: [note("await", "Client submission", "waiting")],
+    sourceFacts,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   11. Stage 8 — Risk & MLRO decision
+   ══════════════════════════════════════════════════════════════════════ */
+
+function decisionStage(facts: AmlWorkspaceFacts): StageReading {
+  const stage = caseStage(facts.caseRow);
+  const risk = facts.caseRow.risk_rating ?? null;
+  const sourceFacts = [`case_stage = ${stage}`, `risk_rating = ${risk ?? "unrated"}`];
+
+  const blockers: AmlJourneyNote[] = [];
+  const warnings: AmlJourneyNote[] = [];
+  const completed: AmlJourneyNote[] = [];
+  const outstanding: AmlJourneyNote[] = [];
+
+  if (risk) {
+    completed.push(note("rated", `Risk rated ${risk.toUpperCase()}`, "steady"));
+  } else {
+    outstanding.push(note("unrated", "Risk assessment", "attention"));
+  }
+
+  if (risk === "prohibited") {
+    blockers.push(
+      note("prohibited", "Prohibited risk rating recorded", "critical", {
+        detail: "A decision-maker must record the outcome. The rating does not move the gate by itself.",
+      }),
+    );
+  }
+
+  if (loaded(facts.monitoring)) {
+    const openEdd = facts.monitoring.open_edd ?? [];
+    if (openEdd.length > 0) {
+      blockers.push(
+        note("edd", `${openEdd.length} enhanced due diligence case open`, "attention"),
+      );
+    }
+  }
+
+  if (stage === "blocked") {
+    return {
+      status: "attention",
+      owner: "reviewer",
+      summary: "The case is blocked. It reopens only on an explicit decision.",
+      attention: "critical",
+      blocking: true,
+      blockers: [
+        note("blocked", "The case is blocked", "critical", {
+          detail: "Nothing downstream progresses until a reviewer reopens it.",
+        }),
+        ...blockers,
+      ],
+      outstandingItems: outstanding,
+      completedItems: completed,
+      primaryAction: { key: "risk", label: "Open risk & decision", section: "risk" },
+      sourceFacts,
+    };
+  }
+
+  if (stage === "decision_pending" || facts.caseRow.status === "escalated_mlro") {
+    return {
+      status: "attention",
+      owner: "mlro",
+      summary: "The case has been escalated and is waiting on an authorised decision-maker.",
+      blockers: [
+        note("mlro_decision", "MLRO decision required", "attention", {
+          detail: "Every fact needed to decide is consolidated in the decision dossier.",
+        }),
+        ...blockers,
+      ],
+      warnings,
+      completedItems: completed,
+      outstandingItems: [note("decision", "MLRO decision", "attention"), ...outstanding],
+      primaryAction: {
+        key: "mlro_decision",
+        label: "Open the decision dossier",
+        section: "risk",
+        actionType: "mlro_decision",
+      },
+      sourceFacts,
+    };
+  }
+
+  if (stage === "cleared" || stage === "cleared_with_conditions") {
+    return {
+      status: "complete",
+      owner: "none",
+      summary: `A decision has been recorded — ${CASE_STAGE_LABELS[stage]}.`,
+      completedItems: [note("decided", "Compliance decision recorded", "steady"), ...completed],
+      warnings,
+      sourceFacts,
+    };
+  }
+
+  if (stage === "enhanced_cdd") {
+    return {
+      status: "attention",
+      owner: "analyst",
+      summary: "The case is in enhanced due diligence.",
+      blockers: [note("edd_stage", "Enhanced due diligence is open", "attention"), ...blockers],
+      completedItems: completed,
+      outstandingItems: outstanding,
+      primaryAction: { key: "risk", label: "Open risk & decision", section: "risk" },
+      sourceFacts,
+    };
+  }
+
+  if (stage === "staff_review") {
+    return {
+      status: "in_progress",
+      owner: "analyst",
+      summary: "The case is in staff review and the assessment can be completed.",
+      blockers,
+      warnings,
+      completedItems: completed,
+      outstandingItems: outstanding,
+      primaryAction: { key: "risk", label: "Complete the risk assessment", section: "risk" },
+      sourceFacts,
+    };
+  }
+
+  return {
+    status: risk ? "in_progress" : "not_started",
+    owner: blockers.length > 0 ? "reviewer" : "none",
+    summary: risk
+      ? `Rated ${risk.toUpperCase()}. No decision has been recorded yet.`
+      : "Not yet assessed. Evidence is still being collected.",
+    blockers,
+    warnings,
+    completedItems: completed,
+    outstandingItems: outstanding,
+    sourceFacts,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   12. Stage 9 — Service gate & Passport
+   ══════════════════════════════════════════════════════════════════════
+
+   Four concepts, kept apart on purpose: the compliance decision (stage 8),
+   the service gate, the Passport credential, and its distribution (stage
+   10). Nothing here collapses them into one "approved" boolean.            */
+
+const GATE_APPROVED = new Set(["approved", "approved_with_controls"]);
+
+/** Passport state codes that mean the credential is currently in force. */
+const PASSPORT_IN_FORCE = new Set(["issued_current"]);
+/** Passport state codes that need somebody to act. */
+const PASSPORT_NEEDS_ACTION = new Set([
+  "ready_for_issuance",
+  "refresh_required",
+  "superseded",
+]);
+
+function passportStage(facts: AmlWorkspaceFacts): StageReading {
+  const gate = serviceGateStatus(facts.caseRow);
+  const sourceFacts = [`service_gate_status = ${gate}`];
+  const unavailableFacts: string[] = [];
+
+  const blockers: AmlJourneyNote[] = [];
+  const warnings: AmlJourneyNote[] = [];
+  const completed: AmlJourneyNote[] = [];
+  const outstanding: AmlJourneyNote[] = [];
+
+  const gateApproved = GATE_APPROVED.has(gate);
+  const gateStopped = gate === "locked" || gate === "terminated";
+
+  if (gateApproved) {
+    completed.push(
+      note("gate", `Service gate: ${SERVICE_GATE_LABELS[gate]}`, "steady", {
+        detail: "Recorded by an authorised decision-maker.",
+      }),
+    );
+  } else if (gateStopped) {
+    blockers.push(
+      note("gate_stopped", `Service gate: ${SERVICE_GATE_LABELS[gate]}`, "critical", {
+        detail: "The designated service may not proceed.",
+      }),
+    );
+  } else {
+    blockers.push(
+      note("gate_open", `Service gate: ${SERVICE_GATE_LABELS[gate]}`, "attention", {
+        detail: "The gate is an explicit decision; evidence and risk do not move it.",
+      }),
+    );
+    outstanding.push(note("gate_decision", "Service-gate decision", "attention"));
+  }
+
+  if (loaded(facts.gate)) {
+    sourceFacts.push("aml-risk gate_contract");
+    const openConditions = (facts.gate.conditions ?? []).filter(
+      (c) => (c.status ?? "open") === "open",
+    );
+    for (const condition of openConditions) {
+      warnings.push(
+        note(`condition-${condition.id ?? condition.label}`, condition.label, "attention", {
+          detail: "Attached to the gate decision and not yet met.",
+        }),
+      );
+    }
+  } else {
+    unavailableFacts.push("service-gate contract");
+  }
+
+  // ── The Passport credential. Its state is SERVER-derived and embedded in
+  //    the projection; nothing here recomputes it.
+  let passportCode: string | null = null;
+  let passportLabel: string | null = null;
+  let issuedAt: string | null = null;
+
+  if (loaded(facts.passport) && facts.passport.enabled !== false) {
+    sourceFacts.push("passport distribution status");
+    passportCode = facts.passport.state?.code ?? null;
+    passportLabel = facts.passport.state?.label ?? null;
+    issuedAt = facts.passport.issued_at ?? null;
+
+    if (passportCode && PASSPORT_IN_FORCE.has(passportCode)) {
+      completed.push(
+        note(
+          "passport",
+          `Passport ${passportLabel ?? "issued"}${facts.passport.version ? ` · v${facts.passport.version}` : ""}`,
+          "steady",
+        ),
+      );
+    } else if (passportCode === "ready_for_issuance") {
+      outstanding.push(note("issue", "Passport issuance", "attention"));
+      blockers.push(
+        note("passport_ready", "Passport ready for issuance", "attention", {
+          detail: "The credential can be issued by an authorised decision-maker.",
+        }),
+      );
+    } else if (passportCode && PASSPORT_NEEDS_ACTION.has(passportCode)) {
+      warnings.push(
+        note("passport_action", `Passport: ${passportLabel ?? passportCode}`, "attention"),
+      );
+      outstanding.push(note("passport_refresh", "Passport version", "attention"));
+    } else if (passportCode === "suspended" || passportCode === "revoked") {
+      blockers.push(
+        note("passport_restricted", `Passport: ${passportLabel ?? passportCode}`, "critical"),
+      );
+    } else if (passportCode === "not_issued") {
+      outstanding.push(note("passport_not_issued", "Passport not issued", "waiting"));
+    }
+  } else if (loaded(facts.passport)) {
+    // The distribution surface is switched off for this deployment. Saying so
+    // is materially different from saying the Passport is not ready.
+    warnings.push(
+      note("passport_disabled", "Passport distribution is not enabled here", "waiting"),
+    );
+  } else {
+    unavailableFacts.push("passport state");
+  }
+
+  const complete = gateApproved && passportCode !== null && PASSPORT_IN_FORCE.has(passportCode);
+
+  const owner: AmlJourneyOwner = complete
+    ? "none"
+    : gateStopped
+      ? "reviewer"
+      : !gateApproved
+        ? "mlro"
+        : passportCode === "ready_for_issuance"
+          ? "mlro"
+          : passportCode === null
+            ? "none"
+            : "mlro";
+
+  return {
+    status: complete
+      ? "complete"
+      : blockers.length > 0
+        ? "attention"
+        : unavailableFacts.length > 0 && !gateApproved
+          ? "unknown"
+          : "in_progress",
+    owner,
+    summary: complete
+      ? `The service may proceed and the Passport is in force${facts.passport?.version ? ` at v${facts.passport.version}` : ""}.`
+      : gateApproved
+        ? `Gate approved. Passport: ${passportLabel ?? "state unavailable"}.`
+        : `${SERVICE_GATE_LABELS[gate]} — the designated service may not proceed yet.`,
+    blockers,
+    warnings,
+    completedItems: completed,
+    outstandingItems: outstanding,
+    completedAt: issuedAt,
+    primaryAction: complete
+      ? null
+      : !gateApproved
+        ? { key: "gate", label: "Record the service-gate decision", section: "risk" }
+        : { key: "passport", label: "Open the Compliance Passport", section: "passport" },
+    secondaryActions: [{ key: "passport_open", label: "Passport & reliance", section: "passport" }],
+    sourceFacts,
+    unavailableFacts,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   13. Stage 10 — Partner distribution & ongoing CDD
+   ══════════════════════════════════════════════════════════════════════ */
+
+function distributionStage(facts: AmlWorkspaceFacts): StageReading {
+  const blockers: AmlJourneyNote[] = [];
+  const warnings: AmlJourneyNote[] = [];
+  const completed: AmlJourneyNote[] = [];
+  const outstanding: AmlJourneyNote[] = [];
+  const sourceFacts: string[] = [];
+  const unavailableFacts: string[] = [];
+
+  let owner: AmlJourneyOwner = "none";
+  let distributionState: AmlEvidenceState = "unknown";
+  let summary = "Partner readiness could not be read.";
+
+  if (loaded(facts.passport) && facts.passport.enabled !== false) {
+    const partners = facts.passport.partners ?? [];
+    const s = facts.passport.summary ?? {};
+    sourceFacts.push(`passport distribution readiness (${partners.length} partner(s))`);
+
+    if (partners.length === 0) {
+      distributionState = "not_applicable";
+      summary = "No partner organisation is linked to this case.";
+      completed.push(
+        note("no_partners", "No partner linked", "steady", {
+          detail: "Nothing to distribute until a partner organisation is linked to the case.",
+        }),
+      );
+    } else {
+      const ready = s.ready ?? 0;
+      const current = s.already_current ?? 0;
+      const blocked = s.blocked ?? 0;
+      summary = `${current} current · ${ready} ready to share · ${blocked} blocked.`;
+
+      if (ready > 0) {
+        distributionState = "attention";
+        owner = "analyst";
+        outstanding.push(note("share", `${ready} partner ready to receive the Passport`, "attention"));
+      }
+      if (blocked > 0) {
+        warnings.push(
+          note("blocked_partners", `${blocked} partner blocked`, "attention", {
+            detail: "The server states the blockers; they are shown on the partner card.",
+          }),
+        );
+      }
+      if (current > 0) {
+        completed.push(note("current", `${current} partner holds the current version`, "steady"));
+        if (distributionState === "unknown") distributionState = "complete";
+      }
+      if (distributionState === "unknown") {
+        distributionState = blocked > 0 ? "attention" : "in_progress";
+      }
+      if (ready === 0 && blocked === 0 && current > 0) {
+        distributionState = "complete";
+        owner = "partner";
+      }
+    }
+  } else if (loaded(facts.passport)) {
+    warnings.push(note("dist_disabled", "Passport distribution is not enabled here", "waiting"));
+    distributionState = "not_applicable";
+    summary = "Passport distribution is not enabled for this deployment.";
+  } else {
+    unavailableFacts.push("passport distribution readiness");
+  }
+
+  // ── Ongoing CDD. Issuance is not the end of AML.
+  let monitoringState: AmlEvidenceState = "unknown";
+  if (loaded(facts.monitoring)) {
+    sourceFacts.push("case monitoring summary");
+    const m = facts.monitoring;
+    const overdue = m.overdue_review_count ?? 0;
+    const alerts = (m.open_alerts ?? []).length;
+    if (m.relationship_ended_at) {
+      monitoringState = "not_applicable";
+      completed.push(note("ended", "Relationship ended — records retained", "steady"));
+    } else if (overdue > 0) {
+      monitoringState = "attention";
+      owner = "analyst";
+      blockers.push(note("overdue", `${overdue} review${overdue === 1 ? "" : "s"} overdue`, "attention"));
+    } else if (m.rescreen_overdue) {
+      monitoringState = "attention";
+      owner = "analyst";
+      warnings.push(note("rescreen", "Screening refresh overdue", "attention"));
+    } else if (alerts > 0) {
+      monitoringState = "attention";
+      owner = "analyst";
+      warnings.push(note("alerts", `${alerts} open monitoring alert${alerts === 1 ? "" : "s"}`, "attention"));
+    } else if (m.monitoring_status === "paused") {
+      monitoringState = "attention";
+      warnings.push(note("paused", "Monitoring is paused", "attention"));
+    } else {
+      monitoringState = "complete";
+      completed.push(note("monitoring", "Monitoring active, nothing overdue", "steady"));
+    }
+  } else {
+    unavailableFacts.push("monitoring summary");
+  }
+
+  const states: AmlEvidenceState[] = [distributionState, monitoringState].filter(
+    (s) => s !== "not_applicable",
+  );
+  const status: AmlEvidenceState = states.length === 0
+    ? "not_applicable"
+    : states.includes("attention")
+      ? "attention"
+      : states.includes("unknown")
+        ? "unknown"
+        : states.includes("in_progress")
+          ? "in_progress"
+          : states.includes("not_started")
+            ? "not_started"
+            : "complete";
+
+  return {
+    status,
+    owner: status === "complete" ? owner : owner === "none" ? "analyst" : owner,
+    summary,
+    blockers,
+    warnings,
+    completedItems: completed,
+    outstandingItems: outstanding,
+    primaryAction:
+      status === "complete" || status === "not_applicable"
+        ? null
+        : { key: "distribution", label: "Open partners & monitoring", section: "monitoring" },
+    secondaryActions: [{ key: "passport", label: "Passport & reliance", section: "passport" }],
+    sourceFacts,
+    unavailableFacts,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   14. Assembly
+   ══════════════════════════════════════════════════════════════════════ */
+
+const STAGE_READERS: Record<AmlJourneyStageId, (facts: AmlWorkspaceFacts) => StageReading> = {
+  activation: activationStage,
+  intake: intakeStage,
+  documents: documentsStage,
+  identity: identityStage,
+  screening: screeningStage,
+  funding: fundingStage,
+  submission: submissionStage,
+  decision: decisionStage,
+  passport: passportStage,
+  distribution: distributionStage,
+};
+
+/**
+ * Which stage the operator should be working.
+ *
+ * The first stage that is blocking wins; otherwise the first stage that is
+ * not settled; otherwise the last stage. Deliberately NOT "the furthest
+ * stage reached" — a case whose Passport is issued but whose documents were
+ * never accepted has a real problem at stage 3, and the rail should say so.
+ */
+function currentStage(stages: AmlJourneyStage[]): AmlJourneyStageId {
+  const blocking = stages.find((s) => s.blocking && s.applicable);
+  if (blocking) return blocking.id;
+  const open = stages.find(
+    (s) => s.applicable && s.status !== "complete" && s.status !== "not_applicable",
+  );
+  return open?.id ?? stages[stages.length - 1].id;
+}
+
+export function deriveAmlJourney(facts: AmlWorkspaceFacts): AmlJourney {
+  const stages: AmlJourneyStage[] = STAGE_DEFINITIONS.map((def, index) => {
+    const reading = STAGE_READERS[def.id](facts);
+    const attention = attentionFor(reading);
+    const applicable = reading.applicable !== false && reading.status !== "not_applicable";
+
+    // A blocker is by definition outstanding. Enforcing that here rather
+    // than in ten separate readers is what keeps the readiness count
+    // honest: without it a stage could report "1 of 1 complete" while
+    // something was visibly stopping it.
+    const outstanding = [...(reading.outstandingItems ?? [])];
+    for (const blocker of reading.blockers ?? []) {
+      if (!outstanding.some((o) => o.key === blocker.key)) {
+        outstanding.push({ ...blocker, key: `blocker:${blocker.key}` });
+      }
+    }
+
+    return {
+      id: def.id,
+      number: index + 1,
+      label: def.label,
+      shortLabel: def.shortLabel,
+      purpose: def.purpose,
+      status: reading.status,
+      owner: reading.owner,
+      ownerLabel: JOURNEY_OWNER_LABELS[reading.owner],
+      attention,
+      blocking:
+        reading.blocking ??
+        ((reading.blockers ?? []).length > 0 &&
+          (attention === "critical" || attention === "attention")),
+      summary: reading.summary,
+      blockers: reading.blockers ?? [],
+      warnings: reading.warnings ?? [],
+      completedItems: reading.completedItems ?? [],
+      outstandingItems: outstanding,
+      primaryAction: reading.primaryAction ?? null,
+      secondaryActions: reading.secondaryActions ?? [],
+      completedAt: reading.completedAt ?? null,
+      targetSection: def.sections[0],
+      sections: def.sections,
+      applicable,
+      notApplicableReason: reading.notApplicableReason ?? null,
+      sourceFacts: reading.sourceFacts ?? [],
+      unavailableFacts: reading.unavailableFacts ?? [],
+    };
+  });
+
+  const applicableStages = stages.filter((s) => s.applicable);
+
+  return {
+    stages,
+    currentStageId: currentStage(stages),
+    completeCount: applicableStages.filter((s) => s.status === "complete").length,
+    applicableCount: applicableStages.length,
+    attention: highestAttention(stages.map((s) => s.attention)),
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   15. Live position — the four scalars the right rail always shows
+   ══════════════════════════════════════════════════════════════════════ */
+
+export interface AmlLivePosition {
+  stageLabel: string;
+  stageNumber: number;
+  stageTotal: number;
+  caseStageLabel: string;
+  clientStatusLabel: string;
+  financeStatusLabel: string;
+  serviceGateLabel: string;
+  /** Server-derived; `null` when the projection was not available. */
+  passportLabel: string | null;
+  passportVersion: number | null;
+}
+
+const CLIENT_STATUS_LABELS: Record<string, string> = {
+  not_started: "Not started",
+  action_required: "Action required",
+  in_progress: "In progress",
+  submitted: "Submitted",
+  under_review: "Under review",
+  additional_info_required: "Information requested",
+  complete: "Complete",
+  contact_adviser: "Asked to contact adviser",
+};
+
+const FINANCE_STATUS_LABELS: Record<string, string> = {
+  not_requested: "Not requested",
+  information_required: "Information required",
+  submitted: "Submitted",
+  clarification_required: "Clarification required",
+  under_review: "Under review",
+  accepted: "Accepted",
+  no_further_action: "No further action",
+};
+
+export function deriveAmlLivePosition(
+  facts: AmlWorkspaceFacts,
+  journey: AmlJourney,
+): AmlLivePosition {
+  const active = journey.stages.find((s) => s.id === journey.currentStageId) ?? journey.stages[0];
+  const portal = clientPortalStatus(facts.caseRow);
+  const finance = financePortalStatus(facts.caseRow);
+
+  return {
+    stageLabel: active.label,
+    stageNumber: active.number,
+    stageTotal: JOURNEY_STAGES.length,
+    caseStageLabel: CASE_STAGE_LABELS[caseStage(facts.caseRow)],
+    clientStatusLabel: CLIENT_STATUS_LABELS[portal] ?? portal,
+    financeStatusLabel: FINANCE_STATUS_LABELS[finance] ?? finance,
+    serviceGateLabel: SERVICE_GATE_LABELS[serviceGateStatus(facts.caseRow)],
+    passportLabel:
+      facts.passport && facts.passport.enabled !== false
+        ? (facts.passport.state?.label ?? null)
+        : null,
+    passportVersion: facts.passport?.version ?? null,
+  };
+}

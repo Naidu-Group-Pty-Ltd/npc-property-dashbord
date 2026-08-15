@@ -181,6 +181,9 @@ export interface AmlWorkspaceCaseFacts extends CaseDimensionSource {
   risk_rating?: AmlRiskRating | null;
   closed_at?: string | null;
   updated_at?: string;
+  /** Explicit activation contract columns (Phase 1). Null on legacy rows. */
+  activation_timing?: string | null;
+  agreement_state?: string | null;
 }
 
 /** `aml-verification list_verification_checks` rows. */
@@ -242,6 +245,57 @@ export interface AmlFundingFacts {
   sources: Array<{ verified?: boolean; source_type?: string; description?: string | null }>;
 }
 
+/** `aml.cases.metadata.activation`, written once at activation time. */
+export interface AmlActivationFacts {
+  model?: string | null;
+  event?: string | null;
+  activated_by_email?: string | null;
+  activated_at?: string | null;
+  program_version?: string | null;
+}
+
+/** `aml-cases consent_status` — the AUSTRAC-referenced consent catalogue. */
+export interface AmlConsentFacts {
+  satisfied: boolean;
+  outstanding: string[];
+  version?: string | number | null;
+}
+
+/** `aml-transactions list_transactions`, when the role may read the matter. */
+export interface AmlTransactionFacts {
+  transactions: Array<{
+    status?: string | null;
+    settlement_date?: string | null;
+    property_address?: string | null;
+    reference?: string | null;
+  }>;
+}
+
+/**
+ * `aml-reliance get_passport_distribution_status`.
+ *
+ * Every field here is SERVER-DERIVED and rendered verbatim. The browser has
+ * no passport-state derivation of its own and must never gain one: there is
+ * one `derivePassportState` and it runs in the edge function, which is what
+ * makes "the journey says issued, the Passport says pending" impossible.
+ * `enabled: false` means the distribution surface is switched off for this
+ * deployment — materially different from "the Passport is not ready".
+ */
+export interface AmlPassportFacts {
+  enabled?: boolean;
+  state?: { code?: string | null; label?: string | null; tone?: string | null } | null;
+  version?: number | null;
+  issued_at?: string | null;
+  partners?: Array<{
+    partner?: { org_id?: string | null; org_name?: string | null; portal_type?: string | null } | null;
+    state?: string | null;
+    ready?: boolean;
+    blockers?: string[];
+    legal_route?: string | null;
+  }>;
+  summary?: { total?: number; ready?: number; already_current?: number; blocked?: number } | null;
+}
+
 export interface AmlWorkspaceFacts {
   caseRow: AmlWorkspaceCaseFacts;
   /** Count of client requests still open or awaiting our follow-up. */
@@ -253,6 +307,13 @@ export interface AmlWorkspaceFacts {
   documents?: AmlDocumentFacts | null;
   ownership?: AmlOwnershipFacts | null;
   funding?: AmlFundingFacts | null;
+  /* ── Added for the journey reading (`journeyModel.ts`). Every one is
+        optional and absent means `unknown`, exactly as above — no existing
+        derivation reads them, so nothing already shipped changed. ──────── */
+  activation?: AmlActivationFacts | null;
+  consent?: AmlConsentFacts | null;
+  transactions?: AmlTransactionFacts | null;
+  passport?: AmlPassportFacts | null;
 }
 
 /* Small readers that keep the "was this loaded?" question in one place. */

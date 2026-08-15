@@ -1,21 +1,26 @@
 /**
- * The right rail, contextual to the area the operator is in.
+ * Case status transitions, in the right rail.
  *
  * ── What this does and does not do ────────────────────────────────────
  * It invents no server operation. The only mutation it performs is the
- * case status transition the previous action panel already performed,
- * through the same `amlCasesApi.transition` call, with the same legal
- * transition map (mirrored server-side), the same separation of
- * attention-raising and destructive options, and the same required,
- * confirmed reason for Blocked and Closed.
+ * case status transition the original action panel performed, through the
+ * same `amlCasesApi.transition` call, with the same legal transition map
+ * (mirrored server-side), the same separation of attention-raising and
+ * destructive options, and the same required, confirmed reason for Blocked
+ * and Closed. Hiding a button was never authorisation and still is not —
+ * the server decides.
  *
- * Everything else in the rail is context and navigation: what is
- * outstanding in *this* area, and a way to get to the section where the
- * existing, server-authorised control already lives. Hiding a button was
- * never authorisation and still is not — the server decides.
+ * ── What moved out of it ──────────────────────────────────────────────
+ * It used to open with two context cards: what was outstanding in the
+ * current *area*, and a restatement of the service gate. The journey
+ * replaced areas with ten stages, and `AmlLivePositionRail` now carries
+ * position, readiness, attention and the next action in one place — so
+ * those two cards would have been a second, quieter copy of the rail
+ * directly above them. The transitions are what is left, and they are the
+ * only thing here that was ever a mutation.
  */
 import { useState } from "react";
-import { AlertTriangle, ArrowRight, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -29,20 +34,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import { amlCasesApi, type AmlCase, type AmlCaseStatus } from "@/lib/aml/amlCasesApi";
 import { CASE_STATUS_LABELS } from "@/lib/aml/caseDimensions";
-import { cn } from "@/lib/utils";
-import {
-  AREA_LABELS,
-  AREA_SECTIONS,
-  areaForSection,
-  type AmlNextAction,
-  type AmlOutstandingItem,
-  type AmlServiceReadiness,
-  type AmlWorkspaceArea,
-  type AmlWorkspaceSection,
-} from "@/lib/aml/workspaceViewModel";
-
-import { ATTENTION_EDGE } from "./attentionTone";
-import { SECTION_LABELS } from "./workspaceLabels";
 
 /**
  * The legal transition map. Unchanged from the panel this replaces and
@@ -76,70 +67,23 @@ const PANEL_DESTRUCTIVE_COPY: Partial<Record<AmlCaseStatus, { title: string; bod
   },
 };
 
-/**
- * Where the work for each area is done. Purely a set of shortcuts into
- * sections that already exist; every control in them is unchanged.
- */
-const AREA_SHORTCUTS: Record<AmlWorkspaceArea, Array<{ section: AmlWorkspaceSection; label: string }>> = {
-  overview: [
-    { section: "requests", label: "Ask the client for something" },
-    { section: "risk", label: "Open risk & decision" },
-  ],
-  customer: [
-    { section: "identity", label: "Identity verification & screening" },
-    { section: "ownership", label: "Ownership & control" },
-    { section: "requests", label: "Request information" },
-  ],
-  transaction: [
-    { section: "documents", label: "Documents & evidence" },
-    { section: "finance", label: "Funding & finance" },
-    { section: "submission-review", label: "Submission review" },
-  ],
-  decision: [
-    { section: "risk", label: "Risk, decision & service gate" },
-    { section: "identity", label: "Check the evidence behind it" },
-  ],
-  records: [
-    { section: "passport", label: "Compliance passport & partners" },
-    { section: "monitoring", label: "Monitoring & reviews" },
-    { section: "timeline", label: "Timeline & audit" },
-  ],
-};
-
 export interface AmlContextActionPanelProps {
   caseRow: AmlCase;
-  section: AmlWorkspaceSection;
-  nextAction: AmlNextAction;
-  readiness: AmlServiceReadiness;
-  outstanding: AmlOutstandingItem[];
-  visibleSections: ReadonlySet<AmlWorkspaceSection>;
   canWrite: boolean;
   isMlro: boolean;
   onChanged: () => void;
-  onOpenSection: (section: AmlWorkspaceSection) => void;
 }
 
 export function AmlContextActionPanel({
   caseRow,
-  section,
-  nextAction,
-  readiness,
-  outstanding,
-  visibleSections,
   canWrite,
   isMlro,
   onChanged,
-  onOpenSection,
 }: AmlContextActionPanelProps) {
   const [reason, setReason] = useState("");
   const [transitioning, setTransitioning] = useState(false);
   const [pendingDestructive, setPendingDestructive] = useState<AmlCaseStatus | null>(null);
   const [destructiveReason, setDestructiveReason] = useState("");
-
-  const area = areaForSection(section);
-  const areaSectionSet = new Set<string>(AREA_SECTIONS[area]);
-  const inThisArea = outstanding.filter((item) => areaSectionSet.has(item.section));
-  const shortcuts = AREA_SHORTCUTS[area].filter((s) => visibleSections.has(s.section));
 
   const nextOptions = NEXT_STATUSES[caseRow.status] ?? [];
   const progressOptions = nextOptions.filter(
@@ -170,89 +114,6 @@ export function AmlContextActionPanel({
 
   return (
     <>
-      {/* ── What is outstanding here ───────────────────────────────── */}
-      <Card>
-        <CardContent className="p-4">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-            {AREA_LABELS[area]}
-          </p>
-
-          {area !== "overview" && (
-            <div className="mt-2 rounded-md border border-border/60 bg-muted/30 p-2.5">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Next on this case
-              </p>
-              <p className="mt-0.5 text-sm font-medium leading-snug">{nextAction.label}</p>
-              {nextAction.section !== section && nextAction.key !== "none" && (
-                <Button
-                  variant="link"
-                  size="sm"
-                  className="mt-0.5 h-auto p-0 text-xs"
-                  onClick={() => onOpenSection(nextAction.section)}
-                >
-                  Go to {SECTION_LABELS[nextAction.section]}
-                  <ArrowRight aria-hidden className="ml-1 h-3 w-3" />
-                </Button>
-              )}
-            </div>
-          )}
-
-          {inThisArea.length > 0 ? (
-            <ul className="mt-3 space-y-1.5">
-              {inThisArea.map((item) => (
-                <li
-                  key={item.key}
-                  className={cn("border-l-2 pl-2.5", ATTENTION_EDGE[item.attention])}
-                >
-                  <button
-                    type="button"
-                    onClick={() => onOpenSection(item.section)}
-                    className="text-left text-xs hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-                  >
-                    {item.label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-3 text-xs text-muted-foreground">
-              Nothing outstanding in this area.
-            </p>
-          )}
-
-          {shortcuts.length > 0 && (
-            <div className="mt-3 space-y-1 border-t border-border/50 pt-3">
-              {shortcuts.map((shortcut) => (
-                <Button
-                  key={shortcut.section}
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-full justify-start px-2 text-xs"
-                  onClick={() => onOpenSection(shortcut.section)}
-                >
-                  {shortcut.label}
-                </Button>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ── Service gate, restated compactly away from the Overview ── */}
-      {area !== "overview" && (
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              Service gate
-            </p>
-            <p className="mt-1 text-sm font-medium leading-snug">{readiness.label}</p>
-            {readiness.reasons.length > 0 && readiness.level !== "ready" && (
-              <p className="mt-1 text-xs text-muted-foreground">{readiness.reasons[0]}</p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
       {/* ── Case status transitions ────────────────────────────────── */}
       {canWrite && nextOptions.length > 0 && (
         <Card>

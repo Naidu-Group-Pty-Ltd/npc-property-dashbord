@@ -16,6 +16,7 @@ import {
 } from "@/lib/aml/workspaceViewModel";
 import { ATTENTION_TEXT, READINESS_TEXT } from "@/components/aml/workspace";
 import { displayRelative } from "@/lib/aml/displayDate";
+import type { AmlJourneyStageId } from "@/lib/aml/journeyModel";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -152,9 +153,22 @@ export default function AmlCasesPage() {
     }
   };
 
-  const openCase = (c: AmlCase) => {
-    if (fullPageWorkspace) navigate(`/admin/aml/cases/${c.id}`);
-    else setActiveId(c.id);
+  /**
+   * Open a case, optionally on a named journey stage.
+   *
+   * Activation used to end at a toast and a case row: the officer had just
+   * confirmed a real client and started AML/CTF compliance, and the next
+   * thing they needed — get the client into their portal — was somewhere
+   * they had to go and find. Handing activation straight to the Client
+   * intake stage makes the journey continuous, and it navigates only: the
+   * stage is derived from the case's own state either way.
+   */
+  const openCase = (c: AmlCase, stage?: AmlJourneyStageId) => {
+    if (fullPageWorkspace) {
+      navigate(`/admin/aml/cases/${c.id}${stage ? `?stage=${stage}` : ""}`);
+    } else {
+      setActiveId(c.id);
+    }
   };
 
   // Phase 12 · deep-link support from legacy alias banner: /admin/aml/cases?open=<id>&tab=<hint>
@@ -610,7 +624,8 @@ export default function AmlCasesPage() {
           clearActivateParam();
           setActivateClientId(null);
           load();
-          openCase(c);
+          // Straight into Client intake — the next thing the case needs.
+          openCase(c, "intake");
         }}
       />
 

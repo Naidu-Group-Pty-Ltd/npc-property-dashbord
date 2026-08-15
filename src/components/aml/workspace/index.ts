@@ -8,15 +8,20 @@
  * read operations.
  */
 export { AmlWorkspaceHeader } from "./AmlWorkspaceHeader";
-export { AmlMacroProgress } from "./AmlMacroProgress";
 export { AmlNextActionCard } from "./AmlNextActionCard";
 export { AmlServiceReadinessCard } from "./AmlServiceReadinessCard";
 export { AmlComplianceSummary } from "./AmlComplianceSummary";
 export { AmlOutstandingItems } from "./AmlOutstandingItems";
 export { AmlRecentActivity } from "./AmlRecentActivity";
 export { AmlConnectedPortals } from "./AmlConnectedPortals";
-export { AmlWorkspaceNavigation } from "./AmlWorkspaceNavigation";
 export { AmlContextActionPanel } from "./AmlContextActionPanel";
+/* The ten-stage journey: rail, stage header, live position rail, footer and
+   the MLRO dossier. All presentational, all fed by `journeyModel.ts`. */
+export { AmlJourneyRail } from "./AmlJourneyRail";
+export { AmlJourneyStageHeader } from "./AmlJourneyStageHeader";
+export { AmlLivePositionRail } from "./AmlLivePositionRail";
+export { AmlJourneyFooter } from "./AmlJourneyFooter";
+export { MlroDecisionDossier } from "./MlroDecisionDossier";
 export { SECTION_LABELS } from "./workspaceLabels";
 export {
   ATTENTION_EDGE, ATTENTION_SURFACE, ATTENTION_TEXT, EVIDENCE_ICON, EVIDENCE_TEXT,

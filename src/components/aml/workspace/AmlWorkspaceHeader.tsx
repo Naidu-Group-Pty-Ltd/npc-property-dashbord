@@ -1,16 +1,23 @@
 /**
  * The persistent case header.
  *
- * One line of identity at the top of every section, so an analyst never has
+ * One line of identity at the top of every stage, so an analyst never has
  * to scroll to remember which case they are in. It answers three of the ten
  * questions on its own — what am I looking at, where is it, and what is the
- * risk and gate position — and hands the fourth (what needs attention) to
- * the phase rail immediately beneath it.
+ * risk and gate position — and hands the fourth (where in the process, and
+ * what needs attention) to the journey rail immediately beneath it.
  *
  * Restraint is the point: one strong name, quiet metadata, and exactly two
  * badges. Risk and the service gate are the only two dimensions that earn a
  * badge here, and they are visually separated so that neither reads as
  * causing the other.
+ *
+ * The five-phase macro rail used to sit under this header. It was a lower
+ * resolution reading of the same canonical state the ten-stage journey rail
+ * now renders directly beneath — two rails saying the same thing at
+ * different granularities is one rail too many, so this header stopped
+ * drawing one. `deriveAmlMacroPhase` is untouched and still drives the
+ * register's Phase column.
  */
 import { ArrowLeft, User } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -18,11 +25,9 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { displayRelative } from "@/lib/aml/displayDate";
 import { cn } from "@/lib/utils";
-import type { AmlMacroProgress as MacroProgress } from "@/lib/aml/workspaceViewModel";
 import type { AmlCase } from "@/lib/aml/amlCasesApi";
 
 import { AmlGateBadge, AmlRiskBadge } from "@/components/aml/primitives";
-import { AmlMacroProgress } from "./AmlMacroProgress";
 import { serviceGateStatus } from "@/lib/aml/caseDimensions";
 
 const SUBJECT_TYPE_LABELS: Record<string, string> = {
@@ -33,7 +38,6 @@ const SUBJECT_TYPE_LABELS: Record<string, string> = {
 
 export interface AmlWorkspaceHeaderProps {
   caseRow: AmlCase;
-  macro: MacroProgress;
   /** Property or matter line, when the case has one loaded. */
   matterLabel?: string | null;
   className?: string;
@@ -41,7 +45,6 @@ export interface AmlWorkspaceHeaderProps {
 
 export function AmlWorkspaceHeader({
   caseRow,
-  macro,
   matterLabel,
   className,
 }: AmlWorkspaceHeaderProps) {
@@ -49,7 +52,7 @@ export function AmlWorkspaceHeader({
   const subjectType = SUBJECT_TYPE_LABELS[caseRow.subject_type] ?? caseRow.subject_type;
 
   return (
-    <header className={cn("space-y-3", className)}>
+    <header className={cn(className)}>
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         {/* `basis-72` gives the row somewhere to wrap. Without it the badge
             group — which must not shrink — squeezed the whole identity
@@ -107,8 +110,6 @@ export function AmlWorkspaceHeader({
           <AmlGateBadge gate={gate} prefix />
         </div>
       </div>
-
-      <AmlMacroProgress macro={macro} />
     </header>
   );
 }
