@@ -92,6 +92,24 @@ adjacently to their own call pass `meterUsage: false`. The credential a
 which mirrors the router's dispatch and returns **null** rather than guessing; a
 CI test reads the router's source and fails when the two drift.
 
+## The Commercial & Industrial Analysis Workspace
+`/calculators` is one guided workspace, not nine calculator cards. Read
+[`docs/commercial/ANALYSIS_WORKSPACE.md`](./docs/commercial/ANALYSIS_WORKSPACE.md)
+before touching it, `src/components/commercial/workspace/` or
+`src/lib/ciAssessment/analysis*.ts`. The rule that carries it: **an analysis is
+an assessment record** — there is no separate calculator session, client model
+or property model, so autosave, calculation runs, client linking and the
+rendered report are the platform's own rather than a second implementation. The
+standalone suite it replaces kept the whole deal in a Zustand store with no
+persistence (a refresh discarded it) and its "Generate Report" produced no
+document at all.
+
+Two things bite. The **two analysis engines use different units** —
+`capRateEngine`'s valuation gap is a ratio, `dcfEngine`'s IRRs are already
+percentages — and getting it wrong renders a plausible number rather than an
+error; both are pinned by tests. And **readiness is not a second opinion**:
+blocking is exactly what the report route refuses, everything else is disclosed.
+
 ## Stamp duty
 Every duty figure in the product comes from `supabase/functions/_shared/stampDuty/`
 and nowhere else; `src/utils/stampDutyCalculator.ts` is a one-line re-export.

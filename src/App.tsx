@@ -150,6 +150,7 @@ const CommercialPropertyDetail = lazyWithRetry(() => import("./pages/commercial/
 
 const IndustrialPropertyDetail = lazyWithRetry(() => import("./pages/industrial/IndustrialPropertyDetail"));
 const PropertyCalculators = lazyWithRetry(() => import("./pages/calculators/PropertyCalculators"));
+const CommercialIndustrialWorkspace = lazyWithRetry(() => import("./pages/calculators/CommercialIndustrialWorkspace"));
 const NotFound = lazyWithRetry(() => import("./pages/NotFound"));
 import { PortalAuthProvider } from "@/hooks/usePortalAuth";
 import { PortalProtectedRoute } from "@/components/portal/PortalProtectedRoute";
@@ -707,14 +708,22 @@ const App = () => (
                 <Route path="billing/usage" element={<Navigate to="/billing?tab=usage" replace />} />
                 <Route path="admin/token-audit" element={<TokenAuditLog />} />
                 <Route path="commercial" element={<ModuleGuard moduleKey="commercial"><CommercialIndustrial /></ModuleGuard>} />
-                <Route path="commercial/calculators" element={<ModuleGuard moduleKey="commercial"><PropertyCalculators /></ModuleGuard>} />
+                {/* The analysis workspace is what `/calculators` now means.
+                    Every historical entry point keeps working: the domain and
+                    property query parameters are read by the workspace's own
+                    bootstrap, which opens an analysis around that property
+                    rather than dead-ending. The pre-workspace calculator suite
+                    stays reachable at `calculators/classic` until every engine
+                    it holds has a home in a stage. */}
+                <Route path="commercial/calculators" element={<ModuleGuard moduleKey="commercial"><CommercialIndustrialWorkspace /></ModuleGuard>} />
                 {/* Assessment routes sit above the :id property route so an
                     assessment id is never swallowed by the property detail page. */}
                 <Route path="commercial/assessments/:id" element={<ModuleGuard moduleKey="commercial"><CommercialAssessmentWorkspace /></ModuleGuard>} />
                 <Route path="commercial/:id" element={<ModuleGuard moduleKey="commercial"><CommercialPropertyDetail /></ModuleGuard>} />
                 <Route path="industrial" element={<ModuleGuard moduleKey="commercial"><CommercialIndustrial /></ModuleGuard>} />
-                <Route path="industrial/calculators" element={<ModuleGuard moduleKey="commercial"><PropertyCalculators /></ModuleGuard>} />
-                <Route path="calculators" element={<ModuleGuard moduleKey="commercial"><PropertyCalculators /></ModuleGuard>} />
+                <Route path="industrial/calculators" element={<ModuleGuard moduleKey="commercial"><CommercialIndustrialWorkspace /></ModuleGuard>} />
+                <Route path="calculators" element={<ModuleGuard moduleKey="commercial"><CommercialIndustrialWorkspace /></ModuleGuard>} />
+                <Route path="calculators/classic" element={<ModuleGuard moduleKey="commercial"><PropertyCalculators /></ModuleGuard>} />
                 <Route path="industrial/:id" element={<ModuleGuard moduleKey="commercial"><IndustrialPropertyDetail /></ModuleGuard>} />
                         </Route>
                         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

@@ -126,7 +126,9 @@ describe('creating a client from the linking step', () => {
     renderStep();
     const create = await screen.findByRole('button', { name: /create a new client instead/i });
     const search = screen.getByLabelText(/search your clients/i);
-    const results = screen.getByText(/no matching clients/i);
+    // The results region before a query has been typed. What matters is where
+    // it sits relative to the two controls, not what it currently says.
+    const results = await screen.findByText(/type at least two characters/i);
 
     expect(search.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(create.compareDocumentPosition(results) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
