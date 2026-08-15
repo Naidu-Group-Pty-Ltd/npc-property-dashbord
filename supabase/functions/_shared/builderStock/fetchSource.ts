@@ -159,6 +159,83 @@ export async function fetchStockSource(startUrl: string): Promise<FetchedSource>
 }
 
 /**
+ * POST a JSON body to a public endpoint and read a JSON answer, under exactly
+ * the same guard, timeouts and size ceiling as `fetchStockSource`.
+ *
+ * This exists for ONE caller: recovering a PUBLIC Notion page's own content
+ * from Notion's public, unauthenticated endpoints, which is the only way that
+ * content exists at all (the first HTML response is a rendering shell). It is
+ * not a general-purpose client and deliberately cannot become one:
+ *
+ *   • `assertPublicUrl` runs on the destination, same as a GET;
+ *   • a redirect is REFUSED rather than followed — an API POST that bounces is
+ *     not something to chase, and refusing keeps "every destination went
+ *     through the guard" true by construction;
+ *   • nothing credentialed is sent. No cookie, no Authorization, no Supabase
+ *     key, no builder session. The headers below are the whole request.
+ */
+export async function postGuardedJson(
+  rawUrl: string,
+  payload: unknown,
+  options: { deadline?: number } = {},
+): Promise<{ status: number; json: unknown; byteLength: number }> {
+  const deadline = options.deadline ?? (Date.now() + TOTAL_TIMEOUT_MS);
+
+  let target: URL;
+  try {
+    target = await assertPublicUrl(rawUrl, resolveDns);
+  } catch (error) {
+    throw refusal(error);
+  }
+
+  const controller = new AbortController();
+  const budget = Math.min(HOP_TIMEOUT_MS, Math.max(1000, deadline - Date.now()));
+  const timer = setTimeout(() => controller.abort(), budget);
+
+  let response: Response;
+  try {
+    response = await fetch(target.toString(), {
+      method: 'POST',
+      redirect: 'manual',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'NPC-BuilderStock/1.0',
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'Accept-Language': 'en-AU,en;q=0.9',
+      },
+      body: JSON.stringify(payload ?? {}),
+    });
+  } catch (error) {
+    const aborted = (error as { name?: string })?.name === 'AbortError';
+    throw new SourceFetchError(
+      aborted ? 'source_timeout' : 'source_unreachable',
+      aborted
+        ? 'That address took too long to respond.'
+        : 'That address could not be reached.',
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (response.status >= 300 && response.status < 400) {
+    // Not followed, so nothing reaches an address the guard has not seen.
+    try { await response.body?.cancel(); } catch { /* already drained */ }
+    throw new SourceFetchError('source_bad_redirect', 'That address redirected somewhere unreadable.');
+  }
+
+  const bytes = await readCapped(response, deadline);
+  const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  let parsed: unknown = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = null;
+  }
+  return { status: response.status, json: parsed, byteLength: bytes.length };
+}
+
+/**
  * Read the body, stopping at the ceiling.
  *
  * Streamed rather than `arrayBuffer()`d: a server that lies about

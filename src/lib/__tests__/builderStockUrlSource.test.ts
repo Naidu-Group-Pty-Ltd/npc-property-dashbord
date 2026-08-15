@@ -302,9 +302,19 @@ describe('TEST F — a private or missing Notion page fails safely', () => {
     expect(assessment.gated).toBe(true);
   });
 
-  it('treats an empty client-rendered shell as gated', () => {
+  /**
+   * This assertion used to read `.gated === true`, and that is precisely the
+   * production defect: every published Notion page returns an empty
+   * client-rendered shell, so the rule reported that pages shared to the whole
+   * web were private. A shell is a shell — the content arrives from Notion's
+   * public endpoints afterwards, which `builderStockNotion.test.ts` covers.
+   */
+  it('does not call an empty client-rendered shell gated', () => {
     const shell = '<html><body><div id="notion-app"></div></body></html>';
-    expect(assessNotionReadability(shell, extractReadableText(shell)).gated).toBe(true);
+    const assessment = assessNotionReadability(shell, extractReadableText(shell));
+    expect(assessment.gated).toBe(false);
+    expect(assessment.clientRendered).toBe(true);
+    expect(assessment.state).toBe('shell');
   });
 
   it('creates no rows from a gated page', () => {
