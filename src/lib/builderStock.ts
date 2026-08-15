@@ -114,8 +114,10 @@ export interface BuilderStockItem {
   latest_selection?: {
     id: string; status: StockSelectionStatus; selected_at: string; acknowledged_at: string | null;
   } | null;
+  /** Live selections on this property. Carries no client identifier — see
+   *  `decorate()` in `builder-stock-marketplace`. */
   selections?: Array<{
-    id: string; client_id: string; status: StockSelectionStatus; selected_at: string;
+    id: string; status: StockSelectionStatus; selected_at: string;
   }>;
 }
 

@@ -236,6 +236,16 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'list_selections') {
+      // Gated on the CLIENTS module, like `search_clients` and unlike the
+      // stock reads: this returns `client_id`, the client's name and the
+      // Command Centre's `internal_notes`. `listings.can_view` alone was
+      // enough to reach all three, which let a user with Marketplace access
+      // but no Clients access read both.
+      const clientsView = await requireModulePermission(supabase, actor, 'clients', 'can_view');
+      if (!clientsView.ok) {
+        return createForbiddenResponse(clientsView.error || 'Client access required', corsHeaders);
+      }
+
       const { page, pageSize, from, to } = stockPagination(body);
       const clientId = cleanText(body.client_id, 64);
       const stockItemId = cleanText(body.stock_item_id, 64);
@@ -434,8 +444,13 @@ async function decorate(supabase: any, items: any[]): Promise<any[]> {
     supabase.from('builder_organisations')
       .select('id, legal_name, trading_name')
       .in('id', organisationIds),
+    // No `client_id`. The card needs to know a property IS spoken for and at
+    // what stage, not for whom — and `list_stock` is reachable on
+    // `listings.can_view` alone, which does not entitle the caller to client
+    // identifiers. `list_selections` is where a selection's client is read,
+    // behind the Clients module.
     supabase.from('builder_stock_selections')
-      .select('id, stock_item_id, client_id, status, selected_at')
+      .select('id, stock_item_id, status, selected_at')
       .in('stock_item_id', ids)
       .neq('status', 'withdrawn'),
   ]);

@@ -476,7 +476,12 @@ Deno.serve(async (req) => {
 
       if (uploadId && !remaining) {
         const upload = await loadUpload(uploadId);
-        if (upload && upload.status === 'enriching') {
+        // `partially_complete` as well as `enriching`. An upload with even one
+        // unsaveable row is set straight to `partially_complete` at import, so
+        // testing for `enriching` alone left `image_stage_summary` empty for
+        // ever on exactly those uploads — the audit record then said nothing
+        // about image processing precisely where a reader most wants it.
+        if (upload && ['enriching', 'partially_complete'].includes(String(upload.status))) {
           const { data: stageCounts } = await supabase
             .from('builder_stock_item_images')
             .select('source_stage, processing_status')
