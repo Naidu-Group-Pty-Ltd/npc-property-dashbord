@@ -62,9 +62,24 @@ async function fetchEmploymentSecure(clientId: string) {
 export function EmploymentManualEntry({ clientId, contacts, onComplete }: EmploymentManualEntryProps) {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>('primary');
-  const [formData, setFormData] = useState<EmploymentFormData>(defaultFormData);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  // One independent draft (and edit target) per contact tab. A single shared
+  // formData let one contact's workplace address bleed into another's panel when
+  // switching tabs, so every tab keeps its own record state.
+  const [drafts, setDrafts] = useState<Record<string, EmploymentFormData>>({});
+  const [editingIds, setEditingIds] = useState<Record<string, string | null>>({});
   const queryClient = useQueryClient();
+
+  const blankFormFor = useCallback((tabId: string): EmploymentFormData => {
+    const contact = contacts.find(c => c.id === tabId);
+    return {
+      ...defaultFormData,
+      contact_type: contact?.contactType === 'additional' ? 'additional' : (contact?.contactType || 'primary') as any,
+      additional_contact_id: contact?.additionalContactId || null,
+    };
+  }, [contacts]);
+
+  const formData = drafts[activeTab] ?? blankFormFor(activeTab);
+  const editingId = editingIds[activeTab] ?? null;
 
   const { data: existingEmployment = [] } = useQuery({
     queryKey: ['client-employment', clientId],
@@ -89,18 +104,17 @@ export function EmploymentManualEntry({ clientId, contacts, onComplete }: Employ
   }, [existingEmployment]);
 
   const updateField = useCallback((field: keyof EmploymentFormData, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  }, []);
+    setDrafts(prev => ({
+      ...prev,
+      [activeTab]: { ...(prev[activeTab] ?? blankFormFor(activeTab)), [field]: value },
+    }));
+  }, [activeTab, blankFormFor]);
 
   const resetForm = useCallback(() => {
-    const activeContact = contacts.find(c => c.id === activeTab);
-    setFormData({
-      ...defaultFormData,
-      contact_type: activeContact?.contactType === 'additional' ? 'additional' : (activeContact?.contactType || 'primary') as any,
-      additional_contact_id: activeContact?.additionalContactId || null,
-    });
-    setEditingId(null);
-  }, [activeTab, contacts]);
+    setDrafts(prev => ({ ...prev, [activeTab]: blankFormFor(activeTab) }));
+    setEditingIds(prev => ({ ...prev, [activeTab]: null }));
+  }, [activeTab, blankFormFor]);
+
 
   const startEdit = (employment: any) => {
     setFormData({

@@ -5588,6 +5588,498 @@ export type Database = {
           },
         ]
       }
+      builder_stock_item_images: {
+        Row: {
+          byte_size: number | null
+          confidence: number | null
+          content_type: string | null
+          created_at: string
+          error_message: string | null
+          external_url: string | null
+          id: string
+          organisation_id: string
+          position: number
+          processing_status: string
+          source_detail: Json
+          source_page_url: string | null
+          source_provider: string | null
+          source_reference: string | null
+          source_stage: string
+          stock_item_id: string | null
+          storage_bucket: string | null
+          storage_path: string | null
+          updated_at: string
+          upload_id: string | null
+          verification_status: string
+        }
+        Insert: {
+          byte_size?: number | null
+          confidence?: number | null
+          content_type?: string | null
+          created_at?: string
+          error_message?: string | null
+          external_url?: string | null
+          id?: string
+          organisation_id: string
+          position?: number
+          processing_status?: string
+          source_detail?: Json
+          source_page_url?: string | null
+          source_provider?: string | null
+          source_reference?: string | null
+          source_stage: string
+          stock_item_id?: string | null
+          storage_bucket?: string | null
+          storage_path?: string | null
+          updated_at?: string
+          upload_id?: string | null
+          verification_status?: string
+        }
+        Update: {
+          byte_size?: number | null
+          confidence?: number | null
+          content_type?: string | null
+          created_at?: string
+          error_message?: string | null
+          external_url?: string | null
+          id?: string
+          organisation_id?: string
+          position?: number
+          processing_status?: string
+          source_detail?: Json
+          source_page_url?: string | null
+          source_provider?: string | null
+          source_reference?: string | null
+          source_stage?: string
+          stock_item_id?: string | null
+          storage_bucket?: string | null
+          storage_path?: string | null
+          updated_at?: string
+          upload_id?: string | null
+          verification_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_stock_item_images_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_item_images_stock_item_id_fkey"
+            columns: ["stock_item_id"]
+            isOneToOne: false
+            referencedRelation: "builder_stock_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_item_images_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: false
+            referencedRelation: "builder_stock_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_stock_items: {
+        Row: {
+          address_line: string | null
+          availability_status: string
+          bathrooms: number | null
+          bedrooms: number | null
+          builder_project_id: string | null
+          builder_unit_id: string | null
+          building_size_sqm: number | null
+          car_spaces: number | null
+          created_at: string
+          created_by_builder_user_id: string | null
+          description: string | null
+          development_name: string | null
+          enriched_at: string | null
+          enrichment_status: string
+          expected_completion: string | null
+          external_reference: string | null
+          first_upload_id: string | null
+          id: string
+          land_size_sqm: number | null
+          last_seen_at: string
+          lifecycle_status: string
+          lot_number: string | null
+          organisation_id: string
+          postcode: string | null
+          price: number | null
+          price_display: string | null
+          primary_image_id: string | null
+          project_name: string | null
+          property_type: string | null
+          source_row: Json
+          state: string | null
+          suburb: string | null
+          unit_number: string | null
+          updated_at: string
+          upload_id: string | null
+        }
+        Insert: {
+          address_line?: string | null
+          availability_status?: string
+          bathrooms?: number | null
+          bedrooms?: number | null
+          builder_project_id?: string | null
+          builder_unit_id?: string | null
+          building_size_sqm?: number | null
+          car_spaces?: number | null
+          created_at?: string
+          created_by_builder_user_id?: string | null
+          description?: string | null
+          development_name?: string | null
+          enriched_at?: string | null
+          enrichment_status?: string
+          expected_completion?: string | null
+          external_reference?: string | null
+          first_upload_id?: string | null
+          id?: string
+          land_size_sqm?: number | null
+          last_seen_at?: string
+          lifecycle_status?: string
+          lot_number?: string | null
+          organisation_id: string
+          postcode?: string | null
+          price?: number | null
+          price_display?: string | null
+          primary_image_id?: string | null
+          project_name?: string | null
+          property_type?: string | null
+          source_row?: Json
+          state?: string | null
+          suburb?: string | null
+          unit_number?: string | null
+          updated_at?: string
+          upload_id?: string | null
+        }
+        Update: {
+          address_line?: string | null
+          availability_status?: string
+          bathrooms?: number | null
+          bedrooms?: number | null
+          builder_project_id?: string | null
+          builder_unit_id?: string | null
+          building_size_sqm?: number | null
+          car_spaces?: number | null
+          created_at?: string
+          created_by_builder_user_id?: string | null
+          description?: string | null
+          development_name?: string | null
+          enriched_at?: string | null
+          enrichment_status?: string
+          expected_completion?: string | null
+          external_reference?: string | null
+          first_upload_id?: string | null
+          id?: string
+          land_size_sqm?: number | null
+          last_seen_at?: string
+          lifecycle_status?: string
+          lot_number?: string | null
+          organisation_id?: string
+          postcode?: string | null
+          price?: number | null
+          price_display?: string | null
+          primary_image_id?: string | null
+          project_name?: string | null
+          property_type?: string | null
+          source_row?: Json
+          state?: string | null
+          suburb?: string | null
+          unit_number?: string | null
+          updated_at?: string
+          upload_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_stock_items_builder_project_id_fkey"
+            columns: ["builder_project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_items_builder_unit_id_fkey"
+            columns: ["builder_unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_items_created_by_builder_user_id_fkey"
+            columns: ["created_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_items_first_upload_id_fkey"
+            columns: ["first_upload_id"]
+            isOneToOne: false
+            referencedRelation: "builder_stock_uploads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_items_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_items_primary_image_fk"
+            columns: ["primary_image_id"]
+            isOneToOne: false
+            referencedRelation: "builder_stock_item_images"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_items_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: false
+            referencedRelation: "builder_stock_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_stock_selections: {
+        Row: {
+          acknowledged_at: string | null
+          acknowledged_by_builder_user_id: string | null
+          builder_project_id: string | null
+          builder_reference: string | null
+          client_id: string
+          created_at: string
+          id: string
+          internal_notes: string | null
+          organisation_id: string
+          originating_builder_user_id: string | null
+          selected_at: string
+          selected_by_user_id: string
+          source_upload_id: string | null
+          status: string
+          stock_item_id: string
+          updated_at: string
+          withdrawn_at: string | null
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          acknowledged_by_builder_user_id?: string | null
+          builder_project_id?: string | null
+          builder_reference?: string | null
+          client_id: string
+          created_at?: string
+          id?: string
+          internal_notes?: string | null
+          organisation_id: string
+          originating_builder_user_id?: string | null
+          selected_at?: string
+          selected_by_user_id: string
+          source_upload_id?: string | null
+          status?: string
+          stock_item_id: string
+          updated_at?: string
+          withdrawn_at?: string | null
+        }
+        Update: {
+          acknowledged_at?: string | null
+          acknowledged_by_builder_user_id?: string | null
+          builder_project_id?: string | null
+          builder_reference?: string | null
+          client_id?: string
+          created_at?: string
+          id?: string
+          internal_notes?: string | null
+          organisation_id?: string
+          originating_builder_user_id?: string | null
+          selected_at?: string
+          selected_by_user_id?: string
+          source_upload_id?: string | null
+          status?: string
+          stock_item_id?: string
+          updated_at?: string
+          withdrawn_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_stock_selections_acknowledged_by_builder_user_id_fkey"
+            columns: ["acknowledged_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_selections_builder_project_id_fkey"
+            columns: ["builder_project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_selections_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_selections_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_selections_originating_builder_user_id_fkey"
+            columns: ["originating_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_selections_source_upload_id_fkey"
+            columns: ["source_upload_id"]
+            isOneToOne: false
+            referencedRelation: "builder_stock_uploads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_selections_stock_item_id_fkey"
+            columns: ["stock_item_id"]
+            isOneToOne: false
+            referencedRelation: "builder_stock_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_stock_uploads: {
+        Row: {
+          byte_size: number | null
+          created_at: string
+          declared_content_type: string | null
+          deleted_at: string | null
+          deleted_by_builder_user_id: string | null
+          detected_content_type: string | null
+          error_code: string | null
+          error_detail: Json | null
+          error_message: string | null
+          file_sha256: string | null
+          final_url: string | null
+          id: string
+          image_stage_summary: Json
+          organisation_id: string
+          original_filename: string
+          parse_strategy: string | null
+          processing_completed_at: string | null
+          processing_started_at: string | null
+          records_detected: number
+          records_failed: number
+          records_imported: number
+          records_updated: number
+          retrieved_at: string | null
+          source_title: string | null
+          source_type: string
+          source_url: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string
+          updated_at: string
+          uploaded_by_builder_user_id: string | null
+        }
+        Insert: {
+          byte_size?: number | null
+          created_at?: string
+          declared_content_type?: string | null
+          deleted_at?: string | null
+          deleted_by_builder_user_id?: string | null
+          detected_content_type?: string | null
+          error_code?: string | null
+          error_detail?: Json | null
+          error_message?: string | null
+          file_sha256?: string | null
+          final_url?: string | null
+          id?: string
+          image_stage_summary?: Json
+          organisation_id: string
+          original_filename: string
+          parse_strategy?: string | null
+          processing_completed_at?: string | null
+          processing_started_at?: string | null
+          records_detected?: number
+          records_failed?: number
+          records_imported?: number
+          records_updated?: number
+          retrieved_at?: string | null
+          source_title?: string | null
+          source_type?: string
+          source_url?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path: string
+          updated_at?: string
+          uploaded_by_builder_user_id?: string | null
+        }
+        Update: {
+          byte_size?: number | null
+          created_at?: string
+          declared_content_type?: string | null
+          deleted_at?: string | null
+          deleted_by_builder_user_id?: string | null
+          detected_content_type?: string | null
+          error_code?: string | null
+          error_detail?: Json | null
+          error_message?: string | null
+          file_sha256?: string | null
+          final_url?: string | null
+          id?: string
+          image_stage_summary?: Json
+          organisation_id?: string
+          original_filename?: string
+          parse_strategy?: string | null
+          processing_completed_at?: string | null
+          processing_started_at?: string | null
+          records_detected?: number
+          records_failed?: number
+          records_imported?: number
+          records_updated?: number
+          retrieved_at?: string | null
+          source_title?: string | null
+          source_type?: string
+          source_url?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string
+          updated_at?: string
+          uploaded_by_builder_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_stock_uploads_deleted_by_builder_user_id_fkey"
+            columns: ["deleted_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_uploads_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_stock_uploads_uploaded_by_builder_user_id_fkey"
+            columns: ["uploaded_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_task_assignments: {
         Row: {
           assigned_at: string

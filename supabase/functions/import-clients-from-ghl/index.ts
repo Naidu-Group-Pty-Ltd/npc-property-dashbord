@@ -199,32 +199,72 @@ Deno.serve(async (req) => {
       let savedCount = 0;
       
       for (const contact of contacts) {
+        const ghlAddress = [contact.address1, contact.city, contact.state, contact.postalCode]
+          .filter(Boolean)
+          .join(', ') || null;
+
         const clientData = {
           primary_first_name: contact.firstName || 'Unknown',
           primary_surname: contact.lastName || 'Unknown',
           primary_email: contact.email || null,
           primary_mobile: contact.phone || null,
-          current_address: [contact.address1, contact.city, contact.state, contact.postalCode]
-            .filter(Boolean)
-            .join(', ') || null,
+          current_address: ghlAddress,
+          current_suburb: contact.city || null,
+          current_state: contact.state || null,
+          current_postcode: contact.postalCode || null,
           country: contact.country || 'Australia',
           ghl_contact_id: contact.id,
           ghl_sync_status: 'synced',
           ghl_last_synced_at: new Date().toISOString(),
         };
 
+        // Non-destructive update payload for EXISTING clients.
+        // GHL is not the source of truth for a client record that staff maintain in
+        // the Command Centre: a background auto-sync must never revert a locally
+        // edited address, name, email or phone with a stale GHL value. Only fill
+        // fields that are currently blank. New clients (insert path) seed everything.
+        const buildNonDestructivePatch = (existing: Record<string, any> | null) => {
+          const patch: Record<string, any> = {
+            ghl_contact_id: contact.id,
+            ghl_sync_status: 'synced',
+            ghl_last_synced_at: new Date().toISOString(),
+          };
+          const candidates: Record<string, any> = {
+            primary_first_name: contact.firstName || null,
+            primary_surname: contact.lastName || null,
+            primary_email: contact.email || null,
+            primary_mobile: contact.phone || null,
+            current_address: ghlAddress,
+            current_suburb: contact.city || null,
+            current_state: contact.state || null,
+            current_postcode: contact.postalCode || null,
+            country: contact.country || null,
+          };
+          for (const [key, value] of Object.entries(candidates)) {
+            if (value === null || value === undefined || value === '') continue;
+            const current = existing?.[key];
+            if (current === null || current === undefined || current === '') {
+              patch[key] = value;
+            }
+          }
+          return patch;
+        };
+
+        const EXISTING_COLUMNS =
+          'id, primary_first_name, primary_surname, primary_email, primary_mobile, current_address, current_suburb, current_state, current_postcode, country';
+
         // Check if client already exists by ghl_contact_id first
         const { data: existingByGhlId } = await supabase
           .from('clients')
-          .select('id')
+          .select(EXISTING_COLUMNS)
           .eq('ghl_contact_id', contact.id)
           .maybeSingle();
 
         if (existingByGhlId) {
-          // Update existing client by ghl_contact_id
+          // Update existing client by ghl_contact_id (fill blanks only)
           const { error: updateError } = await supabase
             .from('clients')
-            .update(clientData)
+            .update(buildNonDestructivePatch(existingByGhlId))
             .eq('id', existingByGhlId.id);
 
           if (updateError) {
@@ -241,16 +281,16 @@ Deno.serve(async (req) => {
         if (contact.email) {
           const { data: existingByEmail } = await supabase
             .from('clients')
-            .select('id, ghl_contact_id')
+            .select(`${EXISTING_COLUMNS}, ghl_contact_id`)
             .eq('primary_email', contact.email)
             .maybeSingle();
 
           if (existingByEmail) {
-            // Update existing client with new ghl_contact_id (newer contact takes precedence)
-            console.log(`Found existing client with email ${contact.email}, updating ghl_contact_id from ${existingByEmail.ghl_contact_id} to ${contact.id}`);
+            // Adopt the newer ghl_contact_id but never clobber local field values
+            console.log(`Found existing client with email ${contact.email}, updating ghl_contact_id from ${(existingByEmail as any).ghl_contact_id} to ${contact.id}`);
             const { error: updateError } = await supabase
               .from('clients')
-              .update(clientData)
+              .update(buildNonDestructivePatch(existingByEmail))
               .eq('id', existingByEmail.id);
 
             if (updateError) {
@@ -263,6 +303,7 @@ Deno.serve(async (req) => {
             continue;
           }
         }
+
 
         // Insert new client
         const { data: insertedClient, error: insertError } = await supabase
