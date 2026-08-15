@@ -694,6 +694,78 @@ describe('purchasing structure — entity questions', () => {
   });
 });
 
+/* ── the two AUD amount fields ───────────────────────────────────────────── */
+
+/**
+ * "Target price range (AUD)" and "Estimated deposit amount (AUD)" show a `$`.
+ *
+ * It is drawn beside the input, never written into it, so the assertions that
+ * matter are the negative ones: what loads, what is displayed and what is
+ * saved must all be exactly the characters the client typed. A `$` that
+ * reaches the payload is a string where a figure was, and it would travel
+ * from here into the saved draft, the submission and the case file.
+ */
+describe('AUD amount fields', () => {
+  const openSection = async (label: string, payload: Record<string, unknown>) => {
+    getQuestionnaire.mockResolvedValue({ response: { payload, status: 'draft', updated_at: null } });
+    render(<PortalAml />);
+    await waitFor(() => expect(pill(label)).toBeTruthy());
+    fireEvent.click(pill(label));
+  };
+  const lastSaved = () => saveQuestionnaire.mock.calls.at(-1)![2] as Record<string, unknown>;
+  const saveDraft = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveQuestionnaire).toHaveBeenCalled());
+  };
+
+  it('shows the target price range with a $ that is not part of the value', async () => {
+    await openSection('Purchase profile', { price_range: '1000000' });
+
+    const input = await screen.findByDisplayValue('1000000');
+    // Displayed, and adjacent — not inside the field.
+    expect(input.parentElement!.textContent).toContain('$');
+    expect(screen.queryByDisplayValue('$1000000')).toBeNull();
+    expect(screen.queryByDisplayValue('$ 1000000')).toBeNull();
+  });
+
+  it('shows the deposit amount with a $ that is not part of the value', async () => {
+    await openSection('Source of funds', { deposit: '200000' });
+
+    const input = await screen.findByDisplayValue('200000');
+    expect(input.parentElement!.textContent).toContain('$');
+    expect(screen.queryByDisplayValue('$200000')).toBeNull();
+  });
+
+  it('saves both amounts as the client typed them, with no symbol attached', async () => {
+    await openSection('Purchase profile', { price_range: '1000000' });
+    fireEvent.change(await screen.findByDisplayValue('1000000'), { target: { value: '1250000' } });
+    await saveDraft();
+    // The whole point: a presentation change that the payload cannot see.
+    expect(lastSaved()).toEqual({ price_range: '1250000' });
+
+    cleanup();
+    saveQuestionnaire.mockClear();
+
+    await openSection('Source of funds', { deposit: '200000' });
+    fireEvent.change(await screen.findByDisplayValue('200000'), { target: { value: '250000' } });
+    await saveDraft();
+    expect(lastSaved()).toEqual({ deposit: '250000' });
+  });
+
+  it('leaves every other field on both sections without one', async () => {
+    // Scoped to two fields. `Input` was not given an adornment slot, which
+    // would have put a dollar sign in front of every input in the product.
+    await openSection('Purchase profile', {
+      price_range: '1000000', property_types: 'House', timeframe: '60 days',
+    });
+
+    for (const other of ['House', '60 days']) {
+      const input = await screen.findByDisplayValue(other);
+      expect(input.parentElement!.textContent, other).not.toContain('$');
+    }
+  });
+});
+
 /* ── review & submit: the confirmation ───────────────────────────────────── */
 
 /**
