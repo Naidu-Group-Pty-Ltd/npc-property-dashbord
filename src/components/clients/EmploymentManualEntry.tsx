@@ -62,9 +62,24 @@ async function fetchEmploymentSecure(clientId: string) {
 export function EmploymentManualEntry({ clientId, contacts, onComplete }: EmploymentManualEntryProps) {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>('primary');
-  const [formData, setFormData] = useState<EmploymentFormData>(defaultFormData);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  // One independent draft (and edit target) per contact tab. A single shared
+  // formData let one contact's workplace address bleed into another's panel when
+  // switching tabs, so every tab keeps its own record state.
+  const [drafts, setDrafts] = useState<Record<string, EmploymentFormData>>({});
+  const [editingIds, setEditingIds] = useState<Record<string, string | null>>({});
   const queryClient = useQueryClient();
+
+  const blankFormFor = useCallback((tabId: string): EmploymentFormData => {
+    const contact = contacts.find(c => c.id === tabId);
+    return {
+      ...defaultFormData,
+      contact_type: contact?.contactType === 'additional' ? 'additional' : (contact?.contactType || 'primary') as any,
+      additional_contact_id: contact?.additionalContactId || null,
+    };
+  }, [contacts]);
+
+  const formData = drafts[activeTab] ?? blankFormFor(activeTab);
+  const editingId = editingIds[activeTab] ?? null;
 
   const { data: existingEmployment = [] } = useQuery({
     queryKey: ['client-employment', clientId],
@@ -89,53 +104,53 @@ export function EmploymentManualEntry({ clientId, contacts, onComplete }: Employ
   }, [existingEmployment]);
 
   const updateField = useCallback((field: keyof EmploymentFormData, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  }, []);
+    setDrafts(prev => ({
+      ...prev,
+      [activeTab]: { ...(prev[activeTab] ?? blankFormFor(activeTab)), [field]: value },
+    }));
+  }, [activeTab, blankFormFor]);
 
   const resetForm = useCallback(() => {
-    const activeContact = contacts.find(c => c.id === activeTab);
-    setFormData({
-      ...defaultFormData,
-      contact_type: activeContact?.contactType === 'additional' ? 'additional' : (activeContact?.contactType || 'primary') as any,
-      additional_contact_id: activeContact?.additionalContactId || null,
-    });
-    setEditingId(null);
-  }, [activeTab, contacts]);
+    setDrafts(prev => ({ ...prev, [activeTab]: blankFormFor(activeTab) }));
+    setEditingIds(prev => ({ ...prev, [activeTab]: null }));
+  }, [activeTab, blankFormFor]);
+
 
   const startEdit = (employment: any) => {
-    setFormData({
-      id: employment.id,
-      contact_type: employment.contact_type,
-      additional_contact_id: employment.additional_contact_id || null,
-      is_current: employment.is_current ?? true,
-      employment_type: employment.employment_type || 'permanent',
-      occupation_role: employment.occupation_role || '',
-      employer_name: employment.employer_name || '',
-      start_date: employment.start_date || '',
-      salary_amount: employment.salary_amount || 0,
-      salary_frequency: employment.salary_frequency || 'annual',
-      gross_annual_salary: employment.gross_annual_salary || 0,
-      bonus: employment.bonus || 0,
-      commission: employment.commission || 0,
-      overtime_essential: employment.overtime_essential || 0,
-      overtime_non_essential: employment.overtime_non_essential || 0,
-      allowance: employment.allowance || 0,
-      other_taxable_income: employment.other_taxable_income || 0,
-      workplace_address_line_1: employment.workplace_address_line_1 || '',
-      workplace_suburb: employment.workplace_suburb || '',
-      workplace_state: employment.workplace_state || '',
-      workplace_postcode: employment.workplace_postcode || '',
-      workplace_country: employment.workplace_country || '',
-      work_arrangement: employment.work_arrangement || '',
-    });
-    setEditingId(employment.id);
-    // Switch to the right tab
-    if (employment.additional_contact_id) {
-      setActiveTab(employment.additional_contact_id);
-    } else {
-      setActiveTab(employment.contact_type);
-    }
+    // The record's own contact determines which tab owns this draft.
+    const tabId = employment.additional_contact_id || employment.contact_type;
+    setDrafts(prev => ({
+      ...prev,
+      [tabId]: {
+        id: employment.id,
+        contact_type: employment.contact_type,
+        additional_contact_id: employment.additional_contact_id || null,
+        is_current: employment.is_current ?? true,
+        employment_type: employment.employment_type || 'permanent',
+        occupation_role: employment.occupation_role || '',
+        employer_name: employment.employer_name || '',
+        start_date: employment.start_date || '',
+        salary_amount: employment.salary_amount || 0,
+        salary_frequency: employment.salary_frequency || 'annual',
+        gross_annual_salary: employment.gross_annual_salary || 0,
+        bonus: employment.bonus || 0,
+        commission: employment.commission || 0,
+        overtime_essential: employment.overtime_essential || 0,
+        overtime_non_essential: employment.overtime_non_essential || 0,
+        allowance: employment.allowance || 0,
+        other_taxable_income: employment.other_taxable_income || 0,
+        workplace_address_line_1: employment.workplace_address_line_1 || '',
+        workplace_suburb: employment.workplace_suburb || '',
+        workplace_state: employment.workplace_state || '',
+        workplace_postcode: employment.workplace_postcode || '',
+        workplace_country: employment.workplace_country || '',
+        work_arrangement: employment.work_arrangement || '',
+      },
+    }));
+    setEditingIds(prev => ({ ...prev, [tabId]: employment.id }));
+    setActiveTab(tabId);
   };
+
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -363,18 +378,7 @@ export function EmploymentManualEntry({ clientId, contacts, onComplete }: Employ
           </SheetHeader>
 
           <ScrollArea className="h-[calc(100vh-180px)] pr-4 mt-4">
-            <Tabs value={activeTab} onValueChange={(v) => {
-              setActiveTab(v);
-              if (v !== 'previous') {
-                const contact = contacts.find(c => c.id === v);
-                setFormData(prev => ({
-                  ...prev,
-                  contact_type: contact?.contactType === 'additional' ? 'additional' : (contact?.contactType || 'primary') as any,
-                  additional_contact_id: contact?.additionalContactId || null,
-                }));
-              }
-              setEditingId(null);
-            }}>
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className={`grid w-full`} style={{ gridTemplateColumns: `repeat(${tabItems.length}, 1fr)` }}>
                 {tabItems.map(tab => (
                   <TabsTrigger key={tab.value} value={tab.value} className="text-xs">

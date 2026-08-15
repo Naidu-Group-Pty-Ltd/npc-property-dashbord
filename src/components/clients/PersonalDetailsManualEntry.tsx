@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { supabase } from '@/integrations/supabase/client';
@@ -153,9 +153,14 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
     marital_status: '', dependents_count: 0,
   });
 
+  // What the record looked like when this sheet last loaded it. Saving diffs
+  // against this so an untouched field is never written back.
+  const baselineRef = useRef<Record<string, any> | null>(null);
+
   useEffect(() => {
     if (open && clientData) {
       setFormData({
+
         primary_first_name: clientData.primary_first_name || '',
         primary_middle_name: clientData.primary_middle_name || '',
         primary_surname: clientData.primary_surname || '',
@@ -188,6 +193,39 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
         marital_status: clientData.marital_status || '',
         dependents_count: clientData.dependents_count || 0,
       });
+      baselineRef.current = {
+        primary_first_name: clientData.primary_first_name ?? null,
+        primary_middle_name: clientData.primary_middle_name ?? null,
+        primary_surname: clientData.primary_surname ?? null,
+        primary_mobile: clientData.primary_mobile ?? null,
+        primary_email: clientData.primary_email ?? null,
+        primary_gender: clientData.primary_gender ?? null,
+        primary_dob: clientData.primary_dob ?? null,
+        secondary_first_name: clientData.secondary_first_name ?? null,
+        secondary_middle_name: clientData.secondary_middle_name ?? null,
+        secondary_surname: clientData.secondary_surname ?? null,
+        secondary_mobile: clientData.secondary_mobile ?? null,
+        secondary_email: clientData.secondary_email ?? null,
+        secondary_gender: clientData.secondary_gender ?? null,
+        secondary_dob: clientData.secondary_dob ?? null,
+        current_address: clientData.current_address ?? null,
+        current_suburb: clientData.current_suburb ?? null,
+        current_state: clientData.current_state ?? null,
+        current_postcode: clientData.current_postcode ?? null,
+        country: clientData.country ?? null,
+        living_situation: clientData.living_situation ?? null,
+        residential_status: clientData.residential_status ?? null,
+        secondary_current_address: (clientData as any).secondary_current_address ?? null,
+        secondary_current_suburb: (clientData as any).secondary_current_suburb ?? null,
+        secondary_current_state: (clientData as any).secondary_current_state ?? null,
+        secondary_current_postcode: (clientData as any).secondary_current_postcode ?? null,
+        secondary_country: (clientData as any).secondary_country ?? null,
+        secondary_living_situation: (clientData as any).secondary_living_situation ?? null,
+        secondary_residential_status: (clientData as any).secondary_residential_status ?? null,
+        secondary_same_address_as_primary: (clientData as any).secondary_same_address_as_primary ?? false,
+        marital_status: clientData.marital_status ?? null,
+        dependents_count: clientData.dependents_count ?? null,
+      };
       setAdditionalContacts(initialAdditionalContacts.map(c => ({ ...c })));
       setDeletedContactIds([]);
     }
@@ -275,11 +313,30 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
         dependents_count: formData.dependents_count || null,
       };
 
+      // Send only the fields this dialog actually changed. The form snapshot is
+      // taken when the sheet opens, so posting the whole record would revert any
+      // field edited elsewhere in the meantime (the address panel, an import, a
+      // sync) back to the stale snapshot value.
+      const baseline = baselineRef.current;
+      const changedData: Record<string, any> = {};
+      for (const [key, value] of Object.entries(updateData)) {
+        if (!baseline || !(key in baseline)) {
+          changedData[key] = value;
+          continue;
+        }
+        const before = baseline[key] === '' || baseline[key] === undefined ? null : baseline[key];
+        const after = value === '' || value === undefined ? null : value;
+        if (before !== after) changedData[key] = value;
+      }
+
       // Update via secure edge function only — the anon-key fallback would fail RLS and
       // silently mask errors, so we surface the real error instead.
-      const { data: resp, error: edgeErr } = await invokeSecureFunction('manage-client-data', {
-        operation: 'update', table: 'clients', clientId, data: updateData,
-      });
+      const { data: resp, error: edgeErr } = Object.keys(changedData).length === 0
+        ? { data: { success: true } as any, error: null as any }
+        : await invokeSecureFunction('manage-client-data', {
+            operation: 'update', table: 'clients', clientId, data: changedData,
+          });
+
       if (edgeErr) {
         console.error('[client-update] edge function error', edgeErr);
         throw new Error(edgeErr.message || 'Failed to save client details');
@@ -289,6 +346,12 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
         console.error('[client-update] non-success response', resp);
         throw new Error(String(details));
       }
+
+      // What we just wrote is now the record's state, so a second save in the
+      // same session diffs against it rather than re-sending these fields.
+      baselineRef.current = { ...(baseline || {}), ...changedData };
+
+
 
       // Delete removed contacts
       for (const contactId of deletedContactIds) {
