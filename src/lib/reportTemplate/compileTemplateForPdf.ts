@@ -37,15 +37,32 @@
  * output is a degraded page, and shipping it silently is how this went
  * unnoticed. Surface it.
  */
-import { preloadImages } from './imagePreloader';
+import { preloadImagesWithReport } from './imagePreloader';
 import { renderTemplateToHtml, type HtmlRenderOptions } from './htmlRenderer';
 import { resolvePageOutputPolicy } from './rendering/pdfImportPagePolicy';
 import type { Page, ReportTemplate } from './templateSchema';
+
+/**
+ * The origin the render boundary admits.
+ *
+ * Hardcoded like `secureInvoke.ts` and `integrations/supabase/client.ts`, and
+ * for the reason those two record: the repo ships no `.env`, `vite.config.ts`
+ * declares no fallback, and the one call site that read
+ * `import.meta.env.VITE_SUPABASE_PROJECT_ID` compiled into a request to
+ * `https://undefined.supabase.co` in every build but the hosting one.
+ */
+const RENDER_PROJECT_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
 
 export interface CompiledTemplatePdfHtml {
   html: string;
   /** 1-based page numbers whose source raster could not be resolved. */
   unresolvedRasterPages: number[];
+  /**
+   * Assets that could not be brought inside the render boundary and were left
+   * out of the document. A thinner page, said out loud — never a refused
+   * render, which is what carrying them cost.
+   */
+  droppedAssets: Array<{ where: string; url: string }>;
 }
 
 /** Pages that need a raster to render, and did not get one. */
@@ -85,9 +102,24 @@ export async function compileTemplateHtmlForPdf(
   template: ReportTemplate,
   options: HtmlRenderOptions = {},
 ): Promise<CompiledTemplatePdfHtml> {
-  const prepared = await preloadImages(template, { mode: 'reference' });
+  // `data` and `supabaseUrl` are what let the resolution step see an asset
+  // named by a BINDING, and drop one it cannot reach. Without them an `image`
+  // block whose `src` is `{{property.imageUrl}}` — the block registry's own
+  // default — put a remote URL into the HTML *after* the only step that could
+  // have normalised it, and the render boundary refused the whole document for
+  // one picture. See `imagePreloader.ts`.
+  const { template: prepared, dropped } = await preloadImagesWithReport(template, {
+    mode: 'reference',
+    data: options.data,
+    tokens: options.tokenOverrides as never,
+    supabaseUrl: RENDER_PROJECT_URL,
+  });
   const { html } = renderTemplateToHtml(prepared, { ...options, fontSource: 'container' });
-  return { html, unresolvedRasterPages: findUnresolvedRasterPages(prepared) };
+  return {
+    html,
+    unresolvedRasterPages: findUnresolvedRasterPages(prepared),
+    droppedAssets: dropped,
+  };
 }
 
 /** Human-readable warning for a partially-resolved render, or null. */
@@ -96,4 +128,22 @@ export function describeUnresolvedRasterPages(pages: number[]): string | null {
   const list = pages.length > 6 ? `${pages.slice(0, 6).join(', ')}…` : pages.join(', ');
   return `Source image unavailable for page${pages.length === 1 ? '' : 's'} ${list}; `
     + 'rendered from the rebuilt content instead.';
+}
+
+/**
+ * Human-readable warning for assets left out of the document, or null.
+ *
+ * Said because the alternative to saying it is what this replaced: the asset
+ * was carried, the boundary refused the whole document for it, and the person
+ * was told the render failed with a URL and no block name.
+ */
+export function describeDroppedAssets(
+  dropped: CompiledTemplatePdfHtml['droppedAssets'],
+): string | null {
+  if (!dropped.length) return null;
+  const first = dropped.slice(0, 3).map((d) => d.where).join(', ');
+  const rest = dropped.length > 3 ? ` and ${dropped.length - 3} more` : '';
+  return `${dropped.length} image${dropped.length === 1 ? '' : 's'} could not be loaded `
+    + `and ${dropped.length === 1 ? 'was' : 'were'} left out (${first}${rest}). `
+    + 'The rest of the document is unaffected.';
 }

@@ -190,16 +190,62 @@ The regex is `verifyAuth\w*` now, all twelve carry the guard, and
 `verifyAuthOrNativeUser` function so the widening is proven to bite rather than
 believed to.
 
-### Still open
+### 4. The boundary was refusing documents for their prose
 
-A template whose `image` block binds a remote URL — including the block
-registry's own default `{{property.imageUrl}}` — reaches the boundary
-unnormalised, because `preloadImages` normalises only literal `http(s)` prop
-values and leaves a failed fetch's URL in place. The production route degrades
-to the legacy generator; the Template Builder's export produces no file. The fix
-is to inline or drop it the way `adapters/organisation.ts` already does for
-brand marks ("a logo that could not be fetched is a thinner document, not a
-failed one"), and it is not done here.
+The scan read the whole document as one string and refused any URL-shaped
+substring anywhere in it — including in the visible text of the report.
+
+**808 of the 1,182 investment reports carry a URL in their content.** A Compass
+report citing a planning portal, or an introduction printing the firm's own
+website, was refused at the boundary and fell back to the legacy generator. The
+two model-authored formats are the most exposed of all, because a model writing
+prose cites its sources.
+
+WeasyPrint has no script engine and resolves a URL in exactly three kinds of
+place: an element attribute, a CSS `url()` / `@import`, and the inline `style`
+attribute that is a special case of the second. A URL in a text node is drawn as
+characters. Nothing requests it, so there is nothing to defend against.
+
+The scan is positional now: **attribute values and stylesheet bodies are judged;
+text between tags is not.** It stays deliberately generous about what counts as
+a position — *every* attribute is judged rather than a list of the ones
+WeasyPrint is known to fetch, because being wrong in the narrow direction
+reopens the SSRF while being wrong in the generous direction costs a loud,
+recoverable refusal. `<img data-xmlns="http://169.254.169.254/…">` is still
+refused for exactly that reason.
+
+Two attributes are exempt, and only two: `xmlns`/`xmlns:prefix` (an identifier,
+never fetched — it already had an exemption) and `href` **on `<a>`** (a link
+annotation in the output PDF, not a request; the renderer emits one for every
+link overlay and every contents row). `href` anywhere else — `<link>`, SVG
+`<image>`, `<use>` — is a fetch and is judged.
+
+### 5. An unreachable image failed the whole document
+
+`preloadImages` ran before binding resolution and skipped `{{…}}` by design.
+Correct for text, fatal for assets: an `image` block whose `src` is a binding —
+including the block registry's own default, `{{property.imageUrl}}` — resolved
+to a remote URL at paint time, *after* the only step that could have brought it
+inside the boundary. And a literal remote URL whose fetch failed was left in
+place rather than dropped. Either way the boundary refused the whole document
+for one picture: the production route degraded to the legacy generator, and the
+Template Builder's export produced no file at all.
+
+The resolution step now takes the render data, so an asset named by a binding is
+resolved and **fetched and inlined like any other** — which is the outcome
+everybody actually wanted, since the picture reaches the page. What cannot be
+reached is **dropped**, and named: `compileTemplateHtmlForPdf` returns
+`droppedAssets` and both export surfaces say so. That is the rule
+`adapters/organisation.ts` already stated for brand marks — *a logo that could
+not be fetched is a thinner document, not a failed one* — applied where it was
+missing.
+
+A project-storage URL is never dropped: `reference` mode deliberately leaves a
+page raster as a signed link for WeasyPrint to fetch itself, and the boundary
+admits it. Client and server share one predicate (`isAdmissibleRenderResource`
+/ `refuseRenderResource`) so the two ends cannot disagree about what is
+admissible — a disagreement there shows up as a document that previews cleanly
+and 500s in production.
 
 ## Where the pieces are
 
@@ -212,6 +258,7 @@ failed one"), and it is not done here.
 | The one PDF compiler | `src/lib/reportTemplate/compileTemplateForPdf.ts` |
 | The production route | `src/lib/reportTemplate/routeReportThroughTemplate.ts` |
 | Ledger and error text | `supabase/functions/render-template-pdf/index.ts` |
+| Asset normalisation and drops | `src/lib/reportTemplate/imagePreloader.ts` |
 | "Is this route deployed?" | `src/lib/reports/undeployedRoute.ts` |
 | The cash flow payload/record merge | `src/lib/reports/cashFlow/liveProjectionRow.ts` |
 | CSRF coverage | `scripts/security/check-csrf-coverage.mjs` |

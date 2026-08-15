@@ -21,6 +21,13 @@ import { pixelFallbackPolicy } from '../rendering/pdfImportPagePolicy';
 const preloadImages = vi.fn();
 vi.mock('../imagePreloader', () => ({
   preloadImages: (...args: unknown[]) => preloadImages(...args),
+  // The compiler calls the reporting form now, so it can tell a caller which
+  // assets it had to leave out. The stub adapts whatever a case returns from
+  // `preloadImages` into that shape, so every existing case reads unchanged.
+  preloadImagesWithReport: async (...args: unknown[]) => ({
+    template: await preloadImages(...args),
+    dropped: [],
+  }),
 }));
 
 const SIGNED = 'https://dduzbchuswwbefdunfct.supabase.co/storage/v1/object/sign/pdf-import-diagnostics/p2.png?token=x';
@@ -78,7 +85,11 @@ describe('compileTemplateHtmlForPdf', () => {
 
     expect(preloadImages).toHaveBeenCalledTimes(1);
     // Reference mode keeps page rasters out of the 25 MB inline payload cap.
-    expect(preloadImages.mock.calls[0][1]).toEqual({ mode: 'reference' });
+    // `data`/`supabaseUrl` are what let the step normalise an asset named by a
+    // BINDING and drop one it cannot reach — see `renderAssetNormalisation.spec.ts`.
+    expect(preloadImages.mock.calls[0][1]).toMatchObject({ mode: 'reference' });
+    expect(preloadImages.mock.calls[0][1]).toHaveProperty('data');
+    expect(preloadImages.mock.calls[0][1].supabaseUrl).toMatch(/^https:\/\/[a-z0-9]+\.supabase\.co$/);
     expect(html, 'the signed raster must reach the renderer').toContain('/storage/v1/object/sign/');
     expect(unresolvedRasterPages).toEqual([]);
   });

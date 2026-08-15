@@ -111,7 +111,9 @@ import {
 // jsPDF preview retired — PDF tab now renders via WeasyPrint for production parity.
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { renderHtmlToPdfUrl, pdfFileNameFor } from '@/lib/reportTemplate/weasyRenderClient';
-import { compileTemplateHtmlForPdf, describeUnresolvedRasterPages } from '@/lib/reportTemplate/compileTemplateForPdf';
+import {
+  compileTemplateHtmlForPdf, describeDroppedAssets, describeUnresolvedRasterPages,
+} from '@/lib/reportTemplate/compileTemplateForPdf';
 import { downloadUrlAsFile } from '@/lib/downloadFile';
 import {
   buildCascadeActivationReadiness,
@@ -1935,7 +1937,7 @@ export default function TemplateBuilderEdit() {
                     // Compiles through the shared path so the page rasters are
                     // resolved first. Calling renderTemplateToHtml directly (as
                     // this did) produced a PDF that was blank from page 2 on.
-                    const { html, unresolvedRasterPages } = await compileTemplateHtmlForPdf(template, {
+                    const { html, unresolvedRasterPages, droppedAssets } = await compileTemplateHtmlForPdf(template, {
                       data: sampleData,
                       title: name || 'Template Preview',
                       customCss: customCss || undefined,
@@ -1951,7 +1953,12 @@ export default function TemplateBuilderEdit() {
                     // Save it rather than `window.open` — the render takes tens
                     // of seconds, so the popup is blocked by then. downloadFile.ts.
                     await downloadUrlAsFile(url, pdfFileNameFor(name));
-                    const degraded = describeUnresolvedRasterPages(unresolvedRasterPages);
+                    // Both, not whichever is checked first: a render can lose a
+                    // page raster AND an image, and reporting one hides the other.
+                    const degraded = [
+                      describeUnresolvedRasterPages(unresolvedRasterPages),
+                      describeDroppedAssets(droppedAssets),
+                    ].filter(Boolean).join(' ') || null;
                     const openAction = { label: 'Open', onClick: () => window.open(url, '_blank', 'noopener') };
                     if (degraded) toast.warning(degraded, { id: toastId, action: openAction });
                     else toast.success('WeasyPrint render downloaded', { id: toastId, action: openAction });

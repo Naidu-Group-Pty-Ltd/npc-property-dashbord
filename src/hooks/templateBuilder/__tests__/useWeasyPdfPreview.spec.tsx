@@ -20,6 +20,10 @@ const { renderHtmlToPdfUrl } = vi.hoisted(() => {
 
 vi.mock('@/lib/reportTemplate/imagePreloader', () => ({
   preloadImages: vi.fn(async (t: unknown) => t),
+  // The compiler calls the reporting form, so it can tell a caller which assets
+  // it had to leave out rather than carrying an unreachable URL into the render
+  // boundary and having the whole document refused for it.
+  preloadImagesWithReport: vi.fn(async (t: unknown) => ({ template: t, dropped: [] })),
 }));
 
 vi.mock('@/lib/reportTemplate/weasyRenderClient', () => ({
