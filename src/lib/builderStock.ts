@@ -1,0 +1,315 @@
+/**
+ * Builder stock lists — shared client types and labels.
+ *
+ * One module for both audiences. The Builder Portal and the Command Centre
+ * render the same properties with the same wording, and a status that reads
+ * "Sold" on one side and "sold" on the other is how two surfaces stop looking
+ * like one product.
+ *
+ * The vocabularies here are re-exported from the edge function's pure modules
+ * where one already exists, so the browser cannot offer a value the server
+ * would reject.
+ */
+export {
+  stockFileAcceptAttribute,
+  MAX_STOCK_FILE_BYTES,
+  STOCK_EXTENSIONS,
+} from '../../supabase/functions/_shared/builderStock/fileTypes.pure';
+
+export type StockUploadStatus =
+  | 'uploaded' | 'parsing' | 'imported' | 'enriching' | 'complete'
+  | 'partially_complete' | 'failed';
+
+export type StockAvailability =
+  | 'available' | 'on_hold' | 'reserved' | 'contracted' | 'sold' | 'settled'
+  | 'withdrawn' | 'unknown';
+
+export type StockImageStage = 'uploaded_document' | 'google_maps' | 'internet_search';
+
+export type StockSelectionStatus =
+  | 'selected' | 'builder_acknowledged' | 'progressed' | 'completed' | 'withdrawn';
+
+export interface BuilderStockUpload {
+  id: string;
+  organisation_id: string;
+  uploaded_by_builder_user_id: string | null;
+  original_filename: string;
+  declared_content_type: string | null;
+  detected_content_type: string | null;
+  byte_size: number | null;
+  status: StockUploadStatus;
+  parse_strategy: string | null;
+  records_detected: number;
+  records_imported: number;
+  records_updated: number;
+  records_failed: number;
+  image_stage_summary: Record<string, Record<string, number>> | null;
+  error_code: string | null;
+  /** Safe to display. The internal diagnosis is never sent to the browser. */
+  error_message: string | null;
+  processing_started_at: string | null;
+  processing_completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BuilderStockImage {
+  id: string;
+  stock_item_id: string | null;
+  source_stage: StockImageStage;
+  source_reference: string | null;
+  source_provider: string | null;
+  source_page_url: string | null;
+  external_url: string | null;
+  storage_path: string | null;
+  content_type: string | null;
+  verification_status: 'source_supplied' | 'location_derived' | 'unverified';
+  confidence: number | null;
+  processing_status: 'pending' | 'ready' | 'unavailable' | 'failed';
+  error_message: string | null;
+  position: number;
+  source_detail: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface BuilderStockItem {
+  id: string;
+  organisation_id: string;
+  upload_id: string | null;
+  first_upload_id: string | null;
+  created_by_builder_user_id: string | null;
+  builder_project_id: string | null;
+  builder_unit_id: string | null;
+  external_reference: string | null;
+  development_name: string | null;
+  project_name: string | null;
+  address_line: string | null;
+  suburb: string | null;
+  state: string | null;
+  postcode: string | null;
+  lot_number: string | null;
+  unit_number: string | null;
+  bedrooms: number | null;
+  bathrooms: number | null;
+  car_spaces: number | null;
+  property_type: string | null;
+  land_size_sqm: number | null;
+  building_size_sqm: number | null;
+  price: number | null;
+  price_display: string | null;
+  availability_status: StockAvailability;
+  expected_completion: string | null;
+  description: string | null;
+  lifecycle_status: 'active' | 'archived';
+  enrichment_status: 'pending' | 'enriching' | 'complete' | 'partial' | 'failed';
+  enriched_at: string | null;
+  primary_image_id: string | null;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string;
+  /** Attached by the server. */
+  images?: BuilderStockImage[];
+  builder_organisation?: { id: string; legal_name: string; trading_name: string | null } | null;
+  selection_count?: number;
+  latest_selection?: {
+    id: string; status: StockSelectionStatus; selected_at: string; acknowledged_at: string | null;
+  } | null;
+  /** Live selections on this property. Carries no client identifier — see
+   *  `decorate()` in `builder-stock-marketplace`. */
+  selections?: Array<{
+    id: string; status: StockSelectionStatus; selected_at: string;
+  }>;
+}
+
+/** What the BUILDER is shown. No client, no adviser, no note. */
+export interface BuilderStockSelectionForBuilder {
+  id: string;
+  stock_item_id: string;
+  organisation_id: string;
+  source_upload_id: string | null;
+  originating_builder_user_id: string | null;
+  builder_project_id: string | null;
+  status: StockSelectionStatus;
+  selected_at: string;
+  acknowledged_at: string | null;
+  acknowledged_by_builder_user_id: string | null;
+  builder_reference: string | null;
+  stock_item?: Partial<BuilderStockItem> | null;
+}
+
+/** What the COMMAND CENTRE is shown — it made the selection. */
+export interface BuilderStockSelection extends BuilderStockSelectionForBuilder {
+  client_id: string;
+  selected_by_user_id: string;
+  withdrawn_at: string | null;
+  internal_notes: string | null;
+  client?: { id: string; primary_first_name: string; primary_surname: string } | null;
+  builder_organisation?: { id: string; legal_name: string; trading_name: string | null } | null;
+}
+
+// ---------------------------------------------------------------------------
+// Labels
+// ---------------------------------------------------------------------------
+
+export const STOCK_UPLOAD_STATUS_LABELS: Record<StockUploadStatus, string> = {
+  uploaded: 'Uploaded',
+  parsing: 'Reading the file',
+  imported: 'Properties imported',
+  enriching: 'Finding images',
+  complete: 'Complete',
+  partially_complete: 'Complete with issues',
+  failed: 'Failed',
+};
+
+export const STOCK_UPLOAD_STATUS_CLASSES: Record<StockUploadStatus, string> = {
+  uploaded: 'border-border/70 bg-muted/40 text-muted-foreground',
+  parsing: 'border-primary/30 bg-primary/10 text-primary',
+  imported: 'border-primary/30 bg-primary/10 text-primary',
+  enriching: 'border-primary/30 bg-primary/10 text-primary',
+  complete: 'border-success/30 bg-success/10 text-success',
+  partially_complete: 'border-warning/30 bg-warning/10 text-warning',
+  failed: 'border-destructive/30 bg-destructive/10 text-destructive',
+};
+
+export const STOCK_AVAILABILITY_LABELS: Record<StockAvailability, string> = {
+  available: 'Available',
+  on_hold: 'On hold',
+  reserved: 'Reserved',
+  contracted: 'Under contract',
+  sold: 'Sold',
+  settled: 'Settled',
+  withdrawn: 'Withdrawn',
+  unknown: 'Not stated',
+};
+
+export const STOCK_AVAILABILITY_CLASSES: Record<StockAvailability, string> = {
+  available: 'border-success/30 bg-success/10 text-success',
+  on_hold: 'border-warning/30 bg-warning/10 text-warning',
+  reserved: 'border-warning/30 bg-warning/10 text-warning',
+  contracted: 'border-primary/30 bg-primary/10 text-primary',
+  sold: 'border-border/70 bg-muted/40 text-muted-foreground',
+  settled: 'border-border/70 bg-muted/40 text-muted-foreground',
+  withdrawn: 'border-border/70 bg-muted/40 text-muted-foreground',
+  unknown: 'border-dashed border-border/70 bg-muted/30 text-muted-foreground',
+};
+
+/** Availability the marketplace still offers. Mirrors the server's set. */
+export const SELECTABLE_AVAILABILITY: ReadonlySet<StockAvailability> =
+  new Set<StockAvailability>(['available', 'on_hold', 'unknown']);
+
+export const STOCK_IMAGE_STAGE_LABELS: Record<StockImageStage, string> = {
+  uploaded_document: 'From the stock list',
+  google_maps: 'Street View / satellite',
+  internet_search: 'Found online',
+};
+
+/** The short badge that must appear wherever an image does. */
+export const STOCK_IMAGE_STAGE_BADGES: Record<StockImageStage, string> = {
+  uploaded_document: 'Builder supplied',
+  google_maps: 'Location imagery',
+  internet_search: 'Unverified',
+};
+
+export const STOCK_SELECTION_STATUS_LABELS: Record<StockSelectionStatus, string> = {
+  selected: 'Selected for a client',
+  builder_acknowledged: 'Acknowledged by builder',
+  progressed: 'Progressing',
+  completed: 'Completed',
+  withdrawn: 'Withdrawn',
+};
+
+// ---------------------------------------------------------------------------
+// Display helpers
+// ---------------------------------------------------------------------------
+
+export function stockItemTitle(item: Pick<BuilderStockItem,
+  'unit_number' | 'lot_number' | 'address_line' | 'development_name'
+  | 'project_name' | 'external_reference'>): string {
+  const prefix = item.unit_number
+    ? `Unit ${item.unit_number}`
+    : item.lot_number ? `Lot ${item.lot_number}` : '';
+  const body = item.address_line
+    ?? item.development_name ?? item.project_name ?? item.external_reference ?? '';
+  if (prefix && body) return `${prefix}, ${body}`;
+  return prefix || body || 'Unnamed property';
+}
+
+export function stockItemLocality(item: Pick<BuilderStockItem,
+  'suburb' | 'state' | 'postcode'>): string {
+  return [item.suburb, item.state, item.postcode].filter(Boolean).join(' ');
+}
+
+/**
+ * The price line.
+ *
+ * `price_display` wins when it exists, because it is what the builder's own
+ * file said — printing "$749,000" where the schedule said "From $749,000" is a
+ * different offer.
+ */
+export function stockItemPrice(item: Pick<BuilderStockItem, 'price' | 'price_display'>): string | null {
+  if (item.price_display) return item.price_display;
+  if (item.price === null || item.price === undefined) return null;
+  return new Intl.NumberFormat('en-AU', {
+    style: 'currency', currency: 'AUD', maximumFractionDigits: 0,
+  }).format(item.price);
+}
+
+export function stockItemConfiguration(item: Pick<BuilderStockItem,
+  'bedrooms' | 'bathrooms' | 'car_spaces'>): string | null {
+  const parts: string[] = [];
+  if (item.bedrooms !== null && item.bedrooms !== undefined) parts.push(`${item.bedrooms} bed`);
+  if (item.bathrooms !== null && item.bathrooms !== undefined) parts.push(`${item.bathrooms} bath`);
+  if (item.car_spaces !== null && item.car_spaces !== undefined) parts.push(`${item.car_spaces} car`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+/**
+ * The image a card should show, by stage priority.
+ *
+ * Mirrors `chooseAndStorePrimaryImage` on the server. Both exist because the
+ * server's choice is stored on the row and the client still has to pick when
+ * it is holding a list of images without one.
+ */
+const STAGE_PRIORITY: Record<StockImageStage, number> = {
+  uploaded_document: 0,
+  google_maps: 1,
+  internet_search: 2,
+};
+
+export function primaryStockImage(item: BuilderStockItem): BuilderStockImage | null {
+  const usable = (item.images ?? []).filter(
+    (image) => image.processing_status === 'ready' && (image.storage_path || image.external_url));
+  if (!usable.length) return null;
+  if (item.primary_image_id) {
+    const chosen = usable.find((image) => image.id === item.primary_image_id);
+    if (chosen) return chosen;
+  }
+  return [...usable].sort((a, b) =>
+    (STAGE_PRIORITY[a.source_stage] ?? 9) - (STAGE_PRIORITY[b.source_stage] ?? 9)
+    || a.position - b.position)[0] ?? null;
+}
+
+/** Per-stage state for the enrichment readout. */
+export function stockImageStageSummary(item: BuilderStockItem): Array<{
+  stage: StockImageStage; label: string; ready: number; note: string | null;
+}> {
+  const stages: StockImageStage[] = ['uploaded_document', 'google_maps', 'internet_search'];
+  return stages.map((stage) => {
+    const rows = (item.images ?? []).filter((image) => image.source_stage === stage);
+    const ready = rows.filter((image) => image.processing_status === 'ready').length;
+    const problem = rows.find((image) => image.processing_status !== 'ready');
+    return {
+      stage,
+      label: STOCK_IMAGE_STAGE_LABELS[stage],
+      ready,
+      note: ready ? null : (problem?.error_message ?? 'Not attempted yet'),
+    };
+  });
+}
+
+export function formatFileSize(bytes: number | null | undefined): string {
+  if (!bytes || bytes < 0) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}

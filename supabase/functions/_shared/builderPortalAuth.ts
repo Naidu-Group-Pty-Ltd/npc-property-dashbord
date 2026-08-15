@@ -501,7 +501,8 @@ export type BuilderActivityEntityType =
   | 'variation' | 'variation_approval' | 'progress_claim'
   | 'inspection' | 'defect' | 'practical_completion' | 'handover' | 'warranty_claim'
   | 'document' | 'document_version' | 'document_grant'
-  | 'conversation' | 'message' | 'task' | 'task_assignment' | 'notification';
+  | 'conversation' | 'message' | 'task' | 'task_assignment' | 'notification'
+  | 'stock_upload' | 'stock_item' | 'stock_selection';
 
 /**
  * Append a project event to the trusted activity log.

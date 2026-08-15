@@ -3,7 +3,7 @@ import type { ElementType, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@/contexts/SearchContext';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
-import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, LayoutGrid, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
+import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, HardHat, List, Table2, LayoutGrid, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -21,6 +21,15 @@ import { ListingGalleryGrid } from '@/components/listings/ListingGalleryGrid';
 import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
 import { useListingImages } from '@/hooks/useListingImages';
 import { useListingCoordinates } from '@/hooks/useListingCoordinates';
+import { useBuilderStockMarketplaceFlag } from '@/hooks/useBuilderStockMarketplaceFlag';
+
+/**
+ * Builder Stock is a separate chunk: the Property Marketplace must not carry
+ * the weight of a tab most deployments have switched off.
+ */
+const BuilderStockTab = lazyWithRetry(
+  () => import('@/components/listings/BuilderStockTab').then((m) => ({ default: m.BuilderStockTab })),
+);
 
 /**
  * Stable identity for "resolve nothing".
@@ -267,7 +276,78 @@ const ListingsLoadingSkeleton = ({ isMobile }: { isMobile: boolean }) => (
 
 // buildFullAddress, extractAUState, extractPostcode now imported from @/lib/addressUtils
 
+/**
+ * The Property Marketplace's two tabs.
+ *
+ * `listings` is everything this page has always been — the Airtable-sourced
+ * intake, unchanged. `builder_stock` is the properties builders uploaded
+ * through their own portal, and it appears only when an administrator has
+ * enabled `feature_flags.builder_stock_marketplace`. The tab strip is not
+ * rendered at all when the flag is off, so a deployment that has never used
+ * the feature sees the page exactly as before.
+ */
+type MarketplaceTab = 'listings' | 'builder_stock';
+
 export default function Listings() {
+  const { enabled: builderStockEnabled } = useBuilderStockMarketplaceFlag();
+  const [tab, setTab] = useState<MarketplaceTab>('listings');
+
+  // A tab that disappears must not leave the page showing nothing. If an
+  // administrator switches the feature off while somebody is looking at it,
+  // the marketplace falls back to its listings.
+  useEffect(() => {
+    if (!builderStockEnabled && tab === 'builder_stock') setTab('listings');
+  }, [builderStockEnabled, tab]);
+
+  if (!builderStockEnabled) return <ListingsMarketplace />;
+
+  return (
+    <div className="space-y-0">
+      <div className={cn(LISTINGS_SHELL, 'pb-0 pt-3')}>
+        <div className={LISTINGS_VIEW_SWITCHER} role="tablist" aria-label="Property Marketplace sections">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            role="tab"
+            aria-selected={tab === 'listings'}
+            onClick={() => setTab('listings')}
+            className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5',
+              tab === 'listings' ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
+          >
+            <Building2 className="h-4 w-4" />
+            Listings
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            role="tab"
+            aria-selected={tab === 'builder_stock'}
+            onClick={() => setTab('builder_stock')}
+            className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5',
+              tab === 'builder_stock' ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
+          >
+            <HardHat className="h-4 w-4" />
+            Builder Stock
+          </Button>
+        </div>
+      </div>
+
+      {tab === 'listings' ? <ListingsMarketplace /> : (
+        <div className={cn(LISTINGS_SHELL, 'space-y-5 md:space-y-7')}>
+          <ErrorBoundary>
+            <Suspense fallback={<Skeleton className="h-72 rounded-2xl" />}>
+              <BuilderStockTab />
+            </Suspense>
+          </ErrorBoundary>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ListingsMarketplace() {
   const { canEdit: canEditListings, canDelete: canDeleteListings } = useModulePermissions('listings');
   const { globalSearchQuery, setGlobalSearchQuery } = useSearch();
   const [selectedListings, setSelectedListings] = useState<Set<string>>(new Set());

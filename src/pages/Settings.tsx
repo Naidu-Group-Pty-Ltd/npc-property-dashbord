@@ -34,6 +34,7 @@ import { FinanceAgentContacts } from "@/components/settings/FinanceAgentContacts
 import { PushNotificationToggle } from "@/components/settings/PushNotificationToggle";
 import { DesktopMessageAlertsToggle } from "@/components/settings/DesktopMessageAlertsToggle";
 import { MissionControlKeyCard } from "@/components/settings/MissionControlKeyCard";
+import { BuilderStockMarketplaceCard } from "@/components/settings/BuilderStockMarketplaceCard";
 import { SeatEntitlementCard } from "@/components/settings/SeatEntitlementCard";
 import { PricingCatalogCard } from "@/components/settings/PricingCatalogCard";
 import { EntitlementDiagnosticsCard } from "@/components/settings/EntitlementDiagnosticsCard";
@@ -422,6 +423,9 @@ export default function Settings() {
 
       {/* Comparison Score Migration */}
       <ComparisonScoreMigration />
+
+      {/* Builder Stock in the Property Marketplace (superadmin only — card hides itself otherwise) */}
+      <BuilderStockMarketplaceCard />
 
       {/* Mission Control Key (superadmin only — card hides itself otherwise) */}
       <MissionControlKeyCard />

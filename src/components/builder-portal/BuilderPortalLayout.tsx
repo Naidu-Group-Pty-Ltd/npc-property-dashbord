@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Bell, Boxes, Building2, FileText, Hammer, HardHat, History, KanbanSquare,
-  LayoutDashboard, ListChecks, LogOut, Menu, MessageSquare, Receipt, Settings as SettingsIcon,
-  Shield, ShieldCheck, X,
+  ArrowLeft, Bell, Boxes, Building2, ClipboardList, FileText, Hammer, HardHat, History,
+  KanbanSquare, LayoutDashboard, ListChecks, LogOut, Menu, MessageSquare, Receipt,
+  Settings as SettingsIcon, Shield, ShieldCheck, X,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -63,6 +63,7 @@ const NAV: BuilderNavItem[] = [
   { to: '/builder', label: 'Dashboard', icon: LayoutDashboard, exact: true, available: true },
   { to: '/builder/projects', label: 'Projects', icon: Building2, available: true },
   { to: '/builder/inventory', label: 'Inventory', icon: Boxes, available: true },
+  { to: '/builder/stock', label: 'Stock List', icon: ClipboardList, available: true },
   { to: '/builder/transactions', label: 'Transactions', icon: Receipt, available: true },
   { to: '/builder/pipeline', label: 'Pipeline', icon: KanbanSquare, available: true },
   { to: '/builder/construction', label: 'Construction', icon: Hammer, available: true },
