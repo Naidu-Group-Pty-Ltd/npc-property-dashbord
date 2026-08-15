@@ -40,6 +40,7 @@ import {
   caseStage, serviceGateStatus,
 } from "@/lib/aml/caseDimensions";
 import { smartCapitalize } from "@/lib/nameUtils";
+import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
 const SUBJECT_TYPE_LABELS: Record<string, string> = {
@@ -182,48 +183,77 @@ export function AmlCaseWorkspaceDialog({
         data-testid="aml-case-workspace-dialog"
         className="inset-0 flex h-[100dvh] w-full max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:h-auto sm:max-h-[92vh] sm:w-[min(94vw,1240px)] sm:max-w-[1240px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:border"
       >
-        {/* ── Fixed case header ─────────────────────────────────────── */}
-        <DialogHeader className="shrink-0 gap-2 border-b border-border/60 px-4 py-4 pr-14 text-left sm:px-6">
-          <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        {/* ── Fixed case header ───────────────────────────────────────
+            Identity first, then one primary state with its two supporting
+            readings beneath it. The stage is the case's current state; risk
+            and the service gate qualify it, so they read as a quieter second
+            line rather than as two more pills of equal weight. Opened and
+            updated stay on the header but drop to the lowest tier — they are
+            reference, not state.
+
+            `sm:pr-14` as well as `pr-14`: the shared `sm:px-6` resets the
+            right padding at that breakpoint, which let the status column run
+            under the dialog's close button on a desktop width. */}
+        <DialogHeader className="shrink-0 gap-2 border-b border-border/60 px-4 py-4 pr-14 text-left sm:px-6 sm:pr-14">
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-6 gap-y-3">
             <div className="min-w-0">
-              <DialogTitle className="break-words text-lg font-semibold leading-tight sm:text-xl">
+              <DialogTitle className="break-words text-xl font-semibold leading-tight tracking-tight sm:text-2xl">
                 {caseRow ? smartCapitalize(caseRow.subject_display_name) : "AML case"}
               </DialogTitle>
-              <DialogDescription className="mt-0.5 break-words text-xs text-muted-foreground">
+              <DialogDescription className="mt-1 break-words text-sm text-muted-foreground">
                 {caseRow ? (
                   <>
-                    <span className="font-mono">{caseRow.case_reference}</span>
+                    <span className="font-mono text-foreground">{caseRow.case_reference}</span>
                     {" · "}{SUBJECT_TYPE_LABELS[caseRow.subject_type] ?? caseRow.subject_type}
-                    {" · Opened "}{new Date(caseRow.opened_at).toLocaleDateString()}
-                    {" · Updated "}{new Date(caseRow.updated_at).toLocaleDateString()}
                   </>
                 ) : (
                   "AML/CTF case workspace"
                 )}
               </DialogDescription>
+              {caseRow && (
+                <p className="mt-1 break-words text-xs text-muted-foreground">
+                  Opened {new Date(caseRow.opened_at).toLocaleDateString()}
+                  {" · Updated "}{new Date(caseRow.updated_at).toLocaleDateString()}
+                </p>
+              )}
             </div>
             {caseRow && stage && gate && (
-              <div className="flex shrink-0 flex-wrap items-center gap-1.5" aria-label="Case status">
-                <Badge variant="secondary">{CASE_STAGE_LABELS[stage]}</Badge>
-                {caseRow.risk_rating ? (
-                  <Badge variant="outline" className={RISK_BADGE_CLASSES[caseRow.risk_rating]}>
-                    Risk: {caseRow.risk_rating.toUpperCase()}
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="text-muted-foreground">Risk: Unrated</Badge>
-                )}
-                <Badge
-                  variant="outline"
-                  className={
-                    ["approved", "approved_with_controls"].includes(gate)
-                      ? "border-success/40 text-success"
-                      : ["locked", "terminated"].includes(gate)
-                        ? "border-destructive/40 text-destructive"
-                        : "text-muted-foreground"
-                  }
-                >
-                  Service: {SERVICE_GATE_LABELS[gate]}
+              <div
+                className="flex shrink-0 flex-col items-start gap-1.5 sm:items-end"
+                aria-label="Case status"
+              >
+                <Badge variant="secondary" className="px-2.5 py-1 text-sm font-semibold">
+                  {CASE_STAGE_LABELS[stage]}
                 </Badge>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:justify-end">
+                  {caseRow.risk_rating ? (
+                    <Badge
+                      variant="outline"
+                      className={cn("px-2 py-0 text-[11px]", RISK_BADGE_CLASSES[caseRow.risk_rating])}
+                    >
+                      Risk: {caseRow.risk_rating.toUpperCase()}
+                    </Badge>
+                  ) : (
+                    <span className="text-muted-foreground">Risk: Unrated</span>
+                  )}
+                  <span aria-hidden className="text-muted-foreground/50">·</span>
+                  {/* Same three-way gate treatment as everywhere else: a tone
+                      only for approved and for locked/terminated. Everything
+                      in between reads as full-strength foreground so the gate
+                      never sinks into the muted metadata around it. */}
+                  <span
+                    className={cn(
+                      "font-medium",
+                      ["approved", "approved_with_controls"].includes(gate)
+                        ? "text-success"
+                        : ["locked", "terminated"].includes(gate)
+                          ? "text-destructive"
+                          : "text-foreground",
+                    )}
+                  >
+                    Service: {SERVICE_GATE_LABELS[gate]}
+                  </span>
+                </div>
               </div>
             )}
           </div>
