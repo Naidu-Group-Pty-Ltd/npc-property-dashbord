@@ -28,8 +28,11 @@
  * `buildClientDetails` takes `now` because nothing in the pure modules reads a
  * clock. The adapter is the edge, so the adapter supplies it.
  */
-import { supabase } from '@/integrations/supabase/client';
-import { listClientRows, loadClientRecord as loadClientRecordSecure } from './secureSource';
+import {
+  listClientRows,
+  listClientScopedRows,
+  loadClientRecord as loadClientRecordSecure,
+} from './secureSource';
 import { buildClientDetails, composeClientName } from '@/lib/reports/clientDetails/normalise.pure';
 import { applyClientDetailsProjection } from '../../../../supabase/functions/_shared/clientDetailsProjection.pure';
 import { CLIENT_NAME_COLUMNS } from '../../../../supabase/functions/_shared/clientName';
@@ -133,18 +136,20 @@ const NAME_COLUMNS =
 const MAX_RECORDED_IDS = 200;
 
 async function clientIdsWithRecords(): Promise<string[]> {
-  const [properties, assets, liabilities, employment, expenses] = await Promise.all([
-    supabase.from('client_properties').select('client_id'),
-    supabase.from('client_assets').select('client_id'),
-    supabase.from('client_liabilities').select('client_id'),
-    supabase.from('client_employment').select('client_id'),
-    supabase.from('client_expenses').select('client_id'),
-  ]);
+  // Through the broker. All five are service-role-only, so on the browser
+  // client every one of these returned an empty result and the picker offered
+  // no client at all — the same silence `secureSource.ts` documents.
+  const tables = [
+    'client_properties', 'client_assets', 'client_liabilities',
+    'client_employment', 'client_expenses',
+  ];
+  const results = await Promise.all(
+    tables.map((table) => listClientScopedRows(table, { select: 'client_id' })),
+  );
 
   const ids = new Set<string>();
-  for (const res of [properties, assets, liabilities, employment, expenses]) {
-    if (res.error || !res.data) continue;
-    for (const row of res.data as Array<{ client_id?: unknown }>) {
+  for (const rows of results) {
+    for (const row of rows as Array<{ client_id?: unknown }>) {
       if (typeof row.client_id === 'string' && row.client_id) ids.add(row.client_id);
     }
   }

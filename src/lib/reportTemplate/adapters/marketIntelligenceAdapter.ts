@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { getAuthenticatedSupabaseClient } from '@/hooks/useAuthenticatedSupabase';
 import type {
   BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
@@ -9,7 +9,19 @@ import {
   applyMarketIntelligenceProjection,
 } from '../../../../supabase/functions/_shared/marketIntelligenceProjection.pure';
 import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
-import { loadBrandMarks, loadOrganisation } from './organisation';
+import { loadBrandMarks, loadOrganisation, loadReportSettings } from './organisation';
+
+/*
+ * The staff-session client, not the anon one.
+ *
+ * This format's rows are invisible to the browser client under the Command
+ * Centre's custom cookie session — see `secureSource.ts` for the measurement —
+ * so every read returned an empty result rather than an error, the adapter
+ * answered `null`, and the router fell back to the legacy generator. The
+ * gateway holds a service-role client and scopes the read to the verified
+ * session, which is the rule every adapter read follows.
+ */
+const db = () => getAuthenticatedSupabaseClient();
 
 /**
  * Market Intelligence, through the normaliser its own render route uses.
@@ -44,7 +56,7 @@ const REPORT_COLUMNS =
 const AUDIENCES = new Set(['general', 'investor', 'homebuyer']);
 
 async function loadReport(id: string) {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('marketing_intelligence_reports')
     .select(REPORT_COLUMNS)
     .eq('id', id)
@@ -68,7 +80,7 @@ export const marketIntelligenceAdapter: ReportTemplateAdapter = {
 
   async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db()
         .from('marketing_intelligence_reports')
         .select('id, report_period, generated_at')
         .order('generated_at', { ascending: false })
@@ -147,7 +159,24 @@ export const marketIntelligenceAdapter: ReportTemplateAdapter = {
     };
 
     applyMarketIntelligenceProjection(data, built.report);
-    applyOrganisationProjection(data, organisation, await loadBrandMarks());
+    /*
+     * The fourth argument is the Report Settings row, and omitting it is why
+     * this format printed the generic disclaimer.
+     *
+     * `applyOrganisationProjection(data, row, marks)` publishes the letterhead
+     * from `whitelabel_settings` and nothing else: `org.disclaimer`,
+     * `org.disclaimerFontSize`, `org.abn` and `org.address` all come from
+     * `projectReportSettings`, which is fed by this argument. Every other
+     * adapter reaches the same place through `applyOrganisationAndBrand`, which
+     * loads all three sources; this one called the lower-level function with
+     * three arguments and so bound a letterhead with no disclaimer under it.
+     */
+    applyOrganisationProjection(
+      data,
+      organisation,
+      await loadBrandMarks(),
+      await loadReportSettings(),
+    );
 
     return {
       data,

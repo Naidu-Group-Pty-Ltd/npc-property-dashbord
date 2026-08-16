@@ -1,19 +1,21 @@
 /**
- * No adapter reads a table the browser cannot see.
+ * No adapter reads a table the browser cannot see, on the browser client.
  *
  * ## The defect
  *
  * Command Centre identity is a custom HttpOnly-cookie session, not a Supabase
  * Auth session — `src/integrations/supabase/client.ts` creates the client with
  * the anon key and `persistSession: false`, so `auth.uid()` is **always NULL**
- * in the browser.
+ * in the browser and the client's role is **always `anon`**.
  *
- * Three of the tables the report adapters read have exactly one non-service
- * SELECT policy and it is gated on `auth.uid()`:
+ * Sixteen of the tables the report adapters read are unreachable from there,
+ * for three different reasons that all look identical from the caller's seat:
  *
- *   investment_reports   generated_by = auth.uid() (or a client join on it)
- *   property_comparisons user_id = auth.uid()
- *   clients              created_by = auth.uid()
+ *   an `auth.uid()`-gated policy   investment_reports, clients, portfolio_*, …
+ *   a policy for `authenticated`   marketing_intelligence_reports,
+ *                                  report_structure_templates
+ *   service-role only, or the      commercial_industrial_*, client_*,
+ *   anon table GRANT revoked       report_qa_*
  *
  * A `supabase.from(...)` read of any of them therefore returns **zero rows for
  * every record and every user** — not an error, an empty result. The adapters
@@ -22,21 +24,28 @@
  * generator. So a person could choose a template, be told the choice was kept,
  * and receive the standard layout every single time.
  *
- * It is also the mechanical explanation for `docs/reports/COVERAGE.md`: the
- * one format that ever rendered through the design system is the one whose
- * adapter already read through a broker.
+ * It is also the mechanical explanation for `docs/reports/COVERAGE.md`: of the
+ * nine active premium templates, the three that had ever rendered a document
+ * are exactly the three whose data does not come from one of these tables.
  *
- * ## The rule
+ * ## The rule, and what this file actually checks
  *
- * An adapter reads a record through an edge function that holds a service-role
- * client and scopes the read to the verified session user — never through the
- * browser client. This test fails on a direct `.from('<invisible table>')` in
- * the adapter directory, which is the only way this class comes back.
+ * An adapter reads through something that holds a service-role client and
+ * scopes the read to the verified session user: a named broker in
+ * `secureSource.ts`, or the `authenticated-data` gateway client. Never the anon
+ * browser client.
  *
- * The list is deliberately narrow: it names the tables *measured* to be
- * invisible, not every table. A permissive policy on the other sixteen is what
- * makes reading them from the browser legitimate today, and this file is the
- * place to widen the list if that ever changes.
+ * So the check is on the **receiver**, not on the table name. `db().from('x')`
+ * and `supabase.from('x')` are the same eleven characters after the dot and
+ * opposite answers to this question, and an earlier version of this file that
+ * scanned for `.from('<table>')` alone could not tell them apart — it would
+ * have failed the fix and passed nothing extra. What it means is that the anon
+ * client must not be the thing on the left, in any adapter, for any of these
+ * tables.
+ *
+ * The list is deliberately a measurement rather than a policy: it names the
+ * tables *observed* to return nothing, with the dates. Widening it is how a
+ * newly-restricted table joins the rule.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -49,37 +58,154 @@ const stripComments = (source: string) => source
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '');
 
+/**
+ * The identifier the anon browser client is bound to. It is the default export
+ * name of `@/integrations/supabase/client` and every file in the repo uses it
+ * under that name, which is what makes a source scan able to see it at all.
+ */
+const ANON_CLIENT = 'supabase';
+
+/**
+ * Does this file read `table` with the anon client as the receiver?
+ *
+ * These reads are written as a chain across four or five lines, so the
+ * whitespace *around the dots* is closed up first and the receiver then sits
+ * immediately before `.from(`. Only around the dots: collapsing every run of
+ * whitespace would join `await` to `supabase` and destroy the very token
+ * boundary the pattern needs — which is what the first draft of this file did,
+ * and it passed a deliberately reintroduced defect. `detectsBothReceivers`
+ * below is here so that cannot happen again silently.
+ *
+ * The leading class rejects a longer identifier ending in the same letters —
+ * `getAuthenticatedSupabaseClient()` is not `supabase`, and neither is a
+ * property access like `client.supabase`.
+ */
+const closeUpChains = (code: string) => code.replace(/\s*\.\s*/g, '.');
+
+const readsWithAnonClient = (code: string, table: string) => new RegExp(
+  `(^|[^\\w$.])${ANON_CLIENT}\\.from\\('${table}'\\)`,
+).test(closeUpChains(code));
+
 const adapterFiles = readdirSync(ADAPTERS)
   .filter((f) => f.endsWith('.ts') && !f.endsWith('.d.ts'));
 
 describe('the invisible-table list', () => {
-  it('names the three measured in production', () => {
-    expect([...BROWSER_INVISIBLE_TABLES].sort())
-      .toEqual(['clients', 'investment_reports', 'property_comparisons']);
+  it('names every table measured unreadable in production', () => {
+    // Sorted, so the assertion is about membership rather than about the order
+    // the module happens to group them in. Three were measured 2026-08-14 and
+    // the remaining fourteen on 2026-08-16; `secureSource.ts` records why each
+    // one is invisible and what the browser saw against what is there.
+    expect([...BROWSER_INVISIBLE_TABLES].sort()).toEqual([
+      'borrowing_capacity_assessments',
+      'client_assets',
+      'client_employment',
+      'client_expenses',
+      'client_liabilities',
+      'client_properties',
+      'clients',
+      'commercial_industrial_assessments',
+      'commercial_industrial_calculation_runs',
+      'investment_reports',
+      'marketing_intelligence_reports',
+      'portfolio_analysis_reports',
+      'portfolio_reviews',
+      'property_comparisons',
+      'report_qa_conversations',
+      'report_qa_messages',
+      'report_structure_templates',
+    ]);
+  });
+});
+
+describe('the detector', () => {
+  /*
+   * A source scan that cannot see the defect it names passes for ever and
+   * proves nothing. This holds it against both receivers, in the multi-line
+   * shape the adapters actually use.
+   */
+  const anonRead = `
+    const { data, error } = await supabase
+      .from('clients')
+      .select('*')
+      .maybeSingle();
+  `;
+  const gatewayRead = `
+    const { data, error } = await db()
+      .from('clients')
+      .select('*')
+      .maybeSingle();
+  `;
+
+  it('sees a read on the anon client, written across lines', () => {
+    expect(readsWithAnonClient(anonRead, 'clients')).toBe(true);
+  });
+
+  it('does not see a read on the gateway client as one', () => {
+    expect(readsWithAnonClient(gatewayRead, 'clients')).toBe(false);
+  });
+
+  it('does not mistake a longer identifier for the anon client', () => {
+    const direct = "await getAuthenticatedSupabaseClient().from('clients').select('*')";
+    expect(readsWithAnonClient(direct, 'clients')).toBe(false);
+  });
+
+  it('does not report a table the file never reads', () => {
+    expect(readsWithAnonClient(anonRead, 'investment_reports')).toBe(false);
   });
 });
 
 describe('every adapter', () => {
-  it.each(adapterFiles)('%s reads no browser-invisible table directly', (file) => {
+  it.each(adapterFiles)('%s reads no browser-invisible table on the anon client', (file) => {
     const code = stripComments(readFileSync(join(ADAPTERS, file), 'utf8'));
     const offenders = BROWSER_INVISIBLE_TABLES.filter(
-      (table) => code.includes(`.from('${table}')`),
+      (table) => readsWithAnonClient(code, table),
     );
     expect(
       offenders,
-      `${file} reads ${offenders.join(', ')} through the browser client, which returns `
-      + 'zero rows under this app\'s custom auth — the read answers "no such record" for '
-      + 'every record. Use the brokers in secureSource.ts.',
+      `${file} reads ${offenders.join(', ')} through the anon browser client, which `
+      + 'returns zero rows under this app\'s custom auth — the read answers "no such '
+      + 'record" for every record. Use a broker from secureSource.ts, or the gateway '
+      + 'client from getAuthenticatedSupabaseClient().',
     ).toEqual([]);
   });
 
-  it('the ones that need a broker import it', () => {
-    // The three formats whose entry record lives in an invisible table. If one
-    // of these stops importing the module, it is reading its record some other
-    // way and that way needs the same scrutiny.
-    for (const file of ['cashFlowAdapter.ts', 'comparisonAdapter.ts', 'clientDetailsAdapter.ts']) {
+  /*
+   * The receiver check above is only as good as the set of receivers that can
+   * exist. `createClient` is the one way to make a fourth client inside this
+   * directory and skip the question entirely, so it is refused outright — the
+   * two authorised clients are both imported, never constructed here.
+   */
+  it.each(adapterFiles)('%s constructs no Supabase client of its own', (file) => {
+    const code = stripComments(readFileSync(join(ADAPTERS, file), 'utf8'));
+    expect(
+      code.includes('createClient('),
+      `${file} builds its own Supabase client. Import a broker from `
+      + 'secureSource.ts or the gateway client from useAuthenticatedSupabase.',
+    ).toBe(false);
+  });
+
+  it('the ones that need an authorised read path import one', () => {
+    // Every adapter whose entry record lives in an invisible table. If one of
+    // these stops importing an authorised path, it is reading its record some
+    // other way and that way needs the same scrutiny.
+    const AUTHORISED = ['./secureSource', 'useAuthenticatedSupabase'];
+    const files = [
+      'borrowingCapacityAdapter.ts',
+      'cashFlowAdapter.ts',
+      'clientDetailsAdapter.ts',
+      'commercialCapacityAdapter.ts',
+      'comparisonAdapter.ts',
+      'investmentReportAdapter.ts',
+      'marketIntelligenceAdapter.ts',
+      'portfolioAdapter.ts',
+      'qaAdapter.ts',
+    ];
+    for (const file of files) {
       const code = stripComments(readFileSync(join(ADAPTERS, file), 'utf8'));
-      expect(code, `${file} no longer reads through secureSource`).toContain('./secureSource');
+      expect(
+        AUTHORISED.some((path) => code.includes(path)),
+        `${file} no longer reads through a broker or the gateway`,
+      ).toBe(true);
     }
   });
 });

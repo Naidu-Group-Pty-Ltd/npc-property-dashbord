@@ -86,6 +86,20 @@ vi.mock('@/integrations/supabase/client', () => ({
 }));
 
 /**
+ * The gateway client, served from the same builders as the anon one.
+ *
+ * `authenticated-data` rewrites a PostgREST request onto an edge function that
+ * verifies the session cookie — the query it sends is the query the caller
+ * wrote, so a stub that answered it differently from the table stub would be
+ * testing the transport rather than the lister. What the two clients differ on
+ * is who may read, which is a property of the deployment and not of this file;
+ * `adapterSourceReadable.spec.ts` is where the *choice* of client is held.
+ */
+vi.mock('@/hooks/useAuthenticatedSupabase', () => ({
+  getAuthenticatedSupabaseClient: () => ({ from: (table: string) => builderFor(table) }),
+}));
+
+/**
  * The brokers, served from the same seeded rows as the tables.
  *
  * Three of the tables these adapters need — `investment_reports`,
@@ -118,7 +132,38 @@ vi.mock('@/lib/secureInvoke', () => ({
       return { data: { success: true, reports: rows(table) }, error: null };
     }
 
+    if (name === 'manage-ci-assessments') {
+      const table = 'commercial_industrial_assessments';
+      if (failed(table)) return { data: null, error: failed(table) };
+      if (payload.operation === 'list') return { data: { data: rows(table) }, error: null };
+      if (payload.operation === 'get') {
+        const assessment = rows(table).find((r) => r.id === payload.assessmentId) ?? null;
+        if (!assessment) return { data: null, error: { message: 'not found' } };
+        // The broker hands back the assessment's LATEST base run, which the
+        // adapter then checks against `current_calculation_id` rather than
+        // trusting — a re-issued report must say what the first one said.
+        const latestRun = rows('commercial_industrial_calculation_runs')
+          .find((r) => r.assessment_id === assessment.id) ?? null;
+        return { data: { data: { assessment, latestRun } }, error: null };
+      }
+      return { data: null, error: { message: `unsupported operation ${payload.operation}` } };
+    }
+
     if (name === 'get-client-data') {
+      // List mode against a named table: the broker's own shape is
+      // `{ success, records }`, and `secureSource.ts` reads exactly that.
+      const options = (payload.listOptions ?? {}) as Record<string, any>;
+      const listTable = options.table as string | undefined;
+      if (payload.listMode && listTable && listTable !== 'clients') {
+        if (failed(listTable)) return { data: null, error: failed(listTable) };
+        let records = rows(listTable);
+        for (const [col, value] of Object.entries(options.filters ?? {})) {
+          records = records.filter((r) => r[col] === value);
+        }
+        if (options.limit) records = records.slice(0, options.limit as number);
+        return { data: { success: true, records, count: records.length }, error: null };
+      }
+
       if (failed('clients')) return { data: null, error: failed('clients') };
       const clientId = payload.clientId as string | undefined;
       if (clientId) {
@@ -314,8 +359,16 @@ describe('each lister reads its own table', () => {
     ];
     // The preference is a preference: a picker ordered by recency is still a
     // picker, and this read failing must not empty it.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const rows = await getAdapter('client_details')!.listRecentReports!();
     expect(rows.map((r) => r.label)).toEqual(['Ada Lovelace']);
+    // Degrading quietly is what hid this whole class: the broker answers `[]`
+    // for a refusal and for an empty table alike, so the refusal is said out
+    // loud even though nothing fails. One line per table that could not be
+    // read.
+    expect(warn).toHaveBeenCalledTimes(5);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('client_expenses'));
+    warn.mockRestore();
   });
 
   it('report q&a labels by the conversation title', async () => {

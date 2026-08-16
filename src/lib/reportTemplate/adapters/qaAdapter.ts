@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { getAuthenticatedSupabaseClient } from '@/hooks/useAuthenticatedSupabase';
 import type {
   BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
@@ -10,6 +10,18 @@ import type {
 } from '../../../../supabase/functions/_shared/reports/reportQa/payload.pure';
 import { applyReportQaProjection } from '../../../../supabase/functions/_shared/reportQaProjection.pure';
 import { applyOrganisationAndBrand } from './organisation';
+
+/*
+ * The staff-session client, not the anon one.
+ *
+ * This format's rows are invisible to the browser client under the Command
+ * Centre's custom cookie session — see `secureSource.ts` for the measurement —
+ * so every read returned an empty result rather than an error, the adapter
+ * answered `null`, and the router fell back to the legacy generator. The
+ * gateway holds a service-role client and scopes the read to the verified
+ * session, which is the rule every adapter read follows.
+ */
+const db = () => getAuthenticatedSupabaseClient();
 
 /**
  * Report Q&A, through the normaliser the format's own render route uses.
@@ -42,7 +54,7 @@ function subjectFor(variant: string | null | undefined): ReportQaSubject {
 }
 
 async function loadConversation(id: string) {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('report_qa_conversations')
     .select(CONVERSATION_COLUMNS)
     .eq('id', id)
@@ -66,7 +78,7 @@ async function loadConversation(id: string) {
  * read it saves when the answer is that there is nothing to render.
  */
 async function hasAnswer(conversationId: string): Promise<boolean> {
-  const { count, error } = await supabase
+  const { count, error } = await db()
     .from('report_qa_messages')
     .select('id', { count: 'exact', head: true })
     .eq('conversation_id', conversationId)
@@ -76,7 +88,7 @@ async function hasAnswer(conversationId: string): Promise<boolean> {
 }
 
 async function loadMessages(conversationId: string) {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('report_qa_messages')
     .select(MESSAGE_COLUMNS)
     .eq('conversation_id', conversationId)
@@ -100,7 +112,7 @@ export const qaAdapter: ReportTemplateAdapter = {
 
   async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db()
         .from('report_qa_conversations')
         .select('id, title, created_at')
         .order('created_at', { ascending: false })

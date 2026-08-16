@@ -96,7 +96,13 @@ Deno.serve(async (req) => {
     const { clientId, clientIds, listMode, listOptions = {}, notesOptions = {}, include = {} } = body;
 
     // Support for querying other tables (portfolio_analysis_reports, etc.)
-    const allowedTables = ['clients', 'portfolio_analysis_reports', 'client_properties', 'client_files', 'client_additional_contacts', 'client_deals', 'deal_stages', 'build_progress_payments', 'builder_invoices', 'borrowing_capacity_assessments', 'client_reminders', 'lead_source_attributions', 'client_portal_reports', 'client_portal_report_requests', 'ghl_client_opportunities', 'ghl_conversations', 'ghl_conversation_messages', 'custom_users', 'export_jobs', 'purchase_files'];
+    // `portfolio_reviews` sits beside `portfolio_analysis_reports`: the
+    // Portfolio Performance Review binds the client's newest completed review
+    // alongside the report itself, and its only non-service policy is a join on
+    // `clients.created_by = auth.uid()` — always NULL under this app's custom
+    // cookie session, so the browser could never read one. Same client scope,
+    // same module permission, and the same treatment its sibling already has.
+    const allowedTables = ['clients', 'portfolio_analysis_reports', 'portfolio_reviews', 'client_properties', 'client_assets', 'client_liabilities', 'client_employment', 'client_expenses', 'client_files', 'client_additional_contacts', 'client_deals', 'deal_stages', 'build_progress_payments', 'builder_invoices', 'borrowing_capacity_assessments', 'client_reminders', 'lead_source_attributions', 'client_portal_reports', 'client_portal_report_requests', 'ghl_client_opportunities', 'ghl_conversations', 'ghl_conversation_messages', 'custom_users', 'export_jobs', 'purchase_files'];
     const targetTable = listOptions.table || 'clients';
     
     if (listOptions.table && !allowedTables.includes(targetTable)) {
@@ -147,9 +153,28 @@ Deno.serve(async (req) => {
         .select(safeSelect)
         .order(orderBy, { ascending: isAscending });
 
-      // The service-role client bypasses RLS, so purchase files must be
-      // constrained to the same client set the actor may access.
-      if (targetTable === 'purchase_files' && !await canAccessAllClients(supabase, actor)) {
+      /*
+       * The service-role client bypasses RLS, so a client-scoped table must be
+       * constrained to the client set the actor may access.
+       *
+       * `purchase_files` was the only entry that did this. The tables added for
+       * the report adapters are scoped the same way rather than inheriting the
+       * unscoped treatment their older siblings have: reaching them through
+       * this broker is what makes the design-system formats work at all, and a
+       * new entry that lists every client's reviews would be a wider grant than
+       * the policy it replaces. The pre-existing entries are deliberately left
+       * as they are — narrowing those is a behaviour change for their own
+       * callers and belongs with them, not here.
+       */
+      const CLIENT_SCOPED_TABLES = new Set([
+        'purchase_files',
+        'portfolio_reviews',
+        'client_assets',
+        'client_liabilities',
+        'client_employment',
+        'client_expenses',
+      ]);
+      if (CLIENT_SCOPED_TABLES.has(targetTable) && !await canAccessAllClients(supabase, actor)) {
         const { data: accessibleClients, error: accessibleClientsError } = await supabase
           .from('clients')
           .select('id')

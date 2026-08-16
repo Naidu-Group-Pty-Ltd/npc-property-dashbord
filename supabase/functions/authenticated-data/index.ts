@@ -136,6 +136,42 @@ const TABLES: Record<string, TableRule> = {
   // Full ownership predicate, every branch — see emailCopilotFilter.
   email_copilot_emails:    { module: 'email_copilot', buildFilter: emailCopilotFilter },
 
+  /*
+   * Two report formats whose records the browser cannot see, for reasons that
+   * have nothing to do with what their policies intend.
+   *
+   * `marketing_intelligence_reports` grants SELECT to `authenticated` with
+   * `USING (true)`, and `report_qa_conversations` / `_messages` to PUBLIC with
+   * `USING (true)` — but this app's identity is a custom HttpOnly cookie, so
+   * the browser client is anon, and the Q&A tables have had their table-level
+   * GRANT to anon revoked on top (`42501 permission denied`). Measured
+   * 2026-08-16: 0 of 6 market intelligence reports and 0 of 253 Q&A
+   * conversations were readable, and both formats had rendered no
+   * design-system document at all.
+   *
+   * `openRead: true` is what those policies already say — any verified session
+   * may read — so this reproduces the intended rule rather than widening it.
+   * For the Q&A tables it is strictly narrower: their policy is PUBLIC, and a
+   * verified session is not. The module on each is that format's own
+   * (`marketing_analytics`, `report_qa`), which gates writes; reads are exempt
+   * under `openRead` precisely because the policy being reproduced does not
+   * gate them either.
+   */
+  marketing_intelligence_reports: { module: 'marketing_analytics', openRead: true },
+  report_qa_conversations:        { module: 'report_qa', openRead: true },
+  report_qa_messages:             { module: 'report_qa', openRead: true },
+
+  /*
+   * The report-structure guides the Investment adapter reads to line its
+   * `sections.*` ids up with the Cascade contract.
+   *
+   * SELECT is `auth.role() = 'authenticated'` and every write policy is
+   * admin/superadmin, so the rule is both halves of that: open to any verified
+   * session for reads, and the two roles for writes. Reading it as the browser
+   * client returned 0 of the 4 published guides for every user.
+   */
+  report_structure_templates: { roles: ['superadmin', 'admin'], openRead: true },
+
   /**
    * `agency_agreements` carries RLS with ZERO policies, i.e. deny-all except
    * service-role, so the feature is broken for everyone today. Any rule is a
@@ -191,7 +227,13 @@ Deno.serve(async (req) => {
   const action = actionFor(req.method);
   const isRead = READ_METHODS.has(req.method);
 
-  if (rule.roles) {
+  // `openRead` exempts reads here for the same reason it does below for the
+  // module and the owner column: it marks a table whose SELECT policy is
+  // genuinely open to any verified session, and a gateway stricter than the
+  // policy it reproduces refuses rows Postgres would have returned. No table
+  // declared both until `report_structure_templates`, whose reads are
+  // `authenticated` and whose writes are admin-only.
+  if (rule.roles && !(isRead && rule.openRead)) {
     const { data: roleRows } = await admin
       .from('user_roles').select('role').eq('user_id', userId);
     const held = new Set((roleRows ?? []).map((r: { role: string }) => r.role));
