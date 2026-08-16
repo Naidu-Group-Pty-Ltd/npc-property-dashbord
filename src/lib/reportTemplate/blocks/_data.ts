@@ -6,7 +6,7 @@
  * `formatCell` reuses the existing binding pipeline filters via `resolveBindable`
  * when a template-style string is provided, otherwise applies the simple format.
  */
-import { resolveBindable, type ResolveContext } from '../bindingResolver';
+import { formatIsoDate, resolveBindable, type ResolveContext } from '../bindingResolver';
 
 export function resolveDataPath(path: unknown, ctx: ResolveContext): any {
   if (path == null) return undefined;
@@ -58,6 +58,10 @@ export function formatCell(value: any, format: CellFormat = 'auto'): string {
     return new Intl.NumberFormat('en-AU').format(n);
   }
   if (format === 'date') {
+    // Read field by field when it is an ISO string, so a cell cannot shift a
+    // day with the operator's timezone. See `formatIsoDate`.
+    const iso = typeof value === 'string' ? formatIsoDate(value) : null;
+    if (iso !== null) return iso;
     const d = value instanceof Date ? value : new Date(String(value));
     if (Number.isNaN(d.getTime())) return String(value);
     return d.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -66,6 +70,15 @@ export function formatCell(value: any, format: CellFormat = 'auto'): string {
   // auto
   if (typeof value === 'number') return new Intl.NumberFormat('en-AU').format(value);
   if (value instanceof Date) return value.toLocaleDateString('en-AU');
+  /*
+   * `auto` means "show this the way a reader expects", and a reader never
+   * expects `2026-08-16T08:58:56.946Z`. A column that declares `format: 'text'`
+   * has asked for the string and still gets it; `autoColumns` declares no
+   * format at all, so a table synthesised from a row's own keys — where a
+   * `created_at` is most likely to turn up — lands here.
+   */
+  const auto = typeof value === 'string' ? formatIsoDate(value) : null;
+  if (auto !== null) return auto;
   return String(value);
 }
 

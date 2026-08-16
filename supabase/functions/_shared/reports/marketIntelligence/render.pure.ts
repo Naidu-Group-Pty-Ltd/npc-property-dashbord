@@ -92,6 +92,7 @@ import {
 import type { ReportBrandSnapshot } from '../../reportDesign/snapshot.pure.ts';
 import { resolveSnapshotBrand } from '../../reportDesign/documentBrand.pure.ts';
 import { renderMarkdown } from '../markdown.pure.ts';
+import { formatReportDate, formatReportDateShort as shortDate } from '../reportDate.pure.ts';
 
 import type { MarketEvent, MarketIntelligenceReport } from './payload.pure.ts';
 import { narrativeFor } from './normalise.pure.ts';
@@ -107,32 +108,12 @@ const ARCHETYPE = REPORT_ARCHETYPES['market-intelligence'];
 /** What the product calls this format, on the cover and in the filename. */
 export const DOCUMENT_NAME = ARCHETYPE.documentName;
 
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
 
 /**
- * `2026-08-03T…` → `03 August 2026`.
- *
- * Parsed rather than handed to `Date`: this module is pure, and
- * `toLocaleDateString` depends on the runtime's ICU build, so the same report
- * would date itself differently in Deno and in Node.
+ * `2026-08-03T…` → `03 August 2026`, and `22 Apr 2026` for a timeline column.
+ * Read rather than parsed — see `reportDate.pure.ts` for the three reasons.
  */
-export function formatReportDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
-  if (!m) return '';
-  const month = MONTHS[Number(m[2]) - 1];
-  return month ? `${m[3]} ${month} ${m[1]}` : '';
-}
-
-/** `2026-04-22` → `22 Apr 2026`. Short, for a timeline column. */
-function shortDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
-  if (!m) return iso ?? '';
-  const month = MONTHS[Number(m[2]) - 1];
-  return month ? `${m[3]} ${month.slice(0, 3)} ${m[1]}` : iso;
-}
+export { formatReportDate };
 
 /** The audience editions, as the legacy labels them. */
 const AUDIENCE_LABELS: Readonly<Record<string, string>> = {

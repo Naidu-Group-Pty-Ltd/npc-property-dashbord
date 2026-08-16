@@ -35,6 +35,45 @@ const precision = (value: string | undefined, fallback: number, maximum: number)
   return Number.isInteger(parsed) && parsed >= 0 && parsed <= maximum ? parsed : fallback;
 };
 
+// ─── Dates ────────────────────────────────────────────────────────────────────
+/*
+ * One implementation, shared with every flowing render route.
+ *
+ * `reportDate.pure.ts` is the single reader; this file used to be the twelfth
+ * copy of it. Its header carries the three reasons an ISO string is read field
+ * by field and never handed to `Date` — the third being that
+ * `new Date('2016-02-14')` is midnight UTC, so a client's move-in date printed
+ * a day early on every render west of UTC.
+ *
+ * The two engines still SPELL a date differently on purpose: the flowing routes
+ * print `16 August 2026` and the masters are typeset around `16 Aug 2026`. That
+ * is now the `style` argument rather than two implementations free to drift.
+ *
+ * Re-exported because `bindingResolver` is where the template side imports its
+ * binding vocabulary from, and a block reaching across the tree for a date
+ * helper is how a thirteenth copy starts.
+ */
+export {
+  formatIsoDate,
+  isIsoDateValue,
+  type ReportDateStyle,
+} from '../../../supabase/functions/_shared/reports/reportDate.pure.ts';
+
+import {
+  formatIsoDate,
+  isIsoDateValue,
+  type ReportDateStyle,
+} from '../../../supabase/functions/_shared/reports/reportDate.pure.ts';
+
+/** The `| date` filter's argument, mapped onto the shared styles. */
+function dateStyle(fmt: string | undefined): ReportDateStyle {
+  if (fmt === 'iso' || fmt === 'long') return fmt;
+  // `short` has always meant `16/08/2026` to this filter, which the shared
+  // module calls `numeric`; its own `short` is the `16 Aug 2026` default.
+  if (fmt === 'short') return 'numeric';
+  return 'short';
+}
+
 export const FILTERS: Record<string, Filter> = {
   // Money / numeric formatting
   currency: (v, decimals) => {
@@ -70,6 +109,11 @@ export const FILTERS: Record<string, Filter> = {
   // Dates
   date: (v, fmt) => {
     if (!v) return '';
+    // An ISO string is read field by field rather than parsed — see
+    // `formatIsoDate`. Anything else (a `Date`, "March 3 2026") still goes
+    // through the platform parser, which is the only thing that understands it.
+    const iso = typeof v === 'string' ? formatIsoDate(v, dateStyle(fmt)) : null;
+    if (iso !== null) return iso;
     const d = new Date(v as any);
     if (Number.isNaN(d.getTime())) return String(v);
     if (fmt === 'iso') return d.toISOString().slice(0, 10);
@@ -332,7 +376,33 @@ export function resolveBindable(
     }
 
     value = applyFilters(value, filterParts);
-    return value == null ? '' : transformResolvedValue(String(value));
+    if (value == null) return '';
+    /*
+     * A binding with no filter that resolves to a bare ISO date gets the `date`
+     * filter anyway.
+     *
+     * `report.generatedDate` is a full ISO timestamp in all seven projections —
+     * they publish `updated_at` / `created_at` / `preparedOn` verbatim, under a
+     * name that promises a date — so a master that omits `| date` prints
+     * `2026-08-16T08:58:56.946Z` on a client's cover. It is not hypothetical:
+     * seven of the thirteen `report_templates` rows a document is actually drawn
+     * from bind it with no filter, and that is what the reported Client Details
+     * export printed, twice.
+     *
+     * Making it a property of the RENDERER rather than of the template is what
+     * makes it hold. The catalogue source was corrected in `ad99bc228`, and the
+     * activated copies kept printing the timestamp for the plain reason that an
+     * activated template is a copy — and neither a user-authored template, nor
+     * an imported one, nor a converted one is reachable by any seed at all.
+     *
+     * Only when NO filter was written: an author who wrote one has said what
+     * they want, and `| date:iso` is how you ask for the machine form.
+     */
+    if (filterParts.length === 0 && isIsoDateValue(value)) {
+      const formatted = formatIsoDate(String(value));
+      if (formatted !== null) return transformResolvedValue(formatted);
+    }
+    return transformResolvedValue(String(value));
   });
 }
 

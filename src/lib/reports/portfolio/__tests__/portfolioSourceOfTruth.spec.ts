@@ -28,8 +28,11 @@ const pureModules = (dir: string) =>
 const BRIDGE_SHAPE =
   /^(?:\/\*\*[\s\S]*?\*\/\s*)?export \* from '\.\.\/\.\.\/\.\.\/\.\.\/supabase\/functions\/_shared\/reports\/portfolio\/([\w.]+)\.pure\.ts';\s*$/;
 
-/** Siblings, or the design system next door. Nothing else. */
-const ALLOWED_IMPORT = /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts)$/;
+/** Siblings, or the design system next door. Nothing else. *
+ * `../reportDate.pure.ts` is the shared date reader, a file in the parent
+ * like the others here — eleven routes each carried a private copy.
+ */
+const ALLOWED_IMPORT = /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/reportDate\.pure\.ts)$/;
 
 describe('portfolio performance review — single source of truth', () => {
   it('has at least one canonical module', () => {

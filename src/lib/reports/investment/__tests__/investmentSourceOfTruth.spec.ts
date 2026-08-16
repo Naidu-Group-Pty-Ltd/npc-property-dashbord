@@ -32,9 +32,12 @@ const BRIDGE_SHAPE =
  * `{{bars: …}}` vocabulary turned out to be shared: it is written into the
  * investment corpus, but the parser and the router sit at the root of
  * `_shared/reports/` because nothing about them is investment-specific.
+ *
+ * `../reportDate.pure.ts` is the shared date reader, a file in the parent
+ * like the others here — eleven routes each carried a private copy.
  */
 const ALLOWED_IMPORT =
-  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|vizDirectives|vizFigures)\.pure\.ts)$/;
+  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|vizDirectives|vizFigures|reportDate)\.pure\.ts)$/;
 
 describe('investment report — single source of truth', () => {
   it('has at least one canonical module', () => {

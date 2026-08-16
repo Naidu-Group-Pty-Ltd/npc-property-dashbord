@@ -40,9 +40,12 @@ const BRIDGE_SHAPE =
  * where `neutraliseUrls` moved when the Report Q&A export became the second
  * caller. A file, not a directory, which is what stops this reading as "the
  * parent directory is open now".
+ *
+ * `../reportDate.pure.ts` is the shared date reader, a file in the parent
+ * like the others here — eleven routes each carried a private copy.
  */
 const ALLOWED_IMPORT =
-  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/cashFlow\/[\w.]+\.pure\.ts|\.\.\/text\.pure\.ts)$/;
+  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/cashFlow\/[\w.]+\.pure\.ts|\.\.\/text\.pure\.ts|\.\.\/reportDate\.pure\.ts)$/;
 
 describe('cash flow comparison — single source of truth', () => {
   it('has at least one canonical module', () => {

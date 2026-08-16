@@ -35,9 +35,12 @@ const BRIDGE_SHAPE =
  * `_shared/reports/*.pure.ts`, where `neutraliseUrls` and the Markdown parser
  * live now that two formats each need them. Named files, not a directory, which
  * is what stops this reading as "the parent directory is open now".
+ *
+ * `../reportDate.pure.ts` is the shared date reader, a file in the parent
+ * like the others here — eleven routes each carried a private copy.
  */
 const ALLOWED_IMPORT =
-  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown)\.pure\.ts)$/;
+  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|reportDate)\.pure\.ts)$/;
 
 describe('report Q&A — single source of truth', () => {
   it('has at least one canonical module', () => {

@@ -60,6 +60,7 @@ import type {
 } from './payload.pure.ts';
 import { snapshotSections, validateSnapshotSpine } from './sections.pure.ts';
 import { headroomChart, incomeMixChart, utilisationChart } from './charts.pure.ts';
+import { formatReportDate as formatAssessedOn } from '../reportDate.pure.ts';
 
 const ARCHETYPE = REPORT_ARCHETYPES['borrowing-capacity'];
 
@@ -100,10 +101,6 @@ export const AUDIT_EFFECT_LEGEND =
 
 // ── Dates ───────────────────────────────────────────────────────────────────
 
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
 
 /**
  * `2026-08-01T00:00:00.000Z` → `01 August 2026`.
@@ -112,12 +109,7 @@ const MONTHS = [
  * pure, and `toLocaleDateString` depends on the runtime's ICU build — the same
  * document would date itself differently in Deno and in Node.
  */
-export function formatAssessedOn(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
-  if (!m) return '';
-  const month = MONTHS[Number(m[2]) - 1];
-  return month ? `${m[3]} ${month} ${m[1]}` : '';
-}
+export { formatAssessedOn };
 
 // ── Input ───────────────────────────────────────────────────────────────────
 

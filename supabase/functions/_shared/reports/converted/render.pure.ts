@@ -65,6 +65,7 @@ import { formatName, isPassthroughFormat } from './binding.pure.ts';
 import { enrichedLines, type EnrichedBlock } from './enrich.pure.ts';
 import { renderEnrichedBlocks } from './renderBlocks.pure.ts';
 import type { ExtractedSection, ExtractedStructure } from './structure.pure.ts';
+import { formatReportDate } from '../reportDate.pure.ts';
 
 /**
  * Enriched blocks for the chapters that got them, by chapter id.
@@ -516,17 +517,8 @@ export interface ConvertedRenderPlan {
   bandNote: string[];
 }
 
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
 
-export function formatReportDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
-  if (!m) return '';
-  const month = MONTHS[Number(m[2]) - 1];
-  return month ? `${m[3]} ${month} ${m[1]}` : '';
-}
+export { formatReportDate };
 
 export function renderConvertedBody(input: RenderConvertedInput): ConvertedRenderPlan {
   const archetype = REPORT_ARCHETYPES[input.plan.format];
