@@ -82,11 +82,34 @@ function LoadListControl({ onLoaded }: { onLoaded: () => void }) {
         return;
       }
       const res = await amlVerificationApi.ingestSanctionsList(rows, file.name);
+      /*
+       * Say what the load did to SCREENING, not only to the register.
+       *
+       * "Screening can now match against this list" was the old wording and it
+       * was not true on its own: production refuses to run the provider while
+       * it sits in simulator mode, so a full load still completed no checks.
+       * The server reports what it did about that, and it is the sentence the
+       * operator actually needs.
+       */
+      const pruning = res.pruned_skipped
+        ? res.reason
+        : `${res.pruned.toLocaleString()} superseded entries removed.`;
+      /*
+       * State how current the DATA is, not just how many rows arrived. An
+       * operator reading "7,840 entries" cannot tell the operative register
+       * from an archived one, and the file DFAT's own canonical URL currently
+       * redirects to is four years out of date.
+       */
+      const currency = res.recency_unknown
+        ? "The file carries no listing dates, so its currency could not be established."
+        : res.newest_listing
+          ? `Newest listing in this file: ${res.newest_listing}.`
+          : "";
       toast({
-        title: `Loaded ${res.entries.toLocaleString()} entries`,
-        description: res.pruned_skipped
-          ? res.reason
-          : `${res.pruned.toLocaleString()} superseded entries removed. Screening can now match against this list.`,
+        title: res.screening?.changed
+          ? `Loaded ${res.entries.toLocaleString()} entries — screening is now live`
+          : `Loaded ${res.entries.toLocaleString()} entries`,
+        description: [pruning, currency, res.screening?.reason].filter(Boolean).join(" "),
       });
       onLoaded();
     } catch (e: unknown) {

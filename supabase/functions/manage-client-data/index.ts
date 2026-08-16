@@ -1109,6 +1109,34 @@ Deno.serve(async (req) => {
 
     if (error) {
       console.error(`Error in ${operation} on ${table}:`, error);
+      /*
+       * A client with an AML/CTF case can no longer be deleted through this
+       * path. `aml.cases.client_id` was ON DELETE SET NULL, so this statement
+       * used to succeed and ORPHAN the case — the customer vanished from the
+       * register while the case, its screening subjects, its determinations
+       * and its event chain remained, attached to nobody (1 case in 6, in
+       * production). The constraint is RESTRICT now, so Postgres refuses.
+       *
+       * That refusal arrives as `23503` and a message naming a constraint,
+       * which tells an operator nothing they can act on. It is translated
+       * here into the one thing they need: there is another route, it is
+       * compliance-aware, and it is the reason this one says no.
+       */
+      const isAmlCaseLink = (error as { code?: string })?.code === '23503'
+        && /cases_client_id_fkey/.test(String(error.message ?? ''));
+      if (isAmlCaseLink) {
+        return new Response(
+          JSON.stringify({
+            error: 'This client has an AML/CTF case and cannot be deleted here.',
+            code: 'aml_case_present',
+            details: 'Deleting them this way would leave the case attached to nobody. '
+              + 'Use Delete on the client row, which routes to the AML reset: it closes or '
+              + 'removes the case explicitly, and refuses outright if the case holds '
+              + 'evidence that must be retained.',
+          }),
+          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
       return new Response(
         JSON.stringify({ error: `Failed to ${operation} record`, details: error.message }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

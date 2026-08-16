@@ -1,4 +1,24 @@
+import { invokeSecureFunction } from "@/lib/secureInvoke";
+
 import { invokeAmlFunction } from "./invokeAmlFunction";
+
+/** What a reset returns, whether it ran or was refused. */
+export interface AmlClientResetResult {
+  mode?: "restart" | "purge";
+  closed?: number;
+  deleted?: number;
+  /** Rows removed per table, on a completed purge. */
+  removed?: Record<string, number>;
+  /** Rows that would have been orphaned, on an aborted purge. */
+  remaining?: Record<string, number>;
+  summary?: string;
+  error?: string;
+  code?: string;
+  /** Why a purge was refused — one line per record holding it. */
+  blockers?: string[];
+  /** What the operation will do, stated before it happens. */
+  effects?: string[];
+}
 
 export type AmlCaseStatus =
   | "draft" | "kyc_in_progress" | "kyc_complete" | "edd_required"
@@ -344,6 +364,38 @@ export const amlCasesApi = {
       consents_to_reaccept: string[]; not_restored: string[];
       preserved: string[]; summary: string;
     }>({ op: "reopen_case", case_id, reason }),
+  /**
+   * Reset a client's AML/CTF journey.
+   *
+   * `restart` closes the open cases and revokes portal access, deleting
+   * nothing. `purge` removes the client and the AML records that would
+   * otherwise be orphaned — and is refused by the server whenever a case
+   * carries evidence that must be retained.
+   *
+   * Called with a mismatched `confirmation` it returns the effects and the
+   * blockers without doing anything, which is how the dialog shows the
+   * operator what they are about to do before they can agree to it.
+   */
+  resetClientJourney: async (payload: {
+    client_id: string;
+    mode: "restart" | "purge";
+    confirmation?: string | null;
+  }): Promise<AmlClientResetResult> => {
+    /*
+     * Deliberately NOT routed through `invoke`. That helper throws whenever
+     * the body carries `error`, which is the right default everywhere else
+     * and exactly wrong here: a refusal IS the payload this screen needs. The
+     * blockers naming which record is holding the client ride on the 409, and
+     * collapsing them into a thrown string would leave the operator with
+     * "this cannot be deleted" and no way to find out why — which is the
+     * dead end they reported in the first place.
+     */
+    const { data, error } = await invokeSecureFunction<AmlClientResetResult>(
+      "aml-cases", { op: "reset_client_journey", ...payload }, { timeoutMs: 60000 },
+    );
+    if (data) return data;
+    return { error: error?.message ?? "The reset could not be completed." };
+  },
   listPepDeterminations: (case_id: string) =>
     invoke<{ determinations: AmlPepDetermination[] }>({ op: "list_pep_determinations", case_id }),
   recordPepDetermination: (payload: {

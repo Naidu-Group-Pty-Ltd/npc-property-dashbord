@@ -80,12 +80,15 @@ const PHASE_LABEL: Record<StockUploadProgress['phase'], string> = {
   requesting: 'Preparing the upload',
   uploading: 'Uploading the file',
   processing: 'Reading the properties',
+  // The builder's OWN imagery, named separately because it is the only stage
+  // whose output a marketplace card may draw.
+  settling: 'Processing supplied images',
   enriching: 'Finding images',
   done: 'Finished',
 };
 
 const PHASE_PERCENT: Record<StockUploadProgress['phase'], number> = {
-  requesting: 10, uploading: 30, processing: 60, enriching: 85, done: 100,
+  requesting: 10, uploading: 30, processing: 55, settling: 75, enriching: 90, done: 100,
 };
 
 export default function BuilderStockList() {

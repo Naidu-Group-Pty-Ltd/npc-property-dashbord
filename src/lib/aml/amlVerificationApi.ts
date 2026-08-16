@@ -132,6 +132,25 @@ export const amlVerificationApi = {
     invoke<{
       list_code: string; entries: number; pruned: number;
       pruned_skipped: boolean; reason: string; sync_id: string;
+      /**
+       * What loading the list did to the platform's ability to screen.
+       *
+       * Loading DFAT was necessary and never sufficient: production refuses to
+       * run the provider while it sits in simulator mode, so the list alone
+       * could not have completed a single check. The server promotes it on a
+       * real load and says so here, because an operator who has just loaded
+       * the register needs to know whether screening actually runs now.
+       */
+      screening?: { mode: string; changed: boolean; reason: string };
+      /**
+       * How current the DATA is, as opposed to how recent the upload was.
+       * Every other freshness signal in the product measures the sync, so a
+       * four-year-old file loaded today reads as perfectly fresh everywhere
+       * else. This is the newest listing the file itself contains.
+       */
+      newest_listing?: string | null;
+      list_age_days?: number | null;
+      recency_unknown?: boolean;
     }>({ op: "ingest_sanctions_list", list_code: "dfat", rows, source_label, force }),
 };
 

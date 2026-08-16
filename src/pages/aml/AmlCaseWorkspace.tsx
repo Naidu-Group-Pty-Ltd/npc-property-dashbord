@@ -58,6 +58,9 @@ import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { displayDate, displayDateTime } from "@/lib/aml/displayDate";
 import {
+  readCaseAttribution,
+} from "../../../supabase/functions/_shared/aml/caseAttribution.pure";
+import {
   amlCasesApi, type AmlCase, type AmlCaseEvent, type AmlScreeningNextAction,
 } from "@/lib/aml/amlCasesApi";
 import { amlFinanceApi } from "@/lib/aml/amlFinanceApi";
@@ -809,9 +812,36 @@ const AGREEMENT_STATE_LABELS: Record<string, string> = {
 function ActivationRecordCard({
   caseRow, activation,
 }: { caseRow: AmlCase; activation: any }) {
+  /*
+   * A case that belongs to nobody must say so before anything else on the
+   * page. `aml.cases.client_id` was ON DELETE SET NULL, so deleting a client
+   * detached the case rather than failing or cascading — and a detached case
+   * renders identically to an ordinary one. An analyst works it, requests
+   * documents, and there is no customer at the other end.
+   */
+  const attribution = readCaseAttribution({
+    clientId: caseRow.client_id,
+    orphanedClient: (caseRow.metadata as any)?.orphaned_client ?? null,
+  });
+
   return (
     <Card>
       <CardContent className="p-5">
+        {attribution.blocking && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertTriangle className="h-4 w-4" aria-hidden />
+            <AlertTitle>{attribution.label}</AlertTitle>
+            <AlertDescription className="space-y-1">
+              <p>{attribution.detail}</p>
+              {attribution.recoveredClientId && (
+                <p className="text-xs">
+                  Recorded at activation:{" "}
+                  <span className="font-mono">{attribution.recoveredClientId}</span>
+                </p>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
         <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
           Activation record
         </p>

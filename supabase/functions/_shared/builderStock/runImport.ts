@@ -79,6 +79,8 @@ export interface RunImportSuccess {
     imported: number;
     updated: number;
     failed: number;
+    /** Properties whose card now shows the builder's own picture. */
+    withSourceImage: number;
     warnings: string[];
     failures: Array<{ label: string; reason: string }>;
   };
@@ -240,6 +242,30 @@ export async function runStockImport(input: RunImportInput): Promise<RunImportRe
       : 'No properties could be read from that file. Check that it lists one property per row with column headings.');
   }
 
+  /**
+   * SAY WHETHER THE BUILDER'S OWN IMAGERY LANDED.
+   *
+   * An import that read the properties and produced no picture used to look
+   * exactly like one that produced every picture — the difference only showed
+   * up later as an empty frame on a card, with nothing anywhere to explain it.
+   */
+  const warnings = [...extraction.warnings];
+  /**
+   * Only where the source ACTUALLY CARRIED imagery this import could see. A
+   * stock list whose pictures live behind a package link each row carries has
+   * none at this point and every one of them a few seconds later, when the
+   * settlement stage follows those links — warning here would be false on
+   * exactly the source type that takes longest to resolve.
+   */
+  const sawImagery = extraction.media.length > 0
+    || (extraction.rowAssets ?? []).some((row) => row.assets.length > 0)
+    || (input.rowAssets ?? []).some((row) => row.assets.length > 0);
+  if (outcome.itemIds.length && sawImagery && !outcome.withSourceImage) {
+    warnings.push(
+      'No supplied image could be identified for these properties, so their cards '
+      + 'will show no photograph.');
+  }
+
   return {
     ok: true,
     summary: {
@@ -247,7 +273,8 @@ export async function runStockImport(input: RunImportInput): Promise<RunImportRe
       imported: outcome.imported,
       updated: outcome.updated,
       failed: outcome.failed,
-      warnings: extraction.warnings,
+      withSourceImage: outcome.withSourceImage,
+      warnings,
       failures: outcome.failures,
     },
     strategy,

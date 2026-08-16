@@ -40,6 +40,15 @@ const STEP_TONE: Record<AmlEvidenceState, string> = {
 };
 
 function StepGlyph({ stage }: { stage: AmlJourneyStage }) {
+  /*
+   * A stage whose evidence is in but whose predecessors are not keeps its
+   * NUMBER rather than taking a tick. The evidence is real — AML evidence
+   * genuinely arrives out of order — but a tick at 7 above an outstanding 5
+   * reads as "the case got this far", which it did not.
+   */
+  if (stage.status === "complete" && stage.aheadOfSequence) {
+    return <span className="text-[13px] font-semibold tabular-nums">{stage.number}</span>;
+  }
   if (stage.status === "complete") return <Check aria-hidden className="h-4 w-4" />;
   if (stage.attention === "critical") return <AlertTriangle aria-hidden className="h-4 w-4" />;
   if (stage.status === "not_applicable") return <Minus aria-hidden className="h-3.5 w-3.5" />;
@@ -53,6 +62,7 @@ function StepGlyph({ stage }: { stage: AmlJourneyStage }) {
 /** The sentence a screen reader hears after the stage name. */
 function statusSentence(stage: AmlJourneyStage): string {
   const parts = [EVIDENCE_STATE_LABELS[stage.status].toLowerCase()];
+  if (stage.aheadOfSequence) parts.push("recorded, but an earlier stage is outstanding");
   if (stage.blocking) parts.push("blocking");
   if (stage.owner !== "none") parts.push(stage.ownerLabel.toLowerCase());
   return parts.join(", ");
@@ -103,7 +113,8 @@ export function AmlJourneyRail({
                   aria-hidden
                   className={cn(
                     "absolute left-0 right-1/2 top-[18px] h-px",
-                    previous?.status === "complete" ? "bg-success/40" : "bg-border",
+                    previous?.status === "complete" && !previous?.aheadOfSequence
+                      ? "bg-success/40" : "bg-border",
                   )}
                 />
               )}
@@ -112,7 +123,8 @@ export function AmlJourneyRail({
                   aria-hidden
                   className={cn(
                     "absolute left-1/2 right-0 top-[18px] h-px",
-                    stage.status === "complete" ? "bg-success/40" : "bg-border",
+                    stage.status === "complete" && !stage.aheadOfSequence
+                      ? "bg-success/40" : "bg-border",
                   )}
                 />
               )}

@@ -523,3 +523,56 @@ export function deriveScreeningNextAction(input: NextActionInput): ScreeningNext
     owner: "none",
   };
 }
+
+/* ─────────────────── Self-healing: what may auto-run ─────────────────── */
+
+export interface RecoveryCandidate {
+  id: string;
+  state: string;
+  screeningCheckId: string | null;
+  updatedAt: string | null;
+  required: boolean;
+}
+
+/**
+ * Which subjects the stage may run WITHOUT anybody pressing anything.
+ *
+ * A queued request that nothing consumed used to sit until an operator
+ * noticed. Measured on one production case: 130 minutes, and the only way out
+ * was a human. That is a dead end dressed as a status.
+ *
+ * Deliberately bounded to two situations, because "run screening
+ * automatically" must never become "run the provider on every page load":
+ *
+ *   NEVER ATTEMPTED  `not_started` with no check. Nothing has been spent, so
+ *                    starting it costs one attempt and removes a click the
+ *                    operator should never have needed.
+ *
+ *   STALLED          queued or processing past the stall window with no
+ *                    check. The queue did not consume it, so releasing and
+ *                    running it is RECOVERY, not a second attempt.
+ *
+ * `error` is excluded on purpose. The consumer claims `queued` and `error`
+ * alike, so auto-running a failed subject would re-run the provider on every
+ * page view — a retry loop, paid for per view. A failure keeps its explicit
+ * Retry, which is a person deciding to spend another attempt.
+ *
+ * A subject that already holds a check is never auto-run: that check is
+ * either in flight or finished, and re-running it would duplicate a
+ * completed execution.
+ */
+export function recoverableSubjects(
+  subjects: RecoveryCandidate[],
+  nowMs: number,
+  stallSeconds: number = SCREENING_STALL_SECONDS,
+): RecoveryCandidate[] {
+  const cutoff = nowMs - stallSeconds * 1000;
+  return subjects.filter((s) => {
+    if (!s.required) return false;
+    if (s.screeningCheckId) return false;
+    if (s.state === "not_started") return true;
+    if (s.state !== "queued" && s.state !== "processing") return false;
+    const at = Date.parse(String(s.updatedAt ?? ""));
+    return Number.isFinite(at) && at <= cutoff;
+  });
+}

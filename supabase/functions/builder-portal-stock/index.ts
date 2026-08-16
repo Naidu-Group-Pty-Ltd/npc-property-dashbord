@@ -60,6 +60,9 @@ import type { AnchoredAssets } from '../_shared/builderStock/sourceAssets.pure.t
 import { repairSourceImagesForUpload } from '../_shared/builderStock/repairSourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 import {
+  settleUploadSourceImages, uploadsNeedingSettlement,
+} from '../_shared/builderStock/settleSourceImages.ts';
+import {
   BUILDER_SELECTION_SELECT, STOCK_AVAILABILITY_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, STOCK_UPLOAD_SELECT, stockPagination,
 } from '../_shared/builderStock/projection.pure.ts';
@@ -76,6 +79,15 @@ const IMAGE_URL_TTL_SECONDS = 300;
  */
 const ENRICHMENT_BUDGET_MS = 90_000;
 const ENRICHMENT_MAX_ITEMS = 25;
+/**
+ * Sources whose imagery one invocation may bring up to the current rules.
+ *
+ * A source is a document read and, for a package link, a folder listing plus a
+ * brochure per property — so this is deliberately far smaller than the item
+ * batch. The work is resumable and the browser's loop comes back, so a small
+ * number costs another round trip and never a timeout.
+ */
+const SETTLEMENT_MAX_UPLOADS = 5;
 
 function cleanText(value: unknown, max = 200): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -798,6 +810,62 @@ Deno.serve(async (req) => {
       const startedAt = Date.now();
       let processed = 0;
 
+      /**
+       * PHASE 0 — THE BUILDER'S OWN IMAGERY, BEFORE ANYBODY GOES OUT TO GOOGLE.
+       *
+       * This loop is what the browser already drives after every import, and
+       * until now it only ever ran stages 2 and 3. Stage 1 — reading the
+       * builder's own source — happened at import or not at all, so a stock
+       * list whose imagery was written under older rules needed a person to
+       * press "Source images" before its cards had pictures.
+       *
+       * Settling it here costs nothing on an upload that is already current
+       * (a marker read), converges because the marker is terminal, and reuses
+       * the SAME implementation the manual repair uses rather than a second
+       * copy of it. `remaining` counts it, so the browser's existing loop keeps
+       * asking until the work is done.
+       */
+      let settlementRemaining = 0;
+      try {
+        const outstanding = await uploadsNeedingSettlement(supabase, {
+          organisationId: activeOrganisationId,
+          uploadId: uploadId || null,
+          limit: SETTLEMENT_MAX_UPLOADS,
+        });
+        for (const id of outstanding) {
+          if (Date.now() - startedAt > ENRICHMENT_BUDGET_MS) break;
+          const settlement = await settleUploadSourceImages(supabase, {
+            organisationId: activeOrganisationId,
+            uploadId: id,
+            deadlineAt: startedAt + ENRICHMENT_BUDGET_MS,
+          });
+          /**
+           * PROGRESS, not completion. The browser stops looping on a batch
+           * that moved nothing, and a source too big to settle inside one
+           * budget moves plenty without finishing — so counting only the
+           * finished ones would abandon exactly the imports that need the
+           * most work.
+           */
+          const moved = settlement.settled
+            || (settlement.repair?.imagesStored ?? 0) > 0
+            || (settlement.repair?.primaryUpdated ?? 0) > 0
+            || (settlement.repair?.demoted ?? 0) > 0;
+          if (moved) processed += 1;
+        }
+        settlementRemaining = (await uploadsNeedingSettlement(supabase, {
+          organisationId: activeOrganisationId,
+          uploadId: uploadId || null,
+          limit: SETTLEMENT_MAX_UPLOADS,
+        })).length;
+      } catch (error) {
+        // Stage 1 failing must not stop stages 2 and 3, and must not be silent.
+        console.warn('[builder-portal-stock] source image settlement failed', {
+          upload_id: uploadId || null,
+          phase: 'source_image_settlement',
+          message: String((error as { message?: string })?.message ?? error).slice(0, 300),
+        });
+      }
+
       for (const item of pending ?? []) {
         if (Date.now() - startedAt > ENRICHMENT_BUDGET_MS) break;
         try {
@@ -823,6 +891,14 @@ Deno.serve(async (req) => {
         .in('enrichment_status', ['pending', 'enriching']);
       if (uploadId) remainingQuery = remainingQuery.eq('upload_id', uploadId);
       const { count: remaining } = await remainingQuery;
+      /**
+       * What the BROWSER should come back for, which is both stages. The
+       * upload's own status below is settled on the ITEMS alone: it means "the
+       * properties have been through image enrichment", and gating it on
+       * settlement as well would leave an upload reading `enriching` for ever
+       * on a source too large to settle inside one budget.
+       */
+      const outstanding = (remaining ?? 0) + settlementRemaining;
 
       if (uploadId && !remaining) {
         const upload = await loadUpload(uploadId);
@@ -851,7 +927,12 @@ Deno.serve(async (req) => {
         }
       }
 
-      return json({ success: true, processed, remaining: remaining ?? 0 });
+      return json({
+        success: true,
+        processed,
+        remaining: outstanding,
+        source_images_outstanding: settlementRemaining,
+      });
     }
 
     // =====================================================================

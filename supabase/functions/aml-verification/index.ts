@@ -29,7 +29,8 @@ import {
 import { stripImagePayloads } from "../_shared/aml/verificationEvidence.pure.ts";
 import { canonicalOutcome } from "../_shared/aml/verificationOutcome.pure.ts";
 import {
-  decideSanctionsIngest, rowsToDfatEntries, withNormalisedNames,
+  assessListRecency, decideProviderPromotion, decideSanctionsIngest,
+  rowsToDfatEntries, withNormalisedNames,
 } from "../_shared/aml/sanctionsIngest.pure.ts";
 
 const DEFAULT_TENANT = "default";
@@ -886,6 +887,30 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           }, 400);
         }
 
+        /*
+         * How current the DATA is, before anything is written.
+         *
+         * Every other freshness control here measures when we SYNCED — the
+         * sync row, the 72-hour provider gate, the 7-day health banner. All
+         * of them would report a four-year-old file uploaded today as
+         * perfectly fresh, because the load genuinely is.
+         *
+         * That is not hypothetical. DFAT's own canonical URL currently
+         * redirects to `regulation8_consolidated_2.xls`, whose newest Control
+         * Date is 2022-01-07: 7,840 rows, structurally perfect, and older
+         * than the entire Russia/Ukraine listing expansion. Loading it would
+         * have turned every gate green and reported every client clear.
+         */
+        const recency = assessListRecency(rows, Date.now());
+        if (recency.stale && body?.force !== true) {
+          return jr({
+            error: recency.reason,
+            code: "stale_list",
+            newest_listing: recency.newestListing,
+            age_days: recency.ageDays,
+          }, 400);
+        }
+
         const { count: existingCount } = await admin.schema("aml").from("sanctions_entries")
           .select("id", { count: "exact", head: true }).eq("list_code", listCode);
         const decision = decideSanctionsIngest(
@@ -940,9 +965,73 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           completed_at: new Date().toISOString(),
         }).eq("id", sync.id);
 
+        /*
+         * The last mile. Loading the list was necessary to screen anybody and
+         * it was never sufficient: production refuses to run a provider left
+         * in `simulator` mode, so Stage 5 would still have refused with
+         * nothing on the page to press, and the only way to finish the job
+         * was an undocumented UPDATE against `provider_configs`.
+         *
+         * `decideProviderPromotion` holds the rule — DFAT only, entries
+         * actually written, out of simulator only, never reactivating a
+         * deactivated provider and never demoting. The freshness gate inside
+         * the provider remains the authority on whether a result is
+         * authoritative; this only decides whether it is allowed to run.
+         */
+        let screening: { mode: string; changed: boolean; reason: string } = {
+          mode: "unknown", changed: false,
+          reason: "The screening provider's state could not be read.",
+        };
+        const { data: providerRow } = await admin.schema("aml").from("provider_configs")
+          .select("id, mode, active").eq("capability", "pep_sanctions")
+          .eq("provider_key", "local_lists").order("priority", { ascending: true }).limit(1);
+        const current = Array.isArray(providerRow) ? providerRow[0] ?? null : null;
+        if (current) {
+          const promotion = decideProviderPromotion({
+            listCode, entriesWritten: written,
+            currentMode: current.mode, active: current.active,
+          });
+          screening = {
+            mode: String(current.mode), changed: false, reason: promotion.reason,
+          };
+          if (promotion.promote) {
+            const { error: promoteError } = await admin.schema("aml").from("provider_configs")
+              .update({ mode: "live" }).eq("id", current.id).eq("mode", "simulator");
+            if (promoteError) {
+              screening.reason = "The list loaded, but screening could not be switched to "
+                + "live. An administrator must set the pep_sanctions provider to live "
+                + "before any check will run.";
+            } else {
+              screening = { mode: "live", changed: true, reason: promotion.reason };
+              // Recorded against the register rather than a case: this is a
+              // change to what the platform may do, not to one customer's file.
+              await admin.from("activity_logs").insert({
+                action_type: "aml_screening_provider_promoted",
+                entity_type: "aml_provider_config",
+                entity_id: String(current.id),
+                metadata: {
+                  capability: "pep_sanctions", provider_key: "local_lists",
+                  from_mode: "simulator", to_mode: "live",
+                  reason: "dfat_list_loaded",
+                  list_code: listCode, entries: written, sync_id: sync.id,
+                  performed_by: userEmail, performed_at: new Date().toISOString(),
+                },
+              }).then(() => undefined, () => undefined);
+            }
+          }
+        }
+
         return jr({
           list_code: listCode, entries: written, pruned,
           pruned_skipped: !decision.prune, reason: decision.reason, sync_id: sync.id,
+          screening,
+          // Stated on every load, not only on a refusal: an operator reading
+          // "7,840 entries" has no way to tell a current register from an
+          // archived one, and the newest listing is the fact that separates
+          // them.
+          newest_listing: recency.newestListing,
+          list_age_days: recency.ageDays,
+          recency_unknown: recency.unknown,
         });
       }
 
