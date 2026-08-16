@@ -511,7 +511,13 @@ export default function AmlCaseWorkspace() {
           {section === "overview" && (
             <>
               <ActivationRecordCard caseRow={caseRow} activation={activation} />
-              <AmlNextActionCard action={summary.nextAction} onOpenSection={setSection} />
+              <AmlNextActionCard
+                action={summary.nextAction}
+                onOpenSection={setSection}
+                currentStageOrder={
+                  activeStageId ? JOURNEY_STAGES.indexOf(activeStageId) + 1 : undefined
+                }
+              />
               <div className="grid items-start gap-4 md:grid-cols-2">
                 <AmlOutstandingItems items={summary.outstanding} onOpenSection={setSection} />
                 <AmlRecentActivity events={events} onOpenTimeline={() => setSection(RECORD_SECTION)} />

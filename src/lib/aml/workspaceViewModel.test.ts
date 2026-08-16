@@ -544,12 +544,15 @@ describe("deriveAmlNextAction", () => {
         caseRow: caseRow({ case_stage: "client_submitted", status: "kyc_complete" }),
       }).section,
     ).toBe("submission-review");
+    // Screening is Stage 5 (`ownership`), not Stage 3. Every screening
+    // action used to route at `identity`, so an MLRO told to resolve a match
+    // was sent to Identity verification.
     expect(
       deriveAmlNextAction({
         caseRow: caseRow(),
         screening: { subjects: [{ state: "possible_match" }] },
       }).section,
-    ).toBe("identity");
+    ).toBe("ownership");
   });
 
   it("is deterministic — the same facts always give the same answer", () => {
@@ -564,7 +567,11 @@ describe("deriveAmlNextAction", () => {
     };
     const runs = Array.from({ length: 5 }, () => deriveAmlNextAction(facts).key);
     expect(new Set(runs).size).toBe(1);
-    expect(runs[0]).toBe("screening_error");
+    // Was `screening_error`, because the winner used to be the first rule
+    // that fired in AUTHORSHIP order. Candidates are now ranked by journey
+    // position, and the referred identity check at Stage 3 comes before the
+    // screening error at Stage 5 — which is the order the journey is walked.
+    expect(runs[0]).toBe("identity_referred");
   });
 
   it("says the reading is partial rather than claiming no action when facts are missing", () => {
