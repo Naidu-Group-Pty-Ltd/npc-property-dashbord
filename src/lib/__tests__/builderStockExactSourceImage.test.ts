@@ -164,7 +164,7 @@ function pageWithBand(options: {
 async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
   const transform = new CompressionStream('deflate');
   const writer = transform.writable.getWriter();
-  const closed = writer.write(bytes).then(() => writer.close());
+  const closed = writer.write(bytes as unknown as BufferSource).then(() => writer.close());
   const chunks: Uint8Array[] = [];
   const reader = transform.readable.getReader();
   for (;;) {

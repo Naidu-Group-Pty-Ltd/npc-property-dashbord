@@ -1388,7 +1388,9 @@ function rankCandidates(candidates: Candidate[]): Candidate[] {
     .map((x) => x.c);
 }
 
-const NO_ACTION: Omit<AmlNextAction, "sourceFacts" | "unavailableFacts" | "partial"> = {
+const NO_ACTION: Omit<
+  AmlNextAction, "sourceFacts" | "unavailableFacts" | "partial" | "stageOrder" | "stageSection"
+> = {
   key: "none",
   label: "No action required",
   explanation: "Nothing on this case is waiting on you right now.",
@@ -1397,7 +1399,9 @@ const NO_ACTION: Omit<AmlNextAction, "sourceFacts" | "unavailableFacts" | "parti
   blocking: false,
 };
 
-const REVIEW_CASE: Omit<AmlNextAction, "sourceFacts" | "unavailableFacts" | "partial"> = {
+const REVIEW_CASE: Omit<
+  AmlNextAction, "sourceFacts" | "unavailableFacts" | "partial" | "stageOrder" | "stageSection"
+> = {
   key: "review_case",
   label: "Review the case",
   explanation:
