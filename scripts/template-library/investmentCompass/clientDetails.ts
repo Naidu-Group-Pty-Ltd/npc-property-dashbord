@@ -608,6 +608,10 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           + '{{clientDetails.expenseLineCount}} individual lines across '
           + '{{clientDetails.expenseCategoryCount}} categories; they are summed here rather '
           + 'than listed.',
+        // Literal apart from two counts, each of which resolves to one or two
+        // digits — far shorter than the bindings they replace, so the source
+        // length is the safe measure.
+        standfirstChars: 175,
       }),
       // Two depths only: of the 13 clients who record expenses, nine group to
       // exactly fourteen categories and four to one or two — the distribution

@@ -284,7 +284,9 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     locations: 'Prepared {{report.generatedDate | date}}',
     facts: [
       { label: 'Properties', value: '{{comparison.propertyCount}}' },
-      { label: 'Ranked first', value: '{{comparison.ranked.0.shortAddress}}' },
+      // A street line rather than a figure, at the band's figure size —
+      // `address.split(',')[0]`, so ~19 typical and ~30 at the long end.
+      { label: 'Ranked first', value: '{{comparison.ranked.0.shortAddress}}', valueChars: 30 },
       { label: 'Top score', value: '{{comparison.ranked.0.score}} / {{comparison.ranked.0.outOf}}' },
       { label: 'Where', value: '{{comparison.statesLine}}' },
     ],
@@ -337,6 +339,10 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
             item: sectionHeading({
               eyebrow: 'The analysis would buy',
               heading: '{{comparison.recommendations.bestOverall.winner}}',
+              // A street line, not a full address — `shortAddress` is
+              // `streetLine(address)` (`propertyComparison/normalise.pure.ts:198`),
+              // and the longest address stored anywhere in the product is 55.
+              headingChars: 45,
               numeral: nextNumeral(),
             }),
           },
@@ -345,6 +351,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
             item: sectionHeading({
               eyebrow: 'Ranked first',
               heading: '{{comparison.ranked.0.shortAddress}}',
+              headingChars: 45,
               // The same numeral: the two are one page, drawn one way or the
               // other, and only one renders.
               numeral: nextNumeral(),
@@ -574,6 +581,8 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       sectionHeading({
         eyebrow: 'The recommendation',
         heading: '{{comparison.recommendations.bestOverall.winner}}',
+        // The winner is named by its street line; see the ranking page above.
+        headingChars: 45,
         numeral: nextNumeral(),
       }),
       {

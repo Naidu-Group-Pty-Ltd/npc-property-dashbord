@@ -259,6 +259,9 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       sectionHeading({
         eyebrow: 'The position',
         heading: '{{capacity.bandLabel}}',
+        // `bandLabel`'s three values, longest first: "Serviceable with limited
+        // headroom" (33) — see `borrowingCapacityProjection.pure.ts:286`.
+        headingChars: 33,
         numeral: nextNumeral(),
       }),
       verdict({

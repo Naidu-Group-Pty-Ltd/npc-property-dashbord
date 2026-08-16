@@ -253,12 +253,16 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       sectionHeading({
         eyebrow: 'The position',
         heading: '{{summary.overallHealth}}',
+        headingChars: LENGTHS.healthStatus,
         numeral: nextNumeral(),
         // The legacy document's own two-sentence description — built from the
         // totals by `describePortfolio`, so it cannot disagree with the tables
         // it sits above. Bounded by construction at ~170 characters, which is
-        // inside the two to three lines every family's standfirst reserves.
+        // what `standfirstChars` has to say out loud: the binding's own source
+        // text is 22 characters, and sizing the band from that is what clipped
+        // the eyebrow off the top of this page on six of the ten families.
         standfirst: '{{portfolio.overview}}',
+        standfirstChars: LENGTHS.overview,
       }),
       // Things the document says out loud — that owner-occupied holdings are
       // excluded from the figures, or that the review it draws on is a draft.
@@ -590,6 +594,9 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       sectionHeading({
         eyebrow: 'Exposure',
         heading: '{{risk.overallRiskLevel}}',
+        // "Low" / "Moderate" / "High", the same one-word scale as the health
+        // status this format already measured.
+        headingChars: LENGTHS.healthStatus,
         numeral: nextNumeral(),
       }),
       // The stored leaf names, not shortened ones. `{{risk.vacancy}}` already

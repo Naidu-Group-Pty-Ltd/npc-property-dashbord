@@ -11,6 +11,7 @@ import { requireModulePermission } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
 import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSafety.ts";
+import { collectFootnoteDefinitions } from "./footnotes.ts";
 // Both are called by `wrapInsightSections` below and neither was imported, so
 // every call to `buildHtml` threw `ReferenceError: wrapInsightHeadingSections is
 // not defined` before WeasyPrint was ever reached. The modules exist and are
@@ -2412,11 +2413,10 @@ function applyEditorialMarkdown(md: string): string {
  */
 function applyFootnotesAndXrefs(html: string): string {
   // 1. Collect footnote defs: [^id]: text  (marked may leave them in <p> or escape ^).
-  const defs = new Map<string, string>();
-  let out = html.replace(/<p>\s*\[\^([\w-]+)\]\s*:\s*([\s\S]*?)<\/p>/gi, (_m, id, body) => {
-    defs.set(String(id), String(body).trim());
-    return "";
-  });
+  //    Splitting them apart, and flattening each body onto one line, are both
+  //    load-bearing — see `footnotes.ts`. A newline here failed the render.
+  const { html: withoutDefs, defs } = collectFootnoteDefinitions(html);
+  let out = withoutDefs;
 
   // 2. Replace inline calls [^id] with a footnote span (float: footnote in CSS).
   out = out.replace(/\[\^([\w-]+)\]/g, (_m, id) => {

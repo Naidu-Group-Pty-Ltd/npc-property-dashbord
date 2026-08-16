@@ -790,25 +790,90 @@ export function cover(opts: CoverOptions): PageDef {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * The number of characters a value actually sets, when it may be a binding.
+ *
+ * A binding's own source text is not what reaches the page:
+ * `'{{portfolio.overview}}'` is 22 characters and the overview it resolves to
+ * is ~170. Sizing a block from the former is how the Portfolio band came to
+ * reserve one line for four — and because `hero` anchors its content to its own
+ * bottom edge inside `overflow:hidden` (`hero.html.ts:78`), the surplus does not
+ * push the page down. It rises out of the TOP of the band and is clipped away:
+ * the eyebrow "The position" was drawn 42.5pt above a box starting at 92pt, on
+ * six of the ten families, and never reached the paper at all.
+ *
+ * Guessing a default here would reintroduce exactly the silent mis-size this
+ * exists to stop, so a binding with no measured length fails the build. There
+ * are 115 openers in the catalogue and only a handful bind their text, so this
+ * is a cheap invariant to hold.
+ */
+function boundChars(value: string, declared: number | undefined, field: string): number {
+  if (declared != null) return declared;
+  if (!value.includes('{{')) return value.length;
+  throw new Error(
+    `sectionHeading: \`${field}\` is bound (${value}), so its own length is not what sets on `
+    + `the page. Pass \`${field}Chars\` with the length measured against production.`,
+  );
+}
+
+/**
  * A section opener, in whichever shape `section_header_style` declares.
  *
  * Six kinds across the catalogue: a tracked eyebrow over a display heading, an
  * oversized numeral beside it, a heading alone (where the rail or masthead
  * carries the label), a filled band behind it, a decimal clause number before
  * it, and an italic standfirst under it.
+ *
+ * ## The standfirst is part of the block's height, in every kind
+ *
+ * It used to be counted only by `band`, and only from the binding's own source
+ * length. The other kinds reserved a fixed multiple of the heading size and
+ * drew the standfirst inside it regardless — so an opener with a real
+ * standfirst set past its declared box and printed over whatever `flow()`
+ * placed next. That is the Cash Flow Comparison verdict page, where the block
+ * below the opener landed on the last lines of it.
+ *
+ * Each kind measures against the width it actually sets in: the band is inset
+ * by its 24pt padding either side, the numeral opener sets in the right column
+ * of a 0.26 two-column split, and the rest use the full measure.
  */
 export function sectionHeading(opts: {
   eyebrow: string;
   heading: string;
   numeral?: string;
   standfirst?: string;
+  /** Production-measured length of `heading`, required when it is a binding. */
+  headingChars?: number;
+  /** Production-measured length of `standfirst`, required when it is a binding. */
+  standfirstChars?: number;
   height?: number;
 }): FlowItem {
   const c = ctx();
   const kind = sectionHeaderKind(c.manifest.section_header_style);
+  const headingChars = boundChars(opts.heading, opts.headingChars, 'heading');
+  const standfirstChars = opts.standfirst
+    ? boundChars(opts.standfirst, opts.standfirstChars, 'standfirst')
+    : 0;
+  /**
+   * The standfirst's depth at the size and measure the chosen kind sets it in.
+   *
+   * Each kind hands it to a different block at a different size, and reading
+   * the wrong one is not a rounding error: the band's subtitle sets at 14pt
+   * (`hero.html.ts`'s default, which nothing here overrides) while this used to
+   * size it from `c.scale.body`, 9 or 10 in every family. The band reserved
+   * about two thirds of the depth its own standfirst needs.
+   */
+  const standfirstDepth = (width: number, size: number, lineHeight: number): number => (
+    standfirstChars ? textHeight(standfirstChars, { size, width, lineHeight }) : 0
+  );
 
   if (kind === 'numeral' && opts.numeral) {
-    const height = opts.height ?? Math.round(c.scale.heading * 2.6) + 20;
+    // `ratio: 0.26` with a 26pt gutter, so the standfirst sets in the right
+    // column rather than across the measure — and as `bodySize`, which this
+    // block sets to the eyebrow size.
+    const rightColumn = Math.max(1, (c.contentWidth - 26) * 0.74);
+    const height = opts.height
+      ?? Math.round(c.scale.heading * 2.6) + 20
+        + standfirstDepth(rightColumn, c.scale.eyebrow, 1.5);
     return {
       height,
       block: (y) => block('two-column', {
@@ -828,22 +893,37 @@ export function sectionHeading(opts: {
   }
 
   if (kind === 'band') {
-    // A band is a `hero`, and a hero centres its content in its own box: a
-    // heading that wraps to more lines than the band is deep does not overflow
-    // downwards, it overflows in BOTH directions, and the first line is lost
-    // above the band's top edge. On the Portfolio holdings page that printed
-    // "Every property, and what it" into the running head and left the word
-    // "contributes" alone inside a black band.
-    //
-    // So the depth is measured from the heading itself. The floor keeps every
-    // band that already fitted exactly where it was.
+    /*
+     * A band is a `hero`, and a hero anchors its content to its own BOTTOM edge
+     * inside `overflow:hidden` (`hero.html.ts:78`). A band that is too short
+     * therefore does not spill downward where `flow()`'s guard would see it —
+     * the content rises out of the TOP and is cut off. On the Portfolio holdings
+     * page that printed "Every property, and what it" into the running head and
+     * left the word "contributes" alone inside a black band; on the overview
+     * page it took the eyebrow off six of the ten families entirely.
+     *
+     * So the depth is derived from what the hero actually draws, at the sizes
+     * it actually uses. Three of those are the block's own defaults, which
+     * nothing here overrides — reading them from anywhere else is what made the
+     * band and the renderer disagree.
+     */
+    const HERO_PADDING = 24; // hero.html.ts:64 — left/right/bottom inset
+    const HERO_EYEBROW = 8; // hero.html.ts:55 — `eyebrowSize` default
+    const HERO_SUBTITLE = 14; // hero.html.ts:53 — `subtitleSize` default
+    const inner = Math.max(1, c.contentWidth - HERO_PADDING * 2);
     const headingLines = Math.max(1, Math.ceil(
-      opts.heading.length / Math.max(1, Math.floor((c.contentWidth - 48) / (c.scale.heading * 0.52))),
+      headingChars / Math.max(1, Math.floor(inner / (c.scale.heading * 0.52))),
     ));
-    const standfirstDepth = opts.standfirst
-      ? textHeight(opts.standfirst.length, { size: c.scale.body, width: c.contentWidth - 48 })
-      : 0;
-    const measured = Math.round(c.scale.heading * 1.3 * headingLines) + 34 + standfirstDepth;
+    const measured = Math.ceil(
+      HERO_PADDING
+      // The eyebrow and its 6pt margin-bottom.
+      + HERO_EYEBROW * 1.2 + 6
+      // The title, at the hero's own 1.1 leading.
+      + headingLines * c.scale.heading * 1.1
+      // The subtitle and its 6pt margin-top.
+      + (standfirstChars ? 6 + standfirstDepth(inner, HERO_SUBTITLE, 1.45) : 0)
+      + HERO_PADDING,
+    );
     const height = opts.height ?? Math.max(Math.round(c.scale.heading * 2.4) + 24, measured);
     return {
       height,
@@ -860,7 +940,11 @@ export function sectionHeading(opts: {
     };
   }
 
-  const height = opts.height ?? Math.round(c.scale.heading * 2.2) + 18;
+  // Only the `standfirst` kind draws one — `bare`, `decimal` and `eyebrow`
+  // drop it, so reserving depth for it there would open a hole in the page.
+  const height = opts.height
+    ?? Math.round(c.scale.heading * 2.2) + 18
+      + (kind === 'standfirst' ? standfirstDepth(c.contentWidth, c.scale.body, 1.5) : 0);
   const decimal = kind === 'decimal' && opts.numeral ? `${opts.numeral}  ` : '';
   return {
     height,
@@ -1009,6 +1093,17 @@ export interface KpiItem {
   value: string;
   note?: string;
   accent?: string;
+  /**
+   * Production-measured length of `value`, for the figures that are text.
+   *
+   * A KPI value is normally a formatted number that cannot wrap. A few are
+   * prose — an address, an investor profile, a band name — and those set at the
+   * band's figure size, which is the largest type on the page: the Cash Flow
+   * Comparison verdict band sets `ranked.0.shortAddress` at 30.75pt into a
+   * half-measure cell, wraps to two lines, and runs 33pt past a box sized for
+   * one. Declaring the length is what lets the band reserve the second line.
+   */
+  valueChars?: number;
 }
 
 /** How many figures this template's KPI arrangement wants. */
@@ -1067,9 +1162,59 @@ export function kpis(items: KpiItem[]): FlowItem {
    */
   const noteLine = shown.some((k) => k.note) ? Math.round(c.scale.kpiNote * 1.7) : 0;
 
+  /**
+   * The height of a grid of cells, derived from the cell the renderer draws.
+   *
+   * `display` and `ruled` are ONE branch in `kpiGrid.html.ts` — the same cell,
+   * differing only in how many go on a row — so they are sized here by the same
+   * arithmetic. It builds a cell as padding, a label band at 1.25, the figure
+   * at `line-height:1` under an 8pt margin, an optional note at 1.35 under a
+   * 5pt margin, and padding again.
+   *
+   * Both heights used to be a constant with no `valueSize` in it (`ruled`) or a
+   * flat multiple of it (`display`), and neither counted a line that wrapped.
+   * Measured in Chromium: Grid's verdict band declared 90pt and set 114.8,
+   * Objective's declared 91 and set 122.4, and Night Desk's declared 144 and
+   * set 164.1 — in each case the caption `flow()` placed underneath was printed
+   * across the last line of the figures.
+   *
+   * The grid is `repeat(n, 1fr)` with NO gap, so a cell is the measure over the
+   * columns less its own padding. At six columns that is under 60pt, narrow
+   * enough that the label and note wrap as well as the figure — which is why
+   * every line count is computed rather than assumed.
+   */
+  const gridHeight = (perRow: number, valueSize: number): number => {
+    const rows = Math.ceil(shown.length / perRow);
+    const padTop = plan.cellBorders ? 10 : 11;
+    const padBottom = plan.cellBorders ? 11 : 12;
+    const cellPad = plan.cellBorders ? 20 : 24;
+    const cellWidth = Math.max(1, c.contentWidth / perRow - cellPad);
+    const linesFor = (chars: number, size: number): number => Math.max(
+      1, Math.ceil(chars / Math.max(1, Math.floor(cellWidth / (size * 0.5)))),
+    );
+    // A bound label or note cannot be measured from its own source text.
+    const literal = (s: string | undefined): number => (s && !s.includes('{{') ? s.length : 0);
+    const labelLines = Math.max(
+      shared.labelLines,
+      ...shown.map((k) => linesFor(literal(k.label), c.scale.kpiLabel)),
+    );
+    const valueLines = Math.max(
+      1, ...shown.map((k) => (k.valueChars ? linesFor(k.valueChars, valueSize) : 1)),
+    );
+    const noteLines = shown.some((k) => k.note)
+      ? Math.max(1, ...shown.map((k) => linesFor(literal(k.note), c.scale.kpiNote)))
+      : 0;
+    const cell = padTop
+      + labelLines * c.scale.kpiLabel * 1.25
+      + 8 + valueLines * valueSize
+      + (noteLines ? 5 + noteLines * c.scale.kpiNote * 1.35 : 0)
+      + padBottom;
+    return Math.ceil(rows * cell);
+  };
+
   if (plan.variant === 'display') {
-    const rows = Math.ceil(shown.length / plan.columns);
-    const height = 24 + rows * (Math.round(c.scale.kpiValue * 2.4) + noteLine);
+    // `kpiGrid.html.ts` caps a display grid at two across, whatever the plan says.
+    const height = gridHeight(Math.min(plan.columns, 2), c.scale.kpiValue);
     return {
       height,
       block: (y) => block('kpi-grid', {
@@ -1121,7 +1266,7 @@ export function kpis(items: KpiItem[]): FlowItem {
   }
 
   // ruled — one or more rows of hairline-separated columns.
-  const rows = Math.ceil(shown.length / plan.columns);
+  //
   // Six columns give each figure ~78pt of measure; a formatted currency value
   // overruns the four-column size there, so the band steps down.
   const valueSize = plan.columns >= 6
@@ -1129,7 +1274,7 @@ export function kpis(items: KpiItem[]): FlowItem {
     : plan.columns === 5
       ? Math.round(c.scale.kpiValue * 0.74)
       : c.scale.kpiValue;
-  const height = rows * ((c.density === 'compact' ? 62 : 78) + noteLine);
+  const height = gridHeight(plan.columns, valueSize);
   return {
     height,
     block: (y) => block('kpi-grid', {
@@ -1475,12 +1620,32 @@ export function definitions(
   chars?: number,
 ): FlowItem {
   const c = ctx();
-  const rowHeight = chars === undefined
-    ? 26
-    // The definition sets beside its term, on roughly two thirds of the measure.
-    : Math.max(26, textHeight(chars, { size: c.scale.cell, width: c.contentWidth * 0.66, extra: 8 }));
+  /*
+   * Derived from the row `extras.html.ts:364` draws, not from a flat 26.
+   *
+   * That row is `grid-template-columns:160pt 1fr` with a 14pt gutter, 8pt of
+   * padding either side and a hairline under it, and BOTH columns set at 9.5pt
+   * whatever the family's own scale says — the definition on a 1.45 leading.
+   * So one line is already ~30.8pt and the reserved 26 was short on every row
+   * of every definition list in the catalogue. It only showed where the rows
+   * were numerous enough to accumulate: the Borrowing Capacity serviceability
+   * page, six rows deep, printed its last line into the callout beneath it.
+   *
+   * The measure matters as much as the depth. The definition does not get two
+   * thirds of the page — it gets whatever is left after a fixed 160pt term
+   * column, which on a narrow master is closer to half.
+   */
+  const TERM_COLUMN = 160;
+  const GUTTER = 14;
+  const SIZE = 9.5;
+  const LEADING = 1.45;
+  const measure = Math.max(1, c.contentWidth - TERM_COLUMN - GUTTER);
+  const lines = chars === undefined
+    ? 1
+    : Math.max(1, Math.ceil(chars / Math.max(1, Math.floor(measure / (SIZE * 0.5)))));
+  const rowHeight = 8 + Math.max(SIZE * 1.2, lines * SIZE * LEADING) + 8 + 1;
   return {
-    height: 30 + items.length * rowHeight,
+    height: Math.ceil(30 + items.length * rowHeight),
     block: (y) => block('definition-list', {
       title, items, x: c.contentLeft, y, width: c.contentWidth,
     }),
