@@ -103,3 +103,59 @@ asset as, from the vocabulary the source itself used.
   `reprocess_source_images` re-derives it. That is the repair, not a regression.
 - **The repair changes images only.** No stock item is created, no price,
   availability, configuration, builder link or client selection is touched.
+
+## Getting the picture onto the card, automatically
+
+The rules above say which picture a card may show. This says who runs them, and
+it is the half that was missing: Lot 537's card read "No image found" while the
+correct facade sat in the builder's PDF and the extractor could name it byte for
+byte. The only thing that could put it on the card was the Builder Portal's
+"Source images" button, so normal operation depended on a maintenance tool.
+
+**The import settles the pointer.** `importStockRecords` now calls
+`chooseAndStorePrimaryImage` for every property it touched. `primary_image_id`
+used to be written only by `enrichStockItem` — the stage-2/3 *provider* loop —
+so a property's own builder-supplied picture reached its card as a side effect
+of going out to Google and Perplexity for pictures it did not need. Storing an
+image nobody points at is the same as not storing it.
+
+**An import re-queues what it touched.** `enrich_images` selects
+`enrichment_status in ('pending','enriching')` and an import never wrote that
+column, so re-importing a source updated the property, attached a better image
+and left the pointer alone. Worse, `failed` was terminal: every property became
+`failed` the moment the role rule shipped, and nothing automatic ever looked at
+one again. An import now puts its properties back to `pending`. This is image
+pipeline state, not property data.
+
+**Stage 1 is a step of the automatic loop.** `enrich_images` settles the
+builder's own imagery before it goes anywhere near a provider, using the same
+`repairSourceImagesForUpload` the manual repair uses, under the same wall-clock
+budget, and reports it in `remaining` so the browser's existing loop keeps
+asking. The builder sees *Processing supplied images* between *Reading the
+properties* and *Finding images*.
+
+**`source_images_settled_version` is the terminal marker.** An upload below
+`PROVENANCE_VERSION` has one pass of work outstanding; an upload at it has none,
+however few images it ended up with. Without a marker the only available test is
+"has properties with no picture", which is true for ever of a spreadsheet that
+carries no imagery — so every pass would re-read every source and no loop would
+converge. Only a *complete* pass writes it.
+
+**Existing stock repairs itself once.** `builder-stock-image-settler` is an
+internal-only function (signed envelope, `verifyInternal`) that pg_cron drives
+every five minutes until no upload is outstanding, then **unschedules its own
+job**. It is a deployment repair, not a service. It reuses the same repair and
+the same `enforceStrictPrimaryImages`; no stock item is created, and no property
+field is written.
+
+**Marketplace reads stay reads.** `list_stock` and `get_stock_item` never
+extract, fetch or repair. `STOCK_IMAGE_SELECT` already carries `source_detail`,
+which is where the role lives, so the strict display rule resolves from the
+payload the marketplace already sends.
+
+One more thing bites. A reference is `page{n}:{name}#{objectNumber}`, and the
+object number is not decoration: a resource name means whatever the resources
+that drew it say it means, so `/Im0` in one form and `/Im0` in another are two
+different pictures on the same page. The reference is both the storage key and
+the upsert key, so naming both `page3:Im0` made them one row and silently lost a
+discovered asset.

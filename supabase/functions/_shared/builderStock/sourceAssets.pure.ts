@@ -133,6 +133,15 @@ export function settleRowAssetRoles(
       };
     }
     if (index === chosen) {
+      /**
+       * A field the source NAMED keeps its own evidence.
+       *
+       * "The row's `Facade` column says so" (LEVEL 1) is a stronger and more
+       * checkable statement than "the row contains one picture" (LEVEL 3), and
+       * relabelling it as the weaker one threw away the only part of the record
+       * that names the column a reader would go and look at.
+       */
+      if (asset.role?.evidenceLevel === 1 && isPrimaryRole(asset.role.role)) return asset;
       return { ...asset, role: roleFromStructuralContainer(container) };
     }
     // A named-hero asset that lost is still property imagery, just not the one.

@@ -29,8 +29,11 @@ import {
   type AnchoredAssets, type SourceImageAsset,
 } from './sourceAssets.pure.ts';
 import { roleDetail, roleFromExplicitField } from './sourceImageRole.pure.ts';
+import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import { assignPdfMediaRolesPerProperty } from './pdfPrimaryImage.pure.ts';
-import { PROVENANCE_VERSION, storeSourceImages } from './sourceImages.ts';
+import {
+  PROVENANCE_VERSION, storeSourceImages, type SourceImageFetcher,
+} from './sourceImages.ts';
 import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
 
 /** What `attachDocumentMedia` did with one picture, for a caller that counts. */
@@ -50,6 +53,13 @@ export interface ImportOutcome {
   itemIds: string[];
   /** Safe to show the uploader: a label and a short reason, never a stack. */
   failures: Array<{ label: string; reason: string }>;
+  /**
+   * Properties whose card now has the builder's own picture on it.
+   *
+   * Reported so an import can SAY whether supplied-image processing worked
+   * rather than leaving a reader to infer it from an empty frame later.
+   */
+  withSourceImage: number;
 }
 
 interface ExistingItem {
@@ -177,9 +187,16 @@ export async function importStockRecords(
     /** The uploaded document's own name, recorded on every image it yielded. */
     filename?: string | null;
   },
+  /**
+   * Injected for the same reason the repair injects it: the production fetcher
+   * reaches for `Deno.resolveDns`, and the end-to-end contract this module now
+   * owns — import produces a displayable card — has to be exercisable.
+   */
+  deps: { fetchImage?: SourceImageFetcher } = {},
 ): Promise<ImportOutcome> {
   const outcome: ImportOutcome = {
     detected: 0, imported: 0, updated: 0, failed: 0, itemIds: [], failures: [],
+    withSourceImage: 0,
   };
 
   /**
@@ -354,7 +371,7 @@ export async function importStockRecords(
                 (url) => roleFromExplicitField(record.image_url_fields[url]).evidenceLevel === 1),
             },
           ),
-        });
+        }, { fetchImage: deps.fetchImage });
       }
     } catch (error) {
       outcome.failed += 1;
@@ -377,7 +394,7 @@ export async function importStockRecords(
       uploadId: input.uploadId,
       stockItemId: itemId,
       assets: anchored.assets,
-    });
+    }, { fetchImage: deps.fetchImage });
   }
 
   await attachDocumentMedia(
@@ -390,6 +407,61 @@ export async function importStockRecords(
       }
       : null,
   );
+
+  /**
+   * SETTLE THE POINTER. An import that stores a photograph and does not say
+   * which one the property shows has not finished.
+   *
+   * This used to be nobody's job here. `primary_image_id` was written only by
+   * `enrichStockItem` — the stage-2/3 PROVIDER loop — so a property's own
+   * builder-supplied picture reached its card as a side effect of going out to
+   * Google and Perplexity for pictures it did not need. Where that loop did not
+   * run, and it does not run for a property it has already been through, the
+   * image sat in the bucket with nothing pointing at it and the card read "No
+   * image found". That is how Lot 537 Kirramingly Avenue ended up needing a
+   * person to press "Source images".
+   *
+   * It is the same rule the repair and the marketplace apply
+   * (`chooseDisplayableImage`), and it is cheap: a read of the rows this import
+   * just wrote and one column. No network, no provider, no budget.
+   */
+  for (const itemId of new Set(outcome.itemIds)) {
+    try {
+      const primary = await chooseAndStorePrimaryImage(db, itemId);
+      if (primary) outcome.withSourceImage += 1;
+    } catch (error) {
+      // An import must not fail because a pointer could not be written; the
+      // property is already saved. It is logged so it is discoverable, and the
+      // re-queue below means the automatic loop will try again.
+      console.warn('[builderStock] primary image not settled at import', {
+        upload_id: input.uploadId,
+        stock_item_id: itemId,
+        phase: 'primary_assignment',
+        message: safeFailureReason(error),
+      });
+    }
+  }
+
+  /**
+   * PUT EVERY TOUCHED PROPERTY BACK IN THE IMAGE QUEUE.
+   *
+   * `enrich_images` selects `enrichment_status in ('pending','enriching')`, and
+   * an import never wrote that column — so re-importing a source updated the
+   * property, attached a better image and left it in whatever state it had
+   * finished in last time. `complete` meant the loop skipped it; `failed` meant
+   * nothing automatic would ever look at it again, which is precisely what
+   * every property became on the day the role rule shipped.
+   *
+   * A property this import touched has new imagery by definition, so its image
+   * pipeline starts again. This is pipeline state and not property data: no
+   * price, availability, configuration, selection or linkage is written here.
+   */
+  if (outcome.itemIds.length) {
+    await db.from('builder_stock_items')
+      .update({ enrichment_status: 'pending' })
+      .in('id', [...new Set(outcome.itemIds)]);
+  }
+
   return outcome;
 }
 

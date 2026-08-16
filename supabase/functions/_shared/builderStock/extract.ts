@@ -499,9 +499,20 @@ export async function extractStockFile(
       for (const asset of found.assets) {
         if (result.media.length >= MAX_MEDIA) break;
         if (asset.bytes.length > MAX_MEDIA_BYTES) continue;
+        /**
+         * THE OBJECT NUMBER IS PART OF THE NAME, and it has to be.
+         *
+         * A resource name means whatever the resources that drew it say it
+         * means, so `/Im0` inside one form and `/Im0` inside another are two
+         * different pictures — and a real exporter emits exactly that. The live
+         * Donnybrook contract draws two of them on its third page. Naming both
+         * `page3:Im0` made them one row: the storage key and the upsert key are
+         * this string, so the second silently replaced the first and one
+         * discovered asset vanished.
+         */
         const suffix = asset.provenance.method === 'page_crop'
           ? `crop(${asset.provenance.crop?.top}-${asset.provenance.crop?.bottom})`
-          : asset.provenance.resourceName ?? `obj${asset.provenance.objectNumber}`;
+          : `${asset.provenance.resourceName ?? 'img'}#${asset.provenance.objectNumber ?? 0}`;
         result.media.push({
           // 1-based and the page a PERSON sees, which is what `page` in the
           // provenance record has to mean.
