@@ -616,6 +616,19 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   const NARRATIVE_PAGES = 40;
   // The same measure the Report Q&A masters take: the first page gives up the
   // heading block, the continuations do not.
+  /*
+   * ONE part for the whole run, not forty.
+   *
+   * Each continuation called `nextPart('Report')`, so the running head counted
+   * "Part 09 · Report" through "Part 48 · Report" and the appendix that follows
+   * came out as "Part 49 · Sources" instead of Part 09. The numeral was read
+   * before the part was taken as well, so the opening page's rule said 07 under
+   * a head that said 08.
+   *
+   * The narrative is one section of the document however many pages it needs —
+   * which is the same reason its pages are conditional.
+   */
+  const narrativePart = nextPart('Report');
   const narrativeHeading = sectionHeading({
     eyebrow: 'As assessed',
     heading: 'The report',
@@ -626,7 +639,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
 
   pages.push({
     ...withFurniture(page('The report', [
-      ...furniture(DOCUMENT_LABEL, nextPart('Report'), 'The report'),
+      ...furniture(DOCUMENT_LABEL, narrativePart, 'The report'),
       ...flow([
         narrativeHeading,
         markdown('{{narrative.source}}', 0, firstNarrativeHeight, MARKDOWN_LINES_PER_PAGE),
@@ -640,7 +653,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   for (let i = 1; i < NARRATIVE_PAGES; i += 1) {
     pages.push({
       ...withFurniture(page(`The report (${i + 1})`, [
-        ...furniture(DOCUMENT_LABEL, nextPart('Report'), 'The report'),
+        ...furniture(DOCUMENT_LABEL, narrativePart, 'The report'),
         ...flow([
           markdown('{{narrative.source}}', i, contNarrativeHeight, MARKDOWN_LINES_PER_PAGE),
         ], contentTop()),
@@ -657,7 +670,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // would print over the text.
   pages.push({
     ...withFurniture(page('Not the whole report', [
-      ...furniture(DOCUMENT_LABEL, nextPart('Report'), 'Not the whole report'),
+      ...furniture(DOCUMENT_LABEL, narrativePart, 'Not the whole report'),
       ...flow([
         sectionHeading({ eyebrow: 'Continued elsewhere', heading: 'Not the whole report' }),
         callout(
