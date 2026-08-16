@@ -174,3 +174,92 @@ describe('the ten-year equity chart', () => {
     expect(html).toContain('text-anchor="end"');
   });
 });
+
+/**
+ * The cover title, which has no fixed number of lines.
+ *
+ * `property_address` is the cover's title and nobody controls its length:
+ * measured over all 1,187 stored reports it is 19 characters at the median, 44
+ * at p90, 61 at p99 and **84** at its longest. The title reserved two lines at
+ * the family's display size, which is 41pt on Private Banking and 61pt on
+ * Objective — so a long address set three, four or six lines and printed
+ * through the gold rule and across the standfirst beneath it.
+ *
+ * Two things fix it, and this pins both because neither is visible from a
+ * render of the median address:
+ *
+ *  - the block is anchored at its FOOT, so it grows up into the empty half of
+ *    the cover instead of down into the standfirst;
+ *  - and where a family's display size cannot carry 84 characters in the space
+ *    between the rule and the head, the master carries a second, smaller title
+ *    under a complementary conditional. Four of the fifty need one.
+ *
+ * The arithmetic below is the same character-advance model `textHeight` uses,
+ * so a family whose scale changes without re-deriving its cover fails here
+ * rather than on a client's cover.
+ */
+describe('the cover title against the longest address in production', () => {
+  const LONGEST_ADDRESS = 84;
+
+  /** Points of height `chars` need at `size` across `width`. */
+  const heightFor = (chars: number, size: number, width: number) => {
+    const perLine = Math.max(1, Math.floor(width / (size * 0.5)));
+    return Math.ceil(chars / perLine) * size * 1.12;
+  };
+
+  const covers = INVESTMENT_COMPASS_TEMPLATES.map((t) => {
+    const schema = (t as { schema: { pages: Array<{ blocks: Array<Record<string, never>> }> } }).schema;
+    const blocks = schema.pages[0].blocks as unknown as Array<{
+      name?: string; conditional?: string; props: Record<string, number | string>;
+    }>;
+    return {
+      slug: String((t as { slug?: string }).slug),
+      titles: blocks.filter((b) => b.name === 'Cover title'),
+      tagline: blocks.find((b) => b.name === 'Tagline'),
+    };
+  });
+
+  it('anchors every cover title to its rule rather than to a reserved two lines', () => {
+    for (const { slug, titles } of covers) {
+      expect(titles.length, `${slug} must carry a cover title`).toBeGreaterThan(0);
+      for (const t of titles) {
+        expect(t.props.anchorBottom, `${slug} title must be bottom-anchored`).toBeTypeOf('number');
+      }
+    }
+  });
+
+  it('offers exactly one title for any given address', () => {
+    for (const { slug, titles } of covers) {
+      if (titles.length === 1) {
+        expect(titles[0].conditional, `${slug} single title must be unconditional`).toBeUndefined();
+        continue;
+      }
+      expect(titles, `${slug} must carry one or two titles`).toHaveLength(2);
+      const [full, small] = titles;
+      // Complementary: the negation of the long case, and the long case.
+      expect(full.conditional).toBe(`!(${small.conditional})`);
+      expect(Number(small.props.headingSize)).toBeLessThan(Number(full.props.headingSize));
+    }
+  });
+
+  it('sets the longest stored address without reaching the head', () => {
+    for (const { slug, titles, tagline } of covers) {
+      // The title that renders for a long address: the second where there is
+      // one, the only one otherwise.
+      const t = titles[titles.length - 1];
+      const foot = Number(t.props.anchorBottom);
+      const width = Number(t.props.width);
+      const size = Number(t.props.headingSize);
+      // The eyebrow above the heading, and the tagline's own line beneath the
+      // head, are both in the way.
+      const eyebrow = Number(t.props.eyebrowSize) + 12;
+      const ceiling = Number(tagline?.props.y ?? 0) + 12;
+      const top = foot - eyebrow - heightFor(LONGEST_ADDRESS, size, width);
+      expect(
+        top,
+        `${slug}: an ${LONGEST_ADDRESS}-character address at ${size}pt reaches ${Math.round(top)}pt, `
+        + `above the head at ${Math.round(ceiling)}pt`,
+      ).toBeGreaterThan(ceiling);
+    }
+  });
+});

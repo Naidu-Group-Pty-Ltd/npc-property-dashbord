@@ -645,9 +645,32 @@ export function cover(opts: CoverOptions): PageDef {
 
   const ruleY = standfirstTop - 16;
 
+  /**
+   * The title is anchored to the rule, not to a reserved two lines.
+   *
+   * `titleHeight` used to be `coverTitle * 1.12 * 2` — two lines, on every
+   * family, for a string whose length nobody controls. `property_address` runs
+   * to **84 characters** across the 1,187 stored reports (median 19, p90 44,
+   * p99 61), and the measure here is 86% of the cover width. At Private
+   * Banking's 41pt that is four lines; at Swiss Minimal's 52pt it is six. The
+   * render showed exactly that: "Point NSW 2486," struck through by the gold
+   * rule and "AUSTRALIA" printed across the standfirst.
+   *
+   * Reserving for the longest address is the other half of the same mistake —
+   * it would leave the median 19-character address floating a hundred points
+   * above its own rule on every cover in the archive. So the block's FOOT is
+   * pinned instead (`anchorBottom`) and it grows up into the empty half of the
+   * cover, which is where a designer would set it and where there is nothing to
+   * collide with: the head sits at `headTop + 46` and even six lines of the
+   * largest display size clear it.
+   *
+   * `titleTop` is kept only as the fallback `y` a renderer without bottom
+   * anchoring would use, and it is the same number it always was.
+   */
   const titleHeight = Math.round(c.scale.coverTitle * 1.12 * 2) + 8;
   const eyebrowHeight = Math.round(c.scale.coverEyebrow + 12);
   const titleTop = ruleY - 14 - titleHeight - eyebrowHeight;
+  const titleFoot = ruleY - 14;
 
   const blocks: BlockDef[] = [];
 
@@ -760,20 +783,79 @@ export function cover(opts: CoverOptions): PageDef {
   }, 'Cover marker'));
 
   // ── Title block ──────────────────────────────────────────────────────────
-  blocks.push(block('text-block', {
-    eyebrow: opts.eyebrow,
-    eyebrowSize: c.scale.coverEyebrow,
-    eyebrowFont: 'token:mono',
-    eyebrowTracking: TRACKING.coverEyebrow,
-    eyebrowColor: 'token:primary',
-    heading: opts.title,
-    headingSize: c.scale.coverTitle,
-    headingFont: 'token:display',
-    headingWeight: 400,
-    headingLineHeight: 1.12,
-    headingColor: bodyInk,
-    x: left, y: titleTop, width: plan.bleed ? width : Math.round(width * 0.86),
-  }, 'Cover title'));
+  /*
+   * The title, at whichever of two sizes the address needs.
+   *
+   * Bottom-anchoring stops the title running INTO the standfirst, which is the
+   * defect the render showed. It cannot stop a long address running UP into the
+   * head: at Luxury Editorial's 40pt over a 414pt measure the longest address
+   * in the corpus is six lines, and the sixth reaches the tagline.
+   *
+   * A designer sets a long title smaller, and a template can too — the choice
+   * is data, and the catalogue already expresses that as mutually exclusive
+   * blocks carrying complementary conditionals (see `oneOf`). So the cover
+   * emits the title twice at the same position: the display size while the
+   * address fits the space above the rule, and a step down past that.
+   *
+   * Both numbers are DERIVED, per family, from the geometry this function has
+   * already computed — the measure, the leading, and the distance from the rule
+   * to the head — rather than being a constant that goes stale when a family's
+   * scale changes. `titleCharsAt` is the same character-advance model
+   * `textHeight` uses and is read slightly wide, which is the safe direction.
+   */
+  const titleWidth = plan.bleed ? width : Math.round(width * 0.86);
+  // The tagline is the lowest thing in the head, at `headTop + 46`; the title
+  // may grow up to just clear of it. 12pt is the tagline's own line, 18 the
+  // clear space beneath it. (`headTop` is declared with the mark, above.)
+  const titleCeiling = headTop + 46 + 12 + 18;
+  const titleRoom = titleFoot - titleCeiling - eyebrowHeight;
+  /** How many characters fit above the rule at `size`, at this measure. */
+  const titleCharsAt = (size: number): number => {
+    const perLine = Math.max(1, Math.floor(titleWidth / (size * 0.5)));
+    const lines = Math.max(1, Math.floor(titleRoom / (size * 1.12)));
+    return perLine * lines;
+  };
+  /**
+   * The longest `property_address` in the corpus, measured 2026-08-16 over all
+   * 1,187 rows: median 19, p90 44, p99 61, max 84. The step-down size is the
+   * first one that fits 84 characters, so no stored address can overrun it.
+   */
+  const LONGEST_ADDRESS = 84;
+  const fullChars = titleCharsAt(c.scale.coverTitle);
+  let smallSize = c.scale.coverTitle;
+  while (smallSize > 12 && titleCharsAt(smallSize) < LONGEST_ADDRESS) smallSize = Math.round((smallSize - 1) * 10) / 10;
+
+  const titleBlock = (size: number, when?: string) => {
+    const b = block('text-block', {
+      eyebrow: opts.eyebrow,
+      eyebrowSize: c.scale.coverEyebrow,
+      eyebrowFont: 'token:mono',
+      eyebrowTracking: TRACKING.coverEyebrow,
+      eyebrowColor: 'token:primary',
+      heading: opts.title,
+      headingSize: size,
+      headingFont: 'token:display',
+      headingWeight: 400,
+      headingLineHeight: 1.12,
+      headingColor: bodyInk,
+      x: left, y: titleTop, anchorBottom: titleFoot,
+      width: titleWidth,
+    }, 'Cover title');
+    return when ? { ...b, conditional: when } : b;
+  };
+
+  if (smallSize >= c.scale.coverTitle) {
+    // This family's display size already carries the longest address there is.
+    blocks.push(titleBlock(c.scale.coverTitle));
+  } else {
+    // `property.address` is set on all 1,187 rows, so the guard is about the
+    // namespace being present rather than about the field.
+    const long = `property && property.address && property.address.length > ${fullChars}`;
+    blocks.push(
+      titleBlock(c.scale.coverTitle, `!(${long})`),
+      titleBlock(smallSize, long),
+    );
+  }
 
   blocks.push(block('divider', {
     color: 'token:primary',
