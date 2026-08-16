@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, Boxes, CheckCircle2, ChevronLeft, ChevronRight, FileSpreadsheet,
-  Image as ImageIcon, ImageDown, Link2, Loader2, Plus, RefreshCw, Search, Sparkles, Trash2,
-  Upload, UserCheck,
+  AlertTriangle, Bath, BedDouble, Boxes, Car, CheckCircle2, ChevronLeft, ChevronRight, FileImage,
+  FileSpreadsheet, Globe, Image as ImageIcon, ImageDown, ImageOff, Link2, Loader2, Map, Plus,
+  RefreshCw, Search, Sparkles, Trash2, Upload, UserCheck, type LucideIcon,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,7 +41,7 @@ import {
   STOCK_IMAGE_STAGE_BADGES, STOCK_SELECTION_STATUS_LABELS, STOCK_UPLOAD_STATUS_CLASSES,
   STOCK_UPLOAD_STATUS_LABELS, STOCK_SOURCE_TYPE_LABELS, stockSourceLabel,
   type BuilderStockItem, type BuilderStockUpload, type StockAvailability,
-  type StockUploadStatus,
+  type StockImageStage, type StockSelectionStatus, type StockUploadStatus,
 } from '@/lib/builderStock';
 
 /**
@@ -358,15 +358,21 @@ export default function BuilderStockList() {
       ) : null}
 
       <Card>
-        <CardHeader className="gap-3">
-          <div>
+        <CardHeader className="gap-4">
+          <div className="min-w-0">
             <CardTitle className="text-base">Your stock</CardTitle>
             <CardDescription>
               Properties imported from your stock lists. These are what the Command Centre sees.
             </CardDescription>
           </div>
-          <div className="flex flex-col gap-2 lg:flex-row">
-            <div className="relative flex-1">
+          {/*
+            One toolbar rather than three stacked controls. The search takes the
+            slack (`flex-1` over a `basis-64` floor) and the two filters hold a
+            fixed compact width, so at narrow widths they wrap onto their own
+            line instead of forcing the card wider than the column.
+          */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-0 flex-1 basis-64">
               <Search
                 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
                 aria-hidden
@@ -375,12 +381,15 @@ export default function BuilderStockList() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search address, suburb, development or reference"
-                className="pl-9"
+                className="h-9 w-full pl-9"
                 aria-label="Search stock"
               />
             </div>
             <Select value={availability} onValueChange={setAvailability}>
-              <SelectTrigger className="lg:w-52" aria-label="Filter by availability">
+              <SelectTrigger
+                className="h-9 w-full min-w-0 sm:w-44"
+                aria-label="Filter by availability"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -390,8 +399,11 @@ export default function BuilderStockList() {
               </SelectContent>
             </Select>
             <Select value={uploadFilter} onValueChange={setUploadFilter}>
-              <SelectTrigger className="lg:w-64" aria-label="Filter by stock list">
-                <SelectValue />
+              <SelectTrigger
+                className="h-9 w-full min-w-0 sm:w-56"
+                aria-label="Filter by stock list"
+              >
+                <SelectValue className="truncate" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All stock lists</SelectItem>
@@ -430,16 +442,31 @@ export default function BuilderStockList() {
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
-                <Table>
+              {/*
+                Two presentations of the same rows, the same data and the same
+                controls.
+
+                The cut is 1400px rather than a named breakpoint because it is
+                measured, not chosen: a 288px sidebar and the content gutters
+                leave ~1030px there, which is the width at which six columns
+                seat "Under contract" in a select and "Builder supplied" on a
+                badge without either being cut short. Below it the identical
+                fields stack into cards — a complete card beats a squeezed row,
+                and neither presentation needs a scroller.
+              */}
+              <div className="hidden min-[1400px]:block">
+                <Table className="table-fixed">
                   <TableHeader>
+                    {/* Percentages, not rem: the columns divide whatever the
+                        content area is, so the table can never be wider than
+                        the card that holds it. */}
                     <TableRow>
-                      <TableHead>Property</TableHead>
-                      <TableHead>Configuration</TableHead>
-                      <TableHead>Price</TableHead>
-                      <TableHead>Images</TableHead>
-                      <TableHead>Availability</TableHead>
-                      <TableHead>Selected</TableHead>
+                      <TableHead className="w-[26%] px-3">Property</TableHead>
+                      <TableHead className="w-[14%] px-3">Configuration</TableHead>
+                      <TableHead className="w-[14%] px-3">Price</TableHead>
+                      <TableHead className="w-[15%] px-3">Images</TableHead>
+                      <TableHead className="w-[18%] px-3">Availability</TableHead>
+                      <TableHead className="w-[13%] px-3">Selected</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -465,6 +492,28 @@ export default function BuilderStockList() {
                   </TableBody>
                 </Table>
               </div>
+
+              <ul className="space-y-3 min-[1400px]:hidden">
+                {records.map((item) => (
+                  <StockCard
+                    key={item.id}
+                    item={item}
+                    saving={setAvailabilityMutation.isPending}
+                    onAvailabilityChange={(next) => {
+                      setAvailabilityMutation.mutate(
+                        { stockItemId: item.id, availability: next },
+                        {
+                          onError: (error) => toast({
+                            title: 'Could not update availability',
+                            description: (error as Error).message,
+                            variant: 'destructive',
+                          }),
+                        },
+                      );
+                    }}
+                  />
+                ))}
+              </ul>
 
               {pagination && pagination.total_pages > 1 ? (
                 <div className="mt-4 flex items-center justify-between">
@@ -828,71 +877,325 @@ function ImportSummaryCard({ summary }: { summary: StockImportSummary }) {
   );
 }
 
-function StockRow({
-  item, saving, onAvailabilityChange,
+// ---------------------------------------------------------------------------
+// Stock row presentation
+//
+// One set of field renderers, drawn either into a table cell (xl and up) or
+// into a stacked card (below xl), so the two presentations cannot drift. Every
+// one of them reads the same fields the previous single table row read, and
+// none of them decides anything: no filtering, no derived availability, no
+// selection state of its own.
+// ---------------------------------------------------------------------------
+
+/**
+ * The selection badge's tint, drawn only from the availability palette this
+ * module already ships — no new colour values. Selection statuses are the
+ * server's; nothing here adds one.
+ */
+const SELECTION_STATUS_CLASSES: Record<StockSelectionStatus, string> = {
+  selected: STOCK_AVAILABILITY_CLASSES.on_hold,
+  builder_acknowledged: STOCK_AVAILABILITY_CLASSES.contracted,
+  progressed: STOCK_AVAILABILITY_CLASSES.contracted,
+  completed: STOCK_AVAILABILITY_CLASSES.available,
+  withdrawn: STOCK_AVAILABILITY_CLASSES.sold,
+};
+
+/** Short forms of the image-stage labels, for chips too narrow for the full one. */
+const STOCK_IMAGE_STAGE_SHORT_LABELS: Record<StockImageStage, string> = {
+  uploaded_document: 'Stock list',
+  google_maps: 'Street View',
+  internet_search: 'Online',
+};
+
+const STOCK_IMAGE_STAGE_ICONS: Record<StockImageStage, LucideIcon> = {
+  uploaded_document: FileImage,
+  google_maps: Map,
+  internet_search: Globe,
+};
+
+/**
+ * The amount, and whatever the builder's file said around it.
+ *
+ * Presentation only: the string `stockItemPrice` returns is split at the first
+ * currency figure and both halves are printed, in the order they were written.
+ * Nothing is dropped or reformatted — "From $749,000" keeps its "From", and the
+ * full line is carried on `title` as well. A price is the offer; setting the
+ * qualifier a size down makes the figure scannable without editing it.
+ */
+const PRICE_AMOUNT = /^([\s\S]*?\$\s?[\d,]+(?:\.\d+)?)\s*([\s\S]*)$/;
+
+function splitPriceLine(price: string | null): { amount: string; qualifier: string | null } {
+  if (!price) return { amount: '—', qualifier: null };
+  const match = PRICE_AMOUNT.exec(price.trim());
+  if (!match) return { amount: price, qualifier: null };
+  return { amount: match[1], qualifier: match[2] || null };
+}
+
+function PropertyIdentity({ item }: { item: BuilderStockItem }) {
+  const title = stockItemTitle(item);
+  const locality = stockItemLocality(item);
+  return (
+    <div className="min-w-0">
+      {/* Wraps to a second line rather than truncating: an address is what
+          identifies the property, and half of one identifies nothing. */}
+      <p className="break-words text-sm font-medium leading-snug text-foreground">{title}</p>
+      {locality || item.external_reference ? (
+        <p className="mt-0.5 break-words text-xs leading-snug text-muted-foreground">
+          {locality}
+          {locality && item.external_reference ? ' · ' : ''}
+          {item.external_reference ? `Ref ${item.external_reference}` : ''}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Bedrooms, bathrooms and car spaces as three compact chips instead of a
+ * sentence. The words are kept for screen readers and on hover, so nothing the
+ * text form said is lost.
+ */
+function ConfigurationChips({ item, hideWhenEmpty = false }: {
+  item: BuilderStockItem;
+  /** Cards omit an absent field; a table column still needs its placeholder. */
+  hideWhenEmpty?: boolean;
+}) {
+  const configuration = stockItemConfiguration(item);
+  if (!configuration) {
+    return hideWhenEmpty ? null : <span className="text-sm text-muted-foreground">—</span>;
+  }
+
+  const parts: Array<{ icon: LucideIcon; value: number; label: string }> = [];
+  if (item.bedrooms !== null && item.bedrooms !== undefined) {
+    parts.push({ icon: BedDouble, value: item.bedrooms, label: 'bed' });
+  }
+  if (item.bathrooms !== null && item.bathrooms !== undefined) {
+    parts.push({ icon: Bath, value: item.bathrooms, label: 'bath' });
+  }
+  if (item.car_spaces !== null && item.car_spaces !== undefined) {
+    parts.push({ icon: Car, value: item.car_spaces, label: 'car' });
+  }
+
+  return (
+    <ul className="flex flex-wrap items-center gap-1" title={configuration}>
+      {parts.map(({ icon: Icon, value, label }) => (
+        <li
+          key={label}
+          className="inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-muted/30 px-1 py-0.5 text-xs leading-none text-foreground"
+        >
+          <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="tabular-nums">{value}</span>
+          <span className="sr-only">{`${value} ${label}`}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function PriceBlock({ item }: { item: BuilderStockItem }) {
+  const price = stockItemPrice(item);
+  const { amount, qualifier } = splitPriceLine(price);
+  return (
+    <div className="min-w-0" title={price ?? undefined}>
+      <p className="break-words text-sm font-semibold tabular-nums leading-snug text-foreground">
+        {amount}
+      </p>
+      {qualifier ? (
+        <p className="mt-0.5 break-words text-xs leading-snug text-muted-foreground">{qualifier}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * What imagery this property has, and where each stage got to.
+ *
+ * The same two facts the text readout carried — which image the card would draw,
+ * and the per-stage ready counts — as a badge and three chips. A stage that
+ * found nothing is drawn dashed and muted rather than being written out, and
+ * its full label and reason stay on the element for hover and screen readers.
+ */
+function ImageSources({ item, showLabels = false }: { item: BuilderStockItem; showLabels?: boolean }) {
+  const image = primaryStockImage(item);
+  const stages = stockImageStageSummary(item);
+
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-1.5">
+      <Badge
+        variant="outline"
+        title={image ? STOCK_IMAGE_STAGE_BADGES[image.source_stage] : 'No image yet'}
+        className={cn(
+          'max-w-full gap-1 px-1.5 py-0 text-[11px] font-medium',
+          image
+            ? STOCK_AVAILABILITY_CLASSES.available
+            : 'border-dashed border-border/70 bg-muted/30 text-muted-foreground',
+        )}
+      >
+        {image
+          ? <ImageIcon className="h-3 w-3 shrink-0" aria-hidden />
+          : <ImageOff className="h-3 w-3 shrink-0" aria-hidden />}
+        <span className="truncate">
+          {image ? STOCK_IMAGE_STAGE_BADGES[image.source_stage] : 'No image yet'}
+        </span>
+      </Badge>
+
+      <ul className="flex flex-wrap items-center gap-1">
+        {stages.map((stage) => {
+          const Icon = STOCK_IMAGE_STAGE_ICONS[stage.stage];
+          const found = stage.ready > 0;
+          return (
+            <li
+              key={stage.stage}
+              title={found ? `${stage.label}: ${stage.ready}` : `${stage.label}: ${stage.note ?? 'none'}`}
+              className={cn(
+                'inline-flex max-w-full items-center gap-0.5 rounded-md border px-1 py-0.5 text-[11px] leading-none',
+                found
+                  ? 'border-border/60 bg-muted/30 text-foreground'
+                  : 'border-dashed border-border/60 text-muted-foreground',
+              )}
+            >
+              <Icon className="h-3 w-3 shrink-0" aria-hidden />
+              {showLabels ? (
+                <span className="truncate">{STOCK_IMAGE_STAGE_SHORT_LABELS[stage.stage]}</span>
+              ) : null}
+              <span className="tabular-nums">{found ? stage.ready : '—'}</span>
+              <span className="sr-only">
+                {stage.label}: {found ? `${stage.ready} available` : (stage.note ?? 'none')}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The availability control. Same value, same options, same handler and same
+ * accessible name as before — only the trigger's width is now the column's
+ * rather than a fixed 10rem that the column had to grow to fit.
+ */
+function AvailabilityControl({
+  item, saving, onAvailabilityChange, className,
 }: {
   item: BuilderStockItem;
   saving: boolean;
   onAvailabilityChange: (next: string) => void;
+  className?: string;
 }) {
-  const image = primaryStockImage(item);
-  const stages = stockImageStageSummary(item);
-  const configuration = stockItemConfiguration(item);
-  const price = stockItemPrice(item);
-  const locality = stockItemLocality(item);
+  return (
+    <Select
+      value={item.availability_status}
+      onValueChange={onAvailabilityChange}
+      disabled={saving}
+    >
+      <SelectTrigger
+        className={cn('h-9 w-full min-w-0', className)}
+        aria-label={`Availability for ${stockItemTitle(item)}`}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {item.availability_status === 'unknown' ? (
+          <SelectItem value="unknown">{STOCK_AVAILABILITY_LABELS.unknown}</SelectItem>
+        ) : null}
+        {SETTABLE_AVAILABILITY.map((status) => (
+          <SelectItem key={status} value={status}>{STOCK_AVAILABILITY_LABELS[status]}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
+/**
+ * The selection state. The statuses are the server's, rendered with the labels
+ * this module already publishes; "Not selected" names the absence the em-dash
+ * used to stand for and is not a status the data can hold.
+ */
+function SelectionStatus({ item }: { item: BuilderStockItem }) {
+  if (!item.latest_selection) {
+    return <span className="text-xs text-muted-foreground">Not selected</span>;
+  }
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        // Wraps inside the column instead of widening it — the status is the
+        // one thing on this row that must never be pushed off the edge.
+        'max-w-full whitespace-normal px-1.5 py-0.5 text-[11px] font-medium leading-tight',
+        SELECTION_STATUS_CLASSES[item.latest_selection.status]
+          ?? STOCK_AVAILABILITY_CLASSES.on_hold,
+      )}
+    >
+      {STOCK_SELECTION_STATUS_LABELS[item.latest_selection.status]}
+    </Badge>
+  );
+}
+
+interface StockPresentationProps {
+  item: BuilderStockItem;
+  saving: boolean;
+  onAvailabilityChange: (next: string) => void;
+}
+
+/** xl and up: the six-column table row. */
+function StockRow({ item, saving, onAvailabilityChange }: StockPresentationProps) {
   return (
     <TableRow>
-      <TableCell>
-        <p className="max-w-[20rem] truncate text-sm font-medium">{stockItemTitle(item)}</p>
-        {locality ? <p className="text-xs text-muted-foreground">{locality}</p> : null}
-        {item.external_reference ? (
-          <p className="text-xs text-muted-foreground">Ref {item.external_reference}</p>
-        ) : null}
+      <TableCell className="px-3 py-3 align-top">
+        <PropertyIdentity item={item} />
       </TableCell>
-      <TableCell className="text-sm text-muted-foreground">{configuration ?? '—'}</TableCell>
-      <TableCell className="whitespace-nowrap text-sm">{price ?? '—'}</TableCell>
-      <TableCell>
-        <div className="flex flex-col gap-1">
-          <span className="flex items-center gap-1.5 text-xs">
-            <ImageIcon className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-            {image
-              ? STOCK_IMAGE_STAGE_BADGES[image.source_stage]
-              : <span className="text-muted-foreground">No image yet</span>}
-          </span>
-          <span className="text-[11px] text-muted-foreground">
-            {stages.map((stage) => `${stage.label}: ${stage.ready || '—'}`).join(' · ')}
-          </span>
-        </div>
+      <TableCell className="px-3 py-3 align-top">
+        <ConfigurationChips item={item} />
       </TableCell>
-      <TableCell>
-        <Select
-          value={item.availability_status}
-          onValueChange={onAvailabilityChange}
-          disabled={saving}
-        >
-          <SelectTrigger className="w-40" aria-label={`Availability for ${stockItemTitle(item)}`}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {item.availability_status === 'unknown' ? (
-              <SelectItem value="unknown">{STOCK_AVAILABILITY_LABELS.unknown}</SelectItem>
-            ) : null}
-            {SETTABLE_AVAILABILITY.map((status) => (
-              <SelectItem key={status} value={status}>{STOCK_AVAILABILITY_LABELS[status]}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <TableCell className="px-3 py-3 align-top">
+        <PriceBlock item={item} />
       </TableCell>
-      <TableCell>
-        {item.latest_selection ? (
-          <Badge variant="outline" className={cn('font-medium', STOCK_AVAILABILITY_CLASSES.on_hold)}>
-            {STOCK_SELECTION_STATUS_LABELS[item.latest_selection.status]}
-          </Badge>
-        ) : (
-          <span className="text-xs text-muted-foreground">—</span>
-        )}
+      <TableCell className="px-3 py-3 align-top">
+        <ImageSources item={item} />
+      </TableCell>
+      <TableCell className="px-3 py-3 align-top">
+        <AvailabilityControl
+          item={item}
+          saving={saving}
+          onAvailabilityChange={onAvailabilityChange}
+        />
+      </TableCell>
+      <TableCell className="px-3 py-3 align-top">
+        <SelectionStatus item={item} />
       </TableCell>
     </TableRow>
+  );
+}
+
+/** Below xl: the same fields stacked, so nothing has to be scrolled to. */
+function StockCard({ item, saving, onAvailabilityChange }: StockPresentationProps) {
+  return (
+    <li className="builder-portal-soft-panel p-4 transition-colors hover:bg-muted/30">
+      {/* The badge drops to its own line rather than squeezing the address into
+          a four-line column on a narrow phone. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
+        <div className="min-w-0 flex-1 basis-56">
+          <PropertyIdentity item={item} />
+        </div>
+        <SelectionStatus item={item} />
+      </div>
+
+      <div className="mt-3 grid gap-3 border-t border-border/50 pt-3 sm:grid-cols-2">
+        <div className="min-w-0 space-y-2">
+          <PriceBlock item={item} />
+          <ConfigurationChips item={item} hideWhenEmpty />
+        </div>
+        <div className="flex min-w-0 flex-col gap-2 sm:items-end">
+          <ImageSources item={item} showLabels />
+          <AvailabilityControl
+            item={item}
+            saving={saving}
+            onAvailabilityChange={onAvailabilityChange}
+            className="sm:w-48"
+          />
+        </div>
+      </div>
+    </li>
   );
 }
