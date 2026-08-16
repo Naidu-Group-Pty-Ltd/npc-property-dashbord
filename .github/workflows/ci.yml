@@ -198,6 +198,7 @@ jobs:
         run: |
           npx vitest run \
             src/lib/__tests__/builderStockAutomaticImages.test.ts \
+            src/lib/__tests__/builderStockEnrichmentRetry.test.ts \
             src/lib/__tests__/builderStockPrimaryImageRole.test.ts \
             src/lib/__tests__/builderStockExactSourceImage.test.ts \
             src/lib/__tests__/builderStockPdfSourceImages.test.ts \

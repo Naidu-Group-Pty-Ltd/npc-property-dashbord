@@ -25,6 +25,11 @@ import { meteredFetch } from '../meteredFetch.ts';
 import { enforceGlobalDailyQuota, killSwitchActive } from '../publicAbuseControls.ts';
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import { geocodableAddress } from './normalise.pure.ts';
+import {
+  decideStageRun, stageSkipMessage,
+  STAGE_INPUT_KEY, STAGE_REASON_KEY, STAGE_STATUS_REFERENCE,
+  type StageReason, type StageRow,
+} from './enrichmentRetry.pure.ts';
 import { hasReadySourceImage } from './sourceImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 
@@ -86,7 +91,15 @@ async function withTimeout<T>(work: (signal: AbortSignal) => Promise<T>): Promis
   }
 }
 
-/** Record a stage that produced nothing, so the UI can say why. */
+/**
+ * Record a stage that produced nothing, so the UI can say why.
+ *
+ * The prose is for a person. The `reason` and the `input` beside it are for the
+ * next run: they are what `decideStageRun` reads to tell "the key was missing"
+ * from "this address has no coverage", and re-asking the second one buys the
+ * same answer for the same money. Matching on the message would have worked
+ * until somebody improved the wording.
+ */
 async function recordStageUnavailable(
   db: any,
   item: EnrichableStockItem,
@@ -94,17 +107,20 @@ async function recordStageUnavailable(
   status: 'unavailable' | 'failed',
   message: string,
   provider: string,
+  reason: StageReason,
+  input: string | null,
 ): Promise<StageOutcome> {
   await db.from('builder_stock_item_images').upsert({
     stock_item_id: item.id,
     organisation_id: item.organisation_id,
     source_stage: stage,
-    source_reference: 'stage-status',
+    source_reference: STAGE_STATUS_REFERENCE,
     source_provider: provider,
     processing_status: status,
     verification_status: stage === 'google_maps' ? 'location_derived' : 'unverified',
     error_message: message,
     position: 0,
+    source_detail: { [STAGE_REASON_KEY]: reason, [STAGE_INPUT_KEY]: input },
   }, { onConflict: 'stock_item_id,source_stage,source_reference' });
   return { stage, status, detail: message };
 }
@@ -135,7 +151,7 @@ async function recordStageSkipped(
       stock_item_id: item.id,
       organisation_id: item.organisation_id,
       source_stage: stage,
-      source_reference: 'stage-status',
+      source_reference: STAGE_STATUS_REFERENCE,
       source_provider: stage === 'google_maps' ? 'google' : 'perplexity',
       processing_status: 'unavailable',
       verification_status: stage === 'google_maps' ? 'location_derived' : 'unverified',
@@ -175,21 +191,24 @@ export async function enrichFromGoogle(
   if (!apiKey) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'Location imagery is not configured for this workspace.', 'google');
+      'Location imagery is not configured for this workspace.', 'google',
+      'not_configured', geocodableAddress(item));
   }
 
   const address = geocodableAddress(item);
   if (!address) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'This property has no street address to look up.', 'google');
+      'This property has no street address to look up.', 'google',
+      'no_input', null);
   }
 
   // The operator's off switch, shared with `street-view`.
   if (killSwitchActive('GOOGLE_STREET_VIEW_KILL_SWITCH')) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'Location imagery is temporarily switched off.', 'google');
+      'Location imagery is temporarily switched off.', 'google',
+      'switched_off', address);
   }
 
   /**
@@ -207,7 +226,8 @@ export async function enrichFromGoogle(
   } else if (circuitOpen === true) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'Location imagery is temporarily unavailable.', 'google');
+      'Location imagery is temporarily unavailable.', 'google',
+      'provider_unavailable', address);
   }
 
   // The same daily ceiling and the same env var as `street-view`, because it
@@ -220,7 +240,8 @@ export async function enrichFromGoogle(
     if (!await spend()) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'The daily limit for location imagery has been reached.', 'google');
+        'The daily limit for location imagery has been reached.', 'google',
+        'quota_exhausted', address);
     }
     const geocoded = await meteredFetch(
       `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&region=au&key=${apiKey}`,
@@ -232,7 +253,8 @@ export async function enrichFromGoogle(
     if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'That address could not be located.', 'google');
+        'That address could not be located.', 'google',
+        'address_not_found', address);
     }
 
     const point = `${location.lat},${location.lng}`;
@@ -242,7 +264,8 @@ export async function enrichFromGoogle(
     if (!await spend()) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'The daily limit for location imagery has been reached.', 'google');
+        'The daily limit for location imagery has been reached.', 'google',
+        'quota_exhausted', address);
     }
     const metadata = await meteredFetch(
       `https://maps.googleapis.com/maps/api/streetview/metadata?location=${encodeURIComponent(point)}&key=${apiKey}`,
@@ -296,7 +319,8 @@ export async function enrichFromGoogle(
     if (!bytes || bytes.length < 1024) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'No location imagery is available for this address.', 'google');
+        'No location imagery is available for this address.', 'google',
+        'no_imagery', address);
     }
 
     const path = `${item.organisation_id}/items/${item.id}/google-${product}.jpg`;
@@ -322,7 +346,13 @@ export async function enrichFromGoogle(
       processing_status: 'ready',
       error_message: null,
       position: 0,
-      source_detail: { address, latitude: location.lat, longitude: location.lng, product },
+      // The address this picture was bought FOR. Correct the address and
+      // `decideStageRun` re-runs the stage, because a Street View of the old
+      // one is a picture of the wrong house.
+      source_detail: {
+        address, latitude: location.lat, longitude: location.lng, product,
+        [STAGE_INPUT_KEY]: address,
+      },
     }, { onConflict: 'stock_item_id,source_stage,source_reference' });
 
     return { stage: 'google_maps', status: 'ready', detail: product };
@@ -332,7 +362,8 @@ export async function enrichFromGoogle(
     });
     return await recordStageUnavailable(
       db, item, 'google_maps', 'failed',
-      'Location imagery could not be retrieved.', 'google');
+      'Location imagery could not be retrieved.', 'google',
+      'retrieval_failed', geocodableAddress(item));
   }
 }
 
@@ -384,14 +415,16 @@ export async function enrichFromInternetSearch(
   if (!apiKey) {
     return await recordStageUnavailable(
       db, item, 'internet_search', 'unavailable',
-      'Internet property search is not configured for this workspace.', 'perplexity');
+      'Internet property search is not configured for this workspace.', 'perplexity',
+      'not_configured', stockSearchQuery(item, builderName));
   }
 
   const query = stockSearchQuery(item, builderName);
   if (!query) {
     return await recordStageUnavailable(
       db, item, 'internet_search', 'unavailable',
-      'This property does not name enough to search for.', 'perplexity');
+      'This property does not name enough to search for.', 'perplexity',
+      'no_input', null);
   }
 
   try {
@@ -429,7 +462,8 @@ export async function enrichFromInternetSearch(
     if (!response.ok) {
       return await recordStageUnavailable(
         db, item, 'internet_search', 'failed',
-        'The property search service did not respond.', 'perplexity');
+        'The property search service did not respond.', 'perplexity',
+        'retrieval_failed', query);
     }
 
     const payload = await response.json().catch(() => null);
@@ -439,7 +473,8 @@ export async function enrichFromInternetSearch(
     if (!candidates.length) {
       return await recordStageUnavailable(
         db, item, 'internet_search', 'unavailable',
-        'No published imagery was found for this property.', 'perplexity');
+        'No published imagery was found for this property.', 'perplexity',
+        'no_imagery', query);
     }
 
     for (const [index, candidate] of candidates.entries()) {
@@ -457,7 +492,7 @@ export async function enrichFromInternetSearch(
         confidence: 0.3,
         processing_status: 'ready',
         position: index,
-        source_detail: { query, title: candidate.title },
+        source_detail: { query, title: candidate.title, [STAGE_INPUT_KEY]: query },
       }, { onConflict: 'stock_item_id,source_stage,source_reference' });
     }
 
@@ -468,7 +503,8 @@ export async function enrichFromInternetSearch(
     });
     return await recordStageUnavailable(
       db, item, 'internet_search', 'failed',
-      'The property search could not be completed.', 'perplexity');
+      'The property search could not be completed.', 'perplexity',
+      'retrieval_failed', query);
   }
 }
 
@@ -514,6 +550,56 @@ export function parseSearchImages(content: string): SearchCandidate[] {
 // ---------------------------------------------------------------------------
 
 /**
+ * Every stage-2 and stage-3 row a property holds, grouped by stage.
+ *
+ * One read for both decisions: asking per stage would spend two round trips to
+ * decide whether to spend money, which is the shape this is trying to remove.
+ */
+async function readStageRows(
+  db: any,
+  stockItemId: string,
+): Promise<Map<string, StageRow[]>> {
+  const byStage = new Map<string, StageRow[]>();
+  const { data } = await db
+    .from('builder_stock_item_images')
+    .select('source_stage, source_reference, processing_status, source_detail')
+    .eq('stock_item_id', stockItemId)
+    .in('source_stage', ['google_maps', 'internet_search'])
+    .limit(200);
+  for (const row of (data ?? []) as Array<StageRow & { source_stage: string }>) {
+    const bucket = byStage.get(row.source_stage) ?? [];
+    bucket.push(row);
+    byStage.set(row.source_stage, bucket);
+  }
+  return byStage;
+}
+
+/**
+ * Run one paid stage, or don't, and say which.
+ *
+ * A stage that is not worth paying for again WRITES NOTHING. The row already on
+ * the property is the answer, and overwriting it with "skipped" would discard
+ * the reason and the input that made this decision possible — so the next run
+ * would have to buy the answer again to learn what it already knew.
+ */
+async function runPaidStage(
+  db: any,
+  item: EnrichableStockItem,
+  stage: 'google_maps' | 'internet_search',
+  stageRows: Map<string, StageRow[]>,
+  input: string | null,
+  run: () => Promise<StageOutcome>,
+): Promise<StageOutcome> {
+  const decision = decideStageRun(stageRows.get(stage) ?? [], input);
+  if (decision.run) return await run();
+
+  console.log('[builderStock] paid stage not repeated', {
+    item: item.id, stage, decision: decision.reason,
+  });
+  return { stage, status: 'skipped', detail: stageSkipMessage(decision.reason) };
+}
+
+/**
  * Run stages 2 and 3 for one property and settle its enrichment status.
  *
  * Stage 1 already ran at import time. The primary image is then chosen by
@@ -546,8 +632,27 @@ export async function enrichStockItem(
       outcomes.push(await recordStageSkipped(db, item, stage));
     }
   } else {
-    outcomes.push(await enrichFromGoogle(db, item));
-    outcomes.push(await enrichFromInternetSearch(db, item, builderName));
+    /**
+     * AND WHERE STAGE 1 DOES NOT, THE PREVIOUS ANSWER MIGHT.
+     *
+     * These two stages spend somebody else's money — three Google calls and one
+     * Perplexity call — and an import re-queues every property it touched, so
+     * importing the same stock list twice used to buy the same pictures twice.
+     * `decideStageRun` is the rule for when that is worth doing: never for an
+     * answer already given about an unchanged property, always when the last
+     * answer was about US, and always when the property's own address or search
+     * subject has moved. It lives in a pure module because it is a policy about
+     * spending, and a policy nothing can test is a policy that drifts.
+     */
+    const stageRows = await readStageRows(db, item.id);
+    outcomes.push(await runPaidStage(
+      db, item, 'google_maps', stageRows, geocodableAddress(item),
+      () => enrichFromGoogle(db, item),
+    ));
+    outcomes.push(await runPaidStage(
+      db, item, 'internet_search', stageRows, stockSearchQuery(item, builderName),
+      () => enrichFromInternetSearch(db, item, builderName),
+    ));
   }
 
   const primaryImageId = await chooseAndStorePrimaryImage(db, item.id);
