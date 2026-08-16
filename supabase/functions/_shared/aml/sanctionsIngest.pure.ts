@@ -249,3 +249,99 @@ export function decideSanctionsIngest(
   }
   return { accept: true, prune: true, reason: `${incoming} entries loaded` };
 }
+
+/* ──────────────── The last mile: simulator → live ──────────────── */
+
+/**
+ * Whether loading this list makes the screening provider able to answer.
+ *
+ * ── The dead end this closes ──────────────────────────────────────────
+ * Loading DFAT was necessary to screen anybody and it was never sufficient.
+ * `aml.provider_configs` carries `mode` for `pep_sanctions/local_lists`, and
+ * production refuses to run a provider in `simulator` mode
+ * (`providerEnvironment.ts`) — correctly, because the screening simulator
+ * returns **"clear" for everyone** who does not match a hardcoded keyword.
+ *
+ * So an MLRO could load the legally operative list in full and Stage 5 would
+ * still refuse, with nothing on the page to press: the only way to finish the
+ * job was an undocumented UPDATE against `provider_configs`, and no surface in
+ * the product performs it.
+ *
+ * ── Why this belongs to the ingest and not to a switch ────────────────
+ * `local_lists` calls no vendor. It queries `aml.sanctions_entries` behind its
+ * own freshness gate, so whether it can produce an authoritative answer is
+ * decided **by the data** and by nothing else. A separate `mode` flag is a
+ * second source of truth about that same fact, and it can only ever disagree
+ * with the first in one of two ways:
+ *
+ *   live + no list    claims readiness it does not have
+ *   simulator + list  refuses although it could answer   ← where we were
+ *
+ * Promoting on a successful load of the legally operative list removes the
+ * disagreement by making the flag a CONSEQUENCE of the data rather than a
+ * parallel assertion about it. It is the exact moment the assertion becomes
+ * true, it is already MLRO-gated, and it is already a recorded compliance act.
+ *
+ * ── What it deliberately will not do ──────────────────────────────────
+ * This is not "flip the mode to make the error go away", which is the thing
+ * that must never happen. It promotes ONLY on the legally operative list,
+ * ONLY when entries were actually written, and ONLY out of `simulator`:
+ *
+ *  - a non-DFAT list does not promote. UN and OFAC are corroborating; DFAT is
+ *    the Australian TFS source the provider requires.
+ *  - a zero-entry write does not promote, so an empty "success" cannot.
+ *  - an inactive provider is left inactive. Deactivation is a deliberate act
+ *    and reversing it is not a data-loading decision.
+ *  - a provider already live is left alone, so a routine refresh is not
+ *    recorded as a change.
+ *
+ * And it never DEMOTES. Freshness stays the provider's own gate: a live flag
+ * over a stale list still fails closed as a technical condition, never as a
+ * customer outcome. Nothing here can turn a stale list into a clear result.
+ */
+export const PROMOTING_LIST = "dfat";
+
+export interface ProviderPromotion {
+  promote: boolean;
+  /** Operator-facing statement of what did or did not change, and why. */
+  reason: string;
+}
+
+export function decideProviderPromotion(input: {
+  listCode: string;
+  entriesWritten: number;
+  currentMode: string | null | undefined;
+  active: boolean | null | undefined;
+}): ProviderPromotion {
+  if (String(input.listCode).toLowerCase() !== PROMOTING_LIST) {
+    return {
+      promote: false,
+      reason: "Screening readiness is unchanged — it follows the DFAT Consolidated List, "
+        + "which is the Australian source the provider requires.",
+    };
+  }
+  if (!(input.entriesWritten > 0)) {
+    return {
+      promote: false,
+      reason: "Screening readiness is unchanged, because no entries were written.",
+    };
+  }
+  if (input.active !== true) {
+    return {
+      promote: false,
+      reason: "The list is loaded, but the screening provider is deactivated. Reactivating "
+        + "it is a deliberate decision and is not made by loading data.",
+    };
+  }
+  if (String(input.currentMode) === "live") {
+    return {
+      promote: false,
+      reason: "Screening was already live; the list has been refreshed.",
+    };
+  }
+  return {
+    promote: true,
+    reason: "Screening is now live. The provider was in simulator mode, which production "
+      + "refuses to run, so the list alone could not have completed a single check.",
+  };
+}
