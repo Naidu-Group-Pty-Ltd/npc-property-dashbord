@@ -8,6 +8,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import {
+  applicableQuestionnaireSections,
+} from "../../../supabase/functions/_shared/aml/questionnaireSections.pure";
+
 // Vitest runs from the repo root; jsdom rewrites import.meta.url to an http
 // scheme, so resolve the sources from the working directory instead.
 const repo = process.cwd();
@@ -200,19 +204,63 @@ describe("conditional questionnaire engine (Phase 5, §14.2–14.4)", () => {
   it("is versioned and server-driven", () => {
     expect(portalSource).toContain("QUESTIONNAIRE_VERSION = '2'");
     expect(portalSource).toContain("questionnaire_version: QUESTIONNAIRE_VERSION");
-    expect(portalSource).toContain("function applicableSections(");
+    // The engine moved to `_shared/aml/questionnaireSections.pure.ts` when
+    // the sanctions section put compliance vocabulary in this file and
+    // tripped the payload guard above. The guard was right; the contract
+    // belongs beside the rest of the shared AML contract. It is exercised
+    // BEHAVIOURALLY below rather than by grepping for its source, which is
+    // what being a pure module buys.
+    expect(portalSource).toContain("applicableQuestionnaireSections(");
   });
 
+  const sections = (payloads: Record<string, Record<string, unknown>>) =>
+    applicableQuestionnaireSections((name) => payloads[name] ?? null);
+
   it("adds entity and related-party sections for the right structures", () => {
-    expect(portalSource).toContain("'entity_details'");
-    expect(portalSource).toContain("'related_parties'");
-    expect(portalSource).toContain("ENTITY_STRUCTURES = new Set(['Company', 'Trust', 'SMSF', 'Partnership'])");
-    expect(portalSource).toContain("MULTI_PARTY_STRUCTURES = new Set(['Joint', 'Company', 'Trust', 'SMSF', 'Partnership'])");
+    for (const entity_type of ["Company", "Trust", "SMSF", "Partnership"]) {
+      expect(sections({ purchasing_structure: { entity_type } }), entity_type)
+        .toContain("entity_details");
+    }
+    for (const entity_type of ["Joint", "Company", "Trust", "SMSF", "Partnership"]) {
+      expect(sections({ purchasing_structure: { entity_type } }), entity_type)
+        .toContain("related_parties");
+    }
+    // An individual with no gift funding needs neither.
+    const individual = sections({ purchasing_structure: { entity_type: "Individual" } });
+    expect(individual).not.toContain("entity_details");
+    expect(individual).not.toContain("related_parties");
+    // Gift funding pulls related parties in on its own.
+    expect(sections({
+      purchasing_structure: { entity_type: "Individual" },
+      funding: { sources: ["Gift"] },
+    })).toContain("related_parties");
   });
 
   it("keeps base sections applicable for every structure", () => {
-    expect(portalSource).toMatch(/out: string\[\] = \['purchasing_structure', 'personal_details'\]/);
-    expect(portalSource).toContain("out.push('purchase_profile', 'funding')");
+    for (const entity_type of ["Individual", "Joint", "Company", "Trust", "SMSF", "Partnership"]) {
+      const out = sections({ purchasing_structure: { entity_type } });
+      expect(out.slice(0, 2), entity_type)
+        .toEqual(["purchasing_structure", "personal_details"]);
+      expect(out, entity_type).toContain("purchase_profile");
+      expect(out, entity_type).toContain("funding");
+      // Screening completeness is asked of every customer, last.
+      expect(out[out.length - 1], entity_type).toBe("sanctions_screening");
+    }
+  });
+
+  it("asks for parties when the client says the disclosure is incomplete", () => {
+    // "Unsure" pulls the step in deliberately — an unsure customer is exactly
+    // the one whose disclosure is most likely incomplete.
+    for (const completeness of ["additions", "unsure"]) {
+      expect(sections({
+        purchasing_structure: { entity_type: "Individual" },
+        sanctions_screening: { completeness },
+      }), completeness).toContain("related_parties");
+    }
+    expect(sections({
+      purchasing_structure: { entity_type: "Individual" },
+      sanctions_screening: { completeness: "complete" },
+    })).not.toContain("related_parties");
   });
 
   it("validates saves against the full catalogue and retains superseded answers", () => {

@@ -80,6 +80,10 @@ export const QUESTIONNAIRE_SECTION_CODES = [
   'related_parties',
   'purchase_profile',
   'funding',
+  // Australian Sanctions & Compliance Screening. The client does not declare
+  // whether they are sanctioned — that is a determination we make. This
+  // section declares whether the information we screen ON is COMPLETE.
+  'sanctions_screening',
 ] as const;
 
 export type QuestionnaireSectionCode = (typeof QUESTIONNAIRE_SECTION_CODES)[number];

@@ -39,7 +39,7 @@ import {
   type ClientPickerStatus,
 } from "../_shared/aml/clientSearchMatch.pure.ts";
 import { sanitiseDocumentName } from "../_shared/aml/documentNaming.pure.ts";
-import { processScreeningEvent } from "../cross-portal-outbox-worker/screeningConsumer.ts";
+import { readSanctionsDeclaration } from "../_shared/aml/sanctionsDeclaration.pure.ts";
 import {
   decideScreeningPolicy,
   deriveMissingScreeningSubjects,
@@ -219,6 +219,10 @@ async function ensureScreeningSubjects(
     return found?.payload && typeof found.payload === 'object' ? found.payload : null;
   };
   const personalDetails = sectionPayload('personal_details');
+  // Names the client disclosed under Australian Sanctions & Compliance
+  // Screening. They widen what the matcher searches on; they never change
+  // whether the subject is screened.
+  const declaration = readSanctionsDeclaration(sectionPayload('sanctions_screening'));
   const hasSubmission = Boolean(submission);
 
   if (!caseRow) return { subjects: existing ?? [], enrolled: 0, personalDetails, hasSubmission };
@@ -226,6 +230,7 @@ async function ensureScreeningSubjects(
   const missing = deriveMissingScreeningSubjects({
     subjectDisplayName: caseRow.subject_display_name ?? null,
     personalDetails,
+    declaredAliases: declaration?.aliases ?? null,
     reconciled: (recon ?? []).map((r: any) => ({
       id: String(r.id),
       declaredName: String(r.declared_name ?? ''),

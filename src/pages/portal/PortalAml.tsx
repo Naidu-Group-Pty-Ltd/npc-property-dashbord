@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  SANCTIONS_ACKNOWLEDGEMENT_VERSION,
+} from '@/lib/aml/sanctionsDeclaration';
 import { toast } from 'sonner';
-import { Loader2, ShieldCheck, CheckCircle2, Clock, AlertTriangle, Lock, Upload, FileText, ArrowRight, ArrowLeft, Send } from 'lucide-react';
+import { Loader2, ShieldCheck, CheckCircle2, Check, Clock, AlertTriangle, Lock, Upload, FileText, ArrowRight, ArrowLeft, Send } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -51,6 +54,7 @@ type PortalStep = { key: string; label: string; section?: AmlSection };
 const SECTION_LABELS: Record<string, string> = {
   purchasing_structure: 'Purchasing structure',
   personal_details: 'Personal details',
+  sanctions_screening: 'Sanctions & compliance screening',
   entity_details: 'Entity details',
   related_parties: 'Related parties',
   purchase_profile: 'Purchase profile',
@@ -837,6 +841,8 @@ function QuestionnaireStep({
   const statusRef = useRef(status);
   statusRef.current = status;
 
+  const [known, setKnown] = useState<Array<{ label: string; value: string }>>([]);
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -850,6 +856,32 @@ function QuestionnaireStep({
       })
       .catch((e) => toast.error(e?.message ?? 'Failed to load'))
       .finally(() => alive && setLoading(false));
+    return () => { alive = false; };
+  }, [caseId, section]);
+
+  /*
+   * Show back what we already hold rather than asking for it again. Read from
+   * the questionnaire the client already completed — never re-entered, and
+   * never invented: a field they have not given simply does not appear.
+   */
+  useEffect(() => {
+    if (section !== 'sanctions_screening') return;
+    let alive = true;
+    amlPortalApi.getQuestionnaire(caseId, 'personal_details')
+      .then((r) => {
+        if (!alive) return;
+        const p = (r.response?.payload ?? {}) as Record<string, unknown>;
+        const rows: Array<{ label: string; value: string }> = [];
+        const push = (label: string, v: unknown) => {
+          if (typeof v === 'string' && v.trim()) rows.push({ label, value: v.trim() });
+        };
+        push('Legal name', p.full_name);
+        push('Date of birth', p.dob);
+        push('Residential address', p.address);
+        push('Citizenship', p.citizenship);
+        setKnown(rows);
+      })
+      .catch(() => { /* the summary is a convenience; its absence blocks nothing */ });
     return () => { alive = false; };
   }, [caseId, section]);
 
@@ -951,6 +983,9 @@ function QuestionnaireStep({
             {section === 'related_parties' && <RelatedPartiesForm value={form} set={set} structureType={structureType} />}
             {section === 'purchase_profile' && <PurchaseProfileForm value={form} set={set} />}
             {section === 'funding' && <FundingForm value={form} set={set} />}
+            {section === 'sanctions_screening' && (
+              <SanctionsScreeningForm value={form} set={set} known={known} />
+            )}
 
             <Separator />
             <div className="flex justify-between">
@@ -982,6 +1017,157 @@ function Field({ label, children, required }: { label: string; children: React.R
     <div className="space-y-1.5">
       <Label className="text-xs">{label}{required && <span className="text-destructive"> *</span>}</Label>
       {children}
+    </div>
+  );
+}
+
+
+/**
+ * Australian Sanctions & Compliance Screening — the client's view.
+ *
+ * ── What this does NOT ask ────────────────────────────────────────────
+ * It never asks the customer whether they are sanctioned or whether they
+ * appear on the DFAT Consolidated List. An ordinary property client cannot
+ * answer that, and asking implies their answer decides whether we screen. It
+ * does not — screening is an obligation we carry independently.
+ *
+ * ── What it asks instead ──────────────────────────────────────────────
+ * The only question they can actually answer, and the one we genuinely need:
+ * is the information we screen ON complete? An undisclosed former name is a
+ * real screening gap, so the aliases collected here widen what the matcher
+ * searches — without ever pretending the customer performed a check.
+ *
+ * Everything we already hold is shown back rather than asked again. The
+ * experience is "confirm this is complete", not "fill in another compliance
+ * form".
+ */
+function SanctionsScreeningForm({
+  value, set, known,
+}: {
+  value: any;
+  set: (k: string, v: any) => void;
+  known: Array<{ label: string; value: string }>;
+}) {
+  const completeness = value.completeness ?? '';
+  const aliases: string[] = Array.isArray(value.aliases) ? value.aliases : [];
+  const setAlias = (i: number, next: string) => {
+    const copy = [...aliases];
+    copy[i] = next;
+    set('aliases', copy);
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-lg border border-border bg-muted/30 p-4">
+        <div className="flex items-start gap-3">
+          <ShieldCheck aria-hidden className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold">Australian Sanctions &amp; Compliance Screening</h3>
+            <p className="text-sm text-muted-foreground">
+              As part of our AML/CTF and Australian sanctions compliance process, we are
+              required to independently check relevant clients and associated persons
+              against applicable Australian sanctions information.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              <strong className="font-medium text-foreground">
+                You do not need to perform this check yourself.
+              </strong>{' '}
+              We use the identity and relationship information you have already provided.
+              Please make sure all names, previous names, aliases and relevant people or
+              organisations connected with your transaction have been disclosed.
+            </p>
+            <details className="text-sm">
+              <summary className="cursor-pointer text-primary underline-offset-2 hover:underline">
+                What is DFAT?
+              </summary>
+              <p className="mt-1.5 text-muted-foreground">
+                DFAT is the Australian Government Department of Foreign Affairs and Trade.
+                The Australian Sanctions Office within DFAT administers Australia&rsquo;s
+                sanctions framework and maintains Australia&rsquo;s Consolidated List.
+              </p>
+            </details>
+          </div>
+        </div>
+      </div>
+
+      {known.length > 0 && (
+        <div>
+          <p className="text-sm font-medium">Information we already have</p>
+          <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+            {known.map((k) => (
+              <li key={k.label} className="flex items-start gap-2 text-sm">
+                <Check aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+                <span>
+                  <span className="text-muted-foreground">{k.label}: </span>
+                  <span className="font-medium">{k.value}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <Field label="Is everything above complete?" required>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {[
+            { v: 'complete', label: 'Yes, everything is complete' },
+            { v: 'additions', label: 'I need to add something' },
+            { v: 'unsure', label: "I'm not sure" },
+          ].map((opt) => (
+            <Button
+              key={opt.v}
+              type="button"
+              variant={completeness === opt.v ? 'default' : 'outline'}
+              className="h-auto whitespace-normal py-2 text-sm"
+              aria-pressed={completeness === opt.v}
+              onClick={() => set('completeness', opt.v)}
+            >
+              {opt.label}
+            </Button>
+          ))}
+        </div>
+      </Field>
+
+      {(completeness === 'additions' || completeness === 'unsure') && (
+        <div className="rounded-md border border-border p-4 space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Add any previous or alternative names below. If another person or
+            organisation is connected with this transaction, you will be asked to name
+            them in the declared-parties step.
+          </p>
+          {[...aliases, ''].map((alias, i) => (
+            <Field key={i} label={i === 0 ? 'Previous or other name' : ''}>
+              <Input
+                value={alias}
+                placeholder="e.g. a maiden name, or an alternative spelling"
+                onChange={(e) => setAlias(i, e.target.value)}
+              />
+            </Field>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-md border border-border p-4">
+        <label className="flex items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4"
+            checked={value.acknowledged === true}
+            onChange={(e) => {
+              set('acknowledged', e.target.checked);
+              set('acknowledgement_version', SANCTIONS_ACKNOWLEDGEMENT_VERSION);
+            }}
+          />
+          <span>
+            I confirm that, to the best of my knowledge, the information I have provided
+            is complete and accurate.
+          </span>
+        </label>
+        <p className="mt-2 pl-7 text-xs text-muted-foreground">
+          Aurixa will complete the required compliance screening independently. Your
+          acknowledgement does not replace our compliance checks.
+        </p>
+      </div>
     </div>
   );
 }

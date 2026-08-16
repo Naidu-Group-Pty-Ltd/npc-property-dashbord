@@ -6,6 +6,9 @@ import {
   ENTITY_ONLY_STRUCTURE_FIELDS, LEGAL_ENTITY_STRUCTURES, PURCHASING_STRUCTURE_TYPES,
   collectsEntityFields, prunePurchasingStructure,
 } from './purchasingStructure';
+import {
+  applicableQuestionnaireSections,
+} from '../../../supabase/functions/_shared/aml/questionnaireSections.pure';
 
 /**
  * The rule that decides which purchasing-structure questions apply.
@@ -63,12 +66,20 @@ describe('which structures are asked the entity questions', () => {
     // exactly one whose entity questions apply — if the two ever disagree, the
     // portal asks for a company name in a section and then never asks the
     // company anything, or the reverse.
-    const source = readFileSync(
-      join(process.cwd(), 'supabase/functions/aml-client-portal/index.ts'), 'utf8');
-    const declared = source.match(/ENTITY_STRUCTURES = new Set\(\[([^\]]*)\]\)/)?.[1];
-    expect(declared).toBeDefined();
-    const types = declared!.split(',').map((t) => t.trim().replace(/^'|'$/g, ''));
-    expect(types).toEqual([...LEGAL_ENTITY_STRUCTURES]);
+    // The engine moved to `_shared/aml/questionnaireSections.pure.ts`, so the
+    // agreement is asserted against its BEHAVIOUR rather than against a
+    // regex over its source — the same check, and it survives a refactor.
+    const raises = (entity_type: string) =>
+      applicableQuestionnaireSections((name) =>
+        name === 'purchasing_structure' ? { entity_type } : null,
+      ).includes('entity_details');
+
+    for (const structure of LEGAL_ENTITY_STRUCTURES) {
+      expect(raises(structure), structure).toBe(true);
+    }
+    for (const structure of ['Individual', 'Joint']) {
+      expect(raises(structure), structure).toBe(false);
+    }
   });
 });
 
