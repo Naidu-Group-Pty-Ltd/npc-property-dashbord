@@ -184,6 +184,29 @@ jobs:
             test_chart_candidates test_chart_series_wiring test_text_alignment \
             test_font_cmap_repair -v
 
+      # Builder Stock's image pipeline — the one that decides what a client sees
+      # on a Marketplace card.
+      #
+      # These specs live in `src/lib/__tests__`, which no step named, so 290
+      # tests covering source provenance, the primary-image role rule and the
+      # automatic import→store→point→display chain had never run on a runner.
+      # That is the surface where a regression is a bedroom render on somebody's
+      # property, and an unrun test is not a test. Named by file rather than by
+      # directory: the directory also holds contract specs that fail for reasons
+      # of their own, and widening this to catch them would be a different job.
+      - name: Unit tests (Builder Stock images)
+        run: |
+          npx vitest run \
+            src/lib/__tests__/builderStockAutomaticImages.test.ts \
+            src/lib/__tests__/builderStockPrimaryImageRole.test.ts \
+            src/lib/__tests__/builderStockExactSourceImage.test.ts \
+            src/lib/__tests__/builderStockPdfSourceImages.test.ts \
+            src/lib/__tests__/builderStockPackageImages.test.ts \
+            src/lib/__tests__/builderStockSourceImages.test.ts \
+            src/lib/__tests__/builderStockNotion.test.ts \
+            src/lib/__tests__/builderStockNormalise.test.ts \
+            src/lib/__tests__/builderStockUrlSource.test.ts
+
       - name: Build
         run: npm run build
 

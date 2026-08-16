@@ -459,6 +459,9 @@ export async function importStockRecords(
   if (outcome.itemIds.length) {
     await db.from('builder_stock_items')
       .update({ enrichment_status: 'pending' })
+      // Scoped like every other write in this module: an id in a list is a
+      // lookup key, never authority.
+      .eq('organisation_id', input.organisationId)
       .in('id', [...new Set(outcome.itemIds)]);
   }
 

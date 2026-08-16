@@ -38,6 +38,9 @@ import { PROVENANCE_VERSION } from '../../../supabase/functions/_shared/builderS
 import {
   settleUploadSourceImages, uploadsNeedingSettlement,
 } from '../../../supabase/functions/_shared/builderStock/settleSourceImages';
+import {
+  roleFromStructuralContainer,
+} from '../../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
 
 // ---------------------------------------------------------------------------
 // An in-memory stand-in for the service-role client
@@ -383,6 +386,57 @@ describe('D/F/G — row-stated imagery settles automatically', () => {
     expect((card.displayable as any).source_detail.role).toBe('primary_property');
     expect((card.displayable as any).source_detail.role_evidence_level).toBe(1);
   });
+
+  /**
+   * TEST B — a Notion row's own page cover.
+   *
+   * The covers arrive as `rowAssets` keyed on the row's block id, which is the
+   * same anchor the CSV the collection becomes carries. This is the path all 25
+   * of the live Notion properties take, so it is the one that has to settle its
+   * own pointer without anybody pressing anything.
+   */
+  it('takes a Notion row cover and points the property at it', async () => {
+    const db = fakeDb();
+    const png = new Uint8Array(4096);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    const anchor = 'notion:30ccabf9-2010-8099-b502-d7ac23995def';
+
+    const outcome = await importStockRecords(db, {
+      organisationId: ORG, uploadId: UPLOAD, builderUserId: 'builder-1',
+      rows: [{
+        'Deal': 'Lot 13 - Hummock Rise, Werribee, VIC - 3030',
+        'Estate Tag': 'Harpley Estate',
+        [SOURCE_ANCHOR_HEADER]: anchor,
+      }],
+      media: [],
+      rowAssets: [{
+        anchor,
+        assets: [{
+          url: 'https://ionized-chalk-a63.notion.site/image/attachment%3Acover',
+          reference: 'attachment:7ac27898-b7dc-478a-a3f6-73213c4054d9:Completed_(1).jpg',
+          origin: 'notion_page_cover',
+          provider: 'notion',
+          pageUrl: 'https://ionized-chalk-a63.notion.site/30ccabf9',
+          position: 0,
+          linkFallback: false,
+          role: roleFromStructuralContainer({
+            container: 'the Notion row for this property',
+            designation: 'page cover',
+          }),
+        }],
+      }],
+      filename: '30ccabf9.csv',
+    }, { fetchImage: async () => ({ bytes: png, finalUrl: 'https://img.notionusercontent.com/signed' }) });
+
+    const card = cardImage(db, outcome.itemIds[0]);
+    expect(card.renders).toBe(true);
+    expect((card.displayable as any).source_detail.role).toBe('primary_property');
+    expect((card.displayable as any).source_detail.role_evidence_level).toBe(3);
+    // The bytes are in the bucket, and the expiring delivery URL is not kept.
+    expect(db.stored[String((card.displayable as any).storage_path)]).toBeDefined();
+    expect((card.displayable as any).external_url).toBeNull();
+    expect(outcome.withSourceImage).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -462,5 +516,58 @@ describe('a page that draws two rasters with the same resource name', () => {
       .map((row: Row) => String(row.source_reference));
     expect(new Set(references).size).toBe(references.length);
     for (const reference of references) expect(reference).toMatch(/#\d+$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The marker must mean "finished", and only that
+// ---------------------------------------------------------------------------
+
+describe('settlement resumability and scope', () => {
+  const upload = (over: Row = {}) => ([{
+    id: UPLOAD, organisation_id: ORG, deleted_at: null,
+    created_at: '2026-08-01T00:00:00Z', source_images_settled_version: null,
+    storage_bucket: 'builder-stock-lists', storage_path: 'missing.pdf',
+    source_type: 'file', original_filename: 'stock.pdf', source_url: null, final_url: null,
+    ...over,
+  }]);
+
+  /**
+   * A source that cannot be re-read produces the same answer on every future
+   * pass, so it settles. Leaving the marker clear would make the sweep re-fetch
+   * a deleted Notion page or a revoked Drive share until somebody noticed.
+   */
+  it('settles an upload whose source can no longer be read', async () => {
+    const db = fakeDb({ uploads: upload() });
+    const outcome = await settleUploadSourceImages(db, {
+      organisationId: ORG, uploadId: UPLOAD,
+    });
+    expect(outcome.repair?.error).toBeTruthy();
+    expect(outcome.settled).toBe(true);
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([]);
+  });
+
+  /** An upload belonging to somebody else is not this organisation's work. */
+  it('never lists another organisation\'s upload', async () => {
+    const db = fakeDb({ uploads: upload({ organisation_id: 'org-other' }) });
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([]);
+  });
+
+  /** A soft-deleted source is not swept, however unsettled it looks. */
+  it('never lists a deleted upload', async () => {
+    const db = fakeDb({ uploads: upload({ deleted_at: '2026-08-02T00:00:00Z' }) });
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([]);
+  });
+
+  /**
+   * The marker records the version it was settled AT. A later provenance bump
+   * has to make every upload outstanding again, or a rules change would only
+   * ever reach stock imported after it.
+   */
+  it('treats an upload settled at an older version as outstanding', async () => {
+    const db = fakeDb({
+      uploads: upload({ source_images_settled_version: PROVENANCE_VERSION - 1 }),
+    });
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([UPLOAD]);
   });
 });
