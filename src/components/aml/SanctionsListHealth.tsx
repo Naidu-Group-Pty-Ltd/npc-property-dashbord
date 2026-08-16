@@ -94,11 +94,22 @@ function LoadListControl({ onLoaded }: { onLoaded: () => void }) {
       const pruning = res.pruned_skipped
         ? res.reason
         : `${res.pruned.toLocaleString()} superseded entries removed.`;
+      /*
+       * State how current the DATA is, not just how many rows arrived. An
+       * operator reading "7,840 entries" cannot tell the operative register
+       * from an archived one, and the file DFAT's own canonical URL currently
+       * redirects to is four years out of date.
+       */
+      const currency = res.recency_unknown
+        ? "The file carries no listing dates, so its currency could not be established."
+        : res.newest_listing
+          ? `Newest listing in this file: ${res.newest_listing}.`
+          : "";
       toast({
         title: res.screening?.changed
           ? `Loaded ${res.entries.toLocaleString()} entries — screening is now live`
           : `Loaded ${res.entries.toLocaleString()} entries`,
-        description: [pruning, res.screening?.reason].filter(Boolean).join(" "),
+        description: [pruning, currency, res.screening?.reason].filter(Boolean).join(" "),
       });
       onLoaded();
     } catch (e: unknown) {

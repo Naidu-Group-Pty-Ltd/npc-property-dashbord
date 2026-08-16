@@ -142,6 +142,15 @@ export const amlVerificationApi = {
        * the register needs to know whether screening actually runs now.
        */
       screening?: { mode: string; changed: boolean; reason: string };
+      /**
+       * How current the DATA is, as opposed to how recent the upload was.
+       * Every other freshness signal in the product measures the sync, so a
+       * four-year-old file loaded today reads as perfectly fresh everywhere
+       * else. This is the newest listing the file itself contains.
+       */
+      newest_listing?: string | null;
+      list_age_days?: number | null;
+      recency_unknown?: boolean;
     }>({ op: "ingest_sanctions_list", list_code: "dfat", rows, source_label, force }),
 };
 

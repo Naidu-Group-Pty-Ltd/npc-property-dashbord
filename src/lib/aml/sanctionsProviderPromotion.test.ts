@@ -176,3 +176,96 @@ describe("promotion is not a result", () => {
     expect(load({ active: false })).toEqual(load({ active: false }));
   });
 });
+
+/* ═════════ How current the DATA is, not how recent the upload ═════════ */
+
+/**
+ * The near-miss that produced this.
+ *
+ * Trying to load the list for real, DFAT's own canonical URL —
+ * `/sites/default/files/regulation8_consolidated.xlsx` — answered 404 with
+ * `location: …/regulation8_consolidated_2.xls` (its own Drupal redirect,
+ * `x-redirect-id: 51826`). That file downloaded cleanly: 2.4 MB, valid
+ * Excel, `[SEC=OFFICIAL]`, 7,840 rows, every column exactly where
+ * `rowsToDfatEntries` expects it.
+ *
+ * Its newest Control Date is **2022-01-07**. Nothing from 2023, 2024, 2025
+ * or 2026 — it predates the entire Russia/Ukraine listing expansion.
+ *
+ * Every freshness control in this platform measures WHEN WE SYNCED, so that
+ * file loaded today would have produced a `succeeded` sync stamped now, made
+ * `dfatLoaded` true, promoted the provider to live, turned every gate green,
+ * and screened every client against a four-year-old register — returning
+ * **clear** for everyone listed since.
+ *
+ * These tests are taken from the real file's actual shape.
+ */
+import { LIST_STALE_AFTER_DAYS, assessListRecency } from "../../../supabase/functions/_shared/aml/sanctionsIngest.pure";
+
+const NOW = Date.parse("2026-08-16T00:00:00Z");
+const sheet = (controlDates: string[]) => [
+  ["Reference", "Name of Individual or Entity", "Type", "Name Type", "Control Date"],
+  ...controlDates.map((d, i) => [`${i + 1}`, `SUBJECT ${i}`, "Individual", "Primary Name", d]),
+];
+
+describe("a file's own dates decide whether it is the current list", () => {
+  it("catches the 2022 file DFAT currently redirects to", () => {
+    const r = assessListRecency(sheet(["15/12/2014", "7/01/2022", "3/11/2021"]), NOW);
+    expect(r.stale).toBe(true);
+    expect(r.newestListing).toBe("2022-01-07");
+    expect(r.reason).toMatch(/not the current Consolidated List/i);
+    expect(r.reason).toMatch(/report them clear/i);
+  });
+
+  it("accepts a genuinely current list", () => {
+    const r = assessListRecency(sheet(["23/07/2026", "15/12/2014"]), NOW);
+    expect(r.stale).toBe(false);
+    expect(r.newestListing).toBe("2026-07-23");
+  });
+
+  it("takes the NEWEST date, not the first or last row", () => {
+    // A current list is mostly old listings — the file is cumulative.
+    const r = assessListRecency(sheet(["15/12/2014", "23/07/2026", "3/11/2003"]), NOW);
+    expect(r.newestListing).toBe("2026-07-23");
+    expect(r.stale).toBe(false);
+  });
+
+  it("is generous enough never to fire on a live list", () => {
+    // DFAT amends many times a year; a full year of silence is the wrong file.
+    expect(LIST_STALE_AFTER_DAYS).toBe(365);
+    const justInside = assessListRecency(sheet(["20/08/2025"]), NOW);
+    expect(justInside.stale).toBe(false);
+  });
+
+  it("reports unknown rather than fresh when no date can be read", () => {
+    // Not reading a date is not evidence of currency.
+    for (const rows of [
+      sheet([]),
+      [["Reference", "Name of Individual or Entity"], ["1", "SUBJECT"]],
+      sheet(["", "not a date"]),
+    ]) {
+      const r = assessListRecency(rows, NOW);
+      expect(r.unknown).toBe(true);
+      expect(r.stale).toBe(false);
+      expect(r.newestListing).toBeNull();
+    }
+  });
+
+  it("reads ISO dates too, so a re-exported file still works", () => {
+    expect(assessListRecency(sheet(["2026-07-23"]), NOW).newestListing).toBe("2026-07-23");
+  });
+
+  it("ignores a malformed date rather than treating it as now", () => {
+    const r = assessListRecency(sheet(["31/31/9999", "7/01/2022"]), NOW);
+    expect(r.newestListing).toBe("2022-01-07");
+    expect(r.stale).toBe(true);
+  });
+
+  it("never reports a screening outcome", () => {
+    for (const rows of [sheet(["7/01/2022"]), sheet(["23/07/2026"]), sheet([])]) {
+      const r = assessListRecency(rows, NOW);
+      expect(Object.keys(r).sort())
+        .toEqual(["ageDays", "newestListing", "reason", "stale", "unknown"]);
+    }
+  });
+});
