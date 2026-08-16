@@ -192,18 +192,60 @@ export function contractFromStructureTemplate(
   };
 }
 
+/**
+ * What a report's tier is called in `report_structure_templates`.
+ *
+ * The generator writes `briefing`; the guide for it is filed under `executive`
+ * ("Executive Briefing Structure v1"). One name for one thing was not on
+ * offer — both are in production data — so the mapping is stated here rather
+ * than left to a lookup that silently misses.
+ */
+const STRUCTURE_TIER_ALIASES: Readonly<Record<string, string>> = {
+  briefing: 'executive',
+};
+
+export function structureTierFor(tier?: string | null): string | null {
+  const key = String(tier ?? '').trim().toLowerCase();
+  if (!key) return null;
+  return STRUCTURE_TIER_ALIASES[key] ?? key;
+}
+
+/**
+ * The configured structure guide for a report, or `null` when there is none.
+ *
+ * ## Why the last resort is `null` and not "the first one"
+ *
+ * This used to end `?? active[0]`, which reads as a kind fallback and is not
+ * one. The guide's headings are what `chunkReportContent` keys the report's
+ * sections by, so handing back an unrelated guide does not degrade the result —
+ * it silently keys a Compass report's sections against the Snapshot contract,
+ * and every `sections.<id>` binding resolves to the empty string with nothing
+ * anywhere reporting a mismatch.
+ *
+ * Measured 2026-08-16, the four active `ai_structure` guides are
+ * `(compass, investment)`, `(executive, investment)`, `(snapshot, investment)`
+ * and `(compass, suburb)` — and **no** production report matched any of them,
+ * because the caller passed the report's *format* as the category
+ * (`investment_compass`, or `address` after the `report_type` defect above it).
+ * So every investment report in the database took the `active[0]` branch and
+ * was chunked against whichever guide the database happened to return first.
+ *
+ * `strategic` and `financial` have no guide at all. `null` is the honest answer
+ * for them, and `chunkReportContent` already falls back to the report's own
+ * headings when it is given none — which is a real degradation with a real
+ * cause, rather than a wrong contract that looks like a right one.
+ */
 export function selectStructureTemplate(
   rows: ReportStructureTemplateLike[] = [],
   opts: { tier?: string | null; category?: string | null } = {},
 ): ReportStructureTemplateLike | null {
   const active = [...rows].sort((a, b) => Number(b.priority ?? 0) - Number(a.priority ?? 0));
-  const tier = opts.tier || null;
+  const tier = structureTierFor(opts.tier);
   const category = opts.category || null;
-  return active.find((t) => t.report_tier === tier && t.report_category === category)
-    ?? active.find((t) => t.report_tier === tier && !t.report_category)
+  return active.find((t) => structureTierFor(t.report_tier) === tier && t.report_category === category)
+    ?? active.find((t) => structureTierFor(t.report_tier) === tier && !t.report_category)
     ?? active.find((t) => !t.report_tier && t.report_category === category)
     ?? active.find((t) => !t.report_tier && !t.report_category)
-    ?? active[0]
     ?? null;
 }
 

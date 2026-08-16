@@ -54,6 +54,8 @@ import {
   ifItFits,
   kpiCapacity,
   kpis,
+  markdown,
+  MARKDOWN_LINES_PER_PAGE,
   page,
   platePage,
   prose,
@@ -571,6 +573,94 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ),
     ], contentTop()),
   ]), FOOTER));
+
+  // ── 06b The report itself ────────────────────────────────────────────────
+  //
+  // Everything above this point is drawn from the calculator's jsonb columns —
+  // `investment_score`, `financial_calculations`, `property_specs`. None of it
+  // is the report. The report is `report_content`: the document the model
+  // writes against the configured `report_structure_templates` guide, and what
+  // an operator means by "the report structure".
+  //
+  // Until now no master carried a word of it. `{{sections.*}}` was bound by 0
+  // of the 13 active `report_templates` rows, and the projection published
+  // nothing from `report_content` at all — so choosing a template produced a
+  // scorecard on a fixed page sequence and the report was simply absent.
+  //
+  // Measured 2026-08-16 across the 1,183 stored bodies:
+  //
+  //   tier        reports   median lines   longest
+  //   compass       1,120        423        3,192
+  //   strategic         9      1,166        1,322
+  //   financial         9        785          906
+  //   briefing         21        298          968
+  //   snapshot         24         71          157
+  //
+  // No fixed sequence covers that range, which is exactly the case conditional
+  // pages exist for: `NARRATIVE_PAGES` continuations, each holding one bucket
+  // of the same source, each conditional on the bucket existing. A page that
+  // does not render costs nothing — `visiblePages` filters before layout — so a
+  // snapshot produces two pages here and a compass a dozen, from one master.
+  //
+  // The page count comes from the projection, computed with the same
+  // `packMarkdownPages` the block uses. See `reports/markdownPaging.pure.ts`
+  // for why that has to be one function rather than two.
+  const NARRATIVE_PAGES = 24;
+  // The same measure the Report Q&A masters take: the first page gives up the
+  // heading block, the continuations do not.
+  const firstNarrativeHeight = c.contentBottom - contentTop() - c.spacing.headingGap - 104;
+  const contNarrativeHeight = c.contentBottom - contentTop() - 12;
+
+  pages.push({
+    ...withFurniture(page('The report', [
+      ...furniture(DOCUMENT_LABEL, nextPart('Report'), 'The report'),
+      ...flow([
+        sectionHeading({
+          eyebrow: 'As assessed',
+          heading: 'The report',
+          numeral: nextNumeral(),
+        }),
+        markdown('{{narrative.source}}', 0, firstNarrativeHeight, MARKDOWN_LINES_PER_PAGE),
+      ], contentTop()),
+    ]), FOOTER),
+    // `narrative.source`, not `narrative`: 4 of the 1,187 stored reports carry
+    // no body, and this page must not open a heading over nothing.
+    conditional: 'narrative && narrative.source',
+  });
+
+  for (let i = 1; i < NARRATIVE_PAGES; i += 1) {
+    pages.push({
+      ...withFurniture(page(`The report (${i + 1})`, [
+        ...furniture(DOCUMENT_LABEL, nextPart('Report'), 'The report'),
+        ...flow([
+          markdown('{{narrative.source}}', i, contNarrativeHeight, MARKDOWN_LINES_PER_PAGE),
+        ], contentTop()),
+      ]), FOOTER),
+      conditional: `narrative && narrative.pages > ${i}`,
+    });
+  }
+
+  // The cut, said on the page. The block stops drawing buckets it has no page
+  // for, so without this the tail of a strategic report — whose median body is
+  // 1,166 lines, past this allowance — would vanish with nothing saying so.
+  // A page of its own rather than a callout on the last continuation, because
+  // that continuation's body is sized to the full page and a callout above it
+  // would print over the text.
+  pages.push({
+    ...withFurniture(page('Not the whole report', [
+      ...furniture(DOCUMENT_LABEL, nextPart('Report'), 'Not the whole report'),
+      ...flow([
+        sectionHeading({ eyebrow: 'Continued elsewhere', heading: 'Not the whole report' }),
+        callout(
+          'This document carries the first part',
+          `The assessment runs past the ${NARRATIVE_PAGES} pages this template sets aside for it. `
+          + 'The full report is available from the report page, which paginates it in full.',
+          textHeight(200, { extra: 34 }),
+        ),
+      ], contentTop()),
+    ]), FOOTER),
+    conditional: `narrative && narrative.pages > ${NARRATIVE_PAGES}`,
+  });
 
   // ── 07 Sources and appendix ──────────────────────────────────────────────
   pages.push(withFurniture(page('Sources and methodology', [

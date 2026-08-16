@@ -105,6 +105,8 @@
  * modelled value is `annualRent`, which uses the report's own stated
  * `occupancyWeeks` rather than assuming 52.
  */
+import { renderMarkdown } from './reports/markdown.pure.ts';
+import { packMarkdownPages, DEFAULT_LINES_PER_PAGE } from './reports/markdownPaging.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
@@ -182,6 +184,73 @@ export interface ProjectedNamespaces {
   /** `{ label, value }` per year, for the projection page's chart. */
   equitySeries: Array<{ label: string; value: number }>;
   report: Record<string, unknown>;
+  /**
+   * The report the model actually wrote — its own sections, in its own order.
+   *
+   * See `projectReportNarrative`. `source` is Markdown for `markdown-block`;
+   * `pages` is how many pages it needs at the master's line budget, computed
+   * with the same `packMarkdownPages` the block uses.
+   */
+  narrative: Record<string, unknown>;
+}
+
+/**
+ * `report_content` as a bindable body, and the pages it needs.
+ *
+ * ## What was missing
+ *
+ * Every namespace above comes from a jsonb column the calculator wrote —
+ * `investment_score`, `financial_calculations`, `property_specs`. None of them
+ * is the report. The report is `report_content`: the document the model writes
+ * against the configured `report_structure_templates` guide, and the thing an
+ * operator means by "the report structure".
+ *
+ * Measured 2026-08-16 on one address generated at all five tiers, the model
+ * writes a full document every time —
+ *
+ * | tier | headings | opens with |
+ * | --- | ---: | --- |
+ * | `snapshot` | 9 | Property Summary |
+ * | `briefing` | 39 | Location Overview |
+ * | `financial` | 42 | Client Investment Decision Summary |
+ * | `strategic` | 80 | Property & Location Due Diligence Report |
+ * | `compass` | 107 | Executive Verdict |
+ *
+ * — and **not one of those sections reached a page**. `{{sections.*}}` is bound
+ * by 0 of the 13 active `report_templates` rows, and this projection published
+ * nothing from `report_content` at all, so a template rendered the scorecard on
+ * a fixed page sequence and the report itself was simply absent.
+ *
+ * ## Why the whole body rather than per-section bindings
+ *
+ * A section-per-binding shape needs the template to know the section ids, and
+ * they are not knowable: they come from whichever guide is configured, they
+ * differ per tier, and the guides are edited in the product. A master binding
+ * `{{sections.executive_verdict.body}}` is a master that breaks when somebody
+ * renames a heading.
+ *
+ * The body is carried whole instead, by the mechanism this programme already
+ * uses for the two other model-authored formats: conditional pages, each
+ * holding one bucket of the same source, sized by `packMarkdownPages`. See
+ * `markdownPaging.pure.ts` for why the block and this function must be the same
+ * arithmetic.
+ */
+export function projectReportNarrative(
+  content: unknown,
+  linesPerPage: number = DEFAULT_LINES_PER_PAGE,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const source = typeof content === 'string' ? content.trim() : '';
+  if (!source) return out;
+
+  // The chart directives the generator's prompt demands are an instruction to
+  // the renderer, and `markdown.pure.ts` drops one it cannot draw rather than
+  // printing its source. Nothing to strip here: a directive that survives to
+  // the block is drawn or dropped there, in one place.
+  put(out, 'source', source);
+  const pages = packMarkdownPages(renderMarkdown(source).blocks, linesPerPage).length;
+  put(out, 'pages', pages || undefined);
+  return out;
 }
 
 /**
@@ -355,6 +424,7 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   return {
     property, financials, assumptions: assumptionsOut, recommendation,
     summary, risks, assessment, opportunities, equitySeries, report,
+    narrative: projectReportNarrative(row.report_content),
   };
 }
 
@@ -380,6 +450,10 @@ export function applyInvestmentProjection(
   merge('recommendation', p.recommendation);
   merge('summary', p.summary);
   merge('report', p.report);
+  // The report the model wrote. Absent — not empty — when the row carries no
+  // content, so the narrative pages are conditional on something real: 4 of the
+  // 1,187 stored reports have no body at all.
+  merge('narrative', p.narrative);
   if (p.risks.length) data.risks = p.risks;
   // Absent rather than empty, so a template can make the block conditional.
   if (p.assessment.length) data.assessment = p.assessment;

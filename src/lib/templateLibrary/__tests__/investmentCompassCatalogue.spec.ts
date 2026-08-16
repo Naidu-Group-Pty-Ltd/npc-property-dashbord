@@ -270,10 +270,51 @@ describe.each(INVESTMENT_COMPASS_TEMPLATES.map((t) => [
     expect(text).toContain('Leichhardt');
   });
 
-  it('renders every page, not just the cover', () => {
+  it('renders every unconditional page, not just the cover', () => {
+    /*
+     * Counted against the pages that are NOT conditional.
+     *
+     * The masters now carry the report the model actually wrote — the document
+     * the configured structure guide defines — and its length is not knowable
+     * when the template is built: measured over the 1,183 stored bodies, a
+     * snapshot is 71 lines at the median and a strategic report 1,166. So the
+     * narrative is a run of conditional pages, each holding one bucket of the
+     * same source, and a page whose bucket does not exist must not render.
+     * `SAMPLE_REPORT_DATA` carries no body, so none of them does here.
+     *
+     * This assertion was `=== pages.length` while every page was
+     * unconditional. Keeping it that way would have meant either dropping the
+     * narrative or giving the sample a body long enough to fill all 24 pages —
+     * which would assert that a template prints its maximum, not that it
+     * prints what it has.
+     */
     const { html } = renderTemplateToHtml(template.schema, { data: SAMPLE });
     const pages = html.match(/class="[^"]*tpl-page/g) ?? [];
-    expect(pages.length).toBe(template.schema.pages.length);
+    // Every page except the narrative run, whose buckets the sample has none
+    // of. The pre-existing conditionals — the assessment's per-dimension prose,
+    // the opportunity, the risk row — all resolve against the sample and are
+    // therefore still counted, exactly as before.
+    const expected = template.schema.pages.filter(
+      (p: any) => !/^(The report|Not the whole report)/.test(p.name),
+    );
+    expect(pages.length).toBe(expected.length);
+    expect(expected.length).toBeGreaterThan(4);
+  });
+
+  it('makes every narrative page conditional on the projection having it', () => {
+    // A page that is unconditional here prints blank on the 4 stored reports
+    // with no body, and on every report shorter than the allowance — which is
+    // most of them. The first is conditional on there being a body at all; the
+    // continuations on the page count the projection computed with the same
+    // `packMarkdownPages` the block uses.
+    const narrative = template.schema.pages.filter((p: any) => /^The report/.test(p.name));
+    expect(narrative.length).toBeGreaterThan(1);
+    for (const p of narrative as any[]) {
+      expect(p.conditional, `page "${p.name}" is unconditional`).toBeTruthy();
+    }
+    for (const [i, p] of (narrative as any[]).slice(1).entries()) {
+      expect(p.conditional).toBe(`narrative && narrative.pages > ${i + 1}`);
+    }
   });
 
   it('leaves no page blank', () => {
