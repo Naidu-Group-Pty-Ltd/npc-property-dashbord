@@ -552,8 +552,12 @@ export interface CoverOptions {
   title: string;
   standfirst: string;
   locations: string;
-  /** The four facts across the foot of the cover. */
-  facts: Array<{ label: string; value: string }>;
+  /**
+   * The four facts across the foot of the cover. `valueChars` is the long-end
+   * character count for a value that is prose rather than a figure, so the
+   * band can size for the line it will actually draw.
+   */
+  facts: Array<{ label: string; value: string; valueChars?: number }>;
 }
 
 /**

@@ -19,6 +19,7 @@ declare const Deno: {
     set(key: string, value: string): void;
     toObject(): Record<string, string>;
   };
+  resolveDns(hostname: string, recordType: string, options?: unknown): Promise<unknown>;
 };
 
 declare module 'npm:@supabase/supabase-js@2.55.0' {

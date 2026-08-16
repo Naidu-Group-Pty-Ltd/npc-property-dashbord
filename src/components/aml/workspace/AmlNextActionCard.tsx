@@ -49,6 +49,7 @@ export function AmlNextActionCard({
   onOpenSection,
   className,
   currentStageOrder,
+  onReopen,
 }: {
   action: AmlNextAction;
   onOpenSection: (section: AmlWorkspaceSection) => void;

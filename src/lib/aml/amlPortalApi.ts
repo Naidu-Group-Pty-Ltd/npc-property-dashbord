@@ -49,7 +49,9 @@ async function call<T = any>(op: string, payload: Record<string, any> = {}): Pro
 export type AmlSection =
   | 'purchasing_structure' | 'personal_details' | 'purchase_profile' | 'funding'
   // Phase 5 — conditional sections; the server decides which apply per case.
-  | 'entity_details' | 'related_parties';
+  | 'entity_details' | 'related_parties'
+  // Screening declaration step, rendered by `SanctionsScreeningForm`.
+  | 'sanctions_screening';
 
 /**
  * Where the client is, as the SERVER says — the one canonical journey.

@@ -510,7 +510,7 @@ async function repairPdfUpload(
   // The label the import matched on: the stored normalised record where there
   // is one, and the property's own columns where there is not.
   const labels = existing.map((item) => stockRecordLabel(
-    (item.source_row as NormalisedStockRecord | null)
+    (item.source_row as unknown as NormalisedStockRecord | null)
       ?? (item as unknown as NormalisedStockRecord),
   ));
 
