@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Database, RefreshCw, XCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  AlertTriangle, CheckCircle2, Database, RefreshCw, Upload, XCircle,
+} from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { amlVerificationApi, type AmlSanctionsSync } from "@/lib/aml/amlVerificationApi";
+import { toast } from "@/hooks/use-toast";
 
 /**
  * Sanctions list freshness.
@@ -41,6 +44,85 @@ const PRESENTATION: Record<Health, { tone: string; label: string; Icon: typeof C
   failed: { tone: "bg-destructive/15 text-destructive", label: "Last sync failed", Icon: XCircle },
   never: { tone: "bg-destructive/15 text-destructive", label: "Never loaded", Icon: XCircle },
 };
+
+/**
+ * Load the register from a spreadsheet a person downloaded.
+ *
+ * The batch loader (`npm run aml:sanctions:load`) needs the production
+ * service-role key on somebody's laptop AND a successful download from
+ * dfat.gov.au — which answers HTTP 403 to a scripted request. That is why
+ * this table has been empty since the platform was built, and why every
+ * screening attempt fails closed.
+ *
+ * A person with a browser is blocked by neither. So: they download the
+ * Consolidated List themselves, drop it here, and the browser does exactly
+ * one job — get the cells out of the container. Mapping and normalisation
+ * happen on the server, because names must be indexed with the same function
+ * the screening query uses.
+ */
+function LoadListControl({ onLoaded }: { onLoaded: () => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  const onFile = async (file: File) => {
+    setBusy(true);
+    try {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      // `header: 1` keeps raw rows. Anything cleverer here would be mapping,
+      // and mapping belongs on the server.
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false });
+      if (!rows || rows.length === 0) {
+        toast({
+          title: "Nothing to load",
+          description: "That file's first sheet is empty.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const res = await amlVerificationApi.ingestSanctionsList(rows, file.name);
+      toast({
+        title: `Loaded ${res.entries.toLocaleString()} entries`,
+        description: res.pruned_skipped
+          ? res.reason
+          : `${res.pruned.toLocaleString()} superseded entries removed. Screening can now match against this list.`,
+      });
+      onLoaded();
+    } catch (e: unknown) {
+      toast({
+        title: "The list could not be loaded",
+        description: e instanceof Error ? e.message : "The spreadsheet could not be read.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv"
+        className="sr-only"
+        id="sanctions-list-file"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) void onFile(f); }}
+      />
+      <Button size="sm" disabled={busy} onClick={() => inputRef.current?.click()}>
+        {busy
+          ? <RefreshCw aria-hidden className="mr-1.5 h-4 w-4 animate-spin motion-reduce:animate-none" />
+          : <Upload aria-hidden className="mr-1.5 h-4 w-4" />}
+        {busy ? "Loading…" : "Load DFAT list"}
+      </Button>
+      <span className="text-xs text-muted-foreground">
+        Download the Consolidated List from dfat.gov.au and drop the spreadsheet here.
+      </span>
+    </div>
+  );
+}
 
 export function SanctionsListHealth() {
   const [syncs, setSyncs] = useState<AmlSanctionsSync[] | null>(null);
@@ -110,9 +192,12 @@ export function SanctionsListHealth() {
         {!loading && entryCount === 0 && !error && (
           <Alert variant="destructive">
             <XCircle className="h-4 w-4" aria-hidden="true" />
-            <AlertDescription>
-              No sanctions entries are loaded. Screening cannot match anyone until the lists
-              are loaded — run <code className="font-mono text-xs">npm run aml:sanctions:load</code>.
+            <AlertDescription className="space-y-2">
+              <p>
+                No sanctions entries are loaded. Screening cannot match anyone and every
+                check fails closed until the DFAT Consolidated List is loaded.
+              </p>
+              <LoadListControl onLoaded={load} />
             </AlertDescription>
           </Alert>
         )}
@@ -165,6 +250,8 @@ export function SanctionsListHealth() {
                 })}
               </TableBody>
             </Table>
+
+            <LoadListControl onLoaded={load} />
 
             <p className="text-xs text-muted-foreground">
               Lists refresh nightly via the <code className="font-mono">AML sanctions refresh</code> workflow.

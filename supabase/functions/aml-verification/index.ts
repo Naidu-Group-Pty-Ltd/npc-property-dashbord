@@ -28,6 +28,9 @@ import {
 } from "../_shared/aml/providers/index.ts";
 import { stripImagePayloads } from "../_shared/aml/verificationEvidence.pure.ts";
 import { canonicalOutcome } from "../_shared/aml/verificationOutcome.pure.ts";
+import {
+  decideSanctionsIngest, rowsToDfatEntries, withNormalisedNames,
+} from "../_shared/aml/sanctionsIngest.pure.ts";
 
 const DEFAULT_TENANT = "default";
 async function resolveTenantId(admin: any, caseId: string): Promise<string> {
@@ -837,6 +840,110 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .order("created_at", { ascending: false }).limit(200);
         if (error) throw error;
         return jr({ access_log: data ?? [] });
+      }
+
+      /**
+       * Load a sanctions list from a spreadsheet a person downloaded.
+       *
+       * `aml.sanctions_entries` has been empty since this platform was built,
+       * so every screening attempt fails closed. The only loader was a Node
+       * script needing the production service-role key on somebody's laptop
+       * and a successful download from dfat.gov.au — and DFAT answers HTTP
+       * 403 to a scripted request. A person with a browser is blocked by
+       * neither, so the browser gets the cells out of the workbook and the
+       * mapping and normalisation happen HERE.
+       *
+       * Normalisation is deliberately server-side: names are indexed with the
+       * same function the screening query uses, and a browser that normalised
+       * differently would write entries no query can ever match. A sanctions
+       * list that silently matches nobody looks exactly like one that works.
+       *
+       * MLRO only. Loading the register is a compliance act, not an import.
+       */
+      case "ingest_sanctions_list": {
+        if (!roles.has("mlro")) {
+          return jr({ error: "MLRO role required to load a sanctions list" }, 403);
+        }
+        const listCode = String(body?.list_code ?? "dfat").trim().toLowerCase();
+        if (listCode !== "dfat") {
+          return jr({ error: "Only the DFAT Consolidated List can be loaded this way" }, 400);
+        }
+        const rows = Array.isArray(body?.rows) ? body.rows as unknown[][] : null;
+        if (!rows || rows.length === 0) {
+          return jr({ error: "rows required — the spreadsheet produced no cells" }, 400);
+        }
+        const sourceLabel = String(body?.source_label ?? "operator upload").slice(0, 300);
+
+        let entries: ReturnType<typeof rowsToDfatEntries>;
+        try {
+          entries = rowsToDfatEntries(rows);
+        } catch (e) {
+          // A refusal to guess at columns, surfaced as itself. A misread
+          // column is a list that matches the wrong people.
+          return jr({
+            error: e instanceof Error ? e.message : "The spreadsheet could not be mapped",
+            code: "unmappable_spreadsheet",
+          }, 400);
+        }
+
+        const { count: existingCount } = await admin.schema("aml").from("sanctions_entries")
+          .select("id", { count: "exact", head: true }).eq("list_code", listCode);
+        const decision = decideSanctionsIngest(
+          entries.length, existingCount ?? 0, body?.force === true);
+        if (!decision.accept) {
+          return jr({ error: decision.reason, code: "rejected", entries: entries.length }, 400);
+        }
+
+        const startedAt = new Date().toISOString();
+        const { data: sync, error: syncError } = await admin.schema("aml")
+          .from("sanctions_list_syncs")
+          .insert({
+            list_code: listCode, source_url: sourceLabel,
+            entry_count: 0, status: "running", started_at: startedAt,
+          }).select("id").single();
+        if (syncError) throw syncError;
+
+        const nowIso = new Date().toISOString();
+        const payload = entries.map((e) => withNormalisedNames(e, listCode, sync.id, nowIso));
+        // Chunked so one oversized statement cannot fail the whole load.
+        let written = 0;
+        try {
+          for (let i = 0; i < payload.length; i += 500) {
+            const { error } = await admin.schema("aml").from("sanctions_entries")
+              .upsert(payload.slice(i, i + 500), { onConflict: "list_code,external_id" });
+            if (error) throw error;
+            written += Math.min(500, payload.length - i);
+          }
+        } catch (e) {
+          // A failed load is recorded as failed. A half-written list reported
+          // as succeeded is the one outcome that must never happen.
+          await admin.schema("aml").from("sanctions_list_syncs").update({
+            status: "failed", entry_count: written,
+            error_detail: (e instanceof Error ? e.message : String(e)).slice(0, 2000),
+            completed_at: new Date().toISOString(),
+          }).eq("id", sync.id);
+          return jr({ error: "The list could not be written", code: "write_failed" }, 500);
+        }
+
+        // Entries that vanished from the source, only when the size is
+        // plausible. A halved list keeps its old entries and says so.
+        let pruned = 0;
+        if (decision.prune) {
+          const { count } = await admin.schema("aml").from("sanctions_entries")
+            .delete({ count: "exact" })
+            .eq("list_code", listCode).neq("sync_id", sync.id);
+          pruned = count ?? 0;
+        }
+
+        await admin.schema("aml").from("sanctions_list_syncs").update({
+          status: "succeeded", entry_count: written,
+          completed_at: new Date().toISOString(),
+        }).eq("id", sync.id);
+
+        return jr({
+          list_code: listCode, entries: written, pruned,
+          pruned_skipped: !decision.prune, reason: decision.reason, sync_id: sync.id,
+        });
       }
 
       case "sanctions_list_status": {
