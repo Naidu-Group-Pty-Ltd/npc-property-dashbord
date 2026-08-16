@@ -2348,10 +2348,30 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const mode = body.mode === 'purge' ? 'purge' : 'restart';
         if (!clientId) return jsonResponse({ error: 'client_id required' }, 400);
 
-        const { data: client } = await admin.from('clients')
-          .select('id, first_name, last_name, email').eq('id', clientId).maybeSingle();
+        /*
+         * `primary_first_name` / `primary_surname` — the columns `clients`
+         * actually has. The first version of this selected `first_name,
+         * last_name, email`, none of which exist: PostgREST refused the
+         * statement, `client` came back null, and the policy answered
+         * `unknown_client` to every request ever made of it.
+         *
+         * The same shape of mistake appears three times in this operation's
+         * history, and it is invisible every time — a column that does not
+         * exist and a column that is empty are indistinguishable in the
+         * result, so the failure reads as a working safety rule.
+         */
+        const { data: client, error: clientReadError } = await admin.from('clients')
+          .select('id, primary_first_name, primary_surname, primary_email')
+          .eq('id', clientId).maybeSingle();
+        if (clientReadError) {
+          return jsonResponse({
+            error: 'The client record could not be read, so nothing was changed.',
+            code: 'client_unreadable', details: clientReadError.message,
+          }, 500);
+        }
         const clientName = client
-          ? [client.first_name, client.last_name].filter(Boolean).join(' ').trim()
+          ? [client.primary_first_name, client.primary_surname]
+            .filter(Boolean).join(' ').trim()
           : '';
 
         const { data: caseRows } = await admin.schema('aml').from('cases')

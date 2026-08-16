@@ -14,6 +14,9 @@
  * So the safeguard is not a confirmation dialog. It is that the system knows
  * what it is holding and refuses on its own — the first describe block.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -172,6 +175,88 @@ describe("who may reset, and how they confirm", () => {
     expect(decideClientReset(facts({ clientId: "", roles: ["mlro"] })).code)
       .toBe("unknown_client");
     expect(decideClientReset(facts({ clientName: "" })).code).toBe("unknown_client");
+  });
+});
+
+/* ═════════════ The column names, which were wrong three times ═════════════ */
+
+describe("the operation reads columns that exist", () => {
+  /*
+   * Every one of these was wrong in the first version, and every one failed
+   * INVISIBLY. PostgREST answers `undefined` for a column that does not
+   * exist exactly as it does for one that is empty, and this operation's
+   * error paths all fail closed — so a mistyped name did not surface as a
+   * bug, it surfaced as a safety rule working perfectly:
+   *
+   *   clients.first_name / last_name   → do not exist (primary_first_name,
+   *                                      primary_surname). `client` came
+   *                                      back null and the policy answered
+   *                                      `unknown_client` to EVERY request.
+   *
+   *   report_submissions.case_id       → does not exist. The probe errored,
+   *                                      the fail-closed branch read it as
+   *                                      "every case has a filed report",
+   *                                      and every purge was refused for
+   *                                      ever.
+   *
+   *   client_portal_users.is_active    → does not exist (status). The update
+   *                                      was refused, the unchecked result
+   *                                      discarded the error, and the
+   *                                      customer kept a live login.
+   *
+   * Verified against the production schema on 2026-08-16. This test reads
+   * the edge source so a regression is caught here rather than by an
+   * operator who cannot delete a client and is told nothing about why.
+   */
+  // Vitest rewrites `import.meta.url` to a non-file scheme, so resolve from
+  // the working directory — the same way the other source guards do.
+  const source = readFileSync(
+    join(process.cwd(), "supabase/functions/aml-cases/index.ts"), "utf8");
+  const op = source.slice(
+    source.indexOf("case 'reset_client_journey': {"),
+    source.indexOf("case 'list_party_screening': {"),
+  );
+
+  it("finds the operation", () => {
+    expect(op.length).toBeGreaterThan(500);
+  });
+
+  it("reads the client's name from the columns clients has", () => {
+    expect(op).toContain("primary_first_name");
+    expect(op).toContain("primary_surname");
+  });
+
+  /*
+   * Asserted against CODE, not prose. The comments in that operation name
+   * the wrong columns deliberately — recording what the mistake was is the
+   * point of them — so a bare source-wide `not.toContain` would fail on the
+   * explanation of the very bug it is guarding.
+   */
+  const code = op.split("\n")
+    .filter((l) => !/^\s*(\*|\/\*|\/\/)/.test(l))
+    .join("\n");
+
+  it("probes aml.reports rather than report_submissions", () => {
+    expect(code).toContain("probe('reports'");
+    expect(code).not.toContain("report_submissions");
+  });
+
+  it("revokes portal access through status, never a column that does not exist", () => {
+    expect(code).toContain("status: 'disabled'");
+    expect(code).not.toMatch(/is_active/);
+  });
+
+  it("does not silently discard a failed client read", () => {
+    // The whole class of defect above is an unchecked result. This one is
+    // the gate on everything after it, so it must be checked.
+    expect(op).toContain("clientReadError");
+  });
+
+  it("verifies nothing was orphaned before deleting the client", () => {
+    // The list is a constant and the schema is not. A re-count is the only
+    // thing that catches a table nobody thought of.
+    expect(op).toContain("orphan_risk");
+    expect(op.indexOf("orphan_risk")).toBeLessThan(op.indexOf("from('clients').delete()"));
   });
 });
 
