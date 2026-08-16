@@ -55,6 +55,7 @@ import {
   kpiCapacity,
   kpis,
   markdown,
+  remainingAfter,
   MARKDOWN_LINES_PER_PAGE,
   page,
   platePage,
@@ -608,18 +609,19 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   const NARRATIVE_PAGES = 24;
   // The same measure the Report Q&A masters take: the first page gives up the
   // heading block, the continuations do not.
-  const firstNarrativeHeight = c.contentBottom - contentTop() - c.spacing.headingGap - 104;
-  const contNarrativeHeight = c.contentBottom - contentTop() - 12;
+  const narrativeHeading = sectionHeading({
+    eyebrow: 'As assessed',
+    heading: 'The report',
+    numeral: nextNumeral(),
+  });
+  const firstNarrativeHeight = remainingAfter([narrativeHeading], contentTop());
+  const contNarrativeHeight = remainingAfter([], contentTop());
 
   pages.push({
     ...withFurniture(page('The report', [
       ...furniture(DOCUMENT_LABEL, nextPart('Report'), 'The report'),
       ...flow([
-        sectionHeading({
-          eyebrow: 'As assessed',
-          heading: 'The report',
-          numeral: nextNumeral(),
-        }),
+        narrativeHeading,
         markdown('{{narrative.source}}', 0, firstNarrativeHeight, MARKDOWN_LINES_PER_PAGE),
       ], contentTop()),
     ]), FOOTER),

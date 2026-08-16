@@ -54,6 +54,7 @@ import {
   flow,
   ifItFits,
   markdown,
+  remainingAfter,
   MARKDOWN_LINES_PER_PAGE,
   oneOf,
   page,
@@ -158,7 +159,7 @@ function eventRow(collection: string, i: number): string[] {
  * `i` depends on which ones came back empty — the projection drops those, so
  * position is not layer identity.
  */
-function layerPages(index: number, bodyHeight: number, firstHeight: number): PageDef[] {
+function layerPages(index: number): PageDef[] {
   const out: PageDef[] = [];
   const source = `{{marketIntel.layers.${index}.content}}`;
   /*
@@ -173,16 +174,24 @@ function layerPages(index: number, bodyHeight: number, firstHeight: number): Pag
    */
   const has = `marketIntel && marketIntel.layers && marketIntel.layers[${index}]`;
 
+  // Derived from the heading this page actually draws, not from a constant
+  // standing in for it. The `- 104` this replaced was 4 to 22pt short on five
+  // families, and a too-large body does not overflow visibly — it prints over
+  // the next block.
+  const heading = sectionHeading({
+    eyebrow: 'Market intelligence',
+    heading: `{{marketIntel.layers.${index}.title}}`,
+    // A layer title — the same order as the longest stored event name
+    // (47, `LENGTHS.eventName`), with a line's worth of slack.
+    headingChars: 60,
+  });
+  const firstHeight = remainingAfter([heading], contentTop());
+  const bodyHeight = remainingAfter([], contentTop());
+
   out.push({
     ...withFurniture(page(`Layer ${index + 1}`, [
       ...flow([
-        sectionHeading({
-          eyebrow: 'Market intelligence',
-          heading: `{{marketIntel.layers.${index}.title}}`,
-          // A layer title — the same order as the longest stored event name
-          // (47, `LENGTHS.eventName`), with a line's worth of slack.
-          headingChars: 60,
-        }),
+        heading,
         markdown(source, 0, firstHeight, MARKDOWN_LINES_PER_PAGE),
       ], contentTop()),
     ]), FOOTER),
@@ -364,10 +373,8 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   }));
 
   // ── The eight layers ─────────────────────────────────────────────────────
-  const firstHeight = c.contentBottom - contentTop() - c.spacing.headingGap - 104;
-  const contHeight = c.contentBottom - contentTop() - 12;
   for (let i = 0; i < LAYERS; i += 1) {
-    pages.push(...layerPages(i, contHeight, firstHeight));
+    pages.push(...layerPages(i));
   }
 
   // ── What happened, and what is coming ────────────────────────────────────
