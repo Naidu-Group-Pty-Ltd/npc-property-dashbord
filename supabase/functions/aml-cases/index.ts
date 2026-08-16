@@ -2018,6 +2018,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           anyMissingPep: required.some((s: any) => !currentDetermination(String(s.id))),
           pepRoute: policy.pepRoute,
           oldestQueuedSeconds,
+          errorCategory: required.find((s: any) => s.state === 'error')?.error_category ?? null,
         });
 
         /*
@@ -2144,7 +2145,49 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         await appendEvent(admin, subject.case_id, 'system',
           `Party screening queued: ${subject.screened_name}`,
           { party_screening_subject_id: subjectId }, userId, userEmail);
-        return jsonResponse({ subject: updated });
+
+        /*
+         * Run it NOW, and keep the queue as the guarantee behind it.
+         *
+         * The transition to 'queued' emits `aml.screening.requested` through
+         * the outbox trigger, and the worker was the only thing that ever
+         * executed it. That made a background worker the CRITICAL path for
+         * an action a person just pressed — so when the worker could not
+         * authenticate, "Run screening" produced a spinner that never
+         * resolved and no way to tell why.
+         *
+         * This is the same shape `aml-verification-processor` already has:
+         * `aml-client-portal` invokes it directly the moment a submission is
+         * accepted (the fast path, so the wait is seconds) and the cron sweep
+         * is the durable guarantee behind it. Screening only ever had the
+         * guarantee.
+         *
+         * Safety comes from `processScreeningEvent` itself, unchanged: it
+         * claims the subject with a CONDITIONAL update, so a worker running
+         * the same event concurrently loses the race and the provider runs at
+         * most once. On failure it records the error category on the subject
+         * — which is what turns a silent hang into "the DFAT list has never
+         * been loaded" on the operator's screen.
+         *
+         * The outbox row is deliberately left in place. If this inline run
+         * dies mid-flight, the queue still holds the work.
+         */
+        let inline: { ran: boolean; error?: string } = { ran: false };
+        try {
+          await processScreeningEvent(admin, {
+            payload: { party_screening_subject_id: subjectId },
+          });
+          inline = { ran: true };
+        } catch (e) {
+          // The consumer has already recorded the error category against the
+          // subject. Surfacing the message lets the operator see the refusal
+          // immediately rather than discovering it a sweep later.
+          inline = { ran: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) };
+        }
+
+        const { data: after } = await admin.schema('aml').from('party_screening_subjects')
+          .select('*').eq('id', subjectId).maybeSingle();
+        return jsonResponse({ subject: after ?? updated, inline });
       }
 
       /**

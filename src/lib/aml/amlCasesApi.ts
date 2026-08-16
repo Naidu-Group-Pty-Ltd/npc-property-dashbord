@@ -305,8 +305,17 @@ export const amlCasesApi = {
   /* ── Party-scoped screening (Stage 16) ── */
   listPartyScreening: (case_id: string) =>
     invoke<{ subjects: AmlPartyScreeningSubject[]; case_pep_determination: AmlPepDetermination | null }>({ op: "list_party_screening", case_id }),
+  /**
+   * Queue AND run the check. The server executes it inline rather than
+   * leaving a background worker on the critical path of a button press; the
+   * outbox row stays as the durable fallback. `inline.error` is the provider's
+   * own refusal, so the operator sees why in the same breath as the click.
+   */
   queuePartyScreening: (subject_id: string, freshness_days?: number) =>
-    invoke<{ subject: AmlPartyScreeningSubject; skipped?: boolean; code?: string }>({ op: "queue_party_screening", subject_id, freshness_days }),
+    invoke<{
+      subject: AmlPartyScreeningSubject; skipped?: boolean; code?: string;
+      inline?: { ran: boolean; error?: string };
+    }>({ op: "queue_party_screening", subject_id, freshness_days }),
   // Adjudication resolves the CANONICAL screening match (same semantics as
   // aml-verification resolve_match); the party state is a projection of it.
   adjudicatePartyScreening: (subject_id: string, match_id: string, outcome: "confirmed_match" | "false_positive", note: string) =>
