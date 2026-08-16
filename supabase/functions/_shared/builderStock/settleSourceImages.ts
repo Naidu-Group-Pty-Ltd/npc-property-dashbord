@@ -76,6 +76,62 @@ export async function uploadsNeedingSettlement(
     .map((row: { id: string }) => row.id);
 }
 
+/** An upload the sweep may pick up, as the queue read returns it. */
+export interface SettlementCandidate {
+  id: string;
+  organisation_id: string;
+}
+
+export interface SettlementTickOutcome {
+  /** Uploads this tick called the repair for. */
+  attempted: number;
+  /** Uploads this tick brought to the current version. */
+  settled: number;
+  /** The organisations actually touched, for the primary-image enforcement. */
+  organisations: string[];
+}
+
+/**
+ * One tick of the sweep: settle what fits, in the order given.
+ *
+ * THE CAP IS ON WORK FINISHED, NOT ON UPLOADS LOOKED AT, and that distinction
+ * is the whole reason this is a function rather than three lines in a handler.
+ * A tick always starts at the oldest outstanding upload, so capping ATTEMPTS
+ * let a source that can never settle — bytes that no longer parse, a document
+ * too large to finish inside one wall clock — hold one of the six places for
+ * ever and starve every upload behind it. The sweep would then never reach the
+ * rest, and never unschedule itself, which is the one thing a repair that
+ * describes itself as a deployment step must not do.
+ *
+ * Capping settlements instead costs a stuck upload a single attempt per tick
+ * and lets the queue behind it drain. The wall clock is what bounds the tick;
+ * the cap only stops it doing more than a tick's worth of successful work.
+ */
+export async function runSettlementTick(
+  outstanding: SettlementCandidate[],
+  options: { maxSettled: number; deadlineAt: number; now?: () => number },
+  settle: (candidate: SettlementCandidate) => Promise<SettlementOutcome>,
+): Promise<SettlementTickOutcome> {
+  const now = options.now ?? (() => Date.now());
+  const organisations = new Set<string>();
+  let attempted = 0;
+  let settled = 0;
+
+  for (const candidate of outstanding) {
+    if (now() > options.deadlineAt) break;
+    if (settled >= options.maxSettled) break;
+    attempted += 1;
+    // Collected as the loop goes, so it names what was ATTEMPTED rather than
+    // what was planned: a tick that stops on its wall clock used to enforce
+    // primaries for organisations it never reached.
+    organisations.add(String(candidate.organisation_id));
+    const outcome = await settle(candidate);
+    if (outcome.settled) settled += 1;
+  }
+
+  return { attempted, settled, organisations: [...organisations] };
+}
+
 /**
  * Bring ONE upload's imagery up to the current rules.
  *

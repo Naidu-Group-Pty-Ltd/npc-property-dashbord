@@ -472,6 +472,7 @@ function fakeDb(seed: { items: FakeRow[]; uploads: FakeRow[]; objects: Record<st
     filters.every(([op, column, value]) => {
       if (op === 'eq') return row[column] === value;
       if (op === 'is') return row[column] === value || (value === null && row[column] == null);
+      if (op === 'in') return (value as unknown[]).includes(row[column]);
       return true;
     });
 
@@ -480,6 +481,7 @@ function fakeDb(seed: { items: FakeRow[]; uploads: FakeRow[]; objects: Record<st
     const builder: any = {
       eq(column: string, value: unknown) { filters.push(['eq', column, value]); return builder; },
       is(column: string, value: unknown) { filters.push(['is', column, value]); return builder; },
+      in(column: string, values: unknown[]) { filters.push(['in', column, values]); return builder; },
       limit() { return builder; },
       order() { return builder; },
       maybeSingle() {
@@ -614,6 +616,43 @@ describe('J — re-reading the stored PDF of an upload already imported', () => 
     expect(image.source_detail.source_sha256).toBe(image.source_detail.stored_sha256);
     // The card now shows it.
     expect(db.tables.builder_stock_items[0].primary_image_id).toBe(image.id);
+  });
+
+  /**
+   * THE PDF PATH IS BUDGETED LIKE EVERY OTHER PATH.
+   *
+   * It used to be the exception: it took no deadline and could not report
+   * `incomplete`, so a document with enough properties ran past the caller's
+   * wall clock and was killed by the edge runtime rather than stopping. A
+   * killed run writes no settlement marker, so the sweep re-read the same
+   * document every tick — and because a tick starts at the oldest outstanding
+   * upload, everything behind it waited on a source that could never finish.
+   *
+   * Reporting `incomplete` is what keeps the marker clear HONESTLY: the caller
+   * asks again, and this run is never mistaken for a finished one.
+   */
+  it('stops on its deadline and says the run is incomplete', async () => {
+    const { repairSourceImagesForUpload } = await import(
+      '../../../supabase/functions/_shared/builderStock/repairSourceImages');
+    const db = fakeDb({
+      items: [item], uploads: [upload], objects: { [upload.storage_path]: bytes },
+    });
+
+    const outcome = await repairSourceImagesForUpload(
+      db as any,
+      // Already spent: the document is still read and attributed, and the
+      // per-property pass that follows is what stops.
+      { organisationId: 'org-a', uploadId: 'upload-537', deadlineAt: Date.now() - 1 },
+    );
+
+    expect(outcome.incomplete).toBe(true);
+    // Stopping is not failing, and it is not a licence to damage anything:
+    // the property is untouched and no image was demoted on a partial view.
+    expect(outcome.demoted).toBe(0);
+    expect(db.tables.builder_stock_items).toHaveLength(1);
+    expect(db.tables.builder_stock_items[0]).toMatchObject({
+      id: 'item-537', price: 941_990, availability_status: 'available',
+    });
   });
 });
 

@@ -32,6 +32,9 @@ import {
   COMMAND_SELECTION_SELECT, COMMAND_SELECTION_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, isSelectableAvailability, stockPagination,
 } from '../_shared/builderStock/projection.pure.ts';
+import {
+  isDisplayableSourceImage, type DisplayableImage,
+} from '../_shared/builderStock/primaryImage.ts';
 
 const FEATURE_FLAG_KEY = 'builder_stock_marketplace';
 const IMAGE_URL_TTL_SECONDS = 300;
@@ -196,10 +199,43 @@ Deno.serve(async (req) => {
     if (operation === 'image_url') {
       const { data: image } = await supabase
         .from('builder_stock_item_images')
-        .select('id, storage_bucket, storage_path, external_url')
+        .select('id, stock_item_id, source_stage, verification_status, processing_status, storage_bucket, storage_path, external_url, source_detail')
         .eq('id', cleanText(body.image_id, 64))
         .maybeSingle();
       if (!image) return json({ error: 'Image not found' }, 404);
+
+      /**
+       * THE RULE IS ENFORCED WHERE THE BYTES ARE SERVED, not only where the
+       * pointer is chosen.
+       *
+       * `primary_image_id` decides what a card asks for, and `primaryImage.ts`
+       * is careful about how it is chosen — but this endpoint took any image id
+       * and minted a signed URL for it on a service-role client. That included
+       * the rows the re-audit had just DEMOTED for being unprovable, which is
+       * precisely the class of picture the whole rule exists to keep off a
+       * client's screen, and images belonging to stock no marketplace surface
+       * will list. The same predicate the card applies is applied here, so
+       * "no proven primary means no image" holds at the boundary that actually
+       * hands over bytes.
+       */
+      if (!isDisplayableSourceImage(image as DisplayableImage)) {
+        return json({ error: 'Image not found' }, 404);
+      }
+      /**
+       * An image the document carried but attributed to NOBODY is stored
+       * against the upload with a null `stock_item_id` — the page declining to
+       * say whose house that is. It belongs to no property, so it is served to
+       * nobody, and asking the question explicitly beats sending `id=eq.null`.
+       */
+      if (!image.stock_item_id) return json({ error: 'Image not found' }, 404);
+      const { data: owner } = await supabase
+        .from('builder_stock_items')
+        .select('id')
+        .eq('id', image.stock_item_id)
+        .eq('lifecycle_status', 'active')
+        .maybeSingle();
+      if (!owner) return json({ error: 'Image not found' }, 404);
+
       if (image.external_url && !image.storage_path) {
         return json({ success: true, url: image.external_url, external: true });
       }

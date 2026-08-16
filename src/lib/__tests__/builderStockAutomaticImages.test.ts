@@ -36,7 +36,8 @@ import {
 import { SOURCE_ANCHOR_HEADER } from '../../../supabase/functions/_shared/builderStock/sourceAssets.pure';
 import { PROVENANCE_VERSION } from '../../../supabase/functions/_shared/builderStock/sourceImages';
 import {
-  settleUploadSourceImages, uploadsNeedingSettlement,
+  runSettlementTick, settleUploadSourceImages, uploadsNeedingSettlement,
+  type SettlementCandidate,
 } from '../../../supabase/functions/_shared/builderStock/settleSourceImages';
 import {
   roleFromStructuralContainer,
@@ -569,5 +570,112 @@ describe('settlement resumability and scope', () => {
       uploads: upload({ source_images_settled_version: PROVENANCE_VERSION - 1 }),
     });
     expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([UPLOAD]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The sweep's own tick — it must CONVERGE, and it must not starve
+// ---------------------------------------------------------------------------
+
+/**
+ * The cron sweep is a deployment repair that unschedules itself, so the one
+ * thing it must not do is fail to finish. A tick always begins at the oldest
+ * outstanding upload, which is what makes the difference between capping
+ * attempts and capping settlements load-bearing rather than stylistic.
+ */
+describe('Y — one tick of the settlement sweep', () => {
+  const candidates = (count: number, organisation = ORG): SettlementCandidate[] =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `upload-${index + 1}`, organisation_id: organisation,
+    }));
+
+  const settles = async (candidate: SettlementCandidate) => ({
+    uploadId: candidate.id, settled: true,
+  });
+
+  it('stops once a tick\'s worth of uploads have been settled', async () => {
+    const seen: string[] = [];
+    const outcome = await runSettlementTick(
+      candidates(10),
+      { maxSettled: 3, deadlineAt: Date.now() + 60_000 },
+      async (candidate) => { seen.push(candidate.id); return settles(candidate); },
+    );
+    expect(outcome.settled).toBe(3);
+    expect(outcome.attempted).toBe(3);
+    expect(seen).toEqual(['upload-1', 'upload-2', 'upload-3']);
+  });
+
+  /**
+   * THE STARVATION CASE, and the reason the cap counts settlements.
+   *
+   * The first three sources here can never settle — bytes that no longer parse,
+   * a document too large for one wall clock. Capping ATTEMPTS at three meant
+   * every tick spent itself on exactly those three for ever: the uploads behind
+   * them were never read, and the sweep never reached the empty queue that
+   * unschedules it.
+   */
+  it('reaches the uploads behind ones that can never settle', async () => {
+    const seen: string[] = [];
+    const outcome = await runSettlementTick(
+      candidates(10),
+      { maxSettled: 3, deadlineAt: Date.now() + 60_000 },
+      async (candidate) => {
+        seen.push(candidate.id);
+        const stuck = ['upload-1', 'upload-2', 'upload-3'].includes(candidate.id);
+        return { uploadId: candidate.id, settled: !stuck };
+      },
+    );
+    expect(outcome.settled).toBe(3);
+    expect(outcome.attempted).toBe(6);
+    expect(seen).toEqual([
+      'upload-1', 'upload-2', 'upload-3', 'upload-4', 'upload-5', 'upload-6',
+    ]);
+  });
+
+  /** The wall clock bounds the tick even when nothing at all is settling. */
+  it('stops on its deadline rather than walking the whole queue', async () => {
+    let clock = 1_000;
+    const seen: string[] = [];
+    const outcome = await runSettlementTick(
+      candidates(500),
+      { maxSettled: 6, deadlineAt: 1_000 + 30, now: () => clock },
+      async (candidate) => {
+        seen.push(candidate.id);
+        clock += 10;
+        return { uploadId: candidate.id, settled: false };
+      },
+    );
+    expect(outcome.settled).toBe(0);
+    expect(seen.length).toBe(4);
+    expect(outcome.attempted).toBe(4);
+  });
+
+  /**
+   * Primaries are enforced per organisation, and only for the ones a tick got
+   * to: a tick that stops on its wall clock used to enforce for organisations
+   * it had never read, which is work charged against a budget it already spent.
+   */
+  it('names only the organisations it actually reached', async () => {
+    const outcome = await runSettlementTick(
+      [
+        { id: 'a', organisation_id: 'org-1' },
+        { id: 'b', organisation_id: 'org-1' },
+        { id: 'c', organisation_id: 'org-2' },
+      ],
+      { maxSettled: 2, deadlineAt: Date.now() + 60_000 },
+      settles,
+    );
+    expect(outcome.organisations).toEqual(['org-1']);
+  });
+
+  /** Nothing outstanding is the terminal state, and it does no work at all. */
+  it('does nothing when the queue is empty', async () => {
+    let called = 0;
+    const outcome = await runSettlementTick(
+      [], { maxSettled: 6, deadlineAt: Date.now() + 60_000 },
+      async (candidate) => { called += 1; return settles(candidate); },
+    );
+    expect(called).toBe(0);
+    expect(outcome).toEqual({ attempted: 0, settled: 0, organisations: [] });
   });
 });
