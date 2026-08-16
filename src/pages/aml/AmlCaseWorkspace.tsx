@@ -133,6 +133,9 @@ export default function AmlCaseWorkspace() {
   const { caseId = "" } = useParams<{ caseId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  // Named explicitly: a bare `prompt` in this scope resolves to the DOM
+  // global, which type-checks and silently does the wrong thing.
+  const { prompt: askOperator, dialog: workspaceDialog } = usePromptDialog();
   const access = useAmlAccess();
   const { caseWorkspace: workspaceEnabled, loading: flagsLoading } = useAmlV3Flags();
 
@@ -264,6 +267,52 @@ export default function AmlCaseWorkspace() {
       outstandingWork: (screeningStage.sync?.next_action.key ?? "none") !== "none",
     },
   );
+
+  /**
+   * Reopen a closed case.
+   *
+   * `closed` is terminal in the transition table by design, so this is its
+   * own authorised operation rather than a status edit. The server records
+   * the reason, resumes the journey from the evidence that already exists,
+   * reissues portal access, and re-asks only for consents whose version has
+   * moved — and it deliberately does NOT restore a terminated service gate.
+   */
+  const reopenCase = useCallback(async () => {
+    const values = await askOperator({
+      title: "Reopen this case",
+      description:
+        "Everything already gathered is kept — documents, verifications, "
+        + "determinations and the questionnaire. The client's portal access is "
+        + "reissued and the journey resumes where it left off. Reopening does not "
+        + "restore permission to serve: a terminated service gate stays terminated "
+        + "and needs a fresh decision.",
+      confirmLabel: "Reopen case",
+      fields: [{
+        name: "reason", label: "Why is this case being reopened?", type: "textarea",
+        required: true, minLength: 10,
+        placeholder: "An auditor will read this — say what changed.",
+      }],
+    });
+    if (!values) return;
+    try {
+      const r = await amlCasesApi.reopenCase(caseId, values.reason.trim());
+      toast({
+        title: "Case reopened",
+        description: r.consents_to_reaccept.length > 0
+          ? `Resumed at ${r.resumed_status.replace(/_/g, " ")}. The client must re-accept `
+            + `${r.consents_to_reaccept.length} consent(s) whose version has changed.`
+          : `Resumed at ${r.resumed_status.replace(/_/g, " ")}. No consents needed re-accepting.`,
+      });
+      load();
+      screeningStage.reload();
+    } catch (e: any) {
+      toast({
+        title: "The case could not be reopened",
+        description: e?.message ?? "The server refused the request.",
+        variant: "destructive",
+      });
+    }
+  }, [caseId, load, askOperator, screeningStage]);
 
   /**
    * Perform Stage 5's one next action.
@@ -525,6 +574,7 @@ export default function AmlCaseWorkspace() {
                 currentStageOrder={
                   activeStageId ? JOURNEY_STAGES.indexOf(activeStageId) + 1 : undefined
                 }
+                onReopen={canInvestigate ? () => void reopenCase() : undefined}
               />
               <div className="grid items-start gap-4 md:grid-cols-2">
                 <AmlOutstandingItems items={summary.outstanding} onOpenSection={setSection} />
@@ -725,6 +775,7 @@ export default function AmlCaseWorkspace() {
           />
         </aside>
       </div>
+      {workspaceDialog}
     </div>
   );
 }
