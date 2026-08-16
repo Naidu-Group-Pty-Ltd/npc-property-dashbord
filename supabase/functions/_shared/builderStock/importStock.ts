@@ -25,8 +25,11 @@ import {
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import type { ExtractedMedia } from './extract.ts';
 import {
-  attributeDocumentMedia, type AnchoredAssets, type SourceImageAsset,
+  attributeDocumentMedia, settleContainerMediaRoles, settleRowAssetRoles,
+  type AnchoredAssets, type SourceImageAsset,
 } from './sourceAssets.pure.ts';
+import { roleDetail, roleFromExplicitField } from './sourceImageRole.pure.ts';
+import { assignPdfMediaRolesPerProperty } from './pdfPrimaryImage.pure.ts';
 import { PROVENANCE_VERSION, storeSourceImages } from './sourceImages.ts';
 import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
 
@@ -163,6 +166,14 @@ export async function importStockRecords(
      * `pdfRowAnchors.pure.ts`, which refuses far more often than it answers.
      */
     pageTexts?: string[];
+    /**
+     * Did the document's OWN page tree establish that order?
+     *
+     * False means a page number is the third-lowest object number rather than
+     * the third page, so no page may be read as a property's cover. It defaults
+     * to true only where no paginated reader ran at all.
+     */
+    pageOrderAuthoritative?: boolean;
     /** The uploaded document's own name, recorded on every image it yielded. */
     filename?: string | null;
   },
@@ -180,6 +191,7 @@ export async function importStockRecords(
    * the mis-attribution this whole path exists to prevent.
    */
   const itemIdByAnchor = new Map<string, string | null>();
+  const labelByItemId = new Map<string, string>();
   const claimAnchor = (anchor: string | null, itemId: string) => {
     if (!anchor) return;
     if (!itemIdByAnchor.has(anchor)) { itemIdByAnchor.set(anchor, itemId); return; }
@@ -209,6 +221,7 @@ export async function importStockRecords(
       records.map((record) => stockRecordLabel(record)),
       input.pageTexts,
       photoPages,
+      input.pageOrderAuthoritative !== false,
     );
     records.forEach((record, index) => {
       if (!record.source_anchor && anchors[index]) record.source_anchor = anchors[index];
@@ -304,6 +317,9 @@ export async function importStockRecords(
       }
 
       outcome.itemIds.push(itemId);
+      // The label the property was matched on, kept so a paginated source can
+      // ask which page states THIS property's identity.
+      labelByItemId.set(itemId, label);
       claimAnchor(record.source_anchor, itemId);
 
       /**
@@ -318,15 +334,26 @@ export async function importStockRecords(
           organisationId: input.organisationId,
           uploadId: input.uploadId,
           stockItemId: itemId,
-          assets: record.image_urls.map((url, position): SourceImageAsset => ({
-            url,
-            reference: url.slice(0, 400),
-            origin: 'stock_list_column',
-            provider: 'stock_list_column',
-            pageUrl: null,
-            position,
-            linkFallback: true,
-          })),
+          assets: settleRowAssetRoles(
+            record.image_urls.map((url, position): SourceImageAsset => ({
+              url,
+              reference: url.slice(0, 400),
+              origin: 'stock_list_column',
+              provider: 'stock_list_column',
+              pageUrl: null,
+              position,
+              linkFallback: true,
+              // LEVEL 1: the heading the URL sat under is the source saying
+              // what the image is for.
+              role: roleFromExplicitField(record.image_url_fields[url]),
+            })),
+            {
+              container: 'this property\'s row',
+              designation: 'property image',
+              preferredIndex: record.image_urls.findIndex(
+                (url) => roleFromExplicitField(record.image_url_fields[url]).evidenceLevel === 1),
+            },
+          ),
         });
       }
     } catch (error) {
@@ -353,7 +380,16 @@ export async function importStockRecords(
     });
   }
 
-  await attachDocumentMedia(db, input, outcome.itemIds, itemIdByAnchor);
+  await attachDocumentMedia(
+    db, input, outcome.itemIds, itemIdByAnchor,
+    input.pageTexts?.length
+      ? {
+        labelByItemId,
+        pageTexts: input.pageTexts,
+        pageOrderAuthoritative: input.pageOrderAuthoritative !== false,
+      }
+      : null,
+  );
   return outcome;
 }
 
@@ -380,6 +416,18 @@ export async function attachDocumentMedia(
   },
   itemIdsInOrder: string[],
   itemIdByAnchor: Map<string, string | null>,
+  /**
+   * The properties this upload produced, and the page text they were read out
+   * of. Present for a PAGINATED source, where the role of a picture is decided
+   * by which page presents the property as a package — see
+   * `pdfPrimaryImage.pure.ts`. Absent for everything else, whose containment is
+   * the only thing the format states.
+   */
+  paginated?: {
+    labelByItemId: Map<string, string>;
+    pageTexts: string[];
+    pageOrderAuthoritative: boolean;
+  } | null,
 ): Promise<AttachedMedia[]> {
   const attached: AttachedMedia[] = [];
   if (!input.media.length) return attached;
@@ -401,6 +449,26 @@ export async function attachDocumentMedia(
     itemIdByAnchor: resolvedAnchors,
     itemIdsInOrder: pageAnchored ? [] : itemIdsInOrder,
   });
+
+  /**
+   * WHAT EACH PICTURE IS FOR, settled once for the whole document.
+   *
+   * Provenance — these bytes came from here — was already recorded and was
+   * never the problem. This is the second fact: did the source present this
+   * image as THIS property's listing image? Without it, "source_supplied" was
+   * read as "safe to show", and a bedroom render reached a client's card.
+   */
+  const roles = paginated
+    ? assignPdfMediaRolesPerProperty({
+      media: input.media,
+      stockItemIds: attributions.map((attribution) => attribution.stockItemId),
+      ...paginated,
+    })
+    : settleContainerMediaRoles({
+      media: input.media.map((media) => ({ name: media.name, anchor: media.anchor ?? null })),
+      stockItemIds: attributions.map((attribution) => attribution.stockItemId),
+      container: 'the container in the builder\'s own document',
+    });
 
   for (const [index, media] of input.media.entries()) {
     const path = `${input.organisationId}/${input.uploadId}/document/${index}-${media.name.replace(/[^A-Za-z0-9._-]+/g, '-').slice(-60)}`;
@@ -433,6 +501,7 @@ export async function attachDocumentMedia(
           structural: attribution.structural,
           anchor: media.anchor ?? null,
           reason: attribution.reason,
+          ...roleDetail(roles[index]),
           upload_id: input.uploadId,
           stock_item_id: stockItemId,
           filename: input.filename ?? null,

@@ -27,6 +27,7 @@
  * reaches for Google and Perplexity and cannot be loaded outside the edge
  * runtime, and a rule nothing can test is a rule that drifts.
  */
+import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
 
 /** The stage whose provenance is the builder's own document. */
 export const SOURCE_SUPPLIED_STAGE = 'uploaded_document';
@@ -42,27 +43,43 @@ export interface DisplayableImage {
   position?: number | null;
   storage_path?: string | null;
   external_url?: string | null;
+  /** Carries `role`: what the SOURCE presented this image as. */
+  source_detail?: Record<string, unknown> | null;
 }
 
 /**
  * May this image be shown on a Builder Stock card?
  *
- * All four conditions, every time: the builder's own stage, the verification
- * that says so, a stage that actually completed, and bytes to serve.
+ * FIVE conditions, every time: the builder's own stage, the verification that
+ * says so, a stage that actually completed, bytes to serve — and the role the
+ * source gave it.
+ *
+ * THE ROLE IS THE ONE THAT WAS MISSING, and its absence is the whole defect.
+ * The first four say "these exact bytes came out of the builder's source",
+ * which was true of the bedroom render that Lot 537 Kirramingly Avenue showed
+ * on its card. Only the fifth says "and the source presented this image as THIS
+ * property's listing image", which was not true of it and is the only thing
+ * that makes the badge "Builder supplied" mean what a client reads it to mean.
+ *
+ * An image with no recorded role is `unknown`, and `unknown` is never
+ * displayable — including every row written before roles existed. Those are
+ * demoted and re-derived by `reprocess_source_images` rather than trusted.
  */
 export function isDisplayableSourceImage(image: DisplayableImage): boolean {
   return image.source_stage === SOURCE_SUPPLIED_STAGE
     && image.verification_status === SOURCE_SUPPLIED_VERIFICATION
     && image.processing_status === 'ready'
-    && !!(image.storage_path || image.external_url);
+    && !!(image.storage_path || image.external_url)
+    && isPrimaryRole(readStoredRole(image.source_detail));
 }
 
 /**
  * The card's image, from a property's images. Null means "show no image".
  *
- * Ordering among displayable images is by `position` — the order the source
- * itself presented them — with the id as a stable last resort so re-running
- * enrichment cannot silently swap a card's picture.
+ * There is normally exactly one candidate, because at most one image per
+ * property can carry `primary_property`. Where a re-import has left two, the
+ * source's own ordering decides, with the id as a stable last resort so
+ * re-running enrichment cannot silently swap a card's picture.
  */
 export function chooseDisplayableImage<T extends DisplayableImage>(images: T[]): T | null {
   const displayable = (images ?? []).filter(isDisplayableSourceImage);
@@ -87,7 +104,7 @@ export async function chooseAndStorePrimaryImage(
 ): Promise<string | null> {
   const { data: images } = await db
     .from('builder_stock_item_images')
-    .select('id, source_stage, verification_status, processing_status, position, storage_path, external_url')
+    .select('id, source_stage, verification_status, processing_status, position, storage_path, external_url, source_detail')
     .eq('stock_item_id', stockItemId);
 
   const primary = chooseDisplayableImage((images ?? []) as DisplayableImage[]);
@@ -122,7 +139,7 @@ export async function enforceStrictPrimaryImages(
 
   const { data: images } = await db
     .from('builder_stock_item_images')
-    .select('id, stock_item_id, source_stage, verification_status, processing_status, position, storage_path, external_url')
+    .select('id, stock_item_id, source_stage, verification_status, processing_status, position, storage_path, external_url, source_detail')
     .eq('organisation_id', organisationId)
     .limit(200000);
 

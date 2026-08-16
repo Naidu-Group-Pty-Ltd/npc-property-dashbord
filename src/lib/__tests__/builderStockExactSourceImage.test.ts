@@ -34,6 +34,23 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/rasterPng';
 import { recoverPackageImage } from '../../../supabase/functions/_shared/builderStock/packageImages';
 import type { BuilderStockImage, BuilderStockItem } from '../../lib/builderStock';
+import {
+  roleDetail, roleFromStructuralContainer,
+} from '../../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
+
+/**
+ * The package's own COVER PAGE, as a person reads it.
+ *
+ * A picture is this property's image because the document presented it on the
+ * page stating this property's identity and its package information — not
+ * because it is the biggest raster in the file. These fixtures are built as
+ * bare page trees with no text layer, so the cover text is supplied the way
+ * production reads it, through the injected reader.
+ */
+const coverTextFor = (label: string) => async () => [
+  `${label}\nFIXED PRICE CONTRACT\n$1,307,585\nLand Size 350 m2\n4 bed 2 bath 2 car`,
+];
+
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -200,7 +217,12 @@ const image = (over: Partial<BuilderStockImage>): BuilderStockImage => ({
   processing_status: 'ready',
   error_message: null,
   position: 0,
-  source_detail: null,
+  // What the SOURCE presented it as. A stage-1 image without this is imagery
+  // the builder supplied and did not designate, and never a card's picture.
+  source_detail: roleDetail(roleFromStructuralContainer({
+    container: 'the Notion row for this property',
+    designation: 'page cover',
+  })),
   created_at: '2026-08-15T00:00:00Z',
   ...over,
 });
@@ -447,11 +469,11 @@ describe('two properties that share a house design', () => {
   it('K — each proves the image from ITS OWN linked document', async () => {
     const lot42 = await recoverPackageImage(
       { packageUrl: DRIVE, label: 'Lot 42 - Tringa Street … [Stradbroke 180]' },
-      { fetchPackage },
+      { fetchPackage, readPageTexts: coverTextFor('Lot 42 - Tringa Street … [Stradbroke 180]') },
     );
     const lot43 = await recoverPackageImage(
       { packageUrl: DRIVE, label: 'Lot 43 - Tringa Street … [Stradbroke 180]' },
-      { fetchPackage },
+      { fetchPackage, readPageTexts: coverTextFor('Lot 43 - Tringa Street … [Stradbroke 180]') },
     );
 
     expect(lot42.status).toBe('recovered');
@@ -469,7 +491,7 @@ describe('two properties that share a house design', () => {
   it('K — a lot whose own folder holds no matching document gets nothing', async () => {
     const outcome = await recoverPackageImage(
       { packageUrl: DRIVE, label: 'Lot 51 - Tringa Street … [Stradbroke 180]' },
-      { fetchPackage },
+      { fetchPackage, readPageTexts: coverTextFor('Lot 51 - Tringa Street … [Stradbroke 180]') },
     );
     expect(outcome.status).toBe('not_identified');
   });
@@ -477,7 +499,7 @@ describe('two properties that share a house design', () => {
   it('records the page, the object and both hashes', async () => {
     const outcome = await recoverPackageImage(
       { packageUrl: DRIVE, label: 'Lot 43 - Tringa Street … [Stradbroke 180]' },
-      { fetchPackage },
+      { fetchPackage, readPageTexts: coverTextFor('Lot 43 - Tringa Street … [Stradbroke 180]') },
     );
     expect(outcome.status).toBe('recovered');
     if (outcome.status !== 'recovered') return;

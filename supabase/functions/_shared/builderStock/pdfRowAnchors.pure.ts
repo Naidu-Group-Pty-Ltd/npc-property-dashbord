@@ -23,8 +23,9 @@
  *     unanchored: a display-village shot on page 4 is kept against the upload
  *     and shown against nobody.
  *
- * Pure: no imports, no IO, no clock.
+ * Pure: no IO and no clock.
  */
+import { findPropertyCoverPages } from './pdfPrimaryImage.pure.ts';
 
 /** The anchor vocabulary. Minted here so both halves cannot drift. */
 export const pdfPageAnchor = (page: number): string => `pdf:page${page}`;
@@ -76,13 +77,36 @@ export function anchorPdfRowsToPages(
   labels: string[],
   pageTexts: string[],
   photoPages: number[] = [],
+  /**
+   * Did the document's own page tree establish the order?
+   *
+   * When it did not, a page number names the third-lowest object rather than
+   * the third page, and anchoring a property to one would tie it to whichever
+   * page happened to sort there. Nothing is anchored in that case.
+   */
+  pageOrderAuthoritative = true,
 ): Array<string | null> {
   if (!labels.length) return [];
+  if (!pageOrderAuthoritative) return labels.map(() => null);
 
-  // One property: the document is that property's, and it leads with its
-  // picture. Nothing later is claimed — see the header.
-  if (labels.length === 1 && photoPages.length >= 1) {
-    return [pdfPageAnchor(photoPages[0])];
+  /**
+   * ONE PROPERTY: the document is that property's, and its record is the page
+   * that presents it AS A PACKAGE — the page stating its identity together
+   * with its price, its configuration or its sizes.
+   *
+   * It used to be "the first page that produced a photograph", which is a fact
+   * about rasters and not about the property. On the live Lot 537 contract the
+   * first page producing a photograph was the third page a person sees, whose
+   * heading is INCLUSIONS and whose picture is a bedroom.
+   */
+  if (labels.length === 1) {
+    const covers = findPropertyCoverPages(pageTexts, labels[0]);
+    if (covers.length === 1) return [pdfPageAnchor(covers[0].page)];
+    // No cover, or two: the document has not said which page is this
+    // property's record, so its pictures stay against the upload.
+    if (covers.length > 1) return [null];
+    if (photoPages.length >= 1) return [pdfPageAnchor(photoPages[0])];
+    return [null];
   }
 
   return labels.map((label) => {

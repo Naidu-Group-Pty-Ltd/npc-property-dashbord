@@ -10,11 +10,19 @@
  * where one already exists, so the browser cannot offer a value the server
  * would reject.
  */
+import {
+  isPrimaryRole, readStoredRole,
+} from '../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
+
 export {
   stockFileAcceptAttribute,
   MAX_STOCK_FILE_BYTES,
   STOCK_EXTENSIONS,
 } from '../../supabase/functions/_shared/builderStock/fileTypes.pure';
+export {
+  isPrimaryRole, readStoredRole, PRIMARY_ROLE,
+  type SourceImageRole,
+} from '../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
 
 export type StockUploadStatus =
   | 'uploaded' | 'parsing' | 'imported' | 'enriching' | 'complete'
@@ -304,9 +312,30 @@ export function isDisplayableSourceImage(image: BuilderStockImage): boolean {
   return image.source_stage === 'uploaded_document'
     && image.verification_status === 'source_supplied'
     && image.processing_status === 'ready'
-    && !!(image.storage_path || image.external_url);
+    && !!(image.storage_path || image.external_url)
+    && isPrimaryRole(readStoredRole(image.source_detail));
 }
 
+/**
+ * The card's image, or null.
+ *
+ * TWO THINGS CHANGED HERE, AND THE SECOND IS WHAT A CLIENT ACTUALLY SAW.
+ *
+ * The role check above is the first: "the builder supplied this" and "the
+ * builder supplied this AS this property's listing image" are different facts,
+ * and only the second belongs on a card badged "Builder supplied".
+ *
+ * The second is that the fallback can no longer reach an image the source did
+ * not designate. It used to fall back to the lowest-`position` SOURCE image
+ * whenever `primary_image_id` was absent or stale, which meant the server could
+ * decline to nominate a primary and the card would show one anyway. Lot 537
+ * Kirramingly Avenue is exactly that: its `primary_image_id` is null in the
+ * database, and the bedroom render reached the marketplace through this
+ * fallback alone. The fallback is kept — a stale pointer at a Street View must
+ * still resolve to the builder's own image rather than to nothing — but it now
+ * ranks only images that already passed the role check above, so there is
+ * nothing for it to fall back TO unless the source designated one.
+ */
 export function primaryStockImage(item: BuilderStockItem): BuilderStockImage | null {
   const displayable = (item.images ?? []).filter(isDisplayableSourceImage);
   if (!displayable.length) return null;

@@ -19,22 +19,34 @@
  * WHAT IS TAKEN, AND WHAT IS REFUSED. Two ways, in order, and no third:
  *
  *   1. THE EMBEDDED ASSET. The page's own drawing instructions say where each
- *      picture is placed and how large it appears; the largest photographic
- *      raster on the page is the one the layout leads with, and its bytes are
- *      copied out exactly as the builder stored them.
+ *      picture is placed and how large it appears; every raster that could be a
+ *      photograph is taken, byte for byte as the builder stored it.
  *   2. THE FLATTENED PAGE. When the whole page is one raster, the photograph
  *      is cut out of it — cropped, never generated — and re-encoded losslessly.
  *
  * Anything else returns nothing, and nothing means the card shows no image.
+ *
+ * WHICH OF THEM IS THE PROPERTY'S IMAGE IS NOT DECIDED HERE. It used to be —
+ * "the largest photographic raster on the page, on the first page that has
+ * one" — and that is a statement about rasters. It is why the live Lot 537
+ * contract's card showed a bedroom: the bedroom is a large, detailed,
+ * well-proportioned JPEG drawn across a full bleed, and a facade render half
+ * its size on the package cover is not. The role a picture plays comes from
+ * the document's own words, in `pdfPrimaryImage.pure.ts`.
  */
 import {
-  flattenedPageImageFrom, parseImagePlacements, readPdfPage, resolveDrawnForms,
-  resolveDrawnImages, selectPropertyPhotographFrom, IDENTITY,
+  flattenedPageImageFrom, objectStreamSlices, pageOrderIsAuthoritative,
+  parseImagePlacements, parseObjectStream, qualifyingPhotographsFrom, readPdfPage,
+  resolveDrawnForms, resolveDrawnImages, selectPropertyPhotographFrom, IDENTITY,
   type DrawnImage, type Matrix, type PdfScope,
 } from './pdfPageImages.pure.ts';
+import { assignPdfMediaRoles, type PdfMediaPlacement } from './pdfPrimaryImage.pure.ts';
 import { isolatePhotographBand } from './pdfFlattenedPhoto.pure.ts';
 import { cropRows, encodePng, inflate, sha256Hex } from './rasterPng.ts';
 import { validateSourceImageBytes } from './sourceAssets.pure.ts';
+import {
+  isPrimaryRole, noPrimaryEvidence, type SourceImageRoleAssignment,
+} from './sourceImageRole.pure.ts';
 
 /** Everything needed to prove a picture came out of a particular document. */
 export interface PdfPhotoProvenance {
@@ -114,6 +126,42 @@ async function collectDrawnImages(
 }
 
 /**
+ * The objects a document hides inside compressed object streams.
+ *
+ * Read ONCE per document and handed to every page read, because a PDF 1.5+
+ * writer puts the page tree itself in one and a reader that cannot see it
+ * cannot put the pages in order. See `objectStreamSlices` for what that cost.
+ *
+ * A stream we cannot inflate contributes nothing rather than failing the
+ * document: a partially readable PDF is still worth reading.
+ */
+export async function recoverCompressedObjects(
+  bytes: Uint8Array,
+): Promise<Map<number, string>> {
+  const recovered = new Map<number, string>();
+  let slices: ReturnType<typeof objectStreamSlices>;
+  try {
+    slices = objectStreamSlices(bytes);
+  } catch {
+    return recovered;
+  }
+
+  for (const slice of slices) {
+    const raw = bytes.slice(slice.start, slice.end);
+    let text: string;
+    try {
+      text = new TextDecoder('latin1').decode(slice.flate ? await inflate(raw) : raw);
+    } catch {
+      continue;
+    }
+    for (const [number, header] of parseObjectStream(text, slice)) {
+      if (!recovered.has(number)) recovered.set(number, header);
+    }
+  }
+  return recovered;
+}
+
+/**
  * The photograph ONE page of a PDF presents, or null.
  *
  * `pageIndex` is zero-based; the provenance reports the page 1-based.
@@ -121,8 +169,9 @@ async function collectDrawnImages(
 export async function extractPdfPagePhoto(
   bytes: Uint8Array,
   pageIndex: number,
+  recovered: ReadonlyMap<number, string> = new Map(),
 ): Promise<PdfPhoto | null> {
-  const page = readPdfPage(bytes, pageIndex);
+  const page = readPdfPage(bytes, pageIndex, recovered);
   if (!page) return null;
 
   // The page's drawing instructions, inflated where the document compressed
@@ -239,19 +288,20 @@ export async function extractPdfPagePhoto(
 /**
  * The photograph a document presents, and the page it presents it on.
  *
- * For a document that IS one property — a package reached through a row's own
- * link, a single-property brochure a builder uploaded — this is the picture it
- * leads with: pages are read in the document's own order and the FIRST that
- * presents a photograph is the answer. Later pages are not searched, so a lot
- * plan on page 4 and an estate masterplan on page 5 are never reached.
+ * DISCOVERY ONLY, and it must not be read as "the property's image". It is the
+ * first page presenting a photograph, which is a fact about the file. What that
+ * picture is FOR is settled by `selectPdfPropertyPrimary`; this is retained for
+ * the flattened-page path and for callers that need to know a document has any
+ * photograph in it at all.
  */
 export async function extractExactSourcePhotoFromPdf(
   bytes: Uint8Array,
   options: { maxPages?: number } = {},
 ): Promise<PdfPhoto | null> {
+  const recovered = await recoverCompressedObjects(bytes);
   const limit = Math.max(1, Math.min(options.maxPages ?? MAX_PAGES_SEARCHED, MAX_PAGES_SEARCHED));
   for (let index = 0; index < limit; index++) {
-    const photo = await extractPdfPagePhoto(bytes, index);
+    const photo = await extractPdfPagePhoto(bytes, index, recovered);
     if (photo) return photo;
   }
   return null;
@@ -269,11 +319,220 @@ export async function extractPdfPhotosByPage(
   bytes: Uint8Array,
   options: { maxPages?: number } = {},
 ): Promise<Array<{ page: number; photo: PdfPhoto }>> {
+  const recovered = await recoverCompressedObjects(bytes);
   const limit = Math.max(1, Math.min(options.maxPages ?? MAX_PAGES_SEARCHED, MAX_PAGES_SEARCHED));
   const out: Array<{ page: number; photo: PdfPhoto }> = [];
   for (let index = 0; index < limit; index++) {
-    const photo = await extractPdfPagePhoto(bytes, index);
+    const photo = await extractPdfPagePhoto(bytes, index, recovered);
     if (photo) out.push({ page: index + 1, photo });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Asset discovery, and the role the SOURCE gave each asset
+// ---------------------------------------------------------------------------
+
+/** One picture the builder's document contains, and where it sits in it. */
+export interface PdfSourceAsset {
+  /** 1-based, the page a person sees when they open the file. */
+  page: number;
+  /** Identifies the raster within the document: object number and name. */
+  key: string;
+  bytes: Uint8Array;
+  contentType: string;
+  provenance: PdfPhotoProvenance;
+  /** How the document placed it — the input the role decision reads. */
+  placement: PdfMediaPlacement;
+  /** What the source presented it as. Assigned only where a label is known. */
+  role: SourceImageRoleAssignment;
+}
+
+interface RawCandidate {
+  page: number;
+  key: string;
+  objectNumber: number | null;
+  resourceName: string | null;
+  width: number;
+  height: number;
+  start: number;
+  end: number;
+  flate: boolean;
+  pageAreaShare: number;
+  placementsOnPage: number;
+}
+
+/**
+ * Every picture the document draws that could be a photograph, page by page,
+ * in the document's OWN page order.
+ *
+ * Repetition is counted across the whole document, not just within a page,
+ * because that is how a letterhead, a footer banner and a bleed wash announce
+ * themselves — the same raster on page after page. Those are dropped here: a
+ * rejection, not a selection, and the only kind of judgement a raster's
+ * placement is entitled to make.
+ */
+async function discoverCandidates(
+  bytes: Uint8Array,
+  recovered: ReadonlyMap<number, string>,
+  limit: number,
+): Promise<{ kept: RawCandidate[]; pagesDrawnOn: Map<string, number> }> {
+  const perPage: RawCandidate[] = [];
+  const pagesDrawnOn = new Map<string, number>();
+
+  for (let index = 0; index < limit; index++) {
+    const page = readPdfPage(bytes, index, recovered);
+    if (!page) break;
+
+    let content = '';
+    for (const slice of page.contents) {
+      const raw = bytes.slice(slice.start, slice.end);
+      try {
+        content += new TextDecoder('latin1').decode(slice.flate ? await inflate(raw) : raw);
+      } catch {
+        /* an unreadable content stream simply contributes nothing */
+      }
+    }
+    const drawn = await collectDrawnImages(bytes, page, content, IDENTITY, 0);
+
+    for (const candidate of qualifyingPhotographsFrom(drawn, page.width, page.height)) {
+      const key = `${candidate.image.objectNumber}:${candidate.image.name}`;
+      pagesDrawnOn.set(key, (pagesDrawnOn.get(key) ?? 0) + 1);
+      perPage.push({
+        page: index + 1,
+        key,
+        objectNumber: candidate.image.objectNumber,
+        resourceName: candidate.image.name,
+        width: candidate.image.width,
+        height: candidate.image.height,
+        start: candidate.image.start,
+        end: candidate.image.end,
+        flate: candidate.image.filters[0] === 'FlateDecode',
+        pageAreaShare: candidate.pageAreaShare,
+        placementsOnPage: candidate.placements,
+      });
+    }
+  }
+
+  const kept = perPage.filter((candidate) =>
+    candidate.placementsOnPage <= 1 && (pagesDrawnOn.get(candidate.key) ?? 0) <= 1);
+  return { kept, pagesDrawnOn };
+}
+
+async function materialise(
+  bytes: Uint8Array,
+  candidate: RawCandidate,
+): Promise<{ bytes: Uint8Array; contentType: string; provenance: PdfPhotoProvenance } | null> {
+  const raw = bytes.slice(candidate.start, candidate.end);
+  const asset = candidate.flate ? await inflate(raw).catch(() => null) : raw;
+  if (!asset) return null;
+  const check = validateSourceImageBytes(asset);
+  if (check.ok !== true) return null;
+
+  const hash = await sha256Hex(asset);
+  return {
+    bytes: asset,
+    contentType: check.contentType,
+    provenance: {
+      page: candidate.page,
+      method: 'embedded_raster',
+      objectNumber: candidate.objectNumber,
+      resourceName: candidate.resourceName,
+      sourceWidth: candidate.width,
+      sourceHeight: candidate.height,
+      sourceSha256: hash,
+      // Nothing was done to the bytes, so the two hashes are one hash.
+      storedSha256: hash,
+      crop: null,
+      pageAreaShare: Number(candidate.pageAreaShare.toFixed(4)),
+      transformation: null,
+    },
+  };
+}
+
+/**
+ * Every builder-supplied picture in the document, each carrying the role the
+ * SOURCE gave it — and, where the source designated one, the property's
+ * primary image.
+ *
+ * `pageTexts[i]` is the text of visible page `i + 1` and `label` is the
+ * property the document is about. Both are required for a primary: without the
+ * text there is nothing to read a cover page out of, and without a label there
+ * is no identity for a page to state. Absent either, every asset comes back
+ * classified and none of them is primary — which is a correct outcome and the
+ * one this whole module exists to make possible.
+ *
+ * THE PAGE ORDER HAS TO BE THE DOCUMENT'S OWN. Where the catalogue could not be
+ * followed, "page 3" is the third-lowest object number rather than the third
+ * page, and a rule that reads a page as a property's cover would be reading the
+ * wrong page. That case yields no primary rather than a guess.
+ */
+export async function selectPdfPropertyPrimary(
+  bytes: Uint8Array,
+  options: {
+    label?: string | null;
+    pageTexts?: string[];
+    maxPages?: number;
+  } = {},
+): Promise<{
+  assets: PdfSourceAsset[];
+  primary: PdfSourceAsset | null;
+  pageOrderAuthoritative: boolean;
+}> {
+  const found = await discoverPdfSourceAssets(bytes, { maxPages: options.maxPages });
+
+  // The SAME decision an upload and a repair make, over the same inputs.
+  const roles = assignPdfMediaRoles({
+    label: options.label ?? null,
+    pageTexts: options.pageTexts ?? [],
+    pageOrderAuthoritative: found.pageOrderAuthoritative,
+    media: found.assets.map((asset) => asset.placement),
+  });
+
+  let primary: PdfSourceAsset | null = null;
+  const assets = found.assets.map((asset, index) => {
+    const settled = { ...asset, role: roles[index] };
+    if (isPrimaryRole(settled.role.role)) primary = settled;
+    return settled;
+  });
+
+  return { assets, primary, pageOrderAuthoritative: found.pageOrderAuthoritative };
+}
+
+/**
+ * Every builder-supplied picture in the document, with NO role assigned.
+ *
+ * Discovery is separated from attribution because they happen at different
+ * moments: a PDF's pictures are read at extraction time, and which property the
+ * document is about is only known once its prose has been read into rows. The
+ * `placement` each asset carries is what lets the role be settled later without
+ * the bytes being read a second time.
+ */
+export async function discoverPdfSourceAssets(
+  bytes: Uint8Array,
+  options: { maxPages?: number } = {},
+): Promise<{ assets: PdfSourceAsset[]; pageOrderAuthoritative: boolean }> {
+  const recovered = await recoverCompressedObjects(bytes);
+  const authoritative = pageOrderIsAuthoritative(bytes, recovered);
+  const limit = Math.max(1, Math.min(options.maxPages ?? MAX_PAGES_SEARCHED, MAX_PAGES_SEARCHED));
+  const { kept } = await discoverCandidates(bytes, recovered, limit);
+
+  const assets: PdfSourceAsset[] = [];
+  for (const candidate of kept) {
+    const made = await materialise(bytes, candidate);
+    if (!made) continue;
+    assets.push({
+      ...made,
+      page: candidate.page,
+      key: candidate.key,
+      placement: {
+        page: candidate.page,
+        name: candidate.resourceName,
+        placementsOnPage: candidate.placementsOnPage,
+        pagesDrawnOn: 1,
+      },
+      role: noPrimaryEvidence('the role of this image has not been settled yet'),
+    });
+  }
+  return { assets, pageOrderAuthoritative: authoritative };
 }

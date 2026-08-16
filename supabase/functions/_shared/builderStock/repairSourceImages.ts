@@ -35,7 +35,11 @@ import {
   normaliseStockRow, stockMatchKeys, stockRecordLabel, stockRowFingerprint,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
-import { SOURCE_ANCHOR_HEADER, type AnchoredAssets, type SourceImageAsset } from './sourceAssets.pure.ts';
+import {
+  SOURCE_ANCHOR_HEADER, settleRowAssetRoles,
+  type AnchoredAssets, type SourceImageAsset,
+} from './sourceAssets.pure.ts';
+import { roleDetail, roleFromExplicitField } from './sourceImageRole.pure.ts';
 import {
   demoteUnprovenSourceImage, hasReadySourceImage, storeSourceImageBytes,
   storeSourceImages, PROVENANCE_VERSION, type SourceImageFetcher,
@@ -122,7 +126,12 @@ export async function repairSourceImagesForUpload(
      */
     deadlineAt?: number;
   },
-  deps: { fetchPackage?: PackageFetcher; fetchImage?: SourceImageFetcher } = {},
+  deps: {
+    fetchPackage?: PackageFetcher;
+    fetchImage?: SourceImageFetcher;
+    /** How a linked package's prose is read. See `packageImages.ts`. */
+    readPageTexts?: (bytes: Uint8Array) => Promise<string[]>;
+  } = {},
 ): Promise<RepairOutcome> {
   const outcome: RepairOutcome = {
     uploadId: input.uploadId,
@@ -146,6 +155,7 @@ export async function repairSourceImagesForUpload(
   let rowAssets: AnchoredAssets[] = [];
   let media: ExtractedMedia[] = [];
   let pageTexts: string[] = [];
+  let pageOrderAuthoritative = true;
 
   const sourceUrl: string | null = upload.final_url || upload.source_url || null;
 
@@ -195,6 +205,7 @@ export async function repairSourceImagesForUpload(
       rowAssets = extraction.rowAssets;
       media = extraction.media;
       pageTexts = extraction.pageTexts ?? [];
+      pageOrderAuthoritative = extraction.pageOrderAuthoritative !== false;
     }
   } catch (error) {
     return {
@@ -219,6 +230,7 @@ export async function repairSourceImagesForUpload(
       upload,
       media,
       pageTexts,
+      pageOrderAuthoritative,
     }, outcome);
   }
 
@@ -305,15 +317,24 @@ export async function repairSourceImagesForUpload(
     const anchor = record.source_anchor
       ?? (typeof raw[SOURCE_ANCHOR_HEADER] === 'string' ? String(raw[SOURCE_ANCHOR_HEADER]) : null);
     const assets = anchor ? assetsByAnchor.get(anchor) ?? [] : [];
-    const linkAssets = record.image_urls.map((url, position): SourceImageAsset => ({
-      url,
-      reference: url.slice(0, 400),
-      origin: 'stock_list_column',
-      provider: 'stock_list_column',
-      pageUrl: sourceUrl,
-      position: assets.length + position,
-      linkFallback: true,
-    }));
+    const linkAssets = settleRowAssetRoles(
+      record.image_urls.map((url, position): SourceImageAsset => ({
+        url,
+        reference: url.slice(0, 400),
+        origin: 'stock_list_column',
+        provider: 'stock_list_column',
+        pageUrl: sourceUrl,
+        position: assets.length + position,
+        linkFallback: true,
+        role: roleFromExplicitField(record.image_url_fields[url]),
+      })),
+      {
+        container: 'this property\'s row',
+        designation: 'property image',
+        preferredIndex: record.image_urls.findIndex(
+          (url) => roleFromExplicitField(record.image_url_fields[url]).evidenceLevel === 1),
+      },
+    );
     const all = [...assets, ...linkAssets];
     if (all.length) outcome.rowsWithImagery += 1;
 
@@ -354,7 +375,7 @@ export async function repairSourceImagesForUpload(
 
     const recovered = await recoverPackageImage(
       { packageUrl, label: stockRecordLabel(record) },
-      { fetchPackage: deps.fetchPackage, cache },
+      { fetchPackage: deps.fetchPackage, cache, readPageTexts: deps.readPageTexts },
     );
     if (recovered.status === 'unreachable') {
       outcome.packageUnreachable += 1;
@@ -382,6 +403,9 @@ export async function repairSourceImagesForUpload(
       // the file, the page, the object, its size, its hashes and whatever was
       // done to it (nothing, unless it was cut out of a flattened page).
       detail: {
+        // The package's own designation of this picture, on the evidence it
+        // stated. Without it the row proves origin and nothing about role.
+        ...roleDetail(recovered.image.role),
         document: recovered.image.documentName,
         document_url: recovered.image.documentUrl,
         source_row_anchor: anchor,
@@ -488,6 +512,7 @@ async function repairPdfUpload(
     upload: { id: string; original_filename: string };
     media: ExtractedMedia[];
     pageTexts: string[];
+    pageOrderAuthoritative: boolean;
   },
   outcome: RepairOutcome,
 ): Promise<RepairOutcome> {
@@ -517,7 +542,8 @@ async function repairPdfUpload(
   const photoPages = input.media
     .map((media) => pdfAnchorPage(media.anchor))
     .filter((page): page is number => page !== null);
-  const anchors = anchorPdfRowsToPages(labels, input.pageTexts, photoPages);
+  const anchors = anchorPdfRowsToPages(
+    labels, input.pageTexts, photoPages, input.pageOrderAuthoritative);
 
   const itemIdByAnchor = new Map<string, string | null>();
   anchors.forEach((anchor, index) => {
@@ -540,6 +566,14 @@ async function repairPdfUpload(
     // the upload, and the property's card stays empty.
     [],
     itemIdByAnchor,
+    // The SAME role decision the import makes, over the same page texts, so a
+    // repair cannot reach a different conclusion about which picture is this
+    // property's than the upload that created it did.
+    {
+      labelByItemId: new Map(existing.map((item, index) => [item.id, labels[index]])),
+      pageTexts: input.pageTexts,
+      pageOrderAuthoritative: input.pageOrderAuthoritative,
+    },
   );
 
   const provenByItem = new Map<string, Set<string>>();

@@ -34,8 +34,11 @@ import {
   type NotionRecordMap,
 } from './notionRecordMap.pure.ts';
 import {
-  SOURCE_ANCHOR_HEADER, type AnchoredAssets, type SourceImageAsset,
+  SOURCE_ANCHOR_HEADER, settleRowAssetRoles, type AnchoredAssets, type SourceImageAsset,
 } from './sourceAssets.pure.ts';
+import {
+  noPrimaryEvidence, roleFromExplicitField, roleFromStructuralContainer,
+} from './sourceImageRole.pure.ts';
 
 /** Rows asked for in one go. A stock list an order of magnitude larger than
  * this is not something a builder maintains by hand in Notion. */
@@ -195,9 +198,18 @@ function collectRowAssets(
     if (!refs.length) continue;
 
     const assets: SourceImageAsset[] = [];
+    /**
+     * The row's COVER is what Notion itself puts at the top of that row's page,
+     * so it is the row designating its own leading image — LEVEL 3. A file
+     * property is LEVEL 1 instead, judged on the property's NAME ("Facade",
+     * "Floorplan"), and a loose image block inside the row's page body is the
+     * row saying nothing at all.
+     */
+    let coverIndex = -1;
     for (const ref of refs) {
       const url = notionAssetUrl(origin.origin, ref);
       if (!url) continue;
+      if (ref.origin === 'page_cover' && coverIndex < 0) coverIndex = assets.length;
       assets.push({
         url,
         // Notion's OWN name for the file, not the signed URL it resolves to.
@@ -213,9 +225,33 @@ function collectRowAssets(
         position: assets.length,
         // Never: a Notion delivery URL is signed and expires within the hour.
         linkFallback: false,
+        role: ref.origin === 'page_cover'
+          ? roleFromStructuralContainer({
+            container: 'the Notion row for this property',
+            designation: 'page cover',
+          })
+          : ref.origin === 'file_property' || ref.origin === 'link_property'
+            ? roleFromExplicitField(ref.label)
+            : noPrimaryEvidence(
+              'this image sits in the row\'s page body and the row does not present it '
+              + 'as the property\'s listing image'),
       });
     }
-    if (assets.length) out.push({ anchor: `notion:${rowId}`, assets });
+    if (assets.length) {
+      out.push({
+        anchor: `notion:${rowId}`,
+        // The cover wins where the row has one; otherwise a single explicitly
+        // named property-image property does, and anything else designates
+        // nothing.
+        assets: settleRowAssetRoles(assets, {
+          container: 'the Notion row for this property',
+          designation: coverIndex >= 0 ? 'page cover' : 'property image',
+          preferredIndex: coverIndex >= 0
+            ? coverIndex
+            : assets.findIndex((asset) => asset.role.evidenceLevel === 1),
+        }),
+      });
+    }
   }
   return out;
 }

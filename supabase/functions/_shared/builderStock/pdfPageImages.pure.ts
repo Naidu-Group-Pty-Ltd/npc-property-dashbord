@@ -111,8 +111,17 @@ interface PdfObject { number: number; start: number; end: number; header: string
  * Only the first 4 KB of each object is decoded: a dictionary is small and an
  * image stream is megabytes, and decoding those to text would cost more than
  * the rest of the import put together.
+ *
+ * `recovered` carries the objects that are NOT written that way — the ones a
+ * PDF 1.5+ writer packs into a compressed object stream. They have no offsets
+ * in the file, so they contribute a header and nothing else, which is all the
+ * page tree needs. They fill gaps only: an object written literally in the file
+ * body is the later, authoritative copy in an incrementally updated document.
  */
-export function indexPdfObjects(bytes: Uint8Array): Map<number, PdfObject> {
+export function indexPdfObjects(
+  bytes: Uint8Array,
+  recovered: ReadonlyMap<number, string> = new Map(),
+): Map<number, PdfObject> {
   const text = decoder.decode(bytes);
   const objects = new Map<number, PdfObject>();
   const pattern = /(?:^|[^0-9])(\d{1,7})\s+(\d{1,5})\s+obj\b/g;
@@ -125,7 +134,109 @@ export function indexPdfObjects(bytes: Uint8Array): Map<number, PdfObject> {
     const end = endIndex < 0 ? text.length : endIndex;
     objects.set(number, { number, start, end, header: text.slice(start, Math.min(start + 4096, end)) });
   }
+
+  for (const [number, header] of recovered) {
+    if (objects.has(number)) continue;
+    // No stream of its own: an object stream holds dictionaries, never image
+    // data, so start === end is correct rather than a placeholder.
+    objects.set(number, { number, start: 0, end: 0, header: header.slice(0, 4096) });
+  }
   return objects;
+}
+
+/**
+ * The compressed object streams a document carries, as slices to inflate.
+ *
+ * WHY THIS EXISTS, AND WHAT IT COST. A PDF 1.5 writer may pack every
+ * non-stream object — including the PAGE TREE — into a `/Type /ObjStm` whose
+ * contents are Flate-compressed. `indexPdfObjects` scans raw bytes for
+ * `N 0 obj`, so those objects simply do not exist for it, and the live Lot 537
+ * contract is exactly that document: its `/Pages` root is object 1098, which
+ * lives in an object stream. The catalogue resolved to nothing, the page walk
+ * produced nothing, and `pageObjectsInOrder` fell through to its last resort —
+ * every `/Type /Page` sorted by OBJECT NUMBER, which is not page order.
+ *
+ * The consequence was not subtle. That document's cover page was added by a
+ * later incremental update, so its page object is numbered 1105 while the rest
+ * are 1…229: sorting by number put the property's own cover LAST of twenty,
+ * beyond the twelve pages a document is searched, and shifted every other page
+ * up by one — so the image drawn on visible page 3 was recorded, and shown to
+ * a person, as "page 2".
+ *
+ * Pure, so it only locates them; the caller inflates and calls
+ * `parseObjectStream`.
+ */
+export function objectStreamSlices(bytes: Uint8Array): Array<{
+  objectNumber: number;
+  /** Byte offsets of the compressed stream data. */
+  start: number;
+  end: number;
+  flate: boolean;
+  /** `/N`: how many objects it holds. `/First`: where their bodies begin. */
+  count: number;
+  first: number;
+}> {
+  const out: Array<{
+    objectNumber: number; start: number; end: number;
+    flate: boolean; count: number; first: number;
+  }> = [];
+  let objects: Map<number, PdfObject>;
+  try {
+    objects = indexPdfObjects(bytes);
+  } catch {
+    return out;
+  }
+
+  for (const object of objects.values()) {
+    if (!/\/Type\s*\/ObjStm\b/.test(object.header)) continue;
+    if (out.length >= MAX_OBJECT_STREAMS) break;
+    const count = Number(/\/N\s+(\d+)/.exec(object.header)?.[1] ?? 0);
+    const first = Number(/\/First\s+(\d+)/.exec(object.header)?.[1] ?? 0);
+    if (!count || !first) continue;
+    const slice = streamSlice(object, bytes);
+    if (!slice) continue;
+    out.push({ objectNumber: object.number, ...slice, count, first });
+  }
+  return out;
+}
+
+/** A cost guard. A stock document is not a book of object streams. */
+const MAX_OBJECT_STREAMS = 64;
+/** And no single stream may contribute more than this. */
+const MAX_OBJECTS_PER_STREAM = 4096;
+
+/**
+ * The objects one inflated object stream holds, as `number → header`.
+ *
+ * The stream begins with `count` pairs of `objectNumber offset`, then the
+ * bodies at `first + offset`. Anything malformed contributes nothing rather
+ * than throwing: a document we cannot fully read must still be read as far as
+ * it goes.
+ */
+export function parseObjectStream(
+  text: string,
+  input: { count: number; first: number },
+): Map<number, string> {
+  const out = new Map<number, string>();
+  const count = Math.min(Math.max(0, input.count), MAX_OBJECTS_PER_STREAM);
+  if (!count || input.first <= 0 || input.first > text.length) return out;
+
+  const pairs = text.slice(0, input.first).trim().split(/\s+/).map(Number);
+  if (pairs.length < count * 2) return out;
+
+  for (let index = 0; index < count; index++) {
+    const number = pairs[index * 2];
+    const offset = pairs[index * 2 + 1];
+    if (!Number.isFinite(number) || !Number.isFinite(offset)) continue;
+    const start = input.first + offset;
+    const nextOffset = index + 1 < count ? pairs[index * 2 + 3] : null;
+    const end = Number.isFinite(nextOffset as number) && nextOffset !== null
+      ? input.first + (nextOffset as number)
+      : text.length;
+    if (start < 0 || start >= text.length || end <= start) continue;
+    out.set(number, text.slice(start, Math.min(end, start + 4096)));
+  }
+  return out;
 }
 
 function firstReference(fragment: string): number | null {
@@ -191,8 +302,13 @@ function pageObjectsInOrder(objects: Map<number, PdfObject>): PdfObject[] {
     break;
   }
   if (!root) {
-    // A catalogue we could not follow: the lowest-numbered page objects, which
-    // is the best available statement of order.
+    /**
+     * A catalogue we could not follow. Object number is the only ordering
+     * left, and it is NOT page order — see `objectStreamSlices` for what that
+     * cost on the Lot 537 contract. It is kept because some order beats none
+     * for a damaged file, and everything that depends on the page number being
+     * the page a person sees now checks `pageOrderIsAuthoritative` first.
+     */
     return [...objects.values()]
       .filter((object) => /\/Type\s*\/Page\b(?!s)/.test(object.header))
       .sort((a, b) => a.number - b.number);
@@ -259,17 +375,49 @@ const COMPONENTS_BY_COLOUR_SPACE: Record<string, number> = {
 };
 
 /** The first page. The overwhelmingly common case, and its own name. */
-export function readFirstPage(bytes: Uint8Array): PdfFirstPage | null {
-  return readPdfPage(bytes, 0);
+export function readFirstPage(
+  bytes: Uint8Array,
+  recovered: ReadonlyMap<number, string> = new Map(),
+): PdfFirstPage | null {
+  return readPdfPage(bytes, 0, recovered);
 }
 
 /** How many pages the document's own page tree lists. */
-export function countPdfPages(bytes: Uint8Array): number {
+export function countPdfPages(
+  bytes: Uint8Array,
+  recovered: ReadonlyMap<number, string> = new Map(),
+): number {
   if (bytes.length < 32) return 0;
   try {
-    return pageObjectsInOrder(indexPdfObjects(bytes)).length;
+    return pageObjectsInOrder(indexPdfObjects(bytes, recovered)).length;
   } catch {
     return 0;
+  }
+}
+
+/**
+ * Did the document's OWN page tree decide this order?
+ *
+ * The difference between "page 3" meaning the third page a person sees and
+ * "page 3" meaning the third-lowest object number. A provenance record that
+ * shows a human-visible page number, and every rule that reads a page as a
+ * property's cover, is only entitled to do so when this is true.
+ */
+export function pageOrderIsAuthoritative(
+  bytes: Uint8Array,
+  recovered: ReadonlyMap<number, string> = new Map(),
+): boolean {
+  if (bytes.length < 32) return false;
+  try {
+    const objects = indexPdfObjects(bytes, recovered);
+    for (const object of objects.values()) {
+      if (!/\/Type\s*\/Catalog\b/.test(object.header)) continue;
+      const pages = /\/Pages\s+(\d{1,7})\s+\d{1,5}\s+R/.exec(object.header);
+      return !!(pages && objects.get(Number(pages[1])));
+    }
+    return false;
+  } catch {
+    return false;
   }
 }
 
@@ -281,12 +429,16 @@ export function countPdfPages(bytes: Uint8Array): number {
  * uploaded stock PDF can put the property's photograph on any page, so this
  * takes an index where the brochure path only ever needed the first.
  */
-export function readPdfPage(bytes: Uint8Array, pageIndex: number): PdfFirstPage | null {
+export function readPdfPage(
+  bytes: Uint8Array,
+  pageIndex: number,
+  recovered: ReadonlyMap<number, string> = new Map(),
+): PdfFirstPage | null {
   if (bytes.length < 32 || pageIndex < 0) return null;
 
   let objects: Map<number, PdfObject>;
   try {
-    objects = indexPdfObjects(bytes);
+    objects = indexPdfObjects(bytes, recovered);
   } catch {
     return null;
   }
@@ -589,6 +741,19 @@ export interface PhotographChoice {
   pageAreaShare: number;
 }
 
+/**
+ * A candidate, and how many times the page drew it.
+ *
+ * `placements` is the discriminator the layout itself provides: a property's
+ * hero is placed once, and a background wash, a banner strip or a letterhead
+ * rule is placed repeatedly. On the live Lot 537 cover the grey faceted wash is
+ * drawn three times and passes every floor here — it is a 1950×1050 DCT raster
+ * covering 47% of the page, LARGER than the facade beside it.
+ */
+export interface PhotographCandidate extends PhotographChoice {
+  placements: number;
+}
+
 /** One picture, and where on the page it was actually drawn. */
 export interface DrawnImage { image: PdfImage; placement: PdfPlacement }
 
@@ -648,8 +813,68 @@ export function selectPropertyPhotograph(
 }
 
 /**
+ * Every picture on the page that COULD be a photograph, with how often the
+ * page draws it.
+ *
+ * THIS IS DISCOVERY, NOT SELECTION, and the distinction is the whole point.
+ * The floors below reject: a logo is too small, a QR code is not a DCT raster,
+ * a 300-pixel thumbnail is not a render. None of them can say which surviving
+ * picture is the PROPERTY's — "largest JPEG" is a fact about a file, and a
+ * bedroom render is a large, detailed, perfectly proportioned JPEG. What the
+ * image is FOR is decided from the source's own semantics, in
+ * `pdfPrimaryImage.pure.ts`, out of the candidates this returns.
+ *
+ * Repeated placements of one picture collapse into a single candidate carrying
+ * its `placements` count, because a page that draws the same raster three times
+ * is drawing furniture — a bleed wash, a banner, a rule — and the count is the
+ * document saying so.
+ */
+export function qualifyingPhotographsFrom(
+  drawn: DrawnImage[],
+  pageWidth: number,
+  pageHeight: number,
+): PhotographCandidate[] {
+  const pageArea = pageWidth * pageHeight;
+  if (pageArea <= 0) return [];
+
+  const byObject = new Map<string, PhotographCandidate>();
+  for (const { image, placement } of drawn) {
+    if (!image.filters.some((filter) => PHOTOGRAPHIC_FILTERS.has(filter))) continue;
+    if (image.width < MIN_PIXELS.width || image.height < MIN_PIXELS.height) continue;
+
+    const aspect = image.width / image.height;
+    if (aspect < MIN_ASPECT || aspect > MAX_ASPECT) continue;
+
+    // Detail, in the only unit available without decoding it. See the header.
+    const detail = (image.end - image.start) / (image.width * image.height);
+    if (detail < MIN_ENCODED_DETAIL) continue;
+
+    const share = (placement.drawn.width * placement.drawn.height) / pageArea;
+    if (share < MIN_PAGE_AREA_SHARE) continue;
+
+    const key = `${image.objectNumber}:${image.name}`;
+    const existing = byObject.get(key);
+    if (!existing) {
+      byObject.set(key, { image, placement, pageAreaShare: share, placements: 1 });
+      continue;
+    }
+    existing.placements += 1;
+    if (share > existing.pageAreaShare) {
+      existing.placement = placement;
+      existing.pageAreaShare = share;
+    }
+  }
+  return [...byObject.values()];
+}
+
+/**
  * The same judgement over pictures gathered from the page AND from every form
  * it draws, which is where a real exporter puts them.
+ *
+ * LARGEST-BY-DRAWN-AREA, AND THAT IS NOT AUTHORITY OVER THE PRIMARY IMAGE.
+ * Kept for the one thing it is entitled to answer — "does this page present a
+ * photograph at all", which the flattened-page fallback needs — and used by
+ * nothing that decides what a client sees on a card.
  */
 export function selectPropertyPhotographFrom(
   drawn: DrawnImage[],

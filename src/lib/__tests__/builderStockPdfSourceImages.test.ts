@@ -547,7 +547,11 @@ function fakeDb(seed: { items: FakeRow[]; uploads: FakeRow[]; objects: Record<st
 describe('J — re-reading the stored PDF of an upload already imported', () => {
   const bytes = buildPdf([{
     inForm: true,
-    text: 'Lot 537 Kirramingly Avenue Donnybrook — Balmain Estate',
+    // A property COVER, as the live contract has it: the lot and street, the
+    // estate, and the package information that makes the page this property's
+    // record rather than a page that merely mentions it.
+    text: 'Lot 537 Kirramingly Avenue Donnybrook — Balmain Estate '
+      + 'FIXED PRICE CONTRACT $941,990 Land Size 350 m2 Build Size 209.7 m2 6 bed 2 bath 2 car',
     images: [{
       name: 'Im0', width: 1700, height: 956, data: render(0x77),
       filter: 'DCTDecode', cm: FULL_BLEED,
