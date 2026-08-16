@@ -527,3 +527,32 @@ cell holds a figure; it now holds the action (`HOLD`), split exactly — all 988
 scored reports are `ACTION - sentence` or the bare action over a four-word
 vocabulary, longest action eight characters — and the sentence stays on the
 verdict page.
+
+### Reproducing a WeasyPrint render without the container
+
+Three of the defects above are invisible in Chromium and obvious in the engine
+that actually prints the document — the cover title, the KPI band and the
+extraction artefact all needed a real PDF. `weasyprint-service/` is a Cloud Run
+image and needs Docker; for *looking at a page* the Python package is enough:
+
+```
+pip install weasyprint pypdf pypdfium2
+```
+
+```python
+from weasyprint import HTML
+import pypdfium2 as pdfium, re
+html = open('page.html').read()
+# The render boundary refuses a network fetch, so strip what the compiler
+# would have inlined; see RENDER_BOUNDARY.md.
+html = re.sub(r'<link[^>]*fonts.googleapis[^>]*>', '', html)
+HTML(string=html, base_url='.').write_pdf('out.pdf')
+pdfium.PdfDocument('out.pdf')[0].render(scale=1.3).to_pil().save('out.png')
+```
+
+Two caveats, both of which cost time here. The typefaces **substitute**, so
+line breaks differ from production — the geometry is indicative, the wrapping
+is not. And it is not the pinned engine: read
+[`CONTAINER_RELEASE.md`](./CONTAINER_RELEASE.md) before drawing a conclusion
+about a version-specific behaviour. What it is reliable for is the class of
+defect this section is full of — a box that does not hold what is put in it.
