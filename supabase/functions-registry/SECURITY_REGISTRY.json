@@ -502,6 +502,13 @@
       "owner": "builder-portal-program",
       "reviewed": true
     },
+    "builder-stock-image-settler": {
+      "verify_jwt": false,
+      "exposure_class": "cron-worker",
+      "owner": "builder-portal-program",
+      "reviewed": true,
+      "notes": "Cron sweep that brings already-imported builder stock up to the current image rules. Signed internal callers only (verifyInternal) with enforceRawBodyLimit ahead of it; holds a service-role client and crosses organisations, so it must not be reachable by a portal session. Writes builder_stock_item_images, the primary_image_id those rows earn, and the settlement marker; creates and deletes no stock item and touches no price, availability, status, selection or project linkage. Resumable and bounded per tick, and the migration's cron job unschedules itself once no upload is below the current version."
+    },
     "builder-stock-marketplace": {
       "verify_jwt": false,
       "exposure_class": "module-gated",
