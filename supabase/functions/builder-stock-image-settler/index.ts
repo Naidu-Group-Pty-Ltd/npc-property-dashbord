@@ -29,7 +29,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
-import { internalError } from '../_shared/errorResponse.ts';
+import { internalErrorResponse } from '../_shared/errorResponse.ts';
 import {
   settleUploadSourceImages, SETTLED_VERSION_COLUMN,
 } from '../_shared/builderStock/settleSourceImages.ts';
@@ -149,6 +149,11 @@ Deno.serve(async (req: Request) => {
     });
     return json({ success: true, settled, attempted, remaining, complete: remaining === 0 });
   } catch (error) {
-    return internalError(error, corsHeaders, '[builder-stock-image-settler]');
+    // `internalError` builds the BODY; the handler owes `Deno.serve` a
+    // Response. Returning the body meant the sweep's only failure path
+    // answered with something the runtime cannot serve — and the arguments
+    // were transposed besides, so the headers were being logged as the
+    // context and the context discarded as a correlation id.
+    return internalErrorResponse(error, '[builder-stock-image-settler]', corsHeaders);
   }
 });
