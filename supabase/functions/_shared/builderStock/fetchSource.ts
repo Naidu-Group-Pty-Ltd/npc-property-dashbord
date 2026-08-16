@@ -30,8 +30,17 @@ const MAX_REDIRECTS = 5;
  */
 export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
 
+/*
+ * `Deno.resolveDns` exists in the edge runtime but not in the browser-side
+ * ambient shim this module is dragged into by the unit tests, so the global is
+ * narrowed here rather than being widened for every consumer of `Deno`.
+ */
+const denoDns = Deno as unknown as {
+  resolveDns(hostname: string, recordType: DnsRecordType): Promise<string[]>;
+};
+
 const resolveDns = (hostname: string, recordType: DnsRecordType) =>
-  Deno.resolveDns(hostname, recordType);
+  denoDns.resolveDns(hostname, recordType);
 
 export interface FetchedSource {
   bytes: Uint8Array;
