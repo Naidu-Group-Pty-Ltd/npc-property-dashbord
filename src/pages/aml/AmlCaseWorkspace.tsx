@@ -290,16 +290,24 @@ export default function AmlCaseWorkspace() {
         const results = await Promise.allSettled(
           subjects.map((s) => amlCasesApi.queuePartyScreening(s.id)));
         const failed = results.filter((r) => r.status === "rejected");
-        toast(failed.length === 0
+        // The server runs the check inline, so its refusal is available now
+        // rather than a sweep later. Showing it is the difference between
+        // "nothing happened" and "the sanctions list has never been loaded".
+        const refused = results.find(
+          (r) => r.status === "fulfilled" && r.value.inline && !r.value.inline.ran);
+        toast(failed.length > 0 || refused
           ? {
-            title: `Screening queued for ${subjects.length} part${subjects.length === 1 ? "y" : "ies"}`,
-            description: "Candidates come back for adjudication.",
+            title: "Screening could not complete",
+            description: failed.length > 0
+              ? (failed[0] as PromiseRejectedResult).reason?.message
+                ?? "The screening engine refused the request."
+              : (refused as PromiseFulfilledResult<{ inline?: { error?: string } }>)
+                .value.inline?.error ?? "The screening engine refused the request.",
+            variant: "destructive",
           }
           : {
-            title: "Some parties could not be queued",
-            description: (failed[0] as PromiseRejectedResult).reason?.message
-              ?? "The screening engine refused the request.",
-            variant: "destructive",
+            title: `Screening completed for ${subjects.length} part${subjects.length === 1 ? "y" : "ies"}`,
+            description: "Any candidates come back for adjudication.",
           });
         screeningStage.reload();
         load();
