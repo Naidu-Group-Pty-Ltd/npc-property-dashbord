@@ -125,24 +125,33 @@ describe('CommercialIndustrialOverviewCard report actions placement and actions'
   });
 
   /**
-   * The half of the original assertion the component does not satisfy.
+   * The other half of the original assertion, now implemented.
    *
    * It read "directly after the overview summary and before detailed
-   * sections", and the component returns `{ReportActions}` FIRST — before the
-   * incomplete-property banner and before the overview card. Measured: the
-   * Report Actions title is element 5 and the overview title is element 63.
+   * sections", and the component returned `{ReportActions}` FIRST — before the
+   * incomplete-property banner and before the overview card (measured: Report
+   * Actions title at element 5, overview title at 63). The test and the
+   * component arrived in the same merge (PR #2085) and the file was never
+   * collectable — `vi.mock` hoisting killed it on load — so the assertion had
+   * never run and the disagreement was unimplemented intent rather than a
+   * regression. The card has been moved to where the sentence says.
    *
-   * This is left as a `todo` rather than resolved either way, because it is a
-   * layout decision and there is no evidence of one. The test and the component
-   * arrived in the same merge (PR #2085) and the file has never been
-   * collectable — `vi.mock` hoisting killed it on load — so this assertion has
-   * never run, and its disagreement with the component is an unimplemented
-   * intent rather than a regression. Moving a card on a live page on the
-   * strength of a test that has never executed is not a call to make from here;
-   * deleting the sentence would throw away the only record that somebody wanted
-   * it there.
+   * Both neighbours are pinned, not just the one: an ordering test that only
+   * checks what comes after passes just as well when the card is first.
    */
-  it.todo('places Report Actions directly after the overview summary — see the note above');
+  it('places Report Actions after the overview summary and before the detailed sections', () => {
+    const { container } = render(<CommercialIndustrialOverviewCard />);
+    const order = Array.from(container.querySelectorAll('*'));
+    const at = (text: string) => order.indexOf(screen.getByText(text));
+
+    const overview = at('Commercial / Industrial Assessment Overview');
+    const reportActions = at('Report Actions');
+    const firstDetail = at('Transaction Snapshot');
+
+    expect(overview).toBeGreaterThanOrEqual(0);
+    expect(reportActions).toBeGreaterThan(overview);
+    expect(reportActions).toBeLessThan(firstDetail);
+  });
 
   it('keeps Report Actions buttons wired to their existing behaviours', async () => {
     render(<CommercialIndustrialOverviewCard />);

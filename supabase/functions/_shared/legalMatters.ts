@@ -81,6 +81,23 @@ export const SOLICITOR_MATTER_LIST_SELECT = `
   settlement_date, risk_flag
 `;
 
+/**
+ * The flagged-matter strip, and the only list read that carries `risk_notes`.
+ *
+ * The dashboard's "Needs attention" card explains WHY a matter is flagged, so
+ * it needs the note — but it shows at most five matters and only flagged ones.
+ * Serving it from `list_matters` meant every page of every matter list carried
+ * the note for matters nobody had flagged. This is the note plus what the card
+ * already renders around it, filtered to `risk_flag` at the query rather than
+ * in the client, under the same matter-access and firm scoping as any other
+ * read here. It deliberately carries no financial or conveyancing columns.
+ */
+export const SOLICITOR_MATTER_RISK_SELECT = `
+  id, matter_reference, title, matter_type, status, client_id,
+  property_address, property_suburb, property_state, property_postcode,
+  settlement_date, risk_flag, risk_notes
+`;
+
 export const PARTY_SELECT = `
   id, legal_matter_id, role, name, organisation, email, phone, address,
   reference, is_primary_contact, notes, created_at, updated_at
