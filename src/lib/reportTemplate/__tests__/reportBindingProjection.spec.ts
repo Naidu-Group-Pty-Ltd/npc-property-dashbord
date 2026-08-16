@@ -23,6 +23,22 @@ const ROW = {
   property_address: '14 Marlborough Street, Leichhardt NSW 2040',
   updated_at: '2026-08-02T00:00:00.000Z',
   created_at: '2026-08-01T00:00:00.000Z',
+  /*
+   * The document the model writes, which `projectReportNarrative` publishes as
+   * `narrative.source` and the Compass masters bind on their narrative pages.
+   *
+   * Present here because it is present in production: 1,187 of 1,187
+   * `investment_reports` rows carry it, averaging ~38,000 characters. A
+   * fixture without it made `narrative.source` look like a binding with no
+   * source, which is the one thing the expected-absent list below must never
+   * be allowed to claim about a column every real row has.
+   */
+  report_content: '## Executive Verdict\n\n'
+    + 'Leichhardt is a **consolidated inner-west market** with limited detached '
+    + 'stock and a long-run preference for period housing on level land.\n\n'
+    + '### Location Overview\n\n'
+    + 'The address sits within the Inner West council area, zoned R2 Low '
+    + 'Density Residential.\n',
   property_specs: {
     bedrooms: 3, bathrooms: 2, parking: 1,
     land_size_sqm: 412, building_size_sqm: 168,

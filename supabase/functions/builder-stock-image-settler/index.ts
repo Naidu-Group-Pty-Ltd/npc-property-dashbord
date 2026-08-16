@@ -27,21 +27,30 @@
  * which is exactly why it must not be reachable by a portal session.
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+import { createCorsHeaders } from '../_shared/auth.ts';
 import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
-import { internalError } from '../_shared/errorResponse.ts';
+import { internalErrorResponse } from '../_shared/errorResponse.ts';
 import {
   settleUploadSourceImages, SETTLED_VERSION_COLUMN,
 } from '../_shared/builderStock/settleSourceImages.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, '
-    + 'x-internal-timestamp, x-internal-nonce, x-internal-caller, x-internal-signature, '
-    + 'x-internal-key-id',
-};
+/*
+ * The canonical headers, not a hand-rolled copy.
+ *
+ * The copy this replaces was a snapshot of the allowlist on the day it was
+ * written: it was already missing `x-correlation-id` and `x-step-up-token`,
+ * and it declared no `Access-Control-Expose-Headers` at all — so any custom
+ * response header would have read back as `null`. A hand-rolled list can only
+ * ever go stale, which is why `check-cors-contract.mjs` refuses one.
+ *
+ * `createCorsHeaders()` with no origin also drops the wildcard ACAO the copy
+ * carried. This function holds a service-role client and crosses
+ * organisations; `*` on it was wrong independently of the preflight.
+ */
+const corsHeaders = createCorsHeaders();
 
 /** Wall clock for one tick, well inside the edge ceiling. */
 const BUDGET_MS = 100_000;
@@ -149,6 +158,11 @@ Deno.serve(async (req: Request) => {
     });
     return json({ success: true, settled, attempted, remaining, complete: remaining === 0 });
   } catch (error) {
-    return internalError(error, corsHeaders, '[builder-stock-image-settler]');
+    // `internalError` builds the BODY; the handler owes `Deno.serve` a
+    // Response. Returning the body meant the sweep's only failure path
+    // answered with something the runtime cannot serve — and the arguments
+    // were transposed besides, so the headers were being logged as the
+    // context and the context discarded as a correlation id.
+    return internalErrorResponse(error, '[builder-stock-image-settler]', corsHeaders);
   }
 });

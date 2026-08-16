@@ -77,6 +77,11 @@ const EXPECTED_FUNCTIONS = [
     'builder-portal-verify',
     'builder-portal-workspace',
     'builder-projects-admin',
+    // Cron sweep behind verifyInternal; holds a service-role client and
+    // crosses organisations, so it is deliberately not a portal-reachable
+    // surface. Declared in config.toml and reviewed in SECURITY_REGISTRY.json,
+    // both of which this list's own loop below re-checks.
+    'builder-stock-image-settler',
     'builder-stock-marketplace',
     'builder-transactions-admin',
     'builder-workspace-admin',
