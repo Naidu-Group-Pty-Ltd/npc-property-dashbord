@@ -1,189 +1,256 @@
 /**
- * Stage 5, explained: what it requires, whether it can run, and what happens
- * next. Placed above the screening panels because an operator who cannot run
- * a check needs to know why before they press the button that refuses.
+ * Stage 5's one card: what happens next, and why.
  *
- * Three things this card is careful about, each of which was a real defect:
+ * ── What it replaces ──────────────────────────────────────────────────
+ * Three panels that each said a different kind of nothing. "No screening
+ * subjects recorded." "Screening has not been run." "No screening checks yet
+ * for this case", over a **Run screening** button that had nobody to run
+ * against. Beside them, a panel telling the operator to go resolve declared
+ * parties — on a case that declared none. The reasonable conclusion from
+ * that screen was "this client must not need screening", and it was wrong:
+ * nobody had ever been enrolled.
  *
- *  • It never says PEP screening is "not required", "waived" or "exempt".
- *    PEP and targeted financial sanctions are mandatory determinations that
- *    get ESTABLISHED. A client's declaration is evidence that may support the
- *    determination; it is never the determination.
+ * So this card leads with exactly ONE action, chosen server-side by what
+ * actually blocks the stage, with the button that performs it. Everything
+ * else — scope, parties, determinations — is evidence underneath it.
  *
- *  • It separates "the check can execute" from "the stage is complete". Those
- *    fail independently — a healthy provider with no results is executable and
- *    not complete — and showing one in place of the other is how a case with
- *    no screening evidence came to look finished.
- *
- *  • It states no outcome it has not been given. It never renders "clear", it
- *    never renders "no match", and a blocked provider produces a blocker, not
- *    a blank.
- *
- * It is a reading. Every action it points at lives in the panels below and is
- * authorised by the server, which fails closed on its own freshness gate
- * whatever this card says.
+ * ── What it will not do ───────────────────────────────────────────────
+ * It never says PEP or sanctions are waived, exempt or not required: those
+ * are mandatory determinations that get established. It never renders
+ * "clear" or "no match" — it states no outcome it was not given. And
+ * completing the stage is not a service-gate approval, which it says on the
+ * page rather than leaving to be assumed.
  */
+import { useState } from "react";
 import {
-  AlertTriangle, CheckCircle2, Clock, Info, Loader2, ShieldAlert, ShieldCheck,
+  AlertTriangle, ArrowRight, CheckCircle2, Clock, Info, Loader2, ShieldAlert,
+  ShieldCheck, Users,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import type { AmlScreeningNextAction } from "@/lib/aml/amlCasesApi";
 import type { AmlScreeningStageReading } from "@/lib/aml/useScreeningStage";
 
 const OWNER_LABEL: Record<string, string> = {
-  system: "the screening engine",
-  analyst: "a compliance analyst",
-  reviewer: "a reviewer or the MLRO",
-  administrator: "an administrator",
-  none: "nobody — this stage is settled",
+  system: "Handled automatically",
+  analyst: "You",
+  reviewer: "A reviewer or the MLRO",
+  administrator: "An administrator",
+  client: "The client",
+  none: "Nobody — this stage is settled",
 };
 
-function DeterminationRow({
-  label, detail, resolved, basis,
-}: { label: string; detail: string; resolved: boolean; basis?: string }) {
-  const Icon = resolved ? CheckCircle2 : Clock;
-  return (
-    <li className="flex items-start gap-2.5 border-b border-border/50 py-2 last:border-0">
-      <Icon
-        aria-hidden
-        className={cn("mt-0.5 h-4 w-4 shrink-0",
-          resolved ? "text-success" : "text-muted-foreground")}
-      />
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium">{label}</span>
-          <Badge variant={resolved ? "secondary" : "outline"} className="text-[10px]">
-            {resolved ? "determined" : "outstanding"}
-          </Badge>
-        </div>
-        <p className="text-xs text-muted-foreground">{detail}</p>
-        {basis && <p className="mt-0.5 text-[11px] text-muted-foreground/80">{basis}</p>}
-      </div>
-    </li>
-  );
-}
+/** Tone follows urgency, not sentiment: nothing here is decorative. */
+const TONE: Record<string, { surface: string; text: string; Icon: typeof Info }> = {
+  escalate: { surface: "border-destructive/40 bg-destructive/10", text: "text-destructive", Icon: ShieldAlert },
+  adjudicate_match: { surface: "border-destructive/40 bg-destructive/10", text: "text-destructive", Icon: ShieldAlert },
+  fix_provider: { surface: "border-warning/40 bg-warning/10", text: "text-warning", Icon: AlertTriangle },
+  await_submission: { surface: "border-border bg-muted/40", text: "text-muted-foreground", Icon: Clock },
+  await_provider_result: { surface: "border-border bg-muted/40", text: "text-muted-foreground", Icon: Loader2 },
+  enrol_subjects: { surface: "border-border bg-muted/40", text: "text-muted-foreground", Icon: Users },
+  none: { surface: "border-success/40 bg-success/10", text: "text-success", Icon: CheckCircle2 },
+};
+const DEFAULT_TONE = { surface: "border-primary/40 bg-primary/5", text: "text-primary", Icon: ArrowRight };
 
-export function ScreeningStageCard({ reading }: { reading: AmlScreeningStageReading }) {
-  const { readiness, scope, position, stage, loading } = reading;
+const SCOPE_LABEL: Record<string, string> = {
+  sanctions: "Targeted financial sanctions",
+  pep: "Politically exposed person",
+  adverse_media: "Adverse media",
+  watchlist: "Internal watchlists",
+};
 
-  return (
-    <Card className={cn("border", scope.escalation && "border-destructive/40 bg-destructive/5")}>
-      <CardHeader className="pb-3">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="min-w-0">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              {scope.escalation
-                ? <ShieldAlert aria-hidden className="h-4 w-4 text-destructive" />
-                : <ShieldCheck aria-hidden className="h-4 w-4 text-primary" />}
-              {stage.headline}
-            </CardTitle>
-            <CardDescription>{stage.detail}</CardDescription>
-          </div>
-          {loading && <Loader2 aria-label="Loading screening position" className="h-4 w-4 animate-spin" />}
-        </div>
-      </CardHeader>
+export function ScreeningStageCard({
+  reading, onAct, canAct,
+}: {
+  reading: AmlScreeningStageReading;
+  /** Performs the one action. The card never mutates anything itself. */
+  onAct: (action: AmlScreeningNextAction) => void | Promise<void>;
+  canAct: boolean;
+}) {
+  const { sync, readiness, scope, position, loading, unavailable } = reading;
+  const [busy, setBusy] = useState(false);
 
-      <CardContent className="space-y-4">
-        {/*
-          Executing and completing, side by side and never conflated. The
-          labels say which question each answers.
-        */}
-        <div className="grid gap-2 sm:grid-cols-2">
-          <div className="rounded-md border border-border/60 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              Can the checks run?
-            </p>
-            <p className="mt-1 text-sm font-medium">
-              {scope.canExecute ? "Yes — the provider is live and its lists are current"
-                : readiness.label}
-            </p>
-            {!scope.canExecute && readiness.blockers.length > 0 && (
-              <ul className="mt-1.5 space-y-1">
-                {readiness.blockers.map((b) => (
-                  <li key={b} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                    <AlertTriangle aria-hidden className="mt-0.5 h-3 w-3 shrink-0 text-destructive" />
-                    <span>{b}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <div className="rounded-md border border-border/60 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              Is Stage 5 complete?
-            </p>
-            <p className="mt-1 text-sm font-medium">
-              {scope.canAdvance
-                ? "Yes — every required determination is recorded"
-                : scope.outstanding.length === 1
-                  ? "No — one determination is outstanding"
-                  : `No — ${scope.outstanding.length} determinations are outstanding`}
-            </p>
-            <p className="mt-1.5 text-xs text-muted-foreground">
-              Waiting on {OWNER_LABEL[scope.owner] ?? scope.owner}.
-            </p>
-          </div>
-        </div>
+  if (loading && !sync) {
+    return (
+      <Card>
+        <CardContent className="flex items-center gap-2 p-5 text-sm text-muted-foreground">
+          <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
+          Reading this case&rsquo;s screening position…
+        </CardContent>
+      </Card>
+    );
+  }
 
-        {scope.escalation && (
-          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3">
-            <ShieldAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-            <p className="text-sm text-destructive">{scope.escalation}</p>
-          </div>
-        )}
-
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-            Required determinations
+  // An unread position is not a settled one. It says so, and offers a retry
+  // rather than an action built on a hole.
+  if (unavailable || !sync) {
+    return (
+      <Card className="border-warning/40 bg-warning/5">
+        <CardContent className="space-y-2 p-5">
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <AlertTriangle aria-hidden className="h-4 w-4 text-warning" />
+            This case&rsquo;s screening position could not be read
           </p>
-          <ul className="mt-1">
-            {scope.determinations.map((d) => (
-              <DeterminationRow
-                key={d.scope} label={d.label} detail={d.detail}
-                resolved={d.resolved} basis={d.basis}
-              />
-            ))}
-          </ul>
-        </div>
+          <p className="text-sm text-muted-foreground">
+            Nothing about the stage can be reported from a failed read — it is not
+            evidence that screening is complete, and it is not evidence that it is
+            outstanding.
+          </p>
+          <Button size="sm" variant="outline" onClick={reading.reload}>Try again</Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
-        {/*
-          A control the risk policy stood down is shown with the basis it was
-          stood down on — never as "the client said no", and never for PEP or
-          sanctions, which cannot appear here.
-        */}
-        {scope.notRequiredByPolicy.length > 0 && (
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              Not proportionate for this case
+  const action = sync.next_action;
+  const tone = TONE[action.key] ?? DEFAULT_TONE;
+  const { Icon } = tone;
+  const stoodDown = sync.policy.notRequired ?? [];
+  const answers = Object.entries(sync.policy.evidence ?? {});
+
+  const act = async () => {
+    setBusy(true);
+    try { await onAct(action); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* ── The one action ──────────────────────────────────────────── */}
+      <Card className={cn("border", tone.surface)}>
+        <CardContent className="p-5 sm:p-6">
+          <div className="flex items-center gap-2">
+            <Icon aria-hidden className={cn("h-4 w-4", tone.text,
+              action.key === "await_provider_result" && "animate-spin motion-reduce:animate-none")} />
+            <p className={cn("text-[11px] font-semibold uppercase tracking-[0.08em]", tone.text)}>
+              {action.key === "none" ? "Stage complete" : "Next action"}
             </p>
-            <ul className="mt-1 space-y-1">
-              {scope.notRequiredByPolicy.map((w) => (
-                <li key={w.scope} className="flex items-start gap-2 py-1">
-                  <Info aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <p className="text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">
-                      {w.scope === "adverse_media" ? "Adverse media" : "Internal watchlists"}
-                    </span>
-                    {" — "}{w.basis}
-                  </p>
+          </div>
+          <h3 className="mt-1.5 text-lg font-semibold">{action.headline}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{action.detail}</p>
+
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            {action.label && canAct && (
+              <Button size="sm" onClick={() => void act()} disabled={busy}>
+                {busy && <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin" />}
+                {action.label}
+                {!busy && <ArrowRight aria-hidden className="ml-1.5 h-4 w-4" />}
+              </Button>
+            )}
+            <span className="text-xs text-muted-foreground">
+              {OWNER_LABEL[action.owner] ?? action.owner}
+              {action.owner === "client" && " — no staff action is required"}
+            </span>
+          </div>
+
+          {/* The blockers behind a provider fault: an operator cannot act on
+              one boolean. */}
+          {action.key === "fix_provider" && readiness.blockers.length > 0 && (
+            <ul className="mt-3 space-y-1 border-t border-border/50 pt-3">
+              {readiness.blockers.map((b) => (
+                <li key={b} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                  <AlertTriangle aria-hidden className="mt-0.5 h-3 w-3 shrink-0 text-warning" />
+                  <span>{b}</span>
                 </li>
               ))}
             </ul>
-          </div>
-        )}
+          )}
 
-        {/* Who is being screened — the server's own subject list, not one
-            this browser maintains. */}
-        {position.read && position.subjects.length > 0 && (
-          <div>
+          {scope.escalation && action.key !== "escalate" && (
+            <p className="mt-3 flex items-start gap-2 border-t border-destructive/30 pt-3 text-sm text-destructive">
+              <ShieldAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
+              {scope.escalation}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── The scope, and the answers that produced it ──────────────── */}
+      <Card>
+        <CardContent className="space-y-4 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Screening scope
+              </p>
+              <p className="mt-0.5 text-sm font-medium">{sync.policy.summary}</p>
+            </div>
+            <Badge variant="outline" className="text-[10px]">
+              policy {sync.policy.policyVersion}
+            </Badge>
+          </div>
+
+          <ul className="space-y-1.5">
+            {sync.policy.required.map((s) => (
+              <li key={s} className="flex items-start gap-2 text-sm">
+                <ShieldCheck aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                <span>
+                  <span className="font-medium">{SCOPE_LABEL[s] ?? s}</span>
+                  <span className="text-muted-foreground"> — required</span>
+                </span>
+              </li>
+            ))}
+            {stoodDown.map((n) => (
+              <li key={n.scope} className="flex items-start gap-2 text-sm">
+                <Info aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span>
+                  <span className="font-medium">{SCOPE_LABEL[n.scope] ?? n.scope}</span>
+                  <span className="text-muted-foreground"> — not proportionate for this case</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">{n.basis}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          {/*
+            The answers the decision rests on, on the page rather than in a
+            log. This is the audit trail an operator can check without
+            leaving the case — and the thing that makes a reduced scope
+            reviewable rather than mysterious.
+          */}
+          {answers.length > 0 && (
+            <details className="rounded-md border border-border/60 p-3">
+              <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+                The client&rsquo;s answers this decision was made on
+              </summary>
+              <dl className="mt-2 grid gap-1 sm:grid-cols-2">
+                {answers.map(([field, value]) => (
+                  <div key={field} className="flex items-baseline justify-between gap-2 text-xs">
+                    <dt className="text-muted-foreground">{field}</dt>
+                    <dd className="font-medium">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Recorded on the case audit trail under AML/CTF policy {sync.policy.policyVersion}.
+                A declaration is evidence that supports a determination; it is never the
+                determination and never an exemption from making one.
+              </p>
+            </details>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Who is in scope ─────────────────────────────────────────── */}
+      {position.subjects.length > 0 && (
+        <Card>
+          <CardContent className="p-5">
             <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               Parties in scope
             </p>
-            <ul className="mt-1">
+            {sync.enrolled > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {sync.enrolled} enrolled automatically from this case&rsquo;s own record.
+              </p>
+            )}
+            <ul className="mt-2">
               {position.subjects.map((s) => (
-                <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 py-1.5 last:border-0">
+                <li
+                  key={s.id}
+                  className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 py-1.5 last:border-0"
+                >
                   <span className="min-w-0 text-sm">
                     {s.name}
                     <span className="text-xs text-muted-foreground">
@@ -207,19 +274,9 @@ export function ScreeningStageCard({ reading }: { reading: AmlScreeningStageRead
                 </li>
               ))}
             </ul>
-          </div>
-        )}
-
-        <div className="flex items-start gap-2 rounded-md border border-border/60 bg-muted/30 p-3">
-          <Info aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              What happens next
-            </p>
-            <p className="mt-0.5 text-sm">{stage.whatHappensNext}</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </Card>
+      )}
+    </div>
   );
 }

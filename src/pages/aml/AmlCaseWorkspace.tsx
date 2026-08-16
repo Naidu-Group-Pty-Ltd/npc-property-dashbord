@@ -39,7 +39,7 @@
  * link so nothing breaks mid-rollout.
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, History, Loader2, Lock, Minus,
 } from "lucide-react";
@@ -57,7 +57,9 @@ import { toast } from "@/hooks/use-toast";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { displayDate, displayDateTime } from "@/lib/aml/displayDate";
-import { amlCasesApi, type AmlCase, type AmlCaseEvent } from "@/lib/aml/amlCasesApi";
+import {
+  amlCasesApi, type AmlCase, type AmlCaseEvent, type AmlScreeningNextAction,
+} from "@/lib/aml/amlCasesApi";
 import { amlFinanceApi } from "@/lib/aml/amlFinanceApi";
 import {
   amlTransactionsApi, type AmlTransaction, type AmlCounterpartyCase,
@@ -129,6 +131,7 @@ const RECORD_SECTION: SectionKey = "timeline";
 export default function AmlCaseWorkspace() {
   const { caseId = "" } = useParams<{ caseId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const access = useAmlAccess();
   const { caseWorkspace: workspaceEnabled, loading: flagsLoading } = useAmlV3Flags();
 
@@ -242,6 +245,66 @@ export default function AmlCaseWorkspace() {
     riskRating: caseRow?.risk_rating ?? null,
     enhancedDueDiligence: caseRow?.status === "edd_required",
   });
+
+  /**
+   * Perform Stage 5's one next action.
+   *
+   * Every branch routes to an EXISTING server-authorised operation or to the
+   * surface that owns it. Nothing here decides a screening outcome, and the
+   * server refuses anything this page should not have offered — the button
+   * is a shortcut to the right place, never a second authority.
+   */
+  const runScreeningAction = useCallback(async (action: AmlScreeningNextAction) => {
+    switch (action.key) {
+      case "enrol_subjects":
+        // Enrolment already happened on the read that produced this action;
+        // re-running it is the idempotent way to pick up a failed insert.
+        screeningStage.reload();
+        return;
+      case "run_screening": {
+        const subjects = (screeningStage.sync?.subjects ?? []).filter(
+          (s) => s.required && !["queued", "processing"].includes(s.state));
+        if (subjects.length === 0) { screeningStage.reload(); return; }
+        // Queued one at a time through the canonical operation, which is
+        // itself idempotent — it refuses a subject already in flight rather
+        // than emitting a second provider attempt.
+        const results = await Promise.allSettled(
+          subjects.map((s) => amlCasesApi.queuePartyScreening(s.id)));
+        const failed = results.filter((r) => r.status === "rejected");
+        toast(failed.length === 0
+          ? {
+            title: `Screening queued for ${subjects.length} part${subjects.length === 1 ? "y" : "ies"}`,
+            description: "Candidates come back for adjudication.",
+          }
+          : {
+            title: "Some parties could not be queued",
+            description: (failed[0] as PromiseRejectedResult).reason?.message
+              ?? "The screening engine refused the request.",
+            variant: "destructive",
+          });
+        screeningStage.reload();
+        load();
+        return;
+      }
+      case "fix_provider":
+        navigate("/aml/configuration");
+        return;
+      case "await_submission":
+      case "await_provider_result":
+        screeningStage.reload();
+        return;
+      case "record_pep":
+      case "adjudicate_match":
+      case "escalate":
+      default:
+        // The determination and adjudication surfaces live in the panels
+        // below this card, which is where the audited actions are.
+        document.getElementById("aml-party-screening")?.scrollIntoView({
+          block: "start", behavior: "smooth",
+        });
+        return;
+    }
+  }, [screeningStage, load, navigate]);
 
   const connectedPortals = useMemo(
     () =>
@@ -471,16 +534,22 @@ export default function AmlCaseWorkspace() {
                 determinations to be established; neither is ever reported
                 as waived.
               */}
-              <ScreeningStageCard reading={screeningStage} />
+              <ScreeningStageCard
+                reading={screeningStage}
+                onAct={runScreeningAction}
+                canAct={canWrite}
+              />
               {/* Identity and screening share a customer but never share a
                   meaning: separate panels, separate evidence, separate
                   adjudication. That is why screening is its own stage. */}
+              <div id="aml-party-screening" className="scroll-mt-24">
               <PartyScreeningPanel
                 caseId={caseRow.id}
                 canWrite={canWrite}
                 canAdjudicate={access.isMlro || access.roles.has("reviewer")}
                 onChanged={() => { load(); screeningStage.reload(); }}
               />
+              </div>
               <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
               <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />
             </div>

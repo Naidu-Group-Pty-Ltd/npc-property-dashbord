@@ -1,21 +1,29 @@
 /**
- * One batched read of everything Stage 5 needs to explain itself.
+ * Stage 5, read once, with the server as the authority.
  *
- * Five existing read operations, fired once, in parallel, and each one
- * individually failure-tolerant: a read that fails (or that this role may not
- * make) resolves to `null`, and `null` reads as "not available" all the way
- * to the screen. It never reads as a reassuring default — an unread sanctions
- * ledger is not an empty one, and an unread questionnaire is not a clean
- * profile.
+ * ── What changed, and why ─────────────────────────────────────────────
+ * This used to assemble Stage 5 from four separate reads and decide the
+ * scope in the browser. That was the wrong place for it twice over: the
+ * browser cannot enrol anybody, and a compliance scope decided in a tab is
+ * not a decision anyone can audit.
  *
- * This hook fetches. It decides nothing: the readings come from
- * `deriveAmlScreeningReadiness` and `deriveAmlScreeningScope`, both pure, and
- * the authority for whether screening actually runs is the server, which
- * fails closed on its own freshness gate regardless of anything shown here.
+ * `sync_screening_stage` now does all of it server-side and idempotently —
+ * it enrols whoever is missing (the case subject was never enrolled by
+ * anything, which is why Stage 5 had nothing to screen), decides which
+ * scopes are proportionate, records that decision once with the client's own
+ * answers attached, and returns the single next action a person has to take.
+ *
+ * The readiness read stays, because it is the only thing that says WHY the
+ * provider cannot run — the server's `provider_ready` is one boolean and an
+ * operator needs the blockers behind it.
+ *
+ * Nothing here decides anything. A read that fails resolves to `null`, and
+ * `null` reads as "not available" all the way to the screen — never as a
+ * reassuring default.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { amlCasesApi } from "./amlCasesApi";
+import { amlCasesApi, type AmlScreeningStageSync } from "./amlCasesApi";
 import { amlVerificationApi } from "./amlVerificationApi";
 import {
   deriveAmlScreeningReadiness, type AmlScreeningReadinessReading,
@@ -25,24 +33,26 @@ import {
   type AmlCaseScreeningPosition, type AmlScreeningScopeDecision,
 } from "./screeningScope";
 import {
-  sanctionsListFactsFrom, screeningAnswersFrom, screeningEntityTypeFrom,
-  screeningProviderFactsFrom, screeningSubjectFactsFrom,
+  sanctionsListFactsFrom, screeningProviderFactsFrom, screeningSubjectFactsFrom,
 } from "./screeningStageFacts";
 
 export interface AmlScreeningStageReading {
+  /** The server's own answer. `null` while loading, or if the read failed. */
+  sync: AmlScreeningStageSync | null;
   readiness: AmlScreeningReadinessReading;
   scope: AmlScreeningScopeDecision;
   position: AmlCaseScreeningPosition;
   stage: ReturnType<typeof describeScreeningStage>;
   loading: boolean;
+  /** True when the server read failed — the card says so rather than guessing. */
+  unavailable: boolean;
   reload: () => void;
 }
 
 /**
  * A read that may fail, be forbidden, or not exist resolves to null — never
  * to a default. The thunk matters: a synchronous throw (an operation this
- * build does not have) must degrade this card, not take the page down with
- * it.
+ * build does not have) must degrade this card, not take the page down.
  */
 const tolerate = <T,>(read: () => Promise<T>): Promise<T | null> => {
   try { return read().catch(() => null); } catch { return Promise.resolve(null); }
@@ -55,23 +65,21 @@ export function useScreeningStage(
   const [loading, setLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
   const [raw, setRaw] = useState<{
+    sync: AmlScreeningStageSync | null;
     provider: Awaited<ReturnType<typeof amlVerificationApi.providerReadiness>> | null;
     lists: Awaited<ReturnType<typeof amlVerificationApi.sanctionsListStatus>> | null;
-    subjects: Awaited<ReturnType<typeof amlCasesApi.listPartyScreening>> | null;
-    review: Awaited<ReturnType<typeof amlCasesApi.getSubmissionReview>> | null;
-  }>({ provider: null, lists: null, subjects: null, review: null });
+  }>({ sync: null, provider: null, lists: null });
 
   useEffect(() => {
     let live = true;
     setLoading(true);
     void Promise.all([
+      tolerate(() => amlCasesApi.syncScreeningStage(caseId)),
       tolerate(() => amlVerificationApi.providerReadiness()),
       tolerate(() => amlVerificationApi.sanctionsListStatus()),
-      tolerate(() => amlCasesApi.listPartyScreening(caseId)),
-      tolerate(() => amlCasesApi.getSubmissionReview(caseId)),
-    ]).then(([provider, lists, subjects, review]) => {
+    ]).then(([sync, provider, lists]) => {
       if (!live) return;
-      setRaw({ provider, lists, subjects, review });
+      setRaw({ sync, provider, lists });
       setLoading(false);
     });
     return () => { live = false; };
@@ -93,21 +101,38 @@ export function useScreeningStage(
 
     const nowIso = new Date().toISOString();
     const position = readCaseScreeningPosition(
-      screeningSubjectFactsFrom(raw.subjects?.subjects), nowIso);
+      screeningSubjectFactsFrom(raw.sync?.subjects), nowIso);
+
+    /*
+     * The scope reading stays for the determination list and the
+     * execute/advance split. Its adverse-media inputs are taken from the
+     * SERVER's decision rather than re-derived here, so the browser cannot
+     * disagree with the recorded compliance position: a control the server
+     * stood down is passed as answered-and-clear, and one it kept is passed
+     * as a trigger the browser reproduces.
+     */
+    const serverStoodDownAdverse = Boolean(
+      raw.sync?.policy?.notRequired?.some((n) => n.scope === "adverse_media"));
 
     const scope = deriveAmlScreeningScope({
-      answers: screeningAnswersFrom(raw.review),
-      entityType: screeningEntityTypeFrom(raw.review),
+      answers: serverStoodDownAdverse
+        ? { pep: "no", adverse: "no", thirdParty: "no", overseasFunding: "no" }
+        : null,
+      entityType: serverStoodDownAdverse ? "individual" : null,
       riskRating: caseFacts.riskRating ?? null,
       enhancedDueDiligence: Boolean(caseFacts.enhancedDueDiligence),
+      adverseMediaState: "not_started",
       now: nowIso,
       ...position.facts,
     }, readiness);
 
     return {
+      sync: raw.sync,
       readiness, scope, position,
       stage: describeScreeningStage(scope, readiness),
-      loading, reload,
+      loading,
+      unavailable: !loading && raw.sync === null,
+      reload,
     };
   }, [raw, caseFacts.riskRating, caseFacts.enhancedDueDiligence, loading, reload]);
 }
