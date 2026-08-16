@@ -229,6 +229,12 @@ export function AmlLivePositionRail({
               </p>
             </div>
           </div>
+          {/*
+            Name the destination. "Go there" moved the MLRO without saying
+            where — and because the winner is ranked by journey position it
+            can legitimately be several stages away, which reads as the
+            system skipping ahead rather than checking and finding nothing.
+          */}
           {nextAction.key !== "none" && (
             <Button
               variant="outline"
@@ -236,7 +242,7 @@ export function AmlLivePositionRail({
               className="mt-3 w-full justify-between"
               onClick={() => onOpenSection(nextAction.section)}
             >
-              Go there
+              Go to stage {nextAction.stageOrder}
               <ArrowRight aria-hidden className="h-3.5 w-3.5" />
             </Button>
           )}
