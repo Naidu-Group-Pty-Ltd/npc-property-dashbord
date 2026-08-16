@@ -49,6 +49,7 @@ import {
   PRIMARY_SUBJECT_PARTY_TYPE,
   SCREENING_POLICY_VERSION,
   SCREENING_STALL_SECONDS,
+  recoverableSubjects,
 } from "../_shared/aml/screeningPolicy.pure.ts";
 import {
   isPartyScreeningMissing,
@@ -1975,6 +1976,134 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             (Date.now() - new Date(oldestQueued.occurred_at).getTime()) / 1000))
           : null;
 
+        /*
+         * Provider readiness and the required-subject list, computed before
+         * recovery because recovery depends on both: the stage only runs a
+         * check itself when the provider could actually serve it.
+         */
+        const dfatRows = (syncs ?? []).filter((x: any) => x.list_code === 'dfat');
+        const dfatLoaded = dfatRows.some(
+          (x: any) => x.status === 'succeeded' && Number(x.entry_count) > 0);
+        const providerRow: any = Array.isArray(provider) ? provider[0] ?? null : provider ?? null;
+        const providerReady = providerRow !== null && providerRow.active === true &&
+          providerRow.mode === 'live' && dfatLoaded;
+        const requiredOf = (rows: any[] | null | undefined) => (rows ?? []).filter((s: any) =>
+          s.required && s.state !== 'not_required');
+        // Auto-execution needs a provider that can actually answer. Without
+        // one, recovery would burn a claim to produce the same refusal the
+        // stage already reports.
+        const providerReadyForAuto = providerReady;
+
+        /*
+         * ── Self-healing ─────────────────────────────────────────────
+         *
+         * A queued request that nothing consumed used to sit there until an
+         * operator noticed and pressed a button. Measured on this case: 130
+         * minutes, and the only way out was a human. That is a dead end
+         * dressed as a status.
+         *
+         * The stage now recovers itself on read, and does it in exactly two
+         * situations — bounded deliberately, because "run screening
+         * automatically" must never become "run the provider on every page
+         * load":
+         *
+         *   NEVER ATTEMPTED   `not_started` with no check: nothing has been
+         *                     spent, so starting it costs one attempt and
+         *                     removes a click the operator should not need.
+         *
+         *   STALLED           queued or processing past the stall window with
+         *                     no check: the queue did not consume it, so
+         *                     releasing and running it is recovery, not a
+         *                     second attempt.
+         *
+         * `error` is deliberately EXCLUDED. `processScreeningEvent` claims
+         * `queued` and `error` alike, so auto-running an errored subject
+         * would re-run the provider on every page view — a retry loop, paid
+         * for per view. A failure keeps its explicit Retry.
+         *
+         * Safety is the consumer's own: it claims each subject with a
+         * conditional UPDATE, so two concurrent readers cannot both run it,
+         * and a terminal check is resumed rather than repeated.
+         */
+        let required = requiredOf(enrol.subjects);
+        if (canWrite && providerReadyForAuto) {
+          const recoverable = recoverableSubjects(
+            required.map((s: any) => ({
+              id: String(s.id), state: String(s.state),
+              screeningCheckId: s.screening_check_id ?? null,
+              updatedAt: s.updated_at ?? null, required: true,
+            })),
+            Date.now(),
+          );
+          const recovered: string[] = [];
+          for (const subject of recoverable.slice(0, 5)) {
+            try {
+              if (subject.state !== 'not_started') {
+                /*
+                 * Retire this subject's dead queue entries first, so one
+                 * cannot be claimed late and race this run.
+                 *
+                 * Scoped by `aggregate_id`, which the emitting trigger sets to
+                 * the subject id. Retiring on event_type alone would retire
+                 * every OTHER case's pending request too — including ones a
+                 * worker was about to consume legitimately.
+                 */
+                await admin.from('integration_outbox')
+                  .update({
+                    processed_at: new Date().toISOString(),
+                    locked_at: null, locked_by: null,
+                    last_error: 'superseded_by_auto_recovery',
+                  })
+                  .eq('event_type', 'aml.screening.requested')
+                  .eq('aggregate_id', subject.id)
+                  .is('processed_at', null);
+                await admin.schema('aml').from('party_screening_subjects')
+                  .update({ state: 'queued', error_category: null,
+                    updated_at: new Date().toISOString() })
+                  .eq('id', subject.id);
+              }
+              await processScreeningEvent(admin, {
+                payload: { party_screening_subject_id: subject.id },
+              });
+              recovered.push(subject.id);
+            } catch {
+              // The consumer has already recorded the error category against
+              // the subject. A failed recovery must not fail the read that
+              // triggered it — the operator still gets their page, now with a
+              // determinate state on it.
+            }
+          }
+          if (recoverable.length > 0) {
+            const { data: refreshed } = await admin.schema('aml')
+              .from('party_screening_subjects')
+              .select('*').eq('case_id', caseId).order('created_at', { ascending: true });
+            if (refreshed) {
+              enrol.subjects = refreshed;
+              // Everything downstream — the policy decision, the PEP finding
+              // sweep, the next action — reads `required`. Leaving it pointing
+              // at the pre-recovery rows would report the state the operator
+              // came here to escape.
+              required = requiredOf(refreshed);
+            }
+          }
+          if (recovered.length > 0) {
+            /*
+             * Recorded, because an AML audit must be able to see WHY a
+             * provider was called when no person pressed anything. An
+             * unattributed screening run is worse than a slow one.
+             */
+            await appendEvent(admin, caseId, 'system',
+              recovered.length === 1
+                ? 'Screening ran automatically for 1 subject'
+                : `Screening ran automatically for ${recovered.length} subjects`,
+              {
+                reason: 'screening_auto_recovery',
+                party_screening_subject_ids: recovered,
+                stall_seconds: SCREENING_STALL_SECONDS,
+              }, userId, userEmail);
+          }
+        }
+
         const sections = (((submission?.snapshot ?? {}) as any).sections ?? []) as any[];
         const payload = (name: string): Record<string, unknown> =>
           (sections.find((x: any) => x?.section === name)?.payload ?? {}) as Record<string, unknown>;
@@ -1998,8 +2127,6 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return d;
         };
 
-        const required = (enrol.subjects ?? []).filter((s: any) =>
-          s.required && s.state !== 'not_required');
         const anyPepFinding = required.some((s: any) =>
           currentDetermination(String(s.id))?.result === 'pep');
 
@@ -2013,17 +2140,6 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           enhancedDueDiligence: caseRow.status === 'edd_required',
           anyPepFinding,
         });
-
-        /*
-         * Provider readiness, read the same way the freshness gate enforces
-         * it: a live active provider AND a DFAT list loaded with entries.
-         * A "successful" sync that published nothing is not a load.
-         */
-        const dfat = (syncs ?? []).filter((x: any) => x.list_code === 'dfat');
-        const dfatLoaded = dfat.some((x: any) => x.status === 'succeeded' && Number(x.entry_count) > 0);
-        const providerRow: any = Array.isArray(provider) ? provider[0] ?? null : provider ?? null;
-        const providerReady = providerRow !== null && providerRow.active === true &&
-          providerRow.mode === 'live' && dfatLoaded;
 
         const nextAction = deriveScreeningNextAction({
           hasSubmission: enrol.hasSubmission,
