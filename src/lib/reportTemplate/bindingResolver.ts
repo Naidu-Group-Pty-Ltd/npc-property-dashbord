@@ -35,6 +35,57 @@ const precision = (value: string | undefined, fallback: number, maximum: number)
   return Number.isInteger(parsed) && parsed >= 0 && parsed <= maximum ? parsed : fallback;
 };
 
+// ─── Dates ────────────────────────────────────────────────────────────────────
+/**
+ * A value that is *entirely* an ISO-8601 calendar date, with or without a time.
+ *
+ * Whole-value only, deliberately. A sentence a model wrote that happens to
+ * mention `2026-08-16` is prose, and rewriting inside it would edit an author's
+ * words; the guarantee this file makes is about a value a template binds, not
+ * about text.
+ */
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS_LONG = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/** Whether a value is a bare ISO date or date-time, and nothing else. */
+export function isIsoDateValue(value: unknown): boolean {
+  return typeof value === 'string' && ISO_DATE.test(value.trim());
+}
+
+/**
+ * An ISO date string as a reader should see it — read, never parsed.
+ *
+ * Returns `null` when the input is not a bare ISO date, so a caller can fall
+ * back to the platform parser for the forms only it understands.
+ *
+ * ## Why this does not use `new Date(...)`
+ *
+ * `new Date('2016-02-14')` is midnight **UTC**, and `toLocaleDateString` then
+ * renders it in the runtime's zone — so a client's move-in date of 14 Feb 2016
+ * prints as *13 Feb 2016* on every render west of UTC, and a timestamp of
+ * `2026-08-16T08:58:56Z` prints as 15 Aug in Honolulu. These documents are
+ * typeset in the operator's browser, so the zone is whoever happens to be at
+ * the keyboard, and the date on a client's page is not theirs to move. The
+ * eight `formatReportDate` copies the flowing render routes carry already read
+ * the string this way; this makes the template renderer agree with them.
+ */
+export function formatIsoDate(value: string, style?: string): string | null {
+  const m = ISO_DATE.exec(value.trim());
+  if (!m) return null;
+  const [, year, month, day] = m;
+  const index = Number(month) - 1;
+  if (index < 0 || index > 11) return null;
+  if (style === 'iso') return `${year}-${month}-${day}`;
+  if (style === 'short') return `${day}/${month}/${year}`;
+  if (style === 'long') return `${day} ${MONTHS_LONG[index]} ${year}`;
+  return `${day} ${MONTHS_SHORT[index]} ${year}`;
+}
+
 export const FILTERS: Record<string, Filter> = {
   // Money / numeric formatting
   currency: (v, decimals) => {
@@ -70,6 +121,11 @@ export const FILTERS: Record<string, Filter> = {
   // Dates
   date: (v, fmt) => {
     if (!v) return '';
+    // An ISO string is read field by field rather than parsed — see
+    // `formatIsoDate`. Anything else (a `Date`, "March 3 2026") still goes
+    // through the platform parser, which is the only thing that understands it.
+    const iso = typeof v === 'string' ? formatIsoDate(v, fmt) : null;
+    if (iso !== null) return iso;
     const d = new Date(v as any);
     if (Number.isNaN(d.getTime())) return String(v);
     if (fmt === 'iso') return d.toISOString().slice(0, 10);
@@ -332,7 +388,33 @@ export function resolveBindable(
     }
 
     value = applyFilters(value, filterParts);
-    return value == null ? '' : transformResolvedValue(String(value));
+    if (value == null) return '';
+    /*
+     * A binding with no filter that resolves to a bare ISO date gets the `date`
+     * filter anyway.
+     *
+     * `report.generatedDate` is a full ISO timestamp in all seven projections —
+     * they publish `updated_at` / `created_at` / `preparedOn` verbatim, under a
+     * name that promises a date — so a master that omits `| date` prints
+     * `2026-08-16T08:58:56.946Z` on a client's cover. It is not hypothetical:
+     * seven of the thirteen `report_templates` rows a document is actually drawn
+     * from bind it with no filter, and that is what the reported Client Details
+     * export printed, twice.
+     *
+     * Making it a property of the RENDERER rather than of the template is what
+     * makes it hold. The catalogue source was corrected in `ad99bc228`, and the
+     * activated copies kept printing the timestamp for the plain reason that an
+     * activated template is a copy — and neither a user-authored template, nor
+     * an imported one, nor a converted one is reachable by any seed at all.
+     *
+     * Only when NO filter was written: an author who wrote one has said what
+     * they want, and `| date:iso` is how you ask for the machine form.
+     */
+    if (filterParts.length === 0 && isIsoDateValue(value)) {
+      const formatted = formatIsoDate(String(value));
+      if (formatted !== null) return transformResolvedValue(formatted);
+    }
+    return transformResolvedValue(String(value));
   });
 }
 
