@@ -91,16 +91,13 @@ import type { QaCitation, ReportQaDocument } from './payload.pure.ts';
 import { renderMarkdown, type MarkdownResult } from './markdown.pure.ts';
 import { narrativeFor } from './normalise.pure.ts';
 import { fitTranscript, planFromMarkdown, sourcesChapter, type SectionPlan } from './sections.pure.ts';
+import { formatReportDate } from '../reportDate.pure.ts';
 
 const ARCHETYPE = REPORT_ARCHETYPES['report-qa'];
 
 /** What the product calls this format, on the cover and in the filename. */
 export const DOCUMENT_NAME = ARCHETYPE.documentName;
 
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
 
 /**
  * `2026-08-02T…` → `02 August 2026`.
@@ -109,12 +106,7 @@ const MONTHS = [
  * `toLocaleDateString` depends on the runtime's ICU build, so the same
  * conversation would date itself differently in Deno and in Node.
  */
-export function formatReportDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
-  if (!m) return '';
-  const month = MONTHS[Number(m[2]) - 1];
-  return month ? `${m[3]} ${month} ${m[1]}` : '';
-}
+export { formatReportDate };
 
 /** Which of the three documents, in the words a reader would use. */
 const SUBJECT_LABEL: Record<ReportQaDocument['meta']['subject'], string> = {

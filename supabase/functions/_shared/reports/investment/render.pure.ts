@@ -67,22 +67,14 @@ import {
   planChapters,
   type PlannedChapter,
 } from './sections.pure.ts';
+import { formatReportDate } from '../reportDate.pure.ts';
 
 const ARCHETYPE = REPORT_ARCHETYPES['investment-compass'];
 export const DOCUMENT_NAME = ARCHETYPE.documentName;
 
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
 
 /** `2026-04-22T…` → `22 April 2026`. */
-export function formatReportDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
-  if (!m) return '';
-  const month = MONTHS[Number(m[2]) - 1];
-  return month ? `${m[3]} ${month} ${m[1]}` : '';
-}
+export { formatReportDate };
 
 const pct = (v: number, d = 1): string => `${v.toFixed(d)}%`;
 

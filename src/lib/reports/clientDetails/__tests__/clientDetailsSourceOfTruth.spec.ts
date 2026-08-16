@@ -49,9 +49,12 @@ const BRIDGE_SHAPE =
  * printing "sachin mathew" while the legacy generator printed "Sachin Mathew"
  * was the same class of divergence, and the fix is to share that function
  * rather than to restate it here.
+ *
+ * `../reportDate.pure.ts` is the shared date reader, a file in the parent
+ * like the others here — eleven routes each carried a private copy.
  */
 const ALLOWED_IMPORT =
-  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/\.\.\/clientName\.ts)$/;
+  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/\.\.\/clientName\.ts|\.\.\/reportDate\.pure\.ts)$/;
 
 describe('client details — single source of truth', () => {
   it('has at least one canonical module', () => {

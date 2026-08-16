@@ -133,19 +133,60 @@ describe('the rendered last page', () => {
   });
 });
 
+/**
+ * No raw timestamp reaches a page — including from a template that never got
+ * the filter.
+ *
+ * The first case here passed for as long as it has existed and did not stop the
+ * defect, because it renders the **catalogue source**, and the catalogue source
+ * was corrected in `ad99bc228`. A document is drawn from `report_templates`,
+ * and an activated template is a *copy*: seven of the thirteen live rows still
+ * bind `{{report.generatedDate}}` with no filter, which is what printed
+ * `Prepared 2026-08-16T08:58:56.946Z` on a client's Client Details cover and
+ * again under `PREPARED` on page 3.
+ *
+ * So the second case strips the filters back out before rendering, reproducing
+ * the stored row, and asserts the page is right anyway. That is the difference
+ * between checking what we ship and checking what the renderer guarantees.
+ */
 describe('no raw timestamp reaches a page', () => {
-  it('formats every date the masters bind', () => {
+  /** The dates a real export carries, in the forms the projections publish. */
+  const withDates = () => {
     const data = withSettings();
-    data.report = { ...(data.report ?? {}), generatedDate: '2026-08-15T11:14:20.386Z' };
+    data.report = { ...(data.report ?? {}), generatedDate: '2026-08-16T08:58:56.946Z' };
     data.clientDetails = {
       ...(data.clientDetails ?? {}),
-      addressHistory: [{ address: 'Regalia KL', startDate: '2026-07-23', endDate: '2026-08-15' }],
+      preparedOn: '2026-08-16T08:58:56.946Z',
+      // A Postgres `date`, so date-only — a machine date on the page just the
+      // same, and the form the old assertion could not see.
+      addressHistory: [{ address: 'Regalia KL', suburb: 'Sydney', startDate: '2016-02-14', endDate: '2019-11-03' }],
     };
+    return data;
+  };
+
+  const NO_MACHINE_DATE = /\d{4}-\d{2}-\d{2}/;
+
+  it('formats every date the masters bind', () => {
     for (const t of SAMPLES) {
-      const { html } = renderTemplateToHtml(t.schema as any, { data });
-      // The exact shape that reached a client's cover.
-      expect(html, t.name).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
-      expect(html, t.name).not.toContain('2026-08-15T');
+      const { html } = renderTemplateToHtml(t.schema as any, { data: withDates() });
+      expect(html, t.name).not.toMatch(NO_MACHINE_DATE);
+      expect(html, t.name).toContain('16 Aug 2026');
+    }
+  });
+
+  it('formats them from a template that binds them with no filter', () => {
+    for (const t of SAMPLES) {
+      // Exactly the stored rows' shape: `{{report.generatedDate | date}}`
+      // written back as `{{report.generatedDate}}`.
+      const stored = JSON.parse(
+        JSON.stringify(t.schema).replace(/\s*\|\s*date(:\w+)?\s*\}\}/g, '}}'),
+      );
+      expect(JSON.stringify(stored), `${t.name}: nothing was stripped, so this proves nothing`)
+        .toContain('{{report.generatedDate}}');
+
+      const { html } = renderTemplateToHtml(stored, { data: withDates() });
+      expect(html, t.name).not.toMatch(NO_MACHINE_DATE);
+      expect(html, t.name).toContain('16 Aug 2026');
     }
   });
 });
