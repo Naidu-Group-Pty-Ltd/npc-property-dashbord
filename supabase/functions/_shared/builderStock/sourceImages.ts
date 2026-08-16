@@ -29,6 +29,7 @@ import {
   MAX_SOURCE_IMAGE_BYTES, sourceImageObjectPath, validateSourceImageBytes,
   type SourceImageAsset,
 } from './sourceAssets.pure.ts';
+import { roleDetail } from './sourceImageRole.pure.ts';
 import { sha256Hex } from './rasterPng.ts';
 
 /**
@@ -36,8 +37,14 @@ import { sha256Hex } from './rasterPng.ts';
  *
  * A row written before provenance was recorded cannot prove where its picture
  * came from, so the repair re-derives it rather than trusting the label.
+ *
+ * 3 adds the IMAGE ROLE. Versions 1 and 2 proved where the bytes came from and
+ * said nothing about what the source presented them as, which is how a bedroom
+ * render came to be a property's card image. Every version-2 row is therefore
+ * unproven for display purposes and is re-derived rather than trusted — which
+ * is the behaviour this constant already had, applied to a second fact.
  */
-export const PROVENANCE_VERSION = 2;
+export const PROVENANCE_VERSION = 3;
 
 /** What a retrieval produced. Injected in tests; the default is the guard. */
 export interface FetchedImage {
@@ -128,6 +135,10 @@ export async function storeSourceImages(
         position: asset.position,
         source_detail: {
           origin: asset.origin,
+          // What the SOURCE presented this image as, and on what evidence.
+          // Without it "source_supplied" says only that the bytes are the
+          // builder's, which was never the question a card asks.
+          ...roleDetail(asset.role),
           fetched_from_host: hostOf(finalUrl),
           snapshotted: true,
           // The bytes are stored exactly as the source served them, so one
@@ -173,6 +184,7 @@ export async function storeSourceImages(
         position: asset.position,
         source_detail: {
           origin: asset.origin,
+          ...roleDetail(asset.role),
           snapshotted: false,
           provenance_version: PROVENANCE_VERSION,
         },

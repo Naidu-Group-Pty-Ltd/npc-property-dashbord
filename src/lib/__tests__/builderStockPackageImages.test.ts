@@ -32,6 +32,20 @@ import {
   DriveListingCache, recoverPackageImage,
 } from '../../../supabase/functions/_shared/builderStock/packageImages';
 
+/**
+ * The package's own COVER PAGE, as a person reads it.
+ *
+ * A picture is this property's image because the document presented it on the
+ * page stating this property's identity and its package information — not
+ * because it is the biggest raster in the file. These fixtures are built as
+ * bare page trees with no text layer, so the cover text is supplied the way
+ * production reads it, through the injected reader.
+ */
+const coverTextFor = (label: string) => async () => [
+  `${label}\nFIXED PRICE CONTRACT\n$1,307,585\nLand Size 350 m2\n4 bed 2 bath 2 car`,
+];
+
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -322,7 +336,7 @@ describe('recovering a row-linked package image', () => {
     const { fetchPackage, requested } = library();
     const outcome = await recoverPackageImage(
       { packageUrl: PACKAGE_LINK, label: LOT_43_LABEL },
-      { fetchPackage },
+      { fetchPackage, readPageTexts: coverTextFor(LOT_43_LABEL) },
     );
 
     expect(outcome.status).toBe('recovered');
@@ -347,7 +361,7 @@ describe('recovering a row-linked package image', () => {
     });
     const outcome = await recoverPackageImage(
       { packageUrl: PACKAGE_LINK, label: LOT_43_LABEL },
-      { fetchPackage },
+      { fetchPackage, readPageTexts: coverTextFor(LOT_43_LABEL) },
     );
     expect(outcome.status).toBe('not_identified');
   });
@@ -358,7 +372,7 @@ describe('recovering a row-linked package image', () => {
     });
     const outcome = await recoverPackageImage(
       { packageUrl: PACKAGE_LINK, label: LOT_43_LABEL },
-      { fetchPackage },
+      { fetchPackage, readPageTexts: coverTextFor(LOT_43_LABEL) },
     );
     expect(outcome.status).toBe('not_identified');
   });

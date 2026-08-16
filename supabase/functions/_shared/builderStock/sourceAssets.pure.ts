@@ -16,9 +16,18 @@
  *   image in the same document carries a real anchor — a render of lot 12
  *   shown against lot 40 is worse than showing nothing at all.
  *
- * Pure: no imports, no IO, no clock. Loaded by the edge functions under Deno
- * and by `src/lib/__tests__` under vitest.
+ * ATTRIBUTION IS NOT ROLE. Everything above answers "whose picture is this?".
+ * What the source presented the picture AS — its hero, its floorplan, its
+ * estate map — is a second and equally necessary fact, and it travels with
+ * every asset as `role`. See `sourceImageRole.pure.ts`.
+ *
+ * Pure: no IO and no clock. Loaded by the edge functions under Deno and by
+ * `src/lib/__tests__` under vitest.
  */
+import {
+  isPrimaryRole, noPrimaryEvidence, roleFromAssetName, roleFromStructuralContainer,
+  secondaryRole, type SourceImageRoleAssignment,
+} from './sourceImageRole.pure.ts';
 
 /**
  * The reserved column that carries a row's identity from the source into the
@@ -71,12 +80,79 @@ export interface SourceImageAsset {
    * than falling back honestly now.
    */
   linkFallback: boolean;
+  /**
+   * What the SOURCE presented this image as, and on what evidence.
+   *
+   * Required rather than optional: an asset whose role nobody stated is an
+   * asset that cannot be a card's image, and making the producer say so is what
+   * stops a new source type quietly inheriting "any picture will do".
+   */
+  role: SourceImageRoleAssignment;
 }
 
 /** Assets belonging to one row of the source, keyed by that row's anchor. */
 export interface AnchoredAssets {
   anchor: string;
   assets: SourceImageAsset[];
+}
+
+/**
+ * Settle the roles of the assets ONE row of a structured source carries.
+ *
+ * LEVEL 3, and the rule that makes it safe: a container designates a primary
+ * only when, after everything the source NAMES as non-hero is set aside,
+ * exactly one candidate is left. A Notion row whose cover is its only picture
+ * has designated it; a table row holding three photographs and saying nothing
+ * about them has designated nothing, and the answer to that is no primary.
+ *
+ * `preferred` is the asset the container itself puts first — a row cover, a
+ * card's hero — which outranks its siblings where the source has one.
+ */
+export function settleRowAssetRoles(
+  assets: SourceImageAsset[],
+  container: { container: string; designation: string; preferredIndex?: number },
+): SourceImageAsset[] {
+  const all = assets ?? [];
+  if (!all.length) return all;
+
+  const named = all.map((asset) => roleFromAssetName(asset.reference));
+  const candidates = all
+    .map((asset, index) => ({ asset, index }))
+    .filter(({ index }) => !named[index]);
+
+  const preferred = container.preferredIndex ?? -1;
+  const chosen = candidates.some(({ index }) => index === preferred)
+    ? preferred
+    : candidates.length === 1 ? candidates[0].index : -1;
+
+  return all.map((asset, index) => {
+    if (named[index]) {
+      return {
+        ...asset,
+        role: secondaryRole(named[index]!, `the source names this image "${asset.reference}"`),
+      };
+    }
+    if (index === chosen) {
+      return { ...asset, role: roleFromStructuralContainer(container) };
+    }
+    // A named-hero asset that lost is still property imagery, just not the one.
+    if (isPrimaryRole(asset.role?.role)) {
+      return {
+        ...asset,
+        role: secondaryRole('property_secondary',
+          'the source carries several photographs on this row and does not say which is '
+          + 'the property\'s listing image'),
+      };
+    }
+    return {
+      ...asset,
+      role: noPrimaryEvidence(
+        candidates.length > 1
+          ? 'the source carries several photographs on this row and does not say which is '
+            + 'the property\'s listing image'
+          : 'the source does not present this image as the property\'s listing image'),
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +261,64 @@ export function sourceImageObjectPath(
     .replace(/^-|-$/g, '')
     .slice(-80) || 'source-image';
   return `${organisationId}/items/${stockItemId}/source/${stem}.${extension}`;
+}
+
+/**
+ * Settle the roles of the pictures found INSIDE a document, per property.
+ *
+ * The office formats all state containment and nothing more: a drawing is
+ * anchored to a spreadsheet row, a `<w:drawing>` sits in a table row, a picture
+ * is on a slide. That is LEVEL 3 — the container designating this property's
+ * image — and it holds only while the container designates ONE. A property's
+ * section carrying a facade, a floorplan and a kitchen has stated which is
+ * which only insofar as it NAMED them; where it named nothing, three
+ * photographs is a choice the document did not make, and this does not make it
+ * either.
+ *
+ * `container` is how the record will describe the relationship to a person.
+ */
+export function settleContainerMediaRoles(input: {
+  media: Array<{ name: string; anchor?: string | null }>;
+  /** The property each picture reached, index-aligned. Null is unattributed. */
+  stockItemIds: Array<string | null>;
+  container: string;
+}): SourceImageRoleAssignment[] {
+  const media = input.media ?? [];
+  const named = media.map((entry) => roleFromAssetName(entry.name));
+
+  const byProperty = new Map<string, number[]>();
+  media.forEach((_, index) => {
+    const itemId = input.stockItemIds[index];
+    if (!itemId || named[index]) return;
+    const bucket = byProperty.get(itemId) ?? [];
+    bucket.push(index);
+    byProperty.set(itemId, bucket);
+  });
+
+  const primaries = new Set<number>();
+  for (const indexes of byProperty.values()) {
+    if (indexes.length === 1) primaries.add(indexes[0]);
+  }
+
+  return media.map((entry, index) => {
+    if (named[index]) {
+      return secondaryRole(named[index]!, `the source names this image "${entry.name}"`);
+    }
+    if (primaries.has(index)) {
+      return roleFromStructuralContainer({
+        container: entry.anchor ? `${input.container} (${entry.anchor})` : input.container,
+        designation: 'property image',
+      });
+    }
+    if (!input.stockItemIds[index]) {
+      return noPrimaryEvidence(
+        'the source did not tie this image to a property, so it is kept against the '
+        + 'upload and shown against nobody');
+    }
+    return noPrimaryEvidence(
+      'the source places several photographs against this property and does not say '
+      + 'which is its listing image');
+  });
 }
 
 // ---------------------------------------------------------------------------

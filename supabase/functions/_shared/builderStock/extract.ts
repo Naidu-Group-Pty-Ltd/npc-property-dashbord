@@ -27,8 +27,12 @@ import {
   parseOdfTableImages, parseRelationships, parseSlideImages, parseWorkbookSheets,
   relsPathFor, resolveOoxmlPath, sheetRowAnchor, slideAnchor,
 } from './documentAnchors.pure.ts';
-import { SOURCE_ANCHOR_HEADER, type AnchoredAssets } from './sourceAssets.pure.ts';
+import {
+  SOURCE_ANCHOR_HEADER, settleRowAssetRoles, type AnchoredAssets,
+} from './sourceAssets.pure.ts';
+import { noPrimaryEvidence } from './sourceImageRole.pure.ts';
 import type { PdfPhotoProvenance } from './pdfSourcePhoto.ts';
+import type { PdfMediaPlacement } from './pdfPrimaryImage.pure.ts';
 
 export interface ExtractedMedia {
   /** Path inside the container, or the filename for a bare image. */
@@ -48,6 +52,16 @@ export interface ExtractedMedia {
    * than asserted. Only the PDF reader states it today.
    */
   provenance?: PdfPhotoProvenance | null;
+  /**
+   * How a PAGINATED source placed this picture — its visible page, and how
+   * often the document draws it.
+   *
+   * Carried because discovery and role assignment happen at different moments:
+   * a PDF's pictures are read here, and which property the document is about is
+   * only known once its prose has been read into rows. This travels between the
+   * two so the bytes are never read twice and the two cannot disagree.
+   */
+  placement?: PdfMediaPlacement | null;
 }
 
 export interface StockExtraction {
@@ -70,6 +84,14 @@ export interface StockExtraction {
    * out of the prose can be tied back to the page it was described on.
    */
   pageTexts?: string[];
+  /**
+   * Did the DOCUMENT's own page tree establish the page order?
+   *
+   * False means "page 3" is the third-lowest object number rather than the
+   * third page, so no page may be read as a property's cover and no page number
+   * may be shown to a person. Absent for formats that do not paginate.
+   */
+  pageOrderAuthoritative?: boolean;
   warnings: string[];
   /** A document/page title, when the format carries one. */
   title?: string | null;
@@ -432,21 +454,12 @@ export async function extractStockFile(
   if (classification.kind === 'pdf') {
     result.strategy = 'pdf_text';
     try {
-      const { extractText, getDocumentProxy } = await import('https://esm.sh/unpdf@0.12.1');
-      /**
-       * ITS OWN COPY. pdf.js takes ownership of the array it is handed and
-       * leaves the buffer detached, so reading the text used to empty the very
-       * bytes the photographs are then read out of — a page with a render on
-       * it reported no images at all, and said so on the builder's screen.
-       */
-      const pdf = await getDocumentProxy(bytes.slice());
-      // Page by page, not merged: the page number is the only structure a PDF
-      // offers, and it is what a photograph is later attributed by. The merged
-      // string the model reads is joined back from these, so the two cannot
-      // describe different documents.
-      const { text } = await extractText(pdf, { mergePages: false });
-      const pages = (Array.isArray(text) ? text : [String(text ?? '')])
-        .map((page) => String(page ?? ''));
+      // One implementation, shared with the linked-package path, so a brochure
+      // uploaded here and the same brochure reached through a row's own link
+      // cannot number their pages differently. See `pdfText.ts`.
+      const { readPdfPageTexts } = await import('./pdfText.ts');
+      const pages = await readPdfPageTexts(bytes);
+      if (!pages.length) throw new Error('no text layer');
       result.pageTexts = pages;
       const merged = pages.join('\n');
       result.text = merged.trim() ? merged.slice(0, MAX_TEXT_CHARS) : null;
@@ -471,23 +484,35 @@ export async function extractStockFile(
     // brochure uploaded here and the same brochure reached through a link
     // cannot disagree about which picture is the property.
     try {
-      const { extractPdfPhotosByPage } = await import('./pdfSourcePhoto.ts');
+      const { discoverPdfSourceAssets } = await import('./pdfSourcePhoto.ts');
       const { pdfPageAnchor } = await import('./pdfRowAnchors.pure.ts');
-      const found = await extractPdfPhotosByPage(bytes);
-      for (const { page, photo } of found) {
+      /**
+       * EVERY picture, not one per page.
+       *
+       * This used to take a single photograph per page — the largest — which
+       * silently decided which of a cover's pictures the product would ever see
+       * before anything had asked what they were. Discovery now hands over all
+       * of them and the role is settled where the property is known.
+       */
+      const found = await discoverPdfSourceAssets(bytes);
+      result.pageOrderAuthoritative = found.pageOrderAuthoritative;
+      for (const asset of found.assets) {
         if (result.media.length >= MAX_MEDIA) break;
-        if (photo.bytes.length > MAX_MEDIA_BYTES) continue;
-        const suffix = photo.provenance.method === 'page_crop'
-          ? `crop(${photo.provenance.crop?.top}-${photo.provenance.crop?.bottom})`
-          : photo.provenance.resourceName ?? `obj${photo.provenance.objectNumber}`;
+        if (asset.bytes.length > MAX_MEDIA_BYTES) continue;
+        const suffix = asset.provenance.method === 'page_crop'
+          ? `crop(${asset.provenance.crop?.top}-${asset.provenance.crop?.bottom})`
+          : asset.provenance.resourceName ?? `obj${asset.provenance.objectNumber}`;
         result.media.push({
-          name: `page${page}:${suffix}`,
-          bytes: photo.bytes,
-          contentType: photo.contentType,
+          // 1-based and the page a PERSON sees, which is what `page` in the
+          // provenance record has to mean.
+          name: `page${asset.page}:${suffix}`,
+          bytes: asset.bytes,
+          contentType: asset.contentType,
           // The page IS the anchor. Attribution is by page number and never by
           // the order images happen to appear in the file.
-          anchor: pdfPageAnchor(page),
-          provenance: photo.provenance,
+          anchor: pdfPageAnchor(asset.page),
+          provenance: asset.provenance,
+          placement: asset.placement,
         });
       }
     } catch {
@@ -630,17 +655,28 @@ export async function extractStockFile(
         if (!urls.length) return;
         result.rowAssets.push({
           anchor: htmlRowAnchor(tableIndex, sourceIndex),
-          assets: urls.slice(0, 6).map((url, position) => ({
-            url,
-            reference: url.slice(0, 400),
-            origin: 'html_row_image' as const,
-            provider: 'source_page',
-            pageUrl: options.baseUrl ?? null,
-            position,
-            // An ordinary published URL: if the bytes will not come to us, the
-            // link is still something a browser can load.
-            linkFallback: true,
-          })),
+          // LEVEL 3: the markup states containment, so a row holding ONE
+          // photograph has designated it. A row holding several has not, and
+          // `settleRowAssetRoles` answers that with no primary rather than the
+          // first one in DOM order.
+          assets: settleRowAssetRoles(
+            urls.slice(0, 6).map((url, position) => ({
+              url,
+              reference: url.slice(0, 400),
+              origin: 'html_row_image' as const,
+              provider: 'source_page',
+              pageUrl: options.baseUrl ?? null,
+              position,
+              // An ordinary published URL: if the bytes will not come to us,
+              // the link is still something a browser can load.
+              linkFallback: true,
+              role: noPrimaryEvidence('settled from the row that contains it'),
+            })),
+            {
+              container: 'the property row that contains it',
+              designation: 'property image',
+            },
+          ),
         });
       });
 

@@ -52,6 +52,16 @@ export interface NormalisedStockRecord {
   /** Image URLs the file itself carried. Provenance stage 1. */
   image_urls: string[];
   /**
+   * The HEADER each of those URLs sat under, verbatim.
+   *
+   * The column name is LEVEL 1 evidence about what the image is FOR — a row's
+   * "Facade" column names the property's listing image and its "Floorplan"
+   * column names something that must never reach a card — so throwing it away
+   * at normalisation threw away the only thing that could tell them apart.
+   * Keyed by URL rather than positional so the dedupe above cannot misalign it.
+   */
+  image_url_fields: Record<string, string>;
+  /**
    * WHICH ROW OF THE SOURCE THIS IS — a Notion block id, a sheet and row, a
    * table row. Set only when the source stated it, and it is what ties the
    * builder's own render to this property rather than to the one beside it.
@@ -165,9 +175,20 @@ alias('description',
   'description', 'notes', 'comments', 'details', 'features', 'inclusions',
   'remarks');
 
+/**
+ * Columns that carry an image FOR THE PROPERTY.
+ *
+ * Every one of these names the row's own picture, which is what makes a hit
+ * LEVEL 1 primary evidence in `sourceImageRole.pure.ts`. A column naming
+ * something else — "Floorplan", "Site Plan", "Masterplan" — is deliberately
+ * absent: it would be mapped here, read as the property's image, and printed on
+ * a client's card.
+ */
 alias('image_url',
   'image', 'images', 'image url', 'image urls', 'photo', 'photos', 'photo url',
-  'render', 'renders', 'facade image', 'picture');
+  'render', 'renders', 'facade image', 'picture', 'facade', 'facade url',
+  'hero image', 'primary image', 'property image', 'listing image',
+  'render url', 'photo urls', 'image link');
 
 alias('builder_name',
   'builder', 'builder name', 'developer', 'developer name', 'vendor', 'supplier');
@@ -325,7 +346,7 @@ export function emptyStockRecord(): NormalisedStockRecord {
     car_spaces: null, property_type: null, land_size_sqm: null,
     building_size_sqm: null, price: null, price_display: null,
     availability_status: 'unknown', expected_completion: null, description: null,
-    image_urls: [], source_anchor: null, unmapped: {},
+    image_urls: [], image_url_fields: {}, source_anchor: null, unmapped: {},
   };
 }
 
@@ -397,7 +418,13 @@ export function normaliseStockRow(
       case 'availability_status': record.availability_status = coerceAvailability(value); break;
       case 'expected_completion': record.expected_completion = text(value, 120); break;
       case 'description': record.description = text(value, 4000); break;
-      case 'image_url': record.image_urls.push(...coerceUrls(value)); break;
+      case 'image_url': {
+        const urls = coerceUrls(value);
+        record.image_urls.push(...urls);
+        // The source's own heading, so the role can be read off it later.
+        for (const url of urls) record.image_url_fields[url] ??= String(header ?? '').trim().slice(0, 120);
+        break;
+      }
       case 'builder_name':
         // Recorded for the audit trail only. Who supplied the stock is the
         // authenticated organisation, never a name in a spreadsheet cell.
@@ -409,6 +436,9 @@ export function normaliseStockRow(
   if (!sawAnything) return null;
   if (!identifiesAProperty(record)) return null;
   record.image_urls = Array.from(new Set(record.image_urls)).slice(0, 12);
+  for (const url of Object.keys(record.image_url_fields)) {
+    if (!record.image_urls.includes(url)) delete record.image_url_fields[url];
+  }
   return record;
 }
 

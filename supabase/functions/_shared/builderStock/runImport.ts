@@ -213,6 +213,7 @@ export async function runStockImport(input: RunImportInput): Promise<RunImportRe
     // A PDF's properties come out of prose and carry no anchor of their own;
     // these are what lets one be tied back to the page it was described on.
     pageTexts: extraction.pageTexts,
+    pageOrderAuthoritative: extraction.pageOrderAuthoritative,
     filename: upload.original_filename,
   });
 

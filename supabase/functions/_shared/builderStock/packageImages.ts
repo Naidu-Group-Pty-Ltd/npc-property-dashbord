@@ -31,8 +31,10 @@ import {
   DRIVE_FOLDER_MIME, type DriveEntry,
 } from './drivePackage.pure.ts';
 import {
-  extractExactSourcePhotoFromPdf, type PdfPhotoProvenance,
+  selectPdfPropertyPrimary, type PdfPhotoProvenance,
 } from './pdfSourcePhoto.ts';
+import { readPdfPageTexts } from './pdfText.ts';
+import type { SourceImageRoleAssignment } from './sourceImageRole.pure.ts';
 
 /** Folder listings one repair run may read. Shared and cached across rows. */
 const MAX_LISTINGS_PER_RUN = 40;
@@ -93,6 +95,8 @@ export interface RecoveredPackageImage {
    * anything was done to it.
    */
   provenance: PdfPhotoProvenance;
+  /** What the package presented this image as, and on what evidence. */
+  role: SourceImageRoleAssignment;
 }
 
 export type PackageOutcome =
@@ -110,10 +114,22 @@ export type PackageOutcome =
  */
 export async function recoverPackageImage(
   input: { packageUrl: string; label: string },
-  deps: { fetchPackage?: PackageFetcher; cache?: DriveListingCache } = {},
+  deps: {
+    fetchPackage?: PackageFetcher;
+    cache?: DriveListingCache;
+    /**
+     * How the package's prose is read, page by page.
+     *
+     * Injected for the same reason the fetcher is: the production reader
+     * dynamically imports pdf.js from a CDN, which an offline test runner
+     * cannot reach, and a rule nothing can exercise is a rule that drifts.
+     */
+    readPageTexts?: (bytes: Uint8Array) => Promise<string[]>;
+  } = {},
 ): Promise<PackageOutcome> {
   const fetchPackage = deps.fetchPackage ?? guardedFetch;
   const cache = deps.cache ?? new DriveListingCache(fetchPackage);
+  const readPageTexts = deps.readPageTexts ?? readPdfPageTexts;
 
   let host: string;
   try {
@@ -130,7 +146,8 @@ export async function recoverPackageImage(
   // A link straight to one document: the row named the file itself.
   const directFileId = driveFileId(input.packageUrl);
   if (directFileId) {
-    return await extractFromDocument(fetchPackage, directFileId, 'the linked document');
+    return await extractFromDocument(
+      fetchPackage, readPageTexts, directFileId, 'the linked document', input.label);
   }
 
   const rootId = driveFolderId(input.packageUrl);
@@ -158,7 +175,8 @@ export async function recoverPackageImage(
     };
   }
 
-  return await extractFromDocument(fetchPackage, document.id, document.name);
+  return await extractFromDocument(
+    fetchPackage, readPageTexts, document.id, document.name, input.label);
 }
 
 /**
@@ -206,8 +224,11 @@ async function findLotFolder(
  */
 async function extractFromDocument(
   fetchPackage: PackageFetcher,
+  readPageTexts: (bytes: Uint8Array) => Promise<string[]>,
   fileId: string,
   documentName: string,
+  /** The property this package is supposed to be about. */
+  label: string,
 ): Promise<PackageOutcome> {
   const url = driveDownloadUrl(fileId);
   let bytes: Uint8Array;
@@ -225,9 +246,22 @@ async function extractFromDocument(
     return { status: 'unreachable', detail: 'That document is not publicly downloadable.' };
   }
 
-  const photo = await extractExactSourcePhotoFromPdf(bytes);
+  /**
+   * The SAME rule a directly uploaded PDF goes through: the package's own cover
+   * page — the one stating this property's identity with its package
+   * information — and the one picture presented with them. A package reached
+   * through a link and the same package uploaded through the portal must not be
+   * able to disagree about which picture is the property.
+   */
+  const pageTexts = await readPageTexts(bytes);
+  const selection = await selectPdfPropertyPrimary(bytes, { label, pageTexts });
+  const photo = selection.primary;
   if (!photo) {
-    return { status: 'not_identified', detail: 'That document leads with no photograph.' };
+    return {
+      status: 'not_identified',
+      detail: 'That document does not present a page as this property\'s package cover, '
+        + 'so it names no image for it.',
+    };
   }
 
   const suffix = photo.provenance.method === 'page_crop'
@@ -242,6 +276,7 @@ async function extractFromDocument(
       documentName,
       documentUrl: url,
       provenance: photo.provenance,
+      role: photo.role,
     },
   };
 }

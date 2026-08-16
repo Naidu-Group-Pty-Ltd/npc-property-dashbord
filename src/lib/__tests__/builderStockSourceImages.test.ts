@@ -37,6 +37,23 @@ import {
   chooseAndStorePrimaryImage, isDisplayableSourceImage,
 } from '../../../supabase/functions/_shared/builderStock/primaryImage';
 import { repairSourceImagesForUpload } from '../../../supabase/functions/_shared/builderStock/repairSourceImages';
+import {
+  roleDetail, roleFromStructuralContainer,
+} from '../../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
+
+/**
+ * A role a SOURCE stated, for fixtures that are about something else.
+ *
+ * Every asset now carries what the source presented it as, because
+ * "the builder supplied these bytes" and "the builder supplied them as this
+ * property's listing image" are different facts and only the second may reach a
+ * card. Tests that are about fetching, hashing or storage say so once here.
+ */
+const PRIMARY_ASSET_ROLE = roleFromStructuralContainer({
+  container: 'the Notion row for this property',
+  designation: 'page cover',
+});
+const PRIMARY_ROLE_DETAIL = roleDetail(PRIMARY_ASSET_ROLE);
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -383,6 +400,7 @@ describe('bringing the source image inside', () => {
         pageUrl: PAGE_URL,
         position: 0,
         linkFallback: false,
+        role: PRIMARY_ASSET_ROLE,
       }],
     }, { fetchImage: fetcher.fetchImage });
 
@@ -425,6 +443,7 @@ describe('bringing the source image inside', () => {
         pageUrl: PAGE_URL,
         position: 0,
         linkFallback: false,
+        role: PRIMARY_ASSET_ROLE,
       }],
     }, { fetchImage: fetcher.fetchImage });
 
@@ -451,6 +470,7 @@ describe('bringing the source image inside', () => {
         pageUrl: null,
         position: 0,
         linkFallback: false,
+        role: PRIMARY_ASSET_ROLE,
       }],
     }, { fetchImage: async () => ({ bytes: html, finalUrl: 'https://example.invalid/render.png' }) });
 
@@ -479,6 +499,7 @@ describe('bringing the source image inside', () => {
         pageUrl: null,
         position: 0,
         linkFallback: true,
+        role: PRIMARY_ASSET_ROLE,
       }],
     }, { fetchImage: async () => { throw new Error('That address could not be reached.'); } });
 
@@ -617,7 +638,7 @@ describe('which image the marketplace shows', () => {
         },
         {
           id: 'source-1', stock_item_id: 'item-1', source_stage: 'uploaded_document',
-          verification_status: 'source_supplied',
+          verification_status: 'source_supplied', source_detail: PRIMARY_ROLE_DETAIL,
           processing_status: 'ready', position: 3, storage_path: 'org/items/item-1/source/cover.png',
         },
       ],
@@ -638,7 +659,7 @@ describe('which image the marketplace shows', () => {
         },
         {
           id: 'source-1', stock_item_id: 'item-1', source_stage: 'uploaded_document',
-          verification_status: 'source_supplied',
+          verification_status: 'source_supplied', source_detail: PRIMARY_ROLE_DETAIL,
           processing_status: 'ready', position: 9, storage_path: 's.png',
         },
       ],
@@ -854,8 +875,18 @@ describe('repairing stock that is already imported', () => {
       objects: { [packUpload.storage_path]: encoder.encode(packageCsv) },
     });
 
+    /**
+     * The package's own cover page, as a person reads it: this property's
+     * identity together with its package information. That — and not the
+     * picture's size — is what makes the render on it the property's image.
+     */
+    const readPageTexts = async () => [
+      'Lot 43 - Tringa Street, Sandpiper Estate, Tweed Heads South NSW 2486 [Stradbroke 180]\n'
+      + 'FIXED PRICE CONTRACT\n$1,307,585\nLand Size 350 m2\n4 bed 2 bath 2 car',
+    ];
+
     const outcome = await repairSourceImagesForUpload(
-      db, { organisationId: 'org-a', uploadId: 'upload-2' }, { fetchPackage },
+      db, { organisationId: 'org-a', uploadId: 'upload-2' }, { fetchPackage, readPageTexts },
     );
 
     expect(outcome.error).toBeUndefined();
