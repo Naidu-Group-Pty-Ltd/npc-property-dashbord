@@ -162,6 +162,18 @@ export interface AmlJourneyStage {
   attention: AmlAttentionLevel;
   /** True when this stage is what is stopping the case progressing. */
   blocking: boolean;
+  /**
+   * This stage's own evidence is complete, but an earlier applicable stage is
+   * not — so the journey has not actually progressed through it.
+   *
+   * AML evidence genuinely arrives out of order: a client can submit their
+   * questionnaire before screening has run. Claiming the submission did not
+   * happen would be false. But rendering it as a plain green tick in a
+   * numbered rail reads as "the case got this far", which is also false.
+   *
+   * So the fact is kept and the SEQUENCE is qualified.
+   */
+  aheadOfSequence: boolean;
   /** One line of substance — counts, not adjectives. */
   summary: string;
   blockers: AmlJourneyNote[];
@@ -1027,7 +1039,18 @@ function fundingStage(facts: AmlWorkspaceFacts): StageReading {
    10. Stage 7 — Submission review
    ══════════════════════════════════════════════════════════════════════ */
 
-/** Stages at or beyond which the submission has already been taken in. */
+/**
+ * Stages at or beyond which the submission has already been taken in.
+ *
+ * `closed` is deliberately NOT here, and that omission is the fix for a real
+ * defect: a case can close from ANY stage, including one that never reached
+ * submission. With `closed` in this set, closing a case at Stage 5 rendered
+ * Stage 7 with a green tick — the rail claimed the submission had been taken
+ * into review when nothing of the sort had happened.
+ *
+ * Closure is an ending, not a progression. It says where the case stopped,
+ * never how far it got.
+ */
 const PAST_SUBMISSION = new Set([
   "staff_review",
   "checks_in_progress",
@@ -1036,7 +1059,6 @@ const PAST_SUBMISSION = new Set([
   "cleared",
   "cleared_with_conditions",
   "blocked",
-  "closed",
 ]);
 
 function submissionStage(facts: AmlWorkspaceFacts): StageReading {
@@ -1082,6 +1104,19 @@ function submissionStage(facts: AmlWorkspaceFacts): StageReading {
       owner: "none",
       summary: "The submission has been taken in; the case is past this checkpoint.",
       completedItems: [note("accepted", "Submission accepted into review", "steady")],
+      sourceFacts,
+    };
+  }
+
+  if (stage === "closed") {
+    // The case ended here. Whether the submission was ever taken into review
+    // is not established by the fact of closure, so this reports the ending
+    // rather than inventing a completion.
+    return {
+      status: "not_started",
+      owner: "none",
+      summary: "The case closed without this checkpoint being recorded as completed.",
+      outstandingItems: [note("closed", "Case closed before submission review", "waiting")],
       sourceFacts,
     };
   }
@@ -1606,6 +1641,9 @@ export function deriveAmlJourney(facts: AmlWorkspaceFacts): AmlJourney {
       shortLabel: def.shortLabel,
       purpose: def.purpose,
       status: reading.status,
+      // Filled in below, once every stage has been read — a stage cannot know
+      // whether it is ahead of the sequence until its predecessors are known.
+      aheadOfSequence: false,
       owner: reading.owner,
       ownerLabel: JOURNEY_OWNER_LABELS[reading.owner],
       attention,
@@ -1633,6 +1671,25 @@ export function deriveAmlJourney(facts: AmlWorkspaceFacts): AmlJourney {
   });
 
   const applicableStages = stages.filter((s) => s.applicable);
+
+  /*
+   * Qualify the sequence, without denying the evidence.
+   *
+   * A stage whose own evidence is complete while an EARLIER applicable stage
+   * is not has not actually been progressed through — the rail is numbered,
+   * and a green tick at 7 above an outstanding 5 reads as "the case got this
+   * far". It did not.
+   *
+   * The status stays `complete`, because the evidence is real and every
+   * count, gate and readiness figure derived from it must stay true. Only the
+   * sequence is flagged, for the rail to render differently.
+   */
+  for (let i = 0; i < stages.length; i++) {
+    if (stages[i].status !== "complete" || !stages[i].applicable) continue;
+    stages[i].aheadOfSequence = stages
+      .slice(0, i)
+      .some((earlier) => earlier.applicable && earlier.status !== "complete");
+  }
 
   return {
     stages,
