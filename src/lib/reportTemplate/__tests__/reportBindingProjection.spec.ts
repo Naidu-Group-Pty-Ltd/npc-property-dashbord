@@ -19,7 +19,28 @@ import { applyOrganisationProjection } from '../../../../supabase/functions/_sha
 import { INVESTMENT_COMPASS_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/templates';
 
 /** Shaped exactly like a stored row. See the header. */
+/*
+ * `report_content` is part of the row, and the narrative pages bind it.
+ *
+ * 1,183 of the 1,187 stored reports carry a body — the median compass report
+ * runs 423 lines — so a fixture without one is not the ordinary case, and
+ * omitting it left `narrative.source` looking sourceless when the whole point
+ * of the v8 masters is that it has a source. Short here because the assertion
+ * is that the path RESOLVES; how many pages it packs into is
+ * `markdownPaging.pure.ts`'s own suite.
+ */
+const REPORT_CONTENT = [
+  '# Executive Verdict',
+  '',
+  'Banora Point is a well-established coastal suburb in the Northern Rivers.',
+  '',
+  '# Property & Locality Snapshot',
+  '',
+  'The dwelling sits within walking distance of the village centre.',
+].join('\n');
+
 const ROW = {
+  report_content: REPORT_CONTENT,
   property_address: '14 Marlborough Street, Leichhardt NSW 2040',
   updated_at: '2026-08-02T00:00:00.000Z',
   created_at: '2026-08-01T00:00:00.000Z',

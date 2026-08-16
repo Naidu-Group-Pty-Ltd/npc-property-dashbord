@@ -408,10 +408,14 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       }),
       table({
         headers: ['Dimension', 'Score', 'Weight'],
+        // `scoreLabel` / `weightLabel`, not the raw figures: a dimension the
+        // scorer excluded prints "Not assessed" and "—" rather than a midpoint
+        // score beside a 0% weight, which is what the record actually means.
+        // The projection composes both so the branch lives in one place.
         rows: [0, 1, 2, 3, 4].map((i) => [
           `{{assessment.${i}.label}}`,
-          `{{assessment.${i}.score | fixed:0}}`,
-          `{{assessment.${i}.weight | fixed:0}}%`,
+          `{{assessment.${i}.scoreLabel}}`,
+          `{{assessment.${i}.weightLabel}}`,
         ]),
         columnWidths: [0.5, 0.25, 0.25],
         numeric: [1, 2],
@@ -452,7 +456,21 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     // `financials.loanFees` has no column and no producer; the row printed a
     // label, a blank and "Lender schedule" on every report.
     ['LVR at settlement', '{{financials.lvr | percent:0}}', 'Loan over price'],
-    ['Total acquisition cost', '{{financials.totalCost | currency}}', 'Sum of the above'],
+    /*
+     * "Total acquisition cost … Sum of the above" was neither.
+     *
+     * `financials.totalCost` is `initialCosts.totalUpfront`, which is the
+     * DEPOSIT plus the costs — $340,287 on the production report this was
+     * found in, printed as the total of a table whose rows add to $1,460,587.
+     * It read as though a $1.4M property could be acquired for $340k.
+     *
+     * The figure is right and the label was wrong, so the label is fixed and
+     * the deposit is shown, which is what makes the column add up: deposit
+     * $280,000 + duty $58,287 + legals $1,800 + inspection $500. The purchase
+     * price stays as the contract line it is, above the cash the buyer finds.
+     */
+    ['Deposit', '{{financials.deposit | currency}}', 'Cash at settlement'],
+    ['Total upfront cash', '{{financials.totalCost | currency}}', 'Deposit plus costs'],
   ];
   const cashflowRows = [
     ['Rental income', '{{financials.weeklyRent | currency}}', '{{financials.annualRent | currency}}'],

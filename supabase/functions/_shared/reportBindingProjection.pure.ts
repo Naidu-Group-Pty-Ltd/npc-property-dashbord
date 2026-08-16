@@ -377,15 +377,48 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
     { key: 'demandScore', label: 'Demand' },
     { key: 'riskScore', label: 'Risk' },
   ];
+  /*
+   * A dimension the scorer EXCLUDED did not score 50 — it did not score.
+   *
+   * The row carries `hasData: false` and `excluded: true` on those, and a
+   * `score` of 50 that is a placeholder rather than an assessment; the
+   * calculator then renormalises the weights over the dimensions it did
+   * assess. On the production report this was found in, that is Growth and
+   * Demand — and the page printed
+   *
+   *     Growth    50    0%
+   *     Demand    50    0%
+   *
+   * which reads as "growth was assessed at the midpoint and then ignored".
+   * Neither half is true: it was never assessed, and the 56/33/11 weights on
+   * the other three already account for its absence. A plausible wrong number
+   * on a client's page is this programme's top risk, and a midpoint score
+   * beside a 0% weight is exactly one.
+   *
+   * `scored` carries the distinction so the page can say "not assessed"
+   * instead of printing a figure. `score` and `weight` stay verbatim — this is
+   * a display projection and it restates stored values, it does not re-derive
+   * them.
+   */
   const assessment = DIMENSIONS.map(({ key, label }) => {
     const d = obj(breakdown[key]);
+    const scored = d.excluded !== true && d.hasData !== false;
     const entry: Record<string, unknown> = {};
     put(entry, 'label', label);
-    put(entry, 'score', num(d.score));
-    put(entry, 'weight', num(d.weight));
+    put(entry, 'scored', scored);
+    // The figures a reader may act on, only where they mean something.
+    put(entry, 'score', scored ? num(d.score) : undefined);
+    put(entry, 'weight', scored ? num(d.weight) : undefined);
+    // What the page prints in the two numeric columns either way, so a
+    // template binds one path rather than branching on `scored` in three
+    // places and getting one of them wrong.
+    put(entry, 'scoreLabel', scored && num(d.score) !== undefined
+      ? String(Math.round(num(d.score) as number)) : 'Not assessed');
+    put(entry, 'weightLabel', scored && num(d.weight) !== undefined
+      ? `${Math.round(num(d.weight) as number)}%` : '—');
     put(entry, 'details', str(d.details));
     return entry;
-  }).filter((e) => e.score !== undefined);
+  }).filter((e) => e.label !== undefined);
 
   const opportunities = strArray(score.opportunities);
 

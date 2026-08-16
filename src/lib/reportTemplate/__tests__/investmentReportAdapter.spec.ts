@@ -32,7 +32,23 @@ describe('investmentReportAdapter', () => {
       .resolves.toEqual(expect.objectContaining({ reportType: 'investment_compass' }));
   });
 
-  it('preserves report scope routing for non-Compass rows', async () => {
+  /*
+   * A scope is not a format.
+   *
+   * This asserted `reportType: 'address'`, which is what the adapter used to
+   * return — `getReportType` read `row.report_type`, a column
+   * `investment_reports` has never had, and fell through to `report_scope`.
+   * `address` matches no adapter, no entry in `REPORT_TYPE_ALIASES` and no row
+   * in `report_templates`, so the four non-Compass tiers — snapshot, briefing,
+   * strategic, financial, 63 reports — refused with `no_active_template` and
+   * fell back to the legacy generator every time. The render ledger held five
+   * `investment_compass` jobs and none of any other tier.
+   *
+   * All five tiers are one format. The spec encoded the defect, so it is
+   * inverted here rather than deleted: the case it was written to cover — a
+   * non-Compass row routing somewhere sensible — is the case that was broken.
+   */
+  it('routes a non-Compass tier to the investment format, not its scope', async () => {
     invokeSecureFunction.mockResolvedValue({
       data: {
         report: {
@@ -46,6 +62,10 @@ describe('investmentReportAdapter', () => {
     });
 
     await expect(investmentReportAdapter.resolveRoutingContext({ reportId: 'report-2' }))
-      .resolves.toEqual(expect.objectContaining({ reportType: 'address' }));
+      .resolves.toEqual(expect.objectContaining({
+        reportType: 'investment',
+        tier: 'financial',
+        variant: 'financial',
+      }));
   });
 });
