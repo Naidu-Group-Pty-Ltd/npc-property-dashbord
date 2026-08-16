@@ -915,6 +915,16 @@ export interface AmlNextAction {
   unavailableFacts: string[];
   /** True when a fact needed to rank confidently was missing. */
   partial: boolean;
+  /**
+   * Which journey stage this action belongs to, and where it sits in the ten.
+   *
+   * The MLRO is walking a numbered journey, and an action that just says "Go
+   * to it" gives them no way to tell whether they are being sent forward past
+   * work that is still outstanding. Naming the stage is what makes a jump
+   * legible — and ordering by it is what stops most jumps happening at all.
+   */
+  stageOrder: number;
+  stageSection: AmlWorkspaceSection;
 }
 
 interface Candidate {
@@ -988,7 +998,7 @@ function nextActionCandidates(facts: AmlWorkspaceFacts): Candidate[] {
         label: "Act on a confirmed screening match",
         explanation: `${confirmed.length} screening subject${confirmed.length === 1 ? " has" : "s have"} a confirmed match. This is a finding, not a candidate.`,
         attention: "critical",
-        section: "identity",
+        section: "ownership",
         blocking: true,
         actionType: "screening_adjudication",
         facts: [`party_screening_subjects.state = confirmed_match (${confirmed.length})`],
@@ -1000,7 +1010,7 @@ function nextActionCandidates(facts: AmlWorkspaceFacts): Candidate[] {
         label: "Resolve a potential screening match",
         explanation: `${openMatches.length} subject${openMatches.length === 1 ? "" : "s"} ${openMatches.length === 1 ? "has" : "have"} candidate matches awaiting human adjudication.`,
         attention: "attention",
-        section: "identity",
+        section: "ownership",
         blocking: true,
         actionType: "screening_adjudication",
         facts: [`party screening candidates open (${openMatches.length})`],
@@ -1012,9 +1022,26 @@ function nextActionCandidates(facts: AmlWorkspaceFacts): Candidate[] {
         label: "Re-run screening that did not complete",
         explanation: `${errored.length} screening run${errored.length === 1 ? "" : "s"} failed technically. A technical failure leaves the subject outstanding — it never reads as clear.`,
         attention: "attention",
-        section: "identity",
+        section: "ownership",
         blocking: true,
         facts: [`party_screening_subjects.state = error (${errored.length})`],
+      });
+    }
+    const inFlight = subjects.filter(
+      (s) => s.required !== false && (s.state === "queued" || s.state === "processing"),
+    );
+    if (inFlight.length > 0) {
+      // Without this the stage produced NO candidate while screening was
+      // running, and the ranking fell through to whatever fired next — which
+      // is how a case mid-screening pointed the MLRO at Stage 7.
+      out.push({
+        key: "screening_in_flight",
+        label: "Screening is running",
+        explanation: `${inFlight.length} subject${inFlight.length === 1 ? " is" : "s are"} with the screening engine. Candidates come back for adjudication.`,
+        attention: "waiting",
+        section: "ownership",
+        blocking: true,
+        facts: [`party_screening_subjects.state in (queued, processing) (${inFlight.length})`],
       });
     }
     if (unscreened.length > 0) {
@@ -1023,7 +1050,7 @@ function nextActionCandidates(facts: AmlWorkspaceFacts): Candidate[] {
         label: "Start screening for outstanding parties",
         explanation: `${unscreened.length} required subject${unscreened.length === 1 ? " has" : "s have"} not been screened yet.`,
         attention: "attention",
-        section: "identity",
+        section: "ownership",
         blocking: true,
         facts: [`party_screening_subjects.state = not_started (${unscreened.length})`],
       });
@@ -1260,6 +1287,96 @@ function nextActionCandidates(facts: AmlWorkspaceFacts): Candidate[] {
   return out;
 }
 
+/**
+ * Where each section sits in the ten-stage journey.
+ *
+ * ── The defect this fixes ─────────────────────────────────────────────
+ * The winner used to be `candidates[0]` — the first rule that happened to
+ * fire, in the order the rules were WRITTEN. "Review the client submission"
+ * is authored above documents and funding, so a case at `client_submitted`
+ * sent the MLRO straight to Stage 7 while Stages 3, 5 and 6 still had
+ * outstanding work. From the Activation screen it read as one blocking
+ * action with a button, and the button skipped five stages.
+ *
+ * Ordering by journey position instead means the operator is always sent to
+ * the EARLIEST unaddressed stage, which is the order the journey is meant to
+ * be walked in and the order an auditor reads it back in.
+ *
+ * This map is duplicated from `JOURNEY_STAGES` rather than imported, because
+ * `journeyModel` imports this module and the cycle would be worse than the
+ * duplication. A spec asserts the two agree, so a stage reorder cannot
+ * silently desynchronise them — that exact drift has bitten here before.
+ */
+export const SECTION_JOURNEY_ORDER: Record<AmlWorkspaceSection, number> = {
+  overview: 1,        // Activation
+  requests: 2,        // Client intake
+  identity: 3,        // Identity verification
+  documents: 4,       // Documents & evidence
+  ownership: 5,       // Screening & ownership
+  finance: 6,         // Funding & transaction
+  counterparty: 6,    // …same stage
+  "submission-review": 7,
+  risk: 8,            // Decision
+  passport: 9,        // Gate & passport
+  monitoring: 10,     // Distribution & monitoring
+  timeline: 10,
+};
+
+/**
+ * The few things that must be surfaced whatever stage they belong to.
+ *
+ * A confirmed sanctions match or a prohibited rating is not "Stage 8 work to
+ * be reached in due course" — it stops the case now, and burying it behind an
+ * outstanding document at Stage 4 would be a worse failure than the skipping
+ * this ordering exists to fix. Everything NOT named here is ordered purely by
+ * journey position.
+ */
+/**
+ * Waits on the CLIENT, which never headline while we have work of our own.
+ *
+ * "Awaiting client response" sits at Stage 2, so pure journey order would
+ * hand it to an operator who has a referred identity check at Stage 3 they
+ * could actually do — hiding real work behind something nobody can act on.
+ * These are still listed under Also outstanding.
+ *
+ * Our OWN pipeline running is deliberately not in this set. "Screening is
+ * running" is the journey's current position, not an absence of work, and
+ * demoting it is precisely how an MLRO came to be pointed at Stage 7 while
+ * Stage 5 was still in flight.
+ */
+const CLIENT_WAIT_KEYS = new Set(["awaiting_client_request", "awaiting_client"]);
+
+const PRE_EMPTING_KEYS = new Set([
+  "blocked", "prohibited_risk", "screening_confirmed", "mlro_decision",
+]);
+
+/**
+ * Rank candidates the way the journey is walked.
+ *
+ * Pre-empting findings first, then journey position, then the order the rules
+ * were written as a stable tiebreak within a stage. Blocking work outranks
+ * non-blocking work at the SAME stage, so an operator is never sent to a
+ * stage's optional tidying while that stage still has something stopping it.
+ */
+function rankCandidates(candidates: Candidate[]): Candidate[] {
+  return candidates
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => {
+      const pa = PRE_EMPTING_KEYS.has(a.c.key) ? 0 : 1;
+      const pb = PRE_EMPTING_KEYS.has(b.c.key) ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      const wa = CLIENT_WAIT_KEYS.has(a.c.key) ? 1 : 0;
+      const wb = CLIENT_WAIT_KEYS.has(b.c.key) ? 1 : 0;
+      if (wa !== wb) return wa - wb;
+      const sa = SECTION_JOURNEY_ORDER[a.c.section] ?? 99;
+      const sb = SECTION_JOURNEY_ORDER[b.c.section] ?? 99;
+      if (sa !== sb) return sa - sb;
+      if (a.c.blocking !== b.c.blocking) return a.c.blocking ? -1 : 1;
+      return a.i - b.i;
+    })
+    .map((x) => x.c);
+}
+
 const NO_ACTION: Omit<AmlNextAction, "sourceFacts" | "unavailableFacts" | "partial"> = {
   key: "none",
   label: "No action required",
@@ -1307,10 +1424,12 @@ export function deriveAmlNextAction(facts: AmlWorkspaceFacts): AmlNextAction {
       sourceFacts: [`case_stage = ${stage}`, `service_gate_status = ${gate}`],
       unavailableFacts: [],
       partial: false,
+      stageOrder: SECTION_JOURNEY_ORDER.timeline,
+      stageSection: "timeline",
     };
   }
 
-  const candidates = nextActionCandidates(facts);
+  const candidates = rankCandidates(nextActionCandidates(facts));
   if (candidates.length === 0) {
     // Nothing fired. If the reading was complete, that genuinely means
     // nothing is outstanding; if facts are missing, say so instead of
@@ -1321,6 +1440,8 @@ export function deriveAmlNextAction(facts: AmlWorkspaceFacts): AmlNextAction {
       sourceFacts: [`case_stage = ${stage}`, `service_gate_status = ${gate}`],
       unavailableFacts,
       partial: unavailableFacts.length > 0,
+      stageOrder: SECTION_JOURNEY_ORDER[base.section] ?? 99,
+      stageSection: base.section,
     };
   }
 
@@ -1336,6 +1457,8 @@ export function deriveAmlNextAction(facts: AmlWorkspaceFacts): AmlNextAction {
     sourceFacts: winner.facts,
     unavailableFacts,
     partial: unavailableFacts.length > 0,
+    stageOrder: SECTION_JOURNEY_ORDER[winner.section] ?? 99,
+    stageSection: winner.section,
   };
 }
 

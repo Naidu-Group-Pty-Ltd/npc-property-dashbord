@@ -36,14 +36,25 @@ const ICONS: Record<AmlAttentionLevel, typeof Info> = {
   none: CheckCircle2,
 };
 
+/** The ten stages, by their position. Labels only — routing is the action's. */
+const STAGE_NAMES: Record<number, string> = {
+  1: "Activation", 2: "Client intake", 3: "Identity verification",
+  4: "Documents & evidence", 5: "Screening & ownership", 6: "Funding & transaction",
+  7: "Submission review", 8: "Decision", 9: "Gate & passport",
+  10: "Distribution & monitoring",
+};
+
 export function AmlNextActionCard({
   action,
   onOpenSection,
   className,
+  currentStageOrder,
 }: {
   action: AmlNextAction;
   onOpenSection: (section: AmlWorkspaceSection) => void;
   className?: string;
+  /** Where the operator is standing, so a jump forward can be named. */
+  currentStageOrder?: number;
 }) {
   const Icon = ICONS[action.attention];
   const actionable = action.key !== "none" && action.key !== "review_case";
@@ -71,10 +82,28 @@ export function AmlNextActionCard({
         <h2 className="mt-2 text-lg font-semibold tracking-tight sm:text-xl">{action.label}</h2>
         <p className="mt-1.5 max-w-prose text-sm text-muted-foreground">{action.explanation}</p>
 
+        {/*
+          Where this action lives, always. "Go to it" used to move the
+          operator without saying where — and because the winner was picked in
+          rule-authorship order rather than journey order, it could land five
+          stages ahead of the work that was actually outstanding. The stage is
+          named on the button now, so a move is never unlabelled.
+        */}
         {actionable && (
-          <Button className="mt-4" size="sm" onClick={() => onOpenSection(action.section)}>
-            Go to it <ArrowRight aria-hidden className="ml-1.5 h-3.5 w-3.5" />
-          </Button>
+          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <Button size="sm" onClick={() => onOpenSection(action.section)}>
+              Go to stage {action.stageOrder}
+              {STAGE_NAMES[action.stageOrder] ? ` · ${STAGE_NAMES[action.stageOrder]}` : ""}
+              <ArrowRight aria-hidden className="ml-1.5 h-3.5 w-3.5" />
+            </Button>
+            {typeof currentStageOrder === "number"
+              && action.stageOrder > currentStageOrder + 1 && (
+              <span className="text-xs text-muted-foreground">
+                Stages {currentStageOrder + 1}–{action.stageOrder - 1} have nothing
+                outstanding on this reading.
+              </span>
+            )}
+          </div>
         )}
 
         {action.partial && (
