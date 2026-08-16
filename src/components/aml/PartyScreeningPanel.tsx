@@ -32,8 +32,19 @@ const PEP_TYPES = ["foreign", "domestic", "international_organisation"] as const
 const PEP_RELATIONSHIPS = ["self", "family_member", "close_associate"] as const;
 
 export function PartyScreeningPanel({
-  caseId, canWrite, canAdjudicate, onChanged,
-}: { caseId: string; canWrite: boolean; canAdjudicate: boolean; onChanged: () => void }) {
+  caseId, canWrite, canAdjudicate, onChanged, screeningBlocked,
+}: {
+  caseId: string; canWrite: boolean; canAdjudicate: boolean; onChanged: () => void;
+  /**
+   * Why screening cannot execute right now, or null when it can.
+   *
+   * This panel used to offer "Start screening" whatever state the provider
+   * was in, so pressing it produced a red toast about simulator mode — an
+   * action that could not succeed, offered as though it could. It now says
+   * what is wrong instead of firing into it.
+   */
+  screeningBlocked?: string | null;
+}) {
   const [subjects, setSubjects] = useState<AmlPartyScreeningSubject[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const { prompt, dialog } = usePromptDialog();
@@ -209,7 +220,12 @@ export function PartyScreeningPanel({
                       ) : (
                         <Badge variant="outline">PEP determination outstanding</Badge>
                       )}
-                      {canWrite && ["not_started", "error", "completed", "false_positive"].includes(s.state) && (
+                      {canWrite && screeningBlocked
+                        && ["not_started", "error"].includes(s.state) && (
+                        <span className="text-xs text-muted-foreground">{screeningBlocked}</span>
+                      )}
+                      {canWrite && !screeningBlocked
+                        && ["not_started", "error", "completed", "false_positive"].includes(s.state) && (
                         <Button size="sm" variant="outline" disabled={busyId === s.id} onClick={() => void queue(s.id)}>
                           {busyId === s.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="mr-1.5 h-3.5 w-3.5" />}
                           {["completed", "false_positive"].includes(s.state) ? "Re-screen" : s.state === "error" ? "Retry screening" : "Start screening"}

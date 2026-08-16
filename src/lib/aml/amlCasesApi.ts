@@ -319,6 +319,10 @@ export const amlCasesApi = {
    */
   syncScreeningStage: (case_id: string) =>
     invoke<AmlScreeningStageSync>({ op: "sync_screening_stage", case_id }),
+  /** Release a screening request nothing ever picked up. Refuses live work. */
+  retryStalledScreening: (subject_id: string) =>
+    invoke<{ subject?: AmlPartyScreeningSubject; retired?: number; skipped?: boolean; code?: string }>(
+      { op: "retry_stalled_screening", subject_id }),
   listPepDeterminations: (case_id: string) =>
     invoke<{ determinations: AmlPepDetermination[] }>({ op: "list_pep_determinations", case_id }),
   recordPepDetermination: (payload: {
@@ -387,7 +391,8 @@ export interface AmlScreeningPolicyDecision {
 
 export interface AmlScreeningNextAction {
   key: "none" | "await_submission" | "fix_provider" | "enrol_subjects" | "run_screening"
-    | "adjudicate_match" | "record_pep" | "await_provider_result" | "escalate";
+    | "adjudicate_match" | "record_pep" | "await_provider_result" | "screening_stalled"
+    | "escalate";
   label: string | null;
   headline: string;
   detail: string;

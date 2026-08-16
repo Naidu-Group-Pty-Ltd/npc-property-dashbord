@@ -76,6 +76,7 @@ import { PartyVerificationPanel } from "@/components/aml/PartyVerificationPanel"
 import { PartyScreeningPanel } from "@/components/aml/PartyScreeningPanel";
 import { ScreeningStageCard } from "@/components/aml/ScreeningStageCard";
 import { useScreeningStage } from "@/lib/aml/useScreeningStage";
+import { useLiveCaseRefresh } from "@/lib/aml/useLiveCaseRefresh";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
 import { progressRail, type ProgressRailState } from "@/lib/aml/caseDimensions";
@@ -247,6 +248,24 @@ export default function AmlCaseWorkspace() {
   });
 
   /**
+   * Keep the open case current. A document the client uploads, a screening
+   * result landing or a stage completing now reaches a tab that is already
+   * open — and comes back immediately when the tab is looked at again.
+   */
+  const live = useLiveCaseRefresh(
+    useCallback(async () => {
+      await Promise.all([load(), Promise.resolve(screeningStage.reload())]);
+    }, [load, screeningStage.reload]),
+    {
+      enabled: Boolean(caseRow),
+      screeningInFlight: (screeningStage.sync?.subjects ?? []).some(
+        (s) => s.required && ["queued", "processing"].includes(s.state)),
+      awaitingClient: String(caseRow?.client_portal_status ?? "") !== "complete",
+      outstandingWork: (screeningStage.sync?.next_action.key ?? "none") !== "none",
+    },
+  );
+
+  /**
    * Perform Stage 5's one next action.
    *
    * Every branch routes to an EXISTING server-authorised operation or to the
@@ -278,6 +297,40 @@ export default function AmlCaseWorkspace() {
           }
           : {
             title: "Some parties could not be queued",
+            description: (failed[0] as PromiseRejectedResult).reason?.message
+              ?? "The screening engine refused the request.",
+            variant: "destructive",
+          });
+        screeningStage.reload();
+        load();
+        return;
+      }
+      case "screening_stalled": {
+        // Release the dead queue entries, then re-queue. The server refuses
+        // to release anything genuinely in flight, so this cannot cancel a
+        // provider call that is actually happening.
+        const stuck = (screeningStage.sync?.subjects ?? []).filter(
+          (s) => s.required && ["queued", "processing"].includes(s.state));
+        const released = await Promise.allSettled(
+          stuck.map((s) => amlCasesApi.retryStalledScreening(s.id)));
+        const freed = released.filter(
+          (r) => r.status === "fulfilled" && !r.value.skipped).length;
+        if (freed === 0) {
+          toast({
+            title: "Nothing was released",
+            description: "The screening engine still holds these requests, so they were "
+              + "left alone rather than sent twice.",
+          });
+          screeningStage.reload();
+          return;
+        }
+        const requeued = await Promise.allSettled(
+          stuck.map((s) => amlCasesApi.queuePartyScreening(s.id)));
+        const failed = requeued.filter((r) => r.status === "rejected");
+        toast(failed.length === 0
+          ? { title: `Re-queued ${freed} screening request${freed === 1 ? "" : "s"}` }
+          : {
+            title: "Released, but re-queueing failed",
             description: (failed[0] as PromiseRejectedResult).reason?.message
               ?? "The screening engine refused the request.",
             variant: "destructive",
@@ -376,7 +429,7 @@ export default function AmlCaseWorkspace() {
   return (
     <div className="space-y-4">
       {/* ── Persistent case identity ──────────────────────────────────── */}
-      <AmlWorkspaceHeader caseRow={caseRow} matterLabel={evidence.matterLabel} />
+      <AmlWorkspaceHeader caseRow={caseRow} matterLabel={evidence.matterLabel} live={live} />
 
       {/* ── The journey: ten stages, plus the record surface beside them ─ */}
       {/* On a phone the record button would eat a third of the rail, so it
@@ -548,6 +601,11 @@ export default function AmlCaseWorkspace() {
                 canWrite={canWrite}
                 canAdjudicate={access.isMlro || access.roles.has("reviewer")}
                 onChanged={() => { load(); screeningStage.reload(); }}
+                screeningBlocked={
+                  screeningStage.sync && !screeningStage.sync.provider_ready
+                    ? "Screening cannot run — see the action above"
+                    : null
+                }
               />
               </div>
               <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />

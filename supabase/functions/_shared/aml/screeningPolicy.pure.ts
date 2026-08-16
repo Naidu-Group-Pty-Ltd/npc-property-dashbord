@@ -311,7 +311,19 @@ export type ScreeningNextActionKey =
   | "adjudicate_match"
   | "record_pep"
   | "await_provider_result"
+  | "screening_stalled"
   | "escalate";
+
+/**
+ * How long a queued request may sit before "running" stops being true.
+ *
+ * The worker sweeps every minute and caps each pass at 25 events, so a
+ * request that is genuinely in flight clears well inside this. Past it, the
+ * honest reading is that nothing picked it up — which is exactly what
+ * happened in production for an unbounded time, while the screen said the
+ * engine was working.
+ */
+export const SCREENING_STALL_SECONDS = 300;
 
 export interface ScreeningNextAction {
   key: ScreeningNextActionKey;
@@ -333,6 +345,12 @@ export interface NextActionInput {
   anyConfirmedMatch: boolean;
   anyMissingPep: boolean;
   pepRoute: ScreeningPolicyDecision["pepRoute"];
+  /**
+   * Age of the oldest UNPROCESSED queue entry for this case, in seconds.
+   * `null` when nothing is queued or the queue could not be read — and an
+   * unread queue is never reported as stalled.
+   */
+  oldestQueuedSeconds?: number | null;
 }
 
 /**
@@ -388,6 +406,20 @@ export function deriveScreeningNextAction(input: NextActionInput): ScreeningNext
     };
   }
   if (input.anyProcessing) {
+    const age = input.oldestQueuedSeconds;
+    // "Running" is a claim about something happening. Past the stall window
+    // it is not true, and saying it anyway is how an operator waits for ever.
+    if (typeof age === "number" && age >= SCREENING_STALL_SECONDS) {
+      return {
+        key: "screening_stalled", label: "Retry screening",
+        headline: "Screening has not started",
+        detail: `The request has been queued for ${Math.floor(age / 60)} minutes and ` +
+          "nothing has picked it up. The screening worker is not consuming the queue. " +
+          "Retrying is safe — a request already in flight is refused rather than " +
+          "sent twice.",
+        owner: "administrator",
+      };
+    }
     return {
       key: "await_provider_result", label: null,
       headline: "Screening is running",

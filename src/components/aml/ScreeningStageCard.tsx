@@ -48,6 +48,7 @@ const TONE: Record<string, { surface: string; text: string; Icon: typeof Info }>
   escalate: { surface: "border-destructive/40 bg-destructive/10", text: "text-destructive", Icon: ShieldAlert },
   adjudicate_match: { surface: "border-destructive/40 bg-destructive/10", text: "text-destructive", Icon: ShieldAlert },
   fix_provider: { surface: "border-warning/40 bg-warning/10", text: "text-warning", Icon: AlertTriangle },
+  screening_stalled: { surface: "border-warning/40 bg-warning/10", text: "text-warning", Icon: AlertTriangle },
   await_submission: { surface: "border-border bg-muted/40", text: "text-muted-foreground", Icon: Clock },
   await_provider_result: { surface: "border-border bg-muted/40", text: "text-muted-foreground", Icon: Loader2 },
   enrol_subjects: { surface: "border-border bg-muted/40", text: "text-muted-foreground", Icon: Users },

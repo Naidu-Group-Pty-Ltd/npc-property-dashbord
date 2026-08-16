@@ -26,6 +26,7 @@ import {
   PRIMARY_SUBJECT_PARTY_TYPE,
   RISK_BASED_SCOPES,
   SCREENING_POLICY_VERSION,
+  SCREENING_STALL_SECONDS,
   decideScreeningPolicy,
   deriveMissingScreeningSubjects,
   deriveScreeningNextAction,
@@ -413,5 +414,56 @@ describe("one next action, chosen by what actually blocks the stage", () => {
       expect(a.detail).toBeTruthy();
       expect(a.key === "none").toBe(a.owner === "none");
     }
+  });
+});
+
+/* ═════════════════ "Queued" is only "running" if something runs ═════════ */
+
+describe("a queue nobody drains is not screening in progress", () => {
+  const queued = (over: Partial<NextActionInput> = {}): NextActionInput => ({
+    hasSubmission: true, subjectCount: 1, providerReady: true,
+    anyUnscreened: false, anyProcessing: true, anyPossibleMatch: false,
+    anyConfirmedMatch: false, anyMissingPep: true,
+    pepRoute: "declaration_supported", ...over,
+  });
+
+  it("reports work as running inside the stall window", () => {
+    const a = deriveScreeningNextAction(queued({ oldestQueuedSeconds: 30 }));
+    expect(a.key).toBe("await_provider_result");
+    expect(a.headline).toBe("Screening is running");
+  });
+
+  it("stops claiming it is running once nothing has picked it up", () => {
+    // The production case: the outbox row sat with attempts = 0 because no
+    // cron drove the worker, while the workspace said the engine was working.
+    const a = deriveScreeningNextAction(
+      queued({ oldestQueuedSeconds: SCREENING_STALL_SECONDS }));
+    expect(a.key).toBe("screening_stalled");
+    expect(a.headline).toBe("Screening has not started");
+    expect(a.label).toBe("Retry screening");
+    expect(a.owner).toBe("administrator");
+  });
+
+  it("says how long, in minutes, rather than 'a while'", () => {
+    const a = deriveScreeningNextAction(queued({ oldestQueuedSeconds: 20 * 60 }));
+    expect(a.detail).toMatch(/queued for 20 minutes/);
+    expect(a.detail).toMatch(/refused rather than sent twice/);
+  });
+
+  it("never reports an UNREAD queue as stalled", () => {
+    // No queue reading is not evidence of a stalled queue.
+    for (const age of [null, undefined]) {
+      expect(deriveScreeningNextAction(queued({ oldestQueuedSeconds: age })).key)
+        .toBe("await_provider_result");
+    }
+  });
+
+  it("keeps adjudication and escalation ahead of a stall", () => {
+    expect(deriveScreeningNextAction(
+      queued({ oldestQueuedSeconds: 9999, anyPossibleMatch: true })).key)
+      .toBe("adjudicate_match");
+    expect(deriveScreeningNextAction(
+      queued({ oldestQueuedSeconds: 9999, anyConfirmedMatch: true })).key)
+      .toBe("escalate");
   });
 });

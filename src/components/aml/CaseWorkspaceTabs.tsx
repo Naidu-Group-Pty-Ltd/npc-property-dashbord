@@ -478,26 +478,23 @@ export function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; 
   };
   useEffect(() => { load();   }, [caseId]);
 
-  const runScreen = async () => {
-    setBusy(true);
-    try {
-      await amlVerificationApi.runScreening(caseId, ["pep", "sanctions", "adverse_media"]);
-      toast({ title: "Screening initiated" });
-      await load(); onChanged();
-    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
-    finally { setBusy(false); }
-  };
-
+  /*
+   * This card used to carry its own "Run screening" button. It was the third
+   * competing action on Stage 5, and the one that produced the red
+   * "local_lists is still in simulator mode" toast: it ignored provider
+   * readiness entirely and asked for `["pep","sanctions","adverse_media"]` —
+   * two scopes no configured provider can serve and one the risk policy may
+   * have stood down for this case.
+   *
+   * The stage card above owns the action now, chosen from what actually
+   * blocks the case, so this is the history of checks and nothing else. A
+   * surface that cannot judge whether an action is possible must not offer
+   * it.
+   */
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-sm">PEP · Sanctions · Adverse media</CardTitle>
-        {canWrite && (
-          <Button size="sm" onClick={runScreen} disabled={busy}>
-            {busy ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Play className="h-3.5 w-3.5 mr-1.5" />}
-            Run screening
-          </Button>
-        )}
+        <CardTitle className="text-sm">Screening checks</CardTitle>
       </CardHeader>
       <CardContent>
         {items === null ? (
