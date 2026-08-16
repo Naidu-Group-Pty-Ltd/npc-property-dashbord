@@ -352,3 +352,131 @@ Market Intelligence is the worst-measuring format in the programme at 0.060, and
 it is **3.5× thin**. Nobody should change a page rule there until that is fixed
 first. The method is the one used here: take the format's production table,
 median the payload column, and compare it to what the fixture builds.
+
+---
+
+## 8. What a render against the stored row showed, and a fixture never could
+
+Everything above was measured against production. This section is the same
+method applied one level further out: the Compass masters rendered against
+**one stored row** — `1be16c4a`, 93 Bimbadeen Avenue, Banora Point, generated
+15 Aug 2026 — and the pages looked at. Five defects, four of them on every
+report in the corpus rather than on that one.
+
+### The property table printed eight labels and one value
+
+Counted over all 1,187 rows on 2026-08-16:
+
+| row | resolves on | where from |
+| --- | ---: | --- |
+| Address | 1,187 | `property_address`, never null |
+| Property type | 1,059 | `property_specs`, + 34 from the finance run |
+| Configuration | 656 | bedrooms 651, bathrooms 633, parking **0** |
+| Land area | 114 | `financial_calculations.propertySpecs.landSizeSqm` |
+| Building area | 114 | `…propertySpecs.buildSizeSqm` |
+| Year built | **0** | key present on 1,059 rows, null on all of them |
+| Zoning | **0** | as above |
+| Council | **0** | as above |
+
+Three of the eight could not print on any report ever generated, and the
+comment in the master claiming `council_area` was populated on 1,054 rows was
+simply wrong — the **key** is on 1,059 rows; the **value** is on none.
+
+Two things came out of it.
+
+**A row now carries its own conditional.** `ad99bc228` established the rule and
+expressed it as `oneOf` variants — workable for the Client Details residence
+(two optional fields, four variants) and impossible here, where six of eight
+rows are optional and the same construction is 64 whole-table variants.
+`visibleTableRows` (`blocks/_data.ts`) filters per row, carries the **authored**
+index so `totalRows`/`sectionRows` still name the rows their author named, and
+stripes on the **drawn** position. A table whose every row drops renders
+nothing, because a column head is the same promise a label is. Dropping rows
+can only make a table shorter than its declared height, so the failure
+direction is white space, never an overlap.
+
+**And `projectInvestmentReport` was reading one column of two.** `toSpecs` in
+the flowing report's normaliser already took `financial_calculations.propertySpecs`
+as a fallback; the templated path's own reader did not, so `property.landArea`
+and `property.buildingArea` were unresolvable on all 1,187 rows while the record
+held both on 114. Land and building area now print on a Compass page for the
+first time. The spelling to keep in mind is still `buildSizeSqm`.
+
+### The ten-year equity chart had no y axis at all
+
+Three dashed gridlines at 25/50/75% of the plot, no label against any of them,
+no axis, no value anywhere on the figure. Equity rose from $348,150 to
+$1,116,298 and a reader could not tell $100k from $10m.
+
+The fix is in `blocks/charts.html.ts` — **not** in `reportDesign/charts.pure.ts`,
+which is where you would expect it. Those are two chart implementations: the
+flowing render routes draw the projection with `renderSeriesFan`, which has
+labelled its y axis from `formatAxisValue` all along, and the template blocks
+are a separate family (`chart-line`, `chart-area`, `chart-bar`,
+`chart-stacked-bar`, `sparkline`). That is why the defect survived — the
+canonical module was right, and the masters do not use it. The tick wording is
+now imported from it, so an axis figure has one spelling.
+
+Three more the same render showed, each a figure a reader cannot read:
+
+- **Both end x labels were clipped.** Every label was `text-anchor:middle` on a
+  point at the edge of the viewBox: "Yr 1" printed as "1" and "Yr 10" as "Yr".
+  This is `renderTimelineRibbon`'s recorded defect, reached independently in the
+  second implementation.
+- **The top tick sheared through the chart's own title** until the plot took a
+  line of head room.
+- **On the bar-drawing families the tallest bar had no value over it** — year
+  ten's $1,116,298, the one figure the page exists to state, set three points
+  above the viewBox.
+
+`Math.max(1, …)` as a line chart's upper bound is also gone: on an all-negative
+series it pinned the top of the plot to a value of 1 that is in no series. The
+domain still includes zero, so no chart in the catalogue changes shape.
+
+The axis unit is **declared by the caller** (`axis: 'money'`) and never guessed.
+A chart that labels a ratio as currency is a misstated figure on a client's
+page, which is this programme's top risk.
+
+### The contents page listed sheets, not sections
+
+`toc` drew a row per rendered page. The Compass sets aside 40 pages for the
+report body, so a real document's contents read "The report", "The report (2)"
+… "The report (40)" and filled two sheets. Report Q&A did the same with its
+eight answer pages.
+
+`PageSchema.tocContinues` is how a master says a page continues the one before
+it. Declared, not inferred: a `Name (2)` convention reads intent out of a
+display string, and a contents page is not a place to guess. Rendered against a
+body long enough to fill the allowance, the list goes from ~50 rows to 11, and
+the entry after the report still names the page the next section starts on.
+
+### "Total acquisition cost / Sum of the above" was two false claims
+
+`financials.totalCost` is `initialCosts.totalUpfront` — $340,287 — printed
+under rows adding to $1,460,587, because the purchase price is in the same
+column and is not a cash cost.
+
+It is not the sum of anything, either. Over the 167 stored runs that carry the
+block, `totalUpfront` equals deposit + duty + legal + inspection + LMI on
+**29**; the average gap is $454 and the largest is $93,000. `totals` draws the
+doubled rule that means "the numbers above add up to this", so the rule was
+itself the claim.
+
+The row says what the figure is (**Total upfront cash**), the basis says where
+it comes from rather than how it was reached (**Cash required at settlement**),
+the doubled rule is gone, and the deposit — the largest part of that cash,
+published all along — is a visible row. The cash-flow table below keeps its
+total, because its net position genuinely is one.
+
+### An empty heading is the same defect as an empty row
+
+`strengths-watch` dropped items that resolved to nothing and kept the heading
+over the hole. `investment_score.weaknesses` is empty on **313** of the 1,187
+reports and `strengths` on **439**, so a naked "CONSIDERATIONS" was the printed
+outcome on a quarter and a third of them respectively.
+
+### The check that finds this class
+
+`investmentPropertyRows.spec.ts` renders the real masters against the real
+stored shape and against a record that fills every field. `SAMPLE_REPORT_DATA`
+fills all nine spec fields, which is exactly why it could not see any of this.
