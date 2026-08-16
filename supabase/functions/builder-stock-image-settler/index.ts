@@ -29,18 +29,27 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
-import { internalError } from '../_shared/errorResponse.ts';
+import { internalErrorResponse } from '../_shared/errorResponse.ts';
 import {
   settleUploadSourceImages, SETTLED_VERSION_COLUMN,
 } from '../_shared/builderStock/settleSourceImages.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 
+/**
+ * The canonical internal-worker CORS shape, matching `migration-dispatcher`.
+ *
+ * A wildcard origin is inert here: nothing browser-borne reaches this function
+ * and it authenticates on a signed header envelope rather than a cookie, so
+ * there is no credentialed response for the browser to reject. The list is ONE
+ * string literal on purpose — `check-cors-contract` reads the first literal
+ * after the key, so a concatenated value reads to it as a truncated list.
+ */
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, '
-    + 'x-internal-timestamp, x-internal-nonce, x-internal-caller, x-internal-signature, '
-    + 'x-internal-key-id',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-internal-call, x-internal-timestamp, x-internal-nonce, x-internal-caller, x-internal-signature, x-internal-key-id',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-duration-ms',
 };
 
 /** Wall clock for one tick, well inside the edge ceiling. */
@@ -149,6 +158,6 @@ Deno.serve(async (req: Request) => {
     });
     return json({ success: true, settled, attempted, remaining, complete: remaining === 0 });
   } catch (error) {
-    return internalError(error, corsHeaders, '[builder-stock-image-settler]');
+    return internalErrorResponse(error, 'builder-stock-image-settler', corsHeaders);
   }
 });

@@ -69,6 +69,12 @@ AS $$
 DECLARE
   v_outstanding integer;
 BEGIN
+  -- NULL, and only NULL. This job is the one-shot repair for the bump that
+  -- introduced the column, and every row it was added to is NULL. A LATER
+  -- provenance bump leaves rows at the older number, which this deliberately
+  -- does not treat as outstanding: that bump ships its own migration and its
+  -- own job rather than silently resurrecting this one. `uploadsNeedingSettlement`
+  -- in the application is version-aware and is what settles those.
   SELECT count(*) INTO v_outstanding
     FROM public.builder_stock_uploads
    WHERE deleted_at IS NULL

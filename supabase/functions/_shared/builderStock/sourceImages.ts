@@ -43,8 +43,16 @@ import { sha256Hex } from './rasterPng.ts';
  * render came to be a property's card image. Every version-2 row is therefore
  * unproven for display purposes and is re-derived rather than trusted — which
  * is the behaviour this constant already had, applied to a second fact.
+ *
+ * 4 changes the REFERENCE, which is what a row is keyed on: a page's resource
+ * name is not unique across the forms that draw it, so `page3:Im0` could be two
+ * different pictures and the second silently replaced the first. References now
+ * carry the object number. A version-3 row keyed the old way would never match
+ * the new one and the re-audit is deliberately forbidden from demoting a row at
+ * the current version — so it would sit there ready and displayable for ever
+ * beside its replacement. Bumping is what retires it.
  */
-export const PROVENANCE_VERSION = 3;
+export const PROVENANCE_VERSION = 4;
 
 /** What a retrieval produced. Injected in tests; the default is the guard. */
 export interface FetchedImage {

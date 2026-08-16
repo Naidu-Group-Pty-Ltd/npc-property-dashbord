@@ -502,6 +502,12 @@
       "owner": "builder-portal-program",
       "reviewed": true
     },
+    "builder-stock-image-settler": {
+      "verify_jwt": false,
+      "exposure_class": "cron-worker",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
     "builder-stock-marketplace": {
       "verify_jwt": false,
       "exposure_class": "module-gated",

@@ -464,3 +464,56 @@ describe('a page that draws two rasters with the same resource name', () => {
     for (const reference of references) expect(reference).toMatch(/#\d+$/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The marker must mean "finished", and only that
+// ---------------------------------------------------------------------------
+
+describe('settlement resumability', () => {
+  const upload = (over: Row = {}) => ([{
+    id: UPLOAD, organisation_id: ORG, deleted_at: null,
+    created_at: '2026-08-01T00:00:00Z', source_images_settled_version: null,
+    storage_bucket: 'builder-stock-lists', storage_path: 'missing.pdf',
+    source_type: 'file', original_filename: 'stock.pdf', source_url: null, final_url: null,
+    ...over,
+  }]);
+
+  /**
+   * A source that cannot be re-read produces the same answer on every future
+   * pass, so it settles. Leaving the marker clear would make the sweep re-fetch
+   * a deleted Notion page or a revoked Drive share until somebody noticed.
+   */
+  it('settles an upload whose source can no longer be read', async () => {
+    const db = fakeDb({ uploads: upload() });
+    const outcome = await settleUploadSourceImages(db, {
+      organisationId: ORG, uploadId: UPLOAD,
+    });
+    expect(outcome.repair?.error).toBeTruthy();
+    expect(outcome.settled).toBe(true);
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([]);
+  });
+
+  /** An upload belonging to somebody else is not this organisation's work. */
+  it('never lists another organisation\'s upload', async () => {
+    const db = fakeDb({ uploads: upload({ organisation_id: 'org-other' }) });
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([]);
+  });
+
+  /** A soft-deleted source is not swept, however unsettled it looks. */
+  it('never lists a deleted upload', async () => {
+    const db = fakeDb({ uploads: upload({ deleted_at: '2026-08-02T00:00:00Z' }) });
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([]);
+  });
+
+  /**
+   * The marker records the version it was settled AT. A later provenance bump
+   * has to make every upload outstanding again, or a rules change would only
+   * ever reach stock imported after it.
+   */
+  it('treats an upload settled at an older version as outstanding', async () => {
+    const db = fakeDb({
+      uploads: upload({ source_images_settled_version: PROVENANCE_VERSION - 1 }),
+    });
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([UPLOAD]);
+  });
+});

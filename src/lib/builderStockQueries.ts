@@ -166,17 +166,18 @@ export async function uploadBuilderStockFile(
   try {
     let guard = 0;
     let remaining = processed.enrichment_pending ?? 0;
+    // Held across iterations: reporting a hardcoded phase before each call made
+    // the label flicker between the two stages on every round trip.
+    let phase: StockUploadProgress['phase'] = 'settling';
     while (remaining > 0 && guard < 40) {
-      onProgress?.({ phase: 'enriching', remaining });
+      onProgress?.({ phase, remaining });
       const batch = await invoke<{
         processed: number; remaining: number; source_images_outstanding?: number;
       }>({ operation: 'enrich_images', upload_id: created.upload.id });
       // Stage 1 is the builder's OWN imagery; it is worth naming separately
       // because it is the only stage whose output a card may draw.
-      onProgress?.({
-        phase: batch.source_images_outstanding ? 'settling' : 'enriching',
-        remaining: batch.remaining,
-      });
+      phase = batch.source_images_outstanding ? 'settling' : 'enriching';
+      onProgress?.({ phase, remaining: batch.remaining });
       remaining = batch.remaining;
       // A batch that moved nothing will not move anything next time either.
       if (!batch.processed) break;
@@ -214,15 +215,16 @@ export async function importBuilderStockUrl(
   try {
     let guard = 0;
     let remaining = imported.enrichment_pending ?? 0;
+    // Held across iterations: reporting a hardcoded phase before each call made
+    // the label flicker between the two stages on every round trip.
+    let phase: StockUploadProgress['phase'] = 'settling';
     while (remaining > 0 && guard < 40) {
-      onProgress?.({ phase: 'enriching', remaining });
+      onProgress?.({ phase, remaining });
       const batch = await invoke<{
         processed: number; remaining: number; source_images_outstanding?: number;
       }>({ operation: 'enrich_images', upload_id: imported.upload.id });
-      onProgress?.({
-        phase: batch.source_images_outstanding ? 'settling' : 'enriching',
-        remaining: batch.remaining,
-      });
+      phase = batch.source_images_outstanding ? 'settling' : 'enriching';
+      onProgress?.({ phase, remaining: batch.remaining });
       remaining = batch.remaining;
       if (!batch.processed) break;
       guard += 1;

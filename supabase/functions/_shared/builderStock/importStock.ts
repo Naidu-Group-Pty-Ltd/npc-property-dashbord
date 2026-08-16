@@ -452,13 +452,24 @@ export async function importStockRecords(
    * nothing automatic would ever look at it again, which is precisely what
    * every property became on the day the role rule shipped.
    *
-   * A property this import touched has new imagery by definition, so its image
-   * pipeline starts again. This is pipeline state and not property data: no
-   * price, availability, configuration, selection or linkage is written here.
+   * EVERY property, including the ones that already have their picture. Their
+   * status has to be re-settled by the same code that settles everybody else's
+   * — an item left at `failed` while holding a correct image is a lie in the
+   * builder's list — and the three-stage audit record has to be written for
+   * this import rather than left describing the last one.
+   *
+   * It costs no provider calls to do so: `enrichStockItem` skips Google and
+   * Perplexity outright for a property that already holds a ready source image,
+   * and records those stages as skipped instead.
+   *
+   * This is pipeline state and not property data: no price, availability,
+   * configuration, selection or linkage is written here, and the write is
+   * scoped to the importing organisation like every other write in this module.
    */
   if (outcome.itemIds.length) {
     await db.from('builder_stock_items')
       .update({ enrichment_status: 'pending' })
+      .eq('organisation_id', input.organisationId)
       .in('id', [...new Set(outcome.itemIds)]);
   }
 
