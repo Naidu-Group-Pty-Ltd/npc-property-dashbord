@@ -80,12 +80,15 @@ const PHASE_LABEL: Record<StockUploadProgress['phase'], string> = {
   requesting: 'Preparing the upload',
   uploading: 'Uploading the file',
   processing: 'Reading the properties',
+  // The builder's OWN imagery, named separately because it is the only stage
+  // whose output a marketplace card may draw.
+  settling: 'Processing supplied images',
   enriching: 'Finding images',
   done: 'Finished',
 };
 
 const PHASE_PERCENT: Record<StockUploadProgress['phase'], number> = {
-  requesting: 10, uploading: 30, processing: 60, enriching: 85, done: 100,
+  requesting: 10, uploading: 30, processing: 55, settling: 75, enriching: 90, done: 100,
 };
 
 export default function BuilderStockList() {
@@ -294,7 +297,7 @@ export default function BuilderStockList() {
           <CardContent className="space-y-3 p-4">
             <div className="flex items-center justify-between text-sm font-medium">
               <span>{PHASE_LABEL[progress.phase]}</span>
-              {progress.phase === 'enriching' && progress.remaining ? (
+              {(progress.phase === 'enriching' || progress.phase === 'settling') && progress.remaining ? (
                 <span className="text-muted-foreground">{progress.remaining} propert{progress.remaining === 1 ? 'y' : 'ies'} left</span>
               ) : null}
             </div>

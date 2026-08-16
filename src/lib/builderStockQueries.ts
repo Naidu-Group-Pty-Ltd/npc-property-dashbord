@@ -96,7 +96,7 @@ export async function builderStockImageUrl(imageId: string): Promise<string | nu
 // ---------------------------------------------------------------------------
 
 export interface StockUploadProgress {
-  phase: 'requesting' | 'uploading' | 'processing' | 'enriching' | 'done';
+  phase: 'requesting' | 'uploading' | 'processing' | 'settling' | 'enriching' | 'done';
   /** Properties still waiting for image enrichment, while phase is 'enriching'. */
   remaining?: number;
 }
@@ -106,6 +106,8 @@ export interface StockImportSummary {
   imported: number;
   updated: number;
   failed: number;
+  /** Properties whose card shows the builder's own picture. */
+  withSourceImage?: number;
   warnings: string[];
   failures: Array<{ label: string; reason: string }>;
 }
@@ -166,8 +168,14 @@ export async function uploadBuilderStockFile(
     let remaining = processed.enrichment_pending ?? 0;
     while (remaining > 0 && guard < 40) {
       onProgress?.({ phase: 'enriching', remaining });
-      const batch = await invoke<{ processed: number; remaining: number }>({
-        operation: 'enrich_images', upload_id: created.upload.id,
+      const batch = await invoke<{
+        processed: number; remaining: number; source_images_outstanding?: number;
+      }>({ operation: 'enrich_images', upload_id: created.upload.id });
+      // Stage 1 is the builder's OWN imagery; it is worth naming separately
+      // because it is the only stage whose output a card may draw.
+      onProgress?.({
+        phase: batch.source_images_outstanding ? 'settling' : 'enriching',
+        remaining: batch.remaining,
       });
       remaining = batch.remaining;
       // A batch that moved nothing will not move anything next time either.
@@ -208,8 +216,12 @@ export async function importBuilderStockUrl(
     let remaining = imported.enrichment_pending ?? 0;
     while (remaining > 0 && guard < 40) {
       onProgress?.({ phase: 'enriching', remaining });
-      const batch = await invoke<{ processed: number; remaining: number }>({
-        operation: 'enrich_images', upload_id: imported.upload.id,
+      const batch = await invoke<{
+        processed: number; remaining: number; source_images_outstanding?: number;
+      }>({ operation: 'enrich_images', upload_id: imported.upload.id });
+      onProgress?.({
+        phase: batch.source_images_outstanding ? 'settling' : 'enriching',
+        remaining: batch.remaining,
       });
       remaining = batch.remaining;
       if (!batch.processed) break;
