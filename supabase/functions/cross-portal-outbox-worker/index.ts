@@ -2,7 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { buildPartnerNotification, partnerEventDeliveryDecision } from '../_shared/aml/partnerEvents.ts';
 import { processVerificationEvent } from './verificationConsumer.ts';
 import { processScreeningEvent } from './screeningConsumer.ts';
-import { verifyInternal } from '../_shared/auth_v2.ts';
+import { verifyInternal, logSecurityEvent } from '../_shared/auth_v2.ts';
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
 const workerId=()=>`cross-portal-${crypto.randomUUID()}`;
 
@@ -175,6 +175,28 @@ Deno.serve(async req=>{
     const db0=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const ctx=await verifyInternal(db0,req,rawBody,{allowedCallers:['pg_cron']});
     authorised=ctx.ok===true&&ctx.authType==='internal_service';
+    /*
+     * Say WHY, the way every other guarded function here does.
+     *
+     * This returned a bare 401 and logged nothing, so a scheduled invocation
+     * that could never authenticate was indistinguishable from one that was
+     * simply not scheduled. It took a database dig to find the reason —
+     * meanwhile `email-sync-cron` and `agent-task-runner` had been failing on
+     * `invalid_internal_signature` every five minutes since 2026-07-23,
+     * 6,588 times each, because they DO log and nobody was reading it.
+     *
+     * Logging the reason code is what makes that visible in one query
+     * instead of an afternoon.
+     */
+    if(!authorised){
+      await logSecurityEvent(db0,{
+        action:'cross_portal_outbox_worker.invoke',
+        decision:'deny',
+        reason_code:ctx.errorCode??'internal_auth_failed',
+        actor_type:'cron',
+        actor_id:req.headers.get('x-internal-caller'),
+      });
+    }
   }
   if(!authorised)return json({error:'unauthorised'},401);
   let body:Record<string,unknown>={};
