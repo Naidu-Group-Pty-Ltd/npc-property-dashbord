@@ -1,5 +1,11 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
-import { hasRecentlyReloaded, isChunkLoadError, reloadForFreshBuild } from '@/lib/chunkReload';
+import {
+  extractChunkUrl,
+  hasRecentlyReloaded,
+  isChunkLoadError,
+  reloadForFreshBuild,
+  warmChunkUrl,
+} from '@/lib/chunkReload';
 
 type Importer<T> = () => Promise<{ default: T }>;
 
@@ -28,7 +34,16 @@ export async function loadChunkWithRetry<T>(importer: Importer<T>): Promise<{ de
     } catch (error) {
       lastError = error;
       if (!isChunkLoadError(error)) throw error;
-      if (attempt < RETRY_DELAYS_MS.length) await wait(RETRY_DELAYS_MS[attempt]);
+      if (attempt < RETRY_DELAYS_MS.length) {
+        // Re-request the asset outside the module loader before retrying. The
+        // loader caches a failure per URL, so a plain retry of the same import
+        // can only repeat it; a credentialed no-cache fetch revalidates and
+        // clears an edge interstitial (and picks up the cookie it wanted to
+        // set), which is the failure mode where the file is served fine to
+        // everything except the import that just asked for it.
+        await warmChunkUrl(extractChunkUrl(error));
+        await wait(RETRY_DELAYS_MS[attempt]);
+      }
     }
   }
 

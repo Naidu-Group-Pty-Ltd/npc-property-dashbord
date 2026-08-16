@@ -98,3 +98,40 @@ export function cleanReloadMarkerFromUrl(): void {
   url.searchParams.delete('_v');
   window.history.replaceState(window.history.state, '', url.toString());
 }
+
+/**
+ * Pulls the module URL out of a chunk-load error message.
+ *
+ * Every engine that raises these puts the absolute URL in the message
+ * ("Failed to fetch dynamically imported module: https://…/assets/X-hash.js"),
+ * which is the only handle we get — the rejected promise carries no request.
+ */
+export function extractChunkUrl(error: unknown): string | null {
+  const message = String((error as { message?: string })?.message ?? error ?? '');
+  const match = message.match(/https?:\/\/[^\s'")]+\.(?:m?js|css)/i);
+  return match ? match[0] : null;
+}
+
+/**
+ * Re-requests a failed chunk outside the module loader, bypassing the HTTP
+ * cache and carrying cookies.
+ *
+ * This is what recovers the case the retry loop alone cannot: an edge/WAF that
+ * answers one asset request with an HTML interstitial. The module loader caches
+ * that failure for the URL, but a credentialed `cache: 'reload'` fetch both
+ * revalidates and picks up whatever cookie the edge wanted to set — after which
+ * a reload serves the real script.
+ *
+ * Resolves true only when the response is really JavaScript/CSS.
+ */
+export async function warmChunkUrl(url: string | null): Promise<boolean> {
+  if (!url || typeof fetch !== 'function') return false;
+  try {
+    const response = await fetch(url, { cache: 'reload', credentials: 'include' });
+    if (!response.ok) return false;
+    const type = response.headers.get('content-type') ?? '';
+    return !/text\/html/i.test(type);
+  } catch {
+    return false;
+  }
+}

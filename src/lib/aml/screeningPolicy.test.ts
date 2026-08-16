@@ -26,6 +26,7 @@ import {
   PRIMARY_SUBJECT_PARTY_TYPE,
   RISK_BASED_SCOPES,
   SCREENING_POLICY_VERSION,
+  SCREENING_ERROR_DETAIL,
   SCREENING_STALL_SECONDS,
   decideScreeningPolicy,
   deriveMissingScreeningSubjects,
@@ -465,5 +466,69 @@ describe("a queue nobody drains is not screening in progress", () => {
     expect(deriveScreeningNextAction(
       queued({ oldestQueuedSeconds: 9999, anyConfirmedMatch: true })).key)
       .toBe("escalate");
+  });
+});
+
+/* ═════════════ A technical failure is named, owned and actionable ═══════ */
+
+describe("a failed check says what failed and who fixes it", () => {
+  const failed = (errorCategory: string): NextActionInput => ({
+    hasSubmission: true, subjectCount: 1, providerReady: true,
+    anyUnscreened: true, anyProcessing: false, anyPossibleMatch: false,
+    anyConfirmedMatch: false, anyMissingPep: true,
+    pepRoute: "declaration_supported", errorCategory,
+  });
+
+  it("names the empty sanctions list, and where to load it", () => {
+    // The production state: `aml.sanctions_entries` is empty, so a check
+    // would be screening against nothing.
+    const a = deriveScreeningNextAction(failed("list_data_unavailable"));
+    expect(a.headline).toBe("Screening could not complete");
+    expect(a.detail).toMatch(/never been loaded/);
+    expect(a.detail).toMatch(/AML › Verification/);
+    expect(a.detail).toMatch(/No client action is required/i);
+    expect(a.owner).toBe("administrator");
+  });
+
+  it("names simulator mode as a configuration fault, not a client one", () => {
+    const a = deriveScreeningNextAction(failed("provider_misconfigured"));
+    expect(a.detail).toMatch(/simulator mode/);
+    expect(a.owner).toBe("administrator");
+    expect(a.label).toBe("Open screening configuration");
+  });
+
+  it("offers a retry for a transient fault, owned by the analyst", () => {
+    for (const category of ["timeout", "provider_unavailable"]) {
+      const a = deriveScreeningNextAction(failed(category));
+      expect(a.label, category).toBe("Retry screening");
+      expect(a.owner, category).toBe("analyst");
+      expect(a.detail, category).toMatch(/consumes no attempt/);
+    }
+  });
+
+  it("never renders a raw category code at the operator", () => {
+    for (const category of Object.keys(SCREENING_ERROR_DETAIL)) {
+      const a = deriveScreeningNextAction(failed(category));
+      expect(a.detail, category).not.toContain("_");
+    }
+  });
+
+  it("falls back to a safe sentence for an unknown category", () => {
+    const a = deriveScreeningNextAction(failed("something_new"));
+    expect(a.detail).toMatch(/never a clear result/);
+  });
+
+  it("still puts adjudication and escalation ahead of a technical failure", () => {
+    expect(deriveScreeningNextAction({
+      ...failed("list_data_unavailable"), anyPossibleMatch: true,
+    }).key).toBe("adjudicate_match");
+    expect(deriveScreeningNextAction({
+      ...failed("list_data_unavailable"), anyConfirmedMatch: true,
+    }).key).toBe("escalate");
+  });
+
+  it("does not claim a failure when there is none", () => {
+    const a = deriveScreeningNextAction({ ...failed("x"), errorCategory: null });
+    expect(a.key).toBe("run_screening");
   });
 });

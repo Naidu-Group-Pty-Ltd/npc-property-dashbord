@@ -205,6 +205,16 @@ export interface EnrolmentInput {
   subjectDisplayName: string | null;
   /** `personal_details` payload from the latest submission, if any. */
   personalDetails: Record<string, unknown> | null;
+  /**
+   * Previous names and alternative spellings the client disclosed in the
+   * Australian Sanctions & Compliance Screening section.
+   *
+   * This is the whole point of asking them: an undisclosed former name is a
+   * real screening gap, and a list is only as good as the names put to it.
+   * They enrich the subject's `aliases`, which the matcher indexes — they do
+   * not change WHETHER the subject is screened.
+   */
+  declaredAliases?: string[] | null;
   /** Resolved reconciliation items that require screening. */
   reconciled: Array<{
     id: string; declaredName: string; declaredRole: string;
@@ -262,9 +272,12 @@ export function deriveMissingScreeningSubjects(input: EnrolmentInput): Enrolment
       partyId: null,
       reconciliationItemId: null,
       screenedName: subjectName,
-      aliases: Array.isArray(pd.aliases)
-        ? (pd.aliases as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 20)
-        : [],
+      aliases: [...new Set([
+        ...(Array.isArray(pd.aliases)
+          ? (pd.aliases as unknown[]).filter((x): x is string => typeof x === "string")
+          : []),
+        ...(input.declaredAliases ?? []).filter((x) => typeof x === "string" && x.trim()),
+      ].map((a) => a.trim()).filter(Boolean))].slice(0, 25),
       dateOfBirth: isoDate(pd.dob) ?? isoDate(pd.date_of_birth),
       country: str(pd.citizenship) ?? str(pd.nationality) ?? str(pd.country),
     });
@@ -334,6 +347,34 @@ export interface ScreeningNextAction {
   owner: "system" | "analyst" | "reviewer" | "administrator" | "client" | "none";
 }
 
+/**
+ * What a technical screening failure means, in words an operator can act on.
+ *
+ * `error_category` is recorded by the screening consumer when a check cannot
+ * complete. Rendering the raw category ("list_data_unavailable") tells nobody
+ * anything; naming the cause and the owner is what turns a dead end into a
+ * next step.
+ */
+export const SCREENING_ERROR_DETAIL: Record<string, string> = {
+  list_data_unavailable:
+    "The sanctions list has never been loaded, or is older than the freshness " +
+    "window, so a check would be screening against nothing. Load the DFAT " +
+    "Consolidated List in AML › Verification. No client action is required.",
+  provider_not_configured:
+    "No screening provider is configured for this tenant. An administrator " +
+    "must configure one in AML › Configuration › Providers.",
+  provider_misconfigured:
+    "The screening provider is configured but cannot execute — in production " +
+    "that usually means it is still in simulator mode. An administrator must " +
+    "finish configuring it as live.",
+  timeout:
+    "The screening provider did not answer in time. Re-running is safe and " +
+    "consumes no attempt.",
+  provider_unavailable:
+    "The screening provider could not be reached. Re-running is safe and " +
+    "consumes no attempt.",
+};
+
 export interface NextActionInput {
   hasSubmission: boolean;
   subjectCount: number;
@@ -345,6 +386,8 @@ export interface NextActionInput {
   anyConfirmedMatch: boolean;
   anyMissingPep: boolean;
   pepRoute: ScreeningPolicyDecision["pepRoute"];
+  /** `error_category` from the most relevant failed subject, if any. */
+  errorCategory?: string | null;
   /**
    * Age of the oldest UNPROCESSED queue entry for this case, in seconds.
    * `null` when nothing is queued or the queue could not be read — and an
@@ -426,6 +469,24 @@ export function deriveScreeningNextAction(input: NextActionInput): ScreeningNext
       detail: "The screening engine is checking the enrolled parties against the " +
         "official lists. Candidates come back for adjudication.",
       owner: "system",
+    };
+  }
+  if (input.errorCategory) {
+    // A technical failure leaves the subject outstanding — it never reads as
+    // clear — so it is named, owned, and given the step that clears it.
+    const detail = SCREENING_ERROR_DETAIL[input.errorCategory]
+      ?? "The check could not complete. An error is never a clear result.";
+    return {
+      key: "fix_provider",
+      label: input.errorCategory === "list_data_unavailable"
+        || input.errorCategory === "provider_not_configured"
+        || input.errorCategory === "provider_misconfigured"
+        ? "Open screening configuration"
+        : "Retry screening",
+      headline: "Screening could not complete",
+      detail,
+      owner: input.errorCategory === "timeout" || input.errorCategory === "provider_unavailable"
+        ? "analyst" : "administrator",
     };
   }
   if (input.anyUnscreened) {

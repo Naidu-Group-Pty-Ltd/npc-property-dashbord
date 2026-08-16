@@ -87,6 +87,25 @@ export function validateQuestionnaireSection(
       });
       return errors;
     }
+    case 'sanctions_screening': {
+      // The client declares COMPLETENESS of the screening information, never
+      // a screening outcome. Every branch here is about what they told us,
+      // and none of it can widen or narrow what must be determined.
+      const errors: string[] = [];
+      if (!isOneOf(payload.completeness, ['complete', 'additions', 'unsure'])) {
+        errors.push('completeness');
+      }
+      // The acknowledgement is an audit record of an information declaration.
+      // It is not consent to screen — screening happens under an independent
+      // obligation — so it is required but never load-bearing on scope.
+      if (payload.acknowledged !== true) errors.push('acknowledged');
+      const aliases = payload.aliases;
+      if (aliases !== undefined && (!Array.isArray(aliases)
+        || aliases.some((a) => typeof a !== 'string'))) {
+        errors.push('aliases');
+      }
+      return errors;
+    }
     default:
       return ['section'];
   }
