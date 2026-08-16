@@ -93,6 +93,47 @@ interface ExistingItem {
   lot_number: string | null;
   /** The normalised record the import wrote. The exact thing to match on. */
   source_row?: Record<string, unknown> | null;
+  /** Read with the row so settling the primary costs no second query. */
+  primary_image_id?: string | null;
+}
+
+/** A stage-1 row, as the re-audit needs to see it. */
+interface Stage1ImageRow {
+  id: string;
+  source_reference: string | null;
+  source_detail: Record<string, unknown> | null;
+  processing_status: string;
+}
+
+/**
+ * Every named property's stage-1 image rows, in as FEW reads as possible.
+ *
+ * The re-audit and the primary decision are per property; the rows they need
+ * are not. Asking per property spent a round trip each against the same wall
+ * clock that has to hold reading the source document as well — on a source with
+ * a hundred properties that was a hundred queries to decide something one query
+ * answers.
+ */
+async function readStage1Images(
+  db: any,
+  stockItemIds: string[],
+): Promise<Map<string, Stage1ImageRow[]>> {
+  const byItem = new Map<string, Stage1ImageRow[]>();
+  const ids = [...new Set(stockItemIds)];
+  for (let index = 0; index < ids.length; index += 200) {
+    const { data } = await db
+      .from('builder_stock_item_images')
+      .select('id, stock_item_id, source_reference, source_detail, processing_status')
+      .in('stock_item_id', ids.slice(index, index + 200))
+      .eq('source_stage', 'uploaded_document')
+      .limit(20000);
+    for (const row of (data ?? []) as Array<Stage1ImageRow & { stock_item_id: string }>) {
+      const bucket = byItem.get(row.stock_item_id) ?? [];
+      bucket.push(row);
+      byItem.set(row.stock_item_id, bucket);
+    }
+  }
+  return byItem;
 }
 
 function referenceKey(item: ExistingItem): string | null {
@@ -231,6 +272,7 @@ export async function repairSourceImagesForUpload(
       media,
       pageTexts,
       pageOrderAuthoritative,
+      deadlineAt: input.deadlineAt,
     }, outcome);
   }
 
@@ -240,7 +282,7 @@ export async function repairSourceImagesForUpload(
   // The stock this organisation already holds, and nobody else's.
   const { data: existingRows } = await db
     .from('builder_stock_items')
-    .select('id, external_reference, development_name, project_name, unit_number, lot_number, source_row')
+    .select('id, external_reference, development_name, project_name, unit_number, lot_number, source_row, primary_image_id')
     .eq('organisation_id', input.organisationId)
     .eq('lifecycle_status', 'active')
     .order('created_at', { ascending: true })
@@ -259,7 +301,10 @@ export async function repairSourceImagesForUpload(
    * happened to win the map.
    */
   const byFingerprint = new Map<string, string[]>();
+  /** What each property's primary was before this run, read with the row. */
+  const primaryBefore = new Map<string, string | null>();
   for (const item of (existingRows ?? []) as ExistingItem[]) {
+    primaryBefore.set(item.id, item.primary_image_id ?? null);
     const reference = referenceKey(item);
     if (reference) byReference.set(reference, item.id);
     const developmentUnit = developmentUnitKey(item);
@@ -453,19 +498,11 @@ export async function repairSourceImagesForUpload(
    * provenance was recorded, or one naming an asset the source no longer
    * carries, is demoted — kept for the audit trail, refused for display.
    */
+  const stage1ByItem = await readStage1Images(db, itemIdsInOrder);
   for (const itemId of new Set(itemIdsInOrder)) {
     const proven = provenByItem.get(itemId) ?? new Set<string>();
-    const { data: existing } = await db
-      .from('builder_stock_item_images')
-      .select('id, source_reference, source_detail, processing_status')
-      .eq('stock_item_id', itemId)
-      .eq('source_stage', 'uploaded_document')
-      .limit(200);
 
-    for (const row of (existing ?? []) as Array<{
-      id: string; source_reference: string | null;
-      source_detail: Record<string, unknown> | null; processing_status: string;
-    }>) {
+    for (const row of stage1ByItem.get(itemId) ?? []) {
       if (row.processing_status !== 'ready') continue;
       const reference = String(row.source_reference ?? '');
       if (proven.has(reference)) continue;
@@ -483,9 +520,8 @@ export async function repairSourceImagesForUpload(
   }
 
   for (const itemId of touched) {
-    const previous = await currentPrimary(db, itemId);
     const primary = await chooseAndStorePrimaryImage(db, itemId);
-    if (primary && primary !== previous) outcome.primaryUpdated += 1;
+    if (primary && primary !== (primaryBefore.get(itemId) ?? null)) outcome.primaryUpdated += 1;
   }
 
   return outcome;
@@ -504,6 +540,13 @@ export async function repairSourceImagesForUpload(
  * Attribution is the page, exactly as it is at import time: the same
  * `anchorPdfRowsToPages` over the same page texts, so a repair and an import of
  * the same document cannot disagree about whose house is on page 3.
+ *
+ * BUDGETED LIKE EVERY OTHER PATH. This one used to be the exception: it took no
+ * deadline and reported no `incomplete`, so a document with enough properties
+ * could run past the caller's wall clock and be killed by the edge runtime
+ * instead of stopping. A killed run writes no settlement marker, so the sweep
+ * re-read the same document on the next tick and was killed again — and because
+ * a tick starts at the oldest outstanding upload, everything behind it waited.
  */
 async function repairPdfUpload(
   db: any,
@@ -513,12 +556,13 @@ async function repairPdfUpload(
     media: ExtractedMedia[];
     pageTexts: string[];
     pageOrderAuthoritative: boolean;
+    deadlineAt?: number;
   },
   outcome: RepairOutcome,
 ): Promise<RepairOutcome> {
   const { data: items } = await db
     .from('builder_stock_items')
-    .select('id, external_reference, development_name, project_name, unit_number, lot_number, address_line, suburb, source_row')
+    .select('id, external_reference, development_name, project_name, unit_number, lot_number, address_line, suburb, source_row, primary_image_id')
     .eq('organisation_id', input.organisationId)
     .eq('upload_id', input.upload.id)
     .eq('lifecycle_status', 'active')
@@ -589,19 +633,23 @@ async function repairPdfUpload(
   // Same re-audit the row path runs: a stage-1 image on one of these
   // properties that this run did not re-derive from the builder's own PDF is
   // not provably theirs, so it is kept and refused for display.
-  for (const item of existing) {
-    const proven = provenByItem.get(item.id) ?? new Set<string>();
-    const { data: rows } = await db
-      .from('builder_stock_item_images')
-      .select('id, source_reference, source_detail, processing_status')
-      .eq('stock_item_id', item.id)
-      .eq('source_stage', 'uploaded_document')
-      .limit(200);
+  const stage1ByItem = await readStage1Images(db, existing.map((item) => item.id));
 
-    for (const row of (rows ?? []) as Array<{
-      id: string; source_reference: string | null;
-      source_detail: Record<string, unknown> | null; processing_status: string;
-    }>) {
+  for (const item of existing) {
+    /**
+     * Stopping here is SAFE TO RESUME because it is safe to repeat: the media
+     * were attributed above from the document itself, the demotion below is
+     * decided against the current version rather than against what this run
+     * happened to reach, and settling a primary is idempotent. The properties
+     * left over are re-audited on the next pass.
+     */
+    if (input.deadlineAt && Date.now() > input.deadlineAt) {
+      outcome.incomplete = true;
+      break;
+    }
+    const proven = provenByItem.get(item.id) ?? new Set<string>();
+
+    for (const row of stage1ByItem.get(item.id) ?? []) {
       if (row.processing_status !== 'ready') continue;
       if (proven.has(String(row.source_reference ?? ''))) continue;
       if (Number((row.source_detail ?? {}).provenance_version ?? 0) >= PROVENANCE_VERSION) continue;
@@ -613,9 +661,8 @@ async function repairPdfUpload(
       outcome.demoted += 1;
     }
 
-    const previous = await currentPrimary(db, item.id);
     const primary = await chooseAndStorePrimaryImage(db, item.id);
-    if (primary && primary !== previous) outcome.primaryUpdated += 1;
+    if (primary && primary !== (item.primary_image_id ?? null)) outcome.primaryUpdated += 1;
   }
 
   return outcome;
@@ -638,13 +685,4 @@ function solePackageUrl(unmapped: Record<string, string>): string | null {
     }
   }
   return links.size === 1 ? [...links][0] : null;
-}
-
-async function currentPrimary(db: any, stockItemId: string): Promise<string | null> {
-  const { data } = await db
-    .from('builder_stock_items')
-    .select('primary_image_id')
-    .eq('id', stockItemId)
-    .maybeSingle();
-  return data?.primary_image_id ?? null;
 }

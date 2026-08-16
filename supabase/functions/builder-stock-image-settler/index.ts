@@ -32,7 +32,8 @@ import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
 import { internalErrorResponse } from '../_shared/errorResponse.ts';
 import {
-  settleUploadSourceImages, SETTLED_VERSION_COLUMN,
+  runSettlementTick, settleUploadSourceImages, SETTLED_VERSION_COLUMN,
+  type SettlementCandidate,
 } from '../_shared/builderStock/settleSourceImages.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
@@ -116,29 +117,36 @@ Deno.serve(async (req: Request) => {
       return json({ success: true, settled: 0, remaining: 0, complete: true });
     }
 
-    let settled = 0;
-    let attempted = 0;
-    for (const row of outstanding.slice(0, MAX_UPLOADS_PER_TICK)) {
-      if (Date.now() > deadlineAt) break;
-      attempted += 1;
-      const outcome = await settleUploadSourceImages(supabase, {
-        organisationId: String(row.organisation_id),
-        uploadId: String(row.id),
+    /**
+     * The tick's own rule lives in the shared module, not here.
+     *
+     * It is the part with a defect worth pinning — the cap counts settlements
+     * rather than attempts, so one upload that can never settle cannot starve
+     * the queue behind it — and a rule inside a `Deno.serve` handler is a rule
+     * nothing can test.
+     */
+    const { attempted, settled, organisations } = await runSettlementTick(
+      outstanding.map((row): SettlementCandidate => ({
+        id: String(row.id),
+        organisation_id: String(row.organisation_id),
+      })),
+      { maxSettled: MAX_UPLOADS_PER_TICK, deadlineAt },
+      (candidate) => settleUploadSourceImages(supabase, {
+        organisationId: candidate.organisation_id,
+        uploadId: candidate.id,
         deadlineAt,
-      });
-      if (outcome.settled) settled += 1;
-    }
+      }),
+    );
 
     /**
-     * Every organisation this tick touched gets its primaries settled.
+     * Every organisation this tick TOUCHED gets its primaries settled.
      *
      * A property whose source no longer designates an image must END this run
      * with no primary rather than the one it had under the old rules — and that
      * is true of properties the sweep never re-read, which is why it is applied
-     * per organisation rather than per upload.
+     * per organisation rather than per upload. The tick reports the ones it
+     * actually reached rather than the ones it planned to.
      */
-    const organisations = new Set(
-      outstanding.slice(0, MAX_UPLOADS_PER_TICK).map((row) => String(row.organisation_id)));
     for (const organisationId of organisations) {
       try {
         await enforceStrictPrimaryImages(supabase, organisationId);
