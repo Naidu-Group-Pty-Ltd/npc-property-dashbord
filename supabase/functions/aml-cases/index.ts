@@ -1978,8 +1978,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
          */
         const dfat = (syncs ?? []).filter((x: any) => x.list_code === 'dfat');
         const dfatLoaded = dfat.some((x: any) => x.status === 'succeeded' && Number(x.entry_count) > 0);
-        const providerRow = Array.isArray(provider) ? provider[0] ?? null : provider ?? null;
-        const providerReady = Boolean(providerRow) && providerRow.active === true &&
+        const providerRow: any = Array.isArray(provider) ? provider[0] ?? null : provider ?? null;
+        const providerReady = providerRow !== null && providerRow.active === true &&
           providerRow.mode === 'live' && dfatLoaded;
 
         const nextAction = deriveScreeningNextAction({
