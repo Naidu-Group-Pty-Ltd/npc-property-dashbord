@@ -38,6 +38,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
 import { ExcelDropzone } from '@/components/clients/ExcelDropzone';
+import { ResetClientJourneyDialog } from '@/components/aml/ResetClientJourneyDialog';
+import { amlCasesApi } from '@/lib/aml/amlCasesApi';
 import { ClientCard } from '@/components/clients/ClientCard';
 import { ClientDetailsModal } from '@/components/clients/ClientDetailsModal';
 import { ClientFilters, ClientFiltersState, defaultFilters } from '@/components/clients/ClientFilters';
@@ -159,6 +161,7 @@ export default function ClientManagement() {
   const [deepLinkTab, setDeepLinkTab] = useState<string | undefined>(undefined);
   const [deepLinkDealId, setDeepLinkDealId] = useState<string | undefined>(undefined);
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
+  const [clientToReset, setClientToReset] = useState<Client | null>(null);
   const [filters, setFilters] = useState<ClientFiltersState>(defaultFilters);
   const [selectedClients, setSelectedClients] = useState<string[]>([]);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
@@ -367,6 +370,32 @@ export default function ClientManagement() {
     handleImportFromGHL(true);
   };
 
+  /*
+   * Which clients carry an AML/CTF case.
+   *
+   * Read from the AML API rather than inferred from anything on the client
+   * row — there is no flag on `clients` that means "has a case", and adding
+   * one would be a second source of truth for something the case table
+   * already answers.
+   *
+   * Fails SOFT to an empty set. A user without AML permissions gets a 403
+   * here, and that must leave the ordinary delete working rather than
+   * blocking the page; the server refuses an orphaning delete on its own
+   * regardless of what this set says.
+   */
+  const { data: amlClientIds = new Set<string>() } = useQuery({
+    queryKey: ['aml-case-client-ids'],
+    queryFn: async () => {
+      try {
+        const r = await amlCasesApi.list({ limit: 500 });
+        return new Set((r.cases ?? []).map((c) => c.client_id).filter((id): id is string => !!id));
+      } catch {
+        return new Set<string>();
+      }
+    },
+    staleTime: 60_000,
+  });
+
   // Delete client mutation via secure Edge Function (HttpOnly cookies)
   const deleteClientMutation = useMutation({
     mutationFn: async (clientId: string) => {
@@ -489,8 +518,22 @@ export default function ClientManagement() {
     setShowDetailsModal(true);
   };
 
+  /*
+   * Deleting a client who has an AML/CTF case is not a client delete.
+   *
+   * `aml.cases.client_id` is ON DELETE SET NULL, so the generic path here
+   * neither fails nor cascades — it ORPHANS the case. The customer vanishes
+   * from the register while the case, its screening subjects, its
+   * determinations and its event chain remain, attached to nobody. Measured
+   * in production: one case in six is already in that state.
+   *
+   * So a client with a case is routed to the AML reset instead, which knows
+   * what it is holding and refuses on its own. Clients with no case keep the
+   * existing path exactly as it was.
+   */
   const handleDeleteClient = (client: Client) => {
-    setClientToDelete(client);
+    if (amlClientIds.has(client.id)) setClientToReset(client);
+    else setClientToDelete(client);
   };
 
   const handleSelectClient = (clientId: string, selected: boolean) => {
@@ -983,6 +1026,22 @@ export default function ClientManagement() {
           }}
           initialTab={deepLinkTab}
           initialDealId={deepLinkDealId}
+        />
+      )}
+
+      {/*
+        A client with an AML/CTF case is reset here rather than deleted, so
+        the case cannot be left attached to nobody. The dialog shows the
+        server's own decision, including which record refuses a deletion.
+      */}
+      {clientToReset && (
+        <ResetClientJourneyDialog
+          open
+          onOpenChange={(o) => { if (!o) setClientToReset(null); }}
+          clientId={clientToReset.id}
+          clientName={[clientToReset.primary_first_name, clientToReset.primary_surname]
+            .filter(Boolean).join(' ').trim()}
+          onReset={() => setClientToReset(null)}
         />
       )}
 

@@ -43,6 +43,9 @@ import { processScreeningEvent } from "../cross-portal-outbox-worker/screeningCo
 import { readSanctionsDeclaration } from "../_shared/aml/sanctionsDeclaration.pure.ts";
 import { planCaseReopen, resumeStatusFor } from "../_shared/aml/caseReopen.pure.ts";
 import {
+  AML_PURGE_ORDER, AML_UNLINKED_CASE_TABLES, decideClientReset,
+} from "../_shared/aml/clientResetPolicy.pure.ts";
+import {
   decideScreeningPolicy,
   deriveMissingScreeningSubjects,
   deriveScreeningNextAction,
@@ -2323,6 +2326,220 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           not_restored: plan.notRestored, preserved: plan.preserved,
           summary: plan.summary,
         });
+      }
+
+      /**
+       * Reset a client's AML/CTF journey, without orphaning a compliance record.
+       *
+       * `aml.cases.client_id` is ON DELETE SET NULL, so deleting a client
+       * through the generic client API neither fails nor cascades — it leaves
+       * the case, its screening subjects, its determinations and its event
+       * chain attached to nobody. This operation exists because that outcome
+       * is worse than either deleting or keeping: the operator believes the
+       * data is gone and the record is unattributable.
+       *
+       * Two modes, and the policy module decides which is permitted:
+       *   restart  close every open case, revoke portal access, delete nothing
+       *   purge    remove the client and everything hanging off them, but only
+       *            when no case carries evidence that must be retained
+       */
+      case 'reset_client_journey': {
+        const clientId = String(body.client_id ?? '');
+        const mode = body.mode === 'purge' ? 'purge' : 'restart';
+        if (!clientId) return jsonResponse({ error: 'client_id required' }, 400);
+
+        const { data: client } = await admin.from('clients')
+          .select('id, first_name, last_name, email').eq('id', clientId).maybeSingle();
+        const clientName = client
+          ? [client.first_name, client.last_name].filter(Boolean).join(' ').trim()
+          : '';
+
+        const { data: caseRows } = await admin.schema('aml').from('cases')
+          .select('id, case_reference, service_gate_status, status').eq('client_id', clientId);
+        const caseIds = (caseRows ?? []).map((c: any) => String(c.id));
+
+        // Retention evidence, read rather than assumed. Each probe is
+        // failure-tolerant: a table this deployment does not have cannot make
+        // a purge look safe, so an unreadable probe counts as PRESENT.
+        const probe = async (
+          table: string, column = 'case_id', filter?: (q: any) => any,
+        ): Promise<Set<string>> => {
+          if (caseIds.length === 0) return new Set();
+          try {
+            let q = admin.schema('aml').from(table).select(column).in(column, caseIds);
+            if (filter) q = filter(q);
+            const { data, error } = await q;
+            if (error) return new Set(caseIds); // unreadable ⇒ treat as blocking
+            return new Set((data ?? []).map((r: any) => String(r[column])));
+          } catch {
+            return new Set(caseIds);
+          }
+        };
+
+        /*
+         * `aml.reports` — NOT `report_submissions`, which has no `case_id`
+         * column at all. Probing it selected a column that does not exist,
+         * PostgREST answered with an error, and the fail-closed branch below
+         * turned that into "every case has a submitted report". The refusal
+         * was total and looked exactly like the safety rule working.
+         *
+         * A report that exists but was never filed is a draft, and a draft is
+         * not evidence anybody relied on — so the retention bar is a report
+         * that actually went out.
+         */
+        const [reports, gateDecisions, confirmedMatches, holds, decisions] = await Promise.all([
+          probe('reports', 'case_id', (q: any) => q.not('submitted_at', 'is', null)),
+          probe('service_gate_decisions'),
+          probe('party_screening_subjects', 'case_id',
+            (q: any) => q.eq('state', 'confirmed_match')),
+          probe('legal_holds', 'case_id', (q: any) => q.is('released_at', null)),
+          probe('decisions'),
+        ]);
+
+        const decision = decideClientReset({
+          clientId: client ? String(client.id) : '',
+          clientName,
+          typedConfirmation: typeof body.confirmation === 'string' ? body.confirmation : null,
+          roles: [...roles],
+          requestedMode: mode,
+          cases: (caseRows ?? []).map((c: any) => ({
+            caseId: String(c.id),
+            caseReference: String(c.case_reference ?? c.id),
+            hasSubmittedReport: reports.has(String(c.id)),
+            hasServiceGateDecision: gateDecisions.has(String(c.id)),
+            hasConfirmedMatch: confirmedMatches.has(String(c.id)),
+            hasIssuedPassport: String(c.service_gate_status ?? '') === 'approved',
+            underLegalHold: holds.has(String(c.id)),
+            hasMlroDecision: decisions.has(String(c.id)),
+          })),
+        });
+
+        if (!decision.allowed) {
+          return jsonResponse({
+            error: decision.summary, code: decision.code,
+            blockers: decision.blockers, effects: decision.effects,
+          }, decision.code === 'role_required' ? 403 : 409);
+        }
+
+        if (mode === 'restart') {
+          // Nothing is deleted. Every open case is closed with a reason and
+          // the portal invitation is retired so it cannot be reused.
+          for (const c of caseRows ?? []) {
+            if (['closed', 'cleared'].includes(String(c.status))) continue;
+            await admin.schema('aml').from('cases').update({
+              status: 'closed',
+              client_portal_status: 'complete',
+              updated_at: new Date().toISOString(),
+            }).eq('id', c.id);
+            await appendEvent(admin, String(c.id), 'system',
+              `Journey restarted — case closed by ${userEmail ?? 'an operator'}`,
+              { reason: 'journey_restart', mode }, userId, userEmail);
+          }
+          /*
+           * Revoke portal access through `status`, which is the column that
+           * exists. The first version of this set `is_active: false` — a
+           * column `client_portal_users` does not have — so PostgREST
+           * refused the statement, the unchecked result discarded the error,
+           * and the customer kept a live login to a journey that had just
+           * been closed underneath them.
+           *
+           * `disabled` is the value already in production for a revoked
+           * login. The invitation token goes with it, so the old email
+           * cannot be used to walk back in.
+           */
+          const { error: revokeError } = await admin.from('client_portal_users')
+            .update({ status: 'disabled', invite_token: null, updated_at: new Date().toISOString() })
+            .eq('client_id', clientId);
+          return jsonResponse({
+            mode, closed: (caseRows ?? []).length, deleted: 0, summary: decision.summary,
+            portal_access_revoked: !revokeError,
+            ...(revokeError ? { warning: 'The cases were closed but portal access could '
+              + 'not be revoked. Revoke it manually before reissuing.' } : {}),
+          });
+        }
+
+        /*
+         * Purge, in three steps that are in this order for a reason.
+         *
+         * 1. The UNLINKED rows go first. 47 of the 49 foreign keys to
+         *    `aml.cases` are ON DELETE CASCADE, so the case takes almost
+         *    everything with it. What it does not take is the eight tables
+         *    carrying a `case_id` with no constraint behind it — Postgres has
+         *    no idea they are related, so nothing cascades and nothing
+         *    complains. Those are what this loop is for.
+         *
+         * 2. The case is deleted, and the cascade does the other 47.
+         *
+         * 3. Nothing is left behind — VERIFIED, not assumed. The list in
+         *    step 1 is a constant and the schema is not, so a re-count is the
+         *    only thing that can catch a table nobody thought of.
+         */
+        const removed: Record<string, number> = {};
+        const deleteBy = async (table: string, column: string, ids: string[]) => {
+          if (ids.length === 0) return;
+          try {
+            const { count } = await admin.schema('aml').from(table)
+              .delete({ count: 'exact' }).in(column, ids);
+            if (count) removed[table] = count;
+          } catch { /* absent table: nothing to remove */ }
+        };
+
+        for (const table of AML_PURGE_ORDER) await deleteBy(table, 'case_id', caseIds);
+        await deleteBy('cases', 'id', caseIds);
+
+        /*
+         * The client row is only removed once the case rows are demonstrably
+         * gone. Deleting it while an AML row survives would produce exactly
+         * the orphan this operation exists to prevent — and in production one
+         * case in six is already in that state, so this is a defect that has
+         * happened rather than one that might.
+         */
+        const residue: Record<string, number> = {};
+        if (caseIds.length > 0) {
+          const { count: casesLeft } = await admin.schema('aml').from('cases')
+            .select('id', { count: 'exact', head: true }).in('id', caseIds);
+          if (casesLeft) residue.cases = casesLeft;
+          for (const table of AML_UNLINKED_CASE_TABLES) {
+            try {
+              const { count, error } = await admin.schema('aml').from(table)
+                .select('case_id', { count: 'exact', head: true }).in('case_id', caseIds);
+              if (!error && count) residue[table] = count;
+            } catch { /* absent table cannot hold a row */ }
+          }
+        }
+        if (Object.keys(residue).length > 0) {
+          return jsonResponse({
+            error: 'The client was NOT deleted — AML records remain that would have been '
+              + 'orphaned. Nothing further was removed.',
+            code: 'orphan_risk', removed, remaining: residue,
+          }, 409);
+        }
+
+        // The receipt is written BEFORE the client row goes, and to a table
+        // that is not hanging off it — a purge that leaves no trace of having
+        // happened is not an auditable operation.
+        await admin.from('activity_logs').insert({
+          action_type: 'aml_client_journey_purged',
+          entity_type: 'client',
+          entity_id: clientId,
+          metadata: {
+            client_name: clientName,
+            case_references: (caseRows ?? []).map((c: any) => c.case_reference),
+            removed,
+            performed_by: userEmail,
+            performed_at: new Date().toISOString(),
+          },
+        }).then(() => undefined, () => undefined);
+
+        const { error: clientError } = await admin.from('clients').delete().eq('id', clientId);
+        if (clientError) {
+          return jsonResponse({
+            error: 'The AML records were removed but the client row could not be deleted',
+            details: clientError.message, removed,
+          }, 500);
+        }
+
+        return jsonResponse({ mode, deleted: 1, removed, summary: decision.summary });
       }
 
       case 'list_party_screening': {
