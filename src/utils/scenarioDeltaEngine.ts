@@ -929,7 +929,16 @@ export function computeAcquisitionCapacity(
     });
     stampDuty = sdResult.totalDuty;
     otherCosts = estimateOtherAcquisitionCosts(P).total;
-    const requiredLoan = Math.max(0, P - cashAvailable);
+    // The deposit is what survives the settlement costs — duty and legals are
+    // paid from the same cash, and counting them as deposit understates the
+    // LVR and so the premium. Measured against a bisection of the (now
+    // correct) target path on this module's fixture, `cashAvailable` here put
+    // the ceiling $21,943 high at $60,000 cash and $6,676 high at $30,000;
+    // netting the costs closes both. Where no LMI is charged the loop was
+    // already exact ($26 on a $429,540 ceiling), which is what identifies
+    // this argument as the term at fault.
+    const depositAtP = Math.max(0, cashAvailable - stampDuty - otherCosts);
+    const requiredLoan = Math.max(0, P + stampDuty + otherCosts - cashAvailable);
     const lvrCapDollar = Math.max(0, P * acquisitionLvrCap);
     const cappedLoan = Math.min(borrowingCapacity, requiredLoan, lvrCapDollar);
     if (lvrCapDollar < Math.min(borrowingCapacity, requiredLoan)) {
@@ -938,7 +947,7 @@ export function computeAcquisitionCapacity(
     if (lmiMode !== 'none') {
       const est = estimateLMI({
         propertyValue: P,
-        depositAmount: cashAvailable,
+        depositAmount: depositAtP,
         loanAmount: cappedLoan,
         isFirstHomeBuyer: isFhb,
       });
@@ -1004,25 +1013,74 @@ export function computeAcquisitionCapacity(
     }).totalDuty;
     const otherTarget = estimateOtherAcquisitionCosts(target).total;
 
-    const requiredLoanRaw = Math.max(0, target - cashAvailable);
-    // Phase I9 — clamp the target loan by the LVR cap on the target price
+    // The loan funds whatever the buyer's cash cannot — the price AND the
+    // costs of settling it.
+    //
+    // This read `target - cashAvailable`, which spends the whole deposit on
+    // the price and leaves duty, legals and any cash LMI unfunded. That is
+    // not a conservative reading, it is an arithmetic one: it makes
+    // `netCashAfterSettlement` equal to −(duty + costs) for EVERY leveraged
+    // target, so `meetsTarget` could only ever be true for a purchase the
+    // buyer could make outright. Swept against this module's own fixture
+    // (capacity $458,414, cash $150,000, max price $584,399) it answered
+    // "NOT met" from $150,000 upwards — including $400,000, $184,000 BELOW
+    // the ceiling it reports in the same object — and printed the tell in
+    // its own note: "short by $0 (loan gap $0, cash gap $15,717)". A target
+    // that is short by nothing was met.
+    //
+    // `maxPurchasePrice` above never had the fault: `stepFn` returns
+    // `loanAvail + cashAvailable − lmiCash − stampDuty − otherCosts`, which
+    // is this same funds-to-complete identity. The two halves of one
+    // function disagreed about what a deposit has to cover, and only the
+    // half with a target to check was wrong.
+    //
+    // LMI depends on the loan and the loan now depends on LMI, so settle it:
+    // three passes, the same fix-point the ceiling loop above runs, and the
+    // premium is piecewise-flat in LVR so it converges immediately in
+    // practice.
     const lvrCapDollarTarget = Math.max(0, target * acquisitionLvrCap);
-    const cappedRequiredLoan = Math.min(requiredLoanRaw, lvrCapDollarTarget);
     let lmiAtTarget = 0;
-    if (lmiMode !== 'none') {
+    let lmiCashAtTarget = 0;
+    let requiredLoanRaw = Math.max(0, target + sdTarget + otherTarget - cashAvailable);
+    let cappedRequiredLoan = Math.min(requiredLoanRaw, lvrCapDollarTarget);
+    for (let i = 0; i < 3 && lmiMode !== 'none'; i++) {
       lmiAtTarget = estimateLMI({
         propertyValue: target,
-        depositAmount: cashAvailable,
+        depositAmount: Math.max(0, cashAvailable - sdTarget - otherTarget),
         loanAmount: cappedRequiredLoan,
         isFirstHomeBuyer: isFhb,
       }).lmiAmount;
+      lmiCashAtTarget = lmiMode === 'display_deduction' ? lmiAtTarget : 0;
+      // A capitalised premium is drawn against the same security, so it
+      // consumes the LVR ceiling rather than sitting on top of it — which is
+      // what the maxPurchasePrice loop above has always assumed
+      // (`min(capacity, lvrCapDollar) − lmi`). Leaving the target path to
+      // capitalise above the cap made the two halves disagree by $41,880 on
+      // the $60,000-cash fixture: the target said a price was reachable that
+      // the ceiling in the same object placed out of reach. Bounded
+      // capitalisation above a base cap is real lender practice, but nothing
+      // in this module carries an "LVR inclusive of LMI" limit to bound it
+      // with, and an unbounded one is the permissive reading of a figure the
+      // rest of this engine assesses conservatively.
+      const lvrHeadroom = lmiMode === 'debt_capitalised'
+        ? Math.max(0, lvrCapDollarTarget - lmiAtTarget)
+        : lvrCapDollarTarget;
+      const nextRaw = Math.max(0, target + sdTarget + otherTarget + lmiCashAtTarget - cashAvailable);
+      const nextCapped = Math.min(nextRaw, lvrHeadroom);
+      const settled = Math.abs(nextCapped - cappedRequiredLoan) < 1;
+      requiredLoanRaw = nextRaw;
+      cappedRequiredLoan = nextCapped;
+      if (settled) break;
     }
-    const lmiCashAtTarget = lmiMode === 'display_deduction' ? lmiAtTarget : 0;
+    // Everything settlement has to fund, from cash and loan together.
+    const fundsToComplete = target + sdTarget + otherTarget + lmiCashAtTarget;
     loanRequiredForPurchase = lmiMode === 'debt_capitalised'
       ? cappedRequiredLoan + lmiAtTarget
       : cappedRequiredLoan;
 
-    netCashAfterSettlement = cashAvailable - Math.max(0, target - (loanRequiredForPurchase ?? 0)) - lmiCashAtTarget - sdTarget - otherTarget;
+    // Capitalised LMI is drawn onto the loan but funds none of the purchase,
+    // so the cash test uses the purchase portion alone.
+    netCashAfterSettlement = cashAvailable + cappedRequiredLoan - fundsToComplete;
     meetsTarget = (loanRequiredForPurchase ?? 0) <= borrowingCapacity
       && cappedRequiredLoan >= requiredLoanRaw  // LVR cap doesn't bind
       && netCashAfterSettlement >= 0;
@@ -1039,8 +1097,21 @@ export function computeAcquisitionCapacity(
     } else {
       const loanShort = Math.max(0, (loanRequiredForPurchase ?? 0) - borrowingCapacity);
       const cashShort = Math.max(0, -netCashAfterSettlement);
+      const lvrShort = Math.max(0, requiredLoanRaw - cappedRequiredLoan);
+      // Name the constraint that actually binds. The price gap alone said
+      // "short by $0" whenever a non-price constraint was the blocker, which
+      // reads as a contradiction of the ❌ in front of it.
+      const binding = [
+        loanShort > 0 ? `serviceable capacity short $${Math.round(loanShort).toLocaleString()}` : null,
+        lvrShort > 0 ? `LVR cap short $${Math.round(lvrShort).toLocaleString()}` : null,
+        cashShort > 0 ? `settlement cash short $${Math.round(cashShort).toLocaleString()}` : null,
+      ].filter(Boolean);
       notes.push(
-        `❌ Target $${Math.round(target).toLocaleString()} NOT met: short by $${Math.round(shortfallToTarget).toLocaleString()} (loan gap $${Math.round(loanShort).toLocaleString()}, cash gap $${Math.round(cashShort).toLocaleString()}).`
+        `❌ Target $${Math.round(target).toLocaleString()} NOT met: ` +
+        (binding.length > 0 ? binding.join('; ') : 'blocked by an acquisition constraint') +
+        (shortfallToTarget > 0
+          ? `. Ceiling is $${Math.round(Math.max(0, purchasePrice)).toLocaleString()} — $${Math.round(shortfallToTarget).toLocaleString()} below target.`
+          : `. Total funds still reach $${Math.round(Math.max(0, purchasePrice)).toLocaleString()}.`)
       );
     }
   } else {
@@ -1264,6 +1335,78 @@ function applyCapitalLedger(
   return { ledger, sinkDepositContribution: sinkAggregate.depositContribution, issues };
 }
 
+/** Investment properties, by the predicate both scenario paths share. */
+function investmentPropertiesOf(ctx: ScenarioContext): ScenarioProperty[] {
+  return (ctx.properties || []).filter(p => {
+    const t = (p.propertyType || '').toLowerCase();
+    return t.includes('invest') || t.includes('rental') || t === 'investment';
+  });
+}
+
+/** The Phase I6/I12 add-back for this position assessed at a given income. */
+function negativeGearingAddBackAt(ctx: ScenarioContext, grossAnnualIncome: number) {
+  return computeNegativeGearingAddBack({
+    investmentProperties: investmentPropertiesOf(ctx),
+    marginalTaxRate: marginalTaxRateFor(grossAnnualIncome),
+    addBackShading: 1.0,
+    bufferRatePct: ctx.baseInputs.bufferRate ?? 3,
+  });
+}
+
+/**
+ * How much of the negative-gearing add-back the SCENARIO is responsible for.
+ *
+ * The add-back is a property of the position, not of the deltas — the base
+ * position is negatively geared whether or not anybody models a change, and a
+ * lender assessing it today would add the tax saving back today. But
+ * `ctx.baseResult` is supplied by the caller from `ctx.baseInputs` alone and
+ * cannot include an add-back the engine computes internally, and every
+ * consumer subtracts the two figures directly: the headline
+ * (`StrategyScenarioModeling.tsx:1213`), the per-lever attribution
+ * (`:985`, `isolated.result.borrowingCapacity - baseResult.borrowingCapacity`)
+ * and `capacityChange` here.
+ *
+ * Applying the gross add-back therefore reported it as a scenario gain. A
+ * scenario with NO deltas measured +$1,481 of capacity on the fixture in
+ * `scenarioDeltaEngine.test.ts`, and every isolated lever's attributed impact
+ * carried the same phantom uplift on top of what the lever actually did. The
+ * UI had already met the headline case and papered over it with a baseline
+ * guard that force-collapses to `baseResult` when `deltas.length === 0`
+ * (`:861-869` — "a phantom Scenario Borrowing Capacity = base + base"); that
+ * guard cannot see the per-lever column, which is where the error survived.
+ *
+ * Netting against the base keeps the part of the add-back the deltas really
+ * buy. `marginalTaxRateFor` is the only term a delta moves — the properties
+ * are read from `ctx` unchanged on both paths — so an income change that
+ * crosses a bracket still shows up, as the EXTRA add-back it earns rather than
+ * as the whole of it. The note is raised on the same condition, because an
+ * add-back that nets to nothing has not moved the figure it would claim to
+ * explain.
+ */
+function negativeGearingChange(
+  ctx: ScenarioContext,
+  scenarioGrossAnnualIncome: number,
+): { net: number; notes: string[] } {
+  const scenario = negativeGearingAddBackAt(ctx, scenarioGrossAnnualIncome);
+  const base = negativeGearingAddBackAt(ctx, ctx.baseInputs.grossAnnualIncome);
+  const net = scenario.annualAddBack - base.annualAddBack;
+  if (net === 0) return { net: 0, notes: [] };
+  return {
+    net,
+    notes: [
+      `Negative-gearing add-back moves $${Math.abs(net).toLocaleString()}/yr ` +
+      `${net > 0 ? 'up' : 'down'} under this scenario ` +
+      `($${base.annualAddBack.toLocaleString()} → $${scenario.annualAddBack.toLocaleString()}/yr) — ` +
+      `the assessed marginal rate changed from ` +
+      `${(marginalTaxRateFor(ctx.baseInputs.grossAnnualIncome) * 100).toFixed(1)}% to ` +
+      `${(marginalTaxRateFor(scenarioGrossAnnualIncome) * 100).toFixed(1)}%. ` +
+      `Only the change is applied; the base position already carries ` +
+      `$${base.annualAddBack.toLocaleString()}/yr.`,
+      ...scenario.notes,
+    ],
+  };
+}
+
 export function runScenario(
   scenarioName: string,
   deltas: ScenarioDelta[],
@@ -1334,20 +1477,13 @@ export function runScenario(
   // rate (contracted + APRA buffer) so the add-back tracks the loss the lender
   // assesses, not the cheaper contracted-rate cash position. Conservative —
   // uses cash-basis (no depreciation).
-  const investmentProps = (ctx.properties || []).filter(p => {
-    const t = (p.propertyType || '').toLowerCase();
-    return t.includes('invest') || t.includes('rental') || t === 'investment';
-  });
-  const ngBufferRate = ctx.baseInputs.bufferRate ?? 3;
-  const ngResult = computeNegativeGearingAddBack({
-    investmentProperties: investmentProps,
-    marginalTaxRate: marginalTaxRateFor(newGross),
-    addBackShading: 1.0,
-    bufferRatePct: ngBufferRate,
-  });
-  if (ngResult.annualAddBack > 0) {
-    computedShadedAnnual += ngResult.annualAddBack;
-    total.acquisitionNotes.push(...ngResult.notes);
+  //
+  // Only the CHANGE against the base position is applied — see
+  // `negativeGearingChange`.
+  const ngChange = negativeGearingChange(ctx, newGross);
+  if (ngChange.net !== 0) {
+    computedShadedAnnual = Math.max(0, computedShadedAnnual + ngChange.net);
+    total.acquisitionNotes.push(...ngChange.notes);
   }
 
   // Phase I8/I11 — DTI denominator refinement: when typed components are present,
@@ -1392,10 +1528,7 @@ export function runScenario(
   };
 
   const scenarioResult = calculateBorrowingCapacity(scenarioInputs);
-  const capacityChange = buildScenarioChange(
-    ctx.baseResult.borrowingCapacity,
-    scenarioResult.borrowingCapacity,
-  );
+  const capacityChange = buildScenarioChange(ctx.baseResult.borrowingCapacity, scenarioResult.borrowingCapacity);
 
   const acquisitionCapacity = ctx.acquisition
     ? computeAcquisitionCapacity(scenarioResult.borrowingCapacity, ctx, total)
@@ -1554,25 +1687,17 @@ export function runScenarioWithInputs(
     computedShadedAnnual2 = Math.max(0, ctx.baseInputs.shadedAnnualIncome + total.shadedIncomeAdjustment);
   }
 
-  // Phase I6/I12 — Negative-gearing add-back (parity with runScenario, buffered)
-  const investmentProps2 = (ctx.properties || []).filter(p => {
-    const t = (p.propertyType || '').toLowerCase();
-    return t.includes('invest') || t.includes('rental') || t === 'investment';
-  });
-  const ng2 = computeNegativeGearingAddBack({
-    investmentProperties: investmentProps2,
-    marginalTaxRate: marginalTaxRateFor(newGross2),
-    addBackShading: 1.0,
-    bufferRatePct: ctx.baseInputs.bufferRate ?? 3,
-  });
-  if (ng2.annualAddBack > 0) {
-    computedShadedAnnual2 += ng2.annualAddBack;
+  // Phase I6/I12 — Negative-gearing add-back (parity with runScenario, buffered).
+  // Net of the base position's own add-back — see `negativeGearingChange`.
+  const ng2 = negativeGearingChange(ctx, newGross2);
+  if (ng2.net !== 0) {
+    computedShadedAnnual2 = Math.max(0, computedShadedAnnual2 + ng2.net);
     total.acquisitionNotes.push(...ng2.notes);
     issues.push({
       deltaId: 'negative-gearing',
       deltaType: 'income_change',
       severity: 'warning',
-      message: ng2.notes[0] ?? 'Negative-gearing add-back applied',
+      message: ng2.notes[0] ?? 'Negative-gearing add-back changed',
     });
   }
 

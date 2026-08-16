@@ -223,7 +223,28 @@ describe('scenarioDeltaEngine Phase 1 invariants', () => {
       severity: 'warning',
       deltaId: 'borrowed-funded-card-payoff',
     }));
-    expect(inputs.monthlyCommitments).toBeLessThan(baseInputs.monthlyCommitments);
+    /*
+     * Commitments RISE. This asserted they fall below the $1,500 base, which
+     * contradicts the warning and the "Policy check" note the same test
+     * demands two lines below — retiring a $750/mo card with money borrowed at
+     * the assessed rate is exactly the move those two exist to flag.
+     *
+     *     base commitments                      1,500
+     *     + release drawn against prop-1        1,125   $150,000 @ (6 + 3)% IO
+     *     − card servicing retired               -750
+     *     =                                     1,875
+     *
+     * The release is assessed interest-only at the contracted rate plus the
+     * APRA buffer, which is what makes the borrowed dollar cost more to
+     * service than the card dollar it repays. Both legs are pinned separately
+     * below so a break says which one moved.
+     */
+    const releaseOnly = runScenarioWithInputs('Release only', [deltas[0]], baseContext());
+    expect(releaseOnly.inputs.monthlyCommitments).toBe(2_625);
+    expect(inputs.monthlyCommitments).toBe(1_875);
+    expect(inputs.monthlyCommitments)
+      .toBe(releaseOnly.inputs.monthlyCommitments - 750);
+    expect(inputs.monthlyCommitments).toBeGreaterThan(baseInputs.monthlyCommitments);
     expect(result.capitalLedger?.pools['pool-default']?.sinks[0]?.notes).toEqual(
       expect.arrayContaining([expect.stringContaining('Funding source trace')]),
     );
