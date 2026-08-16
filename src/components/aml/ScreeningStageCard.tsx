@@ -33,6 +33,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { AmlScreeningNextAction } from "@/lib/aml/amlCasesApi";
 import type { AmlScreeningStageReading } from "@/lib/aml/useScreeningStage";
+import { deriveScreeningStatus } from "@/lib/aml/screeningStatus.pure";
 
 const OWNER_LABEL: Record<string, string> = {
   system: "Handled automatically",
@@ -55,6 +56,15 @@ const TONE: Record<string, { surface: string; text: string; Icon: typeof Info }>
   none: { surface: "border-success/40 bg-success/10", text: "text-success", Icon: CheckCircle2 },
 };
 const DEFAULT_TONE = { surface: "border-primary/40 bg-primary/5", text: "text-primary", Icon: ArrowRight };
+
+/** The five statuses, toned by whether they hold the journey. */
+const STATUS_TONE: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  completed: "secondary",
+  not_required: "secondary",
+  in_progress: "outline",
+  required: "outline",
+  manual_review: "destructive",
+};
 
 const SCOPE_LABEL: Record<string, string> = {
   sanctions: "Targeted financial sanctions",
@@ -107,6 +117,7 @@ export function ScreeningStageCard({
   }
 
   const action = sync.next_action;
+  const status = deriveScreeningStatus(sync.subjects);
   const tone = TONE[action.key] ?? DEFAULT_TONE;
   const { Icon } = tone;
   const stoodDown = sync.policy.notRequired ?? [];
@@ -128,6 +139,21 @@ export function ScreeningStageCard({
             <p className={cn("text-[11px] font-semibold uppercase tracking-[0.08em]", tone.text)}>
               {action.key === "none" ? "Stage complete" : "Next action"}
             </p>
+          </div>
+          {/*
+            The status vocabulary the compliance team actually uses, stated
+            explicitly. Three surfaces used to describe this stage and none
+            agreed — an MLRO reading three answers to one question cannot tell
+            whether screening happened. It is derived once, in
+            `screeningStatus.pure.ts`, and rendered identically everywhere.
+          */}
+          <div className="mt-2">
+            <Badge
+              variant={STATUS_TONE[status.status] ?? "outline"}
+              className="text-[11px]"
+            >
+              {status.label}
+            </Badge>
           </div>
           <h3 className="mt-1.5 text-lg font-semibold">{action.headline}</h3>
           <p className="mt-1 text-sm text-muted-foreground">{action.detail}</p>

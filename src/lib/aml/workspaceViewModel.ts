@@ -46,6 +46,7 @@ import {
 } from "./caseDimensions";
 import type { AmlRiskRating } from "./amlCasesApi";
 import type { AmlPortalAccessFacts } from "./portalAccessState";
+import { deriveScreeningStatus } from "./screeningStatus.pure";
 
 /* ══════════════════════════════════════════════════════════════════════
    1. Information architecture — five operator areas over the existing
@@ -206,6 +207,8 @@ export interface AmlScreeningFacts {
     required?: boolean;
     state: string;
     error_category?: string | null;
+    /** When the row last changed — how a stalled queue is recognised. */
+    updated_at?: string | null;
     matches?: Array<{ status: string; match_type?: string | null; matched_name?: string }>;
   }>;
 }
@@ -1031,14 +1034,22 @@ function nextActionCandidates(facts: AmlWorkspaceFacts): Candidate[] {
       (s) => s.required !== false && (s.state === "queued" || s.state === "processing"),
     );
     if (inFlight.length > 0) {
-      // Without this the stage produced NO candidate while screening was
-      // running, and the ranking fell through to whatever fired next — which
-      // is how a case mid-screening pointed the MLRO at Stage 7.
+      /*
+       * "Running" is a claim about something happening, and the whole reading
+       * is derived once in `screeningStatus.pure.ts` so the stage card, this
+       * rail and the journey cannot disagree — which they did, giving an MLRO
+       * three answers to one question and no way to choose between them.
+       *
+       * Past the stall window nothing has picked the request up, and saying
+       * "running" there is how an operator waits for ever.
+       */
+      const reading = deriveScreeningStatus(subjects);
+      const stuck = reading.status === "required";
       out.push({
-        key: "screening_in_flight",
-        label: "Screening is running",
-        explanation: `${inFlight.length} subject${inFlight.length === 1 ? " is" : "s are"} with the screening engine. Candidates come back for adjudication.`,
-        attention: "waiting",
+        key: stuck ? "screening_stalled" : "screening_in_flight",
+        label: stuck ? "Screening has not started" : reading.label,
+        explanation: reading.detail,
+        attention: stuck ? "attention" : "waiting",
         section: "ownership",
         blocking: true,
         facts: [`party_screening_subjects.state in (queued, processing) (${inFlight.length})`],
