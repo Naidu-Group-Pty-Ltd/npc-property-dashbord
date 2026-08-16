@@ -36,18 +36,32 @@
  * **An adapter never reads a record through the browser client.** Every read
  * goes through an edge function that holds a service-role client and scopes
  * the read to the verified session user — the same treatment every other data
- * path in this app already gets. Two existing brokers cover all three tables,
- * so this adds no new surface and no new authorisation decision:
+ * path in this app already gets. There are two such paths, and both already
+ * existed, so this adds no new surface and no new authorisation decision:
  *
- * - `get-investment-reports` — `investment_reports` (the `detail` projection,
- *   which carries `financial_calculations`) and `property_comparisons`.
- *   Permission-gated on the `reports` module.
- * - `get-client-data` — `clients` and every `client_*` child in one call,
- *   authorised per client by `canAccessClient`.
+ * 1. **A broker with a shape of its own**, invoked by name. These carry an
+ *    authorisation rule the table's policy cannot express:
+ *    - `get-investment-reports` — `investment_reports` (the `detail`
+ *      projection, which carries `financial_calculations`) and
+ *      `property_comparisons`. Permission-gated on the `reports` module.
+ *    - `get-client-data` — `clients` and every client-scoped child in one
+ *      call, authorised per client by `canAccessClient`.
+ *    - `manage-ci-assessments` — a commercial assessment with its stored
+ *      calculation run, scoped by its own `loadOwned`.
  *
- * `adapterSourceReadable.spec.ts` holds the list of invisible tables against
- * the adapters, so a tenth format cannot reintroduce this by reading one of
- * them directly.
+ * 2. **The `authenticated-data` gateway**, through
+ *    `getAuthenticatedSupabaseClient()`. It rewrites a PostgREST request onto
+ *    an edge function that verifies the session cookie, then applies the
+ *    table's rule server-side — so `db().from('x').select(...)` reads exactly
+ *    like the browser client while running under a service-role key it never
+ *    hands out. This is the right path for a table whose policy is a plain
+ *    "any verified session may read", where a bespoke broker would only be
+ *    that rule spelt a second time.
+ *
+ * What is never acceptable is the third option: `supabase.from(...)` on the
+ * anon browser client. `adapterSourceReadable.spec.ts` holds that line against
+ * every file in this directory, so a tenth format cannot reintroduce the class
+ * by reading one of these tables directly.
  *
  * ## Every failure is still null
  *
@@ -68,7 +82,202 @@ export const BROWSER_INVISIBLE_TABLES = [
   'investment_reports',
   'property_comparisons',
   'clients',
+  /*
+   * The rest of the same measurement, taken 2026-08-16.
+   *
+   * The first three were the tables whose policy is `auth.uid()`-gated. These
+   * are the remainder of what the adapters read, and they are invisible for
+   * two further reasons — same symptom, same silence:
+   *
+   * | Table | Why the browser sees nothing |
+   * | --- | --- |
+   * | `borrowing_capacity_assessments` | client join on `auth.uid()` |
+   * | `portfolio_analysis_reports` | `generated_by = auth.uid()` OR client join |
+   * | `portfolio_reviews` | client join on `auth.uid()` |
+   * | `commercial_industrial_assessments` | service_role only |
+   * | `commercial_industrial_calculation_runs` | service_role only |
+   * | `client_properties` … `client_expenses` | service_role only |
+   * | `marketing_intelligence_reports` | `authenticated` only; the browser is anon |
+   * | `report_qa_conversations` / `_messages` | table GRANT to anon revoked (42501) |
+   * | `report_structure_templates` | `auth.role() = 'authenticated'`; the browser is anon |
+   *
+   * Row counts as the browser sees them, against what is actually there:
+   * borrowing capacity 0/128, portfolio reports 0/22, portfolio reviews 0/14,
+   * commercial assessments 0/21, market intelligence 0/6, Q&A conversations
+   * 0/253, published structure guides 0/4. Every one of the nine formats binds
+   * a template that cannot be filled.
+   *
+   * Six of the nine active premium templates had rendered **zero** documents
+   * when this was measured; the three that had — `client_details`, `cashflow`,
+   * `investment_compass` — are precisely the three whose data does not come
+   * from one of these tables.
+   *
+   * `report_structure_templates` is the one that is not a record store, and it
+   * is the reason it went unnoticed longest: the Investment adapter reads it
+   * "best-effort" and documents a degradation to the report's own headings when
+   * the read fails. Because the read always came back empty rather than
+   * failing, the degradation was not a fallback — it was the only behaviour.
+   */
+  'borrowing_capacity_assessments',
+  'portfolio_analysis_reports',
+  'portfolio_reviews',
+  'commercial_industrial_assessments',
+  'commercial_industrial_calculation_runs',
+  'marketing_intelligence_reports',
+  'report_qa_conversations',
+  'report_qa_messages',
+  'report_structure_templates',
+  'client_properties',
+  'client_assets',
+  'client_liabilities',
+  'client_employment',
+  'client_expenses',
 ] as const;
+
+/**
+ * One row from a client-scoped table, through `get-client-data`.
+ *
+ * That broker already authorises per client with `canAccessClient` and already
+ * allow-lists these tables, so this adds no authorisation decision — it is the
+ * same treatment the Clients page gets. `filters` selects the row; the broker
+ * decides whether the caller may see it.
+ */
+async function loadClientScopedRow(
+  table: string,
+  filters: Record<string, unknown>,
+  select = '*',
+): Promise<Record<string, any> | null> {
+  const rows = await listClientScopedRows(table, { select, filters, limit: 1 });
+  return rows[0] ?? null;
+}
+
+/** Rows from a client-scoped table, through `get-client-data`. */
+export async function listClientScopedRows(
+  table: string,
+  options: {
+    select?: string;
+    orderBy?: string;
+    orderAsc?: boolean;
+    limit?: number;
+    filters?: Record<string, unknown>;
+  } = {},
+): Promise<Record<string, any>[]> {
+  try {
+    const { data, error } = await invokeSecureFunction('get-client-data', {
+      listMode: true,
+      listOptions: {
+        table,
+        select: options.select ?? '*',
+        orderBy: options.orderBy ?? 'created_at',
+        orderAsc: options.orderAsc ?? false,
+        ...(options.limit ? { limit: options.limit } : {}),
+        ...(options.filters ? { filters: options.filters } : {}),
+      },
+    } as any);
+    if (error) {
+      /*
+       * Said out loud, because this is the one distinction the broker erases.
+       *
+       * A refused or failed read and a table with nothing in it both arrive
+       * here as `[]`, and every caller treats `[]` as "there is no such
+       * record" — which is the correct posture for a genuinely empty table and
+       * exactly how the anon-client defect stayed invisible for the life of the
+       * product. The caller still degrades rather than failing; the console is
+       * the only place the difference can be told.
+       */
+      console.warn(
+        `[reportTemplate] ${table} could not be read through get-client-data: `
+        + `${(error as { message?: string })?.message ?? 'unknown error'}`,
+      );
+      return [];
+    }
+    const payload = data as Record<string, any> | null;
+    // The broker answers list-mode table queries under the table's own name or
+    // a generic `records`, depending on the branch; accept either rather than
+    // depending on which one this table takes.
+    const rows = payload?.[table] ?? payload?.records ?? payload?.data;
+    return Array.isArray(rows) ? rows as Record<string, any>[] : [];
+  } catch {
+    return [];
+  }
+}
+
+/** One borrowing-capacity assessment. */
+export async function loadBorrowingCapacityRow(
+  assessmentId: string,
+  select = '*',
+): Promise<Record<string, any> | null> {
+  return loadClientScopedRow('borrowing_capacity_assessments', { id: assessmentId }, select);
+}
+
+/** Recent borrowing-capacity assessments, for a picker. */
+export async function listBorrowingCapacityRows(
+  limit = 20,
+  select = '*',
+): Promise<Record<string, any>[]> {
+  return listClientScopedRows('borrowing_capacity_assessments', { select, limit });
+}
+
+/** One portfolio analysis report. */
+export async function loadPortfolioReportRow(
+  reportId: string,
+  select = '*',
+): Promise<Record<string, any> | null> {
+  return loadClientScopedRow('portfolio_analysis_reports', { id: reportId }, select);
+}
+
+/** Recent portfolio analysis reports, for a picker. */
+export async function listPortfolioReportRows(
+  limit = 20,
+  select = '*',
+): Promise<Record<string, any>[]> {
+  return listClientScopedRows('portfolio_analysis_reports', { select, limit });
+}
+
+/**
+ * One commercial & industrial assessment with its stored calculation run.
+ *
+ * `manage-ci-assessments`' own `get` returns exactly this pair — the
+ * assessment and its latest base run — scoped to the caller by `loadOwned`.
+ * The format's figures come from the stored run and never from a
+ * recomputation (`docs/reports/COMMERCIAL_CAPACITY.md`), so taking both from
+ * the one authorised call keeps that true.
+ */
+export async function loadCommercialAssessment(
+  assessmentId: string,
+): Promise<{ assessment: Record<string, any>; latestRun: Record<string, any> | null } | null> {
+  try {
+    const { data, error } = await invokeSecureFunction('manage-ci-assessments', {
+      operation: 'get',
+      assessmentId,
+    } as any);
+    if (error) return null;
+    const payload = (data as Record<string, any> | null)?.data;
+    const assessment = payload?.assessment as Record<string, any> | undefined;
+    if (!assessment) return null;
+    return { assessment, latestRun: (payload?.latestRun as Record<string, any>) ?? null };
+  } catch {
+    return null;
+  }
+}
+
+/** Recent commercial & industrial assessments, for a picker. */
+export async function listCommercialAssessments(
+  limit = 20,
+): Promise<Record<string, any>[]> {
+  try {
+    const { data, error } = await invokeSecureFunction('manage-ci-assessments', {
+      operation: 'list',
+      limit: Math.min(Math.max(limit, 1), 200),
+    } as any);
+    if (error) return [];
+    const payload = data as Record<string, any> | null;
+    const rows = payload?.data ?? payload?.assessments;
+    return Array.isArray(rows) ? rows as Record<string, any>[] : [];
+  } catch {
+    return [];
+  }
+}
 
 /**
  * One investment report, with `financial_calculations` — the `detail`

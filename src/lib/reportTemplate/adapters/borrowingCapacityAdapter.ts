@@ -27,25 +27,34 @@
  * borrowing capacity. `docs/reports/BORROWING_CAPACITY.md` describes five
  * separate PDF implementations of this format; this adds no sixth calculator.
  */
-import { supabase } from '@/integrations/supabase/client';
 import { applyBorrowingCapacityProjection } from '../../../../supabase/functions/_shared/borrowingCapacityProjection.pure';
 import {
   CLIENT_NAME_COLUMNS, clientDisplayName, type ClientNameRow,
 } from '../../../../supabase/functions/_shared/clientName';
 import { applyOrganisationAndBrand } from './organisation';
-import { loadClientRecord as loadClientRecordSecure, loadClientRowsByIds } from './secureSource';
+import {
+  loadClientRecord as loadClientRecordSecure,
+  loadClientRowsByIds,
+  loadBorrowingCapacityRow,
+  listBorrowingCapacityRows,
+} from './secureSource';
 import type {
   BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 
+/**
+ * One assessment, through the broker.
+ *
+ * `borrowing_capacity_assessments`' only non-service SELECT policy is a join
+ * on `clients.created_by = auth.uid()`, and `auth.uid()` is always NULL in this
+ * browser — identity is a custom HttpOnly cookie. So this read returned zero
+ * rows for all 128 stored assessments and every user: not an error, an empty
+ * result, which became `null`, which the router read as a refusal and turned
+ * into the legacy generator. This format had rendered no design-system
+ * document at all. See `secureSource.ts`.
+ */
 async function loadAssessment(reportId: string): Promise<Record<string, any> | null> {
-  const { data, error } = await supabase
-    .from('borrowing_capacity_assessments')
-    .select('*')
-    .eq('id', reportId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return data as Record<string, any>;
+  return loadBorrowingCapacityRow(reportId);
 }
 
 /**
@@ -88,12 +97,9 @@ export const borrowingCapacityAdapter: ReportTemplateAdapter = {
    */
   async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
     try {
-      const { data, error } = await supabase
-        .from('borrowing_capacity_assessments')
-        .select('id, client_id, created_at')
-        .order('created_at', { ascending: false })
-        .limit(limit);
-      if (error || !data) return [];
+      // Through the broker, for the same reason `loadAssessment` is.
+      const data = await listBorrowingCapacityRows(limit, 'id, client_id, created_at');
+      if (!data.length) return [];
 
       const clientIds = [...new Set(
         data.map((row: Record<string, any>) => row.client_id).filter((v: unknown) => typeof v === 'string'),

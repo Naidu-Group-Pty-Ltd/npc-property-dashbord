@@ -16,7 +16,6 @@
  * The clock is passed in rather than read inside the normaliser, which is why
  * `now` appears here: the pure modules take no ambient time.
  */
-import { supabase } from '@/integrations/supabase/client';
 import { applyComparisonProjection } from '../../../../supabase/functions/_shared/comparisonProjection.pure';
 import { applyOrganisationAndBrand } from './organisation';
 import { listPropertyComparisonRows, loadPropertyComparisonRow } from './secureSource';

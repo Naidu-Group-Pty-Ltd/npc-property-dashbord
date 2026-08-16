@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { getAuthenticatedSupabaseClient } from '@/hooks/useAuthenticatedSupabase';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { extractStructureHeadings, selectStructureTemplate } from '@/lib/reportTemplate/cascadeMap';
 import { chunkReportContent } from '@/lib/reportTemplate/reportSections';
@@ -14,11 +14,24 @@ function flatten(obj: any): Record<string, any> {
 /**
  * Best-effort headings of the active report-structure guide for this report's
  * type/tier, so `sections.*` chunk ids line up with the Cascade contract ids.
- * Failures (RLS, offline) degrade to chunking by the report's own headings.
+ * Failures (offline, a guide that is not published) degrade to chunking by the
+ * report's own headings.
+ *
+ * ## Why the gateway client and not the browser one
+ *
+ * `report_structure_templates`' only SELECT policy is
+ * `auth.role() = 'authenticated'`, and this app's identity is a custom HttpOnly
+ * cookie — so the browser client is `anon` and the read returned **0 of the 4
+ * published guides**, for every user, every time. Not an error: an empty
+ * result, which fell straight into the documented "degrade to the report's own
+ * headings" path. So the degradation was not a fallback at all, it was the only
+ * behaviour, and `sections.<contract id>` resolved to the empty string on every
+ * Investment render. Measured in production 2026-08-16; see `secureSource.ts`
+ * for the rest of the same class.
  */
 async function loadStructureHeadings(tier: string | null, category: string | null): Promise<string[]> {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await getAuthenticatedSupabaseClient()
       .from('report_structure_templates')
       .select('id,name,parsed_content,report_tier,report_category,priority')
       .eq('template_type', 'ai_structure')

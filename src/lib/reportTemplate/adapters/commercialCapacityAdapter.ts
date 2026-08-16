@@ -1,5 +1,8 @@
-import { supabase } from '@/integrations/supabase/client';
-import { loadClientRecord as loadClientRecordSecure } from './secureSource';
+import {
+  loadClientRecord as loadClientRecordSecure,
+  loadCommercialAssessment,
+  listCommercialAssessments,
+} from './secureSource';
 import type {
   BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
@@ -40,35 +43,16 @@ import { applyOrganisationAndBrand } from './organisation';
  * worse than a row you have to link first.
  */
 
-const ASSESSMENT_COLUMNS =
-  'id, reference, title, status, segment, assessment_type, payload, requested_loan, '
-  + 'maximum_indicative_loan, proposed_lvr, proposed_dscr, outcome, binding_constraint, '
-  + 'client_id, current_calculation_id, version, created_at, updated_at';
-
-const RUN_COLUMNS =
-  'id, assessment_id, engine_version, policy_version, scenario_key, inputs_snapshot, '
-  + 'policy_snapshot, outputs, outcome, binding_constraint, maximum_indicative_loan, '
-  + 'analysis, created_at';
-
-async function loadAssessment(id: string) {
-  const { data, error } = await supabase
-    .from('commercial_industrial_assessments')
-    .select(ASSESSMENT_COLUMNS)
-    .eq('id', id)
-    .maybeSingle();
-  if (error || !data) return null;
-  return data as Record<string, any>;
-}
-
-async function loadRun(runId: string) {
-  const { data, error } = await supabase
-    .from('commercial_industrial_calculation_runs')
-    .select(RUN_COLUMNS)
-    .eq('id', runId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return data as Record<string, any>;
-}
+/*
+ * This file used to hold an `ASSESSMENT_COLUMNS` / `RUN_COLUMNS` pair naming
+ * the thirty-one columns the two reads selected. The reads are the broker's
+ * now (see `loadSnapshotInputs`), which returns whole rows, so the lists chose
+ * nothing — and a column list that no read uses is the exact shape of the
+ * defect `adapterSelectColumns.spec.ts` exists to catch: it looks checked, it
+ * looks load-bearing, and a rename would leave it wrong with nothing failing.
+ * What this format binds is stated where it is used, in
+ * `commercialCapacityProjection.pure.ts` and `normalise.pure.ts`.
+ */
 
 /**
  * The linked client's display name, when there is one.
@@ -94,17 +78,37 @@ async function loadClientName(clientId: string | null): Promise<string | null> {
   return name || null;
 }
 
+/**
+ * The assessment and its stored run, in one authorised call.
+ *
+ * Both tables are service-role-only — `service_role manages ci assessments` is
+ * their single policy — so reading them on the browser client returned zero
+ * rows for every assessment and every user. Not an error: an empty result,
+ * which this function answered as `null`, the router read as "this adapter
+ * refuses this record", and the caller turned into the legacy generator. This
+ * format had rendered no design-system document at all.
+ *
+ * `manage-ci-assessments`' `get` returns exactly the pair this needs, scoped to
+ * the caller by its own `loadOwned`, so this is a broker that already exists
+ * rather than a new authorisation decision. It hands back the assessment's
+ * LATEST base run; the previous read followed `current_calculation_id`, so the
+ * run is checked against it rather than assumed — a re-issued report must say
+ * what the first one said.
+ */
 async function loadSnapshotInputs(reportId: string) {
-  const assessment = await loadAssessment(reportId);
-  if (!assessment) return null;
+  const found = await loadCommercialAssessment(reportId);
+  if (!found) return null;
+  const { assessment, latestRun } = found;
   if (!isReportable(assessment.status)) return null;
 
   const runId = assessment.current_calculation_id as string | null;
   if (!runId) return null;
-  const run = await loadRun(runId);
-  if (!run || !run.outputs) return null;
+  // The broker returns the latest base run. If the assessment points at a
+  // different one, the figures on the page would not be the ones the record
+  // names, and a plausible wrong number is this programme's top risk.
+  if (!latestRun || latestRun.id !== runId || !latestRun.outputs) return null;
 
-  return { assessment, run };
+  return { assessment, run: latestRun };
 }
 
 export const commercialCapacityAdapter: ReportTemplateAdapter = {
@@ -130,13 +134,10 @@ export const commercialCapacityAdapter: ReportTemplateAdapter = {
    */
   async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
     try {
-      const { data, error } = await supabase
-        .from('commercial_industrial_assessments')
-        .select('id, title, reference, status, current_calculation_id, created_at')
-        .order('created_at', { ascending: false })
-        .limit(Math.max(limit * 3, 30));
-      if (error || !data) return [];
-      return (data as Record<string, any>[])
+      // Through the broker, for the same reason `loadSnapshotInputs` is.
+      const data = await listCommercialAssessments(Math.max(limit * 3, 30));
+      if (!data.length) return [];
+      return data
         .filter((row) => isReportable(row.status) && row.current_calculation_id)
         .slice(0, limit)
         .map((row) => ({

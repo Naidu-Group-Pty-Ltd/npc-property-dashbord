@@ -132,7 +132,22 @@ function selectArgAfter(source: string, from: number): string | null {
 
 interface Selection { table: string; columns: string[] }
 
-function selectionsIn(source: string, rel: string): { selections: Selection[]; unresolved: string[] } {
+/**
+ * Comments out, before anything is read as a query.
+ *
+ * These modules explain themselves at length, and an explanation of a read is
+ * written the same way as a read — ``db().from('x').select(...)`` in the
+ * `secureSource.ts` header is prose, not a statement. Scanning it produced an
+ * `unresolved` entry, which this file treats as a failure precisely so that a
+ * skip it cannot explain never passes quietly. Only a line that *starts* with
+ * `//` goes, so a `https://` inside a string is left alone.
+ */
+const stripComments = (source: string) => source
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
+
+function selectionsIn(raw: string, rel: string): { selections: Selection[]; unresolved: string[] } {
+  const source = stripComments(raw);
   const consts = stringConstants(source, sharedConstants);
   const lookup = (name: string) => consts.get(name) ?? sharedConstants.get(name) ?? null;
   const selections: Selection[] = [];
@@ -204,7 +219,157 @@ function selectionsIn(source: string, rel: string): { selections: Selection[]; u
     }
     if (filterColumns.length > 0) selections.push({ table, columns: filterColumns });
   }
+
+  // And the reads that no longer name a table at all, because they go through
+  // a broker. Same columns, same 42703, same silence.
+  selections.push(...brokerHelperSelections(source, lookup));
   return { selections, unresolved };
+}
+
+/**
+ * The `secureSource.ts` helpers, and the table each one reads.
+ *
+ * When a read moves off the browser client, its column list moves with it —
+ * from `.select('id, client_id, created_at')` on a builder to an argument on a
+ * broker helper. The 42703 does not move: PostgREST still fails the whole
+ * statement, `get-client-data` still answers `{ error }`, and the helper still
+ * returns `[]`, which every caller reads as "no such record". So the check has
+ * to follow the read, or a format's picker goes silently empty again with
+ * nothing failing anywhere.
+ *
+ * `listClientScopedRows` is absent because it names its table in its first
+ * argument rather than in its identity; it is handled below.
+ */
+const BROKER_HELPER_TABLES: Record<string, string> = {
+  loadBorrowingCapacityRow: 'borrowing_capacity_assessments',
+  listBorrowingCapacityRows: 'borrowing_capacity_assessments',
+  loadPortfolioReportRow: 'portfolio_analysis_reports',
+  listPortfolioReportRows: 'portfolio_analysis_reports',
+  listClientRows: 'clients',
+  loadClientRowsByIds: 'clients',
+};
+
+const SCOPED_ROWS_HELPER = 'listClientScopedRows';
+
+/** The balanced argument text of a call whose `(` is at `open`. */
+function argsAt(source: string, open: number): string | null {
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, i);
+    }
+  }
+  return null;
+}
+
+/** Top-level commas only — an object or array argument stays one argument. */
+function splitArgs(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let quote: string | null = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) { if (ch === quote && text[i - 1] !== '\\') quote = null; continue; }
+    if (ch === '\'' || ch === '"' || ch === '`') { quote = ch; continue; }
+    if ('([{'.includes(ch)) depth += 1;
+    else if (')]}'.includes(ch)) depth -= 1;
+    else if (ch === ',' && depth === 0) { parts.push(text.slice(start, i)); start = i + 1; }
+  }
+  parts.push(text.slice(start));
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+/**
+ * Columns a call to a broker helper names, from every place it can name one.
+ *
+ * A filter key and an order column are as fatal as a selected one — the error
+ * is raised for the statement, not for the clause — and both are written a
+ * column at a time rather than copied from a shared constant, which is what
+ * makes them the easier half to mistype.
+ */
+function brokerHelperSelections(
+  source: string,
+  lookup: (name: string) => string | null,
+): Selection[] {
+  const out: Selection[] = [];
+  const names = [...Object.keys(BROKER_HELPER_TABLES), SCOPED_ROWS_HELPER];
+  for (const name of names) {
+    for (const m of source.matchAll(new RegExp(`\\b${name}\\s*\\(`, 'g'))) {
+      const open = m.index! + m[0].length - 1;
+      const text = argsAt(source, open);
+      if (text === null) continue;
+      const args = splitArgs(text);
+
+      let table = BROKER_HELPER_TABLES[name] ?? null;
+      let rest = args;
+      if (name === SCOPED_ROWS_HELPER) {
+        const first = args[0] ?? '';
+        // The table can be a loop variable — `clientIdsWithRecords` maps five
+        // of them through one call. Nothing to resolve, so nothing to check;
+        // that call selects `client_id`, which every one of the five has.
+        const literal = first.match(/^'([a-z0-9_]+)'$/);
+        if (!literal) continue;
+        table = literal[1];
+        rest = args.slice(1);
+      }
+      if (!table) continue;
+
+      const columns: string[] = [];
+      const addList = (text_: string) => {
+        for (const piece of text_.split(',')) {
+          const col = piece.trim();
+          if (!col || col === '*' || col.includes('(') || col.includes(':')) continue;
+          columns.push(col.split('->')[0].trim());
+        }
+      };
+      const resolve = (expr: string): string | null => {
+        const trimmed = expr.trim();
+        if (/^'[^']*'$/.test(trimmed) || /^"[^"]*"$/.test(trimmed)) return trimmed.slice(1, -1);
+        if (/^`[^`]*`$/.test(trimmed)) {
+          let missing = false;
+          const filled = trimmed.slice(1, -1).replace(/\$\{([\w$]+)\}/g, (_a, n: string) => {
+            const v = lookup(n);
+            if (v === null) missing = true;
+            return v ?? '';
+          });
+          return missing ? null : filled;
+        }
+        if (/^[A-Za-z_$][\w$]*$/.test(trimmed)) return lookup(trimmed);
+        return null;
+      };
+
+      for (const arg of rest) {
+        if (arg.startsWith('{')) {
+          // All four shapes a select can take, because a column list is mostly
+          // commas: a `[^,]+` window would capture the first column of a
+          // template literal and silently drop the rest.
+          const select = arg.match(
+            /select:\s*(`[^`]*`|'[^']*'|"[^"]*"|[A-Za-z_$][\w$]*)/,
+          )?.[1];
+          if (select) { const t = resolve(select); if (t) addList(t); }
+          const orderBy = arg.match(/orderBy:\s*'([a-z0-9_]+)'/)?.[1];
+          if (orderBy) columns.push(orderBy);
+          const filters = arg.match(/filters:\s*\{([^}]*)\}/)?.[1];
+          if (filters) {
+            for (const key of filters.matchAll(/([A-Za-z_][\w]*)\s*:/g)) columns.push(key[1]);
+          }
+          continue;
+        }
+        // A positional column list. The only string-shaped positionals these
+        // helpers take are column lists (the table, for the scoped helper, has
+        // already been taken off), so an identifier that resolves to one is
+        // one; anything else — an id, a limit — resolves to null and is skipped.
+        const text_ = resolve(arg);
+        if (text_ !== null && text_.trim() !== '*' && text_.includes('_')) addList(text_);
+      }
+      if (columns.length > 0) out.push({ table, columns });
+    }
+  }
+  return out;
 }
 
 const ADAPTER_DIR = 'src/lib/reportTemplate/adapters';
@@ -266,15 +431,23 @@ describe('the generated schema knows every column these paths select', () => {
     const { problems, checkedColumns, unresolved } = check(adapterFiles());
     expect(problems).toEqual([]);
     // Coverage is asserted, because a parser that silently resolved nothing
-    // would pass this file for ever. The floor was 170 when every adapter read
-    // its own tables directly; it is 100 now because three of those tables —
-    // `investment_reports`, `property_comparisons` and `clients` — are
-    // invisible to the browser client under this app's custom auth, so those
-    // reads moved into `get-investment-reports` and `get-client-data`, whose
-    // column lists live in the edge functions. The references that remain are
-    // the sixteen tables an adapter may still read for itself, and the test
-    // below covers the column lists that travelled to the brokers.
-    expect(checkedColumns).toBeGreaterThan(100);
+    // would pass this file for ever. The floor has come down twice, and both
+    // times for the same reason rather than because coverage was given up:
+    // a read moved off the browser client, taking its column list with it.
+    //
+    //   170  every adapter read its own tables directly
+    //   100  `investment_reports`, `property_comparisons` and `clients` moved
+    //        into `get-investment-reports` and `get-client-data`, whose column
+    //        lists live in the edge functions
+    //    70  the remaining seven invisible tables moved to a broker or to the
+    //        `authenticated-data` gateway
+    //
+    // A gateway read still names its table, so it is still checked here. A
+    // broker read is checked through `brokerHelperSelections`, which is what
+    // keeps this from being a bar lowered rather than a check followed; the
+    // count today is 77, and the test below covers the lists that go to a
+    // broker by name.
+    expect(checkedColumns).toBeGreaterThan(70);
     expect(unresolved).toEqual([]);
   });
 

@@ -25,21 +25,30 @@
  * analysis already stored, restated in the vocabulary a template binds. The only
  * derivation is monthly × 12.
  */
-import { supabase } from '@/integrations/supabase/client';
 import { applyPortfolioProjection } from '../../../../supabase/functions/_shared/portfolioProjection.pure';
 import { applyOrganisationAndBrand } from './organisation';
+import {
+  loadPortfolioReportRow,
+  listPortfolioReportRows,
+  listClientScopedRows,
+} from './secureSource';
 import type {
   BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 
+/**
+ * One portfolio analysis report, through the broker.
+ *
+ * Its only non-service SELECT policy is `generated_by = auth.uid()` OR a join
+ * on `clients.created_by = auth.uid()`, and `auth.uid()` is always NULL in this
+ * browser — identity is a custom HttpOnly cookie. So this returned zero rows
+ * for all 22 stored reports and every user: not an error, an empty result,
+ * which became `null`, which the router read as a refusal and turned into the
+ * legacy generator. This format had rendered no design-system document at all.
+ * See `secureSource.ts`.
+ */
 async function loadReport(reportId: string): Promise<Record<string, any> | null> {
-  const { data, error } = await supabase
-    .from('portfolio_analysis_reports')
-    .select('*')
-    .eq('id', reportId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return data as Record<string, any>;
+  return loadPortfolioReportRow(reportId);
 }
 
 /**
@@ -51,19 +60,23 @@ async function loadNewestCompletedReview(
   clientId: unknown,
 ): Promise<Record<string, any> | null> {
   if (typeof clientId !== 'string' || !clientId) return null;
-  const { data, error } = await supabase
-    .from('portfolio_reviews')
-    .select('*')
-    .eq('client_id', clientId)
-    .eq('status', 'completed')
-    .order('review_date', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) {
-    console.warn(`[portfolioAdapter] could not read the review: ${error.message}`);
-    return null;
-  }
-  return (data ?? null) as Record<string, any> | null;
+  // Through the broker: `portfolio_reviews` is invisible to the browser client
+  // for the same reason the report is.
+  //
+  // The broker orders but cannot express `nullsFirst: false`, and Postgres puts
+  // NULLs first on a DESC order — so a client whose newest review has no
+  // `review_date` would otherwise win over one that has a date. The rows are
+  // taken in order and the first dated one is preferred here instead, which is
+  // what the route's own join means by "newest completed".
+  const rows = await listClientScopedRows('portfolio_reviews', {
+    select: '*',
+    orderBy: 'review_date',
+    orderAsc: false,
+    limit: 10,
+    filters: { client_id: clientId, status: 'completed' },
+  });
+  if (!rows.length) return null;
+  return rows.find((row) => row.review_date != null) ?? rows[0];
 }
 
 export const portfolioAdapter: ReportTemplateAdapter = {
@@ -77,13 +90,10 @@ export const portfolioAdapter: ReportTemplateAdapter = {
 
   async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
     try {
-      const { data, error } = await supabase
-        .from('portfolio_analysis_reports')
-        .select('id, client_name, created_at')
-        .order('created_at', { ascending: false })
-        .limit(limit);
-      if (error || !data) return [];
-      return (data as Record<string, any>[]).map((row) => ({
+      // Through the broker, for the same reason `loadReport` is.
+      const data = await listPortfolioReportRows(limit, 'id, client_name, created_at');
+      if (!data.length) return [];
+      return data.map((row) => ({
         id: String(row.id),
         label: (row.client_name as string) || 'Portfolio analysis',
         savedAt: (row.created_at as string) ?? null,

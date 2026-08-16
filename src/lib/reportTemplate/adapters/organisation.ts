@@ -16,8 +16,23 @@
  * transient RLS or network error must not blank the letterhead for the rest of
  * the session. `applyOrganisationProjection` treats null as "publish nothing",
  * which leaves the bindings exactly as they were before this existed.
+ *
+ * ## Two clients, on purpose
+ *
+ * `whitelabel_settings` is deliberately public — its policy is "Anyone can view
+ * whitelabel settings", granted to PUBLIC — so the wordmark and the logo load
+ * on the anon client and always did.
+ *
+ * `global_report_settings` is not. It grants SELECT to `authenticated` and
+ * `service_role` only, and the Command Centre has no Supabase Auth session, so
+ * that read has to go through the staff-session gateway
+ * (`getAuthenticatedSupabaseClient`). Reading it on the anon client does not
+ * fail — PostgREST returns `200 []` — which is how the disclaimer, the ABN and
+ * the postal address came to be missing from every design-system document
+ * while the letterhead beside them looked fine.
  */
 import { supabase } from '@/integrations/supabase/client';
+import { getAuthenticatedSupabaseClient } from '@/hooks/useAuthenticatedSupabase';
 import {
   ORGANISATION_COLUMNS,
   applyOrganisationProjection,
@@ -151,13 +166,57 @@ export async function loadReportSettings(): Promise<ReportSettingsLike | null> {
   if (settingsInFlight) return settingsInFlight;
   settingsInFlight = (async () => {
     try {
-      const { data, error } = await supabase
+      /*
+       * The staff-session client, NOT the anon one.
+       *
+       * `global_report_settings` grants SELECT to `authenticated` and
+       * `service_role` only — RLS-W2 dropped its anon grant, and
+       * `GlobalReportSettings.tsx` was moved onto `useAuthenticatedSupabase`
+       * for exactly that reason. This read was not, and the Command Centre has
+       * no Supabase Auth session: identity is a custom HttpOnly cookie, so
+       * `@/integrations/supabase/client` is the bare anon key.
+       *
+       * PostgREST answers an anon SELECT on an RLS-protected table with
+       * `200 []`, not a 403. So this returned `{contact: null, disclaimer:
+       * null}`, `projectReportSettings` published neither key, and
+       * `{{org.disclaimer}}` resolved to the empty string — at which point
+       * `disclaimer.html.ts` fell through to its fallback and printed the
+       * generic boilerplate on every design-system document. The ABN and the
+       * postal address come from the same row and went the same way.
+       *
+       * That is why binding the templates did not fix it: the binding was
+       * correct and the data behind it was empty. Verified against production
+       * on 16 Aug — the exact query this makes returns `[]` as anon and two
+       * rows as `authenticated`.
+       *
+       * `useAuthenticatedSupabase`'s own header records this class: an anon
+       * read of an RLS table "came back empty instead of failing. Fourteen
+       * tables across sixteen modules were affected." This module is the one
+       * the migration missed.
+       */
+      const authed = getAuthenticatedSupabaseClient();
+      const { data, error } = await authed
         .from('global_report_settings')
         .select('setting_key, setting_value')
         .in('setting_key', ['contact_details', 'professional_disclaimer']);
       if (error || !data) {
         settingsInFlight = null;
         return null;
+      }
+      /*
+       * Say so when the row is missing rather than degrading in silence.
+       *
+       * A deployment that has never opened Report Settings legitimately has no
+       * rows, so this cannot throw — but "no disclaimer configured" and "the
+       * read was quietly unauthorised" produced the same blank for months, and
+       * only one of them is a deployment's own choice.
+       */
+      if (!data.length) {
+        console.warn(
+          '[organisation] global_report_settings returned no rows — the report '
+          + 'disclaimer, ABN and postal address will fall back to their defaults. '
+          + 'If Report Settings is populated, this read is not authenticated.',
+        );
       }
       let contact: Record<string, unknown> | null = null;
       let disclaimer: Record<string, unknown> | null = null;
