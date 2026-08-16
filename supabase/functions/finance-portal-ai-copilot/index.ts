@@ -18,6 +18,45 @@ const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 const MAX_VOICE_AUDIO_BYTES = 2 * 1024 * 1024;
 const MAX_VOICE_DURATION_SECONDS = 90;
 
+/**
+ * The voice-memo bounds, which were called and never defined.
+ *
+ * `transcribe_voice` opened with `validateVoiceMemo(body.audio_base64,
+ * body.duration_seconds)` and no such function existed anywhere in this file or
+ * its imports — a ReferenceError on the first line of the route, caught by the
+ * handler's outer `catch` and returned as a 500. So the endpoint was broken AND
+ * the three abuse controls `financePortalVoiceTranscriptionSecurity.test.ts`
+ * asks for were absent from the code, not merely unasserted:
+ *
+ *  - the payload must be well-formed base64 (length a multiple of four), so a
+ *    malformed blob is refused here rather than at the paid gateway;
+ *  - the DECODED size is capped at `MAX_VOICE_AUDIO_BYTES`, because base64 is
+ *    4/3 the size of what it carries and the request-body limit alone lets a
+ *    larger recording through;
+ *  - and the duration is server-authoritative, because the client sends it and
+ *    it is what the per-minute cost is reasoned about.
+ *
+ * `HttpError` gives each a 400 rather than the outer catch's 500.
+ */
+function validateVoiceMemo(audioBase64: unknown, rawDurationSeconds: unknown): void {
+  if (typeof audioBase64 !== 'string' || audioBase64.length === 0) {
+    throw new HttpError('audio_base64 is required', 400);
+  }
+  // 3 bytes per 4 base64 characters, less the padding.
+  const padding = audioBase64.endsWith('==') ? 2 : audioBase64.endsWith('=') ? 1 : 0;
+  const decodedBytes = (audioBase64.length / 4) * 3 - padding;
+  if (audioBase64.length % 4 !== 0 || decodedBytes > MAX_VOICE_AUDIO_BYTES) {
+    throw new HttpError('Voice memo is malformed or too large', 400);
+  }
+  const durationSeconds = Number(rawDurationSeconds ?? 0);
+  if (!Number.isFinite(durationSeconds) || durationSeconds < 0) {
+    throw new HttpError('duration_seconds must be a number', 400);
+  }
+  if (durationSeconds > MAX_VOICE_DURATION_SECONDS) {
+    throw new HttpError('Voice memo is too long', 400);
+  }
+}
+
 class HttpError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
