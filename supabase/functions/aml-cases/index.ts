@@ -39,6 +39,7 @@ import {
   type ClientPickerStatus,
 } from "../_shared/aml/clientSearchMatch.pure.ts";
 import { sanitiseDocumentName } from "../_shared/aml/documentNaming.pure.ts";
+import { processScreeningEvent } from "../cross-portal-outbox-worker/screeningConsumer.ts";
 import { readSanctionsDeclaration } from "../_shared/aml/sanctionsDeclaration.pure.ts";
 import {
   decideScreeningPolicy,
