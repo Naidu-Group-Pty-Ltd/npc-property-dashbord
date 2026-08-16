@@ -480,3 +480,50 @@ outcome on a quarter and a third of them respectively.
 `investmentPropertyRows.spec.ts` renders the real masters against the real
 stored shape and against a record that fills every field. `SAMPLE_REPORT_DATA`
 fills all nine spec fields, which is exactly why it could not see any of this.
+
+### The cover title had a fixed number of lines and a variable title
+
+`titleHeight` was `coverTitle * 1.12 * 2` — two lines, on every family, for
+`property_address`. Measured over all 1,187 rows that string is 19 characters
+at the median, 44 at p90, 61 at p99 and **84** at its longest, and the cover
+measure is 86% of the page width: four lines at Private Banking's 41pt, seven
+at Objective's 61pt. The WeasyPrint render showed the third line struck through
+by the gold rule and the fourth printed across the standfirst.
+
+Reserving for the longest address is the same mistake pointing the other way —
+it leaves the median address floating a hundred points above its own rule on
+every cover in the archive. Two changes instead:
+
+- **The block's foot is pinned** (`anchorBottom`, new in `absBoxStyle`) and it
+  grows upward into the empty half of the cover. Every other block stays
+  `top`-anchored, which is what `flow()`'s arithmetic describes; this is the one
+  where the height belongs to the data and the baseline is the fixed thing. The
+  overflow cannot happen rather than being budgeted for.
+- **A long title is set smaller**, because that choice is data. The cover emits
+  the title twice at the same position under complementary conditionals, and
+  both the threshold and the smaller size are **derived per family** from the
+  measure, the leading and the distance from the rule to the head — the same
+  character-advance model `textHeight` uses. Four of the fifty masters need the
+  second size (Grand Folio 47.25→43.3, Elevation 42.5→41.5, Objective
+  61.25→46.3, Raster 52→51); the other 46 carry the longest address there is at
+  full display size.
+
+### And one thing that was never a rendering defect at all
+
+"The cover verdict loses its spaces" — reported as
+`HOLD - Aboveaverageinvestment withsome positiveindicators,monitor closely`.
+Rasterised, the page reads correctly. WeasyPrint emits a wrapped,
+letter-spaced line as several show-text operations with positioning
+adjustments and **no space character between them**, so any text extractor —
+`pypdf`, or copy-and-paste out of a viewer — reassembles the line without its
+spaces. Worth knowing before chasing the next one: a defect read out of a
+PDF's text layer needs confirming against the pixels.
+
+The same cell did carry a real defect, which is how the report was right about
+something being wrong: `investment_score.recommendation` averages 69
+characters and a cover KPI cell is a quarter of the measure, so five lines ran
+past the band's 78pt and the bottom rule struck through the last one. A KPI
+cell holds a figure; it now holds the action (`HOLD`), split exactly — all 988
+scored reports are `ACTION - sentence` or the bare action over a four-word
+vocabulary, longest action eight characters — and the sentence stays on the
+verdict page.
