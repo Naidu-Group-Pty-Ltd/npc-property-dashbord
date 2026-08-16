@@ -3,6 +3,7 @@ import {
   formatIsoDate, isIsoDateValue, resolveBindable, resolveBindableColor, resolveBindableNumber,
 } from '../bindingResolver';
 import { formatCell } from '../blocks/_data';
+import { formatReportDate } from '../../../../supabase/functions/_shared/reports/clientDetails/render.pure';
 
 const ctx = (data: any, tokens: any = { colors: {}, fonts: {}, spacing: {} }) => ({ data, tokens });
 
@@ -170,21 +171,28 @@ describe('bindingResolver — dates', () => {
       expect(formatIsoDate('2026-08-16T08:58:56.946Z')).toBe('16 Aug 2026');
     });
 
-    it('is what the flowing render routes already print', () => {
-      // Eight `formatReportDate` copies across the render routes read the ISO
-      // string's own fields exactly like this. Until now the template renderer
-      // parsed instead, so one report could carry two different dates
-      // depending on which engine drew it.
-      const formatReportDate = (iso: string): string => {
-        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
-        if (!m) return '';
-        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        const month = months[Number(m[2]) - 1];
-        return month ? `${m[3]} ${month} ${m[1]}` : '';
-      };
+    it('is the same implementation the flowing render routes use', () => {
+      /*
+       * The real function, imported — not a copy written here.
+       *
+       * The first version of this test declared its own `formatReportDate`
+       * with a SHORT month table and asserted the two were equal. They are
+       * not: every flowing route prints `16 August 2026` and this filter's
+       * default is `16 Aug 2026`. The test passed because it was comparing
+       * against something nothing runs, which is the whole failure mode this
+       * file exists to catch.
+       *
+       * They are one implementation now, and they still spell a date
+       * differently on purpose — that is the `style` argument. `long` is what
+       * a flowing route prints, and this pins the two together at that style
+       * so the shared module cannot be changed for one caller alone.
+       */
       for (const iso of ['2016-02-14', '2026-08-16T08:58:56.946Z', '2026-12-01T23:59:59+11:00']) {
-        expect(formatIsoDate(iso), iso).toBe(formatReportDate(iso));
+        expect(formatIsoDate(iso, 'long'), iso).toBe(formatReportDate(iso));
+        expect(formatIsoDate(iso), iso).not.toBe(formatReportDate(iso));
       }
+      expect(formatReportDate('2026-08-16T08:58:56.946Z')).toBe('16 August 2026');
+      expect(formatIsoDate('2026-08-16T08:58:56.946Z')).toBe('16 Aug 2026');
     });
   });
 

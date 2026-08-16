@@ -80,6 +80,7 @@ import {
   incomeAgainstCommitmentsChart,
   valueAgainstDebtChart,
 } from './charts.pure.ts';
+import { formatReportDate } from '../reportDate.pure.ts';
 
 const ARCHETYPE = REPORT_ARCHETYPES['client-details'];
 
@@ -88,10 +89,6 @@ export const DOCUMENT_NAME = ARCHETYPE.documentName;
 
 // ── Dates ───────────────────────────────────────────────────────────────────
 
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
 
 /**
  * `2026-08-02T…` → `02 August 2026`.
@@ -100,12 +97,7 @@ const MONTHS = [
  * `toLocaleDateString` depends on the runtime's ICU build, so the same record
  * would date itself differently in Deno and in Node.
  */
-export function formatReportDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
-  if (!m) return '';
-  const month = MONTHS[Number(m[2]) - 1];
-  return month ? `${m[3]} ${month} ${m[1]}` : '';
-}
+export { formatReportDate };
 
 // ── Escaping helpers ────────────────────────────────────────────────────────
 

@@ -65,6 +65,7 @@ import type {
 import type { AnalysisFinding, AnalysisScenario } from './analysis.pure.ts';
 import { capacitySections, capacitySpine, validateCapacitySpine } from './sections.pure.ts';
 import { constraintChart, incomeMixChart, utilisationChart } from './charts.pure.ts';
+import { formatReportDate } from '../reportDate.pure.ts';
 
 const ARCHETYPE = REPORT_ARCHETYPES['commercial-capacity'];
 
@@ -137,10 +138,6 @@ export const ANALYSIS_PROVENANCE_NOTE =
 
 // ── Dates ───────────────────────────────────────────────────────────────────
 
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
 
 /**
  * `2026-08-01T00:00:00.000Z` → `01 August 2026`.
@@ -150,12 +147,7 @@ const MONTHS = [
  * depends on the runtime's ICU build, so the same document would date itself
  * differently in Deno and in Node.
  */
-export function formatReportDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
-  if (!m) return '';
-  const month = MONTHS[Number(m[2]) - 1];
-  return month ? `${m[3]} ${month} ${m[1]}` : '';
-}
+export { formatReportDate };
 
 // ── Input ───────────────────────────────────────────────────────────────────
 

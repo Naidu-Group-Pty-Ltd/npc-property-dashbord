@@ -36,54 +36,42 @@ const precision = (value: string | undefined, fallback: number, maximum: number)
 };
 
 // ─── Dates ────────────────────────────────────────────────────────────────────
-/**
- * A value that is *entirely* an ISO-8601 calendar date, with or without a time.
+/*
+ * One implementation, shared with every flowing render route.
  *
- * Whole-value only, deliberately. A sentence a model wrote that happens to
- * mention `2026-08-16` is prose, and rewriting inside it would edit an author's
- * words; the guarantee this file makes is about a value a template binds, not
- * about text.
+ * `reportDate.pure.ts` is the single reader; this file used to be the twelfth
+ * copy of it. Its header carries the three reasons an ISO string is read field
+ * by field and never handed to `Date` — the third being that
+ * `new Date('2016-02-14')` is midnight UTC, so a client's move-in date printed
+ * a day early on every render west of UTC.
+ *
+ * The two engines still SPELL a date differently on purpose: the flowing routes
+ * print `16 August 2026` and the masters are typeset around `16 Aug 2026`. That
+ * is now the `style` argument rather than two implementations free to drift.
+ *
+ * Re-exported because `bindingResolver` is where the template side imports its
+ * binding vocabulary from, and a block reaching across the tree for a date
+ * helper is how a thirteenth copy starts.
  */
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+export {
+  formatIsoDate,
+  isIsoDateValue,
+  type ReportDateStyle,
+} from '../../../supabase/functions/_shared/reports/reportDate.pure.ts';
 
-const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const MONTHS_LONG = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
+import {
+  formatIsoDate,
+  isIsoDateValue,
+  type ReportDateStyle,
+} from '../../../supabase/functions/_shared/reports/reportDate.pure.ts';
 
-/** Whether a value is a bare ISO date or date-time, and nothing else. */
-export function isIsoDateValue(value: unknown): boolean {
-  return typeof value === 'string' && ISO_DATE.test(value.trim());
-}
-
-/**
- * An ISO date string as a reader should see it — read, never parsed.
- *
- * Returns `null` when the input is not a bare ISO date, so a caller can fall
- * back to the platform parser for the forms only it understands.
- *
- * ## Why this does not use `new Date(...)`
- *
- * `new Date('2016-02-14')` is midnight **UTC**, and `toLocaleDateString` then
- * renders it in the runtime's zone — so a client's move-in date of 14 Feb 2016
- * prints as *13 Feb 2016* on every render west of UTC, and a timestamp of
- * `2026-08-16T08:58:56Z` prints as 15 Aug in Honolulu. These documents are
- * typeset in the operator's browser, so the zone is whoever happens to be at
- * the keyboard, and the date on a client's page is not theirs to move. The
- * eight `formatReportDate` copies the flowing render routes carry already read
- * the string this way; this makes the template renderer agree with them.
- */
-export function formatIsoDate(value: string, style?: string): string | null {
-  const m = ISO_DATE.exec(value.trim());
-  if (!m) return null;
-  const [, year, month, day] = m;
-  const index = Number(month) - 1;
-  if (index < 0 || index > 11) return null;
-  if (style === 'iso') return `${year}-${month}-${day}`;
-  if (style === 'short') return `${day}/${month}/${year}`;
-  if (style === 'long') return `${day} ${MONTHS_LONG[index]} ${year}`;
-  return `${day} ${MONTHS_SHORT[index]} ${year}`;
+/** The `| date` filter's argument, mapped onto the shared styles. */
+function dateStyle(fmt: string | undefined): ReportDateStyle {
+  if (fmt === 'iso' || fmt === 'long') return fmt;
+  // `short` has always meant `16/08/2026` to this filter, which the shared
+  // module calls `numeric`; its own `short` is the `16 Aug 2026` default.
+  if (fmt === 'short') return 'numeric';
+  return 'short';
 }
 
 export const FILTERS: Record<string, Filter> = {
@@ -124,7 +112,7 @@ export const FILTERS: Record<string, Filter> = {
     // An ISO string is read field by field rather than parsed — see
     // `formatIsoDate`. Anything else (a `Date`, "March 3 2026") still goes
     // through the platform parser, which is the only thing that understands it.
-    const iso = typeof v === 'string' ? formatIsoDate(v, fmt) : null;
+    const iso = typeof v === 'string' ? formatIsoDate(v, dateStyle(fmt)) : null;
     if (iso !== null) return iso;
     const d = new Date(v as any);
     if (Number.isNaN(d.getTime())) return String(v);
