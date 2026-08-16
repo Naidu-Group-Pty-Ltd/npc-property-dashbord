@@ -119,6 +119,20 @@ export const amlVerificationApi = {
 
   sanctionsListStatus: () =>
     invoke<{ syncs: AmlSanctionsSync[]; entry_count: number }>({ op: "sanctions_list_status" }),
+  /**
+   * Load the DFAT Consolidated List from a spreadsheet a person downloaded.
+   *
+   * The browser sends RAW CELLS and nothing else. Mapping and name
+   * normalisation happen on the server, with the same function the screening
+   * query uses — a browser that normalised differently would write entries no
+   * query could ever match, and a list that matches nobody looks exactly like
+   * one that works.
+   */
+  ingestSanctionsList: (rows: unknown[][], source_label: string, force = false) =>
+    invoke<{
+      list_code: string; entries: number; pruned: number;
+      pruned_skipped: boolean; reason: string; sync_id: string;
+    }>({ op: "ingest_sanctions_list", list_code: "dfat", rows, source_label, force }),
 };
 
 export type AmlVerificationStatusValue =
