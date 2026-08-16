@@ -32,7 +32,19 @@ describe('investmentReportAdapter', () => {
       .resolves.toEqual(expect.objectContaining({ reportType: 'investment_compass' }));
   });
 
-  it('preserves report scope routing for non-Compass rows', async () => {
+  /**
+   * The four non-Compass tiers are investment reports, not a geography.
+   *
+   * This test asserted `reportType: 'address'` and was pinning the defect
+   * rather than the contract. `investment_reports` has no `report_type` column,
+   * so `getReportType` fell through to `report_scope` — `address` or `suburb`,
+   * which is where the property is and not what the document is. `address`
+   * matches no adapter, no alias and no `report_templates` row, so all 63
+   * snapshot / briefing / strategic / financial reports refused with
+   * `no_active_template` and fell back to the legacy generator. All five tiers
+   * now resolve to the investment format; only Compass keeps its own spelling.
+   */
+  it('routes the non-Compass tiers to the investment format, not to their scope', async () => {
     invokeSecureFunction.mockResolvedValue({
       data: {
         report: {
@@ -46,6 +58,6 @@ describe('investmentReportAdapter', () => {
     });
 
     await expect(investmentReportAdapter.resolveRoutingContext({ reportId: 'report-2' }))
-      .resolves.toEqual(expect.objectContaining({ reportType: 'address' }));
+      .resolves.toEqual(expect.objectContaining({ reportType: 'investment', tier: 'financial' }));
   });
 });

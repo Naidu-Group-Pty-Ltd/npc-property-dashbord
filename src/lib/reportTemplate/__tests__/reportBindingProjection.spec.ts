@@ -68,6 +68,25 @@ const ROW = {
       riskScore: { score: 53, weight: 5, details: 'High LVR (80%) increases leverage risk. Moderate negative cash flow requires contribution.' },
     },
   },
+  /*
+   * The report the model wrote.
+   *
+   * This fixture had no `report_content` at all, and `report_content` is
+   * **non-empty on all 1,187 stored reports**, averaging 37,986 characters. So
+   * the fixture disagreed with the database about the one column that holds the
+   * document — the same failure this module's own header is about, one level
+   * down — and `narrative.source` read as a binding with no source once the
+   * masters started carrying it.
+   *
+   * Short here on purpose: what this spec measures is whether the path
+   * resolves. Page economy is measured against production text by
+   * `productionFit.ts`.
+   */
+  report_content: '## Executive Verdict\n\n'
+    + 'A land-led inner-west holding at 3.71% gross, negative in the early years '
+    + 'and carried by the land component.\n\n'
+    + '## Location & Market\n\nWalkability is excellent and CBD access is under '
+    + 'fifteen minutes.\n',
 };
 
 /** Resolve `a.b.c` the way the renderer does: every hop must exist. */

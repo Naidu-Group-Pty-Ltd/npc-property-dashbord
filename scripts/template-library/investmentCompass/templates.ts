@@ -125,6 +125,53 @@ const DETAIL_CHARS = { location: 94, yield: 51, risk: 228 } as const;
 const DOCUMENT_LABEL = 'Investment Compass · {{property.address}}';
 
 /**
+ * The property specification, one guarded row at a time.
+ *
+ * ## A label is a promise that a figure follows it
+ *
+ * This table was eight fixed rows, and on the report behind this change —
+ * `1be16c4a`, 93 Bimbadeen Avenue, 15 Aug 2026 — six of them printed as a
+ * ruled, striped, labelled row with nothing in the Detail column. That is not
+ * that record's misfortune. Counted across the whole `investment_reports`
+ * table on 2026-08-16, after `projectInvestmentReport` was taught the finance
+ * run's spellings:
+ *
+ * | row | resolves on | of 1,187 |
+ * | --- | ---: | --- |
+ * | Address | 1,187 | `property_address`, never null |
+ * | Property type | 1,059 | + 34 more from `propertySpecs.propertyType` |
+ * | Configuration | 656 | bedrooms 651, bathrooms 633, parking 34 |
+ * | Land area | 114 | `propertySpecs.landSizeSqm`; `land_size_sqm` is null on **every** row |
+ * | Building area | 114 | `propertySpecs.buildSizeSqm` — note the spelling |
+ * | Year built | **0** | the key exists on 1,059 rows and holds null on all of them |
+ * | Zoning | **0** | as above |
+ * | Council | **0** | as above |
+ *
+ * So three of the eight could not print on any report ever generated, and two
+ * more printed on one report in ten. The rows stay in the master rather than
+ * being deleted: the columns exist, an intake that starts filling them fills
+ * this page with no template change, and the guard costs a boolean.
+ *
+ * The unit belongs to the row and not to the projection — `landArea` is a
+ * number so that a KPI or a chart can use it — and it is safe to write beside
+ * the binding only because the row no longer prints without a value. An
+ * unresolved binding renders as the empty string, so a fixed row would have
+ * printed a bare " m²".
+ */
+const PROPERTY_ROWS: Array<{ key: string; row: { cells: string[]; when: string } }> = [
+  { key: 'address', row: { cells: ['Address', '{{property.address}}'], when: 'property && property.address' } },
+  { key: 'type', row: { cells: ['Property type', '{{property.type}}'], when: 'property && property.type' } },
+  { key: 'configuration', row: { cells: ['Configuration', '{{property.configuration}}'], when: 'property && property.configuration' } },
+  { key: 'landArea', row: { cells: ['Land area', '{{property.landArea | number}} m²'], when: 'property && property.landArea' } },
+  { key: 'yearBuilt', row: { cells: ['Year built', '{{property.yearBuilt}}'], when: 'property && property.yearBuilt' } },
+  { key: 'zoning', row: { cells: ['Zoning', '{{property.zoning}}'], when: 'property && property.zoning' } },
+  // Was `property.tenancy` and `property.condition`: neither is a key
+  // `property_specs` has ever carried, on any of the 1,187 rows.
+  { key: 'council', row: { cells: ['Council', '{{property.council}}'], when: 'property && property.council' } },
+  { key: 'buildingArea', row: { cells: ['Building area', '{{property.buildingArea | number}} m²'], when: 'property && property.buildingArea' } },
+];
+
+/**
  * Compile one master.
  *
  * The density and layout branches are the catalogue's own meaning made
@@ -305,17 +352,15 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ...(splitSnapshot ? [] : [
         table({
           headers: ['Property', 'Detail'],
-          rows: [
-            ['Property type', '{{property.type}}'],
-            ['Configuration', '{{property.configuration}}'],
-            ['Land area', '{{property.landArea}}'],
-            ['Zoning', '{{property.zoning}}'],
-            // Was `property.tenancy`: `property_specs` has no such key on any
-            // of the 1,182 rows. `council_area` is on 1,054 of them.
-            ['Council', '{{property.council}}'],
-            ['Loan amount', '{{financials.loanAmount | currency}}'],
-            ['Annual repayment', '{{financials.annualRepayment | currency}}'],
-          ],
+          // Every row is guarded. See `PROPERTY_ROWS` for what each one costs
+          // when it is not — this page printed four ruled, labelled, empty rows
+          // on the report behind this change.
+          rows: PROPERTY_ROWS.filter((r) => r.key !== 'address' && r.key !== 'yearBuilt' && r.key !== 'buildingArea')
+            .map((r) => r.row)
+            .concat([
+              { cells: ['Loan amount', '{{financials.loanAmount | currency}}'], when: 'financials && financials.loanAmount' },
+              { cells: ['Annual repayment', '{{financials.annualRepayment | currency}}'], when: 'financials && financials.annualRepayment' },
+            ]),
           columnWidths: [0.42, 0.58],
           numeric: [],
         }),
@@ -345,19 +390,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         }),
         table({
           headers: ['Property', 'Detail'],
-          rows: [
-            ['Address', '{{property.address}}'],
-            ['Property type', '{{property.type}}'],
-            ['Configuration', '{{property.configuration}}'],
-            ['Land area', '{{property.landArea}}'],
-            ['Year built', '{{property.yearBuilt}}'],
-            ['Zoning', '{{property.zoning}}'],
-            // `condition` and `tenancy` are not keys `property_specs` has ever
-            // carried; `council_area` and `building_size_sqm` are, on 1,054 of
-            // the 1,182 rows.
-            ['Council', '{{property.council}}'],
-            ['Building area', '{{property.buildingArea}}'],
-          ],
+          rows: PROPERTY_ROWS.map((r) => r.row),
           columnWidths: [0.34, 0.66],
           numeric: [],
         }),
@@ -525,6 +558,12 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       scenarioChart({
         title: 'Projected equity position',
         caption: 'Property value less loan balance, by year',
+        // Dollars. `projections.moderate[].equity` is stored in whole dollars,
+        // and this series runs from $348k to $1.1m on the report behind this
+        // change — figures a reader could not see at all until the axis was
+        // labelled.
+        axis: 'money',
+        yAxisLabel: 'Equity',
         dataPath: 'tenYear.equitySeries',
         data: Array.from({ length: 10 }, (_, i) => ({ label: `Yr ${i + 1}`, value: 0 })),
       }),

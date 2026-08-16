@@ -1338,9 +1338,20 @@ export function cols(...points: number[]): number[] {
   return total > 0 ? points.map((w) => w / total) : points;
 }
 
+/**
+ * A table row, optionally guarded.
+ *
+ * A bare `string[]` is a row that always prints — every table in the catalogue
+ * was written that way and none of them moves. `{ cells, when }` prints only
+ * where the expression holds, which is how a page keeps the promise a label
+ * makes: see `visibleTableRows` in `blocks/_data.ts` for the counted reason and
+ * for why the choice is per row rather than per table.
+ */
+export type TableRowDef = string[] | { cells: string[]; when: string };
+
 export function table(opts: {
   headers: string[];
-  rows: string[][];
+  rows: TableRowDef[];
   columnWidths?: number[];
   /** Indices of rows that close a total. */
   totals?: number[];
@@ -1406,7 +1417,7 @@ export function table(opts: {
     height: 24 + opts.rows.length * rowHeight,
     block: (y) => block('data-table', {
       headers: opts.headers,
-      rows: opts.rows.map((cells) => ({ cells })),
+      rows: opts.rows.map((row) => (Array.isArray(row) ? { cells: row } : { cells: row.cells, when: row.when })),
       ...(opts.columnWidths ? { columnWidths: opts.columnWidths } : {}),
       headerStyle: plan.headerStyle,
       headerBg: 'token:primary',
@@ -1758,6 +1769,18 @@ export function scenarioChart(opts: {
    */
   labelKey?: string;
   valueKey?: string;
+  /**
+   * How the y-axis ticks are worded.
+   *
+   * `plain` invents no unit and is the default; a caller plotting dollars says
+   * so, and gets `$348k` … `$1.1m` down the axis instead of `348150`. The
+   * renderer will not guess this — a chart that labels a ratio as currency is
+   * a misstated figure on a client's page, which is the one thing the chart
+   * path must never do.
+   */
+  axis?: 'money' | 'percent' | 'plain';
+  /** Set beside the axis, rotated. Omitted, no title is drawn. */
+  yAxisLabel?: string;
 }): FlowItem {
   const c = ctx();
   const plan = chartPlan(c.manifest.chart_style);
@@ -1769,7 +1792,14 @@ export function scenarioChart(opts: {
   return {
     height,
     block: (y) => block(plan.block, {
-      ...(isSparkline ? {} : { title: opts.title, caption: opts.caption }),
+      // A sparkline is a bare series with no room for a scale, so it takes
+      // neither the titles nor the axis.
+      ...(isSparkline ? {} : {
+        title: opts.title,
+        caption: opts.caption,
+        ...(opts.axis ? { axis: opts.axis } : {}),
+        ...(opts.yAxisLabel ? { yAxisLabel: opts.yAxisLabel } : {}),
+      }),
       dataPath: opts.dataPath,
       data: opts.data,
       labelKey: opts.labelKey ?? 'label',

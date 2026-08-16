@@ -160,15 +160,56 @@ function put(target: Record<string, unknown>, key: string, value: unknown): void
 }
 
 /** `3 bed · 2 bath · 1 car`, from whichever parts are present. */
-function configuration(specs: Record<string, unknown>): string | undefined {
+function configuration(spec: (...keys: string[]) => unknown): string | undefined {
   const parts: string[] = [];
-  const bed = num(specs.bedrooms);
-  const bath = num(specs.bathrooms);
-  const car = num(specs.parking);
+  const bed = num(spec('bedrooms'));
+  const bath = num(spec('bathrooms'));
+  const car = num(spec('parking', 'carSpaces', 'car_spaces'));
   if (bed !== undefined) parts.push(`${bed} bed`);
   if (bath !== undefined) parts.push(`${bath} bath`);
   if (car !== undefined) parts.push(`${car} car`);
   return parts.length ? parts.join(' · ') : undefined;
+}
+
+/**
+ * The specification, read from the two columns it actually lives in.
+ *
+ * This mirrors `reports/investment/normalise.pure.ts`'s `toSpecs`, which took
+ * the same fallback when the flowing report was measured against production —
+ * and it had to be mirrored here because the templated path is a different
+ * reader of the same two columns, and it was still reading only one of them.
+ * Counted on the whole table, 2026-08-16:
+ *
+ * | field | `property_specs` | `financial_calculations.propertySpecs` |
+ * | --- | ---: | ---: |
+ * | land size | **0** of 1,187 | 114, as `landSizeSqm` |
+ * | building size | **0** | 114, as `buildSizeSqm` |
+ * | parking | **0** | 34, as `carSpaces` |
+ * | property type | 1,059 | 34, as `propertyType` |
+ * | year built / zoning / council | **0** | absent |
+ *
+ * So `property.landArea` and `property.buildingArea` were unresolvable on every
+ * one of the 1,187 rows through this projection, while the record held both on
+ * 114 of them. Note `buildSizeSqm`: not `building_size_sqm`, not
+ * `buildingSizeSqm` — both of which read naturally and neither of which exists
+ * on any row.
+ *
+ * `property_specs` wins wherever it holds a value: it is the column the intake
+ * writes, and the other is a by-product of the finance run.
+ */
+function specReader(
+  specs: Record<string, unknown>,
+  fallback: Record<string, unknown>,
+): (...keys: string[]) => unknown {
+  return (...keys: string[]): unknown => {
+    for (const key of keys) {
+      if (specs[key] !== undefined && specs[key] !== null) return specs[key];
+    }
+    for (const key of keys) {
+      if (fallback[key] !== undefined && fallback[key] !== null) return fallback[key];
+    }
+    return undefined;
+  };
 }
 
 export interface ProjectedNamespaces {
@@ -271,15 +312,16 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   const assumptions = obj(fin.assumptions);
 
   // ── property ──────────────────────────────────────────────────────────────
+  const spec = specReader(specs, obj(fin.propertySpecs));
   const property: Record<string, unknown> = {};
   put(property, 'address', str(row.property_address));
-  put(property, 'type', str(specs.property_type));
-  put(property, 'yearBuilt', num(specs.year_built) ?? str(specs.year_built));
-  put(property, 'landArea', num(specs.land_size_sqm));
-  put(property, 'buildingArea', num(specs.building_size_sqm));
-  put(property, 'zoning', str(specs.zoning));
-  put(property, 'council', str(specs.council_area));
-  put(property, 'configuration', configuration(specs));
+  put(property, 'type', str(spec('property_type', 'propertyType')));
+  put(property, 'yearBuilt', num(spec('year_built', 'yearBuilt')) ?? str(spec('year_built', 'yearBuilt')));
+  put(property, 'landArea', num(spec('land_size_sqm', 'landSizeSqm')));
+  put(property, 'buildingArea', num(spec('building_size_sqm', 'buildingSizeSqm', 'buildSizeSqm')));
+  put(property, 'zoning', str(spec('zoning')));
+  put(property, 'council', str(spec('council_area', 'councilArea')));
+  put(property, 'configuration', configuration(spec));
 
   // ── financials ────────────────────────────────────────────────────────────
   const annualRates = num(costs.councilRates);

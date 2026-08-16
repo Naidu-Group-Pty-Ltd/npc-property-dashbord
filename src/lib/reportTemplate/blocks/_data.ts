@@ -6,7 +6,54 @@
  * `formatCell` reuses the existing binding pipeline filters via `resolveBindable`
  * when a template-style string is provided, otherwise applies the simple format.
  */
-import { formatIsoDate, resolveBindable, type ResolveContext } from '../bindingResolver';
+import { evalConditional, formatIsoDate, resolveBindable, type ResolveContext } from '../bindingResolver';
+
+/** One authored table row. `when` is the same expression language as `conditional`. */
+export interface TableRow {
+  cells: string[];
+  /** Render this row only when the expression is true. Absent means always. */
+  when?: string;
+}
+
+/**
+ * The rows a table should actually draw, each with the index it was authored at.
+ *
+ * ## Why a row needs a conditional of its own
+ *
+ * A label is a promise that a figure follows it, and until this existed the
+ * only way a master could keep that promise was `oneOf` — mutually exclusive
+ * whole-block variants, one per combination. That is workable for the Client
+ * Details residence (two optional fields, four variants) and impossible for the
+ * Investment Compass property table, where **six** of eight rows are optional:
+ * 64 variants of one table, authored by hand, to say "print what is known".
+ *
+ * So the choice moves down to the row. Measured on the whole
+ * `investment_reports` table (1,187 rows, 2026-08-16), the property page's
+ * fields resolve on: address 1,187, type 1,059, configuration 656, land 114,
+ * building 114, and year built, zoning and council on **nothing at all** — so
+ * the ruled, labelled, permanently empty row was the normal case rather than an
+ * edge one.
+ *
+ * Two properties this relies on, both deliberate:
+ *
+ *  - **The authored index is carried, not the drawn one.** `totalRows` and
+ *    `sectionRows` name rows by where the author put them, and dropping a row
+ *    above one of them would otherwise move the double rule onto its neighbour.
+ *    Striping alternates on the *drawn* position, because a stripe is about the
+ *    page rather than about the schema.
+ *  - **Dropping rows can only make a table shorter.** The authoring helpers
+ *    declare `24 + rows.length * rowHeight` and `flow()` places the next block
+ *    from that declaration, so a dropped row leaves white space and can never
+ *    push a block past the footer. A gap is the safe direction; an empty ruled
+ *    row is not.
+ */
+export function visibleTableRows(rows: TableRow[], ctx: ResolveContext): Array<{ row: TableRow; index: number }> {
+  return rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => (row && typeof row.when === 'string' && row.when.trim() !== ''
+      ? evalConditional(row.when, ctx)
+      : true));
+}
 
 export function resolveDataPath(path: unknown, ctx: ResolveContext): any {
   if (path == null) return undefined;
