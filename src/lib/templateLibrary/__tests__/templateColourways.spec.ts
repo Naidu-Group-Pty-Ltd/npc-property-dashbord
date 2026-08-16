@@ -319,6 +319,7 @@ describe('small-type inks are derived, not approved', () => {
   it('carries every derived ink into the token map the templates bind', () => {
     const colours = colourwayColors(PRIVATE_BANKING_COLOURWAYS[0]);
     expect(colours.mutedInk).toBeTruthy();
+    expect(colours.mutedOnField).toBeTruthy();
     expect(colours.accentInk).toBeTruthy();
     expect(colours.accentOnField).toBeTruthy();
   });
@@ -335,6 +336,32 @@ describe('small-type inks are derived, not approved', () => {
   it.each(all)('%s keeps the cover eyebrow off its own ground', (_label, colourway) => {
     const r = resolveColourway(colourway);
     expect(contrastRatio(r.accentOnField, r.bg)).toBeGreaterThanOrEqual(PRINT_SMALL_TYPE_CONTRAST);
+  });
+
+  /**
+   * The cover's quiet type is not the hairline colour.
+   *
+   * The shell had no muted role for the field, so the standfirst, the locations
+   * line, the KPI labels, the tagline and the cover marker all fell back to
+   * `token:line`. A rule is drawn to be quiet against the page and type has to
+   * be read: as type on the field, `line` is below 4.5:1 in 42 of the 100
+   * colourways and bottoms out at 1.20:1 on the dark grounds, where the field
+   * IS the dark paper and the rule is a hairline drawn to disappear into it.
+   */
+  it.each(all)('%s sets cover muted type above the hairline', (_label, colourway) => {
+    const r = resolveColourway(colourway);
+    expect(contrastRatio(r.mutedOnField, r.bg)).toBeGreaterThanOrEqual(PRINT_SMALL_TYPE_CONTRAST);
+    // Where the hairline actually failed as type, the replacement must be
+    // better. It is not universally brighter and should not be: on a
+    // light-ground colourway the rule is a pale beige that reads at 10.8:1 on
+    // obsidian, which is primary-text contrast for what the shell calls the
+    // MUTED role. Deriving from `muted` makes it quiet on purpose and legible
+    // by construction, instead of loud by accident on half the palettes and
+    // invisible on the other half.
+    if (contrastRatio(r.line, r.bg) < PRINT_SMALL_TYPE_CONTRAST) {
+      expect(contrastRatio(r.mutedOnField, r.bg))
+        .toBeGreaterThan(contrastRatio(r.line, r.bg));
+    }
   });
 
   it('names the monochrome colourways this was found on', () => {

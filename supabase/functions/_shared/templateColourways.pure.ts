@@ -384,6 +384,21 @@ export interface ResolvedColourway {
    */
   mutedInk: string;
   /**
+   * `muted` where it sets on the COVER FIELD rather than on paper.
+   *
+   * The shell had no such role, so the cover's standfirst, locations line, KPI
+   * labels, tagline and marker all fell back to `token:line` — the HAIRLINE
+   * colour — over `token:bg`. A rule colour is chosen to be quiet against the
+   * page; type has to be read. Measured across the 100 approved colourways,
+   * `line` as type on the field is below 4.5:1 in **42**, and the worst sit at
+   * 1.20:1 — the dark-ground colourways, where the field is the dark paper and
+   * the rule is a dark hairline drawn to sit on it invisibly.
+   *
+   * Derived from `muted` against the field, so it stays the muted role rather
+   * than becoming a second body colour.
+   */
+  mutedOnField: string;
+  /**
    * `primary`, at the contrast small type needs — for the eyebrow, which is
    * "the single strongest brand marker on a page" and is set at 5.8–6.8pt.
    *
@@ -465,6 +480,7 @@ export function resolveColourway(colourway: ApprovedColourway): ResolvedColourwa
     // page. A colourway whose muted or accent already clears the floor keeps
     // its approved value byte-for-byte.
     mutedInk: toPrintContrast(colourway.muted, colourway.paper, PRINT_SMALL_TYPE_CONTRAST),
+    mutedOnField: toPrintContrast(colourway.muted, bg, PRINT_SMALL_TYPE_CONTRAST),
     accentInk: toPrintContrast(colourway.accent, colourway.paper, PRINT_SMALL_TYPE_CONTRAST),
     accentOnField: toPrintContrast(colourway.accent, bg, PRINT_SMALL_TYPE_CONTRAST),
     positive: semantic.positive,
@@ -486,6 +502,7 @@ export function colourwayColors(colourway: ApprovedColourway): Record<string, st
     ink: r.ink,
     muted: r.muted,
     mutedInk: r.mutedInk,
+    mutedOnField: r.mutedOnField,
     accentInk: r.accentInk,
     accentOnField: r.accentOnField,
     onPrimary: r.onPrimary,

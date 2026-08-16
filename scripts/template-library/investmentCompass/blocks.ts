@@ -630,7 +630,7 @@ export function cover(opts: CoverOptions): PageDef {
   // On a banded cover the head sits on the field and everything else on paper.
   const headInk = onField || plan.ground === 'band' ? 'token:text' : 'token:ink';
   const bodyInk = onField ? 'token:text' : 'token:ink';
-  const mutedInk = onField ? 'token:line' : 'token:mutedInk';
+  const mutedInk = onField ? 'token:mutedOnField' : 'token:mutedInk';
 
   const factsHeight = c.density === 'spacious' ? 92 : c.density === 'compact' ? 68 : 78;
   const factsTop = PAGE.height - c.margin - inset - factsHeight;
@@ -769,7 +769,7 @@ export function cover(opts: CoverOptions): PageDef {
     bodySize: c.scale.coverEyebrow * 0.92,
     bodyFont: 'token:mono',
     bodyTracking: 0.24,
-    color: plan.ground === 'paper' ? 'token:mutedInk' : 'token:line',
+    color: plan.ground === 'paper' ? 'token:mutedInk' : 'token:mutedOnField',
     x: left, y: headTop + 46, width: width - 140,
   }, 'Tagline'));
 
@@ -778,7 +778,7 @@ export function cover(opts: CoverOptions): PageDef {
     bodySize: c.scale.coverEyebrow * 0.92,
     bodyFont: 'token:mono',
     bodyAlign: 'right',
-    color: plan.ground === 'paper' ? 'token:mutedInk' : 'token:line',
+    color: plan.ground === 'paper' ? 'token:mutedInk' : 'token:mutedOnField',
     x: left + width - 140, y: headTop, width: 140,
   }, 'Cover marker'));
 

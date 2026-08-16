@@ -454,6 +454,8 @@ export interface VoiceColors extends Record<string, string> {
    * substituted, so the approved brand value keeps its own meaning.
    */
   mutedInk: string;
+  /** `muted` where it sets on the cover field rather than on paper. */
+  mutedOnField: string;
   /**
    * `primary` at the contrast small type needs — the eyebrow, which the voices
    * set between 7 and 8pt. The brand file already carries `goldDeep`
@@ -512,6 +514,7 @@ export function voiceColors(voice: Voice, accent: AccentName): VoiceColors {
     ink: BRAND.ink,
     muted: BRAND.stone,
     mutedInk: toPrintContrast(BRAND.stone, voice.surface, PRINT_SMALL_TYPE_CONTRAST),
+    mutedOnField: toPrintContrast(BRAND.stone, voice.field, PRINT_SMALL_TYPE_CONTRAST),
     accentInk: toPrintContrast(a.primary, voice.surface, PRINT_SMALL_TYPE_CONTRAST),
     accentOnField: toPrintContrast(a.primary, voice.field, PRINT_SMALL_TYPE_CONTRAST),
     onPrimary: a.onPrimary,
