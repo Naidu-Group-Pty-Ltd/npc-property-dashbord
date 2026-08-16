@@ -134,6 +134,10 @@ function portalStatusFor(caseRow: any): string {
 // sections for this case from the declared purchasing structure and funding
 // sources, and the portal renders whatever the server returns. Existing
 // version-1 submissions (the four base sections) remain valid unchanged.
+import {
+  applicableQuestionnaireSections,
+} from "../_shared/aml/questionnaireSections.pure.ts";
+
 const QUESTIONNAIRE_VERSION = '2';
 
 const BASE_SECTIONS = ['purchasing_structure', 'personal_details', 'purchase_profile', 'funding'] as const;
@@ -143,31 +147,6 @@ const CONDITIONAL_SECTIONS = ['entity_details', 'related_parties'] as const;
  *  will accept a write for is exactly a section a request may route to. */
 const ALL_SECTIONS: readonly string[] = QUESTIONNAIRE_SECTION_CODES;
 
-const ENTITY_STRUCTURES = new Set(['Company', 'Trust', 'SMSF', 'Partnership']);
-const MULTI_PARTY_STRUCTURES = new Set(['Joint', 'Company', 'Trust', 'SMSF', 'Partnership']);
-
-/**
- * Compute the ordered applicable sections for a case from its questionnaire
- * payloads. Sections already answered but no longer applicable (e.g. the
- * client switches structure from Company to Individual) are retained in
- * storage — never deleted — but drop out of the active checklist.
- */
-function applicableSections(
-  structurePayload: Record<string, unknown> | null,
-  fundingPayload: Record<string, unknown> | null,
-): string[] {
-  const entityType = String(structurePayload?.entity_type ?? '');
-  const fundingSources = Array.isArray(fundingPayload?.sources)
-    ? (fundingPayload!.sources as unknown[]).map((s) => String(s))
-    : [];
-  const giftFunded = fundingSources.includes('Gift');
-
-  const out: string[] = ['purchasing_structure', 'personal_details'];
-  if (ENTITY_STRUCTURES.has(entityType)) out.push('entity_details');
-  if (MULTI_PARTY_STRUCTURES.has(entityType) || giftFunded) out.push('related_parties');
-  out.push('purchase_profile', 'funding');
-  return out;
-}
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
 
@@ -893,10 +872,8 @@ const __corsWrappedHandler = async (req: Request) => {
         const totalReq = reqs.filter((r: any) => r.required).length;
         const completedReq = reqs.filter((r: any) => r.required && ['uploaded','accepted'].includes(r.status)).length;
         const sectionMap = new Map((sections ?? []).map((s: any) => [s.section, s]));
-        const active = applicableSections(
-          sectionMap.get('purchasing_structure')?.payload ?? null,
-          sectionMap.get('funding')?.payload ?? null,
-        );
+        const active = applicableQuestionnaireSections(
+          (name) => sectionMap.get(name)?.payload ?? null);
         const portalStatus = portalStatusFor(c);
         const presentation = PORTAL_STATUS_PRESENTATION[portalStatus] ?? { label: 'In progress', tone: 'progress' as const };
         // Server-owned consent state — the portal stepper mirrors this rather
@@ -2743,10 +2720,8 @@ const __corsWrappedHandler = async (req: Request) => {
         // Phase 5: every currently-applicable section must be submitted before
         // the client can finalise (the checklist itself is conditional).
         const bySection = new Map((sections ?? []).map((s: any) => [s.section, s]));
-        const active = applicableSections(
-          bySection.get('purchasing_structure')?.payload ?? null,
-          bySection.get('funding')?.payload ?? null,
-        );
+        const active = applicableQuestionnaireSections(
+          (name) => bySection.get(name)?.payload ?? null);
         const missingSections = active.filter((s) => {
           const response = bySection.get(s);
           return !['submitted', 'accepted', 'complete'].includes(response?.status ?? '') ||

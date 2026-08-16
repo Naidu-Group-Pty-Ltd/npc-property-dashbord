@@ -205,6 +205,16 @@ export interface EnrolmentInput {
   subjectDisplayName: string | null;
   /** `personal_details` payload from the latest submission, if any. */
   personalDetails: Record<string, unknown> | null;
+  /**
+   * Previous names and alternative spellings the client disclosed in the
+   * Australian Sanctions & Compliance Screening section.
+   *
+   * This is the whole point of asking them: an undisclosed former name is a
+   * real screening gap, and a list is only as good as the names put to it.
+   * They enrich the subject's `aliases`, which the matcher indexes — they do
+   * not change WHETHER the subject is screened.
+   */
+  declaredAliases?: string[] | null;
   /** Resolved reconciliation items that require screening. */
   reconciled: Array<{
     id: string; declaredName: string; declaredRole: string;
@@ -262,9 +272,12 @@ export function deriveMissingScreeningSubjects(input: EnrolmentInput): Enrolment
       partyId: null,
       reconciliationItemId: null,
       screenedName: subjectName,
-      aliases: Array.isArray(pd.aliases)
-        ? (pd.aliases as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 20)
-        : [],
+      aliases: [...new Set([
+        ...(Array.isArray(pd.aliases)
+          ? (pd.aliases as unknown[]).filter((x): x is string => typeof x === "string")
+          : []),
+        ...(input.declaredAliases ?? []).filter((x) => typeof x === "string" && x.trim()),
+      ].map((a) => a.trim()).filter(Boolean))].slice(0, 25),
       dateOfBirth: isoDate(pd.dob) ?? isoDate(pd.date_of_birth),
       country: str(pd.citizenship) ?? str(pd.nationality) ?? str(pd.country),
     });
