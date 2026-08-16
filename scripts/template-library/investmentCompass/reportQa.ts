@@ -57,6 +57,7 @@ import {
   ifItFits,
   kpis,
   markdown,
+  remainingAfter,
   MARKDOWN_LINES_PER_PAGE,
   oneOf,
   page,
@@ -214,13 +215,17 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // than derived: `sectionHeading` sizes itself from the family's own scale, and
   // a declared height that is too small does not overflow the page — it prints
   // over the next block, which `flow()`'s arithmetic cannot see.
-  const firstBodyHeight = c.contentBottom - contentTop() - c.spacing.headingGap - 104;
-  const contBodyHeight = c.contentBottom - contentTop() - 12;
+  // Derived from the heading this page draws. See `remainingAfter`: the
+  // `- 104` these lines used to carry stood in for a height this module
+  // computes exactly, and it was short on five families elsewhere.
+  const answerHeading = sectionHeading({ eyebrow: 'The reply', heading: 'The answer' });
+  const firstBodyHeight = remainingAfter([answerHeading], contentTop());
+  const contBodyHeight = remainingAfter([], contentTop());
 
   pages.push({
     ...withFurniture(page('The answer', [
       ...flow([
-        sectionHeading({ eyebrow: 'The reply', heading: 'The answer' }),
+        answerHeading,
         markdown('{{qa.answer}}', 0, firstBodyHeight, MARKDOWN_LINES_PER_PAGE),
       ], contentTop()),
     ]), FOOTER),

@@ -234,6 +234,28 @@ function block(type: string, props: Record<string, unknown>, name?: string): Blo
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Stack items down the page from `startY`, honouring the spacing scale. */
+/**
+ * The height left on the page for one more item, after `items` have flowed.
+ *
+ * Derived from the same arithmetic `flow` uses — `item.height` plus its gap —
+ * rather than guessed. Three composers sized a paged Markdown body as
+ * `contentBottom - contentTop() - headingGap - 104`, where `104` stood in for
+ * the height of a `sectionHeading` that this module computes exactly and that
+ * varies with the family's header style, its heading length and whether it
+ * carries a standfirst. On the families where the real heading was taller the
+ * body ran past the footer — 48 of the seed builder's 68 refusals were one
+ * layer-opening page on eight layers of five Market Intelligence masters.
+ *
+ * A declared height that is too large does not overflow visibly: it lays one
+ * block over the next. So this is derived, never padded.
+ */
+export function remainingAfter(items: FlowItem[], startY: number): number {
+  const c = ctx();
+  let y = startY;
+  for (const item of items) y += item.height + (item.gap ?? c.spacing.gap);
+  return c.contentBottom - y;
+}
+
 export function flow(items: FlowItem[], startY?: number): BlockDef[] {
   const c = ctx();
   let y = startY ?? c.margin;

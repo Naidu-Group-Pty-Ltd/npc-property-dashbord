@@ -289,7 +289,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // projection, so a five-year facility amortised over twenty says so.
   pages.push({
     ...withFurniture(page('The terms', [
-      ...flow([
+      ...flow(ifItFits([
         sectionHeading({ eyebrow: 'Against policy', heading: 'Where the transaction sits' }),
         (() => {
           const ratioTable = (n: number) => table({
@@ -307,6 +307,12 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
             { when: 'capacity && capacity.ratioRows && capacity.ratioRows.length > 5', item: ratioTable(6) },
           );
         })(),
+      ], [
+        // The eight-term list is placed only where the variant has room. The
+        // policy table above it is the page's subject; both together ran 19 to
+        // 78pt past the footer on four masters, the spacious `-03` variants
+        // worst, and a declared height that overruns prints over the block
+        // below rather than clipping.
         definitions('Assessment terms', [
           { term: 'Assessment rate', definition: '{{capacity.headline.assessmentRate | percent}}' },
           { term: 'Rate basis', definition: '{{capacity.serviceability.rateBasis}}' },
@@ -317,7 +323,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           { term: 'Asset class', definition: '{{capacity.property.assetClass}}' },
           { term: 'GST treatment', definition: '{{capacity.property.gstTreatment}}' },
         ], LENGTHS.rateBasis),
-      ], contentTop()),
+      ], contentTop()), contentTop()),
     ]), FOOTER),
     conditional: 'capacity && capacity.ratioRows',
   });
@@ -716,9 +722,24 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     conditional: 'capacity && capacity.analysis && capacity.analysis.findings',
   });
 
+  /** A run of `count` scenario rows, starting at `from`. */
+  const scenarioList = (from: number, count: number) => definitions(
+    'Scenarios',
+    Array.from({ length: count }, (_, k) => ({
+      term: `{{capacity.analysis.scenarios.${from + k}.name}}`
+        + ` · {{capacity.analysis.scenarios.${from + k}.executionRisk}} risk`,
+      // `detail` is the reasoning followed by the expected effect, composed in
+      // the projection — the page used to draw only the effect, which is a
+      // conclusion with its argument cut. 345 to 489 characters across the
+      // stored scenarios.
+      definition: `{{capacity.analysis.scenarios.${from + k}.detail}}`,
+    })),
+    LENGTHS.scenarioDetail,
+  );
+
   pages.push({
     ...withFurniture(page('What could change it', [
-      ...flow([
+      ...flow(ifItFits([
         sectionHeading({ eyebrow: 'Interpretation', heading: 'Scenarios' }),
         /*
          * A definition list, not a table.
@@ -732,21 +753,18 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
          * narrow as its narrowest useful column. A definition list gives the
          * sentence the full measure, which is what prose needs, and sizes its
          * rows from `chars` rather than assuming one line.
+         *
+         * The list is split across the required and optional halves rather than
+         * drawn whole: at 345 to 489 characters a scenario is most of a page on
+         * a spacious variant, and all three ran 25pt past the footer on Atelier
+         * Press's third. `ifItFits` places the third scenario where there is
+         * room for it, so the variants that can carry three do, and the one
+         * that cannot carries two rather than printing the third over the foot.
          */
-        definitions(
-          'Scenarios',
-          Array.from({ length: ROWS.scenarios }, (_, i) => ({
-            term: `{{capacity.analysis.scenarios.${i}.name}}`
-              + ` · {{capacity.analysis.scenarios.${i}.executionRisk}} risk`,
-            // `detail` is the reasoning followed by the expected effect,
-            // composed in the projection — the page used to draw only the
-            // effect, which is a conclusion with its argument cut. 345 to 489
-            // characters across the stored scenarios.
-            definition: `{{capacity.analysis.scenarios.${i}.detail}}`,
-          })),
-          LENGTHS.scenarioDetail,
-        ),
-      ], contentTop()),
+        scenarioList(0, ROWS.scenarios - 1),
+      ], [
+        scenarioList(ROWS.scenarios - 1, 1),
+      ], contentTop()), contentTop()),
     ]), FOOTER),
     conditional: 'capacity && capacity.analysis && capacity.analysis.scenarios',
   });
@@ -786,7 +804,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // no page.
   pages.push({
     ...withFurniture(page('How it was calculated', [
-      ...flow([
+      ...flow(ifItFits([
         sectionHeading({
           eyebrow: 'The method',
           heading: 'How the engine reached this',
@@ -808,12 +826,16 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           ...callout('Not every step is shown', '{{capacity.methodOmitted}}'),
           conditional: 'capacity && capacity.methodOmitted',
         },
+      ], [
+        // Provenance, placed where the method table leaves room. The table is
+        // the page's subject and its height comes from the record; on Atelier
+        // Press's third variant the two together ran 13pt past the footer.
         definitions('What produced these figures', [
           { term: 'Engine version', definition: '{{capacity.meta.engineVersion}}' },
           { term: 'Policy version', definition: '{{capacity.meta.policyVersion}}' },
           { term: 'Lender profile', definition: '{{capacity.meta.lenderProfile}}' },
         ]),
-      ], contentTop()),
+      ], contentTop()), contentTop()),
     ]), FOOTER),
     conditional: 'capacity && capacity.method',
   });

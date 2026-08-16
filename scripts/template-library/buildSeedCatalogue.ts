@@ -166,10 +166,21 @@ const REPO = resolve(__dirname, '../..');
  *
  * Run the same one-query check before editing this file: if
  * `20260815170000` is already recorded, the next change needs a v8.
+ *
+ * ## v8 — the report's own structure
+ *
+ * It was recorded, so this is v8. The Investment Compass masters now carry the
+ * document the model wrote — `report_content`, chunked into conditional pages
+ * by `packMarkdownPages` — because nothing did. `{{sections.*}}` was bound by 0
+ * of the 13 active `report_templates` rows and the projection published nothing
+ * from that column, so a Compass render was the calculator's scorecard on a
+ * fixed page sequence with the report itself absent. Measured on one address at
+ * all five tiers, the model writes 9 (snapshot) to 107 (compass) headings every
+ * time. See `docs/reports/INVESTMENT.md` and PR #2162.
  */
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20260815170000_seed_template_library_v7_voice_disclaimer.sql',
+  'supabase/migrations/20260816140000_seed_template_library_v8_investment_narrative.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

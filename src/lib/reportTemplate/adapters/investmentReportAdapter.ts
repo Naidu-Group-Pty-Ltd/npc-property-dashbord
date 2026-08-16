@@ -29,6 +29,24 @@ function flatten(obj: any): Record<string, any> {
  * Investment render. Measured in production 2026-08-16; see `secureSource.ts`
  * for the rest of the same class.
  */
+/**
+ * The `report_category` a guide is filed under, for this report.
+ *
+ * Not the format. The four active guides carry `investment` or `suburb`, and
+ * this used to be passed the report's *format* — `investment_compass`, or
+ * `address` once `getReportType` had fallen through to `report_scope`. Neither
+ * has ever been a category, so the (tier, category) lookup missed on every one
+ * of the 1,187 stored reports.
+ *
+ * `suburb` is a scope AND a category, which is the whole reason the confusion
+ * was possible: `Suburb Compass Structure v1` is `(compass, suburb)`. So a
+ * suburb-scoped report asks for `suburb` and every other report asks for
+ * `investment`.
+ */
+function structureCategoryFor(row: any): string {
+  return String(row?.report_scope ?? '').toLowerCase() === 'suburb' ? 'suburb' : 'investment';
+}
+
 async function loadStructureHeadings(tier: string | null, category: string | null): Promise<string[]> {
   try {
     const { data, error } = await getAuthenticatedSupabaseClient()
@@ -59,12 +77,42 @@ async function loadInvestmentReport(reportId: string): Promise<any | null> {
   return ((resp as any)?.report as any) ?? null;
 }
 
+/**
+ * Which format a stored investment report is.
+ *
+ * ## `report_type` is not a column on this table
+ *
+ * `investment_reports` has `report_tier`, `report_variant` and `report_scope`;
+ * there has never been a `report_type`. So `row.report_type` was `undefined`
+ * for every row ever read, and the expression fell through to `report_scope` —
+ * which is `address` or `suburb`, a *geography*, not a format.
+ *
+ * Measured 2026-08-16 over the 1,187 stored reports:
+ *
+ * | tier | rows | resolved to | reaches a template? |
+ * | --- | ---: | --- | --- |
+ * | `compass` | 1,124 | `investment_compass` | yes |
+ * | `snapshot` | 24 | **`address`** | no |
+ * | `briefing` | 21 | **`address`** | no |
+ * | `strategic` | 9 | **`address`** | no |
+ * | `financial` | 9 | **`address`** | no |
+ *
+ * `address` matches no adapter, no entry in `REPORT_TYPE_ALIASES` and no row in
+ * `report_templates`, so `routeReportThroughTemplate` refused with
+ * `no_active_template` and fell back to the legacy generator every time. The
+ * render ledger agrees: of every job it holds, five are `investment_compass`
+ * and **none** is any other tier.
+ *
+ * All five tiers are one format. `REPORT_TYPE_ALIASES` already folds
+ * `investment_compass` onto `investment`, so naming the compass tier separately
+ * costs nothing and keeps the routing context readable — but the scope must
+ * never be mistaken for a format again.
+ */
 function getReportType(row: any): string {
   const tier = String(row?.report_tier ?? '').toLowerCase();
   const variant = String(row?.report_variant ?? '').toLowerCase();
   if (tier === 'compass' || variant === 'compass') return 'investment_compass';
-
-  return String(row?.report_type ?? row?.report_scope ?? 'investment').toLowerCase();
+  return 'investment';
 }
 
 export const investmentReportAdapter: ReportTemplateAdapter = {
@@ -128,7 +176,7 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
     const reportType = getReportType(row);
     const variant = (row.report_variant ?? null) as string | null;
     const tier = (row.report_tier ?? null) as string | null;
-    const structureHeadings = await loadStructureHeadings(tier, reportType);
+    const structureHeadings = await loadStructureHeadings(tier, structureCategoryFor(row));
 
     const data: Record<string, any> = {
       report: {
