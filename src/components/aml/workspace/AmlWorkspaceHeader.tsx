@@ -19,7 +19,7 @@
  * drawing one. `deriveAmlMacroPhase` is untouched and still drives the
  * register's Phase column.
  */
-import { ArrowLeft, User } from "lucide-react";
+import { ArrowLeft, RefreshCw, User } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -47,7 +47,16 @@ export function AmlWorkspaceHeader({
   caseRow,
   matterLabel,
   className,
-}: AmlWorkspaceHeaderProps) {
+  live,
+}: AmlWorkspaceHeaderProps & {
+  /**
+   * Live-refresh state. The case refetches itself, so the header says when it
+   * last did — a screen that updates silently is indistinguishable from one
+   * that has frozen, and this page's whole problem was staleness nobody could
+   * see.
+   */
+  live?: { lastRefreshedAt: Date | null; refreshing: boolean; refreshNow: () => void };
+}) {
   const gate = serviceGateStatus(caseRow);
   const subjectType = SUBJECT_TYPE_LABELS[caseRow.subject_type] ?? caseRow.subject_type;
 
@@ -81,6 +90,28 @@ export function AmlWorkspaceHeader({
             <span>{subjectType}</span>
             <span aria-hidden>·</span>
             <span>Updated {displayRelative(caseRow.updated_at)}</span>
+            {live && (
+              <>
+                <span aria-hidden>·</span>
+                <button
+                  type="button"
+                  onClick={live.refreshNow}
+                  disabled={live.refreshing}
+                  className="inline-flex items-center gap-1 underline-offset-2 hover:underline disabled:opacity-60"
+                >
+                  <RefreshCw
+                    aria-hidden
+                    className={cn("h-3 w-3", live.refreshing
+                      && "animate-spin motion-reduce:animate-none")}
+                  />
+                  {live.refreshing
+                    ? "Refreshing"
+                    : live.lastRefreshedAt
+                      ? `Live · ${displayRelative(live.lastRefreshedAt.toISOString())}`
+                      : "Live"}
+                </button>
+              </>
+            )}
             {/* Ownership of the work, without leaking internal identifiers. */}
             <span aria-hidden>·</span>
             <span>{caseRow.assigned_analyst_id ? "Analyst assigned" : "No analyst assigned"}</span>

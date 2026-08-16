@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { buildPartnerNotification, partnerEventDeliveryDecision } from '../_shared/aml/partnerEvents.ts';
 import { processVerificationEvent } from './verificationConsumer.ts';
 import { processScreeningEvent } from './screeningConsumer.ts';
+import { verifyInternal } from '../_shared/auth_v2.ts';
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
 const workerId=()=>`cross-portal-${crypto.randomUUID()}`;
 
@@ -145,9 +146,39 @@ async function deliverLegalMessage(db:any,event:any) {
 Deno.serve(async req=>{
   if(req.method!=='POST')return json({error:'method_not_allowed'},405);
   if(Deno.env.get('CROSS_PORTAL_OUTBOX_V1')==='false')return json({error:'outbox_worker_disabled'},503);
+  /*
+   * Two ways in, and the existing one is untouched.
+   *
+   * `x-worker-secret` is how this worker has always been invoked, and every
+   * current caller keeps working exactly as before. The problem it left is
+   * that pg_cron cannot produce that header — `cron_invoke_signed_function`
+   * sends the platform's signed `X-Internal-*` envelope — so there was no way
+   * to SCHEDULE this worker, and there never has been a cron entry for it.
+   *
+   * That is not a theoretical gap. `aml.screening.requested` has been emitted
+   * by a trigger and consumed by `screeningConsumer.ts` for months with
+   * nothing driving the loop: measured in production, a queued screening
+   * request sat with attempts = 0, unclaimed, for ever. A customer watching
+   * "Screening is running" was watching nothing run.
+   *
+   * So the signed envelope is accepted as a second credential, verified by
+   * the same `verifyInternal` the rest of the platform uses, restricted to
+   * pg_cron as caller. It is checked FIRST only when the header is present,
+   * so an unsigned request still falls through to the secret and gets the
+   * identical 401 it always did.
+   */
+  const rawBody=await req.text();
   const secret=Deno.env.get('CROSS_PORTAL_WORKER_SECRET');
-  if(!secret||req.headers.get('x-worker-secret')!==secret)return json({error:'unauthorised'},401);
-  const body=await req.json().catch(()=>({} as Record<string,unknown>));
+  const presentedSecret=req.headers.get('x-worker-secret');
+  let authorised=Boolean(secret)&&presentedSecret===secret;
+  if(!authorised&&req.headers.get('x-internal-signature')){
+    const db0=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const ctx=await verifyInternal(db0,req,rawBody,{allowedCallers:['pg_cron']});
+    authorised=ctx.ok===true&&ctx.authType==='internal_service';
+  }
+  if(!authorised)return json({error:'unauthorised'},401);
+  let body:Record<string,unknown>={};
+  try{body=rawBody?JSON.parse(rawBody):{};}catch{body={};}
   const db=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   if(body.verify_audit===true){
     const {data:matters}=await db.from('legal_matters').select('id').order('updated_at',{ascending:false}).limit(Math.min(Number(body.audit_limit)||100,500));

@@ -45,6 +45,7 @@ import {
   deriveScreeningNextAction,
   PRIMARY_SUBJECT_PARTY_TYPE,
   SCREENING_POLICY_VERSION,
+  SCREENING_STALL_SECONDS,
 } from "../_shared/aml/screeningPolicy.pure.ts";
 import {
   isPartyScreeningMissing,
@@ -1932,6 +1933,23 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             .order('started_at', { ascending: false }).limit(50),
         ]);
 
+        /*
+         * How long the oldest unprocessed screening request has been waiting.
+         * `queued` only means "running" if something is consuming the queue,
+         * and for months nothing was — a request sat with attempts = 0 while
+         * the workspace reported the engine was working.
+         */
+        const { data: pending } = await admin.from('integration_outbox')
+          .select('occurred_at')
+          .eq('event_type', 'aml.screening.requested')
+          .is('processed_at', null)
+          .order('occurred_at', { ascending: true }).limit(1);
+        const oldestQueued = Array.isArray(pending) ? pending[0] ?? null : null;
+        const oldestQueuedSeconds = oldestQueued?.occurred_at
+          ? Math.max(0, Math.floor(
+            (Date.now() - new Date(oldestQueued.occurred_at).getTime()) / 1000))
+          : null;
+
         const sections = (((submission?.snapshot ?? {}) as any).sections ?? []) as any[];
         const payload = (name: string): Record<string, unknown> =>
           (sections.find((x: any) => x?.section === name)?.payload ?? {}) as Record<string, unknown>;
@@ -1993,6 +2011,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           anyConfirmedMatch: required.some((s: any) => s.state === 'confirmed_match'),
           anyMissingPep: required.some((s: any) => !currentDetermination(String(s.id))),
           pepRoute: policy.pepRoute,
+          oldestQueuedSeconds,
         });
 
         /*
@@ -2120,6 +2139,76 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           `Party screening queued: ${subject.screened_name}`,
           { party_screening_subject_id: subjectId }, userId, userEmail);
         return jsonResponse({ subject: updated });
+      }
+
+      /**
+       * Release a screening request that nothing ever picked up.
+       *
+       * `queue_party_screening` refuses a subject already `queued` — correctly,
+       * because a second provider attempt costs money and can race the first.
+       * That refusal assumed the queue was being consumed. It was not: the
+       * outbox worker had no cron entry, so a request sat with attempts = 0
+       * for ever and the only way out was a database edit.
+       *
+       * This is bounded and evidence-driven. It refuses unless the subject is
+       * genuinely stuck — queued, with no screening check, and with a queue
+       * entry older than the stall window — so it can never cancel work that
+       * is actually in flight. It retires the dead outbox rows rather than
+       * leaving them to be claimed later and race the retry, and it produces
+       * no screening outcome.
+       */
+      case 'retry_stalled_screening': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const subjectId = String(body.subject_id ?? '');
+        if (!subjectId) return jsonResponse({ error: 'subject_id required' }, 400);
+        const { data: subject } = await admin.schema('aml').from('party_screening_subjects')
+          .select('*').eq('id', subjectId).maybeSingle();
+        if (!subject) return jsonResponse({ error: 'Subject not found' }, 404);
+        if (!['queued', 'processing'].includes(subject.state)) {
+          return jsonResponse({ skipped: true, code: 'not_queued', subject });
+        }
+        if (subject.screening_check_id) {
+          // A check exists, so the provider was reached. That is in flight or
+          // finished, and releasing it would risk a duplicate attempt.
+          return jsonResponse({ skipped: true, code: 'check_in_flight', subject });
+        }
+
+        const { data: pending } = await admin.from('integration_outbox')
+          .select('id, occurred_at')
+          .eq('event_type', 'aml.screening.requested')
+          .is('processed_at', null)
+          .order('occurred_at', { ascending: true });
+        const stale = (pending ?? []).filter((e: any) =>
+          Date.now() - new Date(e.occurred_at).getTime() >= SCREENING_STALL_SECONDS * 1000);
+        if (stale.length === 0) {
+          return jsonResponse({ skipped: true, code: 'not_stalled', subject });
+        }
+
+        // Retire the dead entries first, so the fresh request cannot race one
+        // of them being claimed late.
+        await admin.from('integration_outbox')
+          .update({
+            processed_at: new Date().toISOString(),
+            locked_at: null, locked_by: null,
+            last_error: 'superseded_by_operator_retry',
+          })
+          .in('id', stale.map((e: any) => e.id));
+
+        const { data: released, error: releaseError } = await admin.schema('aml')
+          .from('party_screening_subjects')
+          .update({ state: 'not_started', error_category: null, updated_at: new Date().toISOString() })
+          .eq('id', subjectId).select('*').single();
+        if (releaseError) throw releaseError;
+
+        await appendEvent(admin, subject.case_id, 'system',
+          `Released a stalled screening request: ${subject.screened_name}`,
+          {
+            reason: 'screening_stall_released',
+            party_screening_subject_id: subjectId,
+            retired_outbox_events: stale.length,
+          },
+          userId, userEmail);
+        return jsonResponse({ subject: released, retired: stale.length });
       }
 
       case 'adjudicate_party_screening': {
