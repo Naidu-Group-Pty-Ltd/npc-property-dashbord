@@ -79,6 +79,7 @@ import {
   page,
   prose,
   recommendation,
+  remainingAfter,
   rule,
   sectionHeading,
   strengthsWatch,
@@ -783,6 +784,10 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     });
   }
 
+  /** The four avenues every stored report carries, and `ifItFits`'s own margin. */
+  const GROWTH_AVENUES = 4;
+  const GROWTH_SLACK = 36;
+
   // ── 07e Growth opportunities ─────────────────────────────────────────────
   //
   // Four avenues on every stored report — the next purchase, releasing equity,
@@ -806,13 +811,14 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         ], LENGTHS.growthItem),
       },
     );
-    const growthPage = (name: string, part: string, eyebrow: string, first: number) => ({
+    const growthPage = (
+      name: string, part: string, eyebrow: string, first: number, count: number,
+    ) => ({
       ...withFurniture(page(name, [
         ...furniture(DOCUMENT_LABEL, nextPart(part), name),
         ...flow(ifItFits([
           sectionHeading({ eyebrow, heading: name, numeral: nextNumeral() }),
-          avenue(first),
-          avenue(first + 1),
+          ...Array.from({ length: count }, (_, k) => avenue(first + k)),
         ], first === 0 ? [] : [
           {
             ...callout(
@@ -831,11 +837,56 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ]), FOOTER),
       conditional: 'portfolio && portfolio.growth && portfolio.growth.groups',
     });
-    pages.push(growthPage('Growth opportunities', 'Growth', 'The avenues', 0));
-    pages.push({
-      ...growthPage('Growth opportunities, continued', 'Growth', 'The avenues, continued', 2),
-      conditional: 'portfolio && portfolio.growth && portfolio.growth.groups && portfolio.growth.groups.length > 2',
-    });
+    /*
+     * Two avenues a page where two fit, one where they do not.
+     *
+     * Both were required, and on the spacious `-03` variants the pair ran 39 to
+     * 94pt past the footer — the seed builder refused to write while any master
+     * did. Dropping the second avenue was the cheap fix and the wrong one: it
+     * loses two of the four avenues on exactly the variants that have the most
+     * room to read them.
+     *
+     * "A spacious template does not shrink its type to fit more on a page, it
+     * uses another page" is this catalogue's own rule, so a variant that cannot
+     * carry two avenues carries one and spends four pages. The decision is made
+     * here from `remainingAfter` — the same arithmetic `flow` and `ifItFits`
+     * use — rather than from the density flag, because it is the measured
+     * height that decides, and `SLACK` is the margin `ifItFits` requires of any
+     * block it places.
+     */
+    const fitsTwo = remainingAfter([
+      sectionHeading({ eyebrow: 'The avenues', heading: 'Growth opportunities' }),
+      avenue(0),
+      avenue(1),
+    ], contentTop()) >= GROWTH_SLACK;
+    const perPage = fitsTwo ? 2 : 1;
+
+    for (let start = 0; start < GROWTH_AVENUES; start += perPage) {
+      const first = start === 0;
+      // The two-avenue layout keeps the names it always had, so a variant that
+      // still fits two prints an identical document.
+      const contIndex = Math.floor(start / perPage);
+      const name = first
+        ? 'Growth opportunities'
+        : contIndex === 1
+          ? 'Growth opportunities, continued'
+          : `Growth opportunities, continued (${contIndex})`;
+      pages.push({
+        ...growthPage(
+          name,
+          'Growth',
+          first ? 'The avenues' : 'The avenues, continued',
+          start,
+          perPage,
+        ),
+        // The first page is conditional on there being any avenue; each later
+        // one on the group it opens with existing.
+        ...(first ? {} : {
+          conditional: 'portfolio && portfolio.growth && portfolio.growth.groups'
+            + ` && portfolio.growth.groups.length > ${start}`,
+        }),
+      });
+    }
   }
 
   // ── 08 Priority actions ──────────────────────────────────────────────────

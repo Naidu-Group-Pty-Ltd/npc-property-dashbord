@@ -523,7 +523,14 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // ── 08 Growth and yield ──────────────────────────────────────────────────
   pages.push(analysisPage(withFurniture(page('Growth and yield', [
     ...furniture(DOCUMENT_LABEL, nextPart('Growth'), 'Growth and yield'),
-    ...flow([
+    // Capital growth is required; yield is placed only where the variant has
+    // room for it. Both blocks at `LENGTHS.note` ran past the footer on eight
+    // masters — 5pt on Private Banking's fourth variant and 97pt on Luxury
+    // Editorial's third, which is a whole block's worth. The `-03` variants are
+    // the spacious ones: they set the same material larger, so they are the
+    // first to run out of page, and the seed builder refused to write while any
+    // of them did.
+    ...flow(ifItFits([
       sectionHeading({
         eyebrow: 'In the analysis’s words',
         heading: 'Growth and yield',
@@ -536,6 +543,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         ], LENGTHS.note),
         conditional: 'cashFlowComparison && cashFlowComparison.analysis && cashFlowComparison.analysis.capitalGrowth',
       },
+    ], [
       {
         ...definitions('Yield', [
           { term: 'Best gross', definition: '{{cashFlowComparison.analysis.yields.bestGross.reason}}' },
@@ -544,7 +552,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         ], LENGTHS.note),
         conditional: 'cashFlowComparison && cashFlowComparison.analysis && cashFlowComparison.analysis.yields',
       },
-    ], contentTop()),
+    ], contentTop()), contentTop()),
   ]), FOOTER), 'capitalGrowth'));
 
   // ── 09 Each property in turn ─────────────────────────────────────────────
