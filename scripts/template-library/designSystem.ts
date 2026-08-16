@@ -58,6 +58,11 @@ import { googleFontsCssUrl } from '../../src/lib/reportTemplate/fontCatalog';
  * Each entry names the `tokens/colors.css` custom property it is derived from,
  * so the two can be diffed by eye when either moves.
  */
+import {
+  PRINT_SMALL_TYPE_CONTRAST,
+  toPrintContrast,
+} from '../../supabase/functions/_shared/templateColourways.pure';
+
 export const BRAND = {
   /** `--foreground` 34 20% 16% — body text. Warm graphite, never pure black. */
   ink: '#312A21',
@@ -442,6 +447,22 @@ export interface VoiceColors extends Record<string, string> {
   ink: string;
   /** Labels, captions, footers. */
   muted: string;
+  /**
+   * `muted` at the contrast small type needs — footers, page numbers, KPI
+   * labels, captions. REPORT_RULES §2 puts the floor at 7:1 below 14pt, and
+   * `BRAND.stone` (#6E6253) on ivory measures 5.55:1. Derived rather than
+   * substituted, so the approved brand value keeps its own meaning.
+   */
+  mutedInk: string;
+  /**
+   * `primary` at the contrast small type needs — the eyebrow, which the voices
+   * set between 7 and 8pt. The brand file already carries `goldDeep`
+   * "for type that must pass contrast"; this is the same idea generalised to
+   * whichever accent the template is built in.
+   */
+  accentInk: string;
+  /** `primary` where it sets on the cover field rather than on paper. */
+  accentOnField: string;
   /** Type on an accent fill. */
   onPrimary: string;
   /** Hairlines. Added by this design system; blocks reference `token:line`. */
@@ -490,6 +511,9 @@ export function voiceColors(voice: Voice, accent: AccentName): VoiceColors {
     text: BRAND.ivory,
     ink: BRAND.ink,
     muted: BRAND.stone,
+    mutedInk: toPrintContrast(BRAND.stone, voice.surface, PRINT_SMALL_TYPE_CONTRAST),
+    accentInk: toPrintContrast(a.primary, voice.surface, PRINT_SMALL_TYPE_CONTRAST),
+    accentOnField: toPrintContrast(a.primary, voice.field, PRINT_SMALL_TYPE_CONTRAST),
     onPrimary: a.onPrimary,
     line: voice.line,
     positive: BRAND.evergreen,
