@@ -556,3 +556,43 @@ is not. And it is not the pinned engine: read
 [`CONTAINER_RELEASE.md`](./CONTAINER_RELEASE.md) before drawing a conclusion
 about a version-specific behaviour. What it is reliable for is the class of
 defect this section is full of — a box that does not hold what is put in it.
+
+### The scorecard printed a score the engine never gave
+
+`breakdown.<dim>` carries `excluded: true`, `hasData: false` and `weight: 0`
+when the engine had nothing to score with — and leaves a **placeholder `score`
+of 50 in the field**. The table bound `score` and `weight` straight through:
+
+```
+Growth   50   0%
+Demand   50   0%
+```
+
+A figure the assessment never produced, beside a weight saying it counted for
+nothing. 9 of the 988 scored reports are in that state (growth and demand,
+always together), and on every one the placeholder is exactly 50 and the
+weight exactly 0.
+
+`toScore` in the flowing normaliser already refuses to plot it. The projection
+now refuses on the templated path too: the numeric `score`/`weight` are
+withheld so nothing can plot them, and `scoreLabel`/`weightLabel` are composed
+— "Not assessed" and "—". **The row stays**: four rows where the reader has
+been told there are five reads as a table cut for space.
+
+Worth recording why it survived a year of renders: **Yield genuinely scores 50
+on many reports**, so a 50 in that column is unremarkable. The test asserts the
+two withheld rows say so rather than asserting `50` never appears — the second
+form passes on a report where nothing is withheld and fails on one where a
+real dimension scores 50.
+
+The standfirst above the table also stopped saying an unscored dimension "is
+scored at the midpoint", which described the placeholder rather than the
+report, and would now contradict the page beneath it.
+
+### Three blocks, one heading
+
+The reasoning under the scorecard is one block per dimension that carries
+prose, and each was titled "Why" — so a report with all three printed the word
+three times down the page with a single row under each. The first to render
+carries the heading; the rest are headless continuations, expressed as `oneOf`
+variants so the page reserves one position rather than two.
