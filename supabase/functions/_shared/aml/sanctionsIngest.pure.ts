@@ -345,3 +345,132 @@ export function decideProviderPromotion(input: {
       + "refuses to run, so the list alone could not have completed a single check.",
   };
 }
+
+/* ──────────────── How current the DATA is, not the upload ──────────────── */
+
+/**
+ * The newest listing in the file, and whether that makes it a current list.
+ *
+ * ── The near-miss this exists to stop ─────────────────────────────────
+ * Every freshness control in this platform measures WHEN WE SYNCED.
+ * `sanctions_list_syncs.completed_at`, the 72-hour provider gate, the
+ * 7-day banner on the health card — all of them read the timestamp of the
+ * load, and none of them reads the data.
+ *
+ * So a stale file uploaded today is indistinguishable from a current one.
+ * Worse than indistinguishable: it passes every check, because the load is
+ * genuinely recent. Measured while trying to load this list for real,
+ * DFAT's own canonical URL
+ *
+ *     /sites/default/files/regulation8_consolidated.xlsx
+ *
+ * answers 404 with `location: …/regulation8_consolidated_2.xls` — its own
+ * Drupal redirect — and that file's newest Control Date is **2022-01-07**.
+ * 7,840 rows, structurally perfect, and four and a half years out of date.
+ *
+ * Loading it would have written a `succeeded` sync stamped today, made
+ * `dfatLoaded` true, promoted the provider to live, turned every gate green,
+ * and screened every customer against a register that predates the entire
+ * Russia/Ukraine listing expansion — returning **clear** for all of them.
+ *
+ * That is the exact outcome this programme exists to prevent, and no control
+ * that existed before this function would have caught it.
+ *
+ * ── What it reads ─────────────────────────────────────────────────────
+ * The Control Date column: the date each listing was made or last amended.
+ * The newest one across the file is the strongest available statement about
+ * how current the file is, and it comes from the publisher rather than from
+ * us. A file with no readable dates is reported as unknown and never as
+ * fresh — not reading a date is not evidence of currency.
+ */
+
+/**
+ * A list whose newest listing is older than this cannot be the operative
+ * register. DFAT amends the Consolidated List many times a year, so a full
+ * year of total silence is not a quiet period, it is the wrong file.
+ * Deliberately generous: this must never fire on a genuinely current list.
+ */
+export const LIST_STALE_AFTER_DAYS = 365;
+
+const CONTROL_DATE_COLUMNS = ["control date", "control_date", "date of listing", "listing date"];
+
+export interface ListRecency {
+  /** ISO date of the newest listing found, or null when none could be read. */
+  newestListing: string | null;
+  ageDays: number | null;
+  /** True only when a date was read AND it is older than the window. */
+  stale: boolean;
+  /** True when no date could be read at all. Never treated as fresh. */
+  unknown: boolean;
+  reason: string;
+}
+
+export function assessListRecency(
+  rows: unknown[][],
+  nowMs: number,
+  staleAfterDays: number = LIST_STALE_AFTER_DAYS,
+): ListRecency {
+  const headerIdx = locateHeader(rows);
+  const header = headerIdx >= 0
+    ? (rows[headerIdx] ?? []).map((h) => String(h ?? "").trim().toLowerCase())
+    : [];
+  let col = -1;
+  for (const n of CONTROL_DATE_COLUMNS) {
+    const i = header.indexOf(n);
+    if (i >= 0) { col = i; break; }
+  }
+
+  let newest: number | null = null;
+  if (col >= 0) {
+    for (let r = headerIdx + 1; r < rows.length; r++) {
+      const raw = String((rows[r] ?? [])[col] ?? "").trim();
+      if (!raw) continue;
+      // DFAT writes d/m/yyyy. ISO is accepted too so a re-exported file works.
+      const dmy = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+      const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      /*
+       * Ranges are checked before `Date.UTC`, which does not validate: it
+       * ROLLS OVER, so `31/31/9999` becomes year 10001 and a single
+       * malformed cell would make an archived file look like the newest
+       * list ever published. Caught by its own test.
+       */
+      const parts = dmy
+        ? { y: +dmy[3], m: +dmy[2], d: +dmy[1] }
+        : iso
+          ? { y: +iso[1], m: +iso[2], d: +iso[3] }
+          : null;
+      if (!parts) continue;
+      if (parts.m < 1 || parts.m > 12 || parts.d < 1 || parts.d > 31) continue;
+      if (parts.y < 1900 || parts.y > 2200) continue;
+      const t = Date.UTC(parts.y, parts.m - 1, parts.d);
+      // A rolled-over value no longer matches what was parsed.
+      const back = new Date(t);
+      if (back.getUTCMonth() !== parts.m - 1 || back.getUTCDate() !== parts.d) continue;
+      if (Number.isFinite(t) && (newest === null || t > newest)) newest = t;
+    }
+  }
+
+  if (newest === null) {
+    return {
+      newestListing: null, ageDays: null, stale: false, unknown: true,
+      reason: "The file carries no readable listing dates, so how current it is could not "
+        + "be established from its contents.",
+    };
+  }
+
+  const ageDays = Math.floor((nowMs - newest) / 86_400_000);
+  const newestListing = new Date(newest).toISOString().slice(0, 10);
+  if (ageDays > staleAfterDays) {
+    return {
+      newestListing, ageDays, stale: true, unknown: false,
+      reason: `The newest listing in this file is dated ${newestListing}, which is `
+        + `${Math.floor(ageDays / 365)} year(s) old. This is not the current Consolidated `
+        + "List. Loading it would screen every client against an out-of-date register and "
+        + "report them clear.",
+    };
+  }
+  return {
+    newestListing, ageDays, stale: false, unknown: false,
+    reason: `Newest listing ${newestListing}.`,
+  };
+}

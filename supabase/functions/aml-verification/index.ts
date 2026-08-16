@@ -29,7 +29,8 @@ import {
 import { stripImagePayloads } from "../_shared/aml/verificationEvidence.pure.ts";
 import { canonicalOutcome } from "../_shared/aml/verificationOutcome.pure.ts";
 import {
-  decideProviderPromotion, decideSanctionsIngest, rowsToDfatEntries, withNormalisedNames,
+  assessListRecency, decideProviderPromotion, decideSanctionsIngest,
+  rowsToDfatEntries, withNormalisedNames,
 } from "../_shared/aml/sanctionsIngest.pure.ts";
 
 const DEFAULT_TENANT = "default";
@@ -886,6 +887,30 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           }, 400);
         }
 
+        /*
+         * How current the DATA is, before anything is written.
+         *
+         * Every other freshness control here measures when we SYNCED — the
+         * sync row, the 72-hour provider gate, the 7-day health banner. All
+         * of them would report a four-year-old file uploaded today as
+         * perfectly fresh, because the load genuinely is.
+         *
+         * That is not hypothetical. DFAT's own canonical URL currently
+         * redirects to `regulation8_consolidated_2.xls`, whose newest Control
+         * Date is 2022-01-07: 7,840 rows, structurally perfect, and older
+         * than the entire Russia/Ukraine listing expansion. Loading it would
+         * have turned every gate green and reported every client clear.
+         */
+        const recency = assessListRecency(rows, Date.now());
+        if (recency.stale && body?.force !== true) {
+          return jr({
+            error: recency.reason,
+            code: "stale_list",
+            newest_listing: recency.newestListing,
+            age_days: recency.ageDays,
+          }, 400);
+        }
+
         const { count: existingCount } = await admin.schema("aml").from("sanctions_entries")
           .select("id", { count: "exact", head: true }).eq("list_code", listCode);
         const decision = decideSanctionsIngest(
@@ -1000,6 +1025,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           list_code: listCode, entries: written, pruned,
           pruned_skipped: !decision.prune, reason: decision.reason, sync_id: sync.id,
           screening,
+          // Stated on every load, not only on a refusal: an operator reading
+          // "7,840 entries" has no way to tell a current register from an
+          // archived one, and the newest listing is the fact that separates
+          // them.
+          newest_listing: recency.newestListing,
+          list_age_days: recency.ageDays,
+          recency_unknown: recency.unknown,
         });
       }
 
