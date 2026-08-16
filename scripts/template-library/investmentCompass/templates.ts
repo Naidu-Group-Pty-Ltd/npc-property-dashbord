@@ -606,7 +606,14 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // The page count comes from the projection, computed with the same
   // `packMarkdownPages` the block uses. See `reports/markdownPaging.pure.ts`
   // for why that has to be one function rather than two.
-  const NARRATIVE_PAGES = 24;
+  // 40, not 24. The allowance is a page budget, and it was set from the compass
+  // median; a strategic report's median body is ~38 pages, so at 24 the format
+  // whose document is longest was the one most often clipped. 40 covers the
+  // median of every tier. A page that is not needed costs nothing — the
+  // conditional filters it before layout — so the only price of a generous
+  // allowance is schema size, and the only price of a mean one is a client
+  // reading half a report.
+  const NARRATIVE_PAGES = 40;
   // The same measure the Report Q&A masters take: the first page gives up the
   // heading block, the continuations do not.
   const narrativeHeading = sectionHeading({
