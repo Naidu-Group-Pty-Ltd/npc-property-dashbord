@@ -40,6 +40,13 @@ import {
 } from "../_shared/aml/clientSearchMatch.pure.ts";
 import { sanitiseDocumentName } from "../_shared/aml/documentNaming.pure.ts";
 import {
+  decideScreeningPolicy,
+  deriveMissingScreeningSubjects,
+  deriveScreeningNextAction,
+  PRIMARY_SUBJECT_PARTY_TYPE,
+  SCREENING_POLICY_VERSION,
+} from "../_shared/aml/screeningPolicy.pure.ts";
+import {
   isPartyScreeningMissing,
   projectPartyScreeningState,
 } from "../_shared/aml/partyScreening.pure.ts";
@@ -165,6 +172,112 @@ async function sha256Hex(input: string): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+/**
+ * Make sure everyone this case must screen actually holds a subject row.
+ *
+ * ── Why this is a repair and not a feature ────────────────────────────
+ * `party_screening_subjects` was only ever written when an operator resolved
+ * a RELATED-PARTY reconciliation item. The case subject — the customer the
+ * case is about — was never enrolled by anything, despite
+ * `partyScreening.pure.ts` stating that "the case subject is always
+ * assessed". A straightforward individual purchase declares no related
+ * parties, so it produced no reconciliation items, no subjects, and a Stage 5
+ * with nothing to screen and nothing to press. Measured on this deployment:
+ * 0 subjects across every case, including one with three submissions.
+ *
+ * It runs on READ as well as on sync, and returns only what is missing, so
+ * every existing case self-heals the first time somebody opens it. It is
+ * idempotent by identity (party type + party id + name), never by a flag.
+ *
+ * It enrols people. It screens nobody and decides no outcome.
+ */
+async function ensureScreeningSubjects(
+  admin: any,
+  caseId: string,
+  actorId: string | null,
+  actorLabel: string | null,
+): Promise<{ subjects: any[]; enrolled: number; personalDetails: Record<string, unknown> | null; hasSubmission: boolean }> {
+  const [{ data: caseRow }, { data: submission }, { data: recon }, { data: existing }] =
+    await Promise.all([
+      admin.schema('aml').from('cases')
+        .select('id, subject_display_name').eq('id', caseId).maybeSingle(),
+      admin.schema('aml').from('submission_versions')
+        .select('snapshot, submitted_at').eq('case_id', caseId).is('superseded_at', null)
+        .order('version_number', { ascending: false }).limit(1).maybeSingle(),
+      admin.schema('aml').from('party_reconciliation_items').select('*').eq('case_id', caseId),
+      admin.schema('aml').from('party_screening_subjects')
+        .select('*').eq('case_id', caseId).order('created_at', { ascending: true }),
+    ]);
+
+  const sections = (((submission?.snapshot ?? {}) as any).sections ?? []) as any[];
+  const sectionPayload = (name: string): Record<string, unknown> | null => {
+    const found = sections.find((x: any) => x?.section === name);
+    return found?.payload && typeof found.payload === 'object' ? found.payload : null;
+  };
+  const personalDetails = sectionPayload('personal_details');
+  const hasSubmission = Boolean(submission);
+
+  if (!caseRow) return { subjects: existing ?? [], enrolled: 0, personalDetails, hasSubmission };
+
+  const missing = deriveMissingScreeningSubjects({
+    subjectDisplayName: caseRow.subject_display_name ?? null,
+    personalDetails,
+    reconciled: (recon ?? []).map((r: any) => ({
+      id: String(r.id),
+      declaredName: String(r.declared_name ?? ''),
+      declaredRole: String(r.declared_role ?? ''),
+      resolvedPartyType: r.resolved_party_type ?? null,
+      resolvedPartyId: r.resolved_party_id ?? null,
+      screeningRequired: Boolean(r.screening_required),
+      resolutionStatus: String(r.resolution_status ?? ''),
+      declaredPayload: (r.declared_payload ?? null) as Record<string, unknown> | null,
+    })),
+    existing: (existing ?? []).map((e: any) => ({
+      partyType: String(e.party_type), partyId: e.party_id ?? null,
+      screenedName: String(e.screened_name ?? ''),
+    })),
+  });
+
+  if (missing.length === 0) {
+    return { subjects: existing ?? [], enrolled: 0, personalDetails, hasSubmission };
+  }
+
+  const { error: insertError } = await admin.schema('aml').from('party_screening_subjects')
+    .insert(missing.map((m) => ({
+      case_id: caseId,
+      party_type: m.partyType,
+      party_id: m.partyId,
+      reconciliation_item_id: m.reconciliationItemId,
+      screened_name: m.screenedName,
+      aliases: m.aliases,
+      date_of_birth: m.dateOfBirth,
+      country: m.country,
+      required: true,
+      state: 'not_started',
+    })));
+  // An enrolment failure must not take the read down with it — the caller
+  // still gets the subjects that do exist, and the next action reports the
+  // shortfall rather than offering a check with nobody to run it on.
+  if (insertError) {
+    return { subjects: existing ?? [], enrolled: 0, personalDetails, hasSubmission };
+  }
+
+  await appendEvent(admin, caseId, 'system',
+    `Enrolled ${missing.length} part${missing.length === 1 ? 'y' : 'ies'} for screening`,
+    {
+      enrolled: missing.map((m) => ({ party_type: m.partyType, name: m.screenedName })),
+      reason: 'screening_enrolment',
+    },
+    actorId, actorLabel);
+
+  const { data: refreshed } = await admin.schema('aml').from('party_screening_subjects')
+    .select('*').eq('case_id', caseId).order('created_at', { ascending: true });
+  return {
+    subjects: refreshed ?? existing ?? [], enrolled: missing.length,
+    personalDetails, hasSubmission,
+  };
 }
 
 async function appendEvent(
@@ -1778,12 +1891,166 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       }
 
       /* ═══════════ Party-scoped screening (Stage 16) ═══════════ */
+      /**
+       * One idempotent read that answers all of Stage 5.
+       *
+       * It enrols whoever is missing, works out which scopes are
+       * proportionate for this case, records that decision once with the
+       * client's own answers attached, and returns the single next action a
+       * person actually has to take.
+       *
+       * It never produces a screening OUTCOME. It does not write "clear", it
+       * does not write a PEP result, and it does not advance a stage — the
+       * stage is derived from evidence, and completing it is not a
+       * service-gate approval.
+       */
+      case 'sync_screening_stage': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, status, risk_rating, subject_display_name').eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        const enrol = await ensureScreeningSubjects(admin, caseId, userId, userEmail);
+
+        const [{ data: submission }, { data: determinations }, { data: provider },
+               { data: syncs }] = await Promise.all([
+          admin.schema('aml').from('submission_versions')
+            .select('snapshot').eq('case_id', caseId).is('superseded_at', null)
+            .order('version_number', { ascending: false }).limit(1).maybeSingle(),
+          admin.schema('aml').from('pep_determinations')
+            .select('id, party_screening_subject_id, result, review_due_at, superseded_at')
+            .eq('case_id', caseId).is('superseded_at', null),
+          // Several tenants may hold a row for this capability; take the one
+          // the dispatcher would. maybeSingle() would error on more than one.
+          admin.schema('aml').from('provider_configs')
+            .select('provider_key, mode, active, priority').eq('capability', 'pep_sanctions')
+            .order('priority', { ascending: true }).limit(1),
+          admin.schema('aml').from('sanctions_list_syncs')
+            .select('list_code, status, entry_count, completed_at, started_at')
+            .order('started_at', { ascending: false }).limit(50),
+        ]);
+
+        const sections = (((submission?.snapshot ?? {}) as any).sections ?? []) as any[];
+        const payload = (name: string): Record<string, unknown> =>
+          (sections.find((x: any) => x?.section === name)?.payload ?? {}) as Record<string, unknown>;
+        const yesNo = (v: unknown) => (v === 'yes' || v === true ? 'yes'
+          : v === 'no' || v === false ? 'no' : null) as 'yes' | 'no' | null;
+
+        const personal = payload('personal_details');
+        const purchase = payload('purchase_profile');
+        const funding = payload('funding');
+        const structure = payload('purchasing_structure');
+
+        const nowIso = new Date().toISOString();
+        const detBySubject = new Map<string, any>();
+        for (const d of determinations ?? []) {
+          if (d.party_screening_subject_id) detBySubject.set(String(d.party_screening_subject_id), d);
+        }
+        const currentDetermination = (subjectId: string) => {
+          const d = detBySubject.get(subjectId);
+          if (!d || d.superseded_at) return null;
+          if (d.review_due_at && String(d.review_due_at) < nowIso) return null;
+          return d;
+        };
+
+        const required = (enrol.subjects ?? []).filter((s: any) =>
+          s.required && s.state !== 'not_required');
+        const anyPepFinding = required.some((s: any) =>
+          currentDetermination(String(s.id))?.result === 'pep');
+
+        const policy = decideScreeningPolicy({
+          answers: {
+            pep: yesNo(personal.pep), adverse: yesNo(personal.adverse),
+            thirdParty: yesNo(purchase.third_party), overseasFunding: yesNo(funding.overseas),
+          },
+          entityType: typeof structure.entity_type === 'string' ? structure.entity_type : null,
+          riskRating: caseRow.risk_rating ?? null,
+          enhancedDueDiligence: caseRow.status === 'edd_required',
+          anyPepFinding,
+        });
+
+        /*
+         * Provider readiness, read the same way the freshness gate enforces
+         * it: a live active provider AND a DFAT list loaded with entries.
+         * A "successful" sync that published nothing is not a load.
+         */
+        const dfat = (syncs ?? []).filter((x: any) => x.list_code === 'dfat');
+        const dfatLoaded = dfat.some((x: any) => x.status === 'succeeded' && Number(x.entry_count) > 0);
+        const providerRow: any = Array.isArray(provider) ? provider[0] ?? null : provider ?? null;
+        const providerReady = providerRow !== null && providerRow.active === true &&
+          providerRow.mode === 'live' && dfatLoaded;
+
+        const nextAction = deriveScreeningNextAction({
+          hasSubmission: enrol.hasSubmission,
+          subjectCount: required.length,
+          providerReady,
+          anyUnscreened: required.some((s: any) =>
+            !['completed', 'false_positive', 'confirmed_match', 'queued', 'processing'].includes(s.state)),
+          anyProcessing: required.some((s: any) => ['queued', 'processing'].includes(s.state)),
+          anyPossibleMatch: required.some((s: any) => s.state === 'possible_match'),
+          anyConfirmedMatch: required.some((s: any) => s.state === 'confirmed_match'),
+          anyMissingPep: required.some((s: any) => !currentDetermination(String(s.id))),
+          pepRoute: policy.pepRoute,
+        });
+
+        /*
+         * Record the scope decision once, with the answers that produced it.
+         * Re-recording an unchanged decision on every page load would bury
+         * the audit trail, so it is written only when it differs from the
+         * last one — which also makes a CHANGE (a new risk rating, a revised
+         * answer) visible as its own entry rather than as noise.
+         */
+        const { data: priorEvents } = await admin.schema('aml').from('case_events')
+          .select('payload, created_at').eq('case_id', caseId)
+          .order('created_at', { ascending: false }).limit(60);
+        const priorDecision = (priorEvents ?? [])
+          .map((e: any) => e?.payload)
+          .find((p: any) => p?.reason === 'screening_scope_decision');
+        const fingerprint = JSON.stringify({
+          required: policy.required, evidence: policy.evidence,
+          route: policy.pepRoute, version: policy.policyVersion,
+        });
+        let decisionRecorded = false;
+        if (!priorDecision || String(priorDecision.fingerprint ?? '') !== fingerprint) {
+          await appendEvent(admin, caseId, 'system',
+            policy.notRequired.length > 0
+              ? 'Screening scope reduced to sanctions and PEP under AML/CTF policy '
+                + policy.policyVersion
+              : 'Screening scope: full, under AML/CTF policy ' + policy.policyVersion,
+            {
+              reason: 'screening_scope_decision',
+              fingerprint,
+              policy_version: policy.policyVersion,
+              required_scopes: policy.required,
+              not_required: policy.notRequired,
+              triggers: policy.triggers,
+              pep_route: policy.pepRoute,
+              client_answers: policy.evidence,
+            },
+            userId, userEmail);
+          decisionRecorded = true;
+        }
+
+        return jsonResponse({
+          enrolled: enrol.enrolled,
+          subjects: enrol.subjects,
+          policy,
+          provider_ready: providerReady,
+          next_action: nextAction,
+          decision_recorded: decisionRecorded,
+        });
+      }
+
       case 'list_party_screening': {
         const caseId = String(body.case_id ?? '');
         if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        // Enrolment runs on read so every existing case self-heals the first
+        // time somebody opens it. Idempotent: it returns only what is missing.
+        const enrolment = await ensureScreeningSubjects(admin, caseId, userId, userEmail);
         const [{ data: subjects }, { data: determinations }] = await Promise.all([
-          admin.schema('aml').from('party_screening_subjects')
-            .select('*').eq('case_id', caseId).order('created_at', { ascending: true }),
+          Promise.resolve({ data: enrolment.subjects }),
           admin.schema('aml').from('pep_determinations')
             .select('id, party_screening_subject_id, subject_name, result, pep_type, pep_relationship, determined_at, determined_by_label, review_due_at, superseded_at')
             .eq('case_id', caseId).is('superseded_at', null),

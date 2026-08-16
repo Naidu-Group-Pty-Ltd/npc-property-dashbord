@@ -311,6 +311,14 @@ export const amlCasesApi = {
   // aml-verification resolve_match); the party state is a projection of it.
   adjudicatePartyScreening: (subject_id: string, match_id: string, outcome: "confirmed_match" | "false_positive", note: string) =>
     invoke<{ subject: AmlPartyScreeningSubject; match: AmlScreeningCandidateMatch }>({ op: "adjudicate_party_screening", subject_id, match_id, outcome, note }),
+  /**
+   * One idempotent read that answers all of Stage 5: it enrols whoever is
+   * missing, decides which scopes are proportionate, records that decision
+   * with the client's answers attached, and returns the single next action.
+   * It produces no screening outcome and advances no stage.
+   */
+  syncScreeningStage: (case_id: string) =>
+    invoke<AmlScreeningStageSync>({ op: "sync_screening_stage", case_id }),
   listPepDeterminations: (case_id: string) =>
     invoke<{ determinations: AmlPepDetermination[] }>({ op: "list_pep_determinations", case_id }),
   recordPepDetermination: (payload: {
@@ -357,6 +365,42 @@ export interface AmlPepDetermination {
   pep_relationship: "self" | "family_member" | "close_associate" | null;
   determined_at: string; determined_by_label: string | null;
   review_due_at: string | null; superseded_at: string | null;
+}
+
+export type AmlScreeningScopeKey = "sanctions" | "pep" | "adverse_media" | "watchlist";
+
+/**
+ * Returned verbatim from `decideScreeningPolicy` in
+ * `_shared/aml/screeningPolicy.pure.ts`, so the field names are the pure
+ * module's own — camelCase, not the snake_case of a table row.
+ */
+export interface AmlScreeningPolicyDecision {
+  required: AmlScreeningScopeKey[];
+  notRequired: Array<{ scope: AmlScreeningScopeKey; basis: string }>;
+  triggers: string[];
+  pepRoute: "declaration_supported" | "manual_review";
+  /** The client's own answers, verbatim, that produced this decision. */
+  evidence: Record<string, string>;
+  policyVersion: string;
+  summary: string;
+}
+
+export interface AmlScreeningNextAction {
+  key: "none" | "await_submission" | "fix_provider" | "enrol_subjects" | "run_screening"
+    | "adjudicate_match" | "record_pep" | "await_provider_result" | "escalate";
+  label: string | null;
+  headline: string;
+  detail: string;
+  owner: "system" | "analyst" | "reviewer" | "administrator" | "client" | "none";
+}
+
+export interface AmlScreeningStageSync {
+  enrolled: number;
+  subjects: AmlPartyScreeningSubject[];
+  policy: AmlScreeningPolicyDecision;
+  provider_ready: boolean;
+  next_action: AmlScreeningNextAction;
+  decision_recorded: boolean;
 }
 
 export interface AmlPartyScreeningSubject {
