@@ -454,15 +454,52 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
     { key: 'demandScore', label: 'Demand' },
     { key: 'riskScore', label: 'Risk' },
   ];
+  /**
+   * A dimension the engine did not score prints as such, not as 50.
+   *
+   * `investment_score.breakdown.<dim>` carries `excluded: true`,
+   * `hasData: false` and `weight: 0` when the engine had nothing to score with
+   * — and a **placeholder `score` of 50 sitting in the field regardless**. The
+   * scorecard bound `score` and `weight` straight through, so the page printed
+   *
+   *     Growth   50   0%
+   *     Demand   50   0%
+   *
+   * which is a fabricated figure against a weight that says it counted for
+   * nothing. Measured 2026-08-16: 9 of the 988 scored reports are in that
+   * state, on `growthScore` and `demandScore`, and on every one of the 9 the
+   * placeholder is exactly 50 and the weight exactly 0. Small, and a number a
+   * client would read as an assessment.
+   *
+   * `normalise.pure.ts`'s `toScore` already refuses to plot it — "the engine is
+   * saying it had no data, and plotting it would put a fabricated point on the
+   * wheel". This is the same refusal for the templated path.
+   *
+   * The row stays. A four-row table where the reader was told there are five
+   * dimensions reads as a table cut for space; "Not assessed" says what
+   * happened. So the numeric `score`/`weight` are withheld — nothing can plot
+   * a placeholder — and the table binds the composed labels instead.
+   */
   const assessment = DIMENSIONS.map(({ key, label }) => {
     const d = obj(breakdown[key]);
+    const score = num(d.score);
+    const weight = num(d.weight);
+    const scored = !(d.excluded === true || d.hasData === false);
     const entry: Record<string, unknown> = {};
     put(entry, 'label', label);
-    put(entry, 'score', num(d.score));
-    put(entry, 'weight', num(d.weight));
+    put(entry, 'scored', scored);
+    if (scored) {
+      put(entry, 'score', score);
+      put(entry, 'weight', weight);
+    }
+    put(entry, 'scoreLabel', scored && score !== undefined ? String(Math.round(score)) : 'Not assessed');
+    put(entry, 'weightLabel', scored && weight !== undefined ? `${Math.round(weight)}%` : '—');
     put(entry, 'details', str(d.details));
     return entry;
-  }).filter((e) => e.score !== undefined);
+    // A dimension the record does not carry at all has no score AND no
+    // exclusion flag; it is absent from the engine's output rather than
+    // withheld by it, so it is not a row.
+  }).filter((e) => e.score !== undefined || e.scored === false);
 
   const opportunities = strArray(score.opportunities);
 

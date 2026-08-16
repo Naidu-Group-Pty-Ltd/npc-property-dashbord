@@ -263,3 +263,42 @@ describe('the cover title against the longest address in production', () => {
     }
   });
 });
+
+/**
+ * A dimension the engine did not score.
+ *
+ * `investment_score.breakdown.<dim>` carries `excluded: true`,
+ * `hasData: false`, `weight: 0` — and a **placeholder `score` of 50 left in
+ * the field**. The scorecard bound the figures straight through, so the page
+ * printed "Growth 50 0%": a score the assessment never gave, beside a weight
+ * saying it counted for nothing. 9 of the 988 scored reports are in that
+ * state, and the report behind this branch is one of them.
+ */
+describe('the scorecard on a report with an unscored dimension', () => {
+  const html = render(STORED);
+
+  it('says a withheld dimension was not assessed', () => {
+    // Two dimensions are withheld on this record and both must say so — once
+    // per master. `50` is NOT checked for on its own: Yield genuinely scores
+    // 50 here, which is the whole reason a placeholder of 50 was invisible.
+    const notAssessed = html.split('>Not assessed</td>').length - 1;
+    const dashes = html.split('>—</td>').length - 1;
+    const masters = 20; // the -01 and -03 variants of the ten families
+    expect(notAssessed).toBe(masters * 2);
+    expect(dashes).toBe(masters * 2);
+  });
+
+  it('keeps the dimensions that were scored', () => {
+    expect(html).toContain('>58</td>');
+    expect(html).toContain('>56%</td>');
+    expect(html).toContain('>60</td>');
+  });
+
+  it('names the reasoning once, not once per dimension', () => {
+    // Three blocks each titled "Why" printed the word three times down the
+    // page with one row under each.
+    const whys = html.split('>Why<').length - 1;
+    const masters = 20; // the -01 and -03 variants of the ten families
+    expect(whys).toBeLessThanOrEqual(masters);
+  });
+});

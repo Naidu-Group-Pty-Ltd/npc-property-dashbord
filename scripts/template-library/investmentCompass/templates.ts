@@ -65,6 +65,7 @@ import {
   rule,
   scenarioChart,
   sectionHeading,
+  oneOf,
   strengthsWatch,
   textHeight,
   table,
@@ -443,15 +444,25 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         eyebrow: 'How the grade was reached',
         heading: 'Five dimensions, weighted',
         numeral: nextNumeral(),
+        // Was "A dimension the assessment had no data for is scored at the
+        // midpoint", which described the placeholder rather than the report.
+        // The engine withholds such a dimension and the table now says so, so
+        // the sentence would contradict the page under it.
         standfirst: 'Each dimension is scored out of 100 and weighted into the total. '
-          + 'A dimension the assessment had no data for is scored at the midpoint.',
+          + 'A dimension the assessment had no data for is left unscored.',
       }),
       table({
         headers: ['Dimension', 'Score', 'Weight'],
+        // `scoreLabel` / `weightLabel`, not `score` / `weight`. The engine
+        // leaves a placeholder 50 and a 0 weight in an excluded dimension, so
+        // binding the figures printed "Growth 50 0%" — a score the assessment
+        // never gave, next to a weight saying it counted for nothing. The
+        // projection composes the words; see `assessment` in
+        // `reportBindingProjection.pure.ts` for the counts.
         rows: [0, 1, 2, 3, 4].map((i) => [
           `{{assessment.${i}.label}}`,
-          `{{assessment.${i}.score | fixed:0}}`,
-          `{{assessment.${i}.weight | fixed:0}}%`,
+          `{{assessment.${i}.scoreLabel}}`,
+          `{{assessment.${i}.weightLabel}}`,
         ]),
         columnWidths: [0.5, 0.25, 0.25],
         numeric: [1, 2],
@@ -459,16 +470,32 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       // Location, yield and risk — the three that say something. Each is
       // conditional on its own `details`, because a dimension with a score and
       // no prose must not print a term with nothing beside it.
+      //
+      // One heading, not three. Each of these is its own block, and every one
+      // of them was titled "Why", so a report carrying all three printed the
+      // word three times down the page with one row under each. The first
+      // block that renders carries the heading; the rest are headless
+      // continuations of the same list, which is what they read as.
       ...[
         { i: 1, term: 'Location', chars: DETAIL_CHARS.location },
         { i: 2, term: 'Yield', chars: DETAIL_CHARS.yield },
         { i: 4, term: 'Risk', chars: DETAIL_CHARS.risk },
-      ].map(({ i, term, chars }) => ({
-        ...definitions('Why', [
-          { term, definition: `{{assessment.${i}.details}}` },
-        ], chars),
-        conditional: `assessment && assessment[${i}] && assessment[${i}].details`,
-      })),
+      ].map(({ i, term, chars }, n) => {
+        const has = (j: number) => `assessment && assessment[${j}] && assessment[${j}].details`;
+        const earlier = [1, 2, 4].slice(0, n);
+        const row = [{ term, definition: `{{assessment.${i}.details}}` }];
+        // The first block in the group carries the heading unconditionally;
+        // there is nothing above it to have carried one.
+        if (n === 0) return { ...definitions('Why', row, chars), conditional: has(i) };
+        // For the rest: two mutually exclusive variants at the SAME position —
+        // `oneOf`, not two flow items, or the page reserves height for both.
+        // Headed when nothing above rendered, headless when something did.
+        const somethingAbove = earlier.map((j) => `(${has(j)})`).join(' || ');
+        return oneOf(
+          { when: `${has(i)} && !(${somethingAbove})`, item: definitions('Why', row, chars) },
+          { when: `${has(i)} && (${somethingAbove})`, item: definitions('', row, chars) },
+        );
+      }),
     ], [
       // Opportunities are an array on the scored reports and empty on most of
       // them, so this is drawn only where the variant has room AND the record
