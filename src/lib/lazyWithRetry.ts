@@ -30,7 +30,17 @@ export async function loadChunkWithRetry<T>(importer: Importer<T>): Promise<{ de
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
     try {
-      return await importer();
+      const loaded = await importer();
+      // A *resolved* import can still be nothing: Vite's preload helper
+      // swallows the rejection when a `vite:preloadError` listener calls
+      // `preventDefault()`, and the promise then fulfils with `undefined`.
+      // React.lazy reads `.default` off that and the whole page dies with
+      // "Cannot read properties of undefined (reading 'default')". Treat it as
+      // the chunk failure it actually is so the retry/reload path handles it.
+      if (!loaded || (loaded as { default?: unknown }).default === undefined) {
+        throw new Error('Failed to fetch dynamically imported module (empty module record)');
+      }
+      return loaded;
     } catch (error) {
       lastError = error;
       if (!isChunkLoadError(error)) throw error;

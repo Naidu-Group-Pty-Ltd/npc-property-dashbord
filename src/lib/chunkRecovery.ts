@@ -25,8 +25,19 @@ import {
 let installed = false;
 let recovering = false;
 
+/**
+ * Whether a reload is still available to us. Has to be answerable
+ * *synchronously*, because `preventDefault()` on `vite:preloadError` cannot
+ * wait for an async recovery — and preventing the default when we are not going
+ * to reload is worse than not handling it at all: Vite's helper then fulfils
+ * the import with `undefined`, which React.lazy dereferences.
+ */
+function canRecover(): boolean {
+  return !recovering && !hasRecentlyReloaded();
+}
+
 async function recover(error: unknown): Promise<void> {
-  if (recovering || hasRecentlyReloaded()) return;
+  if (!canRecover()) return;
   recovering = true;
   const url = extractChunkUrl(error);
   await warmChunkUrl(url);
@@ -38,9 +49,13 @@ export function installChunkFailureRecovery(): void {
   if (installed || typeof window === 'undefined') return;
   installed = true;
 
-  // Vite's preload helper emits this for a failed dynamic import; preventing
-  // the default stops it re-throwing over the top of our recovery.
+  // Vite's preload helper emits this for a failed dynamic import. Preventing
+  // the default stops it re-throwing over the top of our recovery — but ONLY
+  // do that when we are actually about to reload. Otherwise let it reject so
+  // `lazyWithRetry` / the error boundary can deal with a real failure instead
+  // of the import resolving to `undefined`.
   window.addEventListener('vite:preloadError', (event) => {
+    if (!canRecover()) return;
     event.preventDefault();
     void recover((event as unknown as { payload?: unknown }).payload);
   });
