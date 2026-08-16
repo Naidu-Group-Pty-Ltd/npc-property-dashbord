@@ -674,7 +674,7 @@ const App = () => (
                 <Route path="admin/market-qa-quality" element={<ModuleGuard moduleKey="activity_logs"><MarketQAQuality /></ModuleGuard>} />
                 <Route path="admin/bc-segment-engine" element={<ModuleGuard moduleKey="__superadmin_only__"><BcSegmentEngineAdmin /></ModuleGuard>} />
                 <Route path="admin/reclassify-property" element={<ReclassifyPropertyAdmin />} />
-                <Route path="admin/agent-quality" element={<ModuleGuard moduleKey="activity_logs"><AgentQuality /></ModuleGuard>} />
+                <Route path="admin/agent-quality" element={<ModuleGuard moduleKey="__superadmin_only__"><AgentQuality /></ModuleGuard>} />
                 <Route path="admin/aml" element={<AmlLayout />}>
                   <Route index element={<AmlGuard capability="aml.view"><AmlOverview /></AmlGuard>} />
                   <Route path="intake" element={<AmlGuard capability="aml.view"><AmlIntakeQueue /></AmlGuard>} />
