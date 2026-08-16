@@ -221,6 +221,13 @@ Deno.serve(async (req) => {
       if (!isDisplayableSourceImage(image as DisplayableImage)) {
         return json({ error: 'Image not found' }, 404);
       }
+      /**
+       * An image the document carried but attributed to NOBODY is stored
+       * against the upload with a null `stock_item_id` — the page declining to
+       * say whose house that is. It belongs to no property, so it is served to
+       * nobody, and asking the question explicitly beats sending `id=eq.null`.
+       */
+      if (!image.stock_item_id) return json({ error: 'Image not found' }, 404);
       const { data: owner } = await supabase
         .from('builder_stock_items')
         .select('id')

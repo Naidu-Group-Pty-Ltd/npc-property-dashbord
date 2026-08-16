@@ -113,20 +113,31 @@ interface Stage1ImageRow {
  * clock that has to hold reading the source document as well — on a source with
  * a hundred properties that was a hundred queries to decide something one query
  * answers.
+ *
+ * THE CHUNK AND THE LIMIT ARE A PAIR. A batched read shares one row budget
+ * where a per-property read had its own, so the two numbers are chosen to keep
+ * the headroom the per-property read gave each property (200 rows) rather than
+ * to look round: 100 × 200 is what the limit means. Widening the chunk without
+ * the limit would let one property with a great many images crowd another's
+ * rows out of the result — and a row the re-audit cannot see is a row it cannot
+ * demote, which is the one direction this must never fail in.
  */
+const STAGE1_CHUNK = 100;
+const STAGE1_ROWS_PER_ITEM = 200;
+
 async function readStage1Images(
   db: any,
   stockItemIds: string[],
 ): Promise<Map<string, Stage1ImageRow[]>> {
   const byItem = new Map<string, Stage1ImageRow[]>();
   const ids = [...new Set(stockItemIds)];
-  for (let index = 0; index < ids.length; index += 200) {
+  for (let index = 0; index < ids.length; index += STAGE1_CHUNK) {
     const { data } = await db
       .from('builder_stock_item_images')
       .select('id, stock_item_id, source_reference, source_detail, processing_status')
-      .in('stock_item_id', ids.slice(index, index + 200))
+      .in('stock_item_id', ids.slice(index, index + STAGE1_CHUNK))
       .eq('source_stage', 'uploaded_document')
-      .limit(20000);
+      .limit(STAGE1_CHUNK * STAGE1_ROWS_PER_ITEM);
     for (const row of (data ?? []) as Array<Stage1ImageRow & { stock_item_id: string }>) {
       const bucket = byItem.get(row.stock_item_id) ?? [];
       bucket.push(row);
