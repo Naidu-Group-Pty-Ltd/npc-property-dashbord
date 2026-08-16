@@ -172,6 +172,40 @@ function configuration(spec: (...keys: string[]) => unknown): string | undefined
 }
 
 /**
+ * The verdict as a figure: `HOLD`, not the sentence that explains it.
+ *
+ * `investment_score.recommendation` is one string carrying both — "HOLD -
+ * Above average investment with some positive indicators, monitor closely",
+ * 69 characters on average and 78 at its longest. A KPI cell is a quarter of
+ * the cover's measure, about 28mm, and a sentence that long needs five lines
+ * in it: rendered through WeasyPrint the cover's VERDICT cell ran past the
+ * band's bottom rule, which struck through its last line.
+ *
+ * The split is exact rather than a guess. Every one of the 988 scored reports
+ * is either `ACTION - sentence` or the bare action, and the vocabulary is four
+ * words:
+ *
+ * | action | with a sentence | bare |
+ * | --- | ---: | ---: |
+ * | `HOLD` | 799 | 56 |
+ * | `CAUTION` | 98 | 1 |
+ * | `HOLD/BUY` | 24 | 9 |
+ * | `BUY` | 1 | 0 |
+ *
+ * The longest action is eight characters. A string that does not match the
+ * pattern is returned whole — the caller gets the same thing `headline` would
+ * have given it, which is what it printed before this existed.
+ *
+ * `headline` is untouched, and the page-3 verdict block still sets the whole
+ * sentence, where there is a full measure to set it in.
+ */
+function recommendationAction(headline: string | undefined): string | undefined {
+  if (!headline) return undefined;
+  const match = /^([A-Z][A-Za-z/ ]{1,20}?)\s+-\s+\S/.exec(headline);
+  return match ? match[1].trim() : headline;
+}
+
+/**
  * The specification, read from the two columns it actually lives in.
  *
  * This mirrors `reports/investment/normalise.pure.ts`'s `toSpecs`, which took
@@ -380,6 +414,7 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   // headline back at the reader.
   const recommendation: Record<string, unknown> = {};
   put(recommendation, 'headline', str(score.recommendation));
+  put(recommendation, 'action', recommendationAction(str(score.recommendation)));
   put(recommendation, 'grade', str(score.grade));
   put(recommendation, 'score', num(score.totalScore));
 

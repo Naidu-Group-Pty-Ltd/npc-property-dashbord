@@ -271,7 +271,13 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
     locations: 'Prepared {{report.generatedDate | date}}',
     facts: [
-      { label: 'Verdict', value: '{{recommendation.headline}}' },
+      // The action, not the sentence. A KPI cell is a quarter of the measure
+      // and `investment_score.recommendation` averages 69 characters: rendered
+      // through WeasyPrint the cover's VERDICT cell set five lines and its last
+      // one was struck through by the band's bottom rule. The whole sentence is
+      // on the verdict page, where there is a measure to set it in. See
+      // `recommendationAction` for why the split is exact rather than a guess.
+      { label: 'Verdict', value: '{{recommendation.action}}' },
       { label: 'Grade', value: '{{recommendation.grade}}' },
       { label: 'Score', value: '{{recommendation.score | fixed:0}}', },
       { label: 'Weekly position', value: '{{financials.weeklyNet | currency}}' },
