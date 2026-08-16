@@ -72,6 +72,8 @@ import { SubmissionReviewPanel } from "@/components/aml/SubmissionReviewPanel";
 import { LegacyVerificationHistoryPanel } from "@/components/aml/LegacyVerificationHistoryPanel";
 import { PartyVerificationPanel } from "@/components/aml/PartyVerificationPanel";
 import { PartyScreeningPanel } from "@/components/aml/PartyScreeningPanel";
+import { ScreeningStageCard } from "@/components/aml/ScreeningStageCard";
+import { useScreeningStage } from "@/lib/aml/useScreeningStage";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
 import { progressRail, type ProgressRailState } from "@/lib/aml/caseDimensions";
@@ -228,6 +230,17 @@ export default function AmlCaseWorkspace() {
       clientId: caseRow?.client_id ?? null,
     },
   );
+
+  /**
+   * Stage 5's own reading. Separate from the summary because it answers two
+   * questions the summary does not: whether the checks CAN execute, and
+   * whether the required determinations have actually been made. Those fail
+   * independently and are never shown as one thing.
+   */
+  const screeningStage = useScreeningStage(caseId, {
+    riskRating: caseRow?.risk_rating ?? null,
+    enhancedDueDiligence: caseRow?.status === "edd_required",
+  });
 
   const connectedPortals = useMemo(
     () =>
@@ -449,6 +462,15 @@ export default function AmlCaseWorkspace() {
           {/* ── Stage 5 · Screening & ownership ─────────────────────── */}
           {section === "ownership" && (
             <div className="space-y-4">
+              {/*
+                What this stage requires, whether it can run, and what
+                happens next — FIRST, because an operator who cannot run a
+                check needs to know why before pressing the button that
+                refuses. PEP and sanctions are shown as mandatory
+                determinations to be established; neither is ever reported
+                as waived.
+              */}
+              <ScreeningStageCard reading={screeningStage} />
               {/* Identity and screening share a customer but never share a
                   meaning: separate panels, separate evidence, separate
                   adjudication. That is why screening is its own stage. */}
@@ -456,7 +478,7 @@ export default function AmlCaseWorkspace() {
                 caseId={caseRow.id}
                 canWrite={canWrite}
                 canAdjudicate={access.isMlro || access.roles.has("reviewer")}
-                onChanged={load}
+                onChanged={() => { load(); screeningStage.reload(); }}
               />
               <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
               <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />

@@ -189,7 +189,15 @@ export function ActivateClientDialog({
   const canSubmit =
     missing.length === 0 && !routeError && !routeLoading;
 
-  const firstBlocker = !selected
+  /*
+   * The primary action is never silently disabled — that is the whole point
+   * of the note above. It stays pressable while requirements are
+   * outstanding, and pressing it NAMES the first one and moves focus there.
+   * Only an in-flight submission disables it.
+   */
+  const firstBlocker = routeLoading
+    ? { id: "ac-client-section", message: "The client record is still loading." }
+    : !selected
     ? { id: "ac-client-section", message: "Select or create a client before activating AML/CTF." }
     : selected.has_open_case
       ? { id: "ac-client-section", message: "This client already has an open AML/CTF case." }
@@ -576,7 +584,7 @@ export function ActivateClientDialog({
               type="submit"
               className="w-full sm:w-auto"
               onClick={handleSubmit}
-              disabled={!canSubmit || submitting}
+              disabled={submitting}
               aria-describedby="ac-outstanding"
             >
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

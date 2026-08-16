@@ -1,124 +1,265 @@
 /**
- * Conditional screening scope — and the one thing it must never do.
+ * Stage 5 scope — and the two things it must never do.
  *
- * The request was to skip Stage 5 when the client's answers say PEP and
- * adverse-media screening are not required. The scoping half is implemented;
- * skipping the STAGE is not, because Stage 5 is "PEP · Sanctions · Adverse
- * media" and **sanctions screening is not risk-based**. No answer, rating or
- * profile removes it.
+ * ── Correction one ────────────────────────────────────────────────────
+ * An earlier revision of this file asserted `pep=no → PEP waived`. Those
+ * assertions were wrong and they are gone. A customer's declaration is
+ * EVIDENCE that may support a determination; it is never the determination
+ * and never an exemption from making one. PEP and targeted financial
+ * sanctions are the mandatory baseline: they are ESTABLISHED, not skipped.
+ * Only adverse media and internal watchlists are risk-based.
  *
- * The first describe block is the compliance invariant. If it ever fails,
- * the change that made it fail is wrong, not the test.
+ * ── Correction two ────────────────────────────────────────────────────
+ * "The provider can run the check" and "the required determinations have
+ * been made" are different questions with different failure modes.
+ * `canExecute` and `canAdvance` must never be aliases, and the case that
+ * proves it is a perfectly healthy provider with no result yet.
+ *
+ * The first two describe blocks are compliance invariants. If either ever
+ * fails, the change that made it fail is wrong, not the test.
  */
 import { describe, expect, it } from "vitest";
 
 import {
-  MANDATORY_SCREENING_SCOPES,
+  MANDATORY_DETERMINATIONS,
   WAIVABLE_SCREENING_SCOPES,
   deriveAmlScreeningScope,
   describeScreeningStage,
+  readCaseScreeningPosition,
+  type AmlPepDeterminationFacts,
   type AmlScreeningScopeFacts,
+  type AmlScreeningSubjectFacts,
 } from "./screeningScope";
 
-const clear = (over: Partial<AmlScreeningScopeFacts> = {}): AmlScreeningScopeFacts => ({
+const NOW = "2026-08-16T00:00:00.000Z";
+
+const ready = {
+  code: "ready" as const, label: "Ready to screen", detail: "…",
+  canRun: true, blockers: [], owner: "none" as const,
+};
+const noDfat = {
+  code: "lists_never_loaded" as const, label: "Screening is not configured",
+  detail: "The DFAT sanctions list has never been successfully loaded.",
+  canRun: false, blockers: ["The DFAT sanctions list has never been successfully loaded."],
+  owner: "administrator" as const,
+};
+
+/** A current, in-date determination that the customer is not a PEP. */
+const determinedNotPep: AmlPepDeterminationFacts = {
+  result: "not_pep",
+  method: "onboarding_declaration_supported",
+  determinedAt: "2026-08-10T00:00:00.000Z",
+  reviewDueAt: "2027-08-10T00:00:00.000Z",
+  supersededAt: null,
+};
+
+const find = (d: ReturnType<typeof deriveAmlScreeningScope>, scope: string) =>
+  d.determinations.find((x) => x.scope === scope);
+
+/** An ordinary low-risk individual whose Stage 5 evidence is all present. */
+const settled = (over: Partial<AmlScreeningScopeFacts> = {}): AmlScreeningScopeFacts => ({
   answers: { pep: "no", adverse: "no", thirdParty: "no", overseasFunding: "no" },
   entityType: "individual",
   subjectType: "individual",
   riskRating: "low",
   enhancedDueDiligence: false,
+  pepDetermination: determinedNotPep,
+  sanctionsState: "clear",
+  now: NOW,
   ...over,
 });
 
-describe("sanctions screening can never be waived", () => {
-  it("is not even in the waivable set", () => {
+/* ───────────────────────── A · B — the baseline ───────────────────────── */
+
+describe("PEP and sanctions are the mandatory baseline", () => {
+  it("A · neither is in the waivable set", () => {
+    expect(WAIVABLE_SCREENING_SCOPES).not.toContain("pep");
     expect(WAIVABLE_SCREENING_SCOPES).not.toContain("sanctions");
-    expect(MANDATORY_SCREENING_SCOPES).toContain("sanctions");
+    expect([...WAIVABLE_SCREENING_SCOPES].sort()).toEqual(["adverse_media", "watchlist"]);
   });
 
-  it("survives every combination of answers and risk", () => {
+  it("B · both are declared mandatory determinations", () => {
+    expect([...MANDATORY_DETERMINATIONS].sort()).toEqual(["pep", "sanctions"]);
+  });
+
+  it("A · no combination of answers, risk or entity ever waives either", () => {
     const answers = ["yes", "no", null, undefined] as const;
     for (const pep of answers) {
       for (const adverse of answers) {
-        for (const risk of ["low", "medium", "high", "prohibited", null]) {
+        for (const riskRating of ["low", "medium", "high", "prohibited", null]) {
           for (const entityType of ["individual", "company", "trust", null]) {
+            const where = `pep=${pep} adverse=${adverse} risk=${riskRating} entity=${entityType}`;
             const d = deriveAmlScreeningScope({
-              answers: { pep, adverse }, riskRating: risk, entityType,
+              answers: { pep, adverse }, riskRating, entityType, now: NOW,
             });
-            expect(d.required, `pep=${pep} adverse=${adverse} risk=${risk} entity=${entityType}`)
-              .toContain("sanctions");
-            expect(d.waived.map((w) => w.scope)).not.toContain("sanctions");
+            const waived = d.notRequiredByPolicy.map((w) => w.scope);
+            expect(waived, where).not.toContain("pep");
+            expect(waived, where).not.toContain("sanctions");
+            expect(find(d, "pep")?.required, where).toBe(true);
+            expect(find(d, "sanctions")?.required, where).toBe(true);
           }
         }
       }
     }
   });
 
-  it("never reports a narrowed case as needing no screening", () => {
-    const d = deriveAmlScreeningScope(clear());
-    expect(d.narrowed).toBe(true);
-    expect(d.required).toEqual(["sanctions"]);
-    // The wording must not read as "screening not required".
-    expect(d.summary).toMatch(/applies to every customer and still runs/i);
+  it("B · never describes a mandatory determination as not required", () => {
+    const d = deriveAmlScreeningScope(settled({ pepDetermination: null }));
+    expect(d.summary).not.toMatch(/not required|waived|exempt/i);
+    expect(find(d, "pep")!.detail).not.toMatch(/not required|waived|exempt/i);
   });
 });
 
-describe("absence is never a negative answer", () => {
-  it("requires everything when the questionnaire was not read", () => {
-    for (const f of [null, undefined, { answers: null }]) {
-      const d = deriveAmlScreeningScope(f as AmlScreeningScopeFacts);
-      expect(d.undetermined).toBe(true);
-      expect(d.narrowed).toBe(false);
-      expect(d.required).toEqual(["sanctions", "pep", "adverse_media"]);
-    }
+/* ────────────────── C · D · E — the declaration is evidence ────────────── */
+
+describe("a client's declaration selects a route, never a waiver", () => {
+  it("C · pep=no with no determination recorded does not resolve PEP", () => {
+    const d = deriveAmlScreeningScope(settled({ pepDetermination: null }));
+    const pep = find(d, "pep")!;
+    expect(pep.required).toBe(true);
+    expect(pep.resolved).toBe(false);
+    expect(d.notRequiredByPolicy.map((w) => w.scope)).not.toContain("pep");
   });
 
-  it("requires everything when either answer is missing", () => {
-    // "The client did not say they were a PEP" and "the client said they are
-    // not" are different facts, and only the second is evidence.
-    for (const answers of [
-      { pep: "no" }, { adverse: "no" }, { pep: null, adverse: "no" }, {},
-    ] as const) {
-      const d = deriveAmlScreeningScope(clear({ answers }));
-      expect(d.undetermined).toBe(true);
-      expect(d.waived).toHaveLength(0);
-    }
+  it("C · says the declaration supports the route but is not the outcome", () => {
+    const d = deriveAmlScreeningScope(settled({ pepDetermination: null }));
+    const outstanding = d.outstanding.find((o) => /PEP determination/i.test(o))!;
+    expect(outstanding).toMatch(/declaration/i);
+    expect(outstanding).toMatch(/not itself the determination/i);
+  });
+
+  it("C · a recorded determination on the declaration route does resolve it", () => {
+    // The route is legitimate — what was missing was the recorded outcome.
+    const d = deriveAmlScreeningScope(settled());
+    const pep = find(d, "pep")!;
+    expect(pep.resolved).toBe(true);
+    expect(pep.basis).toMatch(/onboarding_declaration_supported/);
+  });
+
+  it("D · a missing determination does not complete Stage 5", () => {
+    const d = deriveAmlScreeningScope(settled({ pepDetermination: null }), ready);
+    expect(d.canAdvance).toBe(false);
+    expect(describeScreeningStage(d, ready).canProceed).toBe(false);
+  });
+
+  it("E · a determination past its review date does not complete Stage 5", () => {
+    const d = deriveAmlScreeningScope(settled({
+      pepDetermination: { ...determinedNotPep, reviewDueAt: "2026-08-15T00:00:00.000Z" },
+    }), ready);
+    expect(find(d, "pep")!.resolved).toBe(false);
+    expect(find(d, "pep")!.detail).toMatch(/past its review date/i);
+    expect(d.canAdvance).toBe(false);
+  });
+
+  it("E · a superseded determination does not complete Stage 5", () => {
+    const d = deriveAmlScreeningScope(settled({
+      pepDetermination: { ...determinedNotPep, supersededAt: "2026-08-14T00:00:00.000Z" },
+    }), ready);
+    expect(find(d, "pep")!.resolved).toBe(false);
+    expect(find(d, "pep")!.detail).toMatch(/superseded/i);
+    expect(d.canAdvance).toBe(false);
+  });
+
+  it("E · an unresolved determination is not a determination", () => {
+    const d = deriveAmlScreeningScope(settled({
+      pepDetermination: { ...determinedNotPep, result: "unresolved" },
+    }), ready);
+    expect(find(d, "pep")!.resolved).toBe(false);
+    expect(d.canAdvance).toBe(false);
   });
 });
 
-describe("narrowing, when the client's answers genuinely support it", () => {
-  it("waives PEP and adverse media, each with a written basis", () => {
-    const d = deriveAmlScreeningScope(clear());
-    expect(d.waived.map((w) => w.scope).sort()).toEqual(["adverse_media", "pep"]);
-    for (const w of d.waived) {
-      // A basis an auditor can read, not a code.
-      expect(w.basis.length).toBeGreaterThan(40);
-      expect(w.basis).toMatch(/declared/i);
-    }
-    expect(d.undetermined).toBe(false);
+/* ──────────────── F — executing is not completing ──────────────────────── */
+
+describe("canExecute and canAdvance are never aliases", () => {
+  it("F · provider ready with no screening result: can execute, cannot advance", () => {
+    const d = deriveAmlScreeningScope(
+      settled({ sanctionsState: "not_started", pepDetermination: null }), ready);
+    expect(d.canExecute).toBe(true);
+    expect(d.canAdvance).toBe(false);
   });
 
-  it("waives only the one the client cleared", () => {
-    const pepOnly = deriveAmlScreeningScope(clear({
-      answers: { pep: "yes", adverse: "no", thirdParty: "no", overseasFunding: "no" },
-    }));
-    expect(pepOnly.required).toContain("pep");
-    expect(pepOnly.waived.map((w) => w.scope)).toEqual(["adverse_media"]);
+  it("F · determinations resolved with a broken provider: cannot execute, can advance", () => {
+    // The mirror image. Evidence already gathered is not un-gathered by a
+    // provider that has since gone down.
+    const d = deriveAmlScreeningScope(settled(), noDfat);
+    expect(d.canExecute).toBe(false);
+    expect(d.canAdvance).toBe(true);
+  });
 
-    const adverseOnly = deriveAmlScreeningScope(clear({
-      answers: { pep: "no", adverse: "yes", thirdParty: "no", overseasFunding: "no" },
-    }));
-    expect(adverseOnly.required).toContain("adverse_media");
-    expect(adverseOnly.waived.map((w) => w.scope)).toEqual(["pep"]);
+  it("F · an unread readiness never reports as executable", () => {
+    expect(deriveAmlScreeningScope(settled()).canExecute).toBe(false);
+    expect(deriveAmlScreeningScope(settled(), null).canExecute).toBe(false);
   });
 });
 
-describe("risk indicators override the client's own answers", () => {
-  const cases: Array<[string, Partial<AmlScreeningScopeFacts>, RegExp]> = [
+/* ──────────────── G · H · I — sanctions outcomes ───────────────────────── */
+
+describe("sanctions outcomes", () => {
+  it("G · an error is never a clear result", () => {
+    const d = deriveAmlScreeningScope(settled({ sanctionsState: "error" }), ready);
+    expect(find(d, "sanctions")!.resolved).toBe(false);
+    expect(find(d, "sanctions")!.detail).toMatch(/never a clear result/i);
+    expect(d.canAdvance).toBe(false);
+    expect(d.outstanding.some((o) => /must be re-run/i.test(o))).toBe(true);
+  });
+
+  it("H · a possible match blocks the stage and belongs to an analyst", () => {
+    const d = deriveAmlScreeningScope(settled({ sanctionsState: "possible_match" }), ready);
+    expect(d.canAdvance).toBe(false);
+    expect(d.owner).toBe("analyst");
+    expect(d.outstanding.some((o) => /Adjudicate/i.test(o))).toBe(true);
+  });
+
+  it("H · adjudicating a false positive to clear releases the stage", () => {
+    const d = deriveAmlScreeningScope(settled({ sanctionsState: "clear" }), ready);
+    expect(d.canAdvance).toBe(true);
+  });
+
+  it("I · a confirmed match resolves the determination but escalates", () => {
+    // The trap: a confirmed TFS match IS a resolved determination, so
+    // resolution alone must never read as "nothing to do".
+    const d = deriveAmlScreeningScope(settled({ sanctionsState: "confirmed_match" }), ready);
+    expect(find(d, "sanctions")!.resolved).toBe(true);
+    expect(d.escalation).toMatch(/Compliance Officer/i);
+    expect(d.owner).toBe("reviewer");
+    const stage = describeScreeningStage(d, ready);
+    expect(stage.headline).toMatch(/escalation required/i);
+    expect(stage.whatHappensNext).toMatch(/does not permit the case to proceed to service/i);
+  });
+
+  it("I · a PEP finding escalates too", () => {
+    const d = deriveAmlScreeningScope(settled({
+      pepDetermination: { ...determinedNotPep, result: "pep" },
+      adverseMediaState: "clear",
+    }), ready);
+    expect(find(d, "pep")!.resolved).toBe(true);
+    expect(d.escalation).toMatch(/source of funds and source of wealth/i);
+    expect(d.owner).toBe("reviewer");
+  });
+});
+
+/* ──────────── J · K · P — adverse media is a policy decision ───────────── */
+
+describe("adverse media comes from the risk policy, not from client.adverse", () => {
+  it("J · standing it down cites the risk profile, never the client's answer", () => {
+    const d = deriveAmlScreeningScope(settled());
+    const stood = d.notRequiredByPolicy.find((w) => w.scope === "adverse_media")!;
+    expect(stood.basis).toMatch(/current AML\/CTF policy/i);
+    expect(stood.basis).toMatch(/not high risk/i);
+    // Not "the customer said no".
+    expect(stood.basis).not.toMatch(/declared|the customer answered/i);
+  });
+
+  const overriding: Array<[string, Partial<AmlScreeningScopeFacts>, RegExp]> = [
     ["high risk", { riskRating: "high" }, /high risk/],
     ["prohibited risk", { riskRating: "prohibited" }, /prohibited risk/],
     ["enhanced due diligence", { enhancedDueDiligence: true }, /enhanced due diligence/],
     ["a company customer", { entityType: "company" }, /company rather than an individual/],
     ["a trust customer", { entityType: "trust" }, /trust rather than an individual/],
+    ["a PEP finding", {
+      pepDetermination: { ...determinedNotPep, result: "pep" },
+    }, /politically exposed person/],
     ["overseas funding", {
       answers: { pep: "no", adverse: "no", overseasFunding: "yes", thirdParty: "no" },
     }, /overseas/],
@@ -127,49 +268,241 @@ describe("risk indicators override the client's own answers", () => {
     }, /third party/],
   ];
 
-  it.each(cases)("keeps the full scope for %s", (_name, over, reason) => {
-    const d = deriveAmlScreeningScope(clear(over));
-    expect(d.narrowed).toBe(false);
-    expect(d.waived).toHaveLength(0);
-    expect(d.required).toEqual(["sanctions", "pep", "adverse_media"]);
-    expect(d.summary).toMatch(reason);
+  it.each(overriding)(
+    "J · %s keeps adverse media required despite adverse=no", (_n, over, reason) => {
+      const d = deriveAmlScreeningScope(settled(over));
+      const am = find(d, "adverse_media")!;
+      expect(am.required).toBe(true);
+      expect(am.resolved).toBe(false);
+      expect(d.notRequiredByPolicy.map((w) => w.scope)).not.toContain("adverse_media");
+      expect(am.basis).toMatch(reason);
+      expect(d.canAdvance).toBe(false);
+    },
+  );
+
+  it("P · an entity case is released only once the research is done", () => {
+    const trust = settled({ entityType: "trust" });
+    expect(deriveAmlScreeningScope(trust, ready).canAdvance).toBe(false);
+    const done = deriveAmlScreeningScope(
+      { ...trust, adverseMediaState: "clear" }, ready);
+    expect(find(done, "adverse_media")!.resolved).toBe(true);
+    expect(done.canAdvance).toBe(true);
   });
 
-  it("names every reason, not just the first", () => {
-    const d = deriveAmlScreeningScope(clear({ riskRating: "high", enhancedDueDiligence: true }));
-    expect(d.summary).toMatch(/high risk/);
-    expect(d.summary).toMatch(/enhanced due diligence/);
+  it("J · names every reason, not just the first", () => {
+    const d = deriveAmlScreeningScope(settled({ riskRating: "high", enhancedDueDiligence: true }));
+    const am = find(d, "adverse_media")!;
+    expect(am.basis).toMatch(/high risk/);
+    expect(am.basis).toMatch(/enhanced due diligence/);
   });
 });
 
-describe("a narrowed scope is not permission to skip a blocked stage", () => {
-  const notReady = {
-    code: "simulator_mode" as const, label: "Screening is not configured",
-    detail: "…", canRun: false, blockers: ["x"], owner: "administrator" as const,
-  };
-  const ready = {
-    code: "ready" as const, label: "Ready to screen", detail: "…",
-    canRun: true, blockers: [], owner: "none" as const,
-  };
+describe("absence is never a negative answer", () => {
+  it("K · an unread questionnaire stands nothing down", () => {
+    for (const f of [null, undefined, { answers: null }]) {
+      const d = deriveAmlScreeningScope(f as AmlScreeningScopeFacts, ready);
+      expect(d.notRequiredByPolicy).toHaveLength(0);
+      expect(find(d, "adverse_media")!.required).toBe(true);
+      expect(find(d, "adverse_media")!.detail).toMatch(/has not been read/i);
+      expect(d.canAdvance).toBe(false);
+    }
+  });
 
-  it("never says 'not required' while sanctions still cannot run", () => {
-    // The trap: a narrowed case whose provider is unconfigured is still
-    // blocked, and saying "screening not required" there would be false.
-    const d = describeScreeningStage(deriveAmlScreeningScope(clear()), notReady);
+  it("K · a missing adverse answer is not an answer of 'no'", () => {
+    for (const answers of [{ pep: "no" }, { adverse: null }, {}] as const) {
+      const d = deriveAmlScreeningScope(settled({ answers }));
+      expect(d.notRequiredByPolicy).toHaveLength(0);
+    }
+  });
+});
+
+/* ─────────── R · S — the right people, read from canonical rows ────────── */
+
+describe("the case position aggregates the server's own subject list", () => {
+  const subject = (over: Partial<AmlScreeningSubjectFacts> = {}): AmlScreeningSubjectFacts => ({
+    id: "s1", name: "Alex Doe", partyType: "primary_subject",
+    required: true, state: "completed", pepDetermination: determinedNotPep, ...over,
+  });
+
+  it("R · an unread subject list is not an empty one", () => {
+    const p = readCaseScreeningPosition(null, NOW);
+    expect(p.read).toBe(false);
+    expect(p.facts.sanctionsState).toBe("not_started");
+    expect(deriveAmlScreeningScope({ ...settled(), ...p.facts }, ready).canAdvance).toBe(false);
+  });
+
+  it("R · no required subject at all is 'nothing checked', never 'clear'", () => {
+    const p = readCaseScreeningPosition([], NOW);
+    expect(p.facts.sanctionsState).toBe("not_started");
+    expect(p.facts.pepDetermination).toBeNull();
+    expect(deriveAmlScreeningScope({ ...settled(), ...p.facts }, ready).canAdvance).toBe(false);
+  });
+
+  it("S · one outstanding co-purchaser holds the whole case open", () => {
+    const p = readCaseScreeningPosition([
+      subject(),
+      subject({ id: "s2", name: "Sam Roe", partyType: "co_purchaser", state: "not_started" }),
+    ], NOW);
+    expect(p.facts.sanctionsState).toBe("not_started");
+    const d = deriveAmlScreeningScope({ ...settled(), ...p.facts }, ready);
+    expect(d.canAdvance).toBe(false);
+    expect(p.subjects[1].outstanding).toContain("Run the sanctions check.");
+  });
+
+  it("S · one co-purchaser without a PEP determination holds it open too", () => {
+    const p = readCaseScreeningPosition([
+      subject(),
+      subject({
+        id: "s2", partyType: "beneficial_owner", state: "completed", pepDetermination: null,
+      }),
+    ], NOW);
+    expect(p.facts.pepDetermination).toBeNull();
+    expect(deriveAmlScreeningScope({ ...settled(), ...p.facts }, ready).canAdvance).toBe(false);
+  });
+
+  it("S · a party the server does not require does not hold it open", () => {
+    const p = readCaseScreeningPosition([
+      subject(),
+      subject({ id: "s2", required: false, state: "not_required", pepDetermination: null }),
+    ], NOW);
+    expect(p.facts.sanctionsState).toBe("clear");
+    expect(deriveAmlScreeningScope({ ...settled(), ...p.facts }, ready).canAdvance).toBe(true);
+  });
+
+  it("I · a confirmed match on one party escalates behind another's outstanding work", () => {
+    // The trap the extra facts exist for: reporting only the most-blocking
+    // state would have lost the confirmed match entirely.
+    const p = readCaseScreeningPosition([
+      subject({ state: "confirmed_match" }),
+      subject({ id: "s2", partyType: "director", state: "not_started" }),
+    ], NOW);
+    expect(p.facts.sanctionsState).toBe("not_started");
+    expect(p.facts.confirmedSanctionsMatch).toBe(true);
+    const d = deriveAmlScreeningScope({ ...settled(), ...p.facts }, ready);
+    expect(d.canAdvance).toBe(false);
+    expect(d.escalation).toMatch(/Compliance Officer/i);
+    expect(d.owner).toBe("reviewer");
+  });
+
+  it("I · a PEP finding on one party escalates behind another's outstanding work", () => {
+    const p = readCaseScreeningPosition([
+      subject({ pepDetermination: { ...determinedNotPep, result: "pep" } }),
+      subject({ id: "s2", partyType: "trustee", pepDetermination: null }),
+    ], NOW);
+    expect(p.facts.pepFinding).toBe(true);
+    const d = deriveAmlScreeningScope({ ...settled(), ...p.facts }, ready);
+    expect(d.escalation).toMatch(/politically exposed person/i);
+    // And it makes adverse media proportionate for the whole case.
+    expect(find(d, "adverse_media")!.required).toBe(true);
+    expect(d.notRequiredByPolicy).toHaveLength(0);
+  });
+
+  it("R · a possible match outranks an unstarted check for attention", () => {
+    const p = readCaseScreeningPosition([
+      subject({ state: "possible_match" }),
+      subject({ id: "s2", state: "not_started" }),
+    ], NOW);
+    expect(p.facts.sanctionsState).toBe("possible_match");
+  });
+
+  it("R · an unknown subject state fails closed", () => {
+    const p = readCaseScreeningPosition([subject({ state: "something_new" })], NOW);
+    expect(p.facts.sanctionsState).toBe("not_started");
+  });
+
+  it("R · a stale determination on a screened party is not a determination", () => {
+    const p = readCaseScreeningPosition([
+      subject({ pepDetermination: { ...determinedNotPep, reviewDueAt: "2026-01-01T00:00:00.000Z" } }),
+    ], NOW);
+    expect(p.subjects[0].pep.resolved).toBe(false);
+    expect(deriveAmlScreeningScope({ ...settled(), ...p.facts }, ready).canAdvance).toBe(false);
+  });
+
+  it("S · every required party is named with what it still needs", () => {
+    const p = readCaseScreeningPosition([
+      subject({ state: "not_started", pepDetermination: null }),
+    ], NOW);
+    expect(p.subjects[0].outstanding).toEqual([
+      "Run the sanctions check.", "Record the PEP determination.",
+    ]);
+  });
+
+  it("M · a fully settled multi-party case completes", () => {
+    const p = readCaseScreeningPosition([
+      subject(),
+      subject({ id: "s2", partyType: "co_purchaser" }),
+      subject({ id: "s3", partyType: "authorised_representative", state: "false_positive" }),
+    ], NOW);
+    const d = deriveAmlScreeningScope({ ...settled(), ...p.facts }, ready);
+    expect(d.canAdvance).toBe(true);
+    expect(d.escalation).toBeNull();
+  });
+});
+
+/* ──────── L · M · N · O · Q — readiness, completion and Stage 6 ────────── */
+
+describe("the stage description", () => {
+  it("Q · never says 'not required' while the provider cannot run", () => {
+    const d = describeScreeningStage(
+      deriveAmlScreeningScope(settled({ sanctionsState: "not_started" }), noDfat), noDfat);
     expect(d.canProceed).toBe(false);
     expect(d.headline).toMatch(/cannot run/i);
-    expect(d.detail).toMatch(/Sanctions screening is still required/i);
+    expect(d.detail).not.toMatch(/not required/i);
+    expect(d.whatHappensNext).toMatch(/administrator/i);
+    expect(d.whatHappensNext).toMatch(/No client action is required/i);
   });
 
-  it("reports a reduced scope once the provider is ready", () => {
-    const d = describeScreeningStage(deriveAmlScreeningScope(clear()), ready);
-    expect(d.canProceed).toBe(true);
-    expect(d.headline).toBe("Reduced screening scope");
+  it("Q · a DFAT blocker is an administrator's, never the client's", () => {
+    const d = deriveAmlScreeningScope(settled({ sanctionsState: "not_started" }), noDfat);
+    expect(d.owner).toBe("administrator");
   });
 
-  it("reports the full scope when nothing was narrowed", () => {
-    const d = describeScreeningStage(
-      deriveAmlScreeningScope(clear({ riskRating: "high" })), ready);
-    expect(d.headline).toBe("Screening required");
+  it("M · an ordinary low-risk case with its evidence in is complete", () => {
+    const d = deriveAmlScreeningScope(settled(), ready);
+    expect(d.canAdvance).toBe(true);
+    expect(d.outstanding).toEqual([]);
+    expect(d.owner).toBe("none");
+    expect(describeScreeningStage(d, ready).headline).toBe("Stage 5 complete");
+  });
+
+  it("N · completion names Stage 6 as what happens next", () => {
+    const next = describeScreeningStage(deriveAmlScreeningScope(settled(), ready), ready)
+      .whatHappensNext;
+    expect(next).toMatch(/Stage 6/);
+    expect(next).toMatch(/Funding & transaction/);
+  });
+
+  it("O · completion is not approval and issues no Passport", () => {
+    const next = describeScreeningStage(deriveAmlScreeningScope(settled(), ready), ready)
+      .whatHappensNext;
+    expect(next).toMatch(/not a service-gate decision/i);
+    expect(next).toMatch(/Aurixa Compliance Passport/);
+  });
+
+  it("L · an incomplete stage says what to do next", () => {
+    const d = deriveAmlScreeningScope(
+      settled({ sanctionsState: "not_started", pepDetermination: null }), ready);
+    const stage = describeScreeningStage(d, ready);
+    expect(stage.canProceed).toBe(false);
+    expect(stage.headline).toBe("Action required");
+    expect(stage.whatHappensNext).toMatch(/Stage 6 becomes available/i);
+  });
+
+  it("every reading is renderable, and only a resolved case proceeds", () => {
+    const cases: Array<[AmlScreeningScopeFacts | null, typeof ready | typeof noDfat | null]> = [
+      [null, null], [null, ready], [settled(), ready], [settled(), noDfat],
+      [settled({ sanctionsState: "error" }), ready],
+      [settled({ sanctionsState: "confirmed_match" }), ready],
+      [settled({ pepDetermination: null }), ready],
+    ];
+    for (const [f, r] of cases) {
+      const d = deriveAmlScreeningScope(f, r);
+      const stage = describeScreeningStage(d, r);
+      expect(stage.headline).toBeTruthy();
+      expect(stage.detail).toBeTruthy();
+      expect(stage.whatHappensNext).toBeTruthy();
+      expect(stage.canProceed).toBe(d.canAdvance);
+      expect(d.canAdvance).toBe(d.determinations.every((x) => x.resolved));
+    }
   });
 });

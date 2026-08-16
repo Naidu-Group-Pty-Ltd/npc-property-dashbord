@@ -1,249 +1,525 @@
 import type { AmlScreeningReadinessReading } from "./screeningReadiness";
 
 /**
- * WHICH screening a case actually needs — and which it does not.
+ * What Stage 5 requires of a case — and, separately, whether it can proceed.
  *
- * ── The request, and the one correction it needs ──────────────────────
- * The ask was: if the client's answers say PEP and adverse-media screening
- * are not required, mark Stage 5 "not required", skip it, and move to
- * Stage 6.
+ * ── The correction this module carries ────────────────────────────────
+ * An earlier revision modelled `pep` as a WAIVABLE scope: the client answered
+ * "no" to the politically-exposed-person question and PEP screening was
+ * marked waived. That was wrong, and it conflicted with infrastructure this
+ * repository already has.
  *
- * The first half is right and is implemented here. The second half is not
- * safe as stated, for one reason:
+ * `_shared/aml/partyScreening.pure.ts` already models PEP as a
+ * DETERMINATION, not a check that may be skipped:
  *
- *   **SANCTIONS SCREENING IS NOT RISK-BASED.**
+ *   pepDeterminationCurrent(determination, now)   supersession + review_due_at
+ *   PEP_DETERMINATION_REQUIRED_ROLES              co-purchaser, director,
+ *                                                 trustee, beneficial owner,
+ *                                                 authorised representative
+ *   pepControlsSatisfied(...)                     determination → EDD → SoF → SoW
  *
- * Australia's targeted financial sanctions obligations bite on everyone.
- * There is no questionnaire answer, risk rating or customer profile that
- * removes them — that is precisely what distinguishes them from PEP and
- * adverse-media screening, which ARE risk-based and can legitimately be
- * scoped out with a recorded basis.
+ * A customer's own answer is EVIDENCE that may support a determination. It
+ * is not the determination, and it is certainly not an exemption from making
+ * one. So the vocabulary here is:
  *
- * Stage 5 is labelled "PEP · Sanctions · Adverse media". Skipping the STAGE
- * therefore skips sanctions, and a case that never ran sanctions screening
- * would carry a compliance gap that no later stage recovers — while looking,
- * on the rail, exactly like one that had.
+ *   MANDATORY DETERMINATIONS   sanctions (TFS), pep
+ *     — always required, never waivable, established rather than skipped.
  *
- * So this module makes the SCOPE conditional, never the stage:
+ *   RISK-BASED CONTROLS        adverse_media, watchlist
+ *     — proportionate, driven by a policy assessment of the case's own risk
+ *       evidence, with the customer's declaration as ONE input among many.
  *
- *   • `sanctions` is always required. It is not in the waivable set at all,
- *     so no combination of answers can remove it.
- *   • `pep` and `adverse_media` are waived when the client's own answers and
- *     the case's risk indicators support it, each with a written basis.
- *   • A case needing only sanctions still RUNS Stage 5 — it just runs a
- *     narrower check, and finishes quickly.
+ * `WAIVABLE_SCREENING_SCOPES` therefore contains neither `sanctions` nor
+ * `pep`, and a test sweeps the input space to prove it.
  *
- * That gives the outcome actually wanted (no client is forced through
- * screening that does not apply to them, and the stage stops being a wall)
- * without inventing a compliance position.
+ * ── Executing is not completing ───────────────────────────────────────
+ * The second correction. A live provider with a current list answers ONE
+ * question: can the check run? It says nothing about whether the required
+ * determinations have actually been made. Those are `canExecute` and
+ * `canAdvance`, they are never aliases, and a case with a perfectly healthy
+ * provider and no screening result yet has `canExecute === true` and
+ * `canAdvance === false`.
  *
- * ── Absence is never a negative answer ────────────────────────────────
- * An unanswered questionnaire does not waive anything. "The client did not
- * say they were a PEP" and "the client said they are not a PEP" are
- * different facts, and only the second is evidence. Every waiver here
- * requires an explicit answer to be present.
+ * ── What this module is not ───────────────────────────────────────────
+ * It decides nothing that binds. It reads canonical facts the server
+ * supplies and reports what Stage 5 needs, what is outstanding and whose
+ * move it is. Stage 5 completion is derived from evidence; it is not a flag
+ * the browser sets, and completing it is not service-gate approval.
  */
 
 export type AmlScreeningScope = "pep" | "sanctions" | "adverse_media" | "watchlist";
 
-/** The scopes that may EVER be waived. Sanctions is deliberately absent. */
-export const WAIVABLE_SCREENING_SCOPES: readonly AmlScreeningScope[] = [
-  "pep", "adverse_media",
+/**
+ * Determinations that must be ESTABLISHED for every customer.
+ *
+ * `sanctions` because targeted financial sanctions are not risk-based.
+ * `pep` because a PEP determination is an outcome to be reached, and the
+ * repository already models it that way.
+ */
+export const MANDATORY_DETERMINATIONS: readonly AmlScreeningScope[] = [
+  "sanctions", "pep",
 ] as const;
 
-/** Always run, for every customer, regardless of anything below. */
-export const MANDATORY_SCREENING_SCOPES: readonly AmlScreeningScope[] = ["sanctions"] as const;
-
 /**
- * The client's own declarations, as the portal questionnaire records them.
- * `undefined` means unanswered — which never waives.
+ * The only scopes a risk policy may conclude are not proportionate.
+ * Deliberately contains neither `sanctions` nor `pep`.
  */
+export const WAIVABLE_SCREENING_SCOPES: readonly AmlScreeningScope[] = [
+  "adverse_media", "watchlist",
+] as const;
+
+/** How a PEP determination was, or may be, reached. */
+export type AmlPepDeterminationMethod =
+  | "onboarding_declaration_supported"
+  | "specialist_provider"
+  | "open_source"
+  | "manual_review"
+  | "existing_verified_evidence";
+
+export type AmlPepResult = "not_pep" | "pep" | "unresolved";
+
+/** A determination as the canonical `aml.pep_determinations` row expresses it. */
+export interface AmlPepDeterminationFacts {
+  result: AmlPepResult;
+  method?: AmlPepDeterminationMethod | string | null;
+  determinedAt?: string | null;
+  reviewDueAt?: string | null;
+  supersededAt?: string | null;
+}
+
+/** The client's declarations. Evidence — never a conclusion. */
 export interface AmlScreeningAnswers {
-  /** `personal_details.pep` — "are you a politically exposed person?" */
   pep?: "yes" | "no" | null;
-  /** `personal_details.adverse` — adverse-media self-declaration. */
   adverse?: "yes" | "no" | null;
-  /** `purchase_profile.third_party` — is anybody else involved? */
   thirdParty?: "yes" | "no" | null;
-  /** `funding.overseas` — are funds coming from overseas? */
   overseasFunding?: "yes" | "no" | null;
 }
 
 export interface AmlScreeningScopeFacts {
   answers: AmlScreeningAnswers | null;
-  /** `purchasing_structure.entity_type` — individuals only can narrow. */
   entityType?: string | null;
   subjectType?: string | null;
   riskRating?: string | null;
-  /** True when the case is in enhanced due diligence. */
   enhancedDueDiligence?: boolean;
+  /** The current PEP determination, if one has been recorded. */
+  pepDetermination?: AmlPepDeterminationFacts | null;
+  /** Sanctions screening outcome, from canonical party-screening state. */
+  sanctionsState?: AmlCheckState | string | null;
+  /**
+   * Adverse-media outcome, from the same canonical state. Only consulted when
+   * the risk policy has concluded the control IS proportionate — a control
+   * the policy stood down is not waiting on a result.
+   */
+  adverseMediaState?: AmlCheckState | string | null;
+  /**
+   * A confirmed sanctions match exists SOMEWHERE on the case, even if the
+   * aggregate state reports a different party's outstanding work. Escalation
+   * must not be lost behind another party's unfinished check.
+   */
+  confirmedSanctionsMatch?: boolean;
+  /** Likewise: some party is determined to be a PEP. */
+  pepFinding?: boolean;
+  /** Clock injection keeps this pure. */
+  now?: string;
+}
+
+/** The canonical `aml.screening_checks.status` vocabulary. */
+export type AmlCheckState =
+  | "not_started" | "processing" | "clear"
+  | "possible_match" | "confirmed_match" | "error";
+
+/**
+ * A check is resolved when it produced a real outcome. `error` is not one:
+ * a failed check is not a clear result, and never advances a stage.
+ */
+function checkResolved(state: string): boolean {
+  return state === "clear" || state === "confirmed_match";
+}
+
+/** The sentence a check state deserves, in an operator's words. */
+function checkDetail(state: string, subject: string): string {
+  switch (state) {
+    case "clear": return `No ${subject} match was found.`;
+    case "confirmed_match":
+      return `A confirmed ${subject} match was recorded — downstream controls apply.`;
+    case "possible_match": return `A possible ${subject} match needs adjudication.`;
+    case "processing": return "The check is running.";
+    case "error":
+      return "The check could not complete. An error is never a clear result.";
+    default: return "Not yet checked.";
+  }
+}
+
+/** What to do next about an unresolved check. */
+function checkOutstanding(state: string, subject: string): string {
+  switch (state) {
+    case "possible_match": return `Adjudicate the possible ${subject} match.`;
+    case "error": return `The ${subject} check failed and must be re-run.`;
+    case "processing": return `The ${subject} check is still running.`;
+    default: return `Run the ${subject} check.`;
+  }
+}
+
+export interface AmlDeterminationReading {
+  scope: AmlScreeningScope;
+  /** Always true for the mandatory pair. */
+  required: boolean;
+  /** Resolved = this determination no longer holds Stage 5 open. */
+  resolved: boolean;
+  label: string;
+  detail: string;
+  /** Recorded basis, for the audit trail. */
+  basis?: string;
 }
 
 export interface AmlScreeningScopeDecision {
-  /** What must actually be screened. Always contains `sanctions`. */
-  required: AmlScreeningScope[];
-  /** What was waived, each with the basis recorded for the audit trail. */
-  waived: Array<{ scope: AmlScreeningScope; basis: string }>;
+  determinations: AmlDeterminationReading[];
+  /** Risk controls the policy concluded are not proportionate, with a basis. */
+  notRequiredByPolicy: Array<{ scope: AmlScreeningScope; basis: string }>;
   /**
-   * True when nothing beyond the mandatory scopes is required — the case the
-   * request called "screening not required". The stage still runs; it just
-   * runs narrow.
+   * Whether the required checks CAN be executed. Provider health only.
+   * Never a statement about completion.
    */
-  narrowed: boolean;
+  canExecute: boolean;
   /**
-   * True when the answers needed to narrow are missing. Everything is
-   * required, and the reason is that we do not know rather than that we
-   * decided.
+   * Whether Stage 5's evidence has actually resolved. The only thing that
+   * may unlock Stage 6.
    */
-  undetermined: boolean;
-  /** One sentence for the operator. */
+  canAdvance: boolean;
+  /** What is still outstanding, in words an operator can act on. */
+  outstanding: string[];
+  /**
+   * A determination that RESOLVED but whose outcome demands escalation — a
+   * confirmed sanctions match, or a PEP finding. Resolving a determination is
+   * not the same as clearing a customer, and the most serious outcomes this
+   * stage can produce are resolutions rather than blockers.
+   */
+  escalation: string | null;
+  /** Whose move it is. */
+  owner: "system" | "analyst" | "reviewer" | "administrator" | "none";
   summary: string;
 }
 
 const answered = (v: unknown): v is "yes" | "no" => v === "yes" || v === "no";
 
 /**
- * Reasons a case cannot narrow, regardless of what the client answered.
- * Each is a risk indicator that makes PEP and adverse-media screening
- * proportionate even when the client declares nothing.
+ * Risk evidence that makes broader adverse-media research proportionate.
+ * The customer's own declaration is one input and never the only one — a
+ * customer cannot know what has been reported about them.
  */
-function escalators(facts: AmlScreeningScopeFacts): string[] {
+function adverseMediaTriggers(f: AmlScreeningScopeFacts): string[] {
   const out: string[] = [];
-  const risk = String(facts.riskRating ?? "").toLowerCase();
-  if (risk === "high" || risk === "prohibited") {
-    out.push(`the case is rated ${risk} risk`);
+  const risk = String(f.riskRating ?? "").toLowerCase();
+  if (risk === "high" || risk === "prohibited") out.push(`the case is rated ${risk} risk`);
+  if (f.enhancedDueDiligence) out.push("the case is in enhanced due diligence");
+  if (f.pepDetermination?.result === "pep" || f.pepFinding) {
+    out.push("a party to this case is a politically exposed person");
   }
-  if (facts.enhancedDueDiligence) out.push("the case is in enhanced due diligence");
-
-  const entity = String(facts.entityType ?? facts.subjectType ?? "").toLowerCase();
+  const entity = String(f.entityType ?? f.subjectType ?? "").toLowerCase();
   if (entity && entity !== "individual" && entity !== "individuals") {
-    // A company or trust has controllers who are not the named subject, and
-    // narrowing on the subject's own answers would miss them.
     out.push(`the customer is a ${entity} rather than an individual`);
   }
-  if (facts.answers?.overseasFunding === "yes") out.push("funds are coming from overseas");
-  if (facts.answers?.thirdParty === "yes") out.push("a third party is involved in the purchase");
+  if (f.answers?.overseasFunding === "yes") out.push("funds are coming from overseas");
+  if (f.answers?.thirdParty === "yes") out.push("a third party is involved in the purchase");
+  if (f.answers?.adverse === "yes") out.push("the customer disclosed adverse media");
   return out;
+}
+
+/** Is the recorded determination usable right now? Mirrors the server rule. */
+function determinationCurrent(
+  d: AmlPepDeterminationFacts | null | undefined, nowIso: string,
+): boolean {
+  if (!d || d.supersededAt) return false;
+  if (d.reviewDueAt && d.reviewDueAt < nowIso) return false;
+  return d.result === "not_pep" || d.result === "pep";
 }
 
 export function deriveAmlScreeningScope(
   facts: AmlScreeningScopeFacts | null | undefined,
+  readiness?: AmlScreeningReadinessReading | null,
 ): AmlScreeningScopeDecision {
-  const all: AmlScreeningScope[] = ["sanctions", "pep", "adverse_media"];
+  const f: AmlScreeningScopeFacts = facts ?? { answers: null };
+  const nowIso = f.now ?? new Date().toISOString();
+  const determinations: AmlDeterminationReading[] = [];
+  const outstanding: string[] = [];
 
-  if (!facts || !facts.answers) {
-    return {
-      required: all,
-      waived: [],
-      narrowed: false,
-      undetermined: true,
-      summary:
-        "The client's declarations have not been read, so the full screening scope applies.",
-    };
+  /* ── Targeted financial sanctions — mandatory, evidence-driven ───── */
+  const s = String(f.sanctionsState ?? "not_started");
+  const sanctionsResolved = checkResolved(s);
+  determinations.push({
+    scope: "sanctions",
+    required: true,
+    resolved: sanctionsResolved,
+    label: "Targeted financial sanctions",
+    detail: checkDetail(s, "sanctions"),
+  });
+  if (!sanctionsResolved) outstanding.push(checkOutstanding(s, "sanctions"));
+
+  /* ── PEP — a determination to be REACHED, never waived ───────────── */
+  const d = f.pepDetermination;
+  const pepResolved = determinationCurrent(d, nowIso);
+  const declaration = f.answers?.pep;
+
+  determinations.push({
+    scope: "pep",
+    required: true,
+    resolved: pepResolved,
+    label: "Politically exposed person",
+    detail: pepResolved
+      ? d!.result === "pep"
+        ? "Determined — politically exposed person. The applicable controls apply."
+        : "Determined — not a politically exposed person."
+      : d?.supersededAt
+        ? "The previous determination was superseded and must be made again."
+        : d && d.reviewDueAt && d.reviewDueAt < nowIso
+          ? "The determination is past its review date and must be reassessed."
+          : d?.result === "unresolved"
+            ? "The determination could not be reached and needs review."
+            : "No determination has been recorded yet.",
+    basis: pepResolved && d?.method ? `Method: ${String(d.method)}` : undefined,
+  });
+  if (!pepResolved) {
+    // The declaration selects a ROUTE. It never substitutes for the outcome.
+    outstanding.push(
+      answered(declaration) && declaration === "no"
+        ? "Record the PEP determination. The customer's declaration supports the " +
+          "low-risk determination route but is not itself the determination."
+        : "Record the PEP determination.",
+    );
   }
 
-  const { pep, adverse } = facts.answers;
-  const blocks = escalators(facts);
-
-  // Both answers must be PRESENT to narrow anything. Absence is not a no.
-  if (!answered(pep) || !answered(adverse)) {
-    return {
-      required: all,
-      waived: [],
-      narrowed: false,
-      undetermined: true,
-      summary:
-        "The client has not answered the politically-exposed-person and adverse-media " +
-        "questions, so the full screening scope applies.",
-    };
-  }
-
-  if (blocks.length > 0) {
-    return {
-      required: all,
-      waived: [],
-      narrowed: false,
-      undetermined: false,
-      summary:
-        `The full screening scope applies because ${blocks.join(", and ")}.`,
-    };
-  }
-
-  const required: AmlScreeningScope[] = [...MANDATORY_SCREENING_SCOPES];
-  const waived: AmlScreeningScopeDecision["waived"] = [];
-
-  if (pep === "no") {
-    waived.push({
-      scope: "pep",
-      basis:
-        "The client declared they are not a politically exposed person, the customer is an " +
-        "individual, the case is not high risk or in enhanced due diligence, and no overseas " +
-        "funding or third party is involved.",
+  /* ── Adverse media — risk-based, policy-driven ───────────────────── */
+  const notRequiredByPolicy: AmlScreeningScopeDecision["notRequiredByPolicy"] = [];
+  const triggers = adverseMediaTriggers(f);
+  const answersRead = Boolean(f.answers) && answered(f.answers?.adverse);
+  if (triggers.length > 0) {
+    const a = String(f.adverseMediaState ?? "not_started");
+    const adverseResolved = checkResolved(a);
+    determinations.push({
+      scope: "adverse_media", required: true, resolved: adverseResolved,
+      label: "Adverse media",
+      detail: adverseResolved
+        ? checkDetail(a, "adverse media")
+        : `Additional research is proportionate because ${triggers.join(", and ")}.`,
+      basis: `Required by risk policy: ${triggers.join("; ")}.`,
     });
+    if (!adverseResolved) outstanding.push(checkOutstanding(a, "adverse media"));
+  } else if (!answersRead) {
+    // Unknown risk evidence is not a low-risk profile.
+    determinations.push({
+      scope: "adverse_media", required: true, resolved: false,
+      label: "Adverse media",
+      detail: "The case's risk evidence has not been read, so the control cannot be stood down.",
+    });
+    outstanding.push("Read the case's risk evidence before standing adverse media down.");
   } else {
-    required.push("pep");
-  }
-
-  if (adverse === "no") {
-    waived.push({
+    notRequiredByPolicy.push({
       scope: "adverse_media",
       basis:
-        "The client declared no adverse media, the customer is an individual, the case is not " +
-        "high risk or in enhanced due diligence, and no overseas funding or third party is " +
-        "involved.",
+        "Additional adverse-media research is not triggered for this profile under the " +
+        "current AML/CTF policy: the customer is an individual, the case is not high risk " +
+        "or in enhanced due diligence, no PEP finding applies, and there is no overseas " +
+        "funding or third-party involvement.",
     });
-  } else {
-    required.push("adverse_media");
   }
 
-  const narrowed = waived.length > 0;
+  /* ── Executing is not completing ─────────────────────────────────── */
+  const canExecute = readiness ? readiness.canRun : false;
+  const canAdvance = determinations.every((x) => x.resolved);
+
+  const escalation =
+    s === "confirmed_match" || f.confirmedSanctionsMatch
+      ? "A confirmed targeted financial sanctions match is recorded. This case must " +
+        "be escalated to the AML/CTF Compliance Officer immediately, and completing " +
+        "this stage does not permit the case to proceed to service."
+      : (pepResolved && d?.result === "pep") || f.pepFinding
+        ? "A party to this case is determined to be a politically exposed person. " +
+          "Enhanced due diligence, source of funds and source of wealth controls apply " +
+          "before the case may proceed to service."
+        : null;
+
+  const owner: AmlScreeningScopeDecision["owner"] =
+    escalation ? "reviewer"
+      : canAdvance ? "none"
+        : readiness && !readiness.canRun ? "administrator"
+          : s === "possible_match" ? "analyst"
+            : s === "processing" ? "system"
+              : "analyst";
+
   return {
-    required,
-    waived,
-    narrowed,
-    undetermined: false,
-    summary: narrowed
-      ? "Sanctions screening applies to every customer and still runs. " +
-        `${waived.map((w) => label(w.scope)).join(" and ")} ` +
-        `${waived.length === 1 ? "is" : "are"} not required for this client.`
-      : "The full screening scope applies.",
+    determinations,
+    notRequiredByPolicy,
+    canExecute,
+    canAdvance,
+    outstanding,
+    escalation,
+    owner,
+    summary: canAdvance
+      ? "All required Stage 5 determinations are resolved."
+      : outstanding.length === 1
+        ? outstanding[0]
+        : `${outstanding.length} determinations are still outstanding.`,
   };
 }
 
-function label(scope: AmlScreeningScope): string {
-  return scope === "pep" ? "PEP screening"
-    : scope === "adverse_media" ? "Adverse-media screening"
-      : scope === "watchlist" ? "Watchlist screening"
-        : "Sanctions screening";
+/* ───────────────────── Who gets screened, and where they are ─────────────
+ *
+ * The subject list is NOT maintained here. It is read from
+ * `aml.party_screening_subjects` via `list_party_screening`, which the server
+ * derives from the reconciled parties — co-purchasers, directors, trustees,
+ * beneficial owners and authorised representatives included. This function
+ * only READS those canonical rows and reports the case-level position they
+ * add up to, so that a case is never reported as settled while one party's
+ * work is outstanding.
+ */
+
+/** One canonical `aml.party_screening_subjects` row, as facts. */
+export interface AmlScreeningSubjectFacts {
+  id: string;
+  name: string;
+  partyType: string;
+  /** The server's own judgement of whether this party must be screened. */
+  required: boolean;
+  /** The canonical subject state, verbatim. */
+  state: string;
+  pepDetermination?: AmlPepDeterminationFacts | null;
+}
+
+export interface AmlScreeningSubjectReading extends AmlScreeningSubjectFacts {
+  sanctions: { state: AmlCheckState; resolved: boolean; detail: string };
+  pep: { resolved: boolean; detail: string };
+  outstanding: string[];
+}
+
+export interface AmlCaseScreeningPosition {
+  subjects: AmlScreeningSubjectReading[];
+  /** Facts to hand to `deriveAmlScreeningScope`. Never invented. */
+  facts: Pick<AmlScreeningScopeFacts,
+    "sanctionsState" | "pepDetermination" | "confirmedSanctionsMatch" | "pepFinding">;
+  /** False when the subject list has not been read — which is not "nobody". */
+  read: boolean;
+}
+
+/** Canonical subject state → the check vocabulary. Unknown fails closed. */
+function subjectCheckState(state: string): AmlCheckState {
+  switch (state) {
+    case "completed": case "false_positive": return "clear";
+    case "confirmed_match": return "confirmed_match";
+    case "possible_match": return "possible_match";
+    case "error": return "error";
+    case "queued": case "processing": return "processing";
+    default: return "not_started";
+  }
+}
+
+/** Most-blocking first. The case reports the state that still needs someone. */
+const STATE_PRECEDENCE: AmlCheckState[] = [
+  "possible_match", "error", "not_started", "processing", "confirmed_match", "clear",
+];
+
+export function readCaseScreeningPosition(
+  subjects: AmlScreeningSubjectFacts[] | null | undefined,
+  nowIso: string,
+): AmlCaseScreeningPosition {
+  if (!subjects) {
+    // An unread list is not an empty one, and an empty one is not "clear".
+    return { subjects: [], facts: { sanctionsState: "not_started" }, read: false };
+  }
+  const required = subjects.filter((s) => s.required);
+
+  const readings: AmlScreeningSubjectReading[] = subjects.map((s) => {
+    const state = subjectCheckState(s.state);
+    const resolved = checkResolved(state);
+    const pepResolved = determinationCurrent(s.pepDetermination, nowIso);
+    const outstanding: string[] = [];
+    if (s.required && !resolved) outstanding.push(checkOutstanding(state, "sanctions"));
+    if (s.required && !pepResolved) outstanding.push("Record the PEP determination.");
+    return {
+      ...s,
+      sanctions: { state, resolved, detail: checkDetail(state, "sanctions") },
+      pep: {
+        resolved: pepResolved,
+        detail: pepResolved
+          ? s.pepDetermination!.result === "pep"
+            ? "Determined — politically exposed person."
+            : "Determined — not a politically exposed person."
+          : "No current determination.",
+      },
+      outstanding,
+    };
+  });
+
+  const requiredReadings = readings.filter((r) => r.required);
+  const sanctionsState = required.length === 0
+    // No party requires screening yet — reconciliation has not produced one.
+    // That is "nothing has been checked", never "everything is clear".
+    ? "not_started"
+    : STATE_PRECEDENCE.find(
+      (p) => requiredReadings.some((r) => r.sanctions.state === p)) ?? "not_started";
+
+  // The weakest PEP position carries the case: one party without a current
+  // determination holds Stage 5 open however many others have one.
+  const unresolved = requiredReadings.find((r) => !r.pep.resolved);
+  const pepDetermination = required.length === 0
+    ? null
+    : unresolved
+      ? unresolved.pepDetermination ?? null
+      : requiredReadings[0]?.pepDetermination ?? null;
+
+  return {
+    subjects: readings,
+    facts: {
+      sanctionsState,
+      pepDetermination,
+      confirmedSanctionsMatch: requiredReadings.some(
+        (r) => r.sanctions.state === "confirmed_match"),
+      pepFinding: requiredReadings.some(
+        (r) => r.pep.resolved && r.pepDetermination?.result === "pep"),
+    },
+    read: true,
+  };
 }
 
 /**
- * What the operator should see on Stage 5, combining WHAT is required with
- * WHETHER it can run.
+ * What Stage 5 should say, combining WHAT is required with WHETHER it can run.
  *
- * The two are independent and both matter: a narrowed case whose sanctions
- * provider is unconfigured is still blocked, and saying "screening not
- * required" there would be false.
+ * The pairing exists because the two fail independently: a case whose
+ * determinations are all resolved is complete even if nobody looks at it,
+ * and a case with a healthy provider and no results is not.
  */
 export function describeScreeningStage(
   scope: AmlScreeningScopeDecision,
   readiness: AmlScreeningReadinessReading | null,
-): { headline: string; canProceed: boolean; detail: string } {
-  const blocked = readiness ? !readiness.canRun : false;
-  if (blocked) {
+): { headline: string; canProceed: boolean; detail: string; whatHappensNext: string } {
+  if (scope.canAdvance) {
+    return {
+      headline: scope.escalation ? "Stage 5 complete — escalation required" : "Stage 5 complete",
+      canProceed: true,
+      detail: scope.escalation ?? scope.summary,
+      whatHappensNext:
+        (scope.escalation ? `${scope.escalation} ` : "") +
+        "Stage 5 is complete. Continue to Stage 6 — Funding & transaction. " +
+        "Completing this stage is not a service-gate decision and does not itself " +
+        "approve the case or issue an Aurixa Compliance Passport.",
+    };
+  }
+  if (readiness && !readiness.canRun) {
     return {
       headline: "Screening cannot run yet",
       canProceed: false,
-      // Never "not required" — sanctions is still outstanding.
-      detail:
-        scope.narrowed
-          ? "Sanctions screening is still required for this client and the provider is not ready."
-          : readiness?.detail ?? "The screening configuration is incomplete.",
+      // Never "not required": the mandatory determinations are outstanding.
+      detail: "The required checks cannot execute until the screening configuration is fixed.",
+      whatHappensNext:
+        "An administrator must restore the screening provider and sanctions data. " +
+        "No client action is required.",
     };
   }
   return {
-    headline: scope.narrowed ? "Reduced screening scope" : "Screening required",
-    canProceed: true,
+    headline: "Action required",
+    canProceed: false,
     detail: scope.summary,
+    whatHappensNext:
+      `${scope.outstanding[0] ?? "Resolve the outstanding determinations."} ` +
+      "Stage 6 becomes available once Stage 5's determinations resolve.",
   };
 }
