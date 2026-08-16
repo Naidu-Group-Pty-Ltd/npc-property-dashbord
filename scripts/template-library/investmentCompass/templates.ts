@@ -72,6 +72,7 @@ import {
   withFurniture,
   beginCompassTemplate,
   type PageDef,
+  type TableRowDef,
 } from './blocks';
 import { hasContents, imageSlotPlan, kpiPlan, type ImagePlate } from './resolvers';
 import {
@@ -477,15 +478,41 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   pages.push(...platesFor('thesis'));
 
   // ── 04 Dense data ────────────────────────────────────────────────────────
-  const acquisitionRows = [
+  /**
+   * What the purchase costs, and what of it is cash.
+   *
+   * ## "Total acquisition cost / Sum of the above" was two false claims
+   *
+   * The figure is `initialCosts.totalUpfront` — $340,287 on the report behind
+   * this change — printed under rows that add to $1,460,587, because the
+   * purchase price is in the same column and is not a cash cost. A reader
+   * checking the arithmetic finds it wrong by a factor of four, and the one
+   * they are most likely to act on is the one at the bottom in bold.
+   *
+   * It is not the sum of anything, either. Measured over the 167 stored runs
+   * that carry the block, `totalUpfront` equals deposit + duty + legal +
+   * inspection + LMI on **29** of them; the average gap is $454 and the largest
+   * is $93,000. So no basis of the form "sum of …" is true of this figure, and
+   * `totals: [last]` — a doubled rule, which is the accounting convention for
+   * "the numbers above add up to this" — was itself the claim.
+   *
+   * Three changes, all of them removing an assertion rather than adding one:
+   * the row says what the figure is (`Total upfront cash`), the basis says
+   * where it comes from rather than how it was reached, and the doubled rule is
+   * gone. The deposit is shown because it is the largest part of that cash and
+   * the projection publishes it (`initialCosts.deposit`) — its absence is what
+   * made the total look unrelated to the page.
+   */
+  const acquisitionRows: TableRowDef[] = [
     ['Purchase price', '{{financials.purchasePrice | currency}}', 'Contract'],
+    { cells: ['Deposit', '{{financials.deposit | currency}}', 'Cash at exchange'], when: 'financials && financials.deposit' },
     ['Stamp duty', '{{financials.stampDuty | currency}}', 'State schedule'],
     ['Legal and conveyancing', '{{financials.legalFees | currency}}', 'Estimate'],
     ['Building and pest', '{{financials.inspectionFees | currency}}', 'Estimate'],
     // `financials.loanFees` has no column and no producer; the row printed a
     // label, a blank and "Lender schedule" on every report.
     ['LVR at settlement', '{{financials.lvr | percent:0}}', 'Loan over price'],
-    ['Total acquisition cost', '{{financials.totalCost | currency}}', 'Sum of the above'],
+    ['Total upfront cash', '{{financials.totalCost | currency}}', 'Cash required at settlement'],
   ];
   const cashflowRows = [
     ['Rental income', '{{financials.weeklyRent | currency}}', '{{financials.annualRent | currency}}'],
@@ -509,10 +536,11 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         headers: ['Acquisition', 'Amount', 'Basis'],
         rows: acquisitionRows,
         columnWidths: [0.46, 0.27, 0.27],
-        // The last row is the sum of the ones above it, so it is closed by a
-        // doubled rule under `double_rule_statement` and reads as an ordinary
-        // emphasised row under the other treatments.
-        totals: [acquisitionRows.length - 1],
+        // NO `totals`. A doubled rule is the accounting convention for "the
+        // numbers above add up to this", and this figure is not their sum —
+        // see the note on `acquisitionRows`. Withdrawing the rule withdraws
+        // the claim; the "Cash flow" table below keeps its total because its
+        // net position genuinely is one.
       }),
       ...(spacious ? [] : [
         table({
@@ -685,6 +713,13 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         ], contentTop()),
       ]), FOOTER),
       conditional: `narrative && narrative.pages > ${i}`,
+      // One contents entry for the report, not forty. `toc` lists a row per
+      // rendered page, so a compass body — which is what these 39 pages exist
+      // to carry — put "The report (2)" … "The report (40)" on the contents
+      // page and filled two sheets with them. The page still renders and is
+      // still numbered; it just does not open a second entry about the section
+      // the page before it opened. See `PageSchema.tocContinues`.
+      tocContinues: true,
     });
   }
 

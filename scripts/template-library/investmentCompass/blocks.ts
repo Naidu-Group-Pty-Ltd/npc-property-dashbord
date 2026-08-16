@@ -95,6 +95,15 @@ export interface PageDef {
   blocks: BlockDef[];
   /** Drop the page entirely when this evaluates falsy. */
   conditional?: string;
+  /**
+   * Fold this page into the contents entry the page before it opened.
+   *
+   * Set it on a continuation — the second and later sheets of one section — so
+   * the list names the section once. `toc` renders a row per rendered page, so
+   * without it a forty-page body is forty contents rows. See
+   * `PageSchema.tocContinues`.
+   */
+  tocContinues?: boolean;
 }
 
 export interface FlowItem {

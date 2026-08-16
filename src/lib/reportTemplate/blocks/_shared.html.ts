@@ -17,7 +17,7 @@ import { headingTagFor, type SemanticAnnotation } from '../pdfImport/semanticRol
 export interface HtmlBlockContext extends ResolveContext {
   page: { width: number; height: number };
   pageIndex: number;
-  pages?: Array<{ id: string; name: string }>;
+  pages?: Array<{ id: string; name: string; tocContinues?: boolean }>;
   slots?: Record<string, Block>;
 }
 
