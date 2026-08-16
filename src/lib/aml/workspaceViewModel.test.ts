@@ -617,6 +617,11 @@ describe("deriveAmlNextAction", () => {
       "review_submission",
       "review_document",
       "client_request",
+      // `closed` is terminal in the transition table by design, so reopening
+      // is its own authorised server operation rather than a status edit.
+      // It belongs in this vocabulary because it IS one — the guard exists to
+      // stop the next action suggesting something the system cannot perform.
+      "reopen_case",
       undefined,
     ]);
     for (const stage of CASE_STAGES) {

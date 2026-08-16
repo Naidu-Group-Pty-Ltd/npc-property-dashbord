@@ -41,6 +41,7 @@ import {
 import { sanitiseDocumentName } from "../_shared/aml/documentNaming.pure.ts";
 import { processScreeningEvent } from "../cross-portal-outbox-worker/screeningConsumer.ts";
 import { readSanctionsDeclaration } from "../_shared/aml/sanctionsDeclaration.pure.ts";
+import { planCaseReopen, resumeStatusFor } from "../_shared/aml/caseReopen.pure.ts";
 import {
   decideScreeningPolicy,
   deriveMissingScreeningSubjects,
@@ -81,6 +82,23 @@ const EVENT_CATEGORIES = [
 ] as const;
 
 const MLRO_ONLY_EVENT_CATEGORIES = new Set<string>(['mlro_decision', 'system']);
+
+/**
+ * The consent versions currently in force.
+ *
+ * A reopen re-asks only for consents whose version has moved since the client
+ * accepted — an acceptance is evidence of what they agreed to at the time,
+ * not authority for a document that has since changed.
+ */
+const CURRENT_CONSENT_VERSIONS: Record<string, string> = {
+  aml_ctf_program: '2026.2',
+  privacy_notice: '2026.2',
+  identity_verification: '2026.2',
+  biometric_collection: '2026.2',
+  compliance_sharing: '2026.2',
+  record_keeping: '2026.2',
+  regulatory_reporting: '2026.2',
+};
 
 // Allowed transitions (defence-in-depth on top of MLRO overrides)
 const TRANSITIONS: Record<string, string[]> = {
@@ -2067,6 +2085,127 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           provider_ready: providerReady,
           next_action: nextAction,
           decision_recorded: decisionRecorded,
+        });
+      }
+
+      /**
+       * Reopen a closed case and resume the journey.
+       *
+       * `TRANSITIONS` declares `closed: []` — closed is terminal, and
+       * deliberately so: a case must not drift back out of closure through
+       * the ordinary status machinery. This operation is the ONE way back,
+       * which is why it carries its own authority check, its own recorded
+       * reason and its own audit entry rather than relaxing that table.
+       *
+       * It restores the ability to WORK the case. It does not restore
+       * permission to SERVE — a terminated gate stays terminated and a
+       * passport is never re-minted. Reversing those quietly is the dangerous
+       * version of this feature.
+       */
+      case 'reopen_case': {
+        const caseId = String(body.case_id ?? '');
+        const reason = typeof body.reason === 'string' ? body.reason : null;
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, case_reference, status, service_gate_status, client_id')
+          .eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        const [{ data: consents }, { data: subjects }, { data: submission },
+               { data: assessment }] = await Promise.all([
+          admin.schema('aml').from('consents')
+            .select('kind, version').eq('case_id', caseId),
+          admin.schema('aml').from('party_screening_subjects')
+            .select('state, last_screened_at').eq('case_id', caseId),
+          admin.schema('aml').from('submission_versions')
+            .select('id').eq('case_id', caseId).limit(1).maybeSingle(),
+          admin.schema('aml').from('risk_assessments')
+            .select('id').eq('case_id', caseId).limit(1).maybeSingle(),
+        ]);
+
+        const plan = planCaseReopen({
+          caseId, caseReference: String(caseRow.case_reference ?? caseId),
+          status: String(caseRow.status ?? ''),
+          serviceGateStatus: caseRow.service_gate_status ?? null,
+          consents: (consents ?? []).map((c: any) => ({
+            kind: String(c.kind), version: c.version ?? null,
+          })),
+          currentConsentVersions: CURRENT_CONSENT_VERSIONS,
+          hasPortalUser: true,
+          screening: (subjects ?? []).map((s: any) => ({
+            state: String(s.state), lastScreenedAt: s.last_screened_at ?? null,
+          })),
+          roles: [...roles],
+          reason,
+        });
+
+        if (!plan.allowed) {
+          return jsonResponse({
+            error: plan.summary, code: plan.code,
+            not_restored: plan.notRestored, preserved: plan.preserved,
+          }, plan.code === 'role_required' ? 403 : 409);
+        }
+
+        const resumeStatus = resumeStatusFor({
+          hasSubmission: Boolean(submission),
+          hasCompletedScreening: (subjects ?? []).some(
+            (s: any) => ['completed', 'false_positive'].includes(String(s.state))),
+          hasRiskAssessment: Boolean(assessment),
+        });
+
+        // The gate is deliberately NOT touched. Reopening restores the work,
+        // not the permission.
+        const { error: updateError } = await admin.schema('aml').from('cases').update({
+          status: resumeStatus,
+          client_portal_status: plan.reissue.includes('consents')
+            ? 'awaiting_client' : 'in_progress',
+          updated_at: new Date().toISOString(),
+        }).eq('id', caseId);
+        if (updateError) throw updateError;
+
+        /*
+         * Portal access is NOT flipped here. `client_portal_status` is set to
+         * `awaiting_client` above, which surfaces the existing portal-access
+         * step through the ordinary next-action machinery, and that routes to
+         * the one canonical provisioning control.
+         *
+         * Flipping `is_active` from this function would be a second source of
+         * truth for portal access and a compensating write outside any
+         * transaction — the precise pattern `amlActivationPathway.source.test`
+         * forbids, because the old version of it could revert a concurrent
+         * activation's client to inactive and the revert could itself fail.
+         */
+
+        /*
+         * A consent given to a superseded version evidences what the client
+         * agreed to THEN, not authority for what we do now. Those are marked
+         * for re-acceptance; the rest are left alone, because re-ticking an
+         * unchanged document is friction with no compliance value.
+         */
+        if (plan.staleConsents.length > 0) {
+          await admin.schema('aml').from('consents')
+            .delete().eq('case_id', caseId).in('kind', plan.staleConsents);
+        }
+
+        await appendEvent(admin, caseId, 'system',
+          `Case reopened by ${userEmail ?? 'an operator'} — resumed at ${resumeStatus}`,
+          {
+            reason: 'case_reopened',
+            reopen_reason: reason,
+            resumed_status: resumeStatus,
+            reissued: plan.reissue,
+            consents_to_reaccept: plan.staleConsents,
+            not_restored: plan.notRestored,
+            service_gate_status: caseRow.service_gate_status ?? null,
+          },
+          userId, userEmail);
+
+        return jsonResponse({
+          reopened: true, resumed_status: resumeStatus,
+          reissued: plan.reissue, consents_to_reaccept: plan.staleConsents,
+          not_restored: plan.notRestored, preserved: plan.preserved,
+          summary: plan.summary,
         });
       }
 

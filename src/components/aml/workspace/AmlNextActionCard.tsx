@@ -55,6 +55,12 @@ export function AmlNextActionCard({
   className?: string;
   /** Where the operator is standing, so a jump forward can be named. */
   currentStageOrder?: number;
+  /**
+   * Reopen a closed case. Provided only where the caller can authorise it —
+   * a closed case is otherwise a dead end, because `closed` is terminal in
+   * the transition table by design.
+   */
+  onReopen?: () => void;
 }) {
   const Icon = ICONS[action.attention];
   const actionable = action.key !== "none" && action.key !== "review_case";
@@ -89,6 +95,18 @@ export function AmlNextActionCard({
           stages ahead of the work that was actually outstanding. The stage is
           named on the button now, so a move is never unlabelled.
         */}
+        {action.actionType === "reopen_case" && onReopen && (
+          <div className="mt-4">
+            <Button size="sm" onClick={onReopen}>
+              Reopen case <ArrowRight aria-hidden className="ml-1.5 h-3.5 w-3.5" />
+            </Button>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Documents, verifications, determinations and the questionnaire are kept.
+              A terminated service gate stays terminated.
+            </p>
+          </div>
+        )}
+
         {actionable && (
           <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
             <Button size="sm" onClick={() => onOpenSection(action.section)}>

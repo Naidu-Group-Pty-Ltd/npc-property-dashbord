@@ -1430,7 +1430,13 @@ export function deriveAmlNextAction(facts: AmlWorkspaceFacts): AmlNextAction {
       ...NO_ACTION,
       label: "Case closed",
       explanation:
-        "This case is closed. Its records stay available and remain subject to the retention rules.",
+        "This case is closed. Its records stay available and remain subject to the "
+        + "retention rules. It can be reopened and resumed — nothing already gathered "
+        + "is lost, and reopening does not restore permission to serve.",
+      // `closed: []` in the transition table makes this terminal by design, so
+      // the one way back is its own authorised operation rather than a status
+      // edit. Naming it here is what stops a closed case being a dead end.
+      actionType: "reopen_case",
       section: "timeline",
       sourceFacts: [`case_stage = ${stage}`, `service_gate_status = ${gate}`],
       unavailableFacts: [],

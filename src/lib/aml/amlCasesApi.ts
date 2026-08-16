@@ -332,6 +332,18 @@ export const amlCasesApi = {
   retryStalledScreening: (subject_id: string) =>
     invoke<{ subject?: AmlPartyScreeningSubject; retired?: number; skipped?: boolean; code?: string }>(
       { op: "retry_stalled_screening", subject_id }),
+  /**
+   * Reopen a closed case and resume the journey.
+   *
+   * Restores the ability to WORK the case, never permission to SERVE — a
+   * terminated gate stays terminated and a passport is never re-minted.
+   */
+  reopenCase: (case_id: string, reason: string) =>
+    invoke<{
+      reopened: boolean; resumed_status: string; reissued: string[];
+      consents_to_reaccept: string[]; not_restored: string[];
+      preserved: string[]; summary: string;
+    }>({ op: "reopen_case", case_id, reason }),
   listPepDeterminations: (case_id: string) =>
     invoke<{ determinations: AmlPepDetermination[] }>({ op: "list_pep_determinations", case_id }),
   recordPepDetermination: (payload: {
