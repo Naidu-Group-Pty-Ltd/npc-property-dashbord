@@ -22,6 +22,7 @@ import {
   findColourway,
   type ApprovedColourway,
 } from './templateColourways.pure.ts';
+import { bindOrganisationDisclaimer } from './reports/disclaimerBinding.pure.ts';
 
 // ── Operations and authorisation ─────────────────────────────────────────────
 
@@ -402,9 +403,24 @@ export function buildWorkingCopyPayload(req: WorkingCopyRequest): Record<string,
   // happens to be that colour. A reference would have meant teaching three
   // pipelines to resolve one, and a copy whose appearance could change later —
   // which is exactly what the library's snapshot rule exists to prevent.
-  const schema = req.colourway
+  const coloured = req.colourway
     ? applyColourwayToSchema(req.schema, req.colourway)
     : req.schema;
+
+  /*
+   * The disclaimer belongs to the deployment, and a copy is taken at a moment
+   * in time.
+   *
+   * That is not hypothetical: the eight formats activated on 14 Aug took
+   * `e.schema` verbatim, v7 bound `{{org.disclaimer}}` in the catalogue on the
+   * 15th, and the twelve live templates kept the pre-v7 literal — which the
+   * block renderer then honours for ever, because it only reaches its fallback
+   * when the binding resolves empty. Binding here means a copy from a stale
+   * entry, an old export or an operator's paste all end up reading Report
+   * Settings, and the literal they arrived with becomes the fallback rather
+   * than being thrown away. See `reports/disclaimerBinding.pure.ts`.
+   */
+  const schema = bindOrganisationDisclaimer(coloured);
 
   const meta = (entry.design_meta && typeof entry.design_meta === 'object')
     ? entry.design_meta as Record<string, unknown>
