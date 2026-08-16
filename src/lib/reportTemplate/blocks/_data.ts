@@ -8,6 +8,50 @@
  */
 import { evalConditional, formatIsoDate, resolveBindable, type ResolveContext } from '../bindingResolver';
 
+/**
+ * A figure a reader would call negative.
+ *
+ * Shared so a table and a KPI tile cannot disagree about the same number.
+ * `dataTable` has printed negatives in the brand's print-weight red since the
+ * ledger treatment landed; `kpiGrid` never did, so a cover that headlines
+ * "WEEKLY POSITION −$697" — the single most-read figure on the document — set
+ * it in body ink while the identical figure three pages later was red.
+ * REPORT_RULES §7: "the sign is the most-read thing on the page".
+ *
+ * Deliberately anchored to the START of the value: a leading sign is the only
+ * unambiguous case. "Change -$50" and "well-located" are left alone rather than
+ * guessed at.
+ */
+export function isNegativeFigure(text: unknown): boolean {
+  return /^[-−]\s*[$(]?\d/.test(String(text ?? '').trim());
+}
+
+/**
+ * The same text, with any minus sign set as a minus sign.
+ *
+ * U+2212 MINUS is drawn to the width of a digit and sits on the figure's
+ * mathematical axis; the hyphen-minus a keyboard produces is a short dash on
+ * the lowercase axis. In a right-aligned column of tabular numerals the
+ * difference is the one place it is impossible not to see — the signs do not
+ * line up with each other, let alone with the digits above them.
+ *
+ * The rule is "a hyphen that OPENS a figure": start of string or after
+ * whitespace, then optional currency or opening paren, then a digit. That is
+ * narrow on purpose, because the damage from guessing runs the other way —
+ * every one of these must be left alone, and is:
+ *
+ *   cost-benefit      no whitespace before the hyphen
+ *   2024-2026         no whitespace before the hyphen
+ *   3-bedroom         no whitespace before the hyphen
+ *   "the price - 5%"  a space follows the hyphen, so it is a dash, not a sign
+ *
+ * while "Net cash position: -$1,183 a month" — a figure inside a sentence in a
+ * table cell, which is how the portfolio masters write it — is converted.
+ */
+export function typesetFigure(text: unknown): string {
+  return String(text ?? '').replace(/(^|\s)-(?=[$(]?\d)/g, '$1−');
+}
+
 /** One authored table row. `when` is the same expression language as `conditional`. */
 export interface TableRow {
   cells: string[];

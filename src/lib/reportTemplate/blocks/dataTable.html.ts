@@ -1,6 +1,6 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
-import { visibleTableRows, type TableRow } from './_data';
+import { isNegativeFigure, typesetFigure, visibleTableRows, type TableRow } from './_data';
 import { absBoxStyle, esc, type HtmlBlockContext } from './_shared.html';
 
 export function renderDataTableHtml(block: Block, ctx: HtmlBlockContext): string {
@@ -122,8 +122,10 @@ export function renderDataTableHtml(block: Block, ctx: HtmlBlockContext): string
     return `<tr style="background:${drawn % 2 ? stripeBg : 'transparent'};color:${cellFg};">
       ${cells.map((c, col) => {
     const isNumeric = numeric.has(col);
-    const text = resolveBindable(c, ctx);
-    const isNegative = negativeFg !== null && /^-\s*[$(]?\d/.test(String(text).trim());
+    // A real minus, so the signs stack with the digits in a right-aligned
+    // column of tabular numerals. Shared with the KPI tile — see `_data.ts`.
+    const text = typesetFigure(resolveBindable(c, ctx));
+    const isNegative = negativeFg !== null && isNegativeFigure(text);
     const cellStyle = `padding:${cellPad}pt ${ruledHeader ? '4pt' : '8pt'};font-size:${fontSize}pt;font-variant-numeric:tabular-nums lining-nums;`
       + (isNumeric ? `text-align:right;` : '')
       + (isNumeric && numericFont ? `font-family:${numericFont};` : '')

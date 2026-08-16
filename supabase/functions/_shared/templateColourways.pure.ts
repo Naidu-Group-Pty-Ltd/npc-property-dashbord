@@ -163,6 +163,62 @@ export function contrastRatio(a: string, b: string): number {
   return (light + 0.05) / (dark + 0.05);
 }
 
+/**
+ * Contrast floor for type set below 14pt, from the brand's own print rules.
+ *
+ * `.claude/skills/npc-services-design/reports/REPORT_RULES.md` §2 sets three
+ * floors against the ground: 4.5:1 at 14pt and above, and **7:1 for everything
+ * from 13pt down** — body, table cells, and then eyebrows, captions, running
+ * heads and page numbers, which additionally may never be "a chromatic accent
+ * at full saturation".
+ *
+ * It also predicts precisely which colour breaks it: "This is the rule most
+ * likely to be broken, because the brand gold fails it."
+ */
+export const PRINT_SMALL_TYPE_CONTRAST = 7;
+
+/** Contrast floor for 14pt and above — headings and the cover. */
+export const PRINT_LARGE_TYPE_CONTRAST = 4.5;
+
+/**
+ * The same colour, moved away from its ground until it meets `target`.
+ *
+ * Lightness only: hue and saturation are carried through untouched, which is
+ * what REPORT_RULES §2 asks for in as many words — "Small gold type must be
+ * darkened — **derive it, don't hardcode a second gold**", and for the semantic
+ * colours "Keep hue and saturation, clamp lightness". The codebase already
+ * contains eight different golds because that instruction was previously
+ * followed by hand, once per site.
+ *
+ * Measured over all 100 approved colourways: every accent and every muted
+ * reaches 7:1 within 18 one-point steps (median 7), and no chromatic colour
+ * moves in hue — among the 55 derived colours at saturation ≥ 20% the largest
+ * hue drift is 0.7°, which is 8-bit rounding rather than a change of colour.
+ * The near-greys drift further in hue (up to 9° at 2.4% saturation) precisely
+ * because hue is meaningless there.
+ *
+ * Returns the input untouched when it already passes, so a colourway that was
+ * drawn to the floor keeps the approved value exactly.
+ */
+export function toPrintContrast(colour: string, ground: string, target: number): string {
+  if (contrastRatio(colour, ground) >= target) return colour;
+  // Darker on paper, lighter on an obsidian ground. The threshold is the
+  // WCAG mid-luminance, not 50% lightness: a saturated ground can be light in
+  // lightness and dark in luminance.
+  const groundIsLight = relativeLuminance(ground) > 0.18;
+  let hsl = hexToHsl(colour);
+  for (let i = 0; i < 100; i += 1) {
+    const l = groundIsLight ? hsl.l - 1 : hsl.l + 1;
+    if (l < 0 || l > 100) break;
+    hsl = { ...hsl, l };
+    const hex = hslToHex(hsl);
+    if (contrastRatio(hex, ground) >= target) return hex;
+  }
+  // Black or white — the best the hue can do. No approved colourway reaches
+  // this, and a test asserts that stays true.
+  return hslToHex(hsl);
+}
+
 /** Whichever candidate reads better on `background`. */
 export function bestContrast(background: string, candidates: string[]): string {
   let best = candidates[0];
@@ -317,6 +373,46 @@ export interface ResolvedColourway {
   line: string;
   /** Labels, captions, footers. */
   muted: string;
+  /**
+   * `muted`, at the contrast small type needs. Running heads, folios, footers,
+   * captions, column heads, KPI labels — everything the shell sets below 10pt.
+   *
+   * Derived rather than approved, because `muted` is approved for the sizes it
+   * was chosen at and this is the same colour at a size it was not. Measured:
+   * `muted` on its own paper clears 7:1 in **0 of the 100** approved
+   * colourways, and the shell sets running heads and folios at 5.9–6.2pt.
+   */
+  mutedInk: string;
+  /**
+   * `primary`, at the contrast small type needs — for the eyebrow, which is
+   * "the single strongest brand marker on a page" and is set at 5.8–6.8pt.
+   *
+   * The accent clears 7:1 in 40 of 100 colourways and clears even the 4.5:1
+   * heading floor in only 91, so at eyebrow size the approved value is the
+   * exact case REPORT_RULES §2 names. Headings, KPI values, section marks and
+   * rules keep `primary` itself.
+   */
+  accentInk: string;
+  /**
+   * `primary` where it sets on the COVER FIELD instead of on paper.
+   *
+   * The cover eyebrow is drawn in the accent over `bg`, and on a light-ground
+   * colourway `bg` is the colourway's own `ink`. Six approved colourways are
+   * deliberately monochrome — `le-bone-and-ink`, `wm-obsidian-band`,
+   * `da-paper-grid` and their siblings set `accent` to the SAME hex as `ink` —
+   * so on a field cover the eyebrow was being printed in the exact colour of
+   * the ground it sits on: 1.00:1, invisible.
+   *
+   * Measured across the families that actually own a field or band cover, 34
+   * (family × colourway) combinations put that eyebrow below 3:1. It had never
+   * been seen because no investment report has ever rendered through this
+   * system.
+   *
+   * Derived against the field rather than the paper, so a chromatic accent that
+   * already reads there keeps its approved value and a monochrome one resolves
+   * to the light neutral its own palette implies.
+   */
+  accentOnField: string;
 
   positive: string;
   caution: string;
@@ -365,6 +461,12 @@ export function resolveColourway(colourway: ApprovedColourway): ResolvedColourwa
     panel: shiftLightness(colourway.paper, dark ? PANEL_STEP : -PANEL_STEP),
     line: colourway.rule,
     muted: colourway.muted,
+    // Against the PAPER, not against the cover field: these roles set on the
+    // page. A colourway whose muted or accent already clears the floor keeps
+    // its approved value byte-for-byte.
+    mutedInk: toPrintContrast(colourway.muted, colourway.paper, PRINT_SMALL_TYPE_CONTRAST),
+    accentInk: toPrintContrast(colourway.accent, colourway.paper, PRINT_SMALL_TYPE_CONTRAST),
+    accentOnField: toPrintContrast(colourway.accent, bg, PRINT_SMALL_TYPE_CONTRAST),
     positive: semantic.positive,
     caution: semantic.caution,
     negative: semantic.negative,
@@ -383,6 +485,9 @@ export function colourwayColors(colourway: ApprovedColourway): Record<string, st
     text: r.text,
     ink: r.ink,
     muted: r.muted,
+    mutedInk: r.mutedInk,
+    accentInk: r.accentInk,
+    accentOnField: r.accentOnField,
     onPrimary: r.onPrimary,
     line: r.line,
     positive: r.positive,

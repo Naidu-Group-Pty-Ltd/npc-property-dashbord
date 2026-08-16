@@ -24,6 +24,8 @@ import {
   colourwayTokenOverride,
   colourwaysForFamily,
   contrastRatio,
+  PRINT_SMALL_TYPE_CONTRAST,
+  toPrintContrast,
   defaultColourwayFor,
   findColourway,
   hexToHsl,
@@ -241,6 +243,115 @@ describe('resolved roles', () => {
       for (const role of roles) {
         expect(colors[role], `${c.name}.${role}`).toMatch(/^#[0-9A-F]{6}$/i);
       }
+    }
+  });
+});
+
+/**
+ * The small-type inks.
+ *
+ * REPORT_RULES §2 sets 7:1 for everything below 14pt and forbids "a chromatic
+ * accent at full saturation" below 10pt — and the shell sets running heads and
+ * folios at 5.9–6.2pt and eyebrows at 5.8–6.8pt. Measured against that floor,
+ * the approved `muted` clears it in 0 of 100 colourways and the approved
+ * `accent` in 40 of 100.
+ *
+ * The approved values are not the thing to change: they are design decisions
+ * taken in Claude Design and the block above exists to keep them byte-identical.
+ * So the small sizes get a DERIVED ink, which is what §2 asks for in as many
+ * words — "derive it, don't hardcode a second gold".
+ */
+describe('small-type inks are derived, not approved', () => {
+  const all = Object.entries(COLOURWAYS_BY_FAMILY)
+    .flatMap(([key, set]) => set.map((c) => [`${key} / ${c.name}`, c] as const));
+
+  it.each(all)('%s reaches the small-type floor', (_label, colourway) => {
+    const r = resolveColourway(colourway);
+    expect(contrastRatio(r.mutedInk, r.surface)).toBeGreaterThanOrEqual(PRINT_SMALL_TYPE_CONTRAST);
+    expect(contrastRatio(r.accentInk, r.surface)).toBeGreaterThanOrEqual(PRINT_SMALL_TYPE_CONTRAST);
+  });
+
+  it.each(all)('%s moves lightness only', (_label, colourway) => {
+    const r = resolveColourway(colourway);
+    for (const [src, out] of [[r.muted, r.mutedInk], [r.primary, r.accentInk]] as const) {
+      const a = hexToHsl(src);
+      const b = hexToHsl(out);
+      // Hue is meaningless below ~20% saturation and 8-bit rounding swings it
+      // freely there, so the assertion is scoped to the colours where a hue
+      // shift would actually be a change of colour. Measured max: 0.7°.
+      if (a.s >= 20) {
+        const drift = Math.min(Math.abs(a.h - b.h), 360 - Math.abs(a.h - b.h));
+        expect(drift, `${src} -> ${out} hue`).toBeLessThanOrEqual(1);
+        expect(Math.abs(a.s - b.s), `${src} -> ${out} saturation`).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('leaves the approved value untouched when it already clears the floor', () => {
+    // Not hypothetical: 40 of the 100 accents already pass, and for those the
+    // derived ink must be the approved hex itself rather than a re-rounded
+    // near-miss.
+    const passthrough = '#000000';
+    expect(toPrintContrast(passthrough, '#FFFFFF', PRINT_SMALL_TYPE_CONTRAST)).toBe(passthrough);
+
+    let untouched = 0;
+    for (const [, colourway] of all) {
+      const r = resolveColourway(colourway);
+      if (contrastRatio(r.primary, r.surface) >= PRINT_SMALL_TYPE_CONTRAST) {
+        expect(r.accentInk).toBe(r.primary);
+        untouched += 1;
+      }
+    }
+    expect(untouched).toBeGreaterThan(0);
+  });
+
+  it('never has to fall all the way to black or white', () => {
+    // If a derivation bottoms out, the hue is gone and the page has a black
+    // eyebrow where a gold one was designed. No approved colourway does this,
+    // and this is what says so.
+    for (const [label, colourway] of all) {
+      const r = resolveColourway(colourway);
+      expect([r.mutedInk, r.accentInk], label).not.toContain('#000000');
+      expect([r.mutedInk, r.accentInk], label).not.toContain('#FFFFFF');
+    }
+  });
+
+  it('carries every derived ink into the token map the templates bind', () => {
+    const colours = colourwayColors(PRIVATE_BANKING_COLOURWAYS[0]);
+    expect(colours.mutedInk).toBeTruthy();
+    expect(colours.accentInk).toBeTruthy();
+    expect(colours.accentOnField).toBeTruthy();
+  });
+
+  /**
+   * The cover eyebrow was being printed in the colour of the ground under it.
+   *
+   * Six approved colourways are deliberately monochrome and set `accent` to the
+   * same hex as `ink`. On a light-ground colourway the cover field IS the ink,
+   * so on any family whose cover uses that field the eyebrow — the brand's own
+   * strongest marker — came out at 1.00:1. Nobody saw it because no investment
+   * report has ever rendered through this system.
+   */
+  it.each(all)('%s keeps the cover eyebrow off its own ground', (_label, colourway) => {
+    const r = resolveColourway(colourway);
+    expect(contrastRatio(r.accentOnField, r.bg)).toBeGreaterThanOrEqual(PRINT_SMALL_TYPE_CONTRAST);
+  });
+
+  it('names the monochrome colourways this was found on', () => {
+    // Regression anchor: if a future catalogue stops shipping an accent equal
+    // to its ink, this is the test that says the hazard is gone rather than
+    // leaving a derivation nobody can explain.
+    const monochrome = all.filter(([, c]) => {
+      const r = resolveColourway(c);
+      return contrastRatio(r.primary, r.bg) < 1.05;
+    });
+    expect(monochrome.length).toBeGreaterThan(0);
+    for (const [label, c] of monochrome) {
+      const r = resolveColourway(c);
+      // The approved value is untouched…
+      expect(r.primary, label).toBe(c.accent);
+      // …and the derived one is visible.
+      expect(contrastRatio(r.accentOnField, r.bg), label).toBeGreaterThanOrEqual(PRINT_SMALL_TYPE_CONTRAST);
     }
   });
 });

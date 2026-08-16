@@ -451,7 +451,7 @@ export function runningHead(documentLabel: string, part: string): BlockDef[] {
       bodyFont: 'token:mono',
       bodyTracking: TRACKING.runningHead,
       bodyLineHeight: 1.35,
-      color: 'token:muted',
+      color: 'token:mutedInk',
       x: c.contentLeft, y, width: labelWidth,
     }, 'Running head'),
     block('text-block', {
@@ -459,7 +459,7 @@ export function runningHead(documentLabel: string, part: string): BlockDef[] {
       bodySize: c.scale.runningHead,
       bodyFont: 'token:mono',
       bodyAlign: 'right',
-      color: 'token:muted',
+      color: 'token:mutedInk',
       x: c.contentLeft + labelWidth, y, width: c.contentWidth - labelWidth,
     }, 'Part marker'),
     block('divider', {
@@ -497,12 +497,12 @@ export function navigationRail(part: string, section: string): BlockDef[] {
       eyebrowSize: c.scale.eyebrow,
       eyebrowFont: 'token:mono',
       eyebrowTracking: TRACKING.eyebrow,
-      eyebrowColor: 'token:primary',
+      eyebrowColor: 'token:accentInk',
       body: section,
       bodySize: c.scale.runningHead,
       bodyFont: 'token:mono',
       bodyTracking: TRACKING.runningHead,
-      color: 'token:muted',
+      color: 'token:mutedInk',
       x: c.contentLeft, y: top, width: c.contentWidth,
     }, 'Rail marker'),
   ];
@@ -533,7 +533,7 @@ export function footer(text: string): BlockDef {
     // Left, because the page number takes the right end of the same line.
     align: 'left',
     bg: 'token:surface',
-    color: 'token:muted',
+    color: 'token:mutedInk',
     ruleColor: 'token:line',
     inset: c.margin,
     fontSize: c.scale.runningHead,
@@ -544,7 +544,7 @@ export function footer(text: string): BlockDef {
 export function pageNumber(): BlockDef {
   const c = ctx();
   return block('page-number', {
-    color: 'token:muted',
+    color: 'token:mutedInk',
     align: 'right',
     inset: c.margin,
     size: c.scale.runningHead,
@@ -630,7 +630,7 @@ export function cover(opts: CoverOptions): PageDef {
   // On a banded cover the head sits on the field and everything else on paper.
   const headInk = onField || plan.ground === 'band' ? 'token:text' : 'token:ink';
   const bodyInk = onField ? 'token:text' : 'token:ink';
-  const mutedInk = onField ? 'token:line' : 'token:muted';
+  const mutedInk = onField ? 'token:line' : 'token:mutedInk';
 
   const factsHeight = c.density === 'spacious' ? 92 : c.density === 'compact' ? 68 : 78;
   const factsTop = PAGE.height - c.margin - inset - factsHeight;
@@ -769,7 +769,7 @@ export function cover(opts: CoverOptions): PageDef {
     bodySize: c.scale.coverEyebrow * 0.92,
     bodyFont: 'token:mono',
     bodyTracking: 0.24,
-    color: plan.ground === 'paper' ? 'token:muted' : 'token:line',
+    color: plan.ground === 'paper' ? 'token:mutedInk' : 'token:line',
     x: left, y: headTop + 46, width: width - 140,
   }, 'Tagline'));
 
@@ -778,7 +778,7 @@ export function cover(opts: CoverOptions): PageDef {
     bodySize: c.scale.coverEyebrow * 0.92,
     bodyFont: 'token:mono',
     bodyAlign: 'right',
-    color: plan.ground === 'paper' ? 'token:muted' : 'token:line',
+    color: plan.ground === 'paper' ? 'token:mutedInk' : 'token:line',
     x: left + width - 140, y: headTop, width: 140,
   }, 'Cover marker'));
 
@@ -831,7 +831,7 @@ export function cover(opts: CoverOptions): PageDef {
       eyebrowSize: c.scale.coverEyebrow,
       eyebrowFont: 'token:mono',
       eyebrowTracking: TRACKING.coverEyebrow,
-      eyebrowColor: 'token:primary',
+      eyebrowColor: onField ? 'token:accentOnField' : 'token:accentInk',
       heading: opts.title,
       headingSize: size,
       headingFont: 'token:display',
@@ -1073,7 +1073,7 @@ export function sectionHeading(opts: {
         eyebrowSize: c.scale.eyebrow,
         eyebrowFont: 'token:mono',
         eyebrowTracking: TRACKING.eyebrow,
-        eyebrowColor: 'token:primary',
+        eyebrowColor: 'token:accentInk',
       }),
       heading: `${decimal}${opts.heading}`,
       headingSize: c.scale.heading,
@@ -1087,7 +1087,7 @@ export function sectionHeading(opts: {
         bodyFont: 'token:body',
         bodyStyle: 'italic',
         bodyLineHeight: 1.5,
-        color: 'token:muted',
+        color: 'token:mutedInk',
       } : {}),
       x: c.contentLeft, y, width: c.contentWidth,
     }, 'Section opener'),
@@ -1105,7 +1105,7 @@ export function verdict(opts: { eyebrow: string; heading: string; body: string }
       eyebrowSize: c.scale.eyebrow,
       eyebrowFont: 'token:mono',
       eyebrowTracking: TRACKING.eyebrow,
-      eyebrowColor: 'token:primary',
+      eyebrowColor: 'token:accentInk',
       heading: opts.heading,
       headingSize: c.scale.verdict,
       headingFont: 'token:heading',
@@ -1258,7 +1258,7 @@ export function kpis(items: KpiItem[]): FlowItem {
       ? 1
       : (plan.columns >= 4 ? 2 : 1),
     valueColor: 'token:ink',
-    labelColor: 'token:muted',
+    labelColor: 'token:mutedInk',
     ruleColor: 'token:line',
     emphasisColor: 'token:ink',
     valueWeight: 400,
@@ -1374,7 +1374,7 @@ export function kpis(items: KpiItem[]): FlowItem {
         gap: 10,
         tileBg: 'token:panel',
         accent: 'token:primary',
-        labelColor: 'token:muted',
+        labelColor: 'token:mutedInk',
         radius: c.radius,
         valueSize: Math.round(c.scale.kpiValue * 0.7),
         x: c.contentLeft, y, width: c.contentWidth, height,
@@ -1599,11 +1599,11 @@ export function risks(
       titleBg: 'token:bg',
       titleFg: 'token:primary',
       headerBg: 'token:panel',
-      headerFg: 'token:muted',
+      headerFg: 'token:mutedInk',
       stripeBg: 'token:panel',
       rowBg: 'token:surface',
       cellFg: 'token:ink',
-      mutedColor: 'token:muted',
+      mutedColor: 'token:mutedInk',
       borderColor: 'token:line',
       negativeColor: 'token:negative',
       cautionColor: 'token:caution',
@@ -1639,7 +1639,7 @@ export function recommendation(heading: string, body: string): FlowItem {
         eyebrowSize: c.scale.kpiLabel,
         eyebrowFont: 'token:mono',
         eyebrowTracking: TRACKING.label,
-        eyebrowColor: 'token:primary',
+        eyebrowColor: 'token:accentInk',
         heading,
         headingSize: Math.round(c.scale.heading * 0.78),
         headingFont: 'token:heading',
@@ -2017,7 +2017,7 @@ function bleedPlateBlocks(opts: {
           eyebrowSize: c.scale.eyebrow,
           eyebrowFont: 'token:mono',
           eyebrowTracking: TRACKING.label,
-          eyebrowColor: 'token:primary',
+          eyebrowColor: 'token:accentOnField',
         }
         : {}),
       tint: 'token:bg',
@@ -2047,7 +2047,7 @@ function measuredPlateBlocks(opts: {
     block('image', {
       src: plateSrc(opts.index),
       ...(opts.caption ? { caption: opts.caption } : {}),
-      captionColor: 'token:muted',
+      captionColor: 'token:mutedInk',
       captionSize: c.scale.kpiNote,
       captionFont: 'token:mono',
       captionStyle: 'normal',
