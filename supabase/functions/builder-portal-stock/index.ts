@@ -839,7 +839,18 @@ Deno.serve(async (req) => {
             uploadId: id,
             deadlineAt: startedAt + ENRICHMENT_BUDGET_MS,
           });
-          if (settlement.settled) processed += 1;
+          /**
+           * PROGRESS, not completion. The browser stops looping on a batch
+           * that moved nothing, and a source too big to settle inside one
+           * budget moves plenty without finishing — so counting only the
+           * finished ones would abandon exactly the imports that need the
+           * most work.
+           */
+          const moved = settlement.settled
+            || (settlement.repair?.imagesStored ?? 0) > 0
+            || (settlement.repair?.primaryUpdated ?? 0) > 0
+            || (settlement.repair?.demoted ?? 0) > 0;
+          if (moved) processed += 1;
         }
         settlementRemaining = (await uploadsNeedingSettlement(supabase, {
           organisationId: activeOrganisationId,
@@ -880,9 +891,16 @@ Deno.serve(async (req) => {
         .in('enrichment_status', ['pending', 'enriching']);
       if (uploadId) remainingQuery = remainingQuery.eq('upload_id', uploadId);
       const { count: remaining } = await remainingQuery;
+      /**
+       * What the BROWSER should come back for, which is both stages. The
+       * upload's own status below is settled on the ITEMS alone: it means "the
+       * properties have been through image enrichment", and gating it on
+       * settlement as well would leave an upload reading `enriching` for ever
+       * on a source too large to settle inside one budget.
+       */
       const outstanding = (remaining ?? 0) + settlementRemaining;
 
-      if (uploadId && !outstanding) {
+      if (uploadId && !remaining) {
         const upload = await loadUpload(uploadId);
         // `partially_complete` as well as `enriching`. An upload with even one
         // unsaveable row is set straight to `partially_complete` at import, so

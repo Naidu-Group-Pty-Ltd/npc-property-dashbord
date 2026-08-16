@@ -250,7 +250,17 @@ export async function runStockImport(input: RunImportInput): Promise<RunImportRe
    * up later as an empty frame on a card, with nothing anywhere to explain it.
    */
   const warnings = [...extraction.warnings];
-  if (outcome.itemIds.length && !outcome.withSourceImage) {
+  /**
+   * Only where the source ACTUALLY CARRIED imagery this import could see. A
+   * stock list whose pictures live behind a package link each row carries has
+   * none at this point and every one of them a few seconds later, when the
+   * settlement stage follows those links — warning here would be false on
+   * exactly the source type that takes longest to resolve.
+   */
+  const sawImagery = extraction.media.length > 0
+    || (extraction.rowAssets ?? []).some((row) => row.assets.length > 0)
+    || (input.rowAssets ?? []).some((row) => row.assets.length > 0);
+  if (outcome.itemIds.length && sawImagery && !outcome.withSourceImage) {
     warnings.push(
       'No supplied image could be identified for these properties, so their cards '
       + 'will show no photograph.');

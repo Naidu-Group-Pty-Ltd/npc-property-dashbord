@@ -27,7 +27,6 @@
  * rows earn, and this marker.
  */
 import { repairSourceImagesForUpload, type RepairOutcome } from './repairSourceImages.ts';
-import { enforceStrictPrimaryImages } from './primaryImage.ts';
 import { PROVENANCE_VERSION, type SourceImageFetcher } from './sourceImages.ts';
 import type { PackageFetcher } from './packageImages.ts';
 
@@ -158,55 +157,4 @@ export async function settleUploadSourceImages(
   }
 
   return { uploadId: input.uploadId, settled: true, repair };
-}
-
-/**
- * Settle every outstanding upload an organisation has, within a budget.
- *
- * Returns what is LEFT so a caller driving a loop knows whether to come back.
- * `enforceStrictPrimaryImages` runs once at the end rather than per upload: a
- * property whose source no longer designates an image must end the sweep with
- * no primary rather than the one it had under the old rules, and that is true of
- * properties this sweep never touched.
- */
-export async function settleOrganisationSourceImages(
-  db: any,
-  input: { organisationId: string; deadlineAt?: number; limit?: number },
-  deps: {
-    fetchPackage?: PackageFetcher;
-    fetchImage?: SourceImageFetcher;
-    readPageTexts?: (bytes: Uint8Array) => Promise<string[]>;
-  } = {},
-): Promise<{
-  settled: number;
-  attempted: number;
-  remaining: number;
-  outcomes: SettlementOutcome[];
-  primaries: { inspected: number; cleared: number; corrected: number };
-}> {
-  const pending = await uploadsNeedingSettlement(db, {
-    organisationId: input.organisationId,
-    limit: input.limit,
-  });
-
-  const outcomes: SettlementOutcome[] = [];
-  let settled = 0;
-  for (const uploadId of pending) {
-    if (input.deadlineAt && Date.now() > input.deadlineAt) break;
-    const outcome = await settleUploadSourceImages(db, {
-      organisationId: input.organisationId,
-      uploadId,
-      deadlineAt: input.deadlineAt,
-    }, deps);
-    outcomes.push(outcome);
-    if (outcome.settled) settled += 1;
-  }
-
-  const primaries = await enforceStrictPrimaryImages(db, input.organisationId);
-  const remaining = (await uploadsNeedingSettlement(db, {
-    organisationId: input.organisationId,
-    limit: 200,
-  })).length;
-
-  return { settled, attempted: outcomes.length, remaining, outcomes, primaries };
 }

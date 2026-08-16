@@ -297,7 +297,7 @@ export default function BuilderStockList() {
           <CardContent className="space-y-3 p-4">
             <div className="flex items-center justify-between text-sm font-medium">
               <span>{PHASE_LABEL[progress.phase]}</span>
-              {(progress.phase === 'enriching' || progress.phase === 'settling') && progress.remaining ? (
+              {progress.phase === 'enriching' && progress.remaining ? (
                 <span className="text-muted-foreground">{progress.remaining} propert{progress.remaining === 1 ? 'y' : 'ies'} left</span>
               ) : null}
             </div>
