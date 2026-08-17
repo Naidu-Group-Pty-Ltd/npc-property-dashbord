@@ -747,6 +747,24 @@ export const PageSchema = z.object({
   }).default({}),
   blocks: z.array(BlockSchema).default([]),
   conditional: z.string().optional(),
+  /**
+   * This page continues the section the page before it opened.
+   *
+   * A contents list names sections; the `toc` block was listing **sheets**, one
+   * row per rendered page. On the Investment Compass that is 40 rows reading
+   * "The report", "The report (2)" … "The report (40)" — a contents page that
+   * fills pages 2 and 3 of the document and tells the reader nothing they could
+   * not get from the page numbers.
+   *
+   * Declared rather than inferred. A "Name (2)" convention would read the
+   * intent out of a display string, and a section whose continuation is
+   * legitimately titled differently — or a first page that happens to end in a
+   * number — would silently come out wrong. Contents is not a place to guess.
+   *
+   * A continuation still renders, is still numbered, and still carries its own
+   * running head; it only stops opening a second entry in the list.
+   */
+  tocContinues: z.boolean().optional(),
   // Phase 2 — canvas/print furniture (all optional, additive)
   master: z.boolean().optional(),                   // true → reusable master/template page
   masterPageId: z.string().optional(),              // resolve master backdrop at render

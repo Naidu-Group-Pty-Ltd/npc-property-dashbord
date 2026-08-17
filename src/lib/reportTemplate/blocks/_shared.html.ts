@@ -17,7 +17,7 @@ import { headingTagFor, type SemanticAnnotation } from '../pdfImport/semanticRol
 export interface HtmlBlockContext extends ResolveContext {
   page: { width: number; height: number };
   pageIndex: number;
-  pages?: Array<{ id: string; name: string }>;
+  pages?: Array<{ id: string; name: string; tocContinues?: boolean }>;
   slots?: Record<string, Block>;
 }
 
@@ -112,11 +112,41 @@ export function trackingDecl(value: unknown, fallback?: number): string {
 }
 
 /** Render the absolute-positioning wrapper for blocks that use x/y/width/height. */
-export function absBoxStyle(p: Record<string, unknown>, fallback: { x?: number; y?: number; w?: number; h?: number } = {}): string {
+export function absBoxStyle(
+  p: Record<string, unknown>,
+  fallback: { x?: number; y?: number; w?: number; h?: number } = {},
+  pageHeight?: number,
+): string {
   const x = Number(p.x ?? fallback.x ?? 0);
   const y = Number(p.y ?? fallback.y ?? 0);
   const w = p.width != null ? `width:${Number(p.width)}pt;` : fallback.w != null ? `width:${fallback.w}pt;` : '';
   const h = p.height != null ? `height:${Number(p.height)}pt;` : fallback.h != null ? `height:${fallback.h}pt;` : '';
+  /**
+   * Pin the block's BOTTOM to a y coordinate and let it grow upward.
+   *
+   * Every block here is `top`-anchored, which is right for anything that flows:
+   * `flow()` stacks the next block at `y + height`, so a block growing downward
+   * is what the arithmetic describes. It is wrong for a block whose height the
+   * data decides and whose *baseline* is the fixed thing — a cover title above
+   * a rule.
+   *
+   * That title reserved two lines (`coverTitle * 1.12 * 2`) and grew down into
+   * whatever followed. Addresses run to 84 characters in production, which at
+   * Private Banking's 41pt display over a 414pt measure is four lines and at
+   * Swiss Minimal's 52pt is six — so the third line printed over the gold rule
+   * and the fourth over the standfirst beneath it. Reserving for the longest
+   * address instead would leave the median 19-character one floating a hundred
+   * points above its own rule.
+   *
+   * Anchored at the bottom, a one-line title sits on the rule and a four-line
+   * one grows up into the empty half of the cover. The overflow cannot happen
+   * rather than being budgeted for, which is the only version of this that
+   * stays true when somebody buys a longer street.
+   */
+  if (p.anchorBottom != null && Number.isFinite(Number(p.anchorBottom)) && pageHeight != null) {
+    const bottom = Math.max(0, pageHeight - Number(p.anchorBottom));
+    return `position:absolute;left:${x}pt;bottom:${bottom}pt;${w}${h}`;
+  }
   return `position:absolute;left:${x}pt;top:${y}pt;${w}${h}`;
 }
 

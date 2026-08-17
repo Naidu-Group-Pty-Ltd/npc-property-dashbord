@@ -1192,8 +1192,9 @@ export default function MarketUpdates() {
             </div>
           </DialogContent>
         </Dialog>
-        {/* The candidate-review modal was retired: held items are now managed
-            inline through the Held scope chip on the feed itself. */}
+        {/* The candidate-review modal was retired: there is no Held chip either.
+            Held items are merged into the published feed on load and promoted
+            server-side through the audited publish path (reconcileHeldIntoFeed). */}
 
 
         <MarketSourcesAdminDialog open={sourcesAdminOpen} onOpenChange={setSourcesAdminOpen} onChanged={loadUpdates} />

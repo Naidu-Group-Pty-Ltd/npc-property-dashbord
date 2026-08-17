@@ -125,9 +125,37 @@ describe('a device can actually register', () => {
 describe('send-web-push stays fail-closed while accepting the trigger', () => {
   const src = tsCode(read('supabase/functions/send-web-push/index.ts'));
 
-  it('accepts either internal scheme', () => {
-    expect(src).toMatch(/verifyRequiredCronSecret/);
+  /**
+   * ONE scheme, not either.
+   *
+   * This asserted `verifyRequiredCronSecret` was present, and WP-12 removed
+   * that path on purpose: the function used to compare a raw
+   * `x-internal-edge-secret` first and fall back to the signed check, and a
+   * bearer-style shared secret is replayable, carries no caller identity and
+   * binds nothing to the body. Both callers —
+   * `dispatch_web_push_for_portal_notification` and the staff dispatcher —
+   * already build their headers with `public.cron_signed_internal_headers(...)`,
+   * so dropping it removed a redundant weaker credential rather than a
+   * capability.
+   *
+   * The assertion is inverted rather than deleted. A test that demands the
+   * static path be present does not merely fail — it tells whoever is trying to
+   * make the suite green to put a replayable secret back into an
+   * unauthenticated edge function. That is the most expensive shape a stale
+   * test can have, so this one now fails if the static path returns.
+   *
+   * It is not a new opinion, either: `send-web-push/security-contract.test.ts`
+   * has held exactly this contract on the Deno side since WP-12 ("the static
+   * cron-secret helper must no longer gate this function"). The two suites
+   * simply disagreed, and the one that ran in CI's vitest job was the stale
+   * one. `verifyRequiredCronSecret` remains correct for the fourteen functions
+   * that still authenticate that way; this is about this receiver.
+   */
+  it('takes the signed envelope and nothing weaker', () => {
     expect(src).toMatch(/verifySignedInternal/);
+    expect(src).not.toMatch(/verifyRequiredCronSecret/);
+    expect(src).not.toMatch(/x-internal-edge-secret/i);
+    expect(src).not.toMatch(/CRON_SECRET/);
   });
 
   it('still refuses an unauthenticated caller', () => {

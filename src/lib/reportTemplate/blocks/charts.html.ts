@@ -10,6 +10,10 @@ import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
 import { absBoxStyle, esc, type HtmlBlockContext } from './_shared.html';
 import { resolveDataPath, toArray, toNumber, formatCell, colorFromPalette } from './_data';
+// One spelling of an axis figure across the programme. `reportDesign/charts.pure.ts`
+// is the canonical module the flowing render routes draw with; `src/lib/reportDesign`
+// is its bridge (see `designSystemSourceOfTruth.spec.ts`).
+import { formatAxisValue, type AxisMode } from '../../reportDesign/charts.pure';
 
 type Series = { label: string; value: number; color?: string };
 
@@ -87,13 +91,32 @@ export function renderBarChartHtml(block: Block, ctx: HtmlBlockContext): string 
   const hi = Math.max(0, ...values);
   const lo = Math.min(0, ...values);
   const span = hi - lo || 1;
+  /**
+   * Head room for the value printed above the tallest bar.
+   *
+   * A bar chart carries no axis because every bar is labelled with its own
+   * figure — which makes a clipped label the same defect an unlabelled axis is.
+   * The tallest bar reaches the top of the plot and its value was set at
+   * `y - 3`, three points ABOVE the `viewBox`: on the Investment Compass's
+   * ten-year projection drawn by Signal (`mf-01`), year ten's $1,116,298 — the
+   * one figure the page exists to state — was the only bar with no number over
+   * it. One 7pt line of head room, taken off the plot rather than added to the
+   * figure, so the declared block height is unchanged.
+   */
+  const padT = !horizontal && hi > 0 ? 9 : 0;
+  const plotH = Math.max(1, innerH - padT);
   /** Where zero sits, measured down from the top of the plot. */
-  const zeroY = (hi / span) * innerH;
+  const zeroY = padT + (hi / span) * plotH;
   const zeroX = 60 + (-lo / span) * (innerW - 60);
 
   const bars = series.map((s, i) => {
     const color = safeChartColor(s.color ?? colorFromPalette(i, palette), ctx, accent);
-    const label = esc(formatCell(s.value, (p.format as any) ?? 'auto'));
+    // A caller that declares an axis unit gets it here too, so the bar and the
+    // line variants of one series are worded the same way. Absent, the previous
+    // `formatCell` behaviour is unchanged.
+    const label = esc(p.axis
+      ? formatAxisValue(s.value, axisMode(p.axis))
+      : formatCell(s.value, (p.format as any) ?? 'auto'));
     if (horizontal) {
       const rowH = innerH / series.length;
       const yPos = i * rowH + 4;
@@ -106,7 +129,7 @@ export function renderBarChartHtml(block: Block, ctx: HtmlBlockContext): string 
       </g>`;
     }
     const xPos = barGap + i * (barW + barGap);
-    const height = (Math.abs(s.value) / span) * innerH;
+    const height = (Math.abs(s.value) / span) * plotH;
     const yPos = s.value < 0 ? zeroY : zeroY - height;
     // The value sits outside the bar on whichever side the bar grew.
     const valueY = s.value < 0 ? yPos + height + 9 : yPos - 3;
@@ -133,19 +156,32 @@ export function renderBarChartHtml(block: Block, ctx: HtmlBlockContext): string 
 }
 
 // ─── Line / area chart ────────────────────────────────────────────────────────
-function pathFromSeries(series: Series[], w: number, h: number): { line: string; area: string; points: Array<{ x: number; y: number; s: Series }> } {
-  const max = Math.max(1, ...series.map((s) => s.value));
-  const min = Math.min(0, ...series.map((s) => s.value));
-  const range = max - min || 1;
-  const step = series.length > 1 ? w / (series.length - 1) : w;
-  const pts = series.map((s, i) => ({
-    x: i * step,
-    y: h - ((s.value - min) / range) * h,
-    s,
-  }));
-  const line = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(' ');
-  const area = `${line} L${(pts[pts.length - 1]?.x ?? 0).toFixed(1)},${h} L0,${h} Z`;
-  return { line, area, points: pts };
+
+/**
+ * The value domain a line or area chart is drawn in.
+ *
+ * Zero is always in it, which is the pre-existing behaviour and is what keeps
+ * this change from restating every chart in the catalogue at a new baseline —
+ * the growth on a plot the reader has already seen must not appear to change
+ * because an axis was added beside it.
+ *
+ * `Math.max(1, …)` is what this replaces, and it was the same defect the bar
+ * chart records: on an all-negative series the top of the plot was pinned to a
+ * value of **1** that is in no series and means nothing. Nobody could see it
+ * while the axis was unlabelled; with tick labels it would have printed `$1`
+ * over a chart of losses.
+ */
+function chartDomain(series: Series[]): { lo: number; hi: number } {
+  const values = series.map((s) => s.value);
+  let lo = Math.min(0, ...values);
+  let hi = Math.max(0, ...values);
+  if (lo === hi) { lo -= 1; hi += 1; }
+  return { lo, hi };
+}
+
+/** How the y-axis ticks are worded. `plain` is the safe default: it invents no unit. */
+function axisMode(value: unknown): AxisMode {
+  return value === 'money' || value === 'percent' || value === 'plain' ? value : 'plain';
 }
 
 export function renderLineChartHtml(block: Block, ctx: HtmlBlockContext): string {
@@ -155,6 +191,33 @@ export function renderAreaChartHtml(block: Block, ctx: HtmlBlockContext): string
   return renderLineOrAreaHtml(block, ctx, true);
 }
 
+/** Gridlines drawn across the plot, and therefore ticks labelled down the axis. */
+const Y_TICKS = 4;
+
+/**
+ * A line or area chart, with an axis a reader can actually read off.
+ *
+ * ## What was wrong
+ *
+ * Measured on the Investment Compass's ten-year projection page, rendered
+ * against the stored report `1be16c4a` (93 Bimbadeen Avenue): the chart drew
+ * three dashed gridlines at 25%, 50% and 75% of the plot with **no label
+ * against any of them**, no axis, and no value anywhere on the figure. A
+ * reader could see that equity rose and could not tell whether it rose to
+ * $100,000 or to $10,000,000. It is $1.1m.
+ *
+ * Two more defects the same render showed, both at the ends of the x axis:
+ * every label was `text-anchor:middle` and the first and last points sat at
+ * x=0 and x=w, so "Yr 1" printed as "1" with its "Yr" off the left edge and
+ * "Yr 10" printed as "Yr" with its "10" off the right. This is the defect
+ * `renderTimelineRibbon` already carries the fix for — the end labels anchor
+ * to the edge and only the interior ones centre — arrived at independently in
+ * a second chart implementation, which is what a shared axis helper is for.
+ *
+ * The tick wording comes from `formatAxisValue` in
+ * `reportDesign/charts.pure.ts`, the module the flowing render routes draw
+ * their own fan chart with, so `$1.1m` is spelled one way in this programme.
+ */
 function renderLineOrAreaHtml(block: Block, ctx: HtmlBlockContext, fill: boolean): string {
   const p = block.props as Record<string, unknown>;
   const series = readSeries(p, ctx);
@@ -163,14 +226,74 @@ function renderLineOrAreaHtml(block: Block, ctx: HtmlBlockContext, fill: boolean
   const accent = resolveBindableColor(p.accent ?? 'token:primary', ctx, '#BF9B50');
   const innerH = box.h - meta.reserveTop - meta.reserveBottom - 28;
   const innerW = box.w;
-  const { line, area, points } = pathFromSeries(series, innerW, innerH);
-  const gridLines = [0.25, 0.5, 0.75].map((g) => `<line x1="0" x2="${innerW}" y1="${innerH * g}" y2="${innerH * g}" stroke="#EAE3CB" stroke-dasharray="2 3"/>`).join('');
-  const labels = points.map((pt) => `<text x="${pt.x}" y="${innerH + 12}" text-anchor="middle" style="font-size:7pt;fill:#666;">${esc(pt.s.label)}</text>`).join('');
-  const dots = points.map((pt) => `<circle cx="${pt.x}" cy="${pt.y}" r="2.5" fill="${accent}"/>`).join('');
+
+  const mode = axisMode(p.axis);
+  const { lo, hi } = chartDomain(series);
+  const span = hi - lo;
+  const ticks = Array.from({ length: Y_TICKS + 1 }, (_, t) => lo + (span * t) / Y_TICKS);
+  const tickText = ticks.map((v) => formatAxisValue(v, mode));
+
+  /**
+   * The gutter the tick labels are set in.
+   *
+   * Measured from the longest label rather than fixed, because `$1.1m` and
+   * `1,116,298` are not the same width and a gutter that is too narrow sets the
+   * label off the left edge of the figure — which is the defect being fixed,
+   * moved eight points to the left.
+   */
+  const axisTitle = resolveBindable(p.yAxisLabel, ctx);
+  const labelW = Math.max(...tickText.map((t) => t.length)) * 3.9 + 6;
+  const padL = Math.min(innerW * 0.28, labelW + (axisTitle ? 14 : 0));
+  /** The last dot is centred on the plot's right edge; this keeps its radius inside. */
+  const padR = 4;
+  const plotW = Math.max(1, innerW - padL - padR);
+  /**
+   * Head room for the topmost tick label.
+   *
+   * Its text is centred on the gridline, so a plot that starts at y=0 sets the
+   * top label's upper half outside the `viewBox` — where it is clipped, and
+   * printed into the chart's own title. Seen on the first render of this fix:
+   * `$1.1m` sheared through "Projected equity position".
+   */
+  const padT = 5;
+  const plotH = Math.max(1, innerH - padT);
+
+  const px = (i: number) => padL + (series.length > 1 ? (i / (series.length - 1)) * plotW : plotW / 2);
+  const py = (v: number) => padT + plotH - ((v - lo) / span) * plotH;
+
+  const points = series.map((s, i) => ({ x: px(i), y: py(s.value), s }));
+  const line = points.map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(' ');
+  const baseline = py(Math.max(lo, Math.min(hi, 0))).toFixed(1);
+  const area = points.length
+    ? `${line} L${points[points.length - 1].x.toFixed(1)},${baseline} L${points[0].x.toFixed(1)},${baseline} Z`
+    : '';
+
+  const grid = ticks.map((v, t) => {
+    const y = py(v);
+    return `<line x1="${padL}" x2="${(padL + plotW).toFixed(1)}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" stroke="#EAE3CB"${t === 0 ? '' : ' stroke-dasharray="2 3"'}/>`
+      + `<text x="${(padL - 4).toFixed(1)}" y="${(y + 2.5).toFixed(1)}" text-anchor="end" style="font-size:6.5pt;fill:#666;font-variant-numeric:tabular-nums lining-nums;">${esc(tickText[t])}</text>`;
+  }).join('');
+
+  // The axis itself, so the labels read as a scale rather than as loose figures.
+  const axisRule = `<line x1="${padL}" x2="${padL}" y1="${padT}" y2="${innerH}" stroke="#EAE3CB"/>`;
+
+  const axisTitleSvg = axisTitle
+    ? `<text transform="translate(6,${(padT + plotH / 2).toFixed(1)}) rotate(-90)" text-anchor="middle" style="font-size:6.5pt;fill:#666;letter-spacing:0.06em;text-transform:uppercase;">${esc(axisTitle)}</text>`
+    : '';
+
+  // End labels anchor to the edge; only the interior ones centre. See the note
+  // above — a centred label at either end of the plot is set half outside it.
+  const labels = points.map((pt, i) => {
+    const anchor = i === 0 ? 'start' : i === points.length - 1 ? 'end' : 'middle';
+    return `<text x="${pt.x.toFixed(1)}" y="${innerH + 12}" text-anchor="${anchor}" style="font-size:7pt;fill:#666;">${esc(pt.s.label)}</text>`;
+  }).join('');
+  const dots = points.map((pt) => `<circle cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="2.5" fill="${accent}"/>`).join('');
 
   return `<div style="${box.style}">${meta.titleHtml}
     <svg viewBox="0 0 ${innerW} ${innerH + 16}" style="width:100%;height:${innerH + 16}pt;display:block;">
-      ${gridLines}
+      ${grid}
+      ${axisRule}
+      ${axisTitleSvg}
       ${fill ? `<path d="${area}" fill="${accent}" fill-opacity="0.16"/>` : ''}
       <path d="${line}" fill="none" stroke="${accent}" stroke-width="1.6"/>
       ${dots}

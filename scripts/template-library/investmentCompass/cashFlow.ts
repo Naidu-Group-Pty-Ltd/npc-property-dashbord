@@ -318,6 +318,10 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       scenarioChart({
         title: 'Projected equity position',
         caption: 'Property value less loan balance, at the end of each year',
+        // Dollars, from the same stored series the table on the facing page
+        // reads. The axis is what lets the two be checked against each other.
+        axis: 'money',
+        yAxisLabel: 'Equity',
         dataPath: 'cashflow.years',
         labelKey: 'year',
         valueKey: 'equity',

@@ -3,6 +3,7 @@ import { resolveBindable, resolveBindableColor } from '../bindingResolver';
 import {
   absBoxStyle, esc, fontFamilyDecl, trackingDecl, type HtmlBlockContext,
 } from './_shared.html';
+import { isNegativeFigure, typesetFigure } from './_data';
 
 interface KpiItem {
   label: string;
@@ -105,8 +106,30 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
     ? `<div style="color:${labelColor};font-size:${noteSize}pt;margin-top:5pt;line-height:1.35;${noteFont}">${esc(resolveBindable(item.note, ctx))}</div>`
     : '');
 
+  /**
+   * Negative figures print in the brand's print-weight red.
+   *
+   * REPORT_RULES §7 states it without qualification — "the sign is the most-read
+   * thing on the page" — and `dataTable` has done it since the ledger treatment
+   * landed. This block never did, so the cover KPI band, which is where the
+   * weekly cash position is headlined, set a loss in body ink. `token:negative`
+   * is a Category B semantic colour present in every colourway, so it resolves
+   * everywhere rather than needing a prop nobody set.
+   *
+   * `negativeColor: 'none'` opts a band out.
+   */
+  const negativeColor = p.negativeColor === 'none'
+    ? null
+    : resolveBindableColor(p.negativeColor ?? 'token:negative', ctx, '#B91C1C');
+
+  /** The value as it should be set: real minus sign, em dash when absent. */
+  const valueText = (item: KpiItem) => typesetFigure(resolveBindable(item.value, ctx)) || '—';
+  /** `colour`, unless the figure is negative and the band has not opted out. */
+  const valueTone = (item: KpiItem, colour: string) =>
+    (negativeColor && isNegativeFigure(valueText(item)) ? negativeColor : colour);
+
   const figure = (item: KpiItem, size: number, colour: string) =>
-    `<div style="color:${colour};font-size:${size}pt;line-height:1;margin-top:8pt;font-weight:${valueWeight};${figures}${valueFont}">${esc(resolveBindable(item.value, ctx) || '—')}</div>`;
+    `<div style="color:${valueTone(item, colour)};font-size:${size}pt;line-height:1;margin-top:8pt;font-weight:${valueWeight};${figures}${valueFont}">${esc(valueText(item))}</div>`;
 
   // ── ruled: a band of hairline-separated columns ──────────────────────────
   if (variant === 'ruled' || variant === 'display') {
@@ -151,7 +174,7 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
         ${label(item)}
         ${item.note ? `<div style="color:${labelColor};font-size:${noteSize}pt;margin-top:3pt;${noteFont}">${esc(resolveBindable(item.note, ctx))}</div>` : ''}
       </div>
-      <div style="color:${item.accent ? resolveBindableColor(item.accent, ctx, valueColor) : valueColor};font-size:${valueSize}pt;line-height:1;font-weight:${valueWeight};${figures}${valueFont}">${esc(resolveBindable(item.value, ctx) || '—')}</div>
+      <div style="color:${valueTone(item, item.accent ? resolveBindableColor(item.accent, ctx, valueColor) : valueColor)};font-size:${valueSize}pt;line-height:1;font-weight:${valueWeight};${figures}${valueFont}">${esc(valueText(item))}</div>
     </div>`).join('');
     return `<div style="${style}border-top:1.5pt solid ${emphasisColor};">${rows}</div>`;
   }
@@ -168,7 +191,7 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
 
   // ── tile: the original arrangement, unchanged ────────────────────────────
   const tiles = items.slice(0, cols).map((item) => {
-    const value = resolveBindable(item.value, ctx) || '—';
+    const value = valueText(item);
     const accent = item.accent ? resolveBindableColor(item.accent, ctx, accentDefault) : accentDefault;
     return `<div style="position:relative;background:${tileBg};border-radius:${radius}pt;padding:12pt 12pt 10pt 16pt;overflow:hidden;">
       <div style="position:absolute;left:0;top:0;bottom:0;width:3pt;background:${accent};"></div>

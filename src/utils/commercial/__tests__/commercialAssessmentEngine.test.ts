@@ -15,15 +15,53 @@ const borrowingBase = (patch: Partial<BorrowingInputs> = {}): BorrowingInputs =>
 } as BorrowingInputs);
 
 describe('Commercial / Industrial Assessment Engine', () => {
-  it('borrowing NOI includes non-recoverable, strata and itemised operating expenses together', () => {
-    const inputs = borrowingBase();
-    inputs.income.strataOwnersCorp = 7_000;
+  /**
+   * The itemised expenses SUPERSEDE the single-figure entry; they do not add to
+   * it.
+   *
+   * This asserted the two "together" — 20,000 non-recoverable + 42,000 itemised
+   * = 62,000 — and that double-counts under either reading of
+   * `nonRecoverableExpenses`. It is the borrowing engine's simple-mode slot for
+   * total operating expenses, exactly as `simpleTotalOperatingExpenses` is in
+   * `noiEngine`, whose own test — "NOI supports **either** simple total
+   * operating expenses **or** itemised expenses" — has been asserting and
+   * passing that contract all along. `reverseCalculatorEngine` reads it the
+   * same way, deducting `nonRecoverableExpenses` alone as the whole expense
+   * line. And if it were instead the not-recovered PORTION of the itemised
+   * outgoings, adding it to them would double-count those same dollars.
+   *
+   * Every coherent reading gives 42,000 for this fixture; only "sum them" gives
+   * 62,000. The test and the engine were written in the same merge and the file
+   * has never run, so nothing reconciled them.
+   *
+   * All three modes are pinned rather than the one number, because the mode
+   * that matters is the one nobody looks at: what happens when both are filled
+   * in.
+   */
+  it('borrowing NOI takes the itemised expenses over the single-figure entry', () => {
+    const withItemised = borrowingBase();
+    withItemised.income.strataOwnersCorp = 7_000;
 
-    const result = calculateBorrowingNoi(inputs);
+    const both = calculateBorrowingNoi(withItemised);
+    expect(both.totalOperatingExpenses).toBe(42_000);
+    expect(both.actualNoi).toBe(225_500);
+    expect(both.selectedNoi).toBe(225_500);
 
-    expect(result.totalOperatingExpenses).toBe(62_000);
-    expect(result.actualNoi).toBe(205_500);
-    expect(result.selectedNoi).toBe(205_500);
+    // Itemised alone: the same answer, so the 20,000 above changed nothing.
+    const itemisedOnly = borrowingBase();
+    itemisedOnly.income.strataOwnersCorp = 7_000;
+    itemisedOnly.income.nonRecoverableExpenses = 0;
+    expect(calculateBorrowingNoi(itemisedOnly).totalOperatingExpenses).toBe(42_000);
+
+    // Simple alone: the single figure IS the total operating expense line.
+    const simpleOnly = borrowingBase();
+    Object.assign(simpleOnly.income, {
+      councilRates: 0, water: 0, landTax: 0, insurance: 0,
+      strataOwnersCorp: 0, managementFees: 0, repairsMaintenance: 0,
+    });
+    const simple = calculateBorrowingNoi(simpleOnly);
+    expect(simple.totalOperatingExpenses).toBe(20_000);
+    expect(simple.actualNoi).toBe(247_500);
   });
 
   it('NOI supports recovered outgoings, vacancy, lender adjustment, over-rent and unknown lease docs', () => {
@@ -141,7 +179,10 @@ describe('Commercial / Industrial Assessment Engine', () => {
     expect(r.debtYield).toBe(0.15);
     expect(r.maxLoanByIcr).toBeCloseTo(1_250_000, 0);
     expect(r.maxLoanByDscr).toBeGreaterThan(0);
-    expect(r.maxLoanByDebtYield).toBeCloseTo(1_666_666, 0);
+    // 150,000 / 0.09 = 1,666,666.67 — the engine is exact and this assertion
+    // was the truncated integer at ±0.5, so it failed by 0.67 of a dollar. The
+    // expectation is the arithmetic, not a rounding of it.
+    expect(r.maxLoanByDebtYield).toBeCloseTo(150_000 / 0.09, 2);
   });
 
   it('GST handles inclusive, plus GST, verified/unverified going concern, unknown and claimable cashflow', () => {

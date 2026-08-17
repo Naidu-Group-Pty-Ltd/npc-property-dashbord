@@ -25,10 +25,36 @@ describe('Commercial / Industrial 10-Year Cash Flow', () => {
     expect(y1.lenderAdjustedNoi).toBeCloseTo(99_667.5, 0);
     expect(y1.totalCapex).toBe(8_000);
     expect(y1.annualDebtService).toBe(45_000);
-    expect(y1.preTaxCashflow).toBeCloseTo(29_416.67, 0);
+    /*
+     * 21,083.33, not 29,416.67 — the fixture grants BOTH concessions.
+     *
+     *     actual NOI            102,750.00
+     *     less capex             -8,000.00
+     *     less debt service     -45,000.00
+     *     less leasing costs    -28,666.67
+     *     = pre-tax cashflow     21,083.33
+     *
+     * and the leasing costs are one month of downtime (8,333.33) + one month
+     * of incentive (8,333.33) + the 10% leasing fee on passing rent (10,000) +
+     * the reletting allowance (2,000).
+     *
+     * The old constant is what the engine returns when EITHER
+     * `downtimeMonths` or `incentiveMonths` is zero — measured, both give
+     * 29,416.67 — and this fixture sets both to 1. Charging both is the
+     * coherent reading: they are separately named inputs describing different
+     * concessions (a vacant period between tenants, and rent-free granted to
+     * the incoming tenant), and a model that charged only one would leave the
+     * other with no effect at all. The case below pins exactly that, which
+     * nothing asserted.
+     */
+    expect(y1.preTaxCashflow).toBeCloseTo(21_083.33, 2);
     expect(y1.taxableIncome).toBeCloseTo(34_750, 0);
     expect(y1.taxPayableBenefit).toBeCloseTo(10_425, 0);
-    expect(y1.afterTaxCashflow).toBeCloseTo(18_991.67, 0);
+    // Carries the same 8,333.33 as the pre-tax figure above: tax is assessed
+    // on `taxableIncome` (34,750, unchanged and asserted), so the second
+    // concession moves the cashflow and not the tax.
+    expect(y1.afterTaxCashflow).toBeCloseTo(10_658.33, 2);
+    expect(y1.preTaxCashflow - y1.taxPayableBenefit).toBeCloseTo(y1.afterTaxCashflow, 2);
     expect(y1.closingLoanBalance).toBe(591_000);
     expect(y1.equityPosition).toBeCloseTo(429_000, 0);
     expect(y1.lvr).toBeCloseTo(0.5794, 3);
@@ -47,9 +73,33 @@ describe('Commercial / Industrial 10-Year Cash Flow', () => {
     expect(y1.outgoingsAvoided).toBe(10_000);
     expect(y1.ownershipCashCost).toBe(80_000);
     expect(y1.netSavingCostVsLeasing).toBe(20_000);
-    expect(y1.businessDscr).toBeCloseTo(160_000 / 75_000, 3);
+    /*
+     * The working-capital requirement is retained before debt is serviced.
+     *
+     * These two constants — 160,000/75,000 and 68,000 — both omit the
+     * fixture's `workingCapitalRequirement: 10_000`, and both are wrong by
+     * exactly that. Measured by moving one input at a time:
+     *
+     *     denominator  75,000 = property debt service 45,000 + existing
+     *                  business debt service 20,000 + equipment 5,000 +
+     *                  vehicle 5,000            (matches the old expectation)
+     *     numerator   150,000 = EBITDA 200,000 + addbacks 20,000
+     *                           - director drawings 60,000
+     *                           - working capital 10,000
+     *
+     * Cash a business must retain to trade is not cash available to service
+     * debt, so deducting it is the conservative and the conventional read —
+     * and the model that omits it leaves `workingCapitalRequirement` with no
+     * effect on either figure it belongs to. The sensitivity is asserted below
+     * rather than left implicit in a constant.
+     */
+    expect(y1.businessDscr).toBeCloseTo(150_000 / 75_000, 3);
     expect(y1.occupancyCostRatio).toBeCloseTo(0.08, 3);
-    expect(y1.freeCashflowAfterOccupancy).toBeCloseTo(68_000, 0);
+    expect(y1.freeCashflowAfterOccupancy).toBeCloseTo(58_000, 0);
+
+    const noWorkingCapital = calculateTenYearCashFlow(baseInputs({ mode: 'ownerOccupier', workingCapitalRequirement: 0 }));
+    expect(noWorkingCapital.years[0].businessDscr).toBeCloseTo(160_000 / 75_000, 3);
+    expect(noWorkingCapital.years[0].freeCashflowAfterOccupancy).toBeCloseTo(68_000, 0);
     expect(r.years[9].equityCreated).toBeGreaterThan(0);
     expect(r.summary.cumulativeOwnershipBenefit).toBeGreaterThan(0);
     const missing = calculateTenYearCashFlow(baseInputs({ mode: 'ownerOccupier', businessEbitda: null }));

@@ -403,7 +403,12 @@ Deno.serve(async (req) => {
         const { count: notificationCount } = await supabase.from('notification_deliveries').select('id',{count:'exact',head:true}).eq('channel','in_app').eq('status','delivered').in('participant_id',(data||[]).map((entry:any)=>entry.participant.id));
         return json({ success:true, messages:{ unread, total:(data||[]).length }, unread_notifications: notificationCount||0 });
       }
-      const [{ data: threads }, { count: notificationCount }] = await Promise.all([
+      // `unreadNotifications` is BOUND here. It was referenced on the next line
+      // and assigned nowhere: this destructured the notification query as
+      // `{ count: notificationCount }`, which threw the rows away and captured a
+      // count nothing read, so the reference below was a ReferenceError and the
+      // whole summary operation failed at runtime.
+      const [{ data: threads }, { data: unreadNotifications }] = await Promise.all([
         accessibleMatterIds.length
           ? supabase.from('legal_matter_threads').select(THREAD_SELECT)
               .in('legal_matter_id', accessibleMatterIds).eq('firm_id', me.firm_id).eq('is_archived', false)
@@ -439,6 +444,27 @@ Deno.serve(async (req) => {
 
     if (operation === 'mark_notification_read') {
       if(CANONICAL_CONVERSATIONS_V2){let messageId=body.message_id?String(body.message_id):null;if(!messageId&&body.notification_id){const {data:delivery}=await supabase.from('notification_deliveries').select('message_id,conversation_participants!inner(participant_type,participant_id)').eq('id',String(body.notification_id)).eq('conversation_participants.participant_type','solicitor_user').eq('conversation_participants.participant_id',me.id).maybeSingle();messageId=delivery?.message_id||null;}if(messageId){const {data,error}=await supabase.rpc('mark_message_read',{_message_id:messageId,_participant_type:'solicitor_user',_participant_id:me.id});if(error)throw error;return json({success:true,read:data});}}
+      /*
+       * Load the notification, and check it may be seen, before marking it.
+       *
+       * `notification` was referenced here and never declared — the lookup and
+       * the permission check had both gone — so this operation was a
+       * ReferenceError on every call, and the guard
+       * `solicitorPortalNotificationAuthz.security.test.ts` asks for was absent
+       * from the code as well as from the run. The check is the same
+       * `canViewNotification` the list and summary use, so a `message_received`
+       * notification for a client whose `messages`/`view` permission this
+       * solicitor lacks answers 404 rather than being silently mutated.
+       */
+      const { data: notification } = await supabase
+        .from('solicitor_portal_notifications')
+        .select('id, client_id, notification_type')
+        .eq('id', String(body.notification_id || ''))
+        .eq('solicitor_user_id', me.id)
+        .maybeSingle();
+      if (!notification) return json({ error: 'Notification not found' }, 404);
+      if (!(await canViewNotification(notification))) return json({ error: 'Notification not found' }, 404);
+
       const { data } = await supabase
         .from('solicitor_portal_notifications')
         .update({ is_read: true, read_at: new Date().toISOString() })
@@ -451,7 +477,9 @@ Deno.serve(async (req) => {
 
     if (operation === 'mark_all_notifications_read') {
       if(CANONICAL_CONVERSATIONS_V2){const {data}=await supabase.rpc('get_participant_conversations',{_participant_type:'solicitor_user',_participant_id:me.id,_case_id:null});for(const entry of data||[])await supabase.rpc('mark_conversation_read',{_conversation_id:entry.conversation.id,_actor_type:'solicitor_user',_actor_id:me.id});return json({success:true});}
-      await supabase
+      // Bound, for the same reason as the summary above: this ran the query and
+      // discarded its result, then filtered an identifier that did not exist.
+      const { data: unreadNotifications } = await supabase
         .from('solicitor_portal_notifications')
         .select('id, client_id, notification_type')
         .eq('solicitor_user_id', me.id)

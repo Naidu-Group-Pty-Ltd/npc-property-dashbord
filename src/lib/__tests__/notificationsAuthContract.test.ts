@@ -93,7 +93,27 @@ describe('the bell no longer depends on the browser-held JWT', () => {
 describe('the anon fallback can no longer fail silently', () => {
   const sql = read(MIGRATION);
   const auth = read('src/hooks/useAuth.tsx');
-  const verify = read('supabase/functions/custom-auth-verify-v2/index.ts');
+  /**
+   * The handler, not an entrypoint.
+   *
+   * This read `custom-auth-verify-v2/index.ts` directly, and that file is now a
+   * shim: both verify URLs are deployed and both delegate to one handler in
+   * `_shared/customAuth/verify.ts`. The assertion followed the code rather than
+   * being deleted, because the contract it pins — verify SAYS when it could not
+   * mint an RLS token — is exactly what a month-long silent outage cost.
+   *
+   * Reading the shared module is also strictly stronger than what this checked
+   * before. The reason that module exists, in its own words, is that "only one
+   * of them used to have source here, and the one that did not stopped
+   * receiving every hardening the other got" — so the entrypoints are asserted
+   * to be shims below, which is the property the split was made for and which
+   * nothing else tests.
+   */
+  const verify = read('supabase/functions/_shared/customAuth/verify.ts');
+  const entrypoints = [
+    'supabase/functions/custom-auth-verify/index.ts',
+    'supabase/functions/custom-auth-verify-v2/index.ts',
+  ];
 
   it('revokes the grant that turned a denial into an empty result', () => {
     expect(sql).toMatch(/revoke all on public\.notifications from anon/i);
@@ -105,6 +125,24 @@ describe('the anon fallback can no longer fail silently', () => {
     // The old comment ("Continue without JWT - session is still valid") is the
     // decision that made a month-long outage look like normal operation.
     expect(verify).not.toMatch(/Continue without JWT/);
+  });
+
+  it('keeps both verify URLs on that one handler', () => {
+    for (const rel of entrypoints) {
+      const src = read(rel);
+      expect(src, `${rel} must delegate to the shared handler`)
+        .toMatch(/handleStaffVerify/);
+      // A shim that grows its own logic is how the two URLs diverged the first
+      // time. Anything beyond the import and the serve call belongs in the
+      // handler, where both entrypoints get it.
+      const statements = src
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l !== '' && !l.startsWith('//'));
+      expect(statements, `${rel} must stay a shim, not gain its own logic`)
+        .toHaveLength(2);
+    }
   });
 
   it('makes the client shout instead of degrading quietly', () => {
