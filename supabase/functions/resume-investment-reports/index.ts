@@ -1,12 +1,12 @@
 // resume-investment-reports
 // Cron-triggered worker that drives stalled investment reports to completion.
 //
-// Why this exists: a 17-section Compass report needs ~425s of model time, but a
+// Why this exists: a Compass report needs several minutes of model time, but a
 // Supabase edge invocation is killed at ~150s. `generate-investment-report` now
 // stops at a wall-clock budget and returns `resumeRequired: true` rather than
 // being killed mid-section — but something has to call it back. Before this
 // worker the only thing that ever did was an open browser tab running the
-// progress widget, so closing the tab abandoned the report at ~6/17 sections
+// progress widget, so closing the tab abandoned the report partway through
 // with status stuck on 'processing'.
 //
 // Auth: accepts only signed requests from the investment-report-resume pg_cron

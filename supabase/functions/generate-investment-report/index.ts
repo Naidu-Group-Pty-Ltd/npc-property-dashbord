@@ -6,7 +6,9 @@ import { logApiUsage } from '../_shared/logApiUsage.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
-import { compassSections, financialSections, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
+import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
+import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
+import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
@@ -15,7 +17,7 @@ const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim()
 // WALL-CLOCK BUDGET
 // ============================================================================
 // The Supabase edge runtime terminates an invocation at ~150s. A full Compass
-// report is 17 sections at 9-37s each (~425s), so a single invocation can never
+// report is a dozen sections at 9-37s each, so a single invocation can never
 // finish one — it used to be killed around section 6, leaving `status` stuck on
 // 'processing' with `report_generation_runs.status` still 'running' and no error
 // anywhere. Instead of racing the ceiling we stop before it and report progress
@@ -52,8 +54,29 @@ interface ReportSectionDefinition {
   sections: string[];  // H2 headings from template that belong to this group
   maxTokens: number;
   minContentLength: number;
+  /** Upper bound in characters. Optional: the legacy scope templates set none. */
+  maxContentLength?: number;
   requiredKeywords: string[];
 }
+
+/**
+ * Headings a single section may carry before it counts as over-structured.
+ *
+ * Production ran at 96 headings a report across 17 sections — 24.6 `##`, 68.1
+ * `###`, 2.9 `####`. The floor of three in `validateSectionContent` is part of
+ * why: a section with two findings still had to invent a third heading to clear
+ * it. Six leaves room for a genuinely structured section (an H2 plus four or
+ * five sub-heads) and flags the ones padding to a number.
+ */
+const MAX_SECTION_HEADINGS = 6;
+
+/** Same five labels the registry forbids; used to flag a section in the log. */
+const EDITORIAL_LABEL_PROBE = new RegExp(
+  `^\\s*(?:#{1,6}\\s*)?(?:\\*\\*|__)?\\s*(?:${EDITORIAL_LABELS
+    .map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|')})\\b`,
+  'i',
+);
 
 // FALLBACK HARDCODED SECTIONS - Matches database template "Investor Compass Structure v2"
 // These 12 groups contain all 26 H2 sections from the template, logically grouped for generation
@@ -402,18 +425,54 @@ function normaliseGenerationTier(_raw: unknown): 'compass-40' | 'financial-analy
   return 'compass-40';
 }
 
+/**
+ * Turn a registry section into a generation chunk.
+ *
+ * `maxTokens` used to be `maxWordCount * 4` (capped at 5,000) and was then
+ * multiplied by 1.6 again for Compass — handing a 650-word section about 4,160
+ * tokens, roughly 3,100 words, **4.8× its own cap**. The budget was not a
+ * budget.
+ *
+ * It is now derived from the cap with a margin that is deliberately generous
+ * rather than tight: `docs/reports/INVESTMENT.md` records mid-sentence
+ * truncation as a live defect, and the `finish_reason === 'length'`
+ * continuation pass exists because of it. Cutting a section off at the token
+ * limit produces a broken sentence on a client's page, which is worse than a
+ * long section. The cap is enforced by the prompt, by `maxContentLength` here,
+ * and finally by the post-processor — never by truncation.
+ */
 function canonicalSectionsToGenerationSections(
   canonicalSections: CanonicalSectionDefinition[],
   prefix: string,
 ): ReportSectionDefinition[] {
-  return canonicalSections.map((section, index) => ({
-    id: `${prefix}${index}`,
-    name: section.name,
-    sections: [section.name],
-    maxTokens: Math.min(5000, Math.max(1200, section.maxWordCount * 4)),
-    minContentLength: Math.min(4500, Math.max(600, section.maxWordCount * 3)),
-    requiredKeywords: section.sourceHeadings.slice(0, 3).map((heading) => heading.split(/\s+/)[0]?.toLowerCase()).filter(Boolean),
-  }));
+  return canonicalSections.map((section, index) => {
+    // ~6 chars a word, ×1.5 for the tables and directives that are not narrative
+    // and so are not charged against `maxWordCount`.
+    const maxContentLength = Math.round(section.maxWordCount * 9);
+    // The floor is derived from the same number as the ceiling and then held
+    // below half of it. Independently clamped floors and ceilings is how the
+    // old pair ended up with a 600-char floor on a 60-word cover page — a
+    // section penalised for being short at the length it was asked to be.
+    const minContentLength = Math.min(
+      Math.round(maxContentLength * 0.5),
+      Math.max(300, section.maxWordCount * 2),
+    );
+    return {
+      id: `${prefix}${index}`,
+      name: section.name,
+      sections: [section.name],
+      // Deliberately above what `maxContentLength` allows: ~9 chars a word is
+      // ~2.25 tokens a word, so ×3 leaves the model room to finish its last
+      // sentence rather than being cut mid-thought at the token limit.
+      // Truncation is a defect on a client's page (`INVESTMENT.md`); a long
+      // section is not — the ceiling is enforced by the prompt, by
+      // `maxContentLength` and finally by the post-processor, never here.
+      maxTokens: Math.min(4000, Math.max(900, Math.round(section.maxWordCount * 3))),
+      minContentLength,
+      maxContentLength,
+      requiredKeywords: section.sourceHeadings.slice(0, 3).map((heading) => heading.split(/\s+/)[0]?.toLowerCase()).filter(Boolean),
+    };
+  });
 }
 
 function getCanonicalSectionsForTier(tier: 'compass-40' | 'financial-analysis'): ReportSectionDefinition[] {
@@ -430,25 +489,43 @@ function buildCanonicalTemplateContext(tier: 'compass-40' | 'financial-analysis'
 
   const compassStyleRules = tier === 'compass-40' ? [
     '',
-    '## MANDATORY WRITING STYLE — every narrative section uses this 4-block format',
-    '1. **Key takeaway** — one clear sentence telling the client what matters.',
-    '2. **Why this matters** — two to three short paragraphs (45–80 words each) explaining the investment relevance in plain English.',
-    '3. **What to watch** — one practical limitation or risk.',
-    '4. **NPC view** — a short advisory-style conclusion (one paragraph).',
+    '## MANDATORY WRITING STYLE — data first, no commentary blocks',
+    'Every section follows the same three steps, repeated as many times as it has findings:',
+    '1. **State the finding** in the sentence that introduces the data — one sentence, specific, with the number in it.',
+    '2. **Show the data** — a figure, a table, or a short list.',
+    '3. **Move on** to the next finding.',
+    '',
+    'A paragraph that follows a table or a figure and restates it is the single',
+    'thing this report must not contain. If a sentence would begin "this means",',
+    '"in other words", "for an investor this suggests" or similar, delete it: the',
+    'finding belongs in the sentence that introduced the data, not underneath it.',
+    '',
+    '## FORBIDDEN LABELS — these must not appear anywhere, in any form',
+    `- Never write ${EDITORIAL_LABELS.map((l) => `"${l}"`).join(', ')}.`,
+    '- That applies to all three forms: as a heading (`### NPC view`), as a bold',
+    '  lead-in (`**What This Means**`), and as a bare line above a paragraph.',
+    '- There is no permitted number of these. Not one per section, not one per report.',
+    '- Advisory judgement belongs in exactly two places: the Executive Verdict and the',
+    '  Final Recommendation. In both it is written as continuous prose with no label.',
     '',
     '## HARD EXCLUSIONS (Compass / Location & Property Fit Report)',
     '- DO NOT include purchase price, deposit, stamp duty, LMI, LVR, weekly rent, gross/net yield, loan amount, interest rate, monthly/annual repayments, cashflow, sensitivity, 10-year projections, capital growth %, equity-after-X-years, depreciation, negative gearing, land tax. ALL financial modelling lives in the separate Financial Analysis Report.',
     '- DO NOT include a dashboard / KPI row of financial figures in the Executive Verdict or anywhere else.',
     '- DO NOT emit `[citation]`, `[source needed]`, `[TBD]` or any placeholder. Either name the real source inline, or omit the claim and let the Source Appendix carry it.',
-    '- DO NOT repeat education, transport or employment content across multiple sections. Each is rendered ONCE in its dedicated section.',
-    '- DO NOT include transition paragraphs ("As we move into…", "Building on the above…"). At most one "What This Means" / decision box per section.',
+    '- DO NOT repeat education, transport or employment content across sections. Each is rendered ONCE, in the section that owns it.',
+    '- DO NOT include transition paragraphs ("As we move into…", "Building on the above…", "This flows naturally…"). Start the next finding.',
+    '',
+    '## LENGTH AND STRUCTURE',
+    '- Respect the per-section word ceiling given above. It is a ceiling, not a target to reach: a section that says what it has to say in half of it is finished.',
+    '- At most 4 `###` sub-headings in a section. A sub-heading carries a group of findings, not a single paragraph.',
+    '- At most 2 visualisations per section, each showing data that is not also in a table on the same page.',
     '',
     '## CONSISTENCY CHECKS',
     '- Bed / bath / car / land size stated in the Property & Locality Snapshot MUST match every later reference (Property Fit, Risk Dashboard, Final Recommendation).',
     '- Property type (house / townhouse / unit) MUST be identical everywhere it is mentioned.',
     '',
     '## RECOMMENDATION FORMAT',
-    'The Final Recommendation must use one of three labels: **Proceed**, **Proceed with caution**, or **Not suitable**, followed by 150–250 words of plain rationale tied to location, tenant demand and risk — no financial verdict.',
+    'The Final Recommendation opens with one of three labels on its own line — **Proceed**, **Proceed with caution**, or **Not suitable** — then 150–250 words of continuous unlabelled rationale tied to location, tenant demand and risk, then the immediate actions as a short list. No financial verdict.',
     '',
   ].join('\n') : '';
 
@@ -459,9 +536,8 @@ function buildCanonicalTemplateContext(tier: 'compass-40' | 'financial-analysis'
       `## ${section.name}`,
       `- Page budget: ${section.pageBudget}`,
       `- Purpose: ${section.purpose}`,
-      `- Maximum narrative words: ${section.maxWordCount}`,
+      `- Narrative word ceiling: ${section.maxWordCount} (a ceiling, not a target)`,
       section.visualComponents.length ? `- Required visual/data components: ${section.visualComponents.join(', ')}` : '- Required visual/data components: narrative only',
-      section.allowDecisionBox ? '- Include one concise "What This Means"/decision box.' : '- Do not include a decision box in this section.',
       '',
     ]),
     compassStyleRules,
@@ -534,6 +610,10 @@ const COMPASS40_FORBIDDEN_HEADINGS: RegExp[] = [
   /^#{1,4}\s*(?:\d+(?:\.\d+)*\.?\s+)?Category\s+Breakdown\b/i,
   /^#{1,4}\s*(?:\d+(?:\.\d+)*\.?\s+)?(Growth|Location|Yield|Demand|Risk)\s+Score\b/i,
   /^#{1,4}\s*(?:\d+(?:\.\d+)*\.?\s+)?Investment\s+Recommendation\s*$/i,
+  // The commentary labels, when the model reaches for a heading. This catches
+  // them per-section during generation; `compassPostProcessor.stripEditorialBlocks`
+  // catches the bold and bare-line forms across the whole document afterwards.
+  /^#{1,4}\s*(?:\d+(?:\.\d+)*\.?\s+)?(?:What\s+This\s+Means(?:\s+for\s+You)?|Why\s+This\s+Matters(?:\s+for\s+Investors)?|What\s+to\s+Watch|Key\s+Takeaways?|NPC\s+(?:View|Take)|Our\s+View)\b/i,
 ];
 
 // Sentences containing these are dropped (financial leaks in prose).
@@ -1041,37 +1121,68 @@ function groupHeadingsIntoSections(headings: string[]): ReportSectionDefinition[
   return sections;
 }
 
-// Section validation helper - ensures content meets minimum requirements
+// Section validation helper — is this section the right size and shape?
+//
+// This is the only gate that runs inside the generation loop, and until v3.0
+// every rule in it pushed one way: too short scored a penalty, fewer than three
+// headings scored a penalty, and NOTHING had an upper bound. A model asked to
+// clear a floor with no ceiling clears it by a wide margin, which is how a
+// report with a 9,170-word budget came to run at ~21,000. The bounds below are
+// symmetric now.
 function validateSectionContent(
   sectionDef: typeof REPORT_SECTIONS[0],
   content: string
 ): { isValid: boolean; issues: string[]; score: number } {
   const issues: string[] = [];
   let score = 100;
-  
+
   // Check minimum content length
   const contentLength = content?.length || 0;
   if (contentLength < sectionDef.minContentLength) {
     issues.push(`Content too short: ${contentLength} chars (min: ${sectionDef.minContentLength})`);
     score -= 30;
   }
-  
+
+  // And the ceiling, which is the half that was missing. `maxContentLength` is
+  // derived from the section's own word cap, so this cannot drift from it.
+  const maxContentLength = sectionDef.maxContentLength ?? 0;
+  if (maxContentLength > 0 && contentLength > maxContentLength) {
+    issues.push(`Content too long: ${contentLength} chars (max: ${maxContentLength})`);
+    score -= 20;
+  }
+
   // Check for required keywords (case-insensitive)
   const contentLower = (content || '').toLowerCase();
   const missingKeywords = (sectionDef.requiredKeywords || []).filter(
     kw => !contentLower.includes(kw.toLowerCase())
   );
-  
+
   if (missingKeywords.length > 0) {
     issues.push(`Missing content areas: ${missingKeywords.join(', ')}`);
     score -= missingKeywords.length * 10;
   }
-  
-  // Check for structural elements (headings, tables)
+
+  // Check for structural elements (headings, tables). One heading is structure;
+  // three was a floor the model met by inventing sub-headings, and 68 `###` a
+  // report was the structural half of the noise this change removes.
   const headingCount = (content?.match(/^#{1,3}\s+/gm) || []).length;
-  if (headingCount < 3) {
+  if (headingCount < 1) {
     issues.push(`Insufficient structure: only ${headingCount} headings found`);
     score -= 15;
+  } else if (headingCount > MAX_SECTION_HEADINGS) {
+    issues.push(`Over-structured: ${headingCount} headings (max ${MAX_SECTION_HEADINGS})`);
+    score -= 10;
+  }
+
+  // Commentary labels. The post-processor strips these before the report is
+  // stored; flagging here means a section that produces them is visible in the
+  // generation log rather than only in the diff between raw and stored content.
+  const editorialHits = (content || '')
+    .split('\n')
+    .filter((line) => EDITORIAL_LABEL_PROBE.test(line)).length;
+  if (editorialHits > 0) {
+    issues.push(`Contains ${editorialHits} editorial commentary label(s); they will be stripped`);
+    score -= 10;
   }
   
   // Check for data presentation (tables with |)
@@ -1386,9 +1497,11 @@ Median values have climbed steadily ~~[820,860,910,980,1050,1180]~~ over six yea
 
 VISUAL-FIRST RULES (CRITICAL):
 - Every chapter MUST open with a \`{{glance: …}}\` strip immediately after the H2.
-- Aim for **3-4 visualisations per chapter** drawn from the full library
+- **At most 2 visualisations per chapter**, drawn from the full library
   (gauge / bars / quadrant / pictograph / donut / tiles / heatmap / wheel /
-  waterfall / margin / timeline / stat / inline sparkline). Prose EXPLAINS visualisations, never duplicates them.
+  waterfall / margin / timeline / stat / inline sparkline), each showing data
+  that is not also in a table on the same page. Prose INTRODUCES a visualisation
+  and never restates it afterwards.
 - Any "median grew from X to Y" / trend sentence MUST include either \`~~[…]~~\` inline or a \`::: stat\` callout nearby.
 - Any "subject vs suburb vs metro/state" comparison MUST use \`{{bars: Subject X, Suburb Y, Metro Z | title=…}}\`.
 - Investment Score, Affordability, Risk, Suitability, Confidence, and similar 0-100 ratings MUST use \`{{gauge: …}}\`.
@@ -1533,12 +1646,12 @@ ${previousSections.substring(Math.max(0, previousSections.length - 6000))}
 1. Generate ONLY the sections listed above - no introduction, no conclusion beyond what's specified
  2. Follow the exact markdown formatting with ## for main section headings and ### for subsections
 3. Use tables ONLY when a visual shortcode cannot express the data. Prefer \`{{bars}}\`, \`{{heatmap}}\`, \`{{donut}}\`, \`{{tiles}}\`, \`{{timeline}}\`, \`{{gauge}}\`, \`{{pictograph}}\`, and inline \`~~[…]~~\` sparklines over tables or long paragraphs.
-4. After every visual/table/significant data point, include only a brief "What This Means" explanation in plain English — 1 short paragraph max.
-5. Lead each section with a \`{{glance: …}}\` strip and a clear insight before presenting supporting data.
-6. Be thorough and accurate, but compress prose aggressively; every paragraph should earn its place beside a visual.
+4. NEVER follow a visual, table or data point with a paragraph explaining it. State the finding in the sentence that INTRODUCES the data, then show the data, then move on. Do not write ${EDITORIAL_LABELS.map((l) => `"${l}"`).join(', ')} — not as a heading, not as a bold lead-in, not as a bare line. There is no permitted number of these.
+5. Lead each section with a \`{{glance: …}}\` strip carrying the section's own findings — not a description of what the section will cover.
+6. Be thorough and accurate, but compress prose aggressively; every paragraph must add a fact that is not already on the page.
 7. Start immediately with the first section heading - no preamble
 8. Use contextual comparisons (e.g., "30% above the state average") to make numbers meaningful
-9. Include a brief transition sentence at the end of each section to connect to what comes next
+9. End the section when its findings are stated. No transition sentence, no summary of what was just said, no preview of what comes next.
 ${sectionDef.id === 'section10' ? '10. MUST include the Investment Score Analysis section with the exact score values provided above' : ''}
 
 **CROSS-SECTION CONSISTENCY (MANDATORY):**
@@ -1780,7 +1893,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
   const corsHeaders = createCorsHeaders(origin);
 
   // Wall-clock reference for the section budget. The Supabase edge runtime kills
-  // an invocation at ~150s; a 17-section Compass report needs ~425s. Before this
+  // an invocation at ~150s; a Compass report needs several times that. Before this
   // existed the loop simply ran until the platform killed it mid-section, which
   // left the row stuck at 'processing' forever with no error recorded. We now
   // stop voluntarily and hand the rest to the next caller (cron watchdog or the
@@ -1957,7 +2070,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         // Fetch existing report data (including content for continuation)
         const { data: existingReport } = await supabaseClient
           .from('investment_reports')
-          .select('manual_overrides, report_content, property_address, last_completed_section, investment_score, financial_calculations, demographics_data, economic_data, location_intelligence, report_scope, report_tier, generation_engine')
+          .select('manual_overrides, report_content, property_address, last_completed_section, total_sections, investment_score, financial_calculations, demographics_data, economic_data, location_intelligence, report_scope, report_tier, generation_engine')
           .eq('id', reportId)
           .single();
         
@@ -2030,9 +2143,35 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           console.log('   Existing content length:', existingReport.report_content.length, 'chars');
           console.log('   Last completed section (from DB):', lastCompletedSection);
           
+          // A report banked under a different section list cannot be resumed.
+          //
+          // `last_completed_section` is a raw index into the CURRENT registry,
+          // so a row stopped at 8 of 17 that resumed under the 12-section v3.0
+          // list would splice sections 8-11 of the new structure onto sections
+          // 0-7 of the old one — a document with two Population sections, no
+          // Demand Drivers, and no way to tell from the row that anything went
+          // wrong. `total_sections` records which list the banked content was
+          // written against, so the mismatch is detectable; when it does not
+          // match, the report starts again rather than being stitched together.
+          //
+          // This costs one full regeneration, and only for reports in flight
+          // across the deploy. Reports already `completed` are never resumed.
+          const storedTotal = Number((existingReport as any).total_sections) || 0;
+          const registryTotal = /^(compass|compass-40)$/i.test(String((existingReport as any).report_tier ?? 'compass'))
+            ? compassSections().length
+            : 0;
+          const registryChanged = storedTotal > 0 && registryTotal > 0 && storedTotal !== registryTotal;
+          if (registryChanged) {
+            console.log(
+              `   ⚠️ Section list changed since this report was banked ` +
+              `(stored total_sections=${storedTotal}, registry now ${registryTotal}). ` +
+              `Regenerating from scratch — resuming would splice two different structures together.`,
+            );
+          }
+
           // CRITICAL FIX: Only use existing content for TRUE resume (last_completed_section > 0)
           // If last_completed_section is 0, this is a FRESH REGENERATION - do NOT prepend old content
-          if (lastCompletedSection > 0) {
+          if (lastCompletedSection > 0 && !registryChanged) {
             existingReportContent = existingReport.report_content;
             console.log('   ✓ RESUME mode: Using existing content as base');
             
@@ -2046,10 +2185,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             console.log(`   Completed sections: ${completedSectionIndices.length}/${REPORT_SECTIONS.length}`);
             console.log(`   Will resume from section: ${lastCompletedSection} (${REPORT_SECTIONS[lastCompletedSection]?.name || 'END'})`);
           } else {
-            // Fresh regeneration: last_completed_section was reset to 0
-            // Do NOT use existing content - start completely fresh
+            // Fresh regeneration: either last_completed_section was reset to 0,
+            // or the section list changed underneath a partially generated
+            // report. Do NOT use existing content - start completely fresh.
             existingReportContent = '';
-            console.log('   🔄 FRESH REGENERATION mode: Starting from scratch (last_completed_section=0)');
+            completedSectionIndices.length = 0;
+            console.log(
+              registryChanged
+                ? '   🔄 FRESH REGENERATION mode: section list changed, discarding partial content'
+                : '   🔄 FRESH REGENERATION mode: Starting from scratch (last_completed_section=0)',
+            );
             console.log('   Old content will be discarded, generating all sections fresh');
           }
           
@@ -3603,9 +3748,7 @@ Current market conditions are influenced by the National House Price Growth Rate
 | GDP Growth | ${enhancedData.economics?.indicators?.gdpGrowth || '1.3'}% | ABS |
 | National Unemployment | ${enhancedData.economics?.indicators?.unemploymentRate || '4.1'}% | ABS Labour Force |
 
-**What This Means for Property Investors:**
-
-Write 2-3 paragraphs in plain English explaining how the current cash rate of ${enhancedData.economics?.cashRate?.current || '4.10'}% and inflation at ${enhancedData.economics?.inflation?.annual || '2.4'}% affect mortgage costs, borrowing capacity, and property demand in practical terms. Avoid jargon — explain as you would to a client sitting across the table. Connect these macro conditions specifically to the property's local market.
+Write 2-3 paragraphs in plain English explaining how the current cash rate of ${enhancedData.economics?.cashRate?.current || '4.10'}% and inflation at ${enhancedData.economics?.inflation?.annual || '2.4'}% affect mortgage costs, borrowing capacity, and property demand in practical terms. Avoid jargon — explain as you would to a client sitting across the table. Connect these macro conditions specifically to the property's local market. Do NOT put a "What This Means" heading or any other commentary label above them.
 
 ---
 
@@ -4869,21 +5012,19 @@ DO NOT default to 0% or any arbitrary value. The capital growth rate is critical
       // 12-group section list or the legacy DB AI-structure template. The
       // legacy template is what was forcing financial KPI rows, P&I cashflow,
       // 10-year projections and the duplicate "Property Snapshot" pages into
-      // the output. Instead we use the curated 17-section canonical Compass
-      // registry (no financials) and a thin canonical template context. The
-      // Compass-40 overlay below still runs on top to enforce style rules.
+      // the output. Instead we use the canonical Compass registry (no
+      // financials) and a thin canonical template context. The Compass-40
+      // overlay below still runs on top to enforce style rules.
+      //
+      // The ×1.6 token bump that used to be applied here is gone. It was added
+      // against mid-sentence truncation, but it compounded with a maxTokens
+      // already set at 4× the word cap, so a 650-word section was given room
+      // for about 3,100. The headroom now lives in the single derivation in
+      // `canonicalSectionsToGenerationSections`, where it can be reasoned about
+      // against the cap it is a multiple of.
       if (compass40OverlayActive) {
         REPORT_SECTIONS = getCanonicalSectionsForTier('compass-40');
         templateContext = buildCanonicalTemplateContext('compass-40');
-        // Bump per-section tokens for Compass-40 to stop mid-sentence
-        // truncations observed in the legacy output. The generateReportSection
-        // helper also runs a continuation pass when finish_reason==='length',
-        // but a more generous initial budget means most sections finish in one
-        // shot. Cap at 6000 to protect latency.
-        REPORT_SECTIONS = REPORT_SECTIONS.map((s) => ({
-          ...s,
-          maxTokens: Math.min(6000, Math.round(s.maxTokens * 1.6)),
-        }));
         console.log(`✓ Compass-40: using canonical ${REPORT_SECTIONS.length}-section registry (legacy template bypassed)`);
       } else {
         // Always start from legacy default sections; legacy engine reuses this base.
@@ -5035,14 +5176,14 @@ Dashboard / KPI items to omit (no card, no table cell, no inline mention):
 ### 4. STYLE RULES
 
 - Remove repeated transition paragraphs ("As we move into…", "Building on the above…", "This flows naturally…"). They make the report artificially long.
-- ONE "What This Means" / client takeaway box per section maximum — not after every few paragraphs.
+- NO commentary blocks at all. Never write ${EDITORIAL_LABELS.map((l) => `"${l}"`).join(', ')} — not as a heading, not as a bold lead-in, not as a bare line above a paragraph. There is no permitted number: not one per section, not one per report. State the finding in the sentence that introduces the data instead.
 - Do NOT emit \`[citation]\`, \`[source needed]\`, \`[TBD]\` or any placeholder. Name the real source inline or omit the claim.
 - Bed / bath / car / land size / property type stated in the Property Snapshot MUST match every later reference exactly.
 - Where the legacy template would emit a financial figure, replace it with a single approved sentence: *"Detailed cashflow, yield, loan and 10-year projections are provided in the separate Financial Analysis Report."* Use this sentence AT MOST ONCE in the whole report.
 
 ### 5. PAGE TARGET
 
-Aim for ~38–42 pages total after these trims. If the template would push you longer, trim Priority-2 sections further — never trim Priority-1 sections.
+Aim for ${COMPASS_PAGE_BAND.min}–${COMPASS_PAGE_BAND.max} pages total after these trims. If the template would push you longer, trim Priority-2 sections further — never trim Priority-1 sections. A section that says what it has to say in half its word ceiling is finished; do not pad to the ceiling.
 
 ---
 `;
@@ -5068,7 +5209,7 @@ Aim for ~38–42 pages total after these trims. If the template would push you l
 WRITING STYLE RULES:
 1. Lead every section with a clear, plain-English insight or takeaway BEFORE presenting any data
 2. Use a warm, professional, consultative tone — like a knowledgeable advisor speaking to a client
-3. After any table or data point, add a "What This Means" paragraph explaining the practical implications
+3. State what a figure means in the sentence that introduces it. NEVER add a paragraph after a table or data point that explains it — no "What This Means", "Why this matters", "What to watch", "Key takeaway" or "NPC view", as a heading, a bold lead-in or a bare line
 4. Use tables ONLY for direct comparisons or financial breakdowns (max 5-6 rows). Never use a table when a well-written sentence would suffice
 5. Replace jargon with plain language or briefly define technical terms on first use (e.g., "gross rental yield — the annual rent as a percentage of the property price")
 6. Use contextual comparisons to make numbers meaningful (e.g., "This is 15% above the state average" rather than just stating the number)
@@ -5810,6 +5951,51 @@ YOUR DEDICATED PROPERTY PARTNER
     console.log('✓ Post-processing sanitization complete');
     // ========== END POST-PROCESSING SANITIZATION ==========
 
+    // ========== COMPASS POST-PROCESSOR + QA ==========
+    //
+    // This is the seam that was missing. `compassPostProcessor` and
+    // `compassQAValidator` were written, tested and imported by exactly one
+    // caller — `condense-investment-report`, which makes the derived snapshot
+    // and briefing variants (44 rows). The generator that produced all 1,124
+    // Compass reports in the table called neither, so every cap they enforce
+    // applied to everything except the document a client receives. That is why
+    // the report ran at 2.3× its declared budget with ~90 commentary labels.
+    //
+    // It runs after the sanitizer (which works line by line on a section) and
+    // before the row is written, because it needs the assembled document: the
+    // page-pressure ladder measures the whole thing, and a label's paragraph
+    // can cross a section boundary.
+    //
+    // QA is recorded, never thrown. A report that exists and is over its band
+    // is more use to everyone than no report; `validation_flags` is where a
+    // finding belongs, and the row carries the rest of its quality metadata
+    // there already.
+    let compassQa: ReturnType<typeof runQAValidation> | null = null;
+    if (compass40OverlayActive) {
+      const beforePost = reportContent.length;
+      const { markdown, report: postReport } = postProcessReportMarkdown(reportContent, 'compass-40');
+      reportContent = markdown;
+      compassQa = runQAValidation(reportContent, 'compass-40');
+
+      console.log(
+        `✓ Compass post-processor: ${beforePost} → ${reportContent.length} chars, ` +
+        `${postReport.editorialBlocksRemoved} editorial block(s) removed (${postReport.editorialWordsRemoved} words), ` +
+        `${postReport.sectionsTrimmed.length} section(s) trimmed, ` +
+        `trims applied: [${postReport.trimsApplied.join(', ') || 'none'}], ` +
+        `${postReport.initialEstimatedPages} → ${postReport.finalEstimatedPages} est. pages`,
+      );
+      console.log(
+        `✓ Compass QA: ${compassQa.passed ? 'passed' : 'FAILED'} — ` +
+        `${compassQa.estimatedPages} est. pages, ${compassQa.wordCount} words, ` +
+        `${compassQa.findings.filter((f) => f.severity === 'error').length} error(s), ` +
+        `${compassQa.findings.filter((f) => f.severity === 'warning').length} warning(s)`,
+      );
+      for (const finding of compassQa.findings) {
+        console.log(`   [${finding.severity}] ${finding.rule}: ${finding.message}`);
+      }
+    }
+    // ========== END COMPASS POST-PROCESSOR + QA ==========
+
 
     // Extract citations and sources from the response
     const citations = allCitations;
@@ -5938,13 +6124,24 @@ YOUR DEDICATED PROPERTY PARTNER
           message: `Report quality score (${avgScore}/100) below optimal threshold`,
           value: { avgScore, invalidSections: invalidSections.length }
         }] : []),
-        ...(combinedContent.length < 45000 ? [{
+        // The 45,000-char floor below was written for the 17-section document
+        // and is not a target for the v3.0 Compass, which is deliberately about
+        // a third of that. Compass reports are judged by `compassQa` instead.
+        ...(!compass40OverlayActive && combinedContent.length < 45000 ? [{
           type: 'quality',
           severity: 'info',
           field: 'content_length',
           message: `Report content length (${combinedContent.length} chars) may result in fewer pages`,
           value: { actual: combinedContent.length, recommended: 45000 }
-        }] : [])
+        }] : []),
+        // Compass structural QA. Recorded rather than thrown — see the seam above.
+        ...(compassQa ? compassQa.findings.map((f) => ({
+          type: 'structure',
+          severity: f.severity,
+          field: f.sectionId ?? f.rule,
+          message: f.message,
+          value: { rule: f.rule, estimatedPages: compassQa!.estimatedPages, wordCount: compassQa!.wordCount }
+        })) : [])
       ];
       
       // Prepare update object with quality metadata

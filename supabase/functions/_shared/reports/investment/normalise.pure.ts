@@ -283,9 +283,9 @@ export const TITLED_SECTION_CHARTS: ReadonlyArray<{
   { chart: 'score-wheel', test: /risk dashboard|score breakdown/i },
   { chart: 'score-peers', test: /market positioning|yield market/i },
   { chart: 'locality-map', test: /why this location|position within the locality|locality snapshot|location snapshot/i },
-  { chart: 'demographics-bars', test: /population|household growth|demographic/i },
-  { chart: 'economic-bullets', test: /employment|economic linkage|income & affordability|socioeconomic/i },
-  { chart: 'amenity-bullets', test: /retail|healthcare|lifestyle amenity|amenity maturity|education & family/i },
+  { chart: 'demographics-bars', test: /demand drivers|population|household growth|demographic/i },
+  { chart: 'economic-bullets', test: /demand drivers|employment|economic linkage|income & affordability|socioeconomic/i },
+  { chart: 'amenity-bullets', test: /amenity|access|retail|healthcare|lifestyle|education|transport|connectivity/i },
   { chart: 'yield-bullets', test: /financial input snapshot|price, rent & yield/i },
   { chart: 'cost-waterfall', test: /feasibility|financial performance|cash ?flow/i },
   { chart: 'sensitivity-tornado', test: /vacancy risk|rent sustainability|sensitivity/i },
@@ -293,6 +293,24 @@ export const TITLED_SECTION_CHARTS: ReadonlyArray<{
   { chart: 'lvr-bullet', test: /portfolio fit|loan structure|\blvr\b/i },
   { chart: 'projection-value', test: /projection|ten[- ]year|10[- ]year/i },
 ];
+
+/**
+ * Charts a single section may claim at once.
+ *
+ * The v3.0 registry merges six sections into two, and both merges collapse
+ * several of the patterns above onto one title. `Demand Drivers` matches
+ * `demographics-bars` *and* `economic-bullets`; `Amenity & Access` matches
+ * `amenity-bullets` and would match more if the patterns were wider. With the
+ * one-chart-per-section shape the old loop had, the second and third chart on a
+ * merged section were dropped on the floor — the section is one section now,
+ * but it still carries three sections' worth of data, and the charts are drawn
+ * from structured jsonb columns that appear nowhere else in the document.
+ *
+ * Two is the cap because the prompt's own limit is two visualisations a
+ * section: a page carrying the model's two figures plus three of ours is the
+ * page-economy problem this release exists to fix, pointing the other way.
+ */
+export const MAX_CHARTS_PER_SECTION = 2;
 
 /**
  * Attach the named charts by title, but only for a report with no numbering.
@@ -310,6 +328,7 @@ export function attachChartsByTitle(sections: ReportSection[]): ReportSection[] 
     const charts = TITLED_SECTION_CHARTS
       .filter((entry) => !claimed.has(entry.chart) && entry.test.test(section.title))
       .filter((entry) => !supersededByDirective(entry.chart, section.markdown))
+      .slice(0, MAX_CHARTS_PER_SECTION)
       .map((entry) => { claimed.add(entry.chart); return entry.chart; });
     return charts.length ? { ...section, charts } : section;
   });

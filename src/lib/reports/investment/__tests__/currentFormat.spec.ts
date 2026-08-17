@@ -97,6 +97,42 @@ describe('the named infographics find their section without a number', () => {
     expect(attached.length).toBeGreaterThanOrEqual(4);
     expect(new Set(attached).size).toBe(attached.length);
   });
+
+  it('finds the v3.0 merged sections, which no pattern named before', () => {
+    // `Demand Drivers` absorbed Population & Housing Demand, Tenant & Buyer
+    // Profile and Employment & Economic Linkages; `Amenity & Access` absorbed
+    // education, retail/healthcare/lifestyle and transport. The charts here are
+    // drawn from structured jsonb columns and appear nowhere else in the
+    // document, so a title that stops matching loses the data silently — the
+    // module's own comment says a missed chart is invisible by design.
+    const sections = attachChartsByTitle(
+      ['Demand Drivers', 'Amenity & Access'].map((title) => ({
+        number: null, title, markdown: 'x', charts: [],
+      })),
+    );
+    expect(sections[0].charts).toContain('demographics-bars');
+    expect(sections[0].charts).toContain('economic-bullets');
+    expect(sections[1].charts).toContain('amenity-bullets');
+  });
+
+  it('caps a merged section at two charts', () => {
+    // Demand Drivers matches three sections' worth of patterns. Without a cap a
+    // page would carry the model's two figures plus three of ours, which is the
+    // page-economy problem this release exists to fix, pointing the other way.
+    const [demand] = attachChartsByTitle([
+      { number: null, title: 'Demand Drivers', markdown: 'x', charts: [] },
+    ]);
+    expect(demand.charts.length).toBeLessThanOrEqual(2);
+  });
+
+  it('still claims each chart at most once across the document', () => {
+    const sections = attachChartsByTitle(
+      ['Demand Drivers', 'Amenity & Access', 'Population Growth Detail']
+        .map((title) => ({ number: null, title, markdown: 'x', charts: [] })),
+    );
+    const all = sections.flatMap((s) => s.charts);
+    expect(new Set(all).size).toBe(all.length);
+  });
 });
 
 describe('the score breakdown', () => {

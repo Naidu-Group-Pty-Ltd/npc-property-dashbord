@@ -1,5 +1,14 @@
 # Investment report generation — why it resumes, and who drives it
 
+> **Section counts below are v2.0's (17).** The current list is eleven
+> sections plus back matter — see
+> [`INVESTMENT_STRUCTURE.md`](./INVESTMENT_STRUCTURE.md) — so a report now
+> converges in about two budgeted rounds rather than four. The mechanism is
+> unchanged. One rule was added: a report whose stored `total_sections`
+> disagrees with the current registry is **regenerated rather than resumed**,
+> because `last_completed_section` is an index into whichever list is
+> current and splicing two lists produces a chimera no row records.
+
 Investment reports are the one format whose *generation* does not fit inside a
 single request. This document records why, and what now carries a report to
 completion. It is about the generation pipeline, not the PDF — for the render

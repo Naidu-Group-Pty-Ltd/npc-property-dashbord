@@ -1,12 +1,13 @@
 /**
- * Compass-40 Post-Processor — Phases 5 & 6
- * -----------------------------------------
- * Runs AFTER the AI emits markdown for a Compass or Financial Analysis report.
+ * Compass Post-Processor — Phases 5 & 6
+ * -------------------------------------
+ * Runs AFTER the model emits markdown for a Compass or Financial Analysis
+ * report, and BEFORE the report is stored.
  *
- * Phase 5 — Word-cap enforcement:
+ * Phase 5:
+ *   • Strip every EDITORIAL_LABELS block ("What This Means", "NPC view", …)
+ *   • Executive Verdict hard cap from COMPASS_WORD_CAPS
  *   • Per-section maxWordCount from compassSectionRegistry
- *   • Component-level caps from COMPASS_WORD_CAPS (decision boxes, exec summary)
- *   • At most one "What this means" / decision box per section
  *
  * Phase 6 — Page-pressure trimming engine:
  *   • Estimates rendered page count from word count + table rows
@@ -14,7 +15,20 @@
  *   • Protected sections are NEVER touched (zoning, risk, infrastructure,
  *     due diligence, property assessment)
  *
- * Frontend mirror: src/lib/reports/compassPostProcessor.ts (keep in sync).
+ * ## Who calls this, and why that is the whole point
+ *
+ * Until v3.0 the only caller was `condense-investment-report`, which produces
+ * the derived snapshot and briefing variants — 44 rows. `generate-investment-report`,
+ * which produced all 1,124 Compass reports in the table, called neither this
+ * module nor the QA validator. Every cap in here was written, tested and never
+ * applied to the document a client receives, which is why that document ran at
+ * 2.3× its declared budget with 90 commentary labels a report.
+ *
+ * `generate-investment-report` now runs this in its post-processing pass. If you
+ * add a caller, make sure it is on a path that stores a report; if you remove
+ * one, the caps stop existing again rather than becoming advisory.
+ *
+ * Edge original: supabase/functions/_shared/compassPostProcessor.ts (keep in sync).
  */
 
 import {
@@ -22,6 +36,7 @@ import {
   FINANCIAL_ANALYSIS_SECTIONS,
   COMPASS_WORD_CAPS,
   COMPASS_PAGE_BAND,
+  EDITORIAL_LABELS,
   PAGE_PRESSURE_TRIM_ORDER,
   PROTECTED_SECTION_IDS,
   type CompassSectionDefinition,
@@ -38,6 +53,15 @@ export interface PostProcessReport {
   trimsApplied: string[];
   sectionsTrimmed: { sectionId: string; reason: string; wordsRemoved: number }[];
   warnings: string[];
+  /**
+   * How many editorial blocks were removed, and what they weighed.
+   *
+   * Reported rather than silent, for the reason `MarkdownNotices.figuresDropped`
+   * exists: a report the strip emptied looks exactly like one the model wrote
+   * tersely, and only the count tells the two apart. The generator logs this.
+   */
+  editorialBlocksRemoved: number;
+  editorialWordsRemoved: number;
 }
 
 interface ParsedSection {
@@ -177,69 +201,180 @@ function truncateNarrativeToCap(bodyLines: string[], cap: number): { lines: stri
   return { lines: out, removed };
 }
 
-// ─── Phase 5b: decision-box governance ──────────────────────────────────────
-// "## What this means" or "### What this means" blocks. At most one per section,
-// hard-capped to COMPASS_WORD_CAPS.whatThisMeansBox.max.
+// ─── Phase 5b: editorial-block removal ──────────────────────────────────────
+//
+// The report must print none of EDITORIAL_LABELS. This is the code that makes
+// that true, and it is code rather than prompt text for a measured reason: the
+// v2.0 prompt said "at most one per section" twice and production carried 90 a
+// report anyway. An instruction is a request; this is the guarantee.
+//
+// ## Matching all three forms
+//
+// The predecessor matched `^#{2,4} what this means$` and nothing else. Against
+// 56 production reports that found **11 of 5,043 labels — 0.2%**, because the
+// model overwhelmingly writes the bold form (4,161) rather than a heading
+// (424) or a bare line (458). All three are matched here, and the label list
+// itself lives in the registry so the QA validator checks exactly what this
+// removes.
+//
+// ## What a label takes with it
+//
+// The label line and the prose paragraph under it. The paragraph is the point:
+// the label alone is two words, and leaving its body would leave a restatement
+// with no heading, which reads as an orphaned assertion rather than as nothing.
+//
+// It stops at the first structural line — a heading, a `{{…}}` figure
+// directive, a table row, a list item or a rule. Those are the data. A strip
+// that swallowed a figure would remove the thing the paragraph was talking
+// about and keep nothing, which is strictly worse than the commentary.
+//
+// ## The inline form is different, and is kept
+//
+// `**Key takeaway:** Banora Point sits in a coastal growth corridor…` is a
+// finding with a label in front of it, not a paragraph restating a table. The
+// label comes off and the sentence stays. Blanket removal here would delete
+// real content — the Final Recommendation writes its verdict this way.
 
-const DECISION_BOX_RE = /^(#{2,4})\s*(what this means|what this means for you|takeaway)\s*$/i;
+const LABEL_ALTERNATION = EDITORIAL_LABELS
+  .map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  .join('|');
 
-function enforceDecisionBoxes(section: ParsedSection): { lines: string[]; warnings: string[] } {
-  const warnings: string[] = [];
+// The separator can fall on either side of the closing emphasis marker, and
+// production writes it *inside*: `**Key takeaway:**`, not `**Key takeaway**:`.
+// Both are accepted, along with no separator at all for the block form.
+const CLOSE = `(?:[:：–—-]\\s*(?:\\*\\*|__)?|(?:\\*\\*|__)\\s*[:：–—-])`;
+
+/** A line that is *only* a label: `**What This Means**`, `**Key takeaway:**`, `What to watch`. */
+const EDITORIAL_LABEL_LINE_RE = new RegExp(
+  `^\\s*(?:#{1,6}\\s*)?(?:\\*\\*|__)?\\s*(?:${LABEL_ALTERNATION})\\s*[:：–—-]?\\s*(?:\\*\\*|__)?\\s*[:：–—-]?\\s*$`,
+  'i',
+);
+
+/**
+ * A *heading* whose subject is a label — `### NPC view – overall recommendation`.
+ *
+ * Treated as the block form no matter what follows the dash. Production writes
+ * a handful of these, and reading them as the inline form would drop the `###`
+ * and leave "overall recommendation" as a stray line above the opinion it was
+ * titling. A heading about the adviser's view is furniture, not a finding.
+ */
+const EDITORIAL_LABEL_HEADING_RE = new RegExp(
+  `^\\s*#{1,6}\\s*(?:\\*\\*|__)?\\s*(?:${LABEL_ALTERNATION})\\b`,
+  'i',
+);
+
+/**
+ * A label followed by content on the same line — the label goes, the content stays.
+ *
+ * A separator is REQUIRED here, and that is what keeps ordinary prose safe:
+ * "What this means for the tenant profile is covered below" has no separator
+ * after the label, so it does not match and is left exactly as written.
+ */
+const EDITORIAL_LABEL_INLINE_RE = new RegExp(
+  `^(\\s*)(?:#{1,6}\\s*)?(?:\\*\\*|__)?\\s*(?:${LABEL_ALTERNATION})\\s*${CLOSE}\\s*(\\S.*)$`,
+  'i',
+);
+
+/** Lines the strip must never consume: they carry data, not commentary. */
+function isStructuralLine(line: string): boolean {
+  const t = line.trim();
+  return (
+    t === '' ||
+    t.startsWith('#') ||
+    t.startsWith('|') ||
+    t.startsWith('{{') ||
+    /^[-*+]\s+/.test(t) ||
+    /^\d+[.)]\s+/.test(t) ||
+    /^(-{3,}|\*{3,}|_{3,})$/.test(t) ||
+    t.startsWith('>') ||
+    t.startsWith(':::')
+  );
+}
+
+export function stripEditorialBlocks(
+  section: ParsedSection,
+): { lines: string[]; removedBlocks: number; removedWords: number } {
   const out: string[] = [];
-  let seen = 0;
-  const cap = COMPASS_WORD_CAPS.whatThisMeansBox.max;
-  const allowBox = section.def?.allowDecisionBox ?? false;
+  let removedBlocks = 0;
+  let removedWords = 0;
 
   let i = 0;
   while (i < section.bodyLines.length) {
     const line = section.bodyLines[i];
-    if (DECISION_BOX_RE.test(line.trim())) {
-      // Collect the block until next heading
-      const block: string[] = [];
-      let j = i + 1;
-      while (j < section.bodyLines.length && !/^#{2,4}\s+/.test(section.bodyLines[j])) {
-        block.push(section.bodyLines[j]);
-        j++;
-      }
-      seen++;
-      if (!allowBox) {
-        warnings.push(`Removed decision box from "${section.heading}" (not allowed).`);
-        i = j;
+
+    // Block form is tested FIRST. `**What This Means:**` is a whole-line label,
+    // but the inline pattern can also match it by treating the trailing `**` as
+    // its content — which leaves a bare `**` on the page. Whole-line wins, and
+    // so does a heading, whatever trails it.
+    const isBlockLabel =
+      EDITORIAL_LABEL_LINE_RE.test(line) || EDITORIAL_LABEL_HEADING_RE.test(line);
+
+    if (!isBlockLabel) {
+      // Inline: keep the sentence, drop the label.
+      const inline = line.match(EDITORIAL_LABEL_INLINE_RE);
+      if (inline) {
+        out.push(`${inline[1]}${inline[2]}`);
+        removedBlocks++;
+        i++;
         continue;
       }
-      if (seen > 1) {
-        warnings.push(`Removed duplicate decision box from "${section.heading}".`);
-        i = j;
-        continue;
-      }
-      // Word-cap the block
-      const text = block.join('\n').trim();
-      const words = text.split(/\s+/).filter(Boolean);
-      const trimmed =
-        words.length > cap ? words.slice(0, cap).join(' ') + '…' : text;
-      out.push(line);
-      out.push(trimmed);
-      out.push('');
-      i = j;
-    } else {
       out.push(line);
       i++;
+      continue;
+    }
+
+    // Label on its own line: drop it and the prose paragraph beneath it.
+    removedBlocks++;
+    let j = i + 1;
+    // A blank line between the label and its body is normal in the bold form.
+    while (j < section.bodyLines.length && section.bodyLines[j].trim() === '') j++;
+    while (j < section.bodyLines.length && !isStructuralLine(section.bodyLines[j])) {
+      removedWords += countWords(section.bodyLines[j]);
+      j++;
+    }
+    // Leave a paragraph break behind, or the block before the removal runs into
+    // whatever followed it — a heading glued to a paragraph stops being a heading.
+    if (out.length > 0 && out[out.length - 1].trim() !== '') out.push('');
+    i = j;
+  }
+
+  return { lines: out, removedBlocks, removedWords };
+}
+
+/** Does any editorial label survive in this markdown? Used by the QA validator. */
+export function findEditorialLabels(markdown: string): string[] {
+  const hits: string[] = [];
+  for (const line of markdown.split('\n')) {
+    if (
+      EDITORIAL_LABEL_LINE_RE.test(line) ||
+      EDITORIAL_LABEL_HEADING_RE.test(line) ||
+      EDITORIAL_LABEL_INLINE_RE.test(line)
+    ) {
+      hits.push(line.trim());
     }
   }
-  return { lines: out, warnings };
+  return hits;
 }
 
 // ─── Phase 5c: executive-summary cap ────────────────────────────────────────
+//
+// The id is `compass.executiveVerdict`. It was `compass.executiveSummary` here
+// and in Phase 5b's caller, and that id has not existed since the v2.0 registry
+// renamed the section — so this cap never fired once in its life. Two other
+// trim steps had the same defect (`compass.economicContext`,
+// `compass.suburbCharacter`); both are gone with the sections that absorbed them.
+
+const EXECUTIVE_SECTION_ID = 'compass.executiveVerdict';
 
 function capExecutiveSummary(section: ParsedSection, report: PostProcessReport): void {
-  if (section.def?.id !== 'compass.executiveSummary') return;
+  if (section.def?.id !== EXECUTIVE_SECTION_ID) return;
   const cap = COMPASS_WORD_CAPS.executiveSummaryTotal.max;
   const { lines, removed } = truncateNarrativeToCap(section.bodyLines, cap);
   if (removed > 0) {
     section.bodyLines = lines;
     report.sectionsTrimmed.push({
       sectionId: section.def.id,
-      reason: 'Executive Summary exceeded 600-word cap',
+      reason: `Executive Verdict exceeded ${cap}-word cap`,
       wordsRemoved: removed,
     });
   }
@@ -356,17 +491,6 @@ function mergeDuplicateDemographics(sections: ParsedSection[]): number {
   return removed;
 }
 
-function collapseDuplicateDecisionBoxes(sections: ParsedSection[]): number {
-  let removed = 0;
-  for (const s of sections) {
-    const { lines, warnings: _ } = enforceDecisionBoxes(s);
-    const before = s.bodyLines.length;
-    s.bodyLines = lines;
-    if (s.bodyLines.length < before) removed += before - s.bodyLines.length;
-  }
-  return removed;
-}
-
 function applyPagePressureTrims(
   preamble: string[],
   sections: ParsedSection[],
@@ -384,9 +508,6 @@ function applyPagePressureTrims(
       case 'transitions':
         touched = trimTransitions(sections);
         break;
-      case 'collapseDecisionBoxes':
-        touched = collapseDuplicateDecisionBoxes(sections);
-        break;
       case 'capListsToTop5':
         touched = capListsToTop5(sections);
         break;
@@ -397,11 +518,11 @@ function applyPagePressureTrims(
         // Conservative: same as capListsToTop5 second pass with cap=3
         touched = capListsToTop5(sections);
         break;
-      case 'reduceEconomicContext':
-        touched = reduceSectionToOnePage(sections, 'compass.economicContext');
+      case 'reduceDemandDrivers':
+        touched = reduceSectionToOnePage(sections, 'compass.demandDrivers');
         break;
-      case 'reduceLifestyle':
-        touched = reduceSectionToOnePage(sections, 'compass.suburbCharacter');
+      case 'reduceAmenityAccess':
+        touched = reduceSectionToOnePage(sections, 'compass.amenityAccess');
         break;
     }
     if (touched > 0) report.trimsApplied.push(step.id);
@@ -456,20 +577,36 @@ export function postProcessReportMarkdown(
     trimsApplied: [],
     sectionsTrimmed: [],
     warnings: [],
+    editorialBlocksRemoved: 0,
+    editorialWordsRemoved: 0,
   };
 
-  const { preamble, sections } = parseSections(markdown, registry);
+  const parsed = parseSections(markdown, registry);
+  const { sections } = parsed;
+  let { preamble } = parsed;
 
-  // Phase 5a — decision-box governance
-  for (const s of sections) {
-    const { lines, warnings } = enforceDecisionBoxes(s);
-    s.bodyLines = lines;
-    report.warnings.push(...warnings);
-  }
+  // Phase 5a — strip the editorial commentary blocks. Runs on every section,
+  // matched or not: an unrecognised heading is still a client's page. The
+  // preamble is included because the cover block sits above the first H2 and a
+  // label there would survive a section-only pass.
+  const strip = (heading: string, bodyLines: string[]): string[] => {
+    const { lines, removedBlocks, removedWords } = stripEditorialBlocks({ heading, bodyLines });
+    report.editorialBlocksRemoved += removedBlocks;
+    report.editorialWordsRemoved += removedWords;
+    if (removedBlocks > 0) {
+      report.warnings.push(
+        `Removed ${removedBlocks} editorial block(s) (${removedWords} words) from "${heading}".`,
+      );
+    }
+    return lines;
+  };
 
-  // Phase 5b — executive summary hard cap (compass only)
+  preamble = strip('(preamble)', preamble);
+  for (const s of sections) s.bodyLines = strip(s.heading, s.bodyLines);
+
+  // Phase 5b — executive verdict hard cap (compass only)
   if (tier === 'compass-40') {
-    const exec = sections.find((s) => s.def?.id === 'compass.executiveSummary');
+    const exec = sections.find((s) => s.def?.id === EXECUTIVE_SECTION_ID);
     if (exec) capExecutiveSummary(exec, report);
   }
 

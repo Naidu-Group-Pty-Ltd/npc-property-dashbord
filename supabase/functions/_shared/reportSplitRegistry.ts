@@ -168,7 +168,11 @@ export const SPLIT_ROUTES: SplitRoute[] = [
 
   // ── Amenity / education / healthcare ──
   {
-    match: ['amenity', 'education', 'schools', 'healthcare', 'parks', 'community facilities', 'education & family amenity'],
+    // 'amenity & access' is the v3.0 merged section (education + retail/health/
+    // lifestyle + transport). It already matches on 'amenity'; the transport
+    // rule below is now unreachable for the merged heading, which is correct —
+    // one source section cannot feed two PLDD sections.
+    match: ['amenity & access', 'amenity', 'education', 'schools', 'healthcare', 'parks', 'community facilities', 'education & family amenity'],
     target: 'due_diligence',
     newHeadingDueDiligence: 'Amenity Maturity & Daily Liveability',
     ordinalDueDiligence: 6,
@@ -195,7 +199,10 @@ export const SPLIT_ROUTES: SplitRoute[] = [
 
   // ── Population / household ──
   {
-    match: ['population', 'household', 'demographic', 'population & housing demand'],
+    // 'demand drivers' is the v3.0 merged section (population + tenant/buyer +
+    // employment). It matched no rule before this line, and routeCompositeSection
+    // returning null drops a section from both derived variants without a word.
+    match: ['demand drivers', 'population', 'household', 'demographic', 'population & housing demand'],
     target: 'due_diligence',
     newHeadingDueDiligence: 'Population, Household Growth & Demographic Fit',
     ordinalDueDiligence: 9,

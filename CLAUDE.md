@@ -247,8 +247,20 @@ render against production data revealed, and each names the legacy generators
 that must stay.
 
 **Investment Location & Property Fit** is the highest-volume format by an order
-of magnitude — 1,182 rows, 5-18 a week — and the one to read before touching
-anything the *model* draws. Its prose carries a chart vocabulary the generator's
+of magnitude — 1,182 rows, 5-18 a week. Its *structure* is
+[`INVESTMENT_STRUCTURE.md`](./docs/reports/INVESTMENT_STRUCTURE.md), which is the
+one to read before changing a section, the generator prompt or the word caps:
+the report carried **90 editorial commentary labels a report — 16.9% of the
+document** and ran at 2.3× its own declared budget, because the prompt told the
+model "after every visual" and "one per section" at the same time, and because
+`compassPostProcessor` / `compassQAValidator` **had no caller in the generation
+path at all** — every cap they enforce applied to everything except the document
+a client receives. Two rules there keep biting: a label is stripped with its
+paragraph but **never a figure or a table**, and a report banked under a
+different section list is **regenerated rather than resumed**, because
+`last_completed_section` is an index into whichever list is current.
+
+`INVESTMENT.md` is the one to read before touching anything the *model* draws. Its prose carries a chart vocabulary the generator's
 prompt demands and the renderer had never parsed: **3,753 `{{bars: ...}}`-style
 directives, about 107 a report**, every one of which set as body copy on a
 client's page. The parser and the router are shared

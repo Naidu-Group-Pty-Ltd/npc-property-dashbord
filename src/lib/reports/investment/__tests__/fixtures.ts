@@ -493,27 +493,30 @@ export const locationOnly = (over: RowOverrides = {}) =>
 /**
  * The format the generator writes **today**.
  *
- * Seventeen named sections, no numbering anywhere, and a chart directive under
- * most of them. Measured over the corpus: of the 35 reports carrying `{{…}}`
- * figures — every current one — **not one has a numbered heading**, against 733
- * of the 1,147 older reports that do. Both shapes are real and both are
- * fixtured, because the numbered path still serves two-thirds of the archive.
+ * The v3.0 Compass: eleven named sections plus back matter, no numbering
+ * anywhere, and a chart directive under most of them. Measured over the corpus:
+ * of the reports carrying `{{…}}` figures — every current one — **not one has a
+ * numbered heading**, against 733 of the 1,147 older reports that do. Both
+ * shapes are real and both are fixtured, because the numbered path still serves
+ * two-thirds of the archive.
+ *
+ * This list is the registry's `compassSections()` in order, and it must stay
+ * that way. The whole point of `currentFormat()` is that the harness measures
+ * the document a client receives this week — `docs/reports/INVESTMENT.md` §5
+ * and §7 are both about what happens when this fixture and production disagree
+ * (a fixture 8.3× thinner per section than the real thing, and every
+ * page-economy number in the programme taken against it).
  *
  * The directives are verbatim in form and fictional in content.
  */
 export const CURRENT_SECTION_TITLES: readonly string[] = [
-  'Client Reading Guide',
   'Executive Verdict',
   'Property & Locality Snapshot',
   'Why This Location Matters',
-  'Property Fit Within the Suburb',
-  'Transport & Connectivity',
-  'Education & Family Amenity',
-  'Retail, Healthcare & Lifestyle Amenity',
-  'Employment & Economic Linkages',
-  'Population & Housing Demand',
-  'Tenant & Buyer Profile',
+  'Demand Drivers',
+  'Amenity & Access',
   'Market Positioning',
+  'Property Fit Within the Suburb',
   'Risk Dashboard',
   'Due Diligence Checklist',
   'Final Recommendation',

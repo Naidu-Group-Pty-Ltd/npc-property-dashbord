@@ -88,7 +88,7 @@ async function ensureReportRow(
 /**
  * Drive one report to completion.
  *
- * A 17-section report needs ~425s of model time and the edge runtime kills an
+ * A Compass report needs several minutes of model time and the edge runtime kills an
  * invocation at ~150s, so a single call can never finish one. This used to be a
  * single fire wrapped in an 8-minute AbortController — a timeout that could
  * never be reached, because the inner function died at the platform ceiling
@@ -109,7 +109,9 @@ async function callInvestmentReport(
   const anonKey = (Deno.env.get('SUPABASE_ANON_KEY') || '').trim();
 
   // Bounds the resume chain so a report that never advances cannot spin here.
-  // 17 sections at ~4 per budgeted call needs ~5; the rest is headroom.
+  // Sized against the section list: 17 sections at ~4 per budgeted call needed ~5,
+  // and the v3.0 list is 12, so this is now generous rather than tight. It is a
+  // runaway backstop, not a budget — leave headroom if the list grows again.
   const MAX_RESUME_ROUNDS = 12;
   let lastSectionCompleted = -1;
   let stalledRounds = 0;
@@ -197,7 +199,7 @@ async function processOneItem(
     if (!finished) {
       // The report made progress but is not done. Marking the item 'completed'
       // here is what used to ship half-written reports to clients — the item
-      // read as finished while the report sat truncated at ~6 of 17 sections.
+      // read as finished while the report sat truncated partway through its sections.
       // Return it to 'pending' (without consuming an attempt, since nothing
       // failed) so the bulk cron picks it up; the investment-report watchdog
       // will also drive it independently.

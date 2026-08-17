@@ -12,6 +12,7 @@ import {
   STALLED_AFTER_MS,
   type ProgressRow,
 } from '../selectors.pure';
+import { sectionCountForTier } from '@/lib/reports/compassSectionRegistry';
 import type { ReportProgress } from '../parts';
 
 const NOW = Date.parse('2026-08-04T12:00:00.000Z');
@@ -79,6 +80,18 @@ describe('toReportProgress', () => {
   it('falls back to the tier section count when total_sections is null', () => {
     const mapped = toReportProgress(row({ total_sections: null }), NOW);
     expect(mapped.totalSections).toBeGreaterThan(0);
+    expect(mapped.totalSections).toBe(sectionCountForTier('compass'));
+  });
+
+  it('prefers the row’s own total over the registry, whatever the registry says now', () => {
+    // Load-bearing across a section-list change. The v3.0 registry is 12 where
+    // v2.0 was 17, and ~1,120 stored rows carry `total_sections: 17`. If the
+    // fallback won, a finished 17-of-17 report would read as 17-of-12 — over
+    // 100% complete — and a report stopped at 11 would read as finished.
+    const stored = toReportProgress(row({ total_sections: 17, last_completed_section: 17 }), NOW);
+    expect(stored.totalSections).toBe(17);
+    expect(stored.sectionsCompleted).toBe(17);
+    expect(sectionCountForTier('compass')).toBeLessThan(17);
   });
 
   it('clamps a section count that exceeds the total', () => {
