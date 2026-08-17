@@ -237,6 +237,55 @@ narrative rather than a boom-suburb one.
   });
 });
 
+describe('the word-cap trim keeps the data too', () => {
+  // Found by running the post-processor over a whole assembled report for the
+  // first time: 6 of 48 figures vanished. `truncateNarrativeToCap` had its own
+  // inline structural test that covered blanks, tables, bullets and headings but
+  // NOT `{{…}}` directives, so a figure counted against the word budget like a
+  // paragraph and was truncated mid-shortcode once the budget ran out. It could
+  // never show up before, because the caps only ran on the derived variants —
+  // which carry no directives.
+  const fat = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      `Paragraph ${i} of prose that exists only to burn through the word budget, `
+      + 'repeated until the cap is comfortably exceeded and the trimmer has to act.',
+    ).join('\n\n');
+
+  const section = `## Amenity & Access
+
+{{glance: ✓ One | ◆ Two | ⚠ Three}}
+
+${fat(30)}
+
+{{bars: Schools 82, Transport 61, Retail 74 | title=Amenity | max=100}}
+
+| Amenity | Distance |
+| --- | --- |
+| Primary school | 1.1 km |
+
+${fat(30)}
+
+{{timeline: Existing "Highway upgrade", 3-5y "Town centre" | title=Pipeline}}
+`;
+
+  it('never truncates a chart directive', () => {
+    const { markdown } = postProcessReportMarkdown(section, 'compass-40');
+    expect(markdown).toContain('{{glance: ✓ One | ◆ Two | ⚠ Three}}');
+    expect(markdown).toContain('{{bars: Schools 82, Transport 61, Retail 74 | title=Amenity | max=100}}');
+    expect(markdown).toContain('{{timeline: Existing "Highway upgrade", 3-5y "Town centre" | title=Pipeline}}');
+    // A half-eaten shortcode is worse than a long section: the figure is gone
+    // and its source prints on the page in its place.
+    expect(markdown).not.toMatch(/\{\{[^}]*…/);
+  });
+
+  it('still removes prose, and keeps the table', () => {
+    const { markdown, report } = postProcessReportMarkdown(section, 'compass-40');
+    expect(markdown.length).toBeLessThan(section.length);
+    expect(report.sectionsTrimmed.length + report.trimsApplied.length).toBeGreaterThan(0);
+    expect(markdown).toContain('| Primary school | 1.1 km |');
+  });
+});
+
 describe('runQAValidation — the editorial-label rule', () => {
   it('fails a report that still carries a label, in any form', () => {
     for (const line of ['**What This Means**', '### NPC view', 'What to watch']) {

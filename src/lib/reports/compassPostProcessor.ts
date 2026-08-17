@@ -166,23 +166,34 @@ function serializeSections(
 
 // ─── Phase 5a: per-section word-cap enforcement ─────────────────────────────
 
+/**
+ * Trim a section's prose to a word cap, leaving everything that is not prose.
+ *
+ * The structural test is `isStructuralLine`, shared with the editorial strip,
+ * and sharing it is the fix for a real defect. This function had its own
+ * inline test covering blanks, tables, bullets and headings — but **not
+ * `{{…}}` chart directives**, so a directive counted against the word budget
+ * like a paragraph and was truncated mid-shortcode or dropped once the budget
+ * ran out. It never showed up because nothing called this on a Compass report:
+ * the caps were only enforced on the derived variants, which carry no
+ * directives. Wiring the post-processor into the generator surfaced it
+ * immediately — 6 of 48 figures lost on the first whole-report run.
+ *
+ * A truncated directive is worse than a long section twice over: the figure is
+ * gone, and `{{bars: Yield 7.4, Grow…` is what lands on the page in its place.
+ */
 function truncateNarrativeToCap(bodyLines: string[], cap: number): { lines: string[]; removed: number } {
   const original = bodyLines.join('\n');
   const words = original.split(/\s+/).filter(Boolean);
   if (words.length <= cap) return { lines: bodyLines, removed: 0 };
 
-  // Keep tables and bullet/heading lines intact; truncate prose paragraphs from the end.
+  // Keep tables, lists, headings and figures intact; truncate prose from the end.
   const out: string[] = [];
   let budget = cap;
   let removed = 0;
 
   for (const line of bodyLines) {
-    const isStructural =
-      /^\s*$/.test(line) ||
-      /^\s*\|/.test(line) ||
-      /^\s*[-*]\s+/.test(line) ||
-      /#{1,6}\s+/.test(line);
-    if (isStructural) {
+    if (isStructuralLine(line)) {
       out.push(line);
       continue;
     }
