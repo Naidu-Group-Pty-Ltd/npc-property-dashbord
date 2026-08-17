@@ -95,6 +95,15 @@ export interface PageDef {
   blocks: BlockDef[];
   /** Drop the page entirely when this evaluates falsy. */
   conditional?: string;
+  /**
+   * Fold this page into the contents entry the page before it opened.
+   *
+   * Set it on a continuation — the second and later sheets of one section — so
+   * the list names the section once. `toc` renders a row per rendered page, so
+   * without it a forty-page body is forty contents rows. See
+   * `PageSchema.tocContinues`.
+   */
+  tocContinues?: boolean;
 }
 
 export interface FlowItem {
@@ -442,7 +451,7 @@ export function runningHead(documentLabel: string, part: string): BlockDef[] {
       bodyFont: 'token:mono',
       bodyTracking: TRACKING.runningHead,
       bodyLineHeight: 1.35,
-      color: 'token:muted',
+      color: 'token:mutedInk',
       x: c.contentLeft, y, width: labelWidth,
     }, 'Running head'),
     block('text-block', {
@@ -450,7 +459,7 @@ export function runningHead(documentLabel: string, part: string): BlockDef[] {
       bodySize: c.scale.runningHead,
       bodyFont: 'token:mono',
       bodyAlign: 'right',
-      color: 'token:muted',
+      color: 'token:mutedInk',
       x: c.contentLeft + labelWidth, y, width: c.contentWidth - labelWidth,
     }, 'Part marker'),
     block('divider', {
@@ -488,12 +497,12 @@ export function navigationRail(part: string, section: string): BlockDef[] {
       eyebrowSize: c.scale.eyebrow,
       eyebrowFont: 'token:mono',
       eyebrowTracking: TRACKING.eyebrow,
-      eyebrowColor: 'token:primary',
+      eyebrowColor: 'token:accentInk',
       body: section,
       bodySize: c.scale.runningHead,
       bodyFont: 'token:mono',
       bodyTracking: TRACKING.runningHead,
-      color: 'token:muted',
+      color: 'token:mutedInk',
       x: c.contentLeft, y: top, width: c.contentWidth,
     }, 'Rail marker'),
   ];
@@ -524,7 +533,7 @@ export function footer(text: string): BlockDef {
     // Left, because the page number takes the right end of the same line.
     align: 'left',
     bg: 'token:surface',
-    color: 'token:muted',
+    color: 'token:mutedInk',
     ruleColor: 'token:line',
     inset: c.margin,
     fontSize: c.scale.runningHead,
@@ -535,7 +544,7 @@ export function footer(text: string): BlockDef {
 export function pageNumber(): BlockDef {
   const c = ctx();
   return block('page-number', {
-    color: 'token:muted',
+    color: 'token:mutedInk',
     align: 'right',
     inset: c.margin,
     size: c.scale.runningHead,
@@ -621,7 +630,7 @@ export function cover(opts: CoverOptions): PageDef {
   // On a banded cover the head sits on the field and everything else on paper.
   const headInk = onField || plan.ground === 'band' ? 'token:text' : 'token:ink';
   const bodyInk = onField ? 'token:text' : 'token:ink';
-  const mutedInk = onField ? 'token:line' : 'token:muted';
+  const mutedInk = onField ? 'token:mutedOnField' : 'token:mutedInk';
 
   const factsHeight = c.density === 'spacious' ? 92 : c.density === 'compact' ? 68 : 78;
   const factsTop = PAGE.height - c.margin - inset - factsHeight;
@@ -636,9 +645,32 @@ export function cover(opts: CoverOptions): PageDef {
 
   const ruleY = standfirstTop - 16;
 
+  /**
+   * The title is anchored to the rule, not to a reserved two lines.
+   *
+   * `titleHeight` used to be `coverTitle * 1.12 * 2` — two lines, on every
+   * family, for a string whose length nobody controls. `property_address` runs
+   * to **84 characters** across the 1,187 stored reports (median 19, p90 44,
+   * p99 61), and the measure here is 86% of the cover width. At Private
+   * Banking's 41pt that is four lines; at Swiss Minimal's 52pt it is six. The
+   * render showed exactly that: "Point NSW 2486," struck through by the gold
+   * rule and "AUSTRALIA" printed across the standfirst.
+   *
+   * Reserving for the longest address is the other half of the same mistake —
+   * it would leave the median 19-character address floating a hundred points
+   * above its own rule on every cover in the archive. So the block's FOOT is
+   * pinned instead (`anchorBottom`) and it grows up into the empty half of the
+   * cover, which is where a designer would set it and where there is nothing to
+   * collide with: the head sits at `headTop + 46` and even six lines of the
+   * largest display size clear it.
+   *
+   * `titleTop` is kept only as the fallback `y` a renderer without bottom
+   * anchoring would use, and it is the same number it always was.
+   */
   const titleHeight = Math.round(c.scale.coverTitle * 1.12 * 2) + 8;
   const eyebrowHeight = Math.round(c.scale.coverEyebrow + 12);
   const titleTop = ruleY - 14 - titleHeight - eyebrowHeight;
+  const titleFoot = ruleY - 14;
 
   const blocks: BlockDef[] = [];
 
@@ -737,7 +769,7 @@ export function cover(opts: CoverOptions): PageDef {
     bodySize: c.scale.coverEyebrow * 0.92,
     bodyFont: 'token:mono',
     bodyTracking: 0.24,
-    color: plan.ground === 'paper' ? 'token:muted' : 'token:line',
+    color: plan.ground === 'paper' ? 'token:mutedInk' : 'token:mutedOnField',
     x: left, y: headTop + 46, width: width - 140,
   }, 'Tagline'));
 
@@ -746,25 +778,84 @@ export function cover(opts: CoverOptions): PageDef {
     bodySize: c.scale.coverEyebrow * 0.92,
     bodyFont: 'token:mono',
     bodyAlign: 'right',
-    color: plan.ground === 'paper' ? 'token:muted' : 'token:line',
+    color: plan.ground === 'paper' ? 'token:mutedInk' : 'token:mutedOnField',
     x: left + width - 140, y: headTop, width: 140,
   }, 'Cover marker'));
 
   // ── Title block ──────────────────────────────────────────────────────────
-  blocks.push(block('text-block', {
-    eyebrow: opts.eyebrow,
-    eyebrowSize: c.scale.coverEyebrow,
-    eyebrowFont: 'token:mono',
-    eyebrowTracking: TRACKING.coverEyebrow,
-    eyebrowColor: 'token:primary',
-    heading: opts.title,
-    headingSize: c.scale.coverTitle,
-    headingFont: 'token:display',
-    headingWeight: 400,
-    headingLineHeight: 1.12,
-    headingColor: bodyInk,
-    x: left, y: titleTop, width: plan.bleed ? width : Math.round(width * 0.86),
-  }, 'Cover title'));
+  /*
+   * The title, at whichever of two sizes the address needs.
+   *
+   * Bottom-anchoring stops the title running INTO the standfirst, which is the
+   * defect the render showed. It cannot stop a long address running UP into the
+   * head: at Luxury Editorial's 40pt over a 414pt measure the longest address
+   * in the corpus is six lines, and the sixth reaches the tagline.
+   *
+   * A designer sets a long title smaller, and a template can too — the choice
+   * is data, and the catalogue already expresses that as mutually exclusive
+   * blocks carrying complementary conditionals (see `oneOf`). So the cover
+   * emits the title twice at the same position: the display size while the
+   * address fits the space above the rule, and a step down past that.
+   *
+   * Both numbers are DERIVED, per family, from the geometry this function has
+   * already computed — the measure, the leading, and the distance from the rule
+   * to the head — rather than being a constant that goes stale when a family's
+   * scale changes. `titleCharsAt` is the same character-advance model
+   * `textHeight` uses and is read slightly wide, which is the safe direction.
+   */
+  const titleWidth = plan.bleed ? width : Math.round(width * 0.86);
+  // The tagline is the lowest thing in the head, at `headTop + 46`; the title
+  // may grow up to just clear of it. 12pt is the tagline's own line, 18 the
+  // clear space beneath it. (`headTop` is declared with the mark, above.)
+  const titleCeiling = headTop + 46 + 12 + 18;
+  const titleRoom = titleFoot - titleCeiling - eyebrowHeight;
+  /** How many characters fit above the rule at `size`, at this measure. */
+  const titleCharsAt = (size: number): number => {
+    const perLine = Math.max(1, Math.floor(titleWidth / (size * 0.5)));
+    const lines = Math.max(1, Math.floor(titleRoom / (size * 1.12)));
+    return perLine * lines;
+  };
+  /**
+   * The longest `property_address` in the corpus, measured 2026-08-16 over all
+   * 1,187 rows: median 19, p90 44, p99 61, max 84. The step-down size is the
+   * first one that fits 84 characters, so no stored address can overrun it.
+   */
+  const LONGEST_ADDRESS = 84;
+  const fullChars = titleCharsAt(c.scale.coverTitle);
+  let smallSize = c.scale.coverTitle;
+  while (smallSize > 12 && titleCharsAt(smallSize) < LONGEST_ADDRESS) smallSize = Math.round((smallSize - 1) * 10) / 10;
+
+  const titleBlock = (size: number, when?: string) => {
+    const b = block('text-block', {
+      eyebrow: opts.eyebrow,
+      eyebrowSize: c.scale.coverEyebrow,
+      eyebrowFont: 'token:mono',
+      eyebrowTracking: TRACKING.coverEyebrow,
+      eyebrowColor: onField ? 'token:accentOnField' : 'token:accentInk',
+      heading: opts.title,
+      headingSize: size,
+      headingFont: 'token:display',
+      headingWeight: 400,
+      headingLineHeight: 1.12,
+      headingColor: bodyInk,
+      x: left, y: titleTop, anchorBottom: titleFoot,
+      width: titleWidth,
+    }, 'Cover title');
+    return when ? { ...b, conditional: when } : b;
+  };
+
+  if (smallSize >= c.scale.coverTitle) {
+    // This family's display size already carries the longest address there is.
+    blocks.push(titleBlock(c.scale.coverTitle));
+  } else {
+    // `property.address` is set on all 1,187 rows, so the guard is about the
+    // namespace being present rather than about the field.
+    const long = `property && property.address && property.address.length > ${fullChars}`;
+    blocks.push(
+      titleBlock(c.scale.coverTitle, `!(${long})`),
+      titleBlock(smallSize, long),
+    );
+  }
 
   blocks.push(block('divider', {
     color: 'token:primary',
@@ -912,7 +1003,7 @@ export function sectionHeading(opts: {
         headingSize: c.scale.heading,
         headingColor: 'token:ink',
         bodySize: c.scale.eyebrow,
-        bodyColor: 'token:primary',
+        bodyColor: 'token:accentInk',
         x: c.contentLeft, y, width: c.contentWidth,
       }, 'Section opener'),
     };
@@ -982,7 +1073,7 @@ export function sectionHeading(opts: {
         eyebrowSize: c.scale.eyebrow,
         eyebrowFont: 'token:mono',
         eyebrowTracking: TRACKING.eyebrow,
-        eyebrowColor: 'token:primary',
+        eyebrowColor: 'token:accentInk',
       }),
       heading: `${decimal}${opts.heading}`,
       headingSize: c.scale.heading,
@@ -996,7 +1087,7 @@ export function sectionHeading(opts: {
         bodyFont: 'token:body',
         bodyStyle: 'italic',
         bodyLineHeight: 1.5,
-        color: 'token:muted',
+        color: 'token:mutedInk',
       } : {}),
       x: c.contentLeft, y, width: c.contentWidth,
     }, 'Section opener'),
@@ -1014,7 +1105,7 @@ export function verdict(opts: { eyebrow: string; heading: string; body: string }
       eyebrowSize: c.scale.eyebrow,
       eyebrowFont: 'token:mono',
       eyebrowTracking: TRACKING.eyebrow,
-      eyebrowColor: 'token:primary',
+      eyebrowColor: 'token:accentInk',
       heading: opts.heading,
       headingSize: c.scale.verdict,
       headingFont: 'token:heading',
@@ -1080,7 +1171,7 @@ export function markdown(
       headingFont: 'token:heading',
       lineHeight: 1.55,
       color: 'token:ink',
-      headingColor: 'token:primary',
+      headingColor: 'token:accentInk',
       ruleColor: 'token:line',
       x: c.contentLeft, y, width: c.contentWidth,
     }),
@@ -1167,7 +1258,7 @@ export function kpis(items: KpiItem[]): FlowItem {
       ? 1
       : (plan.columns >= 4 ? 2 : 1),
     valueColor: 'token:ink',
-    labelColor: 'token:muted',
+    labelColor: 'token:mutedInk',
     ruleColor: 'token:line',
     emphasisColor: 'token:ink',
     valueWeight: 400,
@@ -1283,7 +1374,7 @@ export function kpis(items: KpiItem[]): FlowItem {
         gap: 10,
         tileBg: 'token:panel',
         accent: 'token:primary',
-        labelColor: 'token:muted',
+        labelColor: 'token:mutedInk',
         radius: c.radius,
         valueSize: Math.round(c.scale.kpiValue * 0.7),
         x: c.contentLeft, y, width: c.contentWidth, height,
@@ -1338,9 +1429,20 @@ export function cols(...points: number[]): number[] {
   return total > 0 ? points.map((w) => w / total) : points;
 }
 
+/**
+ * A table row, optionally guarded.
+ *
+ * A bare `string[]` is a row that always prints — every table in the catalogue
+ * was written that way and none of them moves. `{ cells, when }` prints only
+ * where the expression holds, which is how a page keeps the promise a label
+ * makes: see `visibleTableRows` in `blocks/_data.ts` for the counted reason and
+ * for why the choice is per row rather than per table.
+ */
+export type TableRowDef = string[] | { cells: string[]; when: string };
+
 export function table(opts: {
   headers: string[];
-  rows: string[][];
+  rows: TableRowDef[];
   columnWidths?: number[];
   /** Indices of rows that close a total. */
   totals?: number[];
@@ -1406,7 +1508,7 @@ export function table(opts: {
     height: 24 + opts.rows.length * rowHeight,
     block: (y) => block('data-table', {
       headers: opts.headers,
-      rows: opts.rows.map((cells) => ({ cells })),
+      rows: opts.rows.map((row) => (Array.isArray(row) ? { cells: row } : { cells: row.cells, when: row.when })),
       ...(opts.columnWidths ? { columnWidths: opts.columnWidths } : {}),
       headerStyle: plan.headerStyle,
       headerBg: 'token:primary',
@@ -1449,7 +1551,7 @@ export function callout(title: string, body: string, height?: number): FlowItem 
       variant: 'info',
       style,
       accent: 'token:primary',
-      titleColor: 'token:primary',
+      titleColor: 'token:accentInk',
       // A flat block fills without an accent edge; a bar keeps the edge.
       bg: kind === 'margin' ? 'transparent' : 'token:panel',
       ...(kind === 'block' ? { barWidth: 0 } : {}),
@@ -1495,13 +1597,13 @@ export function risks(
       items,
       ...(bars ? { display: 'bars' } : {}),
       titleBg: 'token:bg',
-      titleFg: 'token:primary',
+      titleFg: 'token:accentOnField',
       headerBg: 'token:panel',
-      headerFg: 'token:muted',
+      headerFg: 'token:mutedInk',
       stripeBg: 'token:panel',
       rowBg: 'token:surface',
       cellFg: 'token:ink',
-      mutedColor: 'token:muted',
+      mutedColor: 'token:mutedInk',
       borderColor: 'token:line',
       negativeColor: 'token:negative',
       cautionColor: 'token:caution',
@@ -1537,7 +1639,7 @@ export function recommendation(heading: string, body: string): FlowItem {
         eyebrowSize: c.scale.kpiLabel,
         eyebrowFont: 'token:mono',
         eyebrowTracking: TRACKING.label,
-        eyebrowColor: 'token:primary',
+        eyebrowColor: 'token:accentInk',
         heading,
         headingSize: Math.round(c.scale.heading * 0.78),
         headingFont: 'token:heading',
@@ -1567,7 +1669,7 @@ export function recommendation(heading: string, body: string): FlowItem {
       accent: 'token:primary',
       bg: onField ? 'token:bg' : 'token:surface',
       color: onField ? 'token:text' : 'token:ink',
-      headingColor: 'token:primary',
+      headingColor: onField ? 'token:accentOnField' : 'token:accentInk',
       headingFont: 'token:mono',
       headingSize: c.scale.kpiLabel,
       headingTracking: TRACKING.label,
@@ -1758,6 +1860,18 @@ export function scenarioChart(opts: {
    */
   labelKey?: string;
   valueKey?: string;
+  /**
+   * How the y-axis ticks are worded.
+   *
+   * `plain` invents no unit and is the default; a caller plotting dollars says
+   * so, and gets `$348k` … `$1.1m` down the axis instead of `348150`. The
+   * renderer will not guess this — a chart that labels a ratio as currency is
+   * a misstated figure on a client's page, which is the one thing the chart
+   * path must never do.
+   */
+  axis?: 'money' | 'percent' | 'plain';
+  /** Set beside the axis, rotated. Omitted, no title is drawn. */
+  yAxisLabel?: string;
 }): FlowItem {
   const c = ctx();
   const plan = chartPlan(c.manifest.chart_style);
@@ -1769,7 +1883,14 @@ export function scenarioChart(opts: {
   return {
     height,
     block: (y) => block(plan.block, {
-      ...(isSparkline ? {} : { title: opts.title, caption: opts.caption }),
+      // A sparkline is a bare series with no room for a scale, so it takes
+      // neither the titles nor the axis.
+      ...(isSparkline ? {} : {
+        title: opts.title,
+        caption: opts.caption,
+        ...(opts.axis ? { axis: opts.axis } : {}),
+        ...(opts.yAxisLabel ? { yAxisLabel: opts.yAxisLabel } : {}),
+      }),
       dataPath: opts.dataPath,
       data: opts.data,
       labelKey: opts.labelKey ?? 'label',
@@ -1896,7 +2017,7 @@ function bleedPlateBlocks(opts: {
           eyebrowSize: c.scale.eyebrow,
           eyebrowFont: 'token:mono',
           eyebrowTracking: TRACKING.label,
-          eyebrowColor: 'token:primary',
+          eyebrowColor: 'token:accentOnField',
         }
         : {}),
       tint: 'token:bg',
@@ -1926,7 +2047,7 @@ function measuredPlateBlocks(opts: {
     block('image', {
       src: plateSrc(opts.index),
       ...(opts.caption ? { caption: opts.caption } : {}),
-      captionColor: 'token:muted',
+      captionColor: 'token:mutedInk',
       captionSize: c.scale.kpiNote,
       captionFont: 'token:mono',
       captionStyle: 'normal',

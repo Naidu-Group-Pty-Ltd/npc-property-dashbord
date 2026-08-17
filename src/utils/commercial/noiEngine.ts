@@ -65,6 +65,15 @@ const parseNumeric = (value: NumericInput, { allowNegative = false }: { allowNeg
 };
 const optional = (value: NumericInput, calculationReady: boolean, opts?: { allowNegative?: boolean }) => parseNumeric(value, opts) ?? (calculationReady ? 0 : null);
 const required = (value: NumericInput, opts?: { allowNegative?: boolean }) => parseNumeric(value, opts);
+/**
+ * An input that OVERRIDES a computed default, and is absent when not supplied.
+ *
+ * `optional()` cannot express this. Its fallback is `calculationReady ? 0 :
+ * null`, so on a ready calculation it returns **0 for an unsupplied input** —
+ * which makes any `optional(x, ready) ?? computedDefault` idiom dead code, and
+ * the stabilised NOI used that idiom three times. See `stabilisedNoi` below.
+ */
+const override = (value: NumericInput, opts?: { allowNegative?: boolean }) => parseNumeric(value, opts);
 
 export function calculateNoiEngine(inputs: NoiEngineInputs, selectedBasis: NoiBasis = 'lenderAdjusted'): NoiEngineResult {
   const warnings: string[] = [];
@@ -81,12 +90,48 @@ export function calculateNoiEngine(inputs: NoiEngineInputs, selectedBasis: NoiBa
   const matrixRecovered = calculationReady ? sum(outgoings.map(o => (optional(o.amount, true) ?? 0) * Math.min(1, Math.max(0, (optional(o.recoverablePct, true) ?? 0) / 100)))) : 0;
   const recoveredOutgoings = optional(inputs.recoveredOutgoings, calculationReady) ?? matrixRecovered;
   const ownerBorneExpenses = totalOperatingExpenses - recoveredOutgoings;
-  const effectiveGrossIncome = potentialGrossIncome - vacancyLoss + recoveredOutgoings;
+  /*
+   * A pending calculation reports nothing, not the part that happened to parse.
+   *
+   * `potentialGrossIncome` is gated on `calculationReady`; `recoveredOutgoings`
+   * was not, and `optional()` returns a parsed value whatever the flag says —
+   * the flag only chooses the FALLBACK. So a form with no gross rent and no
+   * vacancy allowance, but $2,000 of recovered outgoings typed in, produced an
+   * NOI of $2,000 while warning that the calculation was pending. A figure
+   * beside a "pending" warning is worse than no figure: it is the one the
+   * reader takes away.
+   */
+  const effectiveGrossIncome = calculationReady
+    ? potentialGrossIncome - vacancyLoss + recoveredOutgoings
+    : 0;
   const actualNoi = effectiveGrossIncome - totalOperatingExpenses;
   const marketRent = optional(inputs.marketRent, calculationReady) ?? grossPassingRent ?? 0;
-  const normalisedVacancyPct = optional(inputs.normalisedVacancyPct, calculationReady) ?? vacancyAllowancePct ?? 0;
+  /*
+   * The stabilised basis ignored vacancy, recoveries and expenses.
+   *
+   * All three read `optional(inputs.normalisedX, calculationReady) ?? default`,
+   * and `optional` answers **0** rather than null for an unsupplied input on a
+   * ready calculation — so every `??` here was unreachable and each term
+   * collapsed to zero. On the fixture below that is
+   *
+   *     (110,000 + 5,000) x (1 - 0) + 0 - 0 = 115,000
+   *
+   * where the formula this line is written to express gives
+   *
+   *     (110,000 + 5,000) x (1 - 0.05) + 20,000 - 10,000 = 119,250
+   *
+   * Stabilised NOI is what the cap-rate valuation and the max-loan figures are
+   * taken from, so the effect was a valuation computed on gross market rent
+   * with no vacancy allowance and no operating expenses — overstated, and
+   * silently, because every input still appeared on the screen that produced
+   * it. The normalised inputs are OVERRIDES; absent means "use the actual",
+   * which is what `override()` lets the `??` say.
+   */
+  const normalisedVacancyPct = override(inputs.normalisedVacancyPct) ?? vacancyAllowancePct ?? 0;
   const normalisedVacancy = (marketRent + otherIncome) * pct(normalisedVacancyPct);
-  const stabilisedNoi = ((marketRent + otherIncome) * (1 - pct(normalisedVacancyPct))) + (optional(inputs.normalisedRecoveredOutgoings, calculationReady) ?? recoveredOutgoings) - (optional(inputs.normalisedExpenses, calculationReady) ?? totalOperatingExpenses);
+  const stabilisedNoi = ((marketRent + otherIncome) * (1 - pct(normalisedVacancyPct)))
+    + (override(inputs.normalisedRecoveredOutgoings) ?? recoveredOutgoings)
+    - (override(inputs.normalisedExpenses) ?? totalOperatingExpenses);
   const lenderAdjustments = sum([
     inputs.incentiveAdjustment,
     inputs.rentFreeAdjustment,

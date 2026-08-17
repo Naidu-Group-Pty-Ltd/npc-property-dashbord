@@ -217,8 +217,6 @@ export function CommercialIndustrialOverviewCard() {
   );
 
   return <div className="space-y-5">
-    {ReportActions}
-
     {hasIncompletePropertyInfo && (
       <Card className="border-brand-500/40 bg-gradient-to-r from-brand-500/15 via-brand-500/10 to-card shadow-sm">
         <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
@@ -262,6 +260,11 @@ export function CommercialIndustrialOverviewCard() {
         <Row label="Key next action" value={borrowing?.requiredNextAction} />
       </CardContent>
     </Card>
+
+    {/* Report Actions sits between the overview summary and the detailed
+        sections: the reader has the headline outcome before being offered the
+        buttons that act on it, and the actions still lead the detail. */}
+    {ReportActions}
 
     <div className="grid gap-4 lg:grid-cols-2 xl:gap-5">
       <Section title="Transaction Snapshot"><Row label="State / territory" value={profile.dealProfile.state} /><Row label="Lease status" value={title(profile.dealProfile.leaseStatus)} /><Row label="Data source mode" value="Global Sync On" /></Section>

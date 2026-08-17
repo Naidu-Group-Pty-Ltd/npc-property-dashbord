@@ -436,3 +436,41 @@ past every remaining gate into the outer `catch`, where an unreadable schema
 looked exactly like a network failure, so it now parses inside its own guard;
 and the shim reports `no_adapter` itself, because it refuses before the route
 is entered at all.
+
+## The format whose only global candidate could never be drawn
+
+Everything above assumes the ranking's fallback resolves something a renderer
+will accept. On the Investment Compass it did not, and the way it failed is the
+mirror image of the seed above.
+
+Measured in production on 2026-08-16, `resolve_report_template('investment_compass')`
+returned **"Investment Compass — WeasyPrint Pilot"**, whose `engine` is
+`jspdf`. `routeReportThroughTemplate` skips any non-`weasyprint` resolution, so
+that row was chosen by the ranking and refused at the engine gate on every
+generation. The only WeasyPrint master for the format was `scope = 'user'` and
+therefore invisible to the ranking — `rank_source` is NULL for a user-scoped
+row when no user id is passed — and exactly one stored selection existed,
+belonging to that same user. **The design system was reachable by an explicit
+per-user choice and by nothing else**, which is a fifth silent fall-through to
+add to `COVERAGE.md`'s four.
+
+The pilot also carried no `libraryLineage`, so no re-activation could refresh
+it: it still held the schema it was given on 6 August, and every catalogue fix
+since had reached the library and stopped there.
+
+Two rules come out of it.
+
+**A format's ranking is only as good as its global row's engine.** An active
+row is not a route. The check is `is_active AND scope = 'global' AND engine =
+'weasyprint'`, and `20260816160000` seeds exactly that for
+`investment_compass`.
+
+**`investment` and `investment_compass` are one format to the alias map and two
+to the resolver.** `normaliseReportType` folds them, which is what makes the
+picker and the stored selection coherent — but `resolve_report_template`
+matches the raw `report_type` column with an equality. `getReportType` answers
+`investment` for the snapshot, briefing, strategic and financial tiers (63
+reports) and `investment_compass` for the compass tier (1,124), so a row has to
+exist under **both** spellings or one of the two groups resolves nothing.
+Correcting the tier fix's spelling was necessary and, on its own, changed no
+document.

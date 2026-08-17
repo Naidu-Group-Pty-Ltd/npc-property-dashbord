@@ -14,6 +14,8 @@ export {
   BODY_INK_LIFT,
   COLOURWAYS_BY_FAMILY,
   PANEL_STEP,
+  PRINT_LARGE_TYPE_CONTRAST,
+  PRINT_SMALL_TYPE_CONTRAST,
   PRIVATE_BANKING_COLOURWAYS,
   SEMANTIC_COLOURS,
   applyColourwayToSchema,
@@ -33,6 +35,7 @@ export {
   resolveColourway,
   rgbToHex,
   shiftLightness,
+  toPrintContrast,
 } from '../../../supabase/functions/_shared/templateColourways.pure';
 
 export type {

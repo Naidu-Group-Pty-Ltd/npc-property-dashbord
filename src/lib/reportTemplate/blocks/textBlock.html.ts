@@ -65,10 +65,17 @@ export function renderTextBlockHtml(block: Block, ctx: HtmlBlockContext): string
   // not, so there is no default.
   const bodyTracking = trackingDecl(p.bodyTracking);
 
-  const style = absBoxStyle(p, { x: 24, y: 24, w: ctx.page.width - 48 });
+  // `anchorBottom` pins the block's foot and lets it grow upward — see
+  // `absBoxStyle`. The cover title is the case it exists for.
+  const style = absBoxStyle(p, { x: 24, y: 24, w: ctx.page.width - 48 }, ctx.page.height);
+  // A bottom-anchored block's last element must sit ON the anchor, so the
+  // trailing margin that separates a heading from the body below it is exactly
+  // the gap that would push the title off its rule.
+  const anchored = p.anchorBottom != null && Number.isFinite(Number(p.anchorBottom));
+  const headingTail = anchored && !body ? '0' : '0 0 8pt';
   return `<div style="${style}">
     ${eyebrow ? `<div style="color:${eyebrowColor};font-size:${eyebrowSize}pt;font-weight:700;text-transform:uppercase;${eyebrowTracking}margin:0 0 6pt;${eyebrowFont}">${esc(eyebrow)}</div>` : ''}
-    ${heading ? `<h2 style="color:${headingColor};font-size:${headingSize}pt;font-weight:${headingWeight};${headingStyle}${headingLineHeight}margin:0 0 8pt;${headingFont}">${esc(heading)}</h2>` : ''}
+    ${heading ? `<h2 style="color:${headingColor};font-size:${headingSize}pt;font-weight:${headingWeight};${headingStyle}${headingLineHeight}margin:${headingTail};${headingFont}">${esc(heading)}</h2>` : ''}
     ${body ? `<div style="color:${color};font-size:${bodySize}pt;line-height:${bodyLineHeight};${bodyStyle}${bodyAlign}${bodyTracking}white-space:pre-wrap;${bodyFont}">${esc(body)}</div>` : ''}
   </div>`;
 }

@@ -65,6 +65,7 @@ import {
   rule,
   scenarioChart,
   sectionHeading,
+  oneOf,
   strengthsWatch,
   textHeight,
   table,
@@ -72,6 +73,7 @@ import {
   withFurniture,
   beginCompassTemplate,
   type PageDef,
+  type TableRowDef,
 } from './blocks';
 import { hasContents, imageSlotPlan, kpiPlan, type ImagePlate } from './resolvers';
 import {
@@ -123,6 +125,53 @@ const DETAIL_CHARS = { location: 94, yield: 51, risk: 228 } as const;
 
 /** The left half of the running head. */
 const DOCUMENT_LABEL = 'Investment Compass · {{property.address}}';
+
+/**
+ * The property specification, one guarded row at a time.
+ *
+ * ## A label is a promise that a figure follows it
+ *
+ * This table was eight fixed rows, and on the report behind this change —
+ * `1be16c4a`, 93 Bimbadeen Avenue, 15 Aug 2026 — six of them printed as a
+ * ruled, striped, labelled row with nothing in the Detail column. That is not
+ * that record's misfortune. Counted across the whole `investment_reports`
+ * table on 2026-08-16, after `projectInvestmentReport` was taught the finance
+ * run's spellings:
+ *
+ * | row | resolves on | of 1,187 |
+ * | --- | ---: | --- |
+ * | Address | 1,187 | `property_address`, never null |
+ * | Property type | 1,059 | + 34 more from `propertySpecs.propertyType` |
+ * | Configuration | 656 | bedrooms 651, bathrooms 633, parking 34 |
+ * | Land area | 114 | `propertySpecs.landSizeSqm`; `land_size_sqm` is null on **every** row |
+ * | Building area | 114 | `propertySpecs.buildSizeSqm` — note the spelling |
+ * | Year built | **0** | the key exists on 1,059 rows and holds null on all of them |
+ * | Zoning | **0** | as above |
+ * | Council | **0** | as above |
+ *
+ * So three of the eight could not print on any report ever generated, and two
+ * more printed on one report in ten. The rows stay in the master rather than
+ * being deleted: the columns exist, an intake that starts filling them fills
+ * this page with no template change, and the guard costs a boolean.
+ *
+ * The unit belongs to the row and not to the projection — `landArea` is a
+ * number so that a KPI or a chart can use it — and it is safe to write beside
+ * the binding only because the row no longer prints without a value. An
+ * unresolved binding renders as the empty string, so a fixed row would have
+ * printed a bare " m²".
+ */
+const PROPERTY_ROWS: Array<{ key: string; row: { cells: string[]; when: string } }> = [
+  { key: 'address', row: { cells: ['Address', '{{property.address}}'], when: 'property && property.address' } },
+  { key: 'type', row: { cells: ['Property type', '{{property.type}}'], when: 'property && property.type' } },
+  { key: 'configuration', row: { cells: ['Configuration', '{{property.configuration}}'], when: 'property && property.configuration' } },
+  { key: 'landArea', row: { cells: ['Land area', '{{property.landArea | number}} m²'], when: 'property && property.landArea' } },
+  { key: 'yearBuilt', row: { cells: ['Year built', '{{property.yearBuilt}}'], when: 'property && property.yearBuilt' } },
+  { key: 'zoning', row: { cells: ['Zoning', '{{property.zoning}}'], when: 'property && property.zoning' } },
+  // Was `property.tenancy` and `property.condition`: neither is a key
+  // `property_specs` has ever carried, on any of the 1,187 rows.
+  { key: 'council', row: { cells: ['Council', '{{property.council}}'], when: 'property && property.council' } },
+  { key: 'buildingArea', row: { cells: ['Building area', '{{property.buildingArea | number}} m²'], when: 'property && property.buildingArea' } },
+];
 
 /**
  * Compile one master.
@@ -223,7 +272,13 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
     locations: 'Prepared {{report.generatedDate | date}}',
     facts: [
-      { label: 'Verdict', value: '{{recommendation.headline}}' },
+      // The action, not the sentence. A KPI cell is a quarter of the measure
+      // and `investment_score.recommendation` averages 69 characters: rendered
+      // through WeasyPrint the cover's VERDICT cell set five lines and its last
+      // one was struck through by the band's bottom rule. The whole sentence is
+      // on the verdict page, where there is a measure to set it in. See
+      // `recommendationAction` for why the split is exact rather than a guess.
+      { label: 'Verdict', value: '{{recommendation.action}}' },
       { label: 'Grade', value: '{{recommendation.grade}}' },
       { label: 'Score', value: '{{recommendation.score | fixed:0}}', },
       { label: 'Weekly position', value: '{{financials.weeklyNet | currency}}' },
@@ -305,17 +360,15 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ...(splitSnapshot ? [] : [
         table({
           headers: ['Property', 'Detail'],
-          rows: [
-            ['Property type', '{{property.type}}'],
-            ['Configuration', '{{property.configuration}}'],
-            ['Land area', '{{property.landArea}}'],
-            ['Zoning', '{{property.zoning}}'],
-            // Was `property.tenancy`: `property_specs` has no such key on any
-            // of the 1,182 rows. `council_area` is on 1,054 of them.
-            ['Council', '{{property.council}}'],
-            ['Loan amount', '{{financials.loanAmount | currency}}'],
-            ['Annual repayment', '{{financials.annualRepayment | currency}}'],
-          ],
+          // Every row is guarded. See `PROPERTY_ROWS` for what each one costs
+          // when it is not — this page printed four ruled, labelled, empty rows
+          // on the report behind this change.
+          rows: PROPERTY_ROWS.filter((r) => r.key !== 'address' && r.key !== 'yearBuilt' && r.key !== 'buildingArea')
+            .map((r) => r.row)
+            .concat([
+              { cells: ['Loan amount', '{{financials.loanAmount | currency}}'], when: 'financials && financials.loanAmount' },
+              { cells: ['Annual repayment', '{{financials.annualRepayment | currency}}'], when: 'financials && financials.annualRepayment' },
+            ]),
           columnWidths: [0.42, 0.58],
           numeric: [],
         }),
@@ -345,19 +398,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         }),
         table({
           headers: ['Property', 'Detail'],
-          rows: [
-            ['Address', '{{property.address}}'],
-            ['Property type', '{{property.type}}'],
-            ['Configuration', '{{property.configuration}}'],
-            ['Land area', '{{property.landArea}}'],
-            ['Year built', '{{property.yearBuilt}}'],
-            ['Zoning', '{{property.zoning}}'],
-            // `condition` and `tenancy` are not keys `property_specs` has ever
-            // carried; `council_area` and `building_size_sqm` are, on 1,054 of
-            // the 1,182 rows.
-            ['Council', '{{property.council}}'],
-            ['Building area', '{{property.buildingArea}}'],
-          ],
+          rows: PROPERTY_ROWS.map((r) => r.row),
           columnWidths: [0.34, 0.66],
           numeric: [],
         }),
@@ -403,15 +444,25 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         eyebrow: 'How the grade was reached',
         heading: 'Five dimensions, weighted',
         numeral: nextNumeral(),
+        // Was "A dimension the assessment had no data for is scored at the
+        // midpoint", which described the placeholder rather than the report.
+        // The engine withholds such a dimension and the table now says so, so
+        // the sentence would contradict the page under it.
         standfirst: 'Each dimension is scored out of 100 and weighted into the total. '
-          + 'A dimension the assessment had no data for is scored at the midpoint.',
+          + 'A dimension the assessment had no data for is left unscored.',
       }),
       table({
         headers: ['Dimension', 'Score', 'Weight'],
+        // `scoreLabel` / `weightLabel`, not `score` / `weight`. The engine
+        // leaves a placeholder 50 and a 0 weight in an excluded dimension, so
+        // binding the figures printed "Growth 50 0%" — a score the assessment
+        // never gave, next to a weight saying it counted for nothing. The
+        // projection composes the words; see `assessment` in
+        // `reportBindingProjection.pure.ts` for the counts.
         rows: [0, 1, 2, 3, 4].map((i) => [
           `{{assessment.${i}.label}}`,
-          `{{assessment.${i}.score | fixed:0}}`,
-          `{{assessment.${i}.weight | fixed:0}}%`,
+          `{{assessment.${i}.scoreLabel}}`,
+          `{{assessment.${i}.weightLabel}}`,
         ]),
         columnWidths: [0.5, 0.25, 0.25],
         numeric: [1, 2],
@@ -419,16 +470,32 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       // Location, yield and risk — the three that say something. Each is
       // conditional on its own `details`, because a dimension with a score and
       // no prose must not print a term with nothing beside it.
+      //
+      // One heading, not three. Each of these is its own block, and every one
+      // of them was titled "Why", so a report carrying all three printed the
+      // word three times down the page with one row under each. The first
+      // block that renders carries the heading; the rest are headless
+      // continuations of the same list, which is what they read as.
       ...[
         { i: 1, term: 'Location', chars: DETAIL_CHARS.location },
         { i: 2, term: 'Yield', chars: DETAIL_CHARS.yield },
         { i: 4, term: 'Risk', chars: DETAIL_CHARS.risk },
-      ].map(({ i, term, chars }) => ({
-        ...definitions('Why', [
-          { term, definition: `{{assessment.${i}.details}}` },
-        ], chars),
-        conditional: `assessment && assessment[${i}] && assessment[${i}].details`,
-      })),
+      ].map(({ i, term, chars }, n) => {
+        const has = (j: number) => `assessment && assessment[${j}] && assessment[${j}].details`;
+        const earlier = [1, 2, 4].slice(0, n);
+        const row = [{ term, definition: `{{assessment.${i}.details}}` }];
+        // The first block in the group carries the heading unconditionally;
+        // there is nothing above it to have carried one.
+        if (n === 0) return { ...definitions('Why', row, chars), conditional: has(i) };
+        // For the rest: two mutually exclusive variants at the SAME position —
+        // `oneOf`, not two flow items, or the page reserves height for both.
+        // Headed when nothing above rendered, headless when something did.
+        const somethingAbove = earlier.map((j) => `(${has(j)})`).join(' || ');
+        return oneOf(
+          { when: `${has(i)} && !(${somethingAbove})`, item: definitions('Why', row, chars) },
+          { when: `${has(i)} && (${somethingAbove})`, item: definitions('', row, chars) },
+        );
+      }),
     ], [
       // Opportunities are an array on the scored reports and empty on most of
       // them, so this is drawn only where the variant has room AND the record
@@ -444,15 +511,41 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   pages.push(...platesFor('thesis'));
 
   // ── 04 Dense data ────────────────────────────────────────────────────────
-  const acquisitionRows = [
+  /**
+   * What the purchase costs, and what of it is cash.
+   *
+   * ## "Total acquisition cost / Sum of the above" was two false claims
+   *
+   * The figure is `initialCosts.totalUpfront` — $340,287 on the report behind
+   * this change — printed under rows that add to $1,460,587, because the
+   * purchase price is in the same column and is not a cash cost. A reader
+   * checking the arithmetic finds it wrong by a factor of four, and the one
+   * they are most likely to act on is the one at the bottom in bold.
+   *
+   * It is not the sum of anything, either. Measured over the 167 stored runs
+   * that carry the block, `totalUpfront` equals deposit + duty + legal +
+   * inspection + LMI on **29** of them; the average gap is $454 and the largest
+   * is $93,000. So no basis of the form "sum of …" is true of this figure, and
+   * `totals: [last]` — a doubled rule, which is the accounting convention for
+   * "the numbers above add up to this" — was itself the claim.
+   *
+   * Three changes, all of them removing an assertion rather than adding one:
+   * the row says what the figure is (`Total upfront cash`), the basis says
+   * where it comes from rather than how it was reached, and the doubled rule is
+   * gone. The deposit is shown because it is the largest part of that cash and
+   * the projection publishes it (`initialCosts.deposit`) — its absence is what
+   * made the total look unrelated to the page.
+   */
+  const acquisitionRows: TableRowDef[] = [
     ['Purchase price', '{{financials.purchasePrice | currency}}', 'Contract'],
+    { cells: ['Deposit', '{{financials.deposit | currency}}', 'Cash at exchange'], when: 'financials && financials.deposit' },
     ['Stamp duty', '{{financials.stampDuty | currency}}', 'State schedule'],
     ['Legal and conveyancing', '{{financials.legalFees | currency}}', 'Estimate'],
     ['Building and pest', '{{financials.inspectionFees | currency}}', 'Estimate'],
     // `financials.loanFees` has no column and no producer; the row printed a
     // label, a blank and "Lender schedule" on every report.
     ['LVR at settlement', '{{financials.lvr | percent:0}}', 'Loan over price'],
-    ['Total acquisition cost', '{{financials.totalCost | currency}}', 'Sum of the above'],
+    ['Total upfront cash', '{{financials.totalCost | currency}}', 'Cash required at settlement'],
   ];
   const cashflowRows = [
     ['Rental income', '{{financials.weeklyRent | currency}}', '{{financials.annualRent | currency}}'],
@@ -476,10 +569,11 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         headers: ['Acquisition', 'Amount', 'Basis'],
         rows: acquisitionRows,
         columnWidths: [0.46, 0.27, 0.27],
-        // The last row is the sum of the ones above it, so it is closed by a
-        // doubled rule under `double_rule_statement` and reads as an ordinary
-        // emphasised row under the other treatments.
-        totals: [acquisitionRows.length - 1],
+        // NO `totals`. A doubled rule is the accounting convention for "the
+        // numbers above add up to this", and this figure is not their sum —
+        // see the note on `acquisitionRows`. Withdrawing the rule withdraws
+        // the claim; the "Cash flow" table below keeps its total because its
+        // net position genuinely is one.
       }),
       ...(spacious ? [] : [
         table({
@@ -525,6 +619,12 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       scenarioChart({
         title: 'Projected equity position',
         caption: 'Property value less loan balance, by year',
+        // Dollars. `projections.moderate[].equity` is stored in whole dollars,
+        // and this series runs from $348k to $1.1m on the report behind this
+        // change — figures a reader could not see at all until the axis was
+        // labelled.
+        axis: 'money',
+        yAxisLabel: 'Equity',
         dataPath: 'tenYear.equitySeries',
         data: Array.from({ length: 10 }, (_, i) => ({ label: `Yr ${i + 1}`, value: 0 })),
       }),
@@ -646,6 +746,13 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         ], contentTop()),
       ]), FOOTER),
       conditional: `narrative && narrative.pages > ${i}`,
+      // One contents entry for the report, not forty. `toc` lists a row per
+      // rendered page, so a compass body — which is what these 39 pages exist
+      // to carry — put "The report (2)" … "The report (40)" on the contents
+      // page and filled two sheets with them. The page still renders and is
+      // still numbered; it just does not open a second entry about the section
+      // the page before it opened. See `PageSchema.tocContinues`.
+      tocContinues: true,
     });
   }
 

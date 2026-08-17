@@ -5,12 +5,13 @@
  *   x,y,width: layout
  *   rowHeight?: pt (default 22)
  *   headers: string[]
- *   rows: Array<{ cells: string[] }>
+ *   rows: Array<{ cells: string[]; when?: string }>
  *   columnWidths?: number[]   // fractions summing to 1; defaults to equal
  */
 import type { Block } from '../templateSchema';
 import type { BlockRenderContext } from './index';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
+import { visibleTableRows, type TableRow } from './_data';
 
 export function drawDataTableBlock(block: Block, ctx: BlockRenderContext): void {
   const { doc, page } = ctx;
@@ -21,8 +22,13 @@ export function drawDataTableBlock(block: Block, ctx: BlockRenderContext): void 
   const rowH = Number(p.rowHeight ?? 22);
 
   const headers = Array.isArray(p.headers) ? (p.headers as string[]) : [];
-  const rows = Array.isArray(p.rows) ? (p.rows as Array<{ cells: string[] }>) : [];
+  // The same per-row filter the HTML renderer applies, through the same helper,
+  // so the Builder preview cannot disagree with the printed document about
+  // which rows exist.
+  const authored = Array.isArray(p.rows) ? (p.rows as TableRow[]) : [];
+  const rows = visibleTableRows(authored, ctx).map(({ row }) => row);
   if (headers.length === 0) return;
+  if (authored.length > 0 && rows.length === 0) return;
 
   const widths: number[] = Array.isArray(p.columnWidths) && (p.columnWidths as number[]).length === headers.length
     ? (p.columnWidths as number[]).map((f) => f * w)

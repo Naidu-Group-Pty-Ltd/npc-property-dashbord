@@ -26,7 +26,8 @@ import {
   type PermissionMatrix,
 } from "../_shared/solicitorPortalAuth.ts";
 import {
-  LEGAL_MATTER_SOLICITOR_LIST_SELECT,
+  SOLICITOR_MATTER_LIST_SELECT,
+  SOLICITOR_MATTER_RISK_SELECT,
   LEGAL_MATTER_SOLICITOR_DETAIL_SELECT,
   PARTY_SELECT,
   LEGAL_MATTER_STATUSES,
@@ -85,7 +86,9 @@ Deno.serve(async (req) => {
 
     const accessibleMatterIds = await listAccessibleMatterIds(supabase, me.id, me.firm_id);
     if (!accessibleMatterIds.length && operation !== 'matter_stats') {
-      if (operation === 'list_matters') return json({ success: true, records: [] });
+      if (operation === 'list_matters' || operation === 'list_flagged_matters') {
+        return json({ success: true, records: [] });
+      }
     }
 
     /** Assigned clients for which the merged permission matrix allows matter visibility. */
@@ -154,13 +157,21 @@ Deno.serve(async (req) => {
     }
 
     // ───────────────────────── LIST ─────────────────────────
+    // The list projection is the minimal one. `LEGAL_MATTER_SOLICITOR_LIST_SELECT`
+    // is the 38-column shared contract and served this operation for a long
+    // time, which put `purchase_price`, `deposit_amount`, `deposit_percent`,
+    // `title_reference`, `pexa_workspace_id`, `risk_notes` and `shared_summary`
+    // in every page of every matter list — none of which any list surface
+    // renders. `get_matter` still returns the full detail contract, so nothing
+    // a solicitor may see has been taken away; it is now fetched when the
+    // matter is opened rather than shipped for every row of every page.
     if (operation === 'list_matters') {
       const page = Math.max(1, Math.floor(Number(body.page) || 1));
       const pageSize = Math.min(100, Math.max(10, Math.floor(Number(body.page_size) || 25)));
       const from = (page - 1) * pageSize;
       let query = supabase
         .from('legal_matters')
-        .select(LEGAL_MATTER_SOLICITOR_LIST_SELECT, { count: 'exact' })
+        .select(SOLICITOR_MATTER_LIST_SELECT, { count: 'exact' })
         .in('id', accessibleMatterIds)
         .eq('firm_id', me.firm_id)
         .order('settlement_date', { ascending: true, nullsFirst: false });
@@ -194,6 +205,28 @@ Deno.serve(async (req) => {
         .map((r: any) => ({ ...r, client_name: clientMap.get(r.client_id) ?? null }));
 
       return json({ success: true, records, pagination: { page, page_size: pageSize, total: count || 0, total_pages: Math.max(1, Math.ceil((count || 0) / pageSize)) } });
+    }
+
+    // ─────────────────── FLAGGED (risk notes) ───────────────────
+    // The dashboard's "Needs attention" card is the one list surface that needs
+    // `risk_notes`, and it needs it for at most five flagged matters. Filtering
+    // on `risk_flag` in the query rather than in the client is what makes this
+    // narrower than the projection it came out of: the note is read only for
+    // matters somebody actually flagged. Same access scoping as `list_matters`
+    // — `accessibleMatterIds` from `listAccessibleMatterIds`, plus the firm
+    // boundary — so this widens the columns without widening the rows.
+    if (operation === 'list_flagged_matters') {
+      const limit = Math.min(25, Math.max(1, Math.floor(Number(body.limit) || 5)));
+      const { data, error } = await supabase
+        .from('legal_matters')
+        .select(SOLICITOR_MATTER_RISK_SELECT)
+        .in('id', accessibleMatterIds)
+        .eq('firm_id', me.firm_id)
+        .eq('risk_flag', true)
+        .order('settlement_date', { ascending: true, nullsFirst: false })
+        .limit(limit);
+      if (error) throw error;
+      return json({ success: true, records: data || [] });
     }
 
     // ───────────────────────── DETAIL ─────────────────────────

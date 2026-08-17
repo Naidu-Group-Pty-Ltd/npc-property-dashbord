@@ -107,17 +107,26 @@ function investorCompass(): SeedTemplate {
     ])), FOOTER),
     withFurniture(page('The property', flow([
       heading('The property', 'Physical attributes, tenure and current use.'),
+      // The three paths with no source anywhere are gone, for the reason
+      // `reportBindingProjection.pure.ts` states in its header and the
+      // Investment Compass masters already act on: `property.suburb`,
+      // `property.tenancy` and `property.rationale` have no column and no
+      // producer, so each printed a term with nothing beside it — and the
+      // callout printed a titled panel with an empty body — on every report.
+      //
+      // Land area, year built and zoning stay: they are real columns, and
+      // `landArea` now resolves on 114 rows through the finance-run fallback.
+      // A definition list is not a table, so it cannot take the per-row
+      // conditional the Compass property table uses; the Compass's own page is
+      // where a reader gets the guarded version.
       definitions('Property detail', [
         { term: 'Address', definition: '{{property.address}}' },
-        { term: 'Suburb', definition: '{{property.suburb}}' },
         { term: 'Property type', definition: '{{property.type}}' },
         { term: 'Land area', definition: '{{property.landArea}}' },
         { term: 'Bedrooms / bathrooms / parking', definition: '{{property.configuration}}' },
         { term: 'Year built', definition: '{{property.yearBuilt}}' },
         { term: 'Zoning', definition: '{{property.zoning}}' },
-        { term: 'Current tenancy', definition: '{{property.tenancy}}' },
       ]),
-      callout('Why this property', '{{property.rationale}}'),
     ])), FOOTER),
     withFurniture(page('Financial analysis', flow([
       heading('Financial analysis', 'Acquisition costs, funding structure and the first-year position.'),
@@ -125,11 +134,21 @@ function investorCompass(): SeedTemplate {
         ['Item', 'Amount', 'Basis'],
         [
           ['Purchase price', '{{financials.purchasePrice | currency}}', 'Contract'],
+          ['Deposit', '{{financials.deposit | currency}}', 'Cash at exchange'],
           ['Stamp duty', '{{financials.stampDuty | currency}}', 'State schedule'],
           ['Legal and conveyancing', '{{financials.legalFees | currency}}', 'Estimate'],
           ['Building and pest', '{{financials.inspectionFees | currency}}', 'Estimate'],
-          ['Loan establishment', '{{financials.loanFees | currency}}', 'Lender schedule'],
-          ['Total acquisition cost', '{{financials.totalCost | currency}}', 'Sum of the above'],
+          // `financials.loanFees` was here and has no column and no producer,
+          // so the row printed a label, a blank and "Lender schedule" on every
+          // report. (LMI is not a loan fee.)
+          // Not "Sum of the above", for the reason the Investment Compass
+          // master records at length: the figure is `initialCosts.totalUpfront`,
+          // it is printed under a purchase price that is not a cash cost, and it
+          // equals deposit + duty + legal + inspection + LMI on 29 of the 167
+          // stored runs that carry the block (largest gap $93,000). The voice
+          // templates carry their own copy of this table, so they carried their
+          // own copy of the claim.
+          ['Total upfront cash', '{{financials.totalCost | currency}}', 'Cash required at settlement'],
         ],
         [0.46, 0.27, 0.27],
       ),

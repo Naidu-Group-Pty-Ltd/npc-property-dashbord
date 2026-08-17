@@ -513,7 +513,7 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
     ...ctxBase,
     page: { width: page.size.width, height: page.size.height },
     pageIndex,
-    pages: pages.map(p => ({ id: p.id, name: p.name })),
+    pages: pages.map(p => ({ id: p.id, name: p.name, tocContinues: p.tocContinues === true })),
     slots: template.slots ?? {},
   };
 

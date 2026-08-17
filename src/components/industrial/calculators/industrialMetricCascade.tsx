@@ -108,9 +108,13 @@ export function useCascadedIndustrialField(
 
     setField((current) => {
       if (propertyChanged) {
+        // `pendingSource` is cleared explicitly rather than dropped with the
+        // rest of the old state — every other branch below states it, and a
+        // state shape that varies by branch is one `'pendingSource' in field`
+        // away from reading a cleared banner as a present one.
         return selectedSource
-          ? { value: selectedSource.value, source: selectedSource.source, originalValue: selectedSource.value, originalSource: selectedSource.source, history: [] }
-          : { value: '', source: 'Blank', history: [] };
+          ? { value: selectedSource.value, source: selectedSource.source, originalValue: selectedSource.value, originalSource: selectedSource.source, history: [], pendingSource: undefined }
+          : { value: '', source: 'Blank', history: [], pendingSource: undefined };
       }
 
       if (!selectedSource) {

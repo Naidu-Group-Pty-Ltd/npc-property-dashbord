@@ -1324,7 +1324,17 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
 
   financials: {
     purchasePrice: 1285000, stampDuty: 55832, legalFees: 2200, inspectionFees: 1450,
-    loanFees: 1600, loanAmount: 1028000, totalCost: 1346082,
+    loanFees: 1600, loanAmount: 1028000,
+    // `deposit` is `initialCosts.deposit`, published all along and bound for the
+    // first time now that the acquisition table shows the largest part of the
+    // cash instead of leaving its total looking unrelated to the page.
+    deposit: 257000,
+    // `totalCost` is `initialCosts.totalUpfront` — the cash required at
+    // settlement, NOT the sum of the rows above it. It is deliberately not
+    // 257,000 + 55,832 + 2,200 + 1,450 + 1,600 here either: across the 167
+    // stored runs the two agree on 29, and a sample that made them agree would
+    // assert an arithmetic production does not satisfy.
+    totalCost: 316_600,
     weeklyRent: 950, annualRent: 49400,
     weeklyRepayment: 1180, annualRepayment: 61360,
     weeklyRates: 42, annualRates: 2184,
