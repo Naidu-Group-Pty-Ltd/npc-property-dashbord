@@ -160,15 +160,90 @@ function put(target: Record<string, unknown>, key: string, value: unknown): void
 }
 
 /** `3 bed · 2 bath · 1 car`, from whichever parts are present. */
-function configuration(specs: Record<string, unknown>): string | undefined {
+function configuration(spec: (...keys: string[]) => unknown): string | undefined {
   const parts: string[] = [];
-  const bed = num(specs.bedrooms);
-  const bath = num(specs.bathrooms);
-  const car = num(specs.parking);
+  const bed = num(spec('bedrooms'));
+  const bath = num(spec('bathrooms'));
+  const car = num(spec('parking', 'carSpaces', 'car_spaces'));
   if (bed !== undefined) parts.push(`${bed} bed`);
   if (bath !== undefined) parts.push(`${bath} bath`);
   if (car !== undefined) parts.push(`${car} car`);
   return parts.length ? parts.join(' · ') : undefined;
+}
+
+/**
+ * The verdict as a figure: `HOLD`, not the sentence that explains it.
+ *
+ * `investment_score.recommendation` is one string carrying both — "HOLD -
+ * Above average investment with some positive indicators, monitor closely",
+ * 69 characters on average and 78 at its longest. A KPI cell is a quarter of
+ * the cover's measure, about 28mm, and a sentence that long needs five lines
+ * in it: rendered through WeasyPrint the cover's VERDICT cell ran past the
+ * band's bottom rule, which struck through its last line.
+ *
+ * The split is exact rather than a guess. Every one of the 988 scored reports
+ * is either `ACTION - sentence` or the bare action, and the vocabulary is four
+ * words:
+ *
+ * | action | with a sentence | bare |
+ * | --- | ---: | ---: |
+ * | `HOLD` | 799 | 56 |
+ * | `CAUTION` | 98 | 1 |
+ * | `HOLD/BUY` | 24 | 9 |
+ * | `BUY` | 1 | 0 |
+ *
+ * The longest action is eight characters. A string that does not match the
+ * pattern is returned whole — the caller gets the same thing `headline` would
+ * have given it, which is what it printed before this existed.
+ *
+ * `headline` is untouched, and the page-3 verdict block still sets the whole
+ * sentence, where there is a full measure to set it in.
+ */
+function recommendationAction(headline: string | undefined): string | undefined {
+  if (!headline) return undefined;
+  const match = /^([A-Z][A-Za-z/ ]{1,20}?)\s+-\s+\S/.exec(headline);
+  return match ? match[1].trim() : headline;
+}
+
+/**
+ * The specification, read from the two columns it actually lives in.
+ *
+ * This mirrors `reports/investment/normalise.pure.ts`'s `toSpecs`, which took
+ * the same fallback when the flowing report was measured against production —
+ * and it had to be mirrored here because the templated path is a different
+ * reader of the same two columns, and it was still reading only one of them.
+ * Counted on the whole table, 2026-08-16:
+ *
+ * | field | `property_specs` | `financial_calculations.propertySpecs` |
+ * | --- | ---: | ---: |
+ * | land size | **0** of 1,187 | 114, as `landSizeSqm` |
+ * | building size | **0** | 114, as `buildSizeSqm` |
+ * | parking | **0** | 34, as `carSpaces` |
+ * | property type | 1,059 | 34, as `propertyType` |
+ * | year built / zoning / council | **0** | absent |
+ *
+ * So `property.landArea` and `property.buildingArea` were unresolvable on every
+ * one of the 1,187 rows through this projection, while the record held both on
+ * 114 of them. Note `buildSizeSqm`: not `building_size_sqm`, not
+ * `buildingSizeSqm` — both of which read naturally and neither of which exists
+ * on any row.
+ *
+ * `property_specs` wins wherever it holds a value: it is the column the intake
+ * writes, and the other is a by-product of the finance run.
+ */
+function specReader(
+  specs: Record<string, unknown>,
+  fallback: Record<string, unknown>,
+): (...keys: string[]) => unknown {
+  return (...keys: string[]): unknown => {
+    for (const key of keys) {
+      if (specs[key] !== undefined && specs[key] !== null) return specs[key];
+    }
+    for (const key of keys) {
+      if (fallback[key] !== undefined && fallback[key] !== null) return fallback[key];
+    }
+    return undefined;
+  };
 }
 
 export interface ProjectedNamespaces {
@@ -271,15 +346,16 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   const assumptions = obj(fin.assumptions);
 
   // ── property ──────────────────────────────────────────────────────────────
+  const spec = specReader(specs, obj(fin.propertySpecs));
   const property: Record<string, unknown> = {};
   put(property, 'address', str(row.property_address));
-  put(property, 'type', str(specs.property_type));
-  put(property, 'yearBuilt', num(specs.year_built) ?? str(specs.year_built));
-  put(property, 'landArea', num(specs.land_size_sqm));
-  put(property, 'buildingArea', num(specs.building_size_sqm));
-  put(property, 'zoning', str(specs.zoning));
-  put(property, 'council', str(specs.council_area));
-  put(property, 'configuration', configuration(specs));
+  put(property, 'type', str(spec('property_type', 'propertyType')));
+  put(property, 'yearBuilt', num(spec('year_built', 'yearBuilt')) ?? str(spec('year_built', 'yearBuilt')));
+  put(property, 'landArea', num(spec('land_size_sqm', 'landSizeSqm')));
+  put(property, 'buildingArea', num(spec('building_size_sqm', 'buildingSizeSqm', 'buildSizeSqm')));
+  put(property, 'zoning', str(spec('zoning')));
+  put(property, 'council', str(spec('council_area', 'councilArea')));
+  put(property, 'configuration', configuration(spec));
 
   // ── financials ────────────────────────────────────────────────────────────
   const annualRates = num(costs.councilRates);
@@ -338,6 +414,7 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   // headline back at the reader.
   const recommendation: Record<string, unknown> = {};
   put(recommendation, 'headline', str(score.recommendation));
+  put(recommendation, 'action', recommendationAction(str(score.recommendation)));
   put(recommendation, 'grade', str(score.grade));
   put(recommendation, 'score', num(score.totalScore));
 
@@ -377,15 +454,52 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
     { key: 'demandScore', label: 'Demand' },
     { key: 'riskScore', label: 'Risk' },
   ];
+  /**
+   * A dimension the engine did not score prints as such, not as 50.
+   *
+   * `investment_score.breakdown.<dim>` carries `excluded: true`,
+   * `hasData: false` and `weight: 0` when the engine had nothing to score with
+   * — and a **placeholder `score` of 50 sitting in the field regardless**. The
+   * scorecard bound `score` and `weight` straight through, so the page printed
+   *
+   *     Growth   50   0%
+   *     Demand   50   0%
+   *
+   * which is a fabricated figure against a weight that says it counted for
+   * nothing. Measured 2026-08-16: 9 of the 988 scored reports are in that
+   * state, on `growthScore` and `demandScore`, and on every one of the 9 the
+   * placeholder is exactly 50 and the weight exactly 0. Small, and a number a
+   * client would read as an assessment.
+   *
+   * `normalise.pure.ts`'s `toScore` already refuses to plot it — "the engine is
+   * saying it had no data, and plotting it would put a fabricated point on the
+   * wheel". This is the same refusal for the templated path.
+   *
+   * The row stays. A four-row table where the reader was told there are five
+   * dimensions reads as a table cut for space; "Not assessed" says what
+   * happened. So the numeric `score`/`weight` are withheld — nothing can plot
+   * a placeholder — and the table binds the composed labels instead.
+   */
   const assessment = DIMENSIONS.map(({ key, label }) => {
     const d = obj(breakdown[key]);
+    const score = num(d.score);
+    const weight = num(d.weight);
+    const scored = !(d.excluded === true || d.hasData === false);
     const entry: Record<string, unknown> = {};
     put(entry, 'label', label);
-    put(entry, 'score', num(d.score));
-    put(entry, 'weight', num(d.weight));
+    put(entry, 'scored', scored);
+    if (scored) {
+      put(entry, 'score', score);
+      put(entry, 'weight', weight);
+    }
+    put(entry, 'scoreLabel', scored && score !== undefined ? String(Math.round(score)) : 'Not assessed');
+    put(entry, 'weightLabel', scored && weight !== undefined ? `${Math.round(weight)}%` : '—');
     put(entry, 'details', str(d.details));
     return entry;
-  }).filter((e) => e.score !== undefined);
+    // A dimension the record does not carry at all has no score AND no
+    // exclusion flag; it is absent from the engine's output rather than
+    // withheld by it, so it is not a row.
+  }).filter((e) => e.score !== undefined || e.scored === false);
 
   const opportunities = strArray(score.opportunities);
 

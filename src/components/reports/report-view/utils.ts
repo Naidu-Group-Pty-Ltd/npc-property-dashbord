@@ -92,8 +92,23 @@ export function resolveInvestmentGrade(reports: readonly GradeReport[]): Resolve
   if (latest.status === 'pending' || latest.status === 'processing') return toResolved(latest, 'pending');
   if (latest.status === 'failed') return toResolved(latest, 'failed');
 
-  const summary = getInvestmentScoreSummary(latest as InvestmentReport);
-  if (latest.investment_score || summary.insufficient) return toResolved(latest, 'insufficient_data');
+  /*
+   * "We assessed and lacked data" and "there is no assessment" are different
+   * things to tell a client.
+   *
+   * This read `latest.investment_score || summary.insufficient`, and
+   * `summary.insufficient` is `!investmentScore || …` — true whenever the
+   * column is absent. So the second operand subsumed the first, every report
+   * without a score resolved to `insufficient_data` ("Qualitative review
+   * only"), and the `not_graded` branch below was unreachable for any report
+   * that exists. 199 of the 1,187 stored reports carry no `investment_score`
+   * at all and were being described as an assessment that ran short of data.
+   *
+   * `insufficient_data` now requires a score object that is insufficient. No
+   * score object at all is `not_graded`, which is the state the enum has always
+   * had a name for.
+   */
+  if (latest.investment_score) return toResolved(latest, 'insufficient_data');
   return toResolved(latest, 'not_graded');
 }
 

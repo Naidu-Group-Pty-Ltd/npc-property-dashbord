@@ -108,7 +108,10 @@ const SUMMARY_KPIS: KpiItem[] = [
 
 /** A page that exists only when the answer runs on to it. */
 function answerPage(index: number, p: PageDef): PageDef {
-  return { ...p, conditional: `qa && qa.answerPages > ${index}` };
+  // `tocContinues`: the eight answer sheets are one section, so the contents
+  // names "The answer" once rather than listing eight rows. Same rule as the
+  // Investment Compass's forty narrative pages.
+  return { ...p, conditional: `qa && qa.answerPages > ${index}`, tocContinues: true };
 }
 
 function questionRow(i: number): string[] {

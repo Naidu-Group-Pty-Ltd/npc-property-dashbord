@@ -403,7 +403,14 @@ describe('rendering', () => {
     for (const t of PORTFOLIO_TEMPLATES) {
       const { html } = renderTemplateToHtml(t.schema as any, { data: SAMPLE });
       expect(html, t.name).toContain('$3,410,000');
-      expect(html, t.name).toContain('-$1,183');
+      // U+2212 MINUS, not the hyphen-minus the projection produces. A figure
+      // block sets a leading sign as a real minus so the signs stack with the
+      // digits in a right-aligned column of tabular numerals — see
+      // `typesetFigure` in `blocks/_data.ts`. The assertion is that the FIGURE
+      // reaches the page; the glyph is checked once, here, rather than in every
+      // catalogue.
+      expect(html, t.name).toContain('−$1,183');
+      expect(html, t.name).not.toContain('-$1,183');
       expect(html, t.name).not.toContain('{{');
     }
   });

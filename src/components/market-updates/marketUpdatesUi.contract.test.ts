@@ -30,10 +30,26 @@ describe('Market Updates Phase 4 UI contract',()=>{
     expect(page).toContain("useModulePermissions('market_updates')");
   });
 
-  it('surfaces published and held scopes inline in the feed rather than a separate candidate review modal',()=>{
-    expect(page).toContain('Published');
-    expect(page).toContain('Held');
-    expect(page).toContain('setFeedScope');
+  /*
+   * One feed, one scope — not two scopes the reader switches between.
+   *
+   * This asserted `setFeedScope`, a Published/Held toggle that the page no
+   * longer has and deliberately so: anything the classifier holds is merged
+   * into the published feed on load and promoted server-side through the
+   * audited publish path (`reconcileHeldIntoFeed`), so the reader never waits
+   * behind a second tab and the database ends up matching what was shown. The
+   * assertion outlived the design it described. `toContain('Held')` was
+   * passing on identifier names and comment prose either way, which is why it
+   * never caught the drift.
+   *
+   * What the retired candidate-review modal must not come back as is still
+   * pinned below.
+   */
+  it('promotes held items into the single published feed rather than a second scope or a candidate review modal',()=>{
+    expect(page).toContain('const [heldUpdates, setHeldUpdates] = useState<MarketUpdate[]>([])');
+    expect(page).toContain('reconcileHeldIntoFeed');
+    expect(page).toContain('<Badge variant="secondary" className="rounded-full">Published');
+    expect(page).not.toContain('setFeedScope');
     expect(page).not.toContain('max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-4xl');
     expect(page).not.toContain('reviewCandidates');
   });

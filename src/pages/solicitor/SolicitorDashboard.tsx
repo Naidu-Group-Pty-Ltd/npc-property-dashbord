@@ -25,16 +25,23 @@ interface MatterStats {
 export default function SolicitorDashboard() {
   const { user, loading: authLoading } = useSolicitorPortalAuth();
   const [matters, setMatters] = useState<LegalMatter[]>([]);
+  const [flagged, setFlagged] = useState<LegalMatter[]>([]);
   const [stats, setStats] = useState<MatterStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    const [list, stat] = await Promise.all([
+    // The flagged strip is its own read. `list_matters` no longer carries
+    // `risk_notes` — it is the minimal list projection now — so the note that
+    // explains a flag comes from `list_flagged_matters`, which returns it for
+    // flagged matters only. Three calls in the same round trip rather than two.
+    const [list, stat, flaggedList] = await Promise.all([
       invokeSolicitorFunction('solicitor-portal-matters', { operation: 'list_matters' }),
       invokeSolicitorFunction('solicitor-portal-matters', { operation: 'matter_stats' }),
+      invokeSolicitorFunction('solicitor-portal-matters', { operation: 'list_flagged_matters', limit: 5 }),
     ]);
     if (!list.error) setMatters((list.data?.records || []) as LegalMatter[]);
     if (!stat.error) setStats((stat.data?.stats as MatterStats) ?? null);
+    if (!flaggedList.error) setFlagged((flaggedList.data?.records || []) as LegalMatter[]);
     setLoading(false);
   }, []);
 
@@ -50,8 +57,6 @@ export default function SolicitorDashboard() {
       .slice(0, 6),
     [matters],
   );
-
-  const flagged = useMemo(() => matters.filter((m) => m.risk_flag).slice(0, 5), [matters]);
 
   if (authLoading) {
     return (

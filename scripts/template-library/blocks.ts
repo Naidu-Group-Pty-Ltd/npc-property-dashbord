@@ -290,7 +290,7 @@ export function heading(
         ? {
           eyebrow: label,
           eyebrowSize: activeVoice.eyebrowSize,
-          eyebrowColor: 'token:primary',
+          eyebrowColor: 'token:accentInk',
         }
         : {}),
       heading: text,
@@ -378,7 +378,7 @@ export function kpis(items: Array<{ label: string; value: string }>, height = 92
       gap: 12,
       tileBg: 'token:panel',
       accent: 'token:primary',
-      labelColor: 'token:muted',
+      labelColor: 'token:mutedInk',
       radius: activeVoice.radii.md,
       // A four-up tile is ~87pt wide; a formatted currency value overruns the
       // renderer's 20pt default and gets clipped mid-figure.
@@ -467,7 +467,7 @@ export function matrixTable(opts: {
       cellFg: 'token:ink',
       borderColor: 'token:line',
       sectionBg: 'token:panel',
-      sectionFg: 'token:primary',
+      sectionFg: 'token:accentInk',
       negativeColor: 'token:negative',
       numericColumns: opts.headers.map((_, i) => i).slice(1),
       ...(activeVoice.mono ? { numericFont: 'token:mono' } : {}),
@@ -531,7 +531,7 @@ export function summaryCards(
       gap: 12,
       tileBg: 'token:bg',
       accent: 'token:text',
-      labelColor: 'token:line',
+      labelColor: 'token:mutedOnField',
       radius: activeVoice.radii.md,
       valueSize: items.length >= 4 ? 15 : 18,
       x: MARGIN, y, width: contentWidth(), height,
@@ -564,7 +564,7 @@ export function twoColumn(
       leftHeading: left.heading, leftBody: left.body,
       rightHeading: right.heading, rightBody: right.body,
       ratio: 0.5, gap: 22,
-      headingSize: 12, headingColor: 'token:primary',
+      headingSize: 12, headingColor: 'token:accentInk',
       bodySize: activeVoice.bodySize, bodyColor: 'token:ink',
       x: MARGIN, y, width: contentWidth(),
     }),
@@ -776,7 +776,7 @@ export function signature(signerName: string, signerRole: string): FlowItem {
     height: 90,
     block: (y) => block('signature', {
       signerName, signerRole, dateLabel: 'Date',
-      color: 'token:ink', lineColor: 'token:line', mutedColor: 'token:muted',
+      color: 'token:ink', lineColor: 'token:line', mutedColor: 'token:mutedInk',
       x: MARGIN, y, width: contentWidth(),
     }),
   };
@@ -813,7 +813,7 @@ export function footer(text: string): BlockDef {
     text,
     align: 'center',
     bg: 'token:surface',
-    color: 'token:muted',
+    color: 'token:mutedInk',
     ruleColor: 'token:line',
     height: FOOTER_HEIGHT,
   });
@@ -821,7 +821,7 @@ export function footer(text: string): BlockDef {
 
 export function pageNumber(): BlockDef {
   return block('page-number', {
-    color: 'token:muted',
+    color: 'token:mutedInk',
     x: activePageSize.width - MARGIN - 60,
     y: activePageSize.height - 46,
     width: 60,

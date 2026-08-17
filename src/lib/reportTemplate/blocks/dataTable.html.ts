@@ -1,12 +1,20 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
+import { isNegativeFigure, typesetFigure, visibleTableRows, type TableRow } from './_data';
 import { absBoxStyle, esc, type HtmlBlockContext } from './_shared.html';
 
 export function renderDataTableHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
   const headers = Array.isArray(p.headers) ? (p.headers as string[]) : [];
-  const rows = Array.isArray(p.rows) ? (p.rows as Array<{ cells: string[] }>) : [];
+  const authored = Array.isArray(p.rows) ? (p.rows as TableRow[]) : [];
+  // A row may carry its own `when`. See `visibleTableRows` for why the choice
+  // is made per row rather than per table.
+  const rows = visibleTableRows(authored, ctx);
   if (headers.length === 0) return '';
+  // A column head is a promise too. When every row of a table is conditional
+  // and none of them holds, the honest output is nothing — not a ruled header
+  // band over white space, which reads as a table whose body failed to render.
+  if (authored.length > 0 && rows.length === 0) return '';
 
   const headerBg = resolveBindableColor(p.headerBg ?? 'token:primary', ctx, '#BF9B50');
   const headerFg = resolveBindableColor(p.headerFg ?? '#FFFFFF', ctx, '#FFFFFF');
@@ -102,17 +110,22 @@ export function renderDataTableHtml(block: Block, ctx: HtmlBlockContext): string
     return `<th style="${cellStyle}">${esc(resolveBindable(h, ctx))}</th>`;
   }).join('')}
   </tr></thead>`;
-  const tbody = `<tbody>${rows.map((row, i) => {
+  // `i` is where the author put the row and `drawn` is where it lands. Band and
+  // total rows are named by the author, so they key on `i`; the stripe is a
+  // property of the printed page, so it keys on `drawn`.
+  const tbody = `<tbody>${rows.map(({ row, index: i }, drawn) => {
     const cells = row.cells || [];
     if (sections.has(i)) {
       return `<tr><td colspan="${headers.length}" style="background:${sectionBg};color:${sectionFg};padding:${cellPad}pt 8pt;font-size:${fontSize}pt;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;">${esc(resolveBindable(cells[0], ctx))}</td></tr>`;
     }
     const isTotal = totals.has(i);
-    return `<tr style="background:${i % 2 ? stripeBg : 'transparent'};color:${cellFg};">
+    return `<tr style="background:${drawn % 2 ? stripeBg : 'transparent'};color:${cellFg};">
       ${cells.map((c, col) => {
     const isNumeric = numeric.has(col);
-    const text = resolveBindable(c, ctx);
-    const isNegative = negativeFg !== null && /^-\s*[$(]?\d/.test(String(text).trim());
+    // A real minus, so the signs stack with the digits in a right-aligned
+    // column of tabular numerals. Shared with the KPI tile — see `_data.ts`.
+    const text = typesetFigure(resolveBindable(c, ctx));
+    const isNegative = negativeFg !== null && isNegativeFigure(text);
     const cellStyle = `padding:${cellPad}pt ${ruledHeader ? '4pt' : '8pt'};font-size:${fontSize}pt;font-variant-numeric:tabular-nums lining-nums;`
       + (isNumeric ? `text-align:right;` : '')
       + (isNumeric && numericFont ? `font-family:${numericFont};` : '')
