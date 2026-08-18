@@ -145,6 +145,23 @@ assistant references a `credentialId`**, so the link is visible only from `/cred
 `Vapi-Twilio` is a `byo-sip-trunk` with one gateway, `npc-vapi.pstn.twilio.com`, and
 **`inboundEnabled: false`**.
 
+## The clone kit — push leg staged, not fired
+
+[`clone-kit/`](./clone-kit/) turns the snapshot into 49 dependency-ordered `POST`
+payloads (validated against the Create DTOs, offline) and a pusher, `push.py`, that is
+dry-run by default: every write requires `--execute` plus a `VAPI_TARGET_TOKEN` for the
+new account, fingerprints the target so it cannot write into the source org, remaps all
+117 cross-references as ids are minted, substitutes secrets from the environment in
+memory only, and read-back-diffs every create. Its `probe` subcommand is the experiment
+`CLONE-CONTRACT.md` calls for. **Nothing has been executed** — the runbook in that
+directory carries the cutover order, starting with rotating the webhook secret.
+
+[`snapshot/FINAL-SWEEP.md`](./snapshot/FINAL-SWEEP.md) closes the capture: every read
+path in the spec is now fetched, empty, data-not-config, or credential-gated (`/org`
+answers 401 to this key). It also discloses the one thing a read changed: Vapi lazily
+materialised its own default "Metrics Overview" board on first `GET` — platform
+furniture, excluded from the clone set.
+
 ## What a clone can actually carry
 
 [`snapshot/CLONE-CONTRACT.md`](./snapshot/CLONE-CONTRACT.md) ·

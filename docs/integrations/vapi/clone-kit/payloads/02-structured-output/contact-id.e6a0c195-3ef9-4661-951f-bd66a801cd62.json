@@ -1,0 +1,12 @@
+{
+  "assistantIds": [
+    "cc46d882-55c0-454c-82e2-ef00ae000aec"
+  ],
+  "description": "GHL contact id",
+  "name": "contact_id",
+  "schema": {
+    "type": "string"
+  },
+  "type": "ai",
+  "workflowIds": []
+}
