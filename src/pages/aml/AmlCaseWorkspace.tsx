@@ -717,6 +717,7 @@ export default function AmlCaseWorkspace() {
                 caseId={caseRow.id}
                 canWrite={canWrite}
                 canAdjudicate={access.isMlro || access.roles.has("reviewer")}
+                isMlro={access.isMlro}
                 onChanged={() => { load(); screeningStage.reload(); }}
                 screeningBlocked={
                   /*

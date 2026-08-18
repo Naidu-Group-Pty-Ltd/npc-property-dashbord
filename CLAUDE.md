@@ -142,6 +142,18 @@ indistinguishable from losing a race and the subject was left untouched; and a
 provider that is configured but still in simulator mode was reported as no
 provider at all, sending the administrator to the wrong remedy.
 
+There is now a **second execution method**: a screening the MLRO carries out by
+hand. It is a method and never an exemption — nothing on that path writes
+`required` or can spell `not_required` — and it is the *same* record, an
+ordinary `screening_checks` row whose candidates go to the existing
+adjudication. `execution_mode` could not carry it (it is live-vs-simulator, and
+a manual check is both live and authoritative), so the method has its own
+column. A manual **no match** is refused unless it names the sources checked,
+the names searched and a rationale, enforced three times over —
+`manualScreening.pure.ts`, the `record_manual_screening` operation, and a table
+constraint — with the rule written once and imported by both the dialog and the
+edge function.
+
 Three rules carry it. **A green cron run is not a delivered request** —
 pg_cron reports on the SQL that queued the HTTP call, not the call, so the
 honest signals are `integration_outbox.attempts` and

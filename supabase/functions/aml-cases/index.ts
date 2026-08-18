@@ -64,6 +64,11 @@ import {
   type ScreeningScopeKey,
 } from "../_shared/aml/screeningPolicy.pure.ts";
 import {
+  manualScreeningAdmissible,
+  planManualScreening,
+} from "../_shared/aml/manualScreening.pure.ts";
+import {
+  computeRefreshDueAt,
   inlineConvergenceDecision,
   isPartyScreeningMissing,
   projectPartyScreeningState,
@@ -291,6 +296,23 @@ async function runScreeningInline(
       + 'outbox worker has not consumed the queued request',
   );
   return { ran: false, converged: true, error: failure ?? undefined, category };
+}
+
+/**
+ * The re-screening interval, read from the same monitoring rule the automated
+ * consumer reads (`cross-portal-outbox-worker/screeningConsumer.ts`).
+ *
+ * A manual result has to age on exactly the clock an automated one ages on,
+ * or the two methods would disagree about when a party is due again — and the
+ * whole point of recording a manual screening as a canonical check is that
+ * nothing downstream has to know which method produced it.
+ */
+async function rescreenIntervalDays(admin: any): Promise<number> {
+  const { data } = await admin.schema('aml').from('monitoring_rules')
+    .select('criteria').eq('trigger_kind', 'rescreen_due').eq('is_enabled', true)
+    .limit(1).maybeSingle();
+  const days = Number((data?.criteria as any)?.interval_days ?? 365);
+  return Number.isFinite(days) && days > 0 ? days : 365;
 }
 
 /**
@@ -2955,11 +2977,40 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           if (d.party_screening_subject_id) detBySubject.set(String(d.party_screening_subject_id), d);
         }
         const caseLevelPep = (determinations ?? []).find((d: any) => !d.party_screening_subject_id) ?? null;
+
+        /*
+         * Manual attempts, so Stage 5 shows ONE screening history per party
+         * rather than an automated one and a manual one side by side. A
+         * manual check is an ordinary `screening_checks` row, so this is a
+         * filter on the same table the automated path writes — not a second
+         * store.
+         *
+         * The columns arrive with a migration, and this function deploys
+         * independently of it. A missing column must degrade to "no manual
+         * history", never to a 500 that takes the whole panel with it.
+         */
+        const manualBySubject: Record<string, any[]> = {};
+        {
+          const { data: manualChecks, error: manualError } = await admin.schema('aml')
+            .from('screening_checks')
+            .select('id, scope, status, screening_method, manual_outcome, unable_reason, '
+              + 'rationale, sources_checked, searched_names, performed_at, policy_required, '
+              + 'voluntary, metadata')
+            .eq('case_id', caseId).eq('screening_method', 'manual')
+            .order('performed_at', { ascending: false }).limit(100);
+          if (manualError && !isMissingColumnError(manualError)) throw manualError;
+          for (const c of (manualChecks ?? []) as any[]) {
+            const sid = String((c.metadata as any)?.party_screening_subject_id ?? '');
+            if (sid) (manualBySubject[sid] ??= []).push(c);
+          }
+        }
+
         return jsonResponse({
           subjects: (subjects ?? []).map((s: any) => ({
             ...s,
             matches: s.screening_check_id ? (matchesByCheck[s.screening_check_id] ?? []) : [],
             pep_determination: detBySubject.get(String(s.id)) ?? null,
+            manual_checks: manualBySubject[String(s.id)] ?? [],
           })),
           case_pep_determination: caseLevelPep,
         });
@@ -3198,6 +3249,233 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           /* The policy is unchanged by anyone choosing to run it. */
           scope_required: false,
           subject: after ?? subject,
+        });
+      }
+
+      /**
+       * Record a screening the MLRO performed themselves.
+       *
+       * ── Method, not policy ─────────────────────────────────────────
+       * Choosing manual never changes WHETHER screening was required. The
+       * obligation is read from the recorded scope decision and stamped onto
+       * the attempt as `policy_required`, so a voluntary manual check on an
+       * exempt case can never be read back as a mandatory one, or the
+       * reverse. Nothing here writes `case_screening_scopes`.
+       *
+       * ── MLRO only, and the server decides who that is ──────────────
+       * `canWrite` includes analysts. Performing and concluding a screening
+       * by hand is the MLRO's own act, so it is gated here rather than in the
+       * browser, and `performed_by` is taken from the authenticated session —
+       * never from the request. A client cannot nominate another actor, forge
+       * the timestamp, or claim the obligation status.
+       *
+       * ── The same records an automated run writes ───────────────────
+       * A canonical `screening_checks` row and, for a finding, canonical
+       * `screening_matches` rows — so a manual candidate enters the existing
+       * adjudication workflow rather than a parallel one, and every consumer
+       * of those tables keeps working without knowing this exists.
+       */
+      case 'record_manual_screening': {
+        if (!roles.has('mlro')) {
+          return jsonResponse({
+            error: 'MLRO role required to perform a manual screening',
+            code: 'insufficient_role',
+          }, 403);
+        }
+        const subjectId = String(body.subject_id ?? '');
+        if (!subjectId) return jsonResponse({ error: 'subject_id required' }, 400);
+
+        const { data: subject } = await admin.schema('aml').from('party_screening_subjects')
+          .select('*').eq('id', subjectId).maybeSingle();
+        if (!subject) return jsonResponse({ error: 'Subject not found' }, 404);
+
+        /*
+         * The case comes from the SUBJECT, never from the request. A caller
+         * supplying a subject from another case (or another tenant) reaches
+         * that case's own row and nothing else; there is no path here where a
+         * body-supplied case_id decides what is written.
+         */
+        const caseId = String(subject.case_id);
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, tenant_id').eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+        if (String(caseRow.tenant_id ?? 'default') !== String(subject.tenant_id ?? 'default')) {
+          return jsonResponse({ error: 'Subject does not belong to this case', code: 'tenant_mismatch' }, 403);
+        }
+
+        const admissible = manualScreeningAdmissible({ state: String(subject.state) });
+        if (!admissible.ok) {
+          return jsonResponse({ error: admissible.message, code: admissible.code }, 409);
+        }
+
+        /*
+         * PEP is deliberately NOT here. A manually established PEP conclusion
+         * already has its own record (`aml.pep_determinations`, with sources,
+         * rationale and a review date), and giving it a second home would
+         * mean two answers to "is this party a PEP" that can disagree.
+         *
+         * An unrecognised scope is REFUSED rather than defaulted. Coercing it
+         * to sanctions would record a screening against a scope the operator
+         * did not choose, which is worse than an error.
+         */
+        const MANUAL_SCOPES = ['sanctions', 'adverse_media', 'watchlist'];
+        const scopeKey = body.scope === undefined || body.scope === null
+          ? 'sanctions' : String(body.scope);
+        if (!MANUAL_SCOPES.includes(scopeKey)) {
+          return jsonResponse({
+            error: `scope must be one of: ${MANUAL_SCOPES.join(', ')}. A PEP determination `
+              + 'is recorded through record_pep_determination, not here.',
+            code: 'unsupported_scope',
+          }, 400);
+        }
+
+        const plan = planManualScreening({
+          outcome: body.outcome,
+          sources: Array.isArray(body.sources) ? body.sources : [],
+          searchedNames: Array.isArray(body.searched_names) ? body.searched_names : [],
+          rationale: String(body.rationale ?? ''),
+          unableReason: body.unable_reason ?? null,
+          candidates: Array.isArray(body.candidates) ? body.candidates : [],
+        });
+        if (!plan.ok) return jsonResponse({ error: plan.message, code: plan.code }, 400);
+
+        /*
+         * Whether POLICY required this, read from the recorded decision — not
+         * from the request, and not inferred from the fact that somebody
+         * chose to screen. A missing scope row means the default, which is
+         * required.
+         */
+        const { data: scopeRow } = await admin.schema('aml').from('case_screening_scopes')
+          .select('required, policy_version').eq('case_id', caseId).eq('scope', scopeKey)
+          .is('superseded_at', null).maybeSingle();
+        const policyRequired = scopeRow ? scopeRow.required === true : true;
+
+        const nowIso = new Date().toISOString();
+        const { data: check, error: checkError } = await admin.schema('aml')
+          .from('screening_checks').insert({
+            case_id: caseId,
+            subject_label: subject.screened_name,
+            subject_type: subject.party_type === 'entity' ? 'entity' : 'individual',
+            // Named for what it is. A manual check is NOT provider output and
+            // must never read as though a list returned it.
+            provider: 'manual_mlro',
+            scope: [scopeKey],
+            status: plan.checkStatus,
+            screening_method: 'manual',
+            // `execution_mode` stays live-vs-simulator: this ran against real
+            // sources, by a person, so it is live and authoritative.
+            execution_mode: 'live',
+            authoritative: true,
+            performed_by: userId,
+            performed_at: nowIso,
+            requested_by: userId,
+            completed_at: nowIso,
+            rationale: plan.rationale,
+            sources_checked: plan.normalisedSources,
+            searched_names: plan.normalisedNames,
+            manual_outcome: plan.outcome,
+            unable_reason: plan.unableReason,
+            policy_required: policyRequired,
+            voluntary: !policyRequired,
+            result_summary: {
+              manual: true,
+              outcome: plan.outcome,
+              source_count: plan.normalisedSources.length,
+              names_searched: plan.normalisedNames.length,
+              scopes_covered: [scopeKey],
+            },
+            metadata: {
+              party_screening_subject_id: subjectId,
+              party_type: subject.party_type,
+              performed_by_label: userEmail,
+              policy_version: scopeRow?.policy_version ?? SCREENING_POLICY_VERSION,
+            },
+          }).select('*').single();
+        if (checkError) throw checkError;
+
+        // Candidates go into the CANONICAL match table, so adjudication,
+        // escalation and the risk system all treat them identically to an
+        // automated finding.
+        if (plan.candidateStatus) {
+          /*
+           * Built from the PLAN, never from the request body. The candidates
+           * were normalised, trimmed and capped by `planManualScreening`, so
+           * the columns a caller can reach are fixed by that module's shape:
+           * extra keys on a submitted candidate cannot widen this row.
+           */
+          const rows = plan.normalisedCandidates.map((c) => ({
+            screening_check_id: check.id,
+            case_id: caseId,
+            match_type: scopeKey,
+            matched_name: c.matchedName,
+            list_name: c.listName,
+            jurisdiction: c.jurisdiction,
+            status: plan.candidateStatus,
+            details: {
+              manual: true,
+              reference: c.reference,
+              match_basis: c.matchBasis,
+              notes: c.notes,
+              recorded_by_label: userEmail,
+            },
+          }));
+          if (rows.length > 0) {
+            const { error: matchError } = await admin.schema('aml')
+              .from('screening_matches').insert(rows);
+            if (matchError) throw matchError;
+          }
+        }
+
+        /*
+         * Project the subject. `required` is NOT touched: the obligation is
+         * the policy's and this is an execution record. A satisfied manual
+         * screening sets the freshness clock exactly as an automated one
+         * does, so a manual result ages and becomes due again rather than
+         * standing for ever.
+         */
+        const patch: Record<string, unknown> = {
+          state: plan.subjectState,
+          screening_check_id: check.id,
+          screening_method: 'manual',
+          provider_key: 'manual_mlro',
+          error_category: plan.outcome === 'unable_to_complete' ? 'manual_unable_to_complete' : null,
+          updated_at: nowIso,
+        };
+        if (plan.satisfiesObligation) {
+          patch.last_screened_at = nowIso;
+          patch.refresh_due_at = computeRefreshDueAt(nowIso, await rescreenIntervalDays(admin));
+        }
+        await admin.schema('aml').from('party_screening_subjects')
+          .update(patch).eq('id', subjectId);
+
+        await appendEvent(admin, caseId, 'system',
+          `Manual ${scopeKey.replace(/_/g, ' ')} screening recorded for ${subject.screened_name}: `
+            + `${plan.outcome.replace(/_/g, ' ')}`,
+          {
+            reason: 'manual_screening_recorded',
+            party_screening_subject_id: subjectId,
+            screening_check_id: check.id,
+            scope: scopeKey,
+            screening_method: 'manual',
+            outcome: plan.outcome,
+            policy_required: policyRequired,
+            voluntary: !policyRequired,
+            source_count: plan.normalisedSources.length,
+            sources: plan.normalisedSources.map((x) => x.source_name),
+            names_searched: plan.normalisedNames,
+            unable_reason: plan.unableReason,
+            satisfies_obligation: plan.satisfiesObligation,
+            policy_version: scopeRow?.policy_version ?? SCREENING_POLICY_VERSION,
+          },
+          userId, userEmail);
+
+        return jsonResponse({
+          check,
+          outcome: plan.outcome,
+          /* The policy is unchanged by anyone choosing to screen manually. */
+          policy_required: policyRequired,
+          voluntary: !policyRequired,
+          satisfies_obligation: plan.satisfiesObligation,
         });
       }
 

@@ -122,6 +122,72 @@ mapping. The distinction it protects is the reason both categories exist:
 something is there and is unfinished. Only the absence of a provider row is the
 former.
 
+## The second execution method: screening by hand
+
+Everything above describes the **automated** path. There is a second one, and
+it exists because the four faults above were only the loudest way that path can
+stop: a provider can be down, a list can be stale, a name can need a judgement
+no matcher makes. When that happens the obligation does not pause, so the MLRO
+must be able to carry the screening out personally and record that they did.
+
+**It is a METHOD, never an exemption.** Policy decides *whether* a screening is
+required (`SCREENING_SCOPE.md`); this decides *how* a required one is carried
+out. Nothing on this path writes `required`, touches `case_screening_scopes` or
+`case_screening_perimeter`, or can spell `not_required` — the pure module does
+not contain the string and a test asserts the operation does not either. Whether
+policy required the screening is **read** from the recorded scope decision and
+stored on the attempt (`policy_required` / `voluntary`), so a voluntary check
+can never be read back afterwards as a mandatory one, or the reverse.
+
+**It is the same record, not a parallel one.** A manual check is an ordinary
+`aml.screening_checks` row and its candidates are ordinary
+`aml.screening_matches` rows, so a manual possible match enters the existing
+reviewer/MLRO adjudication path and every consumer of those tables keeps working
+without knowing manual screening exists. The four outcomes map onto the status
+vocabulary that was already there:
+
+| MLRO concluded | `status` | party state | discharges the obligation |
+| --- | --- | --- | --- |
+| `no_match` | `clear` | `completed` | **yes** |
+| `possible_match` | `matched` | `possible_match` (open candidates) | no — it becomes an adjudication |
+| `confirmed_match` | `matched` | `confirmed_match` | no — it becomes an escalation |
+| `unable_to_complete` | `failed` | `error` | no — it stays outstanding |
+
+**`execution_mode` could not carry this and must not be made to.** That column
+is `live` | `simulation`, and `aml-cases` treats `simulation` **or**
+`authoritative = false` as non-authoritative. A screening the MLRO performed
+against real published lists is live and is authoritative; it simply was not
+performed by the provider. Manual-vs-automated is a second, orthogonal axis, so
+it has its own column and `provider` reads `manual_mlro` rather than borrowing a
+real provider's name.
+
+**A manual "no match" carries its evidence or it is refused.** It is the claim
+that a customer does not appear on a sanctions list, it is recorded as `clear`
+like any other screening, and it is the cheapest thing in this product to record
+carelessly — afterwards, a `clear` with nothing behind it is indistinguishable
+from a screening that happened. So it must name at least one source actually
+checked, at least one name actually searched, and a rationale of real length,
+and that rule is enforced three times independently: in
+`_shared/aml/manualScreening.pure.ts`, in the `record_manual_screening`
+operation, and by the `screening_checks_manual_evidence` table constraint. The
+rule is written **once** — `planManualScreening` is imported by both the dialog
+and the edge function — so the browser cannot enable a submission the server
+would reject, and the constraint catches any future code path that forgets.
+
+`unable_to_complete` is deliberately held to a different bar: it asserts the
+screening could **not** be concluded, which is the opposite of a claim about the
+customer, so it carries a reason code instead of evidence, satisfies nothing,
+and leaves the party outstanding.
+
+**The browser supplies none of the facts that matter.** `performed_by` comes
+from the session, `performed_at` from the server clock, the case from the
+*subject* rather than a body-supplied id, and the MLRO role is checked by the
+edge function — hiding the control in the panel is a convenience, not the
+control. A satisfied manual screening advances `last_screened_at` and
+`refresh_due_at` on the **same** interval the automated consumer uses (the
+`rescreen_due` monitoring rule), so a manual result ages and falls due again
+rather than standing for ever.
+
 ## The rules that keep biting
 
 **A green cron run is not a delivered request.** pg_cron reports on the SQL it
