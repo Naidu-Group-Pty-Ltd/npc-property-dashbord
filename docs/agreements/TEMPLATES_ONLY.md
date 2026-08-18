@@ -47,21 +47,94 @@ the Command Centre page and by the Finance Portal dashboard. Two
 implementations would drift, and the first thing to drift would be how firmly
 each side is told the platform is not involved.
 
-**The Word file is built in the browser.** `templateDownloads.ts` calls
-`buildAgreementDocx` directly — no request is made, so there is no server-side
-record that a template was taken, by whom, or for which partner. The platform
-cannot report on something it never observed. That is also what lets the
-partner have exactly the same downloads as the issuer without a partner-facing
-render endpoint.
+**The document is the author's file, shipped unchanged.** See
+[the section below](#the-document-is-a-file-not-a-render) — this is the part
+that changed most recently, and the reasoning is worth reading before touching
+`templateFiles.pure.ts` or the download.
 
-**No brand on the partner's copy.** The Command Centre applies the tenant's
-colour and mark; the Finance Portal applies none. A blank template stamped with
-one side's identity reads as that side's prepared offer rather than a neutral
-starting point.
+**No request an application records.** `templateDownloads.ts` fetches a static
+path under `/templates/finance-portal/`. No Edge Function is invoked and
+nothing is written, so there is no record that a template was taken, by whom,
+or for which partner — the platform cannot report on something it never
+observed. Stated precisely rather than over-claimed: fetching a static file is
+a request to the origin, the same as loading an image on the page. What is true
+is that nothing in the application's own record names who took it.
+
+**No brand on either copy.** Neither portal stamps the tenant's colour or mark.
+The supplied cover is built around a `<<COMPANY NAME>>` placeholder — its
+author's intent is that whoever uses it fills their own name in, in Word — and
+a blank template carrying one side's identity reads as that side's prepared
+offer rather than a neutral starting point. Both portals therefore hand over
+byte-identical files. (The Command Centre used to apply the tenant's brand; it
+no longer does, because the branded copy and the supplied copy were two
+different-looking documents claiming to be the same template.)
 
 **The document no longer claims the platform.** `documentHtml.pure.ts` used to
 print *"Generated securely through Aurixa Systems"* behind a
 `showPlatformAttribution` flag. The flag is now inert.
+
+## The document is a file, not a render
+
+These two instruments existed in this repository **three times**, and no reader
+could tell which one a download would give them:
+
+| Where | How | State when this was found |
+| --- | --- | --- |
+| `scripts/finance-portal-templates/build_*.py` → `public/templates/finance-portal/Aurixa_*.docx` | Python builders | Superseded. Still carried the `REFERRAL WORKFLOW` section the document owner **withdrew** on 9 Aug, under the old clause numbering, labelled "Version 3.0". Nothing in the UI linked to it. |
+| `src/lib/agreements/docx.ts` + the content modules | browser renderer | What the desk served. Correct wording, this codebase's typesetting. |
+| The documents their author maintains | authored externally | Not in the repository at all. |
+
+That is how "the template keeps reverting to the old version" happens, and it
+happened repeatedly. **The author's file is now the artefact**, at
+`public/templates/finance-portal/`, declared in
+`_shared/agreements/templateFiles.pure.ts`. The other two are deleted rather
+than dormant: a dormant generator is one `npm run` away from writing a second,
+staler document beside the real one, and `agreementTemplatesOnly.spec.ts` and
+`verify_templates.py` both fail if one comes back.
+
+Re-typesetting a legal instrument on every download was the wrong shape. A
+presentation choice made in this codebase is a change to a document two
+businesses are going to sign, and the person who owns that document has already
+made those choices.
+
+### What holds the wording to account instead
+
+The locked content modules did not become decoration — they became the
+**specification**. `agreementTemplateFiles.spec.ts` opens each shipped `.docx`
+and asserts that every subclause, section heading, note and responsibility
+bullet the modules define is present verbatim, with each `{{field}}` resolved
+to the bracket text an unfilled template prints. When the documents in this
+change were installed, that check passed on all 88 subclauses, 25 section
+headings, 23 notes and 20 bullets across the two files.
+
+That is stronger than rendering was. A renderer can only be as right as its own
+content; this reads the artefact a partner will actually open. The same suite
+also checks the package is one Word can open (required parts, no dangling
+relationship or undefined style), that byte length and SHA-256 match the
+manifest, and that no tenant identity appears anywhere in the package —
+including `docProps`, which a renderer never wrote and which is where Word puts
+the author's name.
+
+### Replacing a document
+
+1. Drop the new file in over the old one, same name.
+2. Update `byteLength` and `sha256` in `templateFiles.pure.ts`
+   (`sha256sum public/templates/finance-portal/<file>`).
+3. Run `npx vitest run src/lib/agreements/__tests__/`.
+
+What it reports missing is wording the reviewed template had and the new file
+does not. If the new document deliberately drops a clause, the content module
+is what has to change first — that is the review step, and it is a diff a
+person can read.
+
+### What the desk shows
+
+Each card lists the document's sections — badge, heading, and what the section
+covers — read from the same modules the shipped file is checked against, so the
+page cannot describe a document different from the one it hands over. The pages
+the template itself says to delete before issue are marked as such. Version and
+file size are shown before the button, because a download should hold no
+surprises.
 
 ## What was removed
 
@@ -74,7 +147,19 @@ anchor probe. On the client: the register, the wizard, the detail workspace,
 the legacy register, the partner inbox, the agreement room, the action card and
 their hooks.
 
-Nine template modules remain, and the spec asserts that list exactly.
+Then, when the download became the shipped file: the browser DOCX renderer
+(`src/lib/agreements/docx.ts`, `docxTheme.ts`) and its two specs, the two
+Python agreement builders and `docx_kit.py`, the orphaned
+`TemplateLibraryDialog`, and `docs/portals/AGREEMENT_CENTRE.md` — 194 lines
+describing the retired lifecycle as though it were live.
+
+Ten template modules remain, and the spec asserts that list exactly. Three of
+them — `documentHtml.pure.ts`, `contentOverrides.pure.ts` and
+`additionalClauses.pure.ts` — no longer have a production caller: the first was
+the PDF renderer, the other two applied a negotiated amendment before a render.
+They are kept because deleting them is a separate decision from integrating a
+document, and because the amendment model is the part of the retirement that
+would be hardest to reconstruct. Nothing calls them; do not assume they work.
 
 ## What was deliberately NOT removed
 

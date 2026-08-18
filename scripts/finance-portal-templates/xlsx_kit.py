@@ -1,6 +1,6 @@
 """Reusable Excel building blocks for the Aurixa Finance Portal templates.
 
-Mirrors ``docx_kit`` so the workbook and the Word agreements share one visual
+Mirrors the pack's Word vocabulary so the workbook and the agreements share one visual
 language: obsidian banners, gold section rules, sand label cells and pale-gold
 input cells. Every helper takes colours from ``aurixa_brand`` rather than
 hard-coding hex, so a partner re-skin is a one-line change.
@@ -237,7 +237,7 @@ def total_row(ws, row: int, columns: int, brand: BrandProfile, *, label_text: st
 
 
 def note(ws, cell_range: str, title: str, body: str, *, tone: str = "neutral") -> None:
-    """Guidance panel — the spreadsheet twin of ``docx_kit.note_card``."""
+    """Guidance panel — the spreadsheet twin of the pack's note card."""
     tones = {
         "neutral": (PALETTE.sand, PALETTE.line, PALETTE.ink_soft),
         "brand": (PALETTE.gold_pale, PALETTE.gold_mid, PALETTE.gold_dark),

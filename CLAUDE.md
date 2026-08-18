@@ -364,9 +364,26 @@ notifications are **gone**, along with three Edge Functions
 recording a contract between two independent businesses made the platform look
 like a participant in it. One rule carries what is left: **downloading a
 template is the end of the platform's involvement.** The wording lives in
-`templateResource.pure.ts` and both portals render it from there, the Word file
-is built **in the browser** so no request records that a template was taken, and
-`agreementTemplatesOnly.spec.ts` asserts the machinery stays gone. Three things
+`templateResource.pure.ts` and both portals render it from there, no Edge
+Function is invoked and nothing is written, and `agreementTemplatesOnly.spec.ts`
+asserts the machinery stays gone.
+
+**The document is a file, not a render.** These two instruments were typeset
+**three** ways in this repository at once — a Python builder writing
+`public/`, a browser DOCX renderer, and the documents their author actually
+maintains — and the generated pair had gone stale, still carrying a section the
+owner withdrew. That is how "the template keeps reverting to the old version"
+kept happening. The author's file is now the artefact, declared in
+`_shared/agreements/templateFiles.pure.ts`; the other two are **deleted rather
+than dormant**, because a dormant generator is one `npm run` away from writing
+a staler document beside the real one. Two rules follow. The locked content
+modules are now the **specification, not the renderer** —
+`agreementTemplateFiles.spec.ts` opens each shipped `.docx` and fails if any
+subclause, heading, note or bullet is missing, and it scans the whole package
+(including `docProps`, where Word puts the author's name) for tenant identity.
+And **both portals hand over byte-identical files**: the branding stamp is gone,
+because the supplied cover is built around `<<COMPANY NAME>>` and a
+tenant-stamped blank reads as that side's prepared offer. Three things
 that were deliberately NOT removed: the historical rows (nothing was ever
 executed — 0 signatures — but destroying the record is irreversible), the Portal
 Access / AML-CTF **Compliance Passport** agreements in
