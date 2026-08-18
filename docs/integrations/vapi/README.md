@@ -82,6 +82,36 @@ have never taken a call** — `NPC IFC Inbound`, `NPC Strategy Session Inbound` 
 `NPC Opt In Follow Up Inbound` are all at zero. Only `NPC Inbound Agent` (37) has traffic, so
 the inbound handoff routing has never actually been exercised in production.
 
+## Provider credentials — and the one pointing at the old Make account
+
+[`snapshot/CREDENTIALS.md`](./snapshot/CREDENTIALS.md) · `GET /credential` returns the org's
+seven connected providers. **Vapi does not return the secret values**, so nothing here needed
+redacting and nothing sensitive is committed — verified as 0 credential-shaped values across
+all seven full records.
+
+The `make` credential reads `teamId: "528268"`, `region: "eu2"` — the **legacy** Make team and
+zone, the same account the 13 tool webhooks still point at. It has to be re-created against
+team `2731020` in `us2`, and it is a dependency the tool payloads do not reveal: **no tool or
+assistant references a `credentialId`**, so the link is visible only from `/credential`.
+
+`Vapi-Twilio` is a `byo-sip-trunk` with one gateway, `npc-vapi.pstn.twilio.com`, and
+**`inboundEnabled: false`**.
+
+## Tool fetching is exhaustive, and that was checked
+
+| Question | Answer |
+| --- | --- |
+| Is the list complete? | Yes — bare array of 20, no pagination wrapper. `limit` works; unknown query params are **rejected with 400**, so there are no hidden filters or expansions to miss. |
+| Does a single `GET` return more? | No — byte-identical to the list entry. |
+| Is version history complete? | `/tool/{id}/versions` carries the full per-version payload. `?version=vN` was cross-checked against it for all 20 — **20 match, 0 differ** — so it adds nothing. |
+| Can the 4 dangling tools be recovered? | No. Base, `/versions` and `?version=` all **404**. |
+| Any adjacent endpoint missed? | A sweep of 33 candidates found `/credential` (7 items, now captured) and `/template` (0). |
+| Tool-call analytics? | None exists — `/tool/{id}/analytics`, `/log`, `/metrics` all 404. |
+
+`/logs` is live with 1,198 entries but is the **API access log** — it records requests made
+*to* Vapi, not tool invocations, and its most recent rows are this session's own reads. Not
+captured.
+
 ## Tool state is captured the same four ways
 
 | Path | What it is |

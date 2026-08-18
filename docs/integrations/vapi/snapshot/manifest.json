@@ -25,6 +25,14 @@
         "credential header values, which are redacted by design"
       ],
       "history": "An earlier version of these views omitted four things that only the raw JSON carried: static body fields (tool.parameters), variableExtractionPlan, tool metadata and function.strict \u2014 plus non-credential header values. The raw JSON was always complete; the readable layer was not. This assertion exists so that cannot recur silently."
+    },
+    "toolFetchExhaustiveness": {
+      "listEndpoint": "GET /tool returns a bare array of 20 with no pagination wrapper. limit works; unknown query params are rejected with 400, so there are no hidden filters or expansions. 20 is the complete set.",
+      "perTool": "GET /tool/{id} is byte-identical to the list entry.",
+      "versions": "GET /tool/{id}/versions carries the full per-version payload; GET /tool/{id}?version=vN was cross-checked against it for all 20 and adds nothing new.",
+      "danglingTools": "The 4 ids referenced by assistants but absent from /tool are unrecoverable \u2014 base, /versions and ?version= all 404.",
+      "adjacent": "A sweep of 33 candidate endpoints found /credential (7 items, now captured) and /template (0 items). /logs is the API ACCESS log (1,198 entries, type API) and records requests to Vapi rather than tool invocations \u2014 not captured, as it is largely this session's own reads.",
+      "notAvailable": "No tool-call/analytics endpoint exists: /tool/{id}/analytics, /log, /metrics all 404."
     }
   },
   "counts": {
@@ -46,7 +54,8 @@
     "assistantNamedVersions": 33,
     "squadStateCards": 3,
     "phoneStateCards": 6,
-    "workflowStateCards": 1
+    "workflowStateCards": 1,
+    "providerCredentials": 7
   },
   "npcSplit": {
     "note": "Vapi has no folder concept; the split is by name prefix and corroborated by squad membership and phone-number naming. Only the NPC set is in scope for migration \u2014 see ../npc-services/clone-plan.json.",
