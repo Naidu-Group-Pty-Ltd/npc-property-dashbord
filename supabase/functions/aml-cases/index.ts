@@ -66,6 +66,7 @@ import {
 import {
   manualScreeningAdmissible,
   planManualScreening,
+  projectManualScreeningToSubject,
 } from "../_shared/aml/manualScreening.pure.ts";
 import {
   computeRefreshDueAt,
@@ -3428,20 +3429,27 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
         /*
          * Project the subject. `required` is NOT touched: the obligation is
-         * the policy's and this is an execution record. A satisfied manual
-         * screening sets the freshness clock exactly as an automated one
-         * does, so a manual result ages and becomes due again rather than
-         * standing for ever.
+         * the policy's and this is an execution record.
+         *
+         * What may change depends on whether policy required the screening,
+         * and the decision is `projectManualScreeningToSubject`'s rather than
+         * this handler's — a voluntary clear leaves `not_required` standing,
+         * because the policy decision and the screening result are answers to
+         * different questions. A FINDING moves the state either way: a
+         * sanctions match reaches the same adjudication whoever went looking.
          */
+        const projection = projectManualScreeningToSubject(plan, { policyRequired });
         const patch: Record<string, unknown> = {
-          state: plan.subjectState,
           screening_check_id: check.id,
           screening_method: 'manual',
           provider_key: 'manual_mlro',
-          error_category: plan.outcome === 'unable_to_complete' ? 'manual_unable_to_complete' : null,
           updated_at: nowIso,
         };
-        if (plan.satisfiesObligation) {
+        if (projection.state !== null) {
+          patch.state = projection.state;
+          patch.error_category = projection.errorCategory;
+        }
+        if (projection.advancesFreshness) {
           patch.last_screened_at = nowIso;
           patch.refresh_due_at = computeRefreshDueAt(nowIso, await rescreenIntervalDays(admin));
         }
@@ -3450,7 +3458,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
         await appendEvent(admin, caseId, 'system',
           `Manual ${scopeKey.replace(/_/g, ' ')} screening recorded for ${subject.screened_name}: `
-            + `${plan.outcome.replace(/_/g, ' ')}`,
+            + `${plan.outcome.replace(/_/g, ' ')}`
+            + (policyRequired
+              ? ''
+              : ' — voluntary; the case still does not require this screening'),
           {
             reason: 'manual_screening_recorded',
             party_screening_subject_id: subjectId,
@@ -3465,6 +3476,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             names_searched: plan.normalisedNames,
             unable_reason: plan.unableReason,
             satisfies_obligation: plan.satisfiesObligation,
+            // What this did NOT change is the part an auditor reads.
+            party_state_unchanged: projection.state === null,
             policy_version: scopeRow?.policy_version ?? SCREENING_POLICY_VERSION,
           },
           userId, userEmail);
@@ -3476,6 +3489,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           policy_required: policyRequired,
           voluntary: !policyRequired,
           satisfies_obligation: plan.satisfiesObligation,
+          /* Null when the policy state was deliberately left standing. */
+          party_state: projection.state,
         });
       }
 

@@ -143,7 +143,9 @@ describe("PartyScreeningPanel — canonical candidate adjudication", () => {
       case_pep_determination: null,
     });
     renderPanel({ optionalUnavailable: true });
-    expect(await screen.findByText(/optional sanctions screening unavailable/i)).toBeTruthy();
+    // The unavailability is now stated against the AUTOMATED method, which is
+    // the only one it applies to.
+    expect(await screen.findByText(/the provider or its list is not ready/i)).toBeTruthy();
     expect(screen.getByText(/nothing is blocked/i)).toBeTruthy();
     expect(screen.queryByRole(
       "button", { name: /run optional sanctions screening/i })).toBeNull();
@@ -196,7 +198,7 @@ describe("PartyScreeningPanel — PEP determination", () => {
   it("flags an outstanding PEP determination and records a not-PEP with methods and rationale", async () => {
     recordPepDetermination.mockResolvedValue({ determination: { id: "x" } });
     renderPanel();
-    expect(await screen.findByText(/PEP determination outstanding/)).toBeTruthy();
+    expect(await screen.findByText(/determination outstanding/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /not a pep/i }));
     fireEvent.change(await screen.findByLabelText(/sources and methods/i), {
       target: { value: "DFAT consolidated list — case screening\nPublic register search" },

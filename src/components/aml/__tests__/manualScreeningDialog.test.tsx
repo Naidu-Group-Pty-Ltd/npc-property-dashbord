@@ -245,27 +245,34 @@ describe("PartyScreeningPanel — who is offered manual screening, and when", ()
   it("is not offered to a reviewer who is not the MLRO", async () => {
     renderPanel({ isMlro: false });
     await screen.findByText("Pat Example");
-    expect(screen.queryByRole("button", { name: /screen manually/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /perform manual sanctions screening/i })).toBeNull();
   });
 
   it("is offered to the MLRO", async () => {
     renderPanel({ isMlro: true });
-    expect(await screen.findByRole("button", { name: /screen manually/i })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /perform manual sanctions screening/i })).toBeTruthy();
   });
 
   it("is offered even when the provider blocks the automated path", async () => {
     renderPanel({ isMlro: true, screeningBlocked: "Screening cannot run — see the action above" });
-    expect(await screen.findByRole("button", { name: /screen manually/i })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /perform manual sanctions screening/i })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /start screening/i })).toBeNull();
   });
 
-  it("is NOT offered where the policy requires no screening at all", async () => {
+  it("IS offered where the policy requires no screening, as an optional method", async () => {
+    // The defect this replaces. Whether a screening is OWED and whether one
+    // may be PERFORMED are different questions; a hand-written state
+    // allowlist that omitted `not_required` made "not required" mean "not
+    // permitted", while the server would have accepted the attempt and
+    // recorded it correctly as voluntary.
     listPartyScreening.mockResolvedValue({
-      subjects: [subject({ state: "not_required" })], case_pep_determination: null,
+      subjects: [subject({ state: "not_required", required: false })],
+      case_pep_determination: null,
     });
     renderPanel({ isMlro: true });
-    await screen.findByText("Pat Example");
-    expect(screen.queryByRole("button", { name: /screen manually/i })).toBeNull();
+    expect(await screen.findByRole(
+      "button", { name: /perform manual sanctions screening/i })).toBeTruthy();
+    expect(screen.getByText(/MLRO only · optional/i)).toBeTruthy();
   });
 
   it("is NOT offered while an automated run is in flight", async () => {
@@ -275,14 +282,14 @@ describe("PartyScreeningPanel — who is offered manual screening, and when", ()
       });
       const view = renderPanel({ isMlro: true });
       await screen.findByText("Pat Example");
-      expect(screen.queryByRole("button", { name: /screen manually/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /perform manual sanctions screening/i })).toBeNull();
       view.unmount();
     }
   });
 
   it("opens the dialog in one click", async () => {
     renderPanel({ isMlro: true });
-    fireEvent.click(await screen.findByRole("button", { name: /screen manually/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /perform manual sanctions screening/i }));
     expect(await screen.findByRole("dialog")).toBeTruthy();
     expect(within(screen.getByRole("dialog"))
       .getByText(/not a way of\s+standing it down/i)).toBeTruthy();
@@ -294,7 +301,7 @@ describe("PartyScreeningPanel — who is offered manual screening, and when", ()
       case_pep_determination: null,
     });
     renderPanel({ isMlro: true });
-    expect(await screen.findByText(/screened manually by the MLRO/i)).toBeTruthy();
+    expect(await screen.findByText(/reached by manual MLRO screening/i)).toBeTruthy();
   });
 
   it("renders one history, with the sources and names a manual attempt carries", async () => {
@@ -333,5 +340,245 @@ describe("PartyScreeningPanel — who is offered manual screening, and when", ()
     });
     renderPanel({ isMlro: true });
     expect(await screen.findByText(/not required under policy/i)).toBeTruthy();
+  });
+});
+
+/**
+ * The exact production state that was reported, and the separations it
+ * depends on.
+ *
+ * Sanctions `not_required`, PEP still required, provider unavailable, user is
+ * the MLRO. Before this, the party row said "Optional sanctions screening
+ * unavailable" and offered nothing but the two PEP buttons — an operator who
+ * was entitled to screen by hand had no way to say so.
+ */
+describe("PartyScreeningPanel — sanctions not required, provider down, MLRO", () => {
+  const renderPanel = (props: Partial<Parameters<typeof PartyScreeningPanel>[0]> = {}) =>
+    render(
+      <PartyScreeningPanel
+        caseId={CASE_ID} canWrite canAdjudicate onChanged={() => {}} {...props}
+      />,
+    );
+
+  const notRequired = (over: Partial<AmlPartyScreeningSubject> = {}) =>
+    subject({ state: "not_required", required: false, ...over });
+
+  beforeEach(() => {
+    listPartyScreening.mockResolvedValue({
+      subjects: [notRequired()], case_pep_determination: null,
+    });
+  });
+
+  it("the reported case: automated unavailable, manual available, PEP outstanding", async () => {
+    renderPanel({ isMlro: true, optionalUnavailable: true });
+
+    // Sanctions: the policy decision, stated as one.
+    expect(await screen.findByText(/not required under policy/i)).toBeTruthy();
+    expect(screen.getByText(/no obligation arose, so nobody was screened/i)).toBeTruthy();
+
+    // Automated: unavailable, and no dead action offered.
+    expect(screen.getByText(/the provider or its list is not ready/i)).toBeTruthy();
+    expect(screen.queryByRole(
+      "button", { name: /run optional sanctions screening/i })).toBeNull();
+
+    // Manual: available anyway. This is the defect being fixed.
+    expect(screen.getByRole(
+      "button", { name: /perform manual sanctions screening/i })).toBeTruthy();
+    expect(screen.getByText(/MLRO only · optional/i)).toBeTruthy();
+
+    // PEP: untouched, still its own outstanding obligation.
+    expect(screen.getByText(/determination outstanding/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /not a pep/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /record pep/i })).toBeTruthy();
+  });
+
+  it("offers BOTH methods when the provider is available and screening is optional", async () => {
+    renderPanel({ isMlro: true, optionalUnavailable: false });
+    expect(await screen.findByRole(
+      "button", { name: /run optional sanctions screening/i })).toBeTruthy();
+    expect(screen.getByRole(
+      "button", { name: /perform manual sanctions screening/i })).toBeTruthy();
+  });
+
+  it("offers BOTH methods when screening is required and the provider is up", async () => {
+    listPartyScreening.mockResolvedValue({
+      subjects: [subject({ state: "not_started" })], case_pep_determination: null,
+    });
+    renderPanel({ isMlro: true });
+    expect(await screen.findByRole("button", { name: /start screening/i })).toBeTruthy();
+    expect(screen.getByRole(
+      "button", { name: /perform manual sanctions screening/i })).toBeTruthy();
+    expect(screen.getByText(/MLRO only · required/i)).toBeTruthy();
+  });
+
+  it("keeps the manual method when a REQUIRED screening is blocked by the provider", async () => {
+    listPartyScreening.mockResolvedValue({
+      subjects: [subject({ state: "not_started" })], case_pep_determination: null,
+    });
+    renderPanel({ isMlro: true, screeningBlocked: "Screening cannot run — see the action above" });
+    expect(await screen.findByRole(
+      "button", { name: /perform manual sanctions screening/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /start screening/i })).toBeNull();
+  });
+
+  it("opens the dialog for a not_required party in one click", async () => {
+    renderPanel({ isMlro: true, optionalUnavailable: true });
+    fireEvent.click(await screen.findByRole(
+      "button", { name: /perform manual sanctions screening/i }));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+  });
+
+  it("sends no policy claim when recording against a not_required party", async () => {
+    recordManualScreening.mockResolvedValue({
+      check: { id: "c1" }, outcome: "no_match",
+      policy_required: false, voluntary: true, satisfies_obligation: false,
+      party_state: null,
+    });
+    renderPanel({ isMlro: true, optionalUnavailable: true });
+    fireEvent.click(await screen.findByRole(
+      "button", { name: /perform manual sanctions screening/i }));
+    await screen.findByRole("dialog");
+    fireEvent.change(screen.getByLabelText(/source 1 name/i), {
+      target: { value: "DFAT Consolidated List" },
+    });
+    fireEvent.change(screen.getByLabelText(/why the conclusion is reasonable/i), {
+      target: { value: "Searched the published list against the legal name; no listing corresponds." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /record manual screening/i }));
+    await waitFor(() => expect(recordManualScreening).toHaveBeenCalled());
+    const payload = recordManualScreening.mock.calls[0][0];
+    for (const forbidden of ["policy_required", "voluntary", "required", "state"]) {
+      expect(payload).not.toHaveProperty(forbidden);
+    }
+  });
+
+  it("shows the policy decision and a voluntary no-match at the same time", async () => {
+    listPartyScreening.mockResolvedValue({
+      subjects: [notRequired({
+        manual_checks: [{
+          id: "c1", scope: ["sanctions"], status: "clear", manual_outcome: "no_match",
+          unable_reason: null,
+          rationale: "No listing corresponds to this party.",
+          sources_checked: [{ source_type: "sanctions_list", source_name: "DFAT Consolidated List" }],
+          searched_names: ["Pat Example"],
+          performed_at: "2026-08-18T00:00:00.000Z",
+          policy_required: false, voluntary: true,
+        }],
+      })],
+      case_pep_determination: null,
+    });
+    renderPanel({ isMlro: true, optionalUnavailable: true });
+    // Both true at once: the obligation and the result answer different
+    // questions, so the phrase appears on the policy badge AND on the history.
+    expect((await screen.findAllByText(/not required under policy/i)).length)
+      .toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/voluntary manual sanctions screening/i)).toBeTruthy();
+    expect(screen.getByText(/sources: DFAT Consolidated List/i)).toBeTruthy();
+  });
+
+  it("still surfaces a voluntary finding for adjudication", async () => {
+    listPartyScreening.mockResolvedValue({
+      subjects: [subject({
+        state: "possible_match", required: false, screening_method: "manual",
+        matches: [{
+          id: "44444444-4444-4444-8444-444444444444",
+          screening_check_id: "c1", match_type: "sanctions",
+          list_name: "DFAT Consolidated List (Australia)", matched_name: "Patrik Exampel",
+          score: null, jurisdiction: "AU", status: "open",
+        }],
+      })],
+      case_pep_determination: null,
+    });
+    renderPanel({ isMlro: true, optionalUnavailable: true });
+    expect(await screen.findByText("Patrik Exampel")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /confirm/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /dismiss/i })).toBeTruthy();
+  });
+
+  it("says a closed case still accepts compliance evidence rather than hiding the action", async () => {
+    renderPanel({ isMlro: true, optionalUnavailable: true, caseStatus: "closed" });
+    expect(await screen.findByRole(
+      "button", { name: /perform manual sanctions screening/i })).toBeTruthy();
+    expect(screen.getByText(/the case is closed, and AML evidence may still be recorded/i))
+      .toBeTruthy();
+  });
+
+  it("shows a reviewer or analyst no manual control at all", async () => {
+    for (const isMlro of [false, undefined]) {
+      const view = renderPanel({ isMlro, optionalUnavailable: true });
+      await screen.findByText("Pat Example");
+      expect(screen.queryByRole(
+        "button", { name: /perform manual sanctions screening/i })).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("still shows a reviewer the manual history they may read", async () => {
+    listPartyScreening.mockResolvedValue({
+      subjects: [notRequired({
+        manual_checks: [{
+          id: "c1", scope: ["sanctions"], status: "clear", manual_outcome: "no_match",
+          unable_reason: null, rationale: "Nothing found.",
+          sources_checked: [{ source_type: "sanctions_list", source_name: "DFAT Consolidated List" }],
+          searched_names: ["Pat Example"], performed_at: "2026-08-18T00:00:00.000Z",
+          policy_required: false, voluntary: true,
+        }],
+      })],
+      case_pep_determination: null,
+    });
+    renderPanel({ isMlro: false });
+    expect(await screen.findByText(/voluntary manual sanctions screening/i)).toBeTruthy();
+    expect(screen.queryByRole(
+      "button", { name: /perform manual sanctions screening/i })).toBeNull();
+  });
+
+  it("does not offer the manual method while an automated run is in flight", async () => {
+    for (const state of ["queued", "processing"]) {
+      listPartyScreening.mockResolvedValue({
+        subjects: [subject({ state })], case_pep_determination: null,
+      });
+      const view = renderPanel({ isMlro: true });
+      await screen.findByText("Pat Example");
+      expect(screen.queryByRole(
+        "button", { name: /perform manual sanctions screening/i })).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("does not offer it over an unadjudicated finding either", async () => {
+    listPartyScreening.mockResolvedValue({
+      subjects: [subject({ state: "possible_match" })], case_pep_determination: null,
+    });
+    renderPanel({ isMlro: true });
+    await screen.findByText("Pat Example");
+    expect(screen.queryByRole(
+      "button", { name: /perform manual sanctions screening/i })).toBeNull();
+    expect(screen.getByText(/adjudicate them before recording a new screening/i)).toBeTruthy();
+  });
+
+  it("keeps sanctions and PEP visibly separate", async () => {
+    renderPanel({ isMlro: true, optionalUnavailable: true });
+    expect(await screen.findByText(/targeted financial sanctions/i)).toBeTruthy();
+    expect(screen.getByText(/politically exposed person/i)).toBeTruthy();
+  });
+
+  it("an automated and a manual attempt coexist in one history", async () => {
+    listPartyScreening.mockResolvedValue({
+      subjects: [subject({
+        state: "completed", screening_method: "manual",
+        last_screened_at: "2026-08-10T00:00:00.000Z",
+        manual_checks: [{
+          id: "c1", scope: ["sanctions"], status: "clear", manual_outcome: "no_match",
+          unable_reason: null, rationale: "Nothing found.",
+          sources_checked: [{ source_type: "sanctions_list", source_name: "DFAT Consolidated List" }],
+          searched_names: ["Pat Example"], performed_at: "2026-08-18T00:00:00.000Z",
+          policy_required: true, voluntary: false,
+        }],
+      })],
+      case_pep_determination: null,
+    });
+    renderPanel({ isMlro: true });
+    expect(await screen.findByText(/reached by manual MLRO screening/i)).toBeTruthy();
+    expect(screen.getByText(/last screened/i)).toBeTruthy();
   });
 });

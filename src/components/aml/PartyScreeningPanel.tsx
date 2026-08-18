@@ -22,6 +22,9 @@ import {
 import { displayDate } from "@/lib/aml/displayDate";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import { ManualScreeningDialog } from "@/components/aml/ManualScreeningDialog";
+import {
+  manualScreeningAdmissible,
+} from "../../../supabase/functions/_shared/aml/manualScreening.pure";
 
 const STATE_TONE: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   not_required: "secondary", not_started: "outline", queued: "outline", processing: "outline",
@@ -32,8 +35,21 @@ const STATE_TONE: Record<string, "default" | "secondary" | "destructive" | "outl
 const PEP_TYPES = ["foreign", "domestic", "international_organisation"] as const;
 const PEP_RELATIONSHIPS = ["self", "family_member", "close_associate"] as const;
 
+/**
+ * Whether the MLRO may record a manual attempt against this party.
+ *
+ * Delegated to the SAME module the edge function calls, so the two cannot
+ * drift. They already had: this panel carried a hand-written state allowlist
+ * that omitted `not_required`, so a case whose sanctions screening was not
+ * required offered no manual option at all — while the server would have
+ * accepted one, and recorded it correctly as voluntary.
+ */
+const manualAdmissible = (s: AmlPartyScreeningSubject) =>
+  manualScreeningAdmissible({ state: s.state });
+
 export function PartyScreeningPanel({
-  caseId, canWrite, canAdjudicate, isMlro, onChanged, screeningBlocked, optionalUnavailable,
+  caseId, canWrite, canAdjudicate, isMlro, caseStatus,
+  onChanged, screeningBlocked, optionalUnavailable,
 }: {
   caseId: string; canWrite: boolean; canAdjudicate: boolean; onChanged: () => void;
   /**
@@ -46,6 +62,18 @@ export function PartyScreeningPanel({
    * prop being wrong cannot let anyone record one.
    */
   isMlro?: boolean;
+  /**
+   * The case's status, used only to SAY that a closed case still accepts
+   * compliance evidence.
+   *
+   * That is the product's existing rule and this does not change it: `closed`
+   * is terminal in the case STATUS TRANSITION table (which is why reopening
+   * is its own authorised operation), and no screening, adjudication or PEP
+   * operation checks it. Record-keeping obligations outlive the file, and a
+   * match found after closure still has to be recordable. Stating it beats
+   * leaving an operator to guess from a control that silently works.
+   */
+  caseStatus?: string | null;
   /**
    * Whether an OPTIONAL run could not execute right now.
    *
@@ -218,6 +246,7 @@ export function PartyScreeningPanel({
   };
 
   const now = new Date().toISOString();
+  const caseClosed = String(caseStatus ?? "") === "closed";
 
   return (
     <Card>
@@ -243,32 +272,245 @@ export function PartyScreeningPanel({
               const pep = s.pep_determination ?? null;
               const pepReviewDue = Boolean(pep?.review_due_at && pep.review_due_at < now);
               return (
-                <li key={s.id} className="border-b border-border/50 py-2 text-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                <li key={s.id} className="border-b border-border/50 py-3 text-sm">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="font-medium">{s.screened_name}</div>
-                      <div className="text-xs text-muted-foreground">
+                      <span className="font-medium">{s.screened_name}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">
                         {s.party_type.replace(/_/g, " ")}
-                        {s.last_screened_at && <> · last screened {displayDate(s.last_screened_at)}</>}
-                        {s.refresh_due_at && <> · refresh due {displayDate(s.refresh_due_at)}</>}
-                        {s.state === "error" && s.error_category && <> · {s.error_category.replace(/_/g, " ")}</>}
-                        {/*
-                          Say HOW the current position was reached. A manual
-                          conclusion must never be presentable as a provider
-                          one; an absent value is the method this product had
-                          before manual screening existed, so it reads as
-                          automated by saying nothing.
-                        */}
-                        {s.screening_method === "manual" && <> · screened manually by the MLRO</>}
-                        {s.adjudication_note && <> · adjudicated</>}
-                        {s.voluntary_run_at && (
-                          <> · run voluntarily{s.voluntary_run_by_label
-                            ? ` by ${s.voluntary_run_by_label}` : ""} — not required under policy</>
-                        )}
-                      </div>
+                      </span>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={STATE_TONE[s.state] ?? "outline"}>{s.state.replace(/_/g, " ")}</Badge>
+                  </div>
+
+                  {/*
+                    ── SANCTIONS ───────────────────────────────────────
+                    Two separate facts, in this order, because conflating
+                    them is what produced the defect this section replaces:
+                    WHETHER the case owes a screening (policy), and HOW one
+                    may be carried out (method). The methods are listed
+                    independently — an unready provider disables the
+                    automated one and says nothing about the manual one.
+                  */}
+                  <div className="mt-2 rounded-md border border-border/60 p-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Targeted financial sanctions
+                      </span>
+                      <Badge variant={STATE_TONE[s.state] ?? "outline"}>
+                        {s.state === "not_required"
+                          ? "not required under policy"
+                          : s.state.replace(/_/g, " ")}
+                      </Badge>
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {s.last_screened_at && <>last screened {displayDate(s.last_screened_at)} · </>}
+                      {s.refresh_due_at && <>refresh due {displayDate(s.refresh_due_at)} · </>}
+                      {s.state === "error" && s.error_category
+                        && <>{s.error_category.replace(/_/g, " ")} · </>}
+                      {/*
+                        Say HOW the current position was reached. A manual
+                        conclusion must never be presentable as a provider
+                        one; an absent value is the method this product had
+                        before manual screening existed, so it reads as
+                        automated by saying nothing.
+                      */}
+                      {s.screening_method === "manual" && <>reached by manual MLRO screening · </>}
+                      {s.adjudication_note && <>adjudicated · </>}
+                      {s.voluntary_run_at && (
+                        <>run voluntarily{s.voluntary_run_by_label
+                          ? ` by ${s.voluntary_run_by_label}` : ""} — not required under
+                          policy · </>
+                      )}
+                      {s.state === "not_required"
+                        ? "No obligation arose, so nobody was screened. This is a policy "
+                          + "decision, not a screening result."
+                        : "Screening is required for this party."}
+                    </div>
+
+                    <dl className="mt-2 space-y-1.5">
+                      {/* ── Method 1: the provider ──────────────────── */}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <dt className="w-20 shrink-0 text-xs font-medium">Automated</dt>
+                        <dd className="flex min-w-0 flex-wrap items-center gap-2">
+                          {s.state === "not_required" ? (
+                            !canWrite ? (
+                              <span className="text-xs text-muted-foreground">
+                                Optional — you do not have permission to run it.
+                              </span>
+                            ) : optionalUnavailable ? (
+                              <span className="text-xs text-muted-foreground">
+                                Unavailable — the provider or its list is not ready. Nothing
+                                is blocked; this case does not require a sanctions screening.
+                              </span>
+                            ) : (
+                              <Button
+                                size="sm" variant="outline" disabled={busyId === s.id}
+                                onClick={() => void runOptional(s.id)}
+                              >
+                                {busyId === s.id
+                                  ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                  : <PlayCircle className="mr-1.5 h-3.5 w-3.5" />}
+                                Run optional sanctions screening
+                              </Button>
+                            )
+                          ) : !canWrite ? (
+                            <span className="text-xs text-muted-foreground">
+                              You do not have permission to start a screening.
+                            </span>
+                          ) : ["queued", "processing"].includes(s.state) ? (
+                            <span className="text-xs text-muted-foreground">
+                              Running — candidates come back for adjudication.
+                            </span>
+                          ) : screeningBlocked && ["not_started", "error"].includes(s.state) ? (
+                            <span className="text-xs text-muted-foreground">{screeningBlocked}</span>
+                          ) : !screeningBlocked
+                            && ["not_started", "error", "completed", "false_positive"].includes(s.state) ? (
+                              <Button
+                                size="sm" variant="outline" disabled={busyId === s.id}
+                                onClick={() => void queue(s.id)}
+                              >
+                                {busyId === s.id
+                                  ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                  : <PlayCircle className="mr-1.5 h-3.5 w-3.5" />}
+                                {["completed", "false_positive"].includes(s.state)
+                                  ? "Re-screen"
+                                  : s.state === "error" ? "Retry screening" : "Start screening"}
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                Not available in this state.
+                              </span>
+                            )}
+                        </dd>
+                      </div>
+
+                      {/*
+                        ── Method 2: the MLRO ──────────────────────────
+                        Offered on exactly the states the SERVER admits —
+                        `manualScreeningAdmissible` is the same module the
+                        edge function calls, so this list cannot drift from
+                        it the way a hand-written one did. That includes
+                        `not_required`: whether a screening is owed and
+                        whether one may be performed are different
+                        questions, and refusing here made "not required"
+                        mean "not permitted".
+
+                        Provider readiness is deliberately absent from this
+                        branch. An unready provider is a fact about the
+                        automated method and has no bearing on whether a
+                        person may search a published list themselves — it
+                        is precisely when they need to.
+                      */}
+                      {isMlro && (
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <dt className="w-20 shrink-0 text-xs font-medium">Manual</dt>
+                          <dd className="flex min-w-0 flex-wrap items-center gap-2">
+                            {manualAdmissible(s).ok ? (
+                              <>
+                                <Button
+                                  size="sm" variant="outline" disabled={busyId === s.id}
+                                  onClick={() => setManualSubject(s)}
+                                >
+                                  <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" />
+                                  Perform manual sanctions screening
+                                </Button>
+                                <span className="text-xs text-muted-foreground">
+                                  MLRO only · {s.state === "not_required" ? "optional" : "required"}
+                                  {caseClosed && " · the case is closed, and AML evidence may still be recorded"}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                {manualAdmissible(s).ok ? "" : (manualAdmissible(s) as { message: string }).message}
+                              </span>
+                            )}
+                          </dd>
+                        </div>
+                      )}
+                    </dl>
+
+                    {openMatches.length > 0 && (
+                      <ul className="mt-2 space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-2">
+                        {openMatches.map((m) => (
+                          <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <span className="min-w-0">
+                              <span className="font-medium">{m.matched_name}</span>
+                              {" — "}{m.list_name ?? m.match_type}
+                              {m.score != null && <> · score {Number(m.score).toFixed(2)}</>}
+                              {m.jurisdiction && <> · {m.jurisdiction}</>}
+                            </span>
+                            {canAdjudicate ? (
+                              <span className="flex items-center gap-1.5">
+                                <Button size="sm" variant="destructive" disabled={busyId === s.id}
+                                  onClick={() => void adjudicate(s, m, "confirmed_match")}>
+                                  <Gavel className="mr-1 h-3 w-3" /> Confirm
+                                </Button>
+                                <Button size="sm" variant="outline" disabled={busyId === s.id}
+                                  onClick={() => void adjudicate(s, m, "false_positive")}>
+                                  Dismiss
+                                </Button>
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">awaiting reviewer/MLRO</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {/*
+                      ONE screening history per party. A manual attempt is an
+                      ordinary `screening_checks` row, so this is the same
+                      history rendered with the detail only a manual attempt
+                      carries — who searched what, where, and why.
+
+                      It sits UNDER the policy status rather than replacing
+                      it, which is the whole point: "not required" and a
+                      voluntary "no match" are answers to different questions
+                      and are both true at once.
+                    */}
+                    {(s.manual_checks ?? []).length > 0 && (
+                      <ul className="mt-2 space-y-1.5 rounded-md border border-border/60 p-2">
+                        {(s.manual_checks ?? []).map((c) => (
+                          <li key={c.id} className="text-xs">
+                            <span className="font-medium">
+                              {c.voluntary ? "Voluntary manual" : "Manual"}{" "}
+                              {(c.scope ?? []).join(", ").replace(/_/g, " ") || "sanctions"} screening
+                            </span>
+                            {" — "}
+                            {(c.manual_outcome ?? "").replace(/_/g, " ") || "recorded"}
+                            {c.performed_at && <> · {displayDate(c.performed_at)}</>}
+                            {c.voluntary && <> · not required under policy</>}
+                            {c.unable_reason && <> · {c.unable_reason.replace(/_/g, " ")}</>}
+                            {(c.sources_checked ?? []).length > 0 && (
+                              <div className="text-muted-foreground">
+                                sources: {(c.sources_checked ?? []).map((x) => x.source_name).join("; ")}
+                              </div>
+                            )}
+                            {(c.searched_names ?? []).length > 0 && (
+                              <div className="text-muted-foreground">
+                                names searched: {(c.searched_names ?? []).join("; ")}
+                              </div>
+                            )}
+                            {c.rationale && <div className="text-muted-foreground">{c.rationale}</div>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  {/*
+                    ── PEP ─────────────────────────────────────────────
+                    A separate obligation with its own evidence and its own
+                    determination record. Recording a sanctions screening —
+                    by either method — never answers it, and standing
+                    sanctions down never stands it down.
+                  */}
+                  <div className="mt-2 rounded-md border border-border/60 p-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Politically exposed person
+                      </span>
                       {pep ? (
                         <Badge variant={pep.result === "pep" ? "destructive" : "secondary"}>
                           {pep.result === "pep"
@@ -277,140 +519,22 @@ export function PartyScreeningPanel({
                           {pepReviewDue && " · review due"}
                         </Badge>
                       ) : (
-                        <Badge variant="outline">PEP determination outstanding</Badge>
-                      )}
-                      {/*
-                        A subject the policy does not require gets the
-                        OPTIONAL action and nothing else. No Retry, no
-                        provider blocker, no "upload the sanctions list" —
-                        none of those are steps towards anything, because
-                        this case is not waiting on a screening.
-                      */}
-                      {s.state === "not_required" ? (
-                        canWrite && (
-                          optionalUnavailable ? (
-                            <span className="text-xs text-muted-foreground">
-                              Optional sanctions screening unavailable — the provider or its
-                              list is not ready. Nothing is blocked.
-                            </span>
-                          ) : (
-                            <Button
-                              size="sm" variant="outline" disabled={busyId === s.id}
-                              onClick={() => void runOptional(s.id)}
-                            >
-                              {busyId === s.id
-                                ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                                : <PlayCircle className="mr-1.5 h-3.5 w-3.5" />}
-                              Run optional sanctions screening
-                            </Button>
-                          )
-                        )
-                      ) : (
-                        <>
-                          {canWrite && screeningBlocked
-                            && ["not_started", "error"].includes(s.state) && (
-                            <span className="text-xs text-muted-foreground">{screeningBlocked}</span>
-                          )}
-                          {canWrite && !screeningBlocked
-                            && ["not_started", "error", "completed", "false_positive"].includes(s.state) && (
-                            <Button size="sm" variant="outline" disabled={busyId === s.id} onClick={() => void queue(s.id)}>
-                              {busyId === s.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="mr-1.5 h-3.5 w-3.5" />}
-                              {["completed", "false_positive"].includes(s.state) ? "Re-screen" : s.state === "error" ? "Retry screening" : "Start screening"}
-                            </Button>
-                          )}
-                        </>
-                      )}
-                      {/*
-                        The SECOND execution method. It sits beside the
-                        automated action rather than replacing it, and it is
-                        offered when the provider is blocked as well as when
-                        it is not — a blocked provider is exactly when an
-                        MLRO needs to be able to screen by hand. It is never
-                        offered for `not_required` (there is no obligation to
-                        discharge) or while an automated run is in flight.
-                      */}
-                      {isMlro && ["not_started", "error", "completed", "false_positive"].includes(s.state) && (
-                        <Button
-                          size="sm" variant="outline" disabled={busyId === s.id}
-                          onClick={() => setManualSubject(s)}
-                        >
-                          <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" />
-                          Screen manually
-                        </Button>
-                      )}
-                      {canAdjudicate && (!pep || pepReviewDue) && (
-                        <>
-                          <Button size="sm" variant="outline" disabled={busyId === s.id} onClick={() => void recordPep(s, "not_pep")}>
-                            <ShieldQuestion className="mr-1.5 h-3.5 w-3.5" /> Not a PEP
-                          </Button>
-                          <Button size="sm" variant="outline" disabled={busyId === s.id} onClick={() => void recordPep(s, "pep")}>
-                            PEP…
-                          </Button>
-                        </>
+                        <Badge variant="outline">determination outstanding</Badge>
                       )}
                     </div>
+                    {canAdjudicate && (!pep || pepReviewDue) && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <Button size="sm" variant="outline" disabled={busyId === s.id}
+                          onClick={() => void recordPep(s, "not_pep")}>
+                          <ShieldQuestion className="mr-1.5 h-3.5 w-3.5" /> Not a PEP
+                        </Button>
+                        <Button size="sm" variant="outline" disabled={busyId === s.id}
+                          onClick={() => void recordPep(s, "pep")}>
+                          Record PEP…
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                  {openMatches.length > 0 && (
-                    <ul className="mt-2 space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-2">
-                      {openMatches.map((m) => (
-                        <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                          <span className="min-w-0">
-                            <span className="font-medium">{m.matched_name}</span>
-                            {" — "}{m.list_name ?? m.match_type}
-                            {m.score != null && <> · score {Number(m.score).toFixed(2)}</>}
-                            {m.jurisdiction && <> · {m.jurisdiction}</>}
-                          </span>
-                          {canAdjudicate ? (
-                            <span className="flex items-center gap-1.5">
-                              <Button size="sm" variant="destructive" disabled={busyId === s.id}
-                                onClick={() => void adjudicate(s, m, "confirmed_match")}>
-                                <Gavel className="mr-1 h-3 w-3" /> Confirm
-                              </Button>
-                              <Button size="sm" variant="outline" disabled={busyId === s.id}
-                                onClick={() => void adjudicate(s, m, "false_positive")}>
-                                Dismiss
-                              </Button>
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground">awaiting reviewer/MLRO</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {/*
-                    ONE screening history per party. A manual attempt is an
-                    ordinary `screening_checks` row, so this is the same
-                    history rendered with the detail only a manual attempt
-                    carries — who searched what, where, and why.
-                  */}
-                  {(s.manual_checks ?? []).length > 0 && (
-                    <ul className="mt-2 space-y-1 rounded-md border border-border/60 p-2">
-                      {(s.manual_checks ?? []).map((c) => (
-                        <li key={c.id} className="text-xs">
-                          <span className="font-medium">
-                            Manual {(c.scope ?? []).join(", ").replace(/_/g, " ") || "sanctions"} screening
-                          </span>
-                          {" — "}
-                          {(c.manual_outcome ?? "").replace(/_/g, " ") || "recorded"}
-                          {c.performed_at && <> · {displayDate(c.performed_at)}</>}
-                          {c.voluntary && <> · voluntary — not required under policy</>}
-                          {c.unable_reason && <> · {c.unable_reason.replace(/_/g, " ")}</>}
-                          {(c.sources_checked ?? []).length > 0 && (
-                            <div className="text-muted-foreground">
-                              sources: {(c.sources_checked ?? []).map((x) => x.source_name).join("; ")}
-                            </div>
-                          )}
-                          {(c.searched_names ?? []).length > 0 && (
-                            <div className="text-muted-foreground">
-                              names searched: {(c.searched_names ?? []).join("; ")}
-                            </div>
-                          )}
-                          {c.rationale && <div className="text-muted-foreground">{c.rationale}</div>}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
                 </li>
               );
             })}
