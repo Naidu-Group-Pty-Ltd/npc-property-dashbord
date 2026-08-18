@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Structural checks on the generated Finance Portal templates.
 
-Guards the things that are easy to break silently when the builders change:
-the Word files must still open, every section must still be present, and the
-workbook's cross-sheet formulas must still point at the rows they describe.
+Guards the things that are easy to break silently when the builder changes:
+the workbook must still open and its cross-sheet formulas must still point at
+the rows they describe.
+
+**The two referral agreements are no longer generated.** They are shipped as
+supplied by their author and verified clause by clause in TypeScript by
+``src/lib/agreements/__tests__/agreementTemplateFiles.spec.ts``, which is the
+authority on them. What is checked here instead is that nothing has started
+writing a SECOND copy of either agreement into this directory — three
+typesettings of the same instrument is what that suite exists to prevent.
 
     python3 scripts/finance-portal-templates/verify_templates.py
 """
@@ -21,28 +28,12 @@ from openpyxl import load_workbook
 
 OUT = Path(__file__).resolve().parents[2] / "public" / "templates" / "finance-portal"
 
-DOCX_EXPECTATIONS: dict[str, list[str]] = {
-    "Aurixa_Strategic_Property_Referral_Agreement.docx": [
-        "DOCUMENT MAP", "BRAND & CUSTOMISATION PANEL", "PARTNER EMAIL TEMPLATE",
-        "AGREEMENT DETAILS", "PURPOSE & SCOPE", "PURPOSE & SERVICES",
-        "REFERRAL WORKFLOW", "COMMERCIAL SCHEDULE",
-        "CLIENT CONSENT, PRIVACY & COMMUNICATIONS",
-        "RELATIONSHIP PROTECTIONS & RISK ALLOCATION",
-        "TERM, TERMINATION & GENERAL PROVISIONS", "EXECUTION",
-        "REFERRAL REGISTRATION FORM",
-    ],
-    "Aurixa_Finance_Referral_and_Commission_Agreement.docx": [
-        "DOCUMENT MAP", "BRAND & CUSTOMISATION PANEL", "PARTNER EMAIL TEMPLATE",
-        "AGREEMENT DETAILS", "PURPOSE & PROFESSIONAL BOUNDARIES",
-        "PURPOSE & FINANCE PARTNER SERVICES", "REFERRAL REQUIREMENTS",
-        "COMMISSION & PAYMENT SCHEDULE",
-        "COMMISSION ADMINISTRATION, CLAWBACKS & TAX",
-        "COMPLIANCE, PRIVACY & RELATIONSHIP PROTECTIONS",
-        "TERM, TERMINATION & GENERAL PROVISIONS", "EXECUTION",
-        "CLIENT REFERRAL & CONSENT FORM",
-        "LOAN WRITER / AUTHORISED REPRESENTATIVE UNDERTAKING",
-        "REFERRER ENTITY & PAYMENT DETAILS",
-    ],
+#: The documents this directory is allowed to hold, and who owns each. A Word
+#: file here that is not on this list means a builder has started generating an
+#: agreement again, beside the one people actually download.
+SHIPPED_AGREEMENTS = {
+    "Strategic_Property_Referral_Agreement.docx",
+    "Finance_Referral_and_Commission_Agreement.docx",
 }
 
 XLSX_FILE = "Aurixa_White_Label_Client_Fact_Find.xlsx"
@@ -71,23 +62,24 @@ def all_text(document: Document) -> str:
 
 
 def verify_docx() -> None:
-    for filename, sections in DOCX_EXPECTATIONS.items():
+    """No agreement may be generated into this directory."""
+    present = {path.name for path in OUT.glob("*.docx")}
+    for filename in sorted(SHIPPED_AGREEMENTS):
         path = OUT / filename
-        check(path.exists(), f"{filename}: missing")
+        check(path.exists(), f"{filename}: missing — the shipped agreement is not here")
         if not path.exists():
             continue
-        document = Document(path)
-        text = all_text(document)
-        for section in sections:
-            check(section in text, f"{filename}: section '{section}' not found")
-        check(document.sections[0].different_first_page_header_footer,
-              f"{filename}: cover page should suppress the running header")
-        check(len(document.tables) > 30,
-              f"{filename}: only {len(document.tables)} tables — layout blocks missing")
-        # Merge tokens must survive so find-and-replace branding still works.
+        text = all_text(Document(path))
+        # Merge tokens must survive, or the pack stops being white-label.
         check("<<COMPANY NAME>>" in text, f"{filename}: <<COMPANY NAME>> token missing")
         check("<<INSERT>>" in text, f"{filename}: <<INSERT>> token missing")
-        print(f"  ✓ {filename} — {len(sections)} sections, {len(document.tables)} tables")
+
+    extra = sorted(present - SHIPPED_AGREEMENTS)
+    check(not extra,
+          "a builder has written Word document(s) beside the shipped agreements: "
+          f"{extra}. Nothing may generate an agreement into this directory — see "
+          "_shared/agreements/templateFiles.pure.ts")
+    print(f"  ✓ {len(SHIPPED_AGREEMENTS)} shipped agreement(s) present, no generated copies")
 
 
 def verify_xlsx() -> None:

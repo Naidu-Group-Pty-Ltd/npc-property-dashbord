@@ -56,6 +56,7 @@ describe('the execution machinery is gone', () => {
       'documentHtml.pure.ts',
       'fields.pure.ts',
       'index.pure.ts',
+      'templateFiles.pure.ts',
       'templateResource.pure.ts',
       'types.pure.ts',
     ]);
@@ -70,6 +71,39 @@ describe('the execution machinery is gone', () => {
       expect(config).not.toContain(`[functions.${fn}]`);
       expect(registry).not.toContain(`"${fn}"`);
     }
+  });
+});
+
+describe('there is one copy of each agreement, not three', () => {
+  // These two instruments were typeset three separate ways in this repository
+  // at once: a Python builder writing `public/`, a browser renderer drawing
+  // the content modules into Word, and the documents their author maintains.
+  // Only the last of those reaches anybody now, and the other two are gone
+  // rather than dormant — a dormant generator is one `npm run` away from
+  // putting a second, staler document next to the real one.
+  it.each([
+    'src/lib/agreements/docx.ts',
+    'src/lib/agreements/docxTheme.ts',
+    'scripts/finance-portal-templates/build_buyers_agent_agreement.py',
+    'scripts/finance-portal-templates/build_finance_referral_agreement.py',
+    'scripts/finance-portal-templates/docx_kit.py',
+  ])('%s no longer exists', (path) => {
+    expect(existsSync(root(path))).toBe(false);
+  });
+
+  it('the template directory holds exactly the two shipped agreements', () => {
+    const dir = root('public/templates/finance-portal');
+    const words = readdirSync(dir).filter((name) => name.endsWith('.docx')).sort();
+    expect(words).toEqual([
+      'Finance_Referral_and_Commission_Agreement.docx',
+      'Strategic_Property_Referral_Agreement.docx',
+    ]);
+  });
+
+  it('the pack builder no longer generates an agreement', () => {
+    const src = read('scripts/finance-portal-templates/build_all.py');
+    expect(src).not.toContain('build_buyers_agent_agreement');
+    expect(src).not.toContain('build_finance_referral_agreement');
   });
 });
 
@@ -116,12 +150,28 @@ describe('the templates survive, on equal terms for both parties', () => {
     }
   });
 
-  it('is built in the browser, so no request records the download', () => {
+  it('takes a static file, so no application call records the download', () => {
     // The neutral position is architectural: nothing observes that a template
     // was taken, by whom, or for which partner.
+    //
+    // This used to assert there was no `fetch(` at all, because the Word file
+    // was drawn in the browser. The document is now the author's own file and
+    // has to be fetched from the origin, the same as any image on the page —
+    // so what is asserted is the part that actually carries the guarantee: no
+    // Edge Function is invoked, and nothing is written.
     const src = read('src/lib/agreements/templateDownloads.ts');
-    expect(src).toContain('buildAgreementDocx');
-    expect(src).not.toMatch(/invokeSecureFunction|invokeFinanceFunction|fetch\(/);
+    expect(src).toContain('agreementTemplateUrl');
+    expect(src).not.toMatch(/invokeSecureFunction|invokeFinanceFunction|supabase\./);
+    expect(src).not.toMatch(/\.insert\(|\.update\(|logEvent|track\(/);
+  });
+
+  it('offers no branded variant, so both sides get the same bytes', () => {
+    // A tenant-stamped copy on one desk and a neutral one on the other is two
+    // documents claiming to be the same template — and the branded one reads
+    // as that side's prepared offer rather than a starting point.
+    const src = read('src/lib/agreements/templateDownloads.ts');
+    expect(src).not.toContain('templateBrand');
+    expect(read('src/pages/AgreementTemplates.tsx')).not.toContain('useBrand');
   });
 
   it('shows BOTH sides the same component and the same words', () => {

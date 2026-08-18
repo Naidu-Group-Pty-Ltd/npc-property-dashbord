@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
-"""Regenerate every Finance Portal template.
+"""Regenerate the generated Finance Portal templates.
 
     python3 scripts/finance-portal-templates/build_all.py
     python3 scripts/finance-portal-templates/build_all.py --out /some/dir
+
+**The two referral agreements are no longer built here.** They used to be, and
+that was one of three separate typesettings of the same two legal instruments
+living in this repository at once. The documents their author maintains are now
+shipped unchanged — ``public/templates/finance-portal/*_Agreement.docx``,
+declared in ``_shared/agreements/templateFiles.pure.ts`` and checked clause by
+clause by ``agreementTemplateFiles.spec.ts``.
+
+Do not add an agreement builder back here. Writing one into this directory
+would leave two documents claiming to be the same agreement, and the generated
+one would be the stale copy — which is precisely the failure this removed.
+``verify_templates.py`` fails if that happens.
 
 Pass ``--brand`` with a JSON file to stamp a partner's details into the
 generated pack instead of leaving merge tokens in place. Any subset of
@@ -29,17 +41,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from aurixa_brand import DEFAULT_BRAND, BrandProfile
 
-import build_buyers_agent_agreement
 import build_client_fact_find
-import build_finance_referral_agreement
 
 DEFAULT_OUT = Path(__file__).resolve().parents[2] / "public" / "templates" / "finance-portal"
 
 TARGETS = [
-    (build_buyers_agent_agreement,
-     "Aurixa_Strategic_Property_Referral_Agreement.docx"),
-    (build_finance_referral_agreement,
-     "Aurixa_Finance_Referral_and_Commission_Agreement.docx"),
     (build_client_fact_find,
      "Aurixa_White_Label_Client_Fact_Find.xlsx"),
 ]

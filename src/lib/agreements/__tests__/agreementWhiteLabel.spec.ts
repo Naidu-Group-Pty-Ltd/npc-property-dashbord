@@ -9,10 +9,16 @@
  * The audit that produced these tests found the founding tenant's identity in
  * three database column defaults (fixed in
  * `20260901001200_agreement_white_label_defaults.sql`) and nowhere in the code.
- * These tests hold the code side of that line: the locked content, the field
- * registry and the DOCX builder are checked for tenant literals, and the
- * builder is checked for the behaviour that matters most — given no brand at
- * all, it must print placeholders rather than invent an issuer.
+ * These tests hold the code side of that line: the locked content and the
+ * field registry are checked for tenant literals, and an empty party name is
+ * checked to print the template's own bracket rather than inherit a company
+ * from somewhere.
+ *
+ * The other half of that guarantee moved when the download became the shipped
+ * document rather than a render. The DOCX builder these tests used to exercise
+ * is gone; `agreementTemplateFiles.spec.ts` now scans the whole shipped
+ * package — body copy AND the Word metadata a builder never wrote — for the
+ * same identity, which is a stronger check than the one it replaces.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,7 +30,6 @@ import {
   templateKeyForDirection,
   type AgreementTemplateKey,
 } from '@/lib/agreements';
-import { buildAgreementDocx } from '@/lib/agreements/docx';
 
 const KEYS: AgreementTemplateKey[] = ['strategic_property_referral', 'finance_referral_commission'];
 
@@ -51,8 +56,8 @@ const AGREEMENT_SOURCES = [
   'supabase/functions/_shared/agreements/types.pure.ts',
   'supabase/functions/_shared/agreements/templateResource.pure.ts',
   'supabase/functions/_shared/agreements/documentHtml.pure.ts',
-  'src/lib/agreements/docx.ts',
-  'src/lib/agreements/docxTheme.ts',
+  'supabase/functions/_shared/agreements/templateFiles.pure.ts',
+  'src/lib/agreements/templateDownloads.ts',
 ];
 
 describe('the agreement path names no tenant', () => {
@@ -71,39 +76,6 @@ describe('the agreement path names no tenant', () => {
       for (const needle of TENANT_IDENTITY) {
         expect(serialised).not.toContain(needle);
       }
-    });
-
-    it(`${key}: an unbranded build invents no issuer`, async () => {
-      // The whole point: with nothing configured, the document must say
-      // "<<INSERT>>", never a company name inherited from somewhere.
-      const blob = await buildAgreementDocx(key, {}, { brand: {}, includeTemplatePack: true });
-      const { default: JSZip } = await import('jszip');
-      const zip = await JSZip.loadAsync(await blob.arrayBuffer());
-      const doc = await zip.files['word/document.xml'].async('string');
-      for (const needle of TENANT_IDENTITY) {
-        expect(doc).not.toContain(needle);
-      }
-      // …and it does print the brackets, rather than rendering blank.
-      expect(doc).toContain('&lt;&lt;INSERT&gt;&gt;');
-    });
-
-    it(`${key}: the tenant's own brand does reach the document`, async () => {
-      // The other half of white-labelling: a configured deployment must see
-      // itself, not a placeholder.
-      const blob = await buildAgreementDocx(key, {}, {
-        brand: {
-          companyName: 'Harbourline Property Co',
-          legalName: 'Harbourline Property Co Pty Ltd',
-          abn: '11 222 333 444',
-          email: 'hello@harbourline.example',
-        },
-        includeTemplatePack: true,
-      });
-      const { default: JSZip } = await import('jszip');
-      const zip = await JSZip.loadAsync(await blob.arrayBuffer());
-      const doc = await zip.files['word/document.xml'].async('string');
-      expect(doc).toContain('Harbourline Property Co Pty Ltd');
-      expect(doc).toContain('11 222 333 444');
     });
   }
 });

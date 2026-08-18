@@ -14,28 +14,14 @@
  */
 import { useEffect } from 'react';
 import { FileSignature } from 'lucide-react';
-import { useBrand } from '@/branding/BrandProvider';
 import AgreementTemplateResources from '@/components/agreement-templates/AgreementTemplateResources';
-import { WORKFLOW_RETIRED_NOTICE, type AgreementTemplateKey } from '@/lib/agreements';
-import {
-  downloadAgreementTemplateDocx,
-  templateBrand,
-} from '@/lib/agreements/templateDownloads';
+import { WORKFLOW_RETIRED_NOTICE } from '@/lib/agreements';
+import { downloadAgreementTemplateDocx } from '@/lib/agreements/templateDownloads';
 
 export default function AgreementTemplates() {
-  const { settings: brandSettings } = useBrand();
-
   useEffect(() => {
     document.title = 'Agreement Templates | Command Centre';
   }, []);
-
-  const handleDocx = async (key: AgreementTemplateKey) => {
-    const brand = await templateBrand({
-      brandColour: brandSettings?.brandColor ?? brandSettings?.primaryColor ?? null,
-      logoSource: brandSettings?.reportLogo ?? brandSettings?.sidebarLogo ?? null,
-    });
-    await downloadAgreementTemplateDocx(key, brand);
-  };
 
   return (
     <div className="space-y-6 p-4 sm:p-6">
@@ -47,7 +33,10 @@ export default function AgreementTemplates() {
         <p className="text-sm text-muted-foreground">{WORKFLOW_RETIRED_NOTICE}</p>
       </header>
 
-      <AgreementTemplateResources onDownloadDocx={handleDocx} />
+      {/* No brand is applied. The supplied cover is built around a
+          `<<COMPANY NAME>>` placeholder, and both portals hand over the same
+          bytes — see `templateDownloads.ts`. */}
+      <AgreementTemplateResources onDownloadDocx={downloadAgreementTemplateDocx} />
     </div>
   );
 }
