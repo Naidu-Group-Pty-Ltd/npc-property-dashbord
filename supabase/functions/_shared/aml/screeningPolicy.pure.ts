@@ -373,6 +373,28 @@ export const SCREENING_ERROR_DETAIL: Record<string, string> = {
   provider_unavailable:
     "The screening provider could not be reached. Re-running is safe and " +
     "consumes no attempt.",
+  /*
+   * The three below exist because each was previously a SILENT stall.
+   *
+   * Measured in production: a subject sat `queued` with `error_category` null,
+   * no screening check and no case event, while the stage reported "nothing
+   * has picked it up". Every one of those paths now names itself.
+   */
+  screening_claim_failed:
+    "The screening request could not be claimed for execution because the " +
+    "database rejected the claim. This is a technical fault, not a screening " +
+    "outcome — no check was performed. Re-running is safe and consumes no " +
+    "attempt.",
+  worker_not_invoked:
+    "The screening request was queued but the background worker never " +
+    "consumed it, and it could not be run directly either. An administrator " +
+    "should check that the outbox worker can authenticate — every rejected " +
+    "scheduled invocation is recorded in the security event log with its " +
+    "reason. No client action is required.",
+  invalid_subject:
+    "The screening request does not name a subject that still exists, so it " +
+    "can never execute. It has been failed rather than left queued. Re-enrol " +
+    "the party from the screening stage.",
 };
 
 export interface NextActionInput {

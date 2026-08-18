@@ -240,6 +240,47 @@ export function screeningClaimDecision(
 }
 
 /**
+ * Did an inline screening attempt actually go anywhere?
+ *
+ * ── Why this is a decision and not an assumption ──────────────────────
+ * Inline execution used to `catch` and move on, trusting that the consumer
+ * had recorded a category. Measured in production on 2026-08-18, that trust
+ * was misplaced: a subject queued at 08:05:58 was still `queued` 27 minutes
+ * later with `error_category` null, no screening check and no case event.
+ * Something had tried and failed, and the failure was discarded.
+ *
+ * So the attempt is now judged by the SUBJECT'S OWN STATE afterwards rather
+ * than by whether a promise rejected:
+ *
+ *   settled     it moved, or it carries a check or a category — the attempt
+ *               reached a conclusion and nothing further is owed.
+ *   in_flight   a concurrent holder claimed it. Leaving it alone is correct;
+ *               the holder converges it and this delivery retries.
+ *   strand      it is still resting on queued/processing with nothing to
+ *               show. This is the silent state, and the caller must name it.
+ */
+export type InlineConvergence = "settled" | "in_flight" | "strand";
+
+export function inlineConvergenceDecision(
+  after: {
+    state?: string | null;
+    error_category?: string | null;
+    screening_check_id?: string | null;
+  } | null | undefined,
+  failureMessage?: string | null,
+): InlineConvergence {
+  // Nothing readable afterwards is not evidence that it settled.
+  if (!after) return "strand";
+  const state = String(after.state ?? "");
+  const resting = state === "queued" || state === "processing";
+  if (!resting) return "settled";
+  if (after.error_category || after.screening_check_id) return "settled";
+  // The one legitimate reason to leave a resting subject alone.
+  if (failureMessage && /screening_in_flight/.test(failureMessage)) return "in_flight";
+  return "strand";
+}
+
+/**
  * What to do with the screening check a claimed subject already points to.
  *
  *   - "resume_completed": the check holds a valid TERMINAL provider result

@@ -72,14 +72,77 @@ async function rescreenIntervalDays(db: any): Promise<number> {
   return Number.isFinite(days) && days > 0 ? days : 365;
 }
 
+/**
+ * Record a technical failure against a subject, in one place.
+ *
+ * Every path that cannot produce a screening RESULT must still produce a
+ * screening STATE. The alternative — returning, throwing, or leaving the row
+ * as it was — is what let a request sit `queued` for days: `error_category`
+ * null, no check, no case event, and a stage reporting "nothing has picked it
+ * up" while something had in fact tried and failed.
+ *
+ * `state: 'error'` is deliberate and is never a customer outcome: the scope
+ * stays outstanding, the stage stays blocked, and nothing reads as clear.
+ * `last_screened_at` is untouched, because no screening was performed.
+ */
+export async function recordTechnicalFailure(
+  db: any,
+  subject: { id: string; case_id?: string | null; screened_name?: string | null },
+  category: string,
+  message: string,
+): Promise<void> {
+  try {
+    await db.schema('aml').from('party_screening_subjects').update({
+      state: 'error',
+      error_category: category,
+      updated_at: new Date().toISOString(),
+    }).eq('id', subject.id);
+  } catch (e) {
+    console.error('[screeningConsumer] could not record failure state', {
+      subject_id: subject.id, category, error: String(e).slice(0, 200),
+    });
+  }
+  if (!subject.case_id) return;
+  try {
+    await appendCaseEvent(db, String(subject.case_id), 'system',
+      `Party screening failed technically for ${subject.screened_name ?? 'subject'} (${category}) — screening remains outstanding`,
+      { party_screening_subject_id: subject.id, error_category: category, error: message.slice(0, 300) });
+  } catch (e) {
+    // The state is the control; the narrative is the courtesy. Never let the
+    // audit append failure hide the failure it was describing.
+    console.error('[screeningConsumer] could not append failure event', {
+      subject_id: subject.id, category, error: String(e).slice(0, 200),
+    });
+  }
+}
+
 export async function processScreeningEvent(db: any, event: any): Promise<void> {
   const subjectId = String(event?.payload?.party_screening_subject_id ?? '');
-  if (!subjectId) return; // malformed event: nothing to do, never retryable
+  // A malformed event names no subject, so there is nothing to fail against
+  // and nothing to retry. Logged rather than silent: an event type that
+  // stopped carrying its id would otherwise vanish without trace.
+  if (!subjectId) {
+    console.error('[screeningConsumer] event carries no party_screening_subject_id', {
+      event_id: event?.id ?? null,
+    });
+    return;
+  }
 
   const { data: subject, error: loadErr } = await db.schema('aml')
     .from('party_screening_subjects').select('*').eq('id', subjectId).maybeSingle();
   if (loadErr) throw loadErr;
-  if (!subject) return;
+  /*
+   * The subject named by the event no longer exists. This used to return
+   * silently, which marked the event processed and left nothing behind. It
+   * cannot be failed against a row that is gone, so it is logged loudly and
+   * the event is allowed to settle — a retry would never find it either.
+   */
+  if (!subject) {
+    console.error('[screeningConsumer] event names a subject that does not exist', {
+      party_screening_subject_id: subjectId, error_category: 'invalid_subject',
+    });
+    return;
+  }
 
   // Eligibility (single shared rule — screeningClaimDecision):
   //   queued/error            → claim and run;
@@ -100,27 +163,43 @@ export async function processScreeningEvent(db: any, event: any): Promise<void> 
   // the provider runs at most once per delivery. The conditional predicate is
   // authoritative; the JS decision above is only routing.
   const stuckCutoff = new Date(Date.now() - STUCK_PROCESSING_MINUTES * 60_000).toISOString();
-  const { data: claimed } = await db.schema('aml').from('party_screening_subjects')
+  const { data: claimed, error: claimError } = await db.schema('aml')
+    .from('party_screening_subjects')
     .update({ state: 'processing', updated_at: new Date().toISOString() })
     .eq('id', subjectId)
     .or(`state.in.(queued,error),and(state.eq.processing,updated_at.lt.${stuckCutoff})`)
     .select('id').maybeSingle();
+
+  /*
+   * A DATABASE FAILURE IS NOT A RACE.
+   *
+   * This statement used to destructure `data` only. PostgREST returns
+   * `{ data: null, error }` on any failure — a malformed filter, a transport
+   * fault, a permission problem — and `data: null` is exactly what losing the
+   * race also looks like. So every database failure here was reported as
+   * "another worker has it, retry", which is the one outcome that converges
+   * nowhere: the inline caller swallows it, the worker retries it for ever,
+   * and the subject stays `queued` with no error_category, no screening check
+   * and no case event.
+   *
+   * That is precisely the silent stall this consumer exists to prevent, and
+   * it was hiding inside the safety mechanism itself. The two cases are now
+   * separated: a genuine race still retries, a database failure is recorded
+   * against the subject and named.
+   */
+  if (claimError) {
+    const message = String((claimError as { message?: string })?.message ?? claimError);
+    await recordTechnicalFailure(db, subject, 'screening_claim_failed', message);
+    throw new Error(`screening_claim_failed: ${message}`);
+  }
   if (!claimed) {
-    // Lost the race to a live worker an instant ago — same as in-flight.
+    // Genuinely lost the race to a live worker an instant ago — same as
+    // in-flight. The holder converges this subject; this delivery retries.
     throw new Error(`screening_in_flight: subject ${subjectId} was claimed concurrently — retry`);
   }
 
-  const technical = async (category: string, message: string) => {
-    await db.schema('aml').from('party_screening_subjects').update({
-      state: 'error',
-      error_category: category,
-      updated_at: new Date().toISOString(),
-      // last_screened_at untouched: no screening was performed.
-    }).eq('id', subjectId);
-    await appendCaseEvent(db, subject.case_id, 'system',
-      `Party screening failed technically for ${subject.screened_name} (${category}) — screening remains outstanding`,
-      { party_screening_subject_id: subjectId, error_category: category, error: message.slice(0, 300) });
-  };
+  const technical = (category: string, message: string) =>
+    recordTechnicalFailure(db, subject, category, message);
 
   try {
     await runScreeningForSubject(db, subject);

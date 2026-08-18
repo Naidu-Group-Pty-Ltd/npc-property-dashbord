@@ -39,7 +39,9 @@ import {
   type ClientPickerStatus,
 } from "../_shared/aml/clientSearchMatch.pure.ts";
 import { sanitiseDocumentName } from "../_shared/aml/documentNaming.pure.ts";
-import { processScreeningEvent } from "../cross-portal-outbox-worker/screeningConsumer.ts";
+import {
+  processScreeningEvent, recordTechnicalFailure,
+} from "../cross-portal-outbox-worker/screeningConsumer.ts";
 import { readSanctionsDeclaration } from "../_shared/aml/sanctionsDeclaration.pure.ts";
 import { planCaseReopen, resumeStatusFor } from "../_shared/aml/caseReopen.pure.ts";
 import {
@@ -55,6 +57,7 @@ import {
   recoverableSubjects,
 } from "../_shared/aml/screeningPolicy.pure.ts";
 import {
+  inlineConvergenceDecision,
   isPartyScreeningMissing,
   projectPartyScreeningState,
 } from "../_shared/aml/partyScreening.pure.ts";
@@ -218,6 +221,71 @@ async function sha256Hex(input: string): Promise<string> {
  *
  * It enrols people. It screens nobody and decides no outcome.
  */
+/**
+ * Run a screening request NOW, and guarantee it lands somewhere.
+ *
+ * ── The silence this closes ───────────────────────────────────────────
+ * Inline execution already existed, and its failure went into a field on the
+ * response that no surface reads. Measured in production on 2026-08-18: a
+ * subject queued at 08:05:58 was still `queued` twenty-seven minutes later
+ * with `error_category` null, no screening check, and no case event — while
+ * the stage told the operator "nothing has picked it up".
+ *
+ * Something HAD picked it up. It failed, and the failure was discarded.
+ *
+ * Meanwhile the durable path behind it was dead too: every
+ * `aml.screening.requested` row in that deployment carries `attempts = 0`,
+ * because the worker's cron invocation is rejected with
+ * `invalid_internal_signature` (2,839 denials recorded in `security_events`).
+ * So neither path converged and neither said so.
+ *
+ * ── The rule ──────────────────────────────────────────────────────────
+ * An operator action must never come to rest on `queued`. After the attempt
+ * this RE-READS the subject, and if it is still unclaimed with no check and
+ * no recorded category, it records one. A person then sees a reason instead
+ * of a spinner, and the explicit Retry has something concrete to retry.
+ *
+ * It produces no screening OUTCOME. `state: 'error'` leaves the scope
+ * outstanding and the stage blocked; nothing here can read as clear.
+ */
+async function runScreeningInline(
+  admin: any,
+  subjectId: string,
+): Promise<{ ran: boolean; converged: boolean; error?: string; category?: string }> {
+  let failure: string | null = null;
+  try {
+    await processScreeningEvent(admin, {
+      payload: { party_screening_subject_id: subjectId },
+    });
+  } catch (e) {
+    failure = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+  }
+
+  const { data: after } = await admin.schema('aml').from('party_screening_subjects')
+    .select('id, case_id, screened_name, state, error_category, screening_check_id')
+    .eq('id', subjectId).maybeSingle();
+
+  const verdict = inlineConvergenceDecision(after, failure);
+  if (verdict === 'settled') {
+    return { ran: failure === null, converged: true, error: failure ?? undefined };
+  }
+  if (verdict === 'in_flight') {
+    // A concurrent holder owns it and will converge it. Touching it here
+    // would break the at-most-once guarantee the claim provides.
+    return { ran: false, converged: true, error: failure ?? undefined };
+  }
+
+  const category = 'worker_not_invoked';
+  await recordTechnicalFailure(
+    admin,
+    { id: subjectId, case_id: after.case_id, screened_name: after.screened_name },
+    category,
+    failure ?? 'inline execution returned without claiming the subject, and the '
+      + 'outbox worker has not consumed the queued request',
+  );
+  return { ran: false, converged: true, error: failure ?? undefined, category };
+}
+
 async function ensureScreeningSubjects(
   admin: any,
   caseId: string,
@@ -2065,10 +2133,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
                     updated_at: new Date().toISOString() })
                   .eq('id', subject.id);
               }
-              await processScreeningEvent(admin, {
-                payload: { party_screening_subject_id: subject.id },
-              });
-              recovered.push(subject.id);
+              // Convergence-checked like every other execution path: a
+              // recovery that silently fails to claim would put the subject
+              // straight back into the state recovery exists to leave.
+              const outcome = await runScreeningInline(admin, subject.id);
+              if (outcome.ran) recovered.push(subject.id);
             } catch {
               // The consumer has already recorded the error category against
               // the subject. A failed recovery must not fail the read that
@@ -2106,6 +2175,59 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
               }, userId, userEmail);
           }
         }
+
+        /*
+         * ── The other half of never sitting queued ───────────────────
+         *
+         * The recovery above is gated on the provider being able to answer,
+         * which is right: re-running against a dead provider only burns a
+         * claim. But the gate had no else-branch, so when the provider was
+         * NOT ready a stalled request simply stayed `queued` — for ever, with
+         * no category and nothing to press. That is the silent state this
+         * whole stage is supposed to make impossible, and it was reachable
+         * from the moment provider readiness failed.
+         *
+         * A subject that cannot be run because the PLATFORM is not ready is
+         * still a subject that must say so. It is converged to `error` with
+         * the reason the stage already knows, using the existing vocabulary:
+         * the list, the mode, or the absence of a provider row.
+         *
+         * It produces no screening outcome, it is fully reversible by Retry
+         * once the provider is fixed, and the scope stays outstanding.
+         */
+        if (canWrite && !providerReadyForAuto) {
+          const notReadyCategory = providerRow === null
+            ? 'provider_not_configured'
+            : !dfatLoaded
+              ? 'list_data_unavailable'
+              : 'provider_misconfigured';
+          const stranded = recoverableSubjects(
+            required.map((s: any) => ({
+              id: String(s.id), state: String(s.state),
+              screeningCheckId: s.screening_check_id ?? null,
+              updatedAt: s.updated_at ?? null, required: true,
+            })),
+            Date.now(),
+          ).filter((s) => s.state !== 'not_started' && !((required.find(
+            (r: any) => String(r.id) === s.id) ?? {}).error_category));
+          for (const subject of stranded.slice(0, 10)) {
+            const row = required.find((r: any) => String(r.id) === subject.id);
+            await recordTechnicalFailure(
+              admin,
+              { id: subject.id, case_id: caseId, screened_name: row?.screened_name },
+              notReadyCategory,
+              'the screening provider cannot execute, so the queued request was failed '
+                + 'rather than left waiting',
+            );
+          }
+          if (stranded.length > 0) {
+            const { data: refreshed } = await admin.schema('aml')
+              .from('party_screening_subjects')
+              .select('*').eq('case_id', caseId).order('created_at', { ascending: true });
+            if (refreshed) { enrol.subjects = refreshed; required = requiredOf(refreshed); }
+          }
+        }
+
 
         const sections = (((submission?.snapshot ?? {}) as any).sections ?? []) as any[];
         const payload = (name: string): Record<string, unknown> =>
@@ -2665,18 +2787,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
          * The outbox row is deliberately left in place. If this inline run
          * dies mid-flight, the queue still holds the work.
          */
-        let inline: { ran: boolean; error?: string } = { ran: false };
-        try {
-          await processScreeningEvent(admin, {
-            payload: { party_screening_subject_id: subjectId },
-          });
-          inline = { ran: true };
-        } catch (e) {
-          // The consumer has already recorded the error category against the
-          // subject. Surfacing the message lets the operator see the refusal
-          // immediately rather than discovering it a sweep later.
-          inline = { ran: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) };
-        }
+        const inline = await runScreeningInline(admin, subjectId);
 
         const { data: after } = await admin.schema('aml').from('party_screening_subjects')
           .select('*').eq('id', subjectId).maybeSingle();
