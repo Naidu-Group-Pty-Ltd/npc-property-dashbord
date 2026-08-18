@@ -159,6 +159,39 @@ describe("3. the workspace grants the action to reviewer AND MLRO, and nobody el
   });
 });
 
+describe("the classify next-action lands on this control", () => {
+  const repo = join(__dirname, "../../../..");
+  const ws = readFileSync(join(repo, "src/pages/aml/AmlCaseWorkspace.tsx"), "utf8");
+
+  it("scrolls to the control rather than navigating anywhere", () => {
+    // The decision is made beside the evidence it rests on, and there is no
+    // second form or endpoint to keep in step with the one that exists.
+    const handler = ws.slice(
+      ws.indexOf('case "classify_perimeter":'),
+      ws.indexOf('case "fix_provider":'));
+    expect(handler).toMatch(/getElementById\("aml-sanctions-perimeter"\)/);
+    expect(handler).toMatch(/scrollIntoView/);
+    expect(handler).not.toMatch(/navigate\(/);
+  });
+
+  it("the scroll target wraps the control", () => {
+    const target = ws.indexOf('id="aml-sanctions-perimeter"');
+    const control = ws.indexOf("<SanctionsPerimeterControl");
+    expect(target).toBeGreaterThan(-1);
+    expect(target).toBeLessThan(control);
+  });
+
+  it("an analyst still sees the requirement, and cannot act on it", () => {
+    // The card tells everyone the decision is outstanding; only a reviewer or
+    // MLRO is given the means to make it.
+    renderControl({ canClassify: false, perimeter: null });
+    expect(screen.getByText(/not yet classified/i)).toBeTruthy();
+    expect(screen.getByText(/sanctions screening is required/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /classify perimeter/i })).toBeNull();
+    expect(screen.getByText(/only a reviewer or the mlro can change this/i)).toBeTruthy();
+  });
+});
+
 describe("7, 20. recording a finding", () => {
   it("sends the classification and reason, and never a required flag", async () => {
     renderControl();

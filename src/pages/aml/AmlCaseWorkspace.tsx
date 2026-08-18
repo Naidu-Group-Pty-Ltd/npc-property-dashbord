@@ -401,6 +401,17 @@ export default function AmlCaseWorkspace() {
         load();
         return;
       }
+      /*
+       * The classify step is answered on this page, by the control below the
+       * card. Scrolling to it rather than navigating anywhere keeps the
+       * decision beside the evidence it is made from — and there is no second
+       * endpoint or duplicate form to keep in step.
+       */
+      case "classify_perimeter":
+        document.getElementById("aml-sanctions-perimeter")?.scrollIntoView({
+          behavior: "smooth", block: "center",
+        });
+        return;
       case "fix_provider":
         // `/aml/configuration` is not a route. `/aml` and `/aml/passport` are
         // the client-facing surfaces; every staff AML page lives under
@@ -675,12 +686,14 @@ export default function AmlCaseWorkspace() {
                 backend enforces it independently; this only decides whether
                 an action nobody may take is offered.
               */}
+              <div id="aml-sanctions-perimeter" className="scroll-mt-24">
               <SanctionsPerimeterControl
                 caseId={caseRow.id}
                 perimeter={screeningStage.sync?.perimeter ?? null}
                 canClassify={access.isMlro || access.roles.has("reviewer")}
                 onChanged={() => { screeningStage.reload(); load(); }}
               />
+              </div>
               {/* Identity and screening share a customer but never share a
                   meaning: separate panels, separate evidence, separate
                   adjudication. That is why screening is its own stage. */}

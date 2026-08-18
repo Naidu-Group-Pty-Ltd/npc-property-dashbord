@@ -24,7 +24,7 @@
 import { useState } from "react";
 import {
   AlertTriangle, ArrowRight, CheckCircle2, Clock, Info, Loader2, ShieldAlert,
-  ShieldCheck, Users,
+  ShieldCheck, ShieldQuestion, Users,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +48,8 @@ const OWNER_LABEL: Record<string, string> = {
 const TONE: Record<string, { surface: string; text: string; Icon: typeof Info }> = {
   escalate: { surface: "border-destructive/40 bg-destructive/10", text: "text-destructive", Icon: ShieldAlert },
   adjudicate_match: { surface: "border-destructive/40 bg-destructive/10", text: "text-destructive", Icon: ShieldAlert },
+  // A decision to make, not a fault. Toned as a prompt rather than a warning.
+  classify_perimeter: { surface: "border-primary/40 bg-primary/5", text: "text-primary", Icon: ShieldQuestion },
   fix_provider: { surface: "border-warning/40 bg-warning/10", text: "text-warning", Icon: AlertTriangle },
   screening_stalled: { surface: "border-warning/40 bg-warning/10", text: "text-warning", Icon: AlertTriangle },
   await_submission: { surface: "border-border bg-muted/40", text: "text-muted-foreground", Icon: Clock },
