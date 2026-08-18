@@ -36,6 +36,10 @@
 -- it was made under.
 --
 -- ROLLBACK (exact):
+--   ALTER TABLE aml.party_screening_subjects
+--     DROP COLUMN IF EXISTS voluntary_run_at,
+--     DROP COLUMN IF EXISTS voluntary_run_by,
+--     DROP COLUMN IF EXISTS voluntary_run_by_label;
 --   DROP TABLE IF EXISTS aml.case_screening_scopes;
 --   DROP TABLE IF EXISTS aml.case_screening_perimeter;
 
@@ -169,3 +173,18 @@ SELECT * FROM (VALUES
 WHERE NOT EXISTS (
   SELECT 1 FROM aml.retention_schedules r WHERE r.entity_type = v.entity_type
 );
+
+/* ── 4. Who asked for a voluntary run ─────────────────────────────────── */
+-- A scope that is not required may still be screened, and the record has to
+-- say that a person chose to — otherwise a check sitting against an exempt
+-- case is indistinguishable from one the policy demanded, which is exactly
+-- the confusion this whole change exists to remove.
+--
+-- These also let the scope reconciler tell an in-flight VOLUNTARY run from a
+-- stale queued request left over from before the exemption. Without that it
+-- would stand the subject down mid-run and cancel work an operator had just
+-- authorised.
+ALTER TABLE aml.party_screening_subjects
+  ADD COLUMN IF NOT EXISTS voluntary_run_at timestamptz,
+  ADD COLUMN IF NOT EXISTS voluntary_run_by uuid,
+  ADD COLUMN IF NOT EXISTS voluntary_run_by_label text;

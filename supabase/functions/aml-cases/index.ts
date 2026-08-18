@@ -48,13 +48,19 @@ import {
   AML_PURGE_ORDER, AML_UNLINKED_CASE_TABLES, decideClientReset,
 } from "../_shared/aml/clientResetPolicy.pure.ts";
 import {
+  ALL_SCREENING_SCOPES,
   decideScreeningPolicy,
   deriveMissingScreeningSubjects,
   deriveScreeningNextAction,
+  deriveScreeningScope,
+  PERIMETER_REASON_CODES,
   PRIMARY_SUBJECT_PARTY_TYPE,
+  providerReadinessRelevant,
   SCREENING_POLICY_VERSION,
   SCREENING_STALL_SECONDS,
   recoverableSubjects,
+  type ScreeningScopeDecision,
+  type ScreeningScopeKey,
 } from "../_shared/aml/screeningPolicy.pure.ts";
 import {
   inlineConvergenceDecision,
@@ -284,6 +290,160 @@ async function runScreeningInline(
       + 'outbox worker has not consumed the queued request',
   );
   return { ran: false, converged: true, error: failure ?? undefined, category };
+}
+
+/**
+ * Read the case's operative perimeter classification.
+ *
+ * Anything absent, superseded or unreadable is INSIDE the perimeter, which
+ * is what `readPerimeter` in the pure module also concludes. Two layers
+ * agreeing on fail-closed is deliberate: this is the one read whose failure
+ * mode would be a silent sanctions exemption.
+ */
+async function readCasePerimeter(admin: any, caseId: string): Promise<any | null> {
+  const { data, error } = await admin.schema('aml').from('case_screening_perimeter')
+    .select('*').eq('case_id', caseId).is('superseded_at', null).maybeSingle();
+  if (error) return null;
+  return data ?? null;
+}
+
+/**
+ * Record the scope decision, and reconcile what it implies for the subjects.
+ *
+ * ── Why the decision is STORED and not just computed ──────────────────
+ * It used to be recomputed on every read and written only as a case event.
+ * That is enough to explain one case to one person and not enough for
+ * anything else: nothing could gate on it, and "which cases were exempted
+ * from sanctions screening, on what basis, under which policy version" —
+ * the question an audit actually asks — had no answer at all.
+ *
+ * Rows are superseded rather than updated, so a case that moves between
+ * policy versions carries both decisions and the earlier one stays exactly
+ * as it was made.
+ *
+ * ── The mapping onto subjects ─────────────────────────────────────────
+ * `PARTY_SCREENING_SCOPE` in the consumer is `['sanctions']`: a party
+ * screening run IS a sanctions run. So `party_screening_subjects.required`
+ * means "this party must be sanctions-screened", and it follows the
+ * sanctions scope exactly. PEP is unaffected — it is established through
+ * `pep_determinations`, not by this provider — which is what lets sanctions
+ * be not_required while PEP stays mandatory.
+ *
+ * ── The one thing an exemption does NOT do ────────────────────────────
+ * A subject that already holds a FINDING keeps `required = true`, whatever
+ * the perimeter says. Once a candidate or confirmed match exists you cannot
+ * un-know it, and the obligation to deal with a positive result comes from
+ * the sanction itself rather than from the screening obligation that
+ * surfaced it. Standing that down would be the one genuinely dangerous
+ * reading of "not required".
+ *
+ * Evidence is never destroyed either: a completed check keeps its result and
+ * its `screening_check_id`; only the obligation flag moves.
+ */
+async function syncScreeningScopeDecision(
+  admin: any,
+  caseId: string,
+  scope: ScreeningScopeDecision,
+  perimeterId: string | null,
+  subjects: any[],
+): Promise<{ changed: ScreeningScopeKey[]; subjectsChanged: number }> {
+  const { data: current } = await admin.schema('aml').from('case_screening_scopes')
+    .select('*').eq('case_id', caseId).is('superseded_at', null);
+  const byScope = new Map<string, any>(
+    (current ?? []).map((r: any) => [String(r.scope), r]));
+
+  const changed: ScreeningScopeKey[] = [];
+  const nowIso = new Date().toISOString();
+  for (const key of ALL_SCREENING_SCOPES) {
+    const decided = scope[key];
+    const existing = byScope.get(key);
+    // Re-recording an unchanged decision on every page load would bury the
+    // trail it exists to provide. A CHANGE is what deserves a new row.
+    const same = existing &&
+      existing.required === decided.required &&
+      String(existing.reason_code) === decided.reasonCode &&
+      String(existing.policy_version) === scope.policyVersion;
+    if (same) continue;
+    if (existing) {
+      await admin.schema('aml').from('case_screening_scopes')
+        .update({ superseded_at: nowIso }).eq('id', existing.id);
+    }
+    await admin.schema('aml').from('case_screening_scopes').insert({
+      case_id: caseId,
+      scope: key,
+      required: decided.required,
+      optional: decided.optional,
+      state: decided.required ? 'required' : 'not_required',
+      reason_code: decided.reasonCode,
+      reason: decided.reason,
+      policy_version: scope.policyVersion,
+      decision_source: 'server_policy',
+      material_inputs: scope.evidence,
+      perimeter_id: perimeterId,
+    });
+    changed.push(key);
+  }
+
+  /* ── Reconcile the subjects with the sanctions scope ────────────── */
+  const sanctionsRequired = scope.sanctions.required;
+  const HAS_FINDING = ['possible_match', 'confirmed_match'];
+  const HAS_RESULT = ['completed', 'false_positive'];
+  let subjectsChanged = 0;
+
+  for (const s of subjects ?? []) {
+    const state = String(s.state);
+    if (!sanctionsRequired) {
+      if (HAS_FINDING.includes(state)) continue;          // see the header
+      /*
+       * A voluntary run already in flight is work an operator authorised
+       * seconds ago. Standing the subject down here would cancel it and
+       * leave them looking at "not required" having just pressed Run.
+       */
+      if (['queued', 'processing'].includes(state) && s.voluntary_run_at) continue;
+      if (HAS_RESULT.includes(state)) {
+        if (s.required === false) continue;
+        await admin.schema('aml').from('party_screening_subjects')
+          .update({ required: false, updated_at: nowIso }).eq('id', s.id);
+        subjectsChanged++;
+        continue;
+      }
+      if (s.required === false && state === 'not_required') continue;
+      /*
+       * Retire any queued request for this subject BEFORE standing it down.
+       * A pending outbox row that a worker claims a second later would run
+       * the provider for a scope the policy just said is not required — and
+       * bill for it. Scoped by aggregate_id, which the emitting trigger sets
+       * to the subject id.
+       */
+      await admin.from('integration_outbox')
+        .update({
+          processed_at: nowIso, locked_at: null, locked_by: null,
+          last_error: 'superseded_by_scope_decision',
+        })
+        .eq('event_type', 'aml.screening.requested')
+        .eq('aggregate_id', s.id)
+        .is('processed_at', null);
+      await admin.schema('aml').from('party_screening_subjects')
+        .update({
+          required: false, state: 'not_required',
+          error_category: null, updated_at: nowIso,
+        }).eq('id', s.id);
+      subjectsChanged++;
+    } else {
+      // Back inside the perimeter: an exemption is withdrawn by restoring the
+      // subject to unscreened, never by inventing a result for it.
+      if (s.required === true && state !== 'not_required') continue;
+      await admin.schema('aml').from('party_screening_subjects')
+        .update({
+          required: true,
+          state: state === 'not_required' ? 'not_started' : state,
+          updated_at: nowIso,
+        }).eq('id', s.id);
+      subjectsChanged++;
+    }
+  }
+
+  return { changed, subjectsChanged };
 }
 
 async function ensureScreeningSubjects(
@@ -2047,6 +2207,66 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             (Date.now() - new Date(oldestQueued.occurred_at).getTime()) / 1000))
           : null;
 
+        const sections = (((submission?.snapshot ?? {}) as any).sections ?? []) as any[];
+        const payload = (name: string): Record<string, unknown> =>
+          (sections.find((x: any) => x?.section === name)?.payload ?? {}) as Record<string, unknown>;
+        const yesNo = (v: unknown) => (v === 'yes' || v === true ? 'yes'
+          : v === 'no' || v === false ? 'no' : null) as 'yes' | 'no' | null;
+
+        const personal = payload('personal_details');
+        const purchase = payload('purchase_profile');
+        const funding = payload('funding');
+        const structure = payload('purchasing_structure');
+
+        const nowIso = new Date().toISOString();
+        const detBySubject = new Map<string, any>();
+        for (const d of determinations ?? []) {
+          if (d.party_screening_subject_id) detBySubject.set(String(d.party_screening_subject_id), d);
+        }
+        const currentDetermination = (subjectId: string) => {
+          const d = detBySubject.get(subjectId);
+          if (!d || d.superseded_at) return null;
+          if (d.review_due_at && String(d.review_due_at) < nowIso) return null;
+          return d;
+        };
+
+        // Read from the enrolled subjects: `required` is derived from the
+        // scope decision this block feeds, so it does not exist yet.
+        const anyPepFinding = (enrol.subjects ?? []).some((s: any) =>
+          currentDetermination(String(s.id))?.result === 'pep');
+
+
+        /*
+         * ── The scope decision, before anything acts on it ────────────
+         *
+         * This has to happen here rather than further down, because every
+         * decision below depends on it: whether the sanctions provider's
+         * readiness is even relevant, whether a subject may be auto-run, and
+         * what the stage tells the operator to do next. Deciding scope after
+         * provider readiness is what made an unloaded DFAT list block cases
+         * that never needed it.
+         */
+        const perimeterRow = await readCasePerimeter(admin, caseId);
+        const policyInput = {
+          answers: {
+            pep: yesNo(personal.pep), adverse: yesNo(personal.adverse),
+            thirdParty: yesNo(purchase.third_party), overseasFunding: yesNo(funding.overseas),
+          },
+          entityType: typeof structure.entity_type === 'string' ? structure.entity_type : null,
+          riskRating: caseRow.risk_rating ?? null,
+          enhancedDueDiligence: caseRow.status === 'edd_required',
+          anyPepFinding,
+        };
+        const scope = deriveScreeningScope({ ...policyInput, perimeter: perimeterRow });
+        const scopeSync = await syncScreeningScopeDecision(
+          admin, caseId, scope, perimeterRow?.id ?? null, enrol.subjects ?? []);
+        if (scopeSync.subjectsChanged > 0) {
+          const { data: afterScope } = await admin.schema('aml')
+            .from('party_screening_subjects')
+            .select('*').eq('case_id', caseId).order('created_at', { ascending: true });
+          if (afterScope) enrol.subjects = afterScope;
+        }
+
         /*
          * Provider readiness and the required-subject list, computed before
          * recovery because recovery depends on both: the stage only runs a
@@ -2060,10 +2280,27 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           providerRow.mode === 'live' && dfatLoaded;
         const requiredOf = (rows: any[] | null | undefined) => (rows ?? []).filter((s: any) =>
           s.required && s.state !== 'not_required');
-        // Auto-execution needs a provider that can actually answer. Without
-        // one, recovery would burn a claim to produce the same refusal the
-        // stage already reports.
-        const providerReadyForAuto = providerReady;
+
+        /*
+         * ── Readiness is a property of a SCOPE, not of the stage ───────
+         *
+         * `providerReady` answers one question: could the sanctions provider
+         * run right now. Whether that MATTERS is a different question, and
+         * conflating them is what let an unloaded DFAT list block a case
+         * with no sanctions obligation at all.
+         *
+         * `providerRelevant` is the second question. When it is false the
+         * stage neither waits for the provider nor reports it as a blocker —
+         * and, critically, the list being empty is not a defect to fix but a
+         * fact that does not apply.
+         */
+        const providerRelevant = providerReadinessRelevant(scope);
+        // Auto-execution needs a provider that can actually answer AND a
+        // scope that actually requires it. Without the first, recovery would
+        // burn a claim to produce the same refusal the stage already reports;
+        // without the second it would run — and bill — a check nobody asked
+        // for.
+        const providerReadyForAuto = providerReady && scope.sanctions.required;
 
         /*
          * ── Self-healing ─────────────────────────────────────────────
@@ -2195,7 +2432,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
          * It produces no screening outcome, it is fully reversible by Retry
          * once the provider is fixed, and the scope stays outstanding.
          */
-        if (canWrite && !providerReadyForAuto) {
+        if (canWrite && scope.sanctions.required && !providerReadyForAuto) {
           const notReadyCategory = providerRow === null
             ? 'provider_not_configured'
             : !dfatLoaded
@@ -2229,47 +2466,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
 
 
-        const sections = (((submission?.snapshot ?? {}) as any).sections ?? []) as any[];
-        const payload = (name: string): Record<string, unknown> =>
-          (sections.find((x: any) => x?.section === name)?.payload ?? {}) as Record<string, unknown>;
-        const yesNo = (v: unknown) => (v === 'yes' || v === true ? 'yes'
-          : v === 'no' || v === false ? 'no' : null) as 'yes' | 'no' | null;
-
-        const personal = payload('personal_details');
-        const purchase = payload('purchase_profile');
-        const funding = payload('funding');
-        const structure = payload('purchasing_structure');
-
-        const nowIso = new Date().toISOString();
-        const detBySubject = new Map<string, any>();
-        for (const d of determinations ?? []) {
-          if (d.party_screening_subject_id) detBySubject.set(String(d.party_screening_subject_id), d);
-        }
-        const currentDetermination = (subjectId: string) => {
-          const d = detBySubject.get(subjectId);
-          if (!d || d.superseded_at) return null;
-          if (d.review_due_at && String(d.review_due_at) < nowIso) return null;
-          return d;
-        };
-
-        const anyPepFinding = required.some((s: any) =>
-          currentDetermination(String(s.id))?.result === 'pep');
-
-        const policy = decideScreeningPolicy({
-          answers: {
-            pep: yesNo(personal.pep), adverse: yesNo(personal.adverse),
-            thirdParty: yesNo(purchase.third_party), overseasFunding: yesNo(funding.overseas),
-          },
-          entityType: typeof structure.entity_type === 'string' ? structure.entity_type : null,
-          riskRating: caseRow.risk_rating ?? null,
-          enhancedDueDiligence: caseRow.status === 'edd_required',
-          anyPepFinding,
-        });
+        // The legacy shape, from the SAME inputs the scope decision used, so
+        // the two cannot describe different cases.
+        const policy = decideScreeningPolicy(policyInput);
 
         const nextAction = deriveScreeningNextAction({
           hasSubmission: enrol.hasSubmission,
           subjectCount: required.length,
-          providerReady,
+          // A provider nobody needs is never the blocker.
+          providerReady: providerRelevant ? providerReady : true,
           anyUnscreened: required.some((s: any) =>
             !['completed', 'false_positive', 'confirmed_match', 'queued', 'processing'].includes(s.state)),
           anyProcessing: required.some((s: any) => ['queued', 'processing'].includes(s.state)),
@@ -2323,9 +2528,34 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           enrolled: enrol.enrolled,
           subjects: enrol.subjects,
           policy,
+          /*
+           * The canonical per-scope decision. The UI renders THIS rather than
+           * deriving its own view of what is required — a compliance scope
+           * decided in a browser tab is not a decision anyone can audit, and
+           * two derivations of one rule is how they drift.
+           */
+          scopes: ALL_SCREENING_SCOPES.map((k) => ({
+            scope: k,
+            required: scope[k].required,
+            optional: scope[k].optional,
+            state: scope[k].required ? 'required' : 'not_required',
+            reason_code: scope[k].reasonCode,
+            reason: scope[k].reason,
+          })),
+          perimeter: {
+            classification: scope.perimeter.classification,
+            reason_code: scope.perimeter.reasonCode,
+            scopes_excluded: scope.perimeter.scopesExcluded,
+            recorded_by_label: scope.perimeter.recordedByLabel,
+            recorded_at: scope.perimeter.recordedAt,
+          },
+          policy_version: scope.policyVersion,
           provider_ready: providerReady,
+          /* Whether that readiness bears on this case at all. */
+          provider_relevant: providerRelevant,
           next_action: nextAction,
           decision_recorded: decisionRecorded,
+          scope_changed: scopeSync.changed,
         });
       }
 
@@ -2721,6 +2951,242 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             pep_determination: detBySubject.get(String(s.id)) ?? null,
           })),
           case_pep_determination: caseLevelPep,
+        });
+      }
+
+      /**
+       * Record whether this case is inside the sanctions perimeter.
+       *
+       * ── The only lever that can stand sanctions down ───────────────
+       * Targeted financial sanctions are not risk-based. No rating, profile
+       * or questionnaire answer reduces them, and nothing in this function
+       * lets one try. What CAN be true is that a case is not a dealing at
+       * all — an enquiry that never became an engagement, an administrative
+       * duplicate, a service declined before it commenced — and that is what
+       * this records.
+       *
+       * Reviewer or MLRO only. Standing down a sanctions obligation is a
+       * compliance act, not data entry, and `canWrite` includes analysts.
+       *
+       * The client never reaches this. `required` is not an input anywhere
+       * in this function: the caller names a CLASSIFICATION and a REASON
+       * CODE from a fixed list, and the policy module derives the scope from
+       * them. A payload claiming `required: false` is ignored because
+       * nothing reads it.
+       */
+      case 'classify_screening_perimeter': {
+        if (!roles.has('reviewer') && !roles.has('mlro')) {
+          return jsonResponse({
+            error: 'Reviewer or MLRO role required to classify the screening perimeter',
+            code: 'insufficient_role',
+          }, 403);
+        }
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id').eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        const classification = String(body.classification ?? '');
+        if (!['designated_service', 'outside_perimeter'].includes(classification)) {
+          return jsonResponse({
+            error: 'classification must be designated_service or outside_perimeter',
+          }, 400);
+        }
+        let reasonCode: string | null = null;
+        let scopesExcluded: string[] = [];
+        if (classification === 'outside_perimeter') {
+          reasonCode = String(body.reason_code ?? '');
+          if (!(PERIMETER_REASON_CODES as readonly string[]).includes(reasonCode)) {
+            return jsonResponse({
+              error: 'reason_code must be one of: ' + PERIMETER_REASON_CODES.join(', '),
+              code: 'invalid_reason_code',
+            }, 400);
+          }
+          scopesExcluded = Array.isArray(body.scopes_excluded)
+            ? [...new Set((body.scopes_excluded as unknown[]).map((x) => String(x)))]
+              .filter((x) => (ALL_SCREENING_SCOPES as readonly string[]).includes(x))
+            : [];
+          if (scopesExcluded.length === 0) {
+            return jsonResponse({
+              error: 'Name at least one scope the finding removes. A perimeter finding that '
+                + 'excludes nothing exempts nothing.',
+              code: 'no_scopes_excluded',
+            }, 400);
+          }
+        }
+        const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : null;
+
+        const nowIso = new Date().toISOString();
+        // Supersede rather than edit: the basis a past decision rested on is
+        // never rewritten, and the partial unique index makes two concurrent
+        // writers impossible rather than merely unlikely.
+        await admin.schema('aml').from('case_screening_perimeter')
+          .update({ superseded_at: nowIso })
+          .eq('case_id', caseId).is('superseded_at', null);
+        const { data: recorded, error: perimeterError } = await admin.schema('aml')
+          .from('case_screening_perimeter').insert({
+            case_id: caseId,
+            classification,
+            reason_code: reasonCode,
+            scopes_excluded: scopesExcluded,
+            note,
+            recorded_by: userId,
+            recorded_by_label: userEmail,
+            policy_version: SCREENING_POLICY_VERSION,
+          }).select('*').single();
+        if (perimeterError) throw perimeterError;
+
+        await appendEvent(admin, caseId, 'system',
+          classification === 'outside_perimeter'
+            ? `Screening perimeter: outside — ${scopesExcluded.join(', ')} not required (${reasonCode})`
+            : 'Screening perimeter: inside — a designated service is provided',
+          {
+            reason: 'screening_perimeter_classified',
+            classification,
+            reason_code: reasonCode,
+            scopes_excluded: scopesExcluded,
+            note,
+            policy_version: SCREENING_POLICY_VERSION,
+          },
+          userId, userEmail);
+
+        return jsonResponse({ perimeter: recorded });
+      }
+
+      /**
+       * Run a screening the policy does not require, because someone asked.
+       *
+       * ── What "optional" has to mean to be worth anything ───────────
+       * A scope recorded as `not_required` still gets screened if an
+       * authorised operator wants the evidence. The run is the NORMAL one —
+       * same provider, same claim, same check and matches, same audit — and
+       * the only difference is that the obligation never existed.
+       *
+       * So this must not, and does not, rewrite the policy decision.
+       * `required` stays false throughout. What gets recorded is that a named
+       * person chose to run it and when, which is the distinction between a
+       * policy obligation and voluntarily obtained evidence.
+       *
+       * ── Refusing without blocking ──────────────────────────────────
+       * If the provider genuinely cannot run, this says so and changes
+       * nothing. It does NOT mark the subject in error and it does NOT make
+       * the stage wait: the case never needed this screening, and an
+       * unavailable provider for an optional extra is not a compliance
+       * blocker.
+       */
+      case 'run_optional_screening': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const subjectId = String(body.subject_id ?? '');
+        if (!subjectId) return jsonResponse({ error: 'subject_id required' }, 400);
+        const { data: subject } = await admin.schema('aml').from('party_screening_subjects')
+          .select('*').eq('id', subjectId).maybeSingle();
+        if (!subject) return jsonResponse({ error: 'Subject not found' }, 404);
+
+        // The scope must actually be optional. Running this against a
+        // REQUIRED scope would record a mandatory screening as voluntary.
+        const { data: scopeRow } = await admin.schema('aml').from('case_screening_scopes')
+          .select('*').eq('case_id', subject.case_id).eq('scope', 'sanctions')
+          .is('superseded_at', null).maybeSingle();
+        if (!scopeRow || scopeRow.required === true) {
+          return jsonResponse({
+            error: 'Sanctions screening is required for this case, so it is not optional. '
+              + 'Use the normal screening action.',
+            code: 'scope_is_required',
+          }, 409);
+        }
+        if (['queued', 'processing'].includes(String(subject.state))) {
+          return jsonResponse({ skipped: true, code: 'already_in_progress', subject });
+        }
+        if (['possible_match', 'confirmed_match'].includes(String(subject.state))) {
+          return jsonResponse({
+            error: 'This subject has candidate or confirmed matches — adjudicate them before re-screening',
+            code: 'adjudication_required',
+          }, 409);
+        }
+
+        // Readiness matters for THIS run and for nothing else. A refusal here
+        // leaves the scope not_required and the stage unblocked.
+        const [{ data: optProvider }, { data: optSyncs }] = await Promise.all([
+          admin.schema('aml').from('provider_configs')
+            .select('provider_key, mode, active, priority').eq('capability', 'pep_sanctions')
+            .order('priority', { ascending: true }).limit(1),
+          admin.schema('aml').from('sanctions_list_syncs')
+            .select('list_code, status, entry_count').eq('list_code', 'dfat'),
+        ]);
+        const optProviderRow: any = Array.isArray(optProvider) ? optProvider[0] ?? null : optProvider;
+        const optListLoaded = (optSyncs ?? []).some(
+          (x: any) => x.status === 'succeeded' && Number(x.entry_count) > 0);
+        const optReady = optProviderRow !== null && optProviderRow.active === true &&
+          optProviderRow.mode === 'live' && optListLoaded;
+        if (!optReady) {
+          return jsonResponse({
+            ran: false,
+            code: 'provider_unavailable_for_optional_run',
+            message: 'Optional sanctions screening cannot run: the provider or its list is '
+              + 'not currently ready. This case does not require sanctions screening, so '
+              + 'nothing is blocked.',
+            provider_ready: false,
+            scope_required: false,
+            subject,
+          }, 200);
+        }
+
+        const nowIso = new Date().toISOString();
+        // Stamp the voluntariness BEFORE the run, so a check created by it can
+        // never exist without the record of who asked for it.
+        await admin.schema('aml').from('party_screening_subjects').update({
+          voluntary_run_at: nowIso,
+          voluntary_run_by: userId,
+          voluntary_run_by_label: userEmail,
+          state: 'queued',
+          error_category: null,
+          updated_at: nowIso,
+        }).eq('id', subjectId);
+
+        await appendEvent(admin, subject.case_id, 'system',
+          `Optional sanctions screening started for ${subject.screened_name} — `
+            + 'not required under policy, run at an operator\'s request',
+          {
+            reason: 'optional_screening_requested',
+            party_screening_subject_id: subjectId,
+            policy_required: false,
+            scope: 'sanctions',
+            scope_decision_id: scopeRow.id,
+            scope_reason_code: scopeRow.reason_code,
+            policy_version: scopeRow.policy_version,
+          },
+          userId, userEmail);
+
+        // The normal pipeline, unchanged.
+        const outcome = await runScreeningInline(admin, subjectId);
+
+        const { data: after } = await admin.schema('aml').from('party_screening_subjects')
+          .select('*').eq('id', subjectId).maybeSingle();
+        // The check the run produced carries the same distinction, so evidence
+        // read on its own still says it was voluntary.
+        if (after?.screening_check_id) {
+          const { data: chk } = await admin.schema('aml').from('screening_checks')
+            .select('metadata').eq('id', after.screening_check_id).maybeSingle();
+          await admin.schema('aml').from('screening_checks').update({
+            requested_by: userId,
+            metadata: {
+              ...((chk?.metadata ?? {}) as Record<string, unknown>),
+              voluntary: true,
+              policy_required: false,
+              scope_decision_id: scopeRow.id,
+              scope_policy_version: scopeRow.policy_version,
+              requested_by_label: userEmail,
+            },
+          }).eq('id', after.screening_check_id);
+        }
+
+        return jsonResponse({
+          ran: outcome.ran,
+          converged: outcome.converged,
+          /* The policy is unchanged by anyone choosing to run it. */
+          scope_required: false,
+          subject: after ?? subject,
         });
       }
 
