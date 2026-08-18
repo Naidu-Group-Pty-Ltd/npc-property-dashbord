@@ -380,6 +380,38 @@ export const amlCasesApi = {
       code?: string; message?: string; provider_ready?: boolean;
       subject?: AmlPartyScreeningSubject;
     }>({ op: "run_optional_screening", subject_id }),
+  /**
+   * Record a screening the MLRO performed by hand.
+   *
+   * This is a METHOD, never an exemption. The server sets who performed it,
+   * when, and whether policy required it — none of which this call can
+   * supply — and it never changes the case's obligation. A `no_match` is
+   * refused unless it carries the sources checked, the names searched and a
+   * rationale, by this contract, by the edge function and by the table.
+   */
+  recordManualScreening: (args: {
+    subject_id: string;
+    /**
+     * PEP is absent by design: a manual PEP conclusion is a
+     * `pep_determinations` record, and the server refuses it here.
+     */
+    scope?: Exclude<AmlScreeningScopeKey, "pep">;
+    outcome: AmlManualOutcome;
+    sources: AmlManualScreeningSource[];
+    searched_names: string[];
+    rationale: string;
+    unable_reason?: AmlManualUnableReason | null;
+    candidates?: Array<{
+      matchedName: string; listName?: string | null; reference?: string | null;
+      matchBasis?: string | null; jurisdiction?: string | null; notes?: string | null;
+    }>;
+  }) => invoke<{
+    check: AmlManualScreeningCheck;
+    outcome: AmlManualOutcome;
+    policy_required: boolean;
+    voluntary: boolean;
+    satisfies_obligation: boolean;
+  }>({ op: "record_manual_screening", ...args }),
   /** Release a screening request nothing ever picked up. Refuses live work. */
   retryStalledScreening: (subject_id: string) =>
     invoke<{ subject?: AmlPartyScreeningSubject; retired?: number; skipped?: boolean; code?: string }>(
@@ -563,6 +595,55 @@ export interface AmlPartyScreeningSubject {
   matches?: AmlScreeningCandidateMatch[];
   /** Current (non-superseded) PEP determination for this party, if any. */
   pep_determination?: AmlPepDetermination | null;
+  /**
+   * How the CURRENT position was reached: by the provider, or by the MLRO.
+   *
+   * Absent on every historical subject and on any deployment where the
+   * migration has not run, which reads as automated — the method this
+   * product had until manual screening existed.
+   */
+  screening_method?: "automated" | "manual" | null;
+  /**
+   * Manual attempts against this party, newest first.
+   *
+   * These are ordinary `screening_checks` rows; they are surfaced separately
+   * only so the panel can render one history without re-querying.
+   */
+  manual_checks?: AmlManualScreeningCheck[];
+}
+
+/** The MLRO's conclusion. Mirrors `_shared/aml/manualScreening.pure.ts`. */
+export type AmlManualOutcome =
+  | "no_match" | "possible_match" | "confirmed_match" | "unable_to_complete";
+
+export type AmlManualUnableReason =
+  | "insufficient_identity" | "source_unavailable"
+  | "evidence_inconclusive" | "other_documented_reason";
+
+export interface AmlManualScreeningSource {
+  source_type: string;
+  source_name: string;
+  source_reference?: string | null;
+  searched_name?: string | null;
+  searched_at?: string | null;
+  notes?: string | null;
+}
+
+export interface AmlManualScreeningCheck {
+  id: string;
+  scope: string[] | null;
+  status: string;
+  screening_method?: string | null;
+  manual_outcome: AmlManualOutcome | null;
+  unable_reason: AmlManualUnableReason | null;
+  rationale: string | null;
+  sources_checked: AmlManualScreeningSource[] | null;
+  searched_names: string[] | null;
+  performed_at: string | null;
+  /** Whether POLICY required the screening this attempt discharges. */
+  policy_required: boolean | null;
+  voluntary: boolean | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface AmlSubmissionReview {

@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2, PlayCircle, Gavel, ShieldQuestion } from "lucide-react";
+import { ClipboardCheck, Loader2, PlayCircle, Gavel, ShieldQuestion } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import {
   amlCasesApi,
@@ -21,6 +21,7 @@ import {
 } from "@/lib/aml/amlCasesApi";
 import { displayDate } from "@/lib/aml/displayDate";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
+import { ManualScreeningDialog } from "@/components/aml/ManualScreeningDialog";
 
 const STATE_TONE: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   not_required: "secondary", not_started: "outline", queued: "outline", processing: "outline",
@@ -32,9 +33,19 @@ const PEP_TYPES = ["foreign", "domestic", "international_organisation"] as const
 const PEP_RELATIONSHIPS = ["self", "family_member", "close_associate"] as const;
 
 export function PartyScreeningPanel({
-  caseId, canWrite, canAdjudicate, onChanged, screeningBlocked, optionalUnavailable,
+  caseId, canWrite, canAdjudicate, isMlro, onChanged, screeningBlocked, optionalUnavailable,
 }: {
   caseId: string; canWrite: boolean; canAdjudicate: boolean; onChanged: () => void;
+  /**
+   * Whether the signed-in user is the MLRO.
+   *
+   * Manual screening is narrower than adjudication: a reviewer may adjudicate
+   * a candidate the provider produced, but only the MLRO may record that a
+   * screening was PERFORMED. Hiding the control is a convenience — the edge
+   * function checks the role itself and refuses a non-MLRO caller, so this
+   * prop being wrong cannot let anyone record one.
+   */
+  isMlro?: boolean;
   /**
    * Whether an OPTIONAL run could not execute right now.
    *
@@ -57,6 +68,7 @@ export function PartyScreeningPanel({
 }) {
   const [subjects, setSubjects] = useState<AmlPartyScreeningSubject[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [manualSubject, setManualSubject] = useState<AmlPartyScreeningSubject | null>(null);
   const { prompt, dialog } = usePromptDialog();
 
   const load = useCallback(async () => {
@@ -240,6 +252,14 @@ export function PartyScreeningPanel({
                         {s.last_screened_at && <> · last screened {displayDate(s.last_screened_at)}</>}
                         {s.refresh_due_at && <> · refresh due {displayDate(s.refresh_due_at)}</>}
                         {s.state === "error" && s.error_category && <> · {s.error_category.replace(/_/g, " ")}</>}
+                        {/*
+                          Say HOW the current position was reached. A manual
+                          conclusion must never be presentable as a provider
+                          one; an absent value is the method this product had
+                          before manual screening existed, so it reads as
+                          automated by saying nothing.
+                        */}
+                        {s.screening_method === "manual" && <> · screened manually by the MLRO</>}
                         {s.adjudication_note && <> · adjudicated</>}
                         {s.voluntary_run_at && (
                           <> · run voluntarily{s.voluntary_run_by_label
@@ -300,6 +320,24 @@ export function PartyScreeningPanel({
                           )}
                         </>
                       )}
+                      {/*
+                        The SECOND execution method. It sits beside the
+                        automated action rather than replacing it, and it is
+                        offered when the provider is blocked as well as when
+                        it is not — a blocked provider is exactly when an
+                        MLRO needs to be able to screen by hand. It is never
+                        offered for `not_required` (there is no obligation to
+                        discharge) or while an automated run is in flight.
+                      */}
+                      {isMlro && ["not_started", "error", "completed", "false_positive"].includes(s.state) && (
+                        <Button
+                          size="sm" variant="outline" disabled={busyId === s.id}
+                          onClick={() => setManualSubject(s)}
+                        >
+                          <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" />
+                          Screen manually
+                        </Button>
+                      )}
                       {canAdjudicate && (!pep || pepReviewDue) && (
                         <>
                           <Button size="sm" variant="outline" disabled={busyId === s.id} onClick={() => void recordPep(s, "not_pep")}>
@@ -340,6 +378,39 @@ export function PartyScreeningPanel({
                       ))}
                     </ul>
                   )}
+                  {/*
+                    ONE screening history per party. A manual attempt is an
+                    ordinary `screening_checks` row, so this is the same
+                    history rendered with the detail only a manual attempt
+                    carries — who searched what, where, and why.
+                  */}
+                  {(s.manual_checks ?? []).length > 0 && (
+                    <ul className="mt-2 space-y-1 rounded-md border border-border/60 p-2">
+                      {(s.manual_checks ?? []).map((c) => (
+                        <li key={c.id} className="text-xs">
+                          <span className="font-medium">
+                            Manual {(c.scope ?? []).join(", ").replace(/_/g, " ") || "sanctions"} screening
+                          </span>
+                          {" — "}
+                          {(c.manual_outcome ?? "").replace(/_/g, " ") || "recorded"}
+                          {c.performed_at && <> · {displayDate(c.performed_at)}</>}
+                          {c.voluntary && <> · voluntary — not required under policy</>}
+                          {c.unable_reason && <> · {c.unable_reason.replace(/_/g, " ")}</>}
+                          {(c.sources_checked ?? []).length > 0 && (
+                            <div className="text-muted-foreground">
+                              sources: {(c.sources_checked ?? []).map((x) => x.source_name).join("; ")}
+                            </div>
+                          )}
+                          {(c.searched_names ?? []).length > 0 && (
+                            <div className="text-muted-foreground">
+                              names searched: {(c.searched_names ?? []).join("; ")}
+                            </div>
+                          )}
+                          {c.rationale && <div className="text-muted-foreground">{c.rationale}</div>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </li>
               );
             })}
@@ -347,6 +418,14 @@ export function PartyScreeningPanel({
         )}
       </CardContent>
       {dialog}
+      {manualSubject && (
+        <ManualScreeningDialog
+          subject={manualSubject}
+          open
+          onOpenChange={(next) => { if (!next) setManualSubject(null); }}
+          onRecorded={() => { void load(); onChanged(); }}
+        />
+      )}
     </Card>
   );
 }
