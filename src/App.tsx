@@ -130,10 +130,7 @@ const DealPipeline = lazyWithRetry(() => import("./pages/DealPipeline"));
 const RemindersHub = lazyWithRetry(() => import("./pages/RemindersHub"));
 const Checklists = lazyWithRetry(() => import("./pages/Checklists"));
 const Agreements = lazyWithRetry(() => import("./pages/Agreements"));
-const PartnerAgreements = lazyWithRetry(() => import("./pages/PartnerAgreements"));
-const AgreementCentre = lazyWithRetry(() => import("./pages/AgreementCentre"));
-const AgreementWizard = lazyWithRetry(() => import("./pages/AgreementWizard"));
-const AgreementCentreDetail = lazyWithRetry(() => import("./pages/AgreementCentreDetail"));
+const AgreementTemplates = lazyWithRetry(() => import("./pages/AgreementTemplates"));
 const PartnerCompliance = lazyWithRetry(() => import("./pages/PartnerCompliance"));
 
 const PartnerReferrals = lazyWithRetry(() => import("./pages/PartnerReferrals"));
@@ -251,8 +248,6 @@ const FinancePortalPurchaseFileDetail = lazyWithRetry(() => import("./pages/fina
 const FinancePortalClientInbox = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalClientInbox"));
 const FinancePortalPipeline = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalPipeline"));
 const FinancePortalComplianceWorkspace = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalComplianceWorkspace"));
-const FinancePortalAgreements = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalAgreements"));
-const FinancePortalAgreementDetail = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalAgreementDetail"));
 const FinancePortalInsights = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalInsights"));
 const PartnerReferralInbox = lazyWithRetry(() => import("./pages/finance-portal/PartnerReferralInbox"));
 const AmlCaseSnapshot = lazyWithRetry(() => import("./pages/finance-portal/AmlCaseSnapshot"));
@@ -497,8 +492,14 @@ const App = () => (
                                 <Route path="pipeline" element={<FinancePortalPipeline />} />
                                 <Route path="insights" element={<FinancePortalInsights />} />
                                 <Route path="referrals" element={<PartnerReferralInbox />} />
-                                <Route path="agreements" element={<FinancePortalAgreements />} />
-                                <Route path="agreements/:id" element={<FinancePortalAgreementDetail />} />
+                                {/* The agreement workflow is retired and the templates
+                                    now live on the dashboard, so there is ONE destination
+                                    rather than a page that still looks like an inbox. */}
+                                <Route path="agreements" element={<Navigate to="/finance" replace />} />
+                                {/* Emailed deep links to a specific issued agreement are
+                                    still in people's inboxes; land them on the dashboard
+                                    rather than a 404. */}
+                                <Route path="agreements/:id" element={<Navigate to="/finance" replace />} />
                                 <Route path="reports" element={<FinancePortalReports />} />
                                 <Route path="settings" element={<FinancePortalSettings />} />
                                 <Route path="aml-snapshot/:token" element={<AmlCaseSnapshot />} />
@@ -718,11 +719,14 @@ const App = () => (
                 <Route path="reminders" element={<ModuleGuard moduleKey="reminders"><RemindersHub /></ModuleGuard>} />
                 <Route path="checklists" element={<ModuleGuard moduleKey="checklists"><Checklists /></ModuleGuard>} />
                 <Route path="agreements" element={<ModuleGuard moduleKey="agreements"><Agreements /></ModuleGuard>} />
-                <Route path="partner-agreements" element={<ModuleGuard moduleKey="agreements"><AgreementCentre /></ModuleGuard>} />
-                <Route path="partner-agreements/new" element={<ModuleGuard moduleKey="agreements" requireEdit><AgreementWizard /></ModuleGuard>} />
-                <Route path="partner-agreements/register" element={<ModuleGuard moduleKey="agreements"><PartnerAgreements /></ModuleGuard>} />
-                <Route path="partner-agreements/:id" element={<ModuleGuard moduleKey="agreements"><AgreementCentreDetail /></ModuleGuard>} />
-                <Route path="partner-agreements/:id/edit" element={<ModuleGuard moduleKey="agreements" requireEdit><AgreementWizard /></ModuleGuard>} />
+                <Route path="partner-agreements" element={<ModuleGuard moduleKey="agreements"><AgreementTemplates /></ModuleGuard>} />
+                {/* The issuance workflow is retired. Every route it owned now
+                    lands on the template desk rather than 404-ing, because the
+                    links are in bookmarks, emails and activity trails. */}
+                <Route path="partner-agreements/new" element={<Navigate to="/partner-agreements" replace />} />
+                <Route path="partner-agreements/register" element={<Navigate to="/partner-agreements" replace />} />
+                <Route path="partner-agreements/:id" element={<Navigate to="/partner-agreements" replace />} />
+                <Route path="partner-agreements/:id/edit" element={<Navigate to="/partner-agreements" replace />} />
                 <Route path="partner-referrals" element={<ModuleGuard moduleKey="agreements"><PartnerReferrals /></ModuleGuard>} />
                 <Route path="loan-writer-undertakings" element={<ModuleGuard moduleKey="agreements"><LoanWriterUndertakings /></ModuleGuard>} />
                 <Route path="partner-compliance" element={<ModuleGuard moduleKey="agreements"><PartnerCompliance /></ModuleGuard>} />

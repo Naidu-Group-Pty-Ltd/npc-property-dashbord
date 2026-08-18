@@ -1,12 +1,24 @@
 /**
- * Agreement Centre — one import surface for the locked templates and their
- * bindings. Everything here is pure and browser-safe; the browser reaches it
- * through the `src/lib/agreements/` bridge re-exports.
+ * Partner agreement TEMPLATES — one import surface.
+ *
+ * ## What this used to be
+ *
+ * This module was the entry point to a full contract lifecycle: a state
+ * machine, partner portal access rules, issuance recipients, clause
+ * annotations, document revisions, a cross-portal sync cursor and a delivery
+ * receipt model. All of it existed to run the formation of an agreement
+ * between two independent businesses *through the platform*.
+ *
+ * That has been retired — see `templateResource.pure.ts` for why. What remains
+ * is the part that was always legitimate: the two locked templates, and enough
+ * machinery to render a blank one as a document somebody can take away.
+ *
+ * Everything here is pure and browser-safe; the browser reaches it through the
+ * `src/lib/agreements/` bridge re-export.
  */
 
 import { FINANCE_REFERRAL_CONTENT } from './contentFinanceReferral.pure.ts';
 import { STRATEGIC_REFERRAL_CONTENT } from './contentStrategicReferral.pure.ts';
-import { agreementContentHash } from './types.pure.ts';
 import {
   applyAgreementContentOverrides,
   contentOverridesFromValues,
@@ -19,68 +31,30 @@ import type { AgreementTemplateContent, AgreementTemplateKey } from './types.pur
 
 export * from './types.pure.ts';
 export * from './fields.pure.ts';
-export * from './lifecycle.pure.ts';
 export * from './contentOverrides.pure.ts';
 export * from './additionalClauses.pure.ts';
 export { STRATEGIC_REFERRAL_CONTENT } from './contentStrategicReferral.pure.ts';
 export { FINANCE_REFERRAL_CONTENT } from './contentFinanceReferral.pure.ts';
 
-
 /**
- * The revision of the agreement document RENDERING, and the rules that decide
- * when an already-stored artefact should be re-rendered. Its own import-free
- * module so the browser can read the number without pulling the report
- * stylesheet in behind it; re-exported here because this is the one import
- * surface. The legal content is hashed separately (`templateContentHash`) and
- * does not change with that number.
+ * The platform's position: these are optional resources and nothing more.
+ * Every surface that offers a template renders its wording from here, so the
+ * Command Centre and the Finance Portal cannot say different things about what
+ * downloading one means.
  */
-export * from './documentRevision.pure.ts';
-
-/**
- * Whether the counterparty can actually open what we send them. Independent of
- * the lifecycle: an agreement can be perfectly issued and still be unreachable
- * because nobody has activated a login yet.
- */
-export * from './partnerAccess.pure.ts';
-
-/**
- * Who a copy of the agreement is emailed to. A partner organisation is rarely
- * one inbox, and none of the others changes who the agreement is addressed to.
- */
-export * from './recipients.pure.ts';
-
-/**
- * A change request pinned to the clause it is about — anchored on the same
- * path an amendment writes to, so the request and the change it produces name
- * the same address.
- */
-export * from './annotations.pure.ts';
-
-/**
- * The cheap cursor both portals poll so neither has to be reloaded to notice
- * the other moved. Realtime is unavailable to the Finance Portal by
- * construction — see the module header.
- */
-export * from './syncStamp.pure.ts';
-
-/**
- * Whether what was issued can be shown to have reached the partner's portal.
- * Distinct from `partnerAccess` (can they sign in) and from the lifecycle
- * (what state is the document in).
- */
-export * from './portalReceipt.pure.ts';
+export * from './templateResource.pure.ts';
 
 export function agreementTemplate(key: AgreementTemplateKey): AgreementTemplateContent {
   return key === 'strategic_property_referral' ? STRATEGIC_REFERRAL_CONTENT : FINANCE_REFERRAL_CONTENT;
 }
 
 /**
- * The wording of ONE agreement: the locked template, with that agreement's
- * negotiated clause amendments applied and its additional clauses (special
- * conditions) injected before EXECUTION. Every renderer — the digital view, the
- * PDF, the DOCX, the partner's review room — must go through here rather than
- * `agreementTemplate`, or the issuer and the counterparty would be reading
- * different documents.
+ * A template with any locally supplied values applied.
+ *
+ * Retained because the DOCX/PDF builders share one code path, and because a
+ * user may still preview a template with their own details filled in before
+ * downloading it. Nothing here is persisted — the values live in the browser
+ * for the length of the export.
  */
 export function agreementContentForValues(
   key: AgreementTemplateKey,
@@ -95,22 +69,11 @@ export function agreementContentForValues(
   );
 }
 
-
-const CONTENT_HASHES: Record<AgreementTemplateKey, string> = {
-  strategic_property_referral: agreementContentHash(STRATEGIC_REFERRAL_CONTENT),
-  finance_referral_commission: agreementContentHash(FINANCE_REFERRAL_CONTENT),
-};
-
-/** The locked content's fingerprint, frozen onto every issued version row. */
-export function templateContentHash(key: AgreementTemplateKey): string {
-  return CONTENT_HASHES[key];
-}
-
 export const AGREEMENT_TEMPLATE_SUMMARIES: readonly {
   key: AgreementTemplateKey;
   title: string;
   issuedByLine: string;
-  /** The relationship arrow, for the template library card. */
+  /** The relationship arrow, for the template card. */
   from: string;
   to: string;
   /** Who the referred clients flow from/to — makes direction unmistakable. */
@@ -122,7 +85,7 @@ export const AGREEMENT_TEMPLATE_SUMMARIES: readonly {
     issuedByLine: STRATEGIC_REFERRAL_CONTENT.issuedByLine,
     from: 'FINANCE PARTNER',
     to: 'BUYER\'S AGENCY / REAL ESTATE AGENCY',
-    referralFlow: 'The finance partner refers clients to the buyer\'s agency / real estate agency for property services. Issued by the buyer\'s agency / real estate agency.',
+    referralFlow: 'The finance partner refers clients to the buyer\'s agency / real estate agency for property services.',
   },
   {
     key: 'finance_referral_commission',
@@ -130,6 +93,6 @@ export const AGREEMENT_TEMPLATE_SUMMARIES: readonly {
     issuedByLine: FINANCE_REFERRAL_CONTENT.issuedByLine,
     from: 'BUYER\'S AGENCY / REAL ESTATE AGENCY',
     to: 'FINANCE PARTNER',
-    referralFlow: 'The buyer\'s agency / real estate agency refers clients to the finance partner for credit services. Issued by the finance partner.',
+    referralFlow: 'The buyer\'s agency / real estate agency refers clients to the finance partner for credit services.',
   },
 ];

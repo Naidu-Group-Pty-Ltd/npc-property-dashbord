@@ -364,14 +364,12 @@ Deno.serve(async (req) => {
         .from(EVENTS_TABLE).select('*').eq('referral_id', id)
         .order('created_at', { ascending: false }).limit(200);
 
-      let agreement: Record<string, unknown> | null = null;
-      if (referral.agreement_id) {
-        const { data } = await supabase
-          .from('partner_agreements')
-          .select('id, direction, status, version, partner_legal_name, fee_model, fee_amount, fee_percentage, gst_treatment, qualifying_event, upfront_share_pct, trail_share_pct, commission_basis, duplicate_referral_rule, exclusions')
-          .eq('id', referral.agreement_id).maybeSingle();
-        agreement = data ?? null;
-      }
+      // The governing-agreement join is gone. Commercial terms are no longer
+      // held by the platform: any agreement is between the parties directly,
+      // so quoting fee models back from a register the platform maintains is
+      // exactly the participation being retired. `agreement_id` survives on
+      // historical rows and is simply not resolved.
+      const agreement: Record<string, unknown> | null = null;
 
       return json({ referral, events: events ?? [], agreement }, corsHeaders);
     }
@@ -382,16 +380,10 @@ Deno.serve(async (req) => {
       if (!DIRECTIONS.has(direction)) return json({ error: 'direction_invalid' }, corsHeaders, 400);
       if (!payload.client_first_name) return json({ error: 'client_first_name_required' }, corsHeaders, 400);
 
-      // Snapshot the live agreement version so commercial terms are provable later.
-      let agreementVersion: number | null = null;
-      if (payload.agreement_id) {
-        const { data: agr } = await supabase
-          .from('partner_agreements').select('id, version, status, direction')
-          .eq('id', payload.agreement_id).maybeSingle();
-        if (!agr) return json({ error: 'agreement_not_found' }, corsHeaders, 404);
-        if (agr.direction !== direction) return json({ error: 'agreement_direction_mismatch' }, corsHeaders, 409);
-        agreementVersion = agr.version ?? null;
-      }
+      // No agreement snapshot. A referral no longer records which
+      // platform-held agreement governs it, because the platform no longer
+      // holds one — see `_shared/agreements/templateResource.pure.ts`.
+      const agreementVersion: number | null = null;
 
       // A loan writer can only be attached at creation if their undertaking is live.
       if (payload.assigned_finance_user_id) {
@@ -651,17 +643,16 @@ Deno.serve(async (req) => {
       return json({ success: true }, corsHeaders);
     }
 
-    /** Active agreements available to attach a referral to. */
+    /**
+     * Always empty, and kept rather than removed.
+     *
+     * There is no register of agreements to attach a referral to any more.
+     * The action stays so a browser running an older bundle gets an empty
+     * picker instead of `unknown_action`, which would surface as an error
+     * toast on a page that is otherwise working.
+     */
     if (action === 'list_active_agreements') {
-      let q = supabase
-        .from('partner_agreements')
-        .select('id, direction, version, partner_legal_name, finance_agent_contact_id, status, effective_date')
-        .eq('status', 'active')
-        .order('partner_legal_name', { ascending: true });
-      if (body.direction && DIRECTIONS.has(body.direction)) q = q.eq('direction', body.direction);
-      const { data, error } = await q;
-      if (error) throw error;
-      return json({ agreements: data ?? [] }, corsHeaders);
+      return json({ agreements: [] }, corsHeaders);
     }
 
     /** Finance portal users, for assigning an outbound referral to a loan writer. */
@@ -768,15 +759,10 @@ Deno.serve(async (req) => {
       if (useChannel === 'email' && !email) return json({ error: 'recipient_email_required' }, corsHeaders, 400);
       if (useChannel === 'sms' && !phone) return json({ error: 'recipient_phone_required' }, corsHeaders, 400);
 
+      // The referral's own `referring_entity_name` is the only source now; it
+      // was already preferred over the agreement's partner name below.
       let feeSummary: string | null = null;
-      let partnerName: string | null = null;
-      if (existing.agreement_id) {
-        const { data: agr } = await supabase
-          .from('partner_agreements')
-          .select('partner_legal_name, fee_model, fee_amount, fee_percentage')
-          .eq('id', existing.agreement_id).maybeSingle();
-        partnerName = agr?.partner_legal_name ?? null;
-      }
+      const partnerName: string | null = null;
 
       const clientName = [existing.client_first_name, existing.client_surname].filter(Boolean).join(' ');
       const statement = buildConsentStatement({
