@@ -561,10 +561,38 @@ export function readCaseScreeningPosition(
  * determinations are all resolved is complete even if nobody looks at it,
  * and a case with a healthy provider and no results is not.
  */
+/**
+ * Scopes the sanctions PROVIDER actually serves.
+ *
+ * PEP is not among them: a PEP determination is reached and recorded, not
+ * fetched from `local_lists`. That is why a case whose only outstanding work
+ * is PEP must never be told the provider is broken.
+ */
+const PROVIDER_BACKED_SCOPES: readonly AmlScreeningScope[] =
+  ["sanctions", "adverse_media", "watchlist"] as const;
+
 export function describeScreeningStage(
   scope: AmlScreeningScopeDecision,
   readiness: AmlScreeningReadinessReading | null,
+  /**
+   * Whether provider readiness bears on this case at all — the server's
+   * `provider_relevant`. Omitted, it is derived from the scope decision, so
+   * an older server degrades to the same answer rather than to a wrong one.
+   */
+  providerRelevant?: boolean,
 ): { headline: string; canProceed: boolean; detail: string; whatHappensNext: string } {
+  /*
+   * ── Readiness is only a blocker for a scope that needs it ──────────
+   *
+   * This used to short-circuit on `readiness.canRun` alone. So a case whose
+   * sanctions scope had been stood down, with only a PEP determination left,
+   * was headlined "Screening cannot run yet — an administrator must restore
+   * the screening provider and sanctions data": a blocker about a provider
+   * the case does not use, hiding the one piece of work that was actually
+   * outstanding.
+   */
+  const relevant = providerRelevant ?? scope.determinations.some(
+    (d) => d.required && PROVIDER_BACKED_SCOPES.includes(d.scope));
   if (scope.canAdvance) {
     return {
       headline: scope.escalation ? "Stage 5 complete — escalation required" : "Stage 5 complete",
@@ -577,7 +605,7 @@ export function describeScreeningStage(
         "approve the case or issue an Aurixa Compliance Passport.",
     };
   }
-  if (readiness && !readiness.canRun) {
+  if (relevant && readiness && !readiness.canRun) {
     return {
       headline: "Screening cannot run yet",
       canProceed: false,

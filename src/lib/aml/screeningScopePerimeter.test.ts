@@ -454,6 +454,28 @@ describe("25, 3-4. reconciling a subject with the scope, behaviourally", () => {
     }
   });
 
+  it("11-12. a prior provider_misconfigured failure stops blocking, and survives", () => {
+    /*
+     * The case this shipped against already had a subject sitting in
+     * `error / provider_misconfigured` from the old always-required rule.
+     * Once the obligation is stood down that error must not go on holding
+     * Stage 5 — and it must not be deleted or relabelled either. The subject
+     * moves to `not_required`; the screening_checks row, its matches and the
+     * case events that recorded the failure are untouched, because nothing
+     * here writes to them.
+     */
+    const r = reconcileSubjectToScope(
+      { state: "error", required: true }, false);
+    expect(r.action).toBe("release");
+    expect(r.patch).toEqual({
+      required: false, state: "not_required", error_category: null,
+    });
+    // The obligation is gone; the evidence is not this function's to touch.
+    expect(r.patch).not.toHaveProperty("screening_check_id");
+    // And it is emphatically not a result.
+    expect(r.patch?.state).not.toBe("completed");
+  });
+
   it("is idempotent — a settled subject is not rewritten on every read", () => {
     const r = reconcileSubjectToScope(
       { state: "not_required", required: false }, false);
