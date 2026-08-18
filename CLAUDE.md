@@ -127,6 +127,30 @@ percentages — and getting it wrong renders a plausible number rather than an
 error; both are pinned by tests. And **readiness is not a second opinion**:
 blocking is exactly what the report route refuses, everything else is disclosed.
 
+## AML screening execution
+Read [`docs/aml/SCREENING_EXECUTION.md`](./docs/aml/SCREENING_EXECUTION.md)
+before touching `cross-portal-outbox-worker/screeningConsumer.ts`, the inline
+path in `aml-cases`, or anything that decides whether a party has been
+screened. "Screening never starts" was reported as a UI defect and was in fact
+**four stacked faults**, each of which explained the symptom on its own and
+each of which reported as normal operation: the internal signing secret had
+diverged, so 17,174 scheduled invocations were refused and no worker ran at
+all; the claim predicate was a PostgREST `.or()` string with a timestamp
+interpolated into it, which never parsed, so the claim had **never once
+succeeded**; the claim's error was discarded, so a database fault was
+indistinguishable from losing a race and the subject was left untouched; and a
+provider that is configured but still in simulator mode was reported as no
+provider at all, sending the administrator to the wrong remedy.
+
+Three rules carry it. **A green cron run is not a delivered request** —
+pg_cron reports on the SQL that queued the HTTP call, not the call, so the
+honest signals are `integration_outbox.attempts` and
+`net._http_response.status_code`. **Never compose a filter as a string**: the
+test double emulated `.or()` with a regex, so code and test agreed while only
+the server disagreed, and a contract test now fails any interpolated filter.
+And **production never runs the simulator and never screens against an empty
+or stale list** — refusal is visible, a confident clear against nothing is not.
+
 ## Stamp duty
 Every duty figure in the product comes from `supabase/functions/_shared/stampDuty/`
 and nowhere else; `src/utils/stampDutyCalculator.ts` is a one-line re-export.
