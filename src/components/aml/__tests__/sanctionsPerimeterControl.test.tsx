@@ -125,6 +125,40 @@ describe("3-5. authorization", () => {
   });
 });
 
+describe("3. the workspace grants the action to reviewer AND MLRO, and nobody else", () => {
+  const repo = join(__dirname, "../../../..");
+  const ws = readFileSync(join(repo, "src/pages/aml/AmlCaseWorkspace.tsx"), "utf8");
+
+  it("passes canClassify for MLRO or reviewer only", () => {
+    /*
+     * Asserted on the wiring rather than by rendering the whole workspace:
+     * the component test above proves what each value DOES, and this proves
+     * which roles get which value. `canWrite` — which includes analysts — is
+     * deliberately not the gate.
+     */
+    const call = ws.slice(
+      ws.indexOf("<SanctionsPerimeterControl"),
+      ws.indexOf("/>", ws.indexOf("<SanctionsPerimeterControl")));
+    expect(call).toMatch(
+      /canClassify=\{access\.isMlro \|\| access\.roles\.has\("reviewer"\)\}/);
+    expect(call).not.toMatch(/canClassify=\{canWrite\}/);
+  });
+
+  it("reloads the stage from the server after a classification", () => {
+    const call = ws.slice(
+      ws.indexOf("<SanctionsPerimeterControl"),
+      ws.indexOf("/>", ws.indexOf("<SanctionsPerimeterControl")));
+    expect(call).toMatch(/onChanged=\{\(\) => \{ screeningStage\.reload\(\); load\(\); \}\}/);
+  });
+
+  it("reads the perimeter from the server's sync, not from local state", () => {
+    const call = ws.slice(
+      ws.indexOf("<SanctionsPerimeterControl"),
+      ws.indexOf("/>", ws.indexOf("<SanctionsPerimeterControl")));
+    expect(call).toMatch(/perimeter=\{screeningStage\.sync\?\.perimeter \?\? null\}/);
+  });
+});
+
 describe("7, 20. recording a finding", () => {
   it("sends the classification and reason, and never a required flag", async () => {
     renderControl();
