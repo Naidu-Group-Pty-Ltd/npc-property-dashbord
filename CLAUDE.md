@@ -152,7 +152,12 @@ column. A manual **no match** is refused unless it names the sources checked,
 the names searched and a rationale, enforced three times over —
 `manualScreening.pure.ts`, the `record_manual_screening` operation, and a table
 constraint — with the rule written once and imported by both the dialog and the
-edge function.
+edge function. It is also available where sanctions are **`not_required`**: what
+is owed and what may be performed are different questions, and a voluntary
+attempt leaves the policy state standing unless it FINDS something —
+`projectManualScreeningToSubject` is the only place that decides. Provider
+readiness is a fact about the automated method alone and never gates the manual
+one.
 
 Three rules carry it. **A green cron run is not a delivered request** —
 pg_cron reports on the SQL that queued the HTTP call, not the call, so the

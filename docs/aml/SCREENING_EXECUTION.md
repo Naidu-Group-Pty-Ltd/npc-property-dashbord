@@ -179,6 +179,53 @@ screening could **not** be concluded, which is the opposite of a claim about the
 customer, so it carries a reason code instead of evidence, satisfies nothing,
 and leaves the party outstanding.
 
+**A screening the policy does not require may still be performed by hand,
+and the policy survives the result.** Whether a screening is *owed* and
+whether one may be *performed* are different questions. The panel originally
+carried its own hand-written list of party states that could be screened
+manually and it omitted `not_required`, so a case where sanctions screening
+was not required offered no manual option at all — while the server would have
+accepted the attempt and recorded it correctly as voluntary. "Not required"
+had come to mean "not permitted". The panel now asks
+`manualScreeningAdmissible`, the same module the edge function asks, so the
+two cannot drift again.
+
+What a voluntary attempt may CHANGE is its own decision,
+`projectManualScreeningToSubject`, and it turns on one distinction:
+
+- A voluntary **clear** leaves the party state at `not_required` and advances
+  no freshness clock. `not_required` is a policy decision — no obligation
+  arose and nobody had to be screened — and `no_match` is a screening result.
+  They answer different questions and they coexist on the page. Overwriting
+  the first with `completed` would make the case read as though sanctions
+  screening had been required all along, and would promote an operator's
+  optional check into the record of an obligation discharged. For the same
+  reason it sets no refresh date: freshness measures an obligation, and a nag
+  on a case that owes nothing is a fabricated one.
+- A voluntary **unable to complete** also leaves the state alone. `error` is
+  how Stage 5 says a required screening is outstanding, and a case that never
+  needed one is not outstanding.
+- A voluntary **finding** moves the state exactly as a required one does. A
+  sanctions match is a match whoever went looking and whyever they did: it
+  reaches the same `screening_matches` row, the same adjudication and the same
+  escalation. "It was optional" is a statement about the obligation, never
+  about the candidate.
+
+**Provider readiness has no bearing on the manual method.** An unready
+provider or a stale list is a fact about the *automated* method; the two are
+rendered as separate lines under the sanctions heading for that reason. A
+blocked provider is precisely when an MLRO needs to search a published list
+themselves, so nothing about readiness stands between the MLRO branch and the
+button — a test asserts that span of the panel mentions neither.
+
+**A closed case still accepts compliance evidence, and now says so.** That is
+the product's existing rule and this changed nothing about it: `closed` is
+terminal in the case *status transition* table, which is why reopening is its
+own authorised operation, and no screening, adjudication or PEP operation
+checks case status. Record-keeping obligations outlive the file and a match
+found afterwards still has to be recordable. The panel states it rather than
+leaving an operator to infer it from a control that silently works.
+
 **The browser supplies none of the facts that matter.** `performed_by` comes
 from the session, `performed_at` from the server clock, the case from the
 *subject* rather than a body-supplied id, and the MLRO role is checked by the

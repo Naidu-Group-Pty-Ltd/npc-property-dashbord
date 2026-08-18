@@ -273,6 +273,62 @@ export function planManualScreening(
 }
 
 /**
+ * What a recorded manual attempt does to the PARTY'S STATE.
+ *
+ * ── Why this is a second decision ─────────────────────────────────────
+ * `planManualScreening` says what the attempt MEANS. This says what it may
+ * change, and the two differ on exactly one case: a screening the policy did
+ * not require.
+ *
+ * `not_required` is a POLICY decision — no obligation arose and nobody had to
+ * be screened. `no_match` is a voluntary screening RESULT. They are answers
+ * to different questions and they coexist, so a voluntary clear must not
+ * overwrite the policy state with `completed`: doing that would make the case
+ * read as though sanctions screening had been required all along, and would
+ * quietly promote an operator's optional check into the record of an
+ * obligation being discharged.
+ *
+ * The same reasoning makes a voluntary `unable_to_complete` leave the state
+ * alone. `error` is how Stage 5 says a required screening is outstanding; a
+ * case that never needed one is not outstanding, and putting it there would
+ * block a case on work nobody owes.
+ *
+ * ── The one thing a voluntary run DOES change ─────────────────────────
+ * A finding. A sanctions match is a match whoever went looking and whyever
+ * they did: it has to reach the same adjudication and the same escalation an
+ * automated finding reaches, so a voluntary possible or confirmed match moves
+ * the party state exactly as a required one does. "It was optional" is a
+ * statement about the obligation, never about the candidate.
+ */
+export interface ManualSubjectProjection {
+  /** The state to write, or null to leave the policy state untouched. */
+  state: "completed" | "possible_match" | "confirmed_match" | "error" | null;
+  /** Whether the freshness clock advances (an obligation was discharged). */
+  advancesFreshness: boolean;
+  errorCategory: string | null;
+}
+
+export function projectManualScreeningToSubject(
+  plan: ManualScreeningPlan,
+  opts: { policyRequired: boolean },
+): ManualSubjectProjection {
+  const finding = plan.candidateStatus !== null;
+
+  if (opts.policyRequired === false && !finding) {
+    return { state: null, advancesFreshness: false, errorCategory: null };
+  }
+
+  return {
+    state: plan.subjectState,
+    // Freshness measures an obligation. A voluntary run discharges nothing,
+    // so it must not set a refresh date on a case that owes no screening.
+    advancesFreshness: plan.satisfiesObligation && opts.policyRequired === true,
+    errorCategory: plan.outcome === "unable_to_complete"
+      ? "manual_unable_to_complete" : null,
+  };
+}
+
+/**
  * Whether a manual attempt may be recorded against this subject at all.
  *
  * Mirrors the automated path's own refusals so the two cannot diverge: work
@@ -283,6 +339,16 @@ export function manualScreeningAdmissible(subject: {
   state: string;
 }): { ok: true } | { ok: false; code: string; message: string } {
   const state = String(subject?.state ?? "");
+  /*
+   * `not_required` is admissible ON PURPOSE. Whether a screening is required
+   * and whether somebody may perform one are different questions: the MLRO
+   * can always choose to screen, and refusing here would have made "not
+   * required" mean "not permitted", which is not what the policy says.
+   *
+   * What it stays is not required — `projectManualScreeningToSubject` is what
+   * keeps the policy state intact when the attempt comes back clear.
+   */
+  if (state === "not_required") return { ok: true };
   if (["queued", "processing"].includes(state)) {
     return {
       ok: false, code: "already_in_progress",

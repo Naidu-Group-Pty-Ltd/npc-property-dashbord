@@ -7,7 +7,9 @@ import {
   UNABLE_REASON_TEXT,
   manualScreeningAdmissible,
   planManualScreening,
+  projectManualScreeningToSubject,
   type ManualOutcome,
+  type ManualScreeningPlan,
 } from "../../../supabase/functions/_shared/aml/manualScreening.pure.ts";
 
 /**
@@ -320,8 +322,24 @@ describe("manual screening — never an exemption", () => {
     expect(JSON.stringify(plan)).not.toContain("not_required");
   });
 
-  it("the pure module never mentions not_required at all", () => {
-    expect(pureCode).not.toMatch(/not_required/);
+  it("the module never PRODUCES not_required — it only declines to overwrite it", () => {
+    /*
+     * The module names `not_required` in exactly one place: admitting a
+     * voluntary screening against a party the policy does not require. That
+     * is the opposite of standing a scope down.
+     *
+     * What it must never do is decide the policy, so: it writes no `required`
+     * field, and the voluntary projection returns `null` — "leave the state
+     * alone" — rather than a state value of its own.
+     */
+    expect(pureCode).not.toMatch(/\brequired\s*[:=]/);
+    const mentions = pureCode.match(/not_required/g) ?? [];
+    expect(mentions.length).toBe(1);
+    expect(pureCode).toMatch(/state === "not_required"\) return \{ ok: true \}/);
+
+    const projection = projectManualScreeningToSubject(
+      planManualScreening(evidenced()) as ManualScreeningPlan, { policyRequired: false });
+    expect(projection.state).toBeNull();
   });
 
   it("the edge function's manual op never writes `required` on the subject", () => {
@@ -425,8 +443,8 @@ describe("manual screening — the record is honest about what produced it", () 
     expect(op).not.toMatch(/body\.candidates as any\[\]/);
   });
 
-  it("advances the freshness clock only when the obligation is discharged", () => {
-    expect(op).toMatch(/if \(plan\.satisfiesObligation\) \{[\s\S]*?last_screened_at = nowIso/);
+  it("advances the freshness clock only when the projection says an obligation was discharged", () => {
+    expect(op).toMatch(/if \(projection\.advancesFreshness\) \{[\s\S]*?last_screened_at = nowIso/);
   });
 
   it("ages a manual result on the same interval an automated one ages on", () => {
@@ -525,14 +543,161 @@ describe("manual screening — the browser and the server share one rule", () =>
     expect(panelSource).toMatch(/edge\s*\n?\s*\*\s*function checks the role itself/);
   });
 
-  it("never offers manual screening for a scope that is not required", () => {
-    const guard = /\{isMlro && \[([^\]]*)\]\.includes\(s\.state\)/.exec(panelSource)?.[1] ?? "";
-    expect(guard).not.toContain("not_required");
-    expect(guard).not.toContain("queued");
-    expect(guard).not.toContain("processing");
+  it("derives what may be screened manually from the module, not a hand-written list", () => {
+    /*
+     * The defect this replaces. The panel carried its own state allowlist and
+     * it omitted `not_required`, so a case whose sanctions screening was not
+     * required offered no manual option — while the server would have taken
+     * one. One rule, one implementation, or they drift again.
+     */
+    expect(panelSource).toMatch(/manualScreeningAdmissible/);
+    expect(stripComments(panelSource))
+      .not.toMatch(/isMlro && \[[^\]]*\]\.includes\(s\.state\)/);
+  });
+
+  it("does not gate the manual method on provider readiness", () => {
+    // From the MLRO branch to the button: nothing about the provider may
+    // stand between them. An unready provider is a fact about the AUTOMATED
+    // method — it is precisely when a person needs to search a list by hand.
+    const code = stripComments(panelSource);
+    const branch = code.slice(
+      code.indexOf("{isMlro && ("),
+      code.indexOf("Perform manual sanctions screening"),
+    );
+    expect(branch.length).toBeGreaterThan(0);
+    expect(branch).not.toMatch(/screeningBlocked|optionalUnavailable|provider/i);
   });
 
   it("says on the page how the current position was reached", () => {
-    expect(panelSource).toMatch(/screened manually by the MLRO/);
+    expect(panelSource).toMatch(/reached by manual MLRO screening/);
+  });
+});
+
+/* ── 11. A screening the policy did NOT require ───────────────────────── */
+
+describe("voluntary manual screening — the policy decision survives the result", () => {
+  const planFor = (over: Record<string, unknown> = {}) =>
+    planManualScreening(evidenced(over)) as ManualScreeningPlan;
+
+  it("admits a party the policy does not require to be screened", () => {
+    // The defect. Whether a screening is OWED and whether one may be
+    // PERFORMED are different questions, and conflating them made
+    // "not required" mean "not permitted".
+    expect(manualScreeningAdmissible({ state: "not_required" }).ok).toBe(true);
+  });
+
+  it("leaves the policy state alone when a voluntary attempt comes back clear", () => {
+    const p = projectManualScreeningToSubject(planFor(), { policyRequired: false });
+    expect(p.state).toBeNull();
+    expect(p.advancesFreshness).toBe(false);
+  });
+
+  it("does not set a refresh date on a case that owes no screening", () => {
+    // Freshness measures an obligation. A voluntary run discharges nothing,
+    // so a "refresh due" nag on a case that needs nothing would be a
+    // fabricated obligation.
+    const p = projectManualScreeningToSubject(planFor(), { policyRequired: false });
+    expect(p.advancesFreshness).toBe(false);
+  });
+
+  it("leaves the policy state alone when a voluntary attempt cannot be completed", () => {
+    // `error` is how Stage 5 says a REQUIRED screening is outstanding. A case
+    // that never needed one is not outstanding, so this must not block it.
+    const plan = planManualScreening({
+      outcome: "unable_to_complete", sources: [], searchedNames: [], rationale: "",
+      unableReason: "source_unavailable",
+    }) as ManualScreeningPlan;
+    const p = projectManualScreeningToSubject(plan, { policyRequired: false });
+    expect(p.state).toBeNull();
+    expect(p.errorCategory).toBeNull();
+  });
+
+  it("DOES move the state on a voluntary possible match", () => {
+    // A sanctions match is a match whoever went looking. It has to reach the
+    // same adjudication an automated candidate reaches.
+    const plan = planFor({
+      outcome: "possible_match", candidates: [{ matchedName: "Patrik Exampel" }],
+    });
+    const p = projectManualScreeningToSubject(plan, { policyRequired: false });
+    expect(p.state).toBe("possible_match");
+  });
+
+  it("DOES move the state on a voluntary confirmed match, so it escalates", () => {
+    const plan = planFor({
+      outcome: "confirmed_match", candidates: [{ matchedName: "Patrik Exampel" }],
+    });
+    const p = projectManualScreeningToSubject(plan, { policyRequired: false });
+    expect(p.state).toBe("confirmed_match");
+    expect(plan.candidateStatus).toBe("confirmed");
+  });
+
+  it("a required attempt is unaffected — it still projects and still discharges", () => {
+    const p = projectManualScreeningToSubject(planFor(), { policyRequired: true });
+    expect(p.state).toBe("completed");
+    expect(p.advancesFreshness).toBe(true);
+  });
+
+  it("a required unable-to-complete still converges to a named error", () => {
+    const plan = planManualScreening({
+      outcome: "unable_to_complete", sources: [], searchedNames: [], rationale: "",
+      unableReason: "insufficient_identity",
+    }) as ManualScreeningPlan;
+    const p = projectManualScreeningToSubject(plan, { policyRequired: true });
+    expect(p.state).toBe("error");
+    expect(p.errorCategory).toBe("manual_unable_to_complete");
+  });
+
+  it("the projection can never write not_required, only decline to overwrite it", () => {
+    for (const policyRequired of [true, false]) {
+      for (const outcome of MANUAL_OUTCOMES) {
+        const plan = planManualScreening(evidenced({
+          outcome, candidates: [{ matchedName: "Patrik Exampel" }],
+          unableReason: "other_documented_reason",
+        }));
+        if (!plan.ok) continue;
+        const p = projectManualScreeningToSubject(plan, { policyRequired });
+        expect(p.state).not.toBe("not_required");
+      }
+    }
+  });
+});
+
+describe("voluntary manual screening — the server decides, not the caller", () => {
+  const op = functionCode.split("case 'record_manual_screening'")[1]
+    ?.split("case 'queue_party_screening'")[0] ?? "";
+
+  it("derives policy_required from the recorded scope decision", () => {
+    expect(op).toMatch(/const policyRequired = scopeRow \? scopeRow\.required === true : true/);
+    expect(op).not.toMatch(/body\.policy_required/);
+  });
+
+  it("derives voluntary from that, never from the request", () => {
+    expect(op).toMatch(/voluntary: !policyRequired/);
+    expect(op).not.toMatch(/body\.voluntary/);
+  });
+
+  it("hands the projection the SERVER's policyRequired", () => {
+    expect(op).toMatch(/projectManualScreeningToSubject\(plan, \{ policyRequired \}\)/);
+  });
+
+  it("writes the party state only when the projection names one", () => {
+    expect(op).toMatch(/if \(projection\.state !== null\) \{/);
+  });
+
+  it("still writes the canonical check and candidates for a voluntary run", () => {
+    // A voluntary finding is a real finding: the evidence and the candidates
+    // are recorded whether or not policy asked for them.
+    expect(op).toMatch(/from\('screening_checks'\)\.insert/);
+    expect(op).toMatch(/plan\.normalisedCandidates\.map/);
+  });
+
+  it("touches no policy or perimeter table on any path", () => {
+    expect(op).not.toMatch(/case_screening_scopes'\)\s*\n?\s*\.(insert|update|upsert)/);
+    expect(op).not.toMatch(/case_screening_perimeter/);
+    expect(op).not.toMatch(/(?<![_a-z])required:/);
+  });
+
+  it("records on the case event what the attempt did NOT change", () => {
+    expect(op).toMatch(/party_state_unchanged: projection\.state === null/);
   });
 });
