@@ -12,10 +12,10 @@
  * cannot be drawn on a card whatever it looks like, so measuring one would be
  * spending an inverse DCT to answer a question nobody asked.
  */
-import { decodeThumbnail } from './sourceImageRaster.ts';
+import { decodeThumbnailResult } from './sourceImageRaster.ts';
 import { readMarketingOverlay } from './marketingOverlay.pure.ts';
 import {
-  decideMarketplaceEligibility, marketplaceEligibilityDetail, UNMEASURED,
+  decideMarketplaceEligibility, marketplaceEligibilityDetail, unmeasured,
   type MarketplaceEligibility,
 } from './marketplaceEligibility.pure.ts';
 import { isPrimaryRole } from './sourceImageRole.pure.ts';
@@ -23,18 +23,25 @@ import { isPrimaryRole } from './sourceImageRole.pure.ts';
 /**
  * Judge bytes the pipeline is about to store.
  *
- * Never throws: a decoder that fails on a builder's file must not fail their
- * import, and an unmeasured image stays displayable.
+ * NEVER THROWS AND NEVER FAILS OPEN. A decoder that cannot read a builder's
+ * file must not fail their import — the bytes are stored, the provenance is
+ * recorded and the role is unchanged — but it must not wave the picture
+ * through either. An image that could not be measured comes back `pending`,
+ * which the display rule treats as "not yet", and the eligibility version
+ * brings it back for another look when the decoders grow.
  */
 export async function assessMarketplaceEligibility(
   bytes: Uint8Array,
 ): Promise<MarketplaceEligibility> {
   try {
-    const view = await decodeThumbnail(bytes);
-    if (!view) return UNMEASURED;
-    return decideMarketplaceEligibility(readMarketingOverlay(view));
+    const result = await decodeThumbnailResult(bytes);
+    if (!result.ok) {
+      return unmeasured(
+        result.reason === 'unsupported' ? 'decoder_unsupported' : 'decoder_failed');
+    }
+    return decideMarketplaceEligibility(readMarketingOverlay(result.thumbnail));
   } catch {
-    return UNMEASURED;
+    return unmeasured('decoder_failed');
   }
 }
 

@@ -14,231 +14,274 @@
  * that is what the source said, and falsifying it to hide the picture would
  * put a lie in the audit trail.
  *
- * WHAT THESE PIN, and it is a pipeline rule rather than a repair: every future
- * import of every supported format asks the same question of the same bytes at
- * the same point, persists the same answer, and the marketplace reads it. No
- * property, filename, word, colour, font or position is named anywhere in the
- * implementation — a builder's next campaign will use different ones of all of
- * them.
+ * TWO THINGS THESE PIN ABOVE ALL.
  *
- * The fixtures below are drawn to the geometry the live tiles have, because
- * geometry is what the measurement reads: a flat coloured block with straight
- * sides laid over a photograph.
+ *   IT FAILS CLOSED. An image nothing could decode is `pending`, never
+ *   `eligible`. "We could not look" and "we looked and it was clean" are
+ *   different facts, and a container no decoder here reads must never be a way
+ *   for a marketing tile to walk past the rule.
+ *
+ *   IT IS A PIPELINE RULE, NOT A REPAIR. Every future import of every
+ *   supported format asks the same question of the same bytes at the same
+ *   point, persists the same answer, and both selectors read it. No property,
+ *   filename, word, colour, font or position is named anywhere in the
+ *   implementation.
+ *
+ * The fixtures are drawn rather than sampled, and drawn to the geometry the
+ * live tiles actually have: a flat block with straight sides, and lettering
+ * set on a common baseline, over a photograph with grain in it.
  */
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import {
-  measureFlatColourRegions, readMarketingOverlay,
+  measureFlatColourRegions, measureOverlayText, readMarketingOverlay,
 } from '../../../supabase/functions/_shared/builderStock/marketingOverlay.pure';
 import {
-  compareMarketplaceEligibility, decideMarketplaceEligibility,
-  isMarketplaceEligible, marketplaceEligibilityDetail, needsEligibilityAssessment,
-  readMarketplaceEligible, MARKETPLACE_ELIGIBILITY_VERSION,
+  decideMarketplaceEligibility, isMarketplaceEligible, marketplaceEligibilityDetail,
+  needsEligibilityAssessment, readEligibilityVersion, readMarketplaceState, unmeasured,
+  MARKETPLACE_ELIGIBILITY_VERSION,
 } from '../../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
+import {
+  assessMarketplaceEligibility, eligibilityDetailFor,
+} from '../../../supabase/functions/_shared/builderStock/assessSourceImage';
+import {
+  decodeThumbnailResult, DECODABLE_CONTAINERS,
+} from '../../../supabase/functions/_shared/builderStock/sourceImageRaster';
 import {
   chooseDisplayableImage, isDisplayableSourceImage,
 } from '../../../supabase/functions/_shared/builderStock/primaryImage';
+import { settleMarketplaceEligibility } from '../../../supabase/functions/_shared/builderStock/settleMarketplaceEligibility';
+import { uploadHasWorkOutstanding } from '../../../supabase/functions/_shared/builderStock/settleSourceImages';
 import { primaryStockImage } from '../../lib/builderStock';
+import {
+  annotatedPicture, jpegOf, photograph, withCaption, withPlate, type Picture,
+} from './fixtures/builderStockPictures';
 import type { BuilderStockImage, BuilderStockItem } from '../../lib/builderStock';
 
 // ---------------------------------------------------------------------------
 // Fixtures — pictures, drawn
+//
+// The picture itself and the treatments laid over it come from
+// `fixtures/builderStockPictures`, which the pipeline tests share. The
+// arrangements below are this file's own: each one is a shape the classifier
+// has to reach a stated verdict on.
 // ---------------------------------------------------------------------------
 
-const W = 200;
-const H = 100;
-
-/**
- * A photograph: textured everywhere, with a sky that has a gradient and a
- * roofline that cuts it off — the two things that make a sky look flat-ish and
- * still not read as a graphic.
- */
-function photograph(): { width: number; height: number; pixels: Uint8Array } {
-  const pixels = new Uint8Array(W * H * 3);
-  // Deterministic grain. A photograph and a render both have it; a vector fill
-  // is the only thing that does not, which is the whole basis of the measure.
-  let seed = 12345;
-  const grain = () => {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-    return ((seed >> 8) % 21) - 10;
-  };
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const at = (y * W + x) * 3;
-      // A roofline: sky above it, house below.
-      const roof = 30 + Math.round(18 * Math.sin((x / W) * Math.PI * 2));
-      if (y < roof) {
-        pixels[at] = 120 + y + grain();
-        pixels[at + 1] = 165 + y + grain();
-        pixels[at + 2] = 215 + Math.min(30, y) + grain();
-      } else {
-        pixels[at] = 150 + ((x * 11 + y * 5) % 40) + grain();
-        pixels[at + 1] = 140 + ((x * 7 + y * 13) % 40) + grain();
-        pixels[at + 2] = 130 + ((x * 3 + y * 17) % 40) + grain();
-      }
-    }
-  }
-  return { width: W, height: H, pixels };
-}
-
-/** Lay a flat coloured rectangle over it, the way a status ribbon sits. */
-function withPill(
-  base: { width: number; height: number; pixels: Uint8Array },
-  box: { x: number; y: number; w: number; h: number },
-  colour: [number, number, number],
-  options: { caption?: boolean } = {},
-): { width: number; height: number; pixels: Uint8Array } {
-  const pixels = new Uint8Array(base.pixels);
-  for (let y = box.y; y < box.y + box.h && y < base.height; y++) {
-    for (let x = box.x; x < box.x + box.w && x < base.width; x++) {
-      const at = (y * base.width + x) * 3;
-      // Words on the pill, which is what cuts a real one into fragments.
-      const onCaption = options.caption
-        && y > box.y + box.h * 0.3 && y < box.y + box.h * 0.7
-        && ((x - box.x) % 7) < 3 && x > box.x + 2 && x < box.x + box.w - 2;
-      pixels[at] = onCaption ? 12 : colour[0];
-      pixels[at + 1] = onCaption ? 12 : colour[1];
-      pixels[at + 2] = onCaption ? 12 : colour[2];
-    }
-  }
-  return { width: base.width, height: base.height, pixels };
-}
+const W = 400;
+const H = 200;
 
 const LIME: [number, number, number] = [193, 255, 114];
-const RED: [number, number, number] = [255, 49, 49];
-/** A neutral bar, the way an "ARTIST IMPRESSION" footer is drawn. */
-const CHARCOAL: [number, number, number] = [38, 38, 40];
-
-/** A clean builder render. */
 const CLEAN = photograph();
-/** The live shape: two big lime pills across the top, with their captions. */
-const MARKETING_TILE = withPill(
-  withPill(CLEAN, { x: 10, y: 8, w: 76, h: 14 }, LIME, { caption: true }),
-  { x: 110, y: 8, w: 76, h: 14 }, RED, { caption: true },
-);
-/** A builder's own small corner tag: the same colour, a twentieth of the size. */
-const SMALL_TAG = withPill(CLEAN, { x: 6, y: 5, w: 26, h: 7 }, LIME);
-/** An "ARTIST IMPRESSION. INDICATIVE ONLY." footer bar. */
-const DISCLAIMER = withPill(CLEAN, { x: 100, y: 92, w: 96, h: 7 }, CHARCOAL);
+
+/** A banner of any colour, with a caption on it. */
+const banner = (plate: [number, number, number], ink: [number, number, number]) =>
+  withCaption(withPlate(CLEAN, { x: 14, y: 10, w: 230, h: 34 }, plate),
+    'SOLERA', { x: 20, y: 16, scale: 3, ink });
+
+const MARKETING_TILE = banner(LIME, [10, 10, 10]);
+const BLACK_BANNER = banner([12, 12, 12], [250, 250, 250]);
+const WHITE_BANNER = banner([250, 250, 250], [20, 20, 20]);
+const GREY_BANNER = banner([128, 128, 130], [250, 250, 250]);
+/** A builder's own corner tag: the same colour as a refused pill, a fraction
+ *  of the size. */
+const SMALL_TAG = withCaption(withPlate(CLEAN, { x: 6, y: 5, w: 60, h: 12 }, LIME),
+  'ORAL', { x: 9, y: 7, scale: 1, ink: [10, 10, 10] });
+/** An "artist impression" footer: neutral, small, and at the foot. */
+const DISCLAIMER = withCaption(withPlate(CLEAN, { x: 250, y: 184, w: 140, h: 12 }, [38, 38, 40]),
+  'ARSOLE', { x: 254, y: 186, scale: 1, ink: [235, 235, 235] });
+/** Letterboxing: flat, neutral, perfectly straight, and pure framing. */
+const LETTERBOXED = withPlate(withPlate(CLEAN, { x: 0, y: 0, w: 26, h: H }, [255, 255, 255]),
+  { x: W - 26, y: 0, w: 26, h: H }, [255, 255, 255]);
 
 // ---------------------------------------------------------------------------
-// The measurement itself
+// What the measurement reads, and what it refuses to read
 // ---------------------------------------------------------------------------
 
-describe('what the measurement reads, and what it refuses to read', () => {
-  it('finds the promotional blocks and nothing else', () => {
-    const measured = measureFlatColourRegions(MARKETING_TILE);
-    expect(measured.regions.length).toBeGreaterThanOrEqual(2);
+describe('the measurement', () => {
+  it('finds a coloured pill laid over the photograph', () => {
     expect(readMarketingOverlay(MARKETING_TILE).annotated).toBe(true);
+    expect(measureFlatColourRegions(MARKETING_TILE).regions.length).toBeGreaterThan(0);
   });
 
-  it('TEST M — a clean render with an "artist impression" footer stays', () => {
-    // Neutral, so it is presentation rather than promotion, and it is never
-    // named or matched as a phrase.
+  it('TEST T/U/V — a black, white or grey banner is refused too', () => {
+    // Colour decides nothing. A neutral banner has to be larger before it
+    // counts, because neutral is what ordinary presentation is drawn in, and
+    // every one of these clears that.
+    for (const view of [BLACK_BANNER, WHITE_BANNER, GREY_BANNER]) {
+      expect(readMarketingOverlay(view).annotated).toBe(true);
+    }
+  });
+
+  it('TEST Y — an artist-impression footer stays', () => {
     expect(readMarketingOverlay(DISCLAIMER).annotated).toBe(false);
-    expect(readMarketingOverlay(CLEAN).annotated).toBe(false);
   });
 
-  it('TEST N — a small builder tag or watermark stays', () => {
-    // Exactly the colour of the pill that is refused. Size and geometry
-    // decide, never the colour.
+  it('TEST Z — a small builder tag or watermark stays', () => {
+    // Exactly the colour of the pill that is refused, a fraction of the size.
     expect(readMarketingOverlay(SMALL_TAG).annotated).toBe(false);
   });
 
-  it('reads a sky as sky: flat, saturated, larger than any pill', () => {
-    // The measure that separates them is the straightness of the region's own
-    // sides, not its size — a sky is cut off by a roofline.
-    expect(readMarketingOverlay(CLEAN).regionCount).toBe(0);
+  it('a clean render, and letterboxing around one, stay', () => {
+    expect(readMarketingOverlay(CLEAN).annotated).toBe(false);
+    // Framing is not a badge: a band spanning the picture is excluded by
+    // measurement rather than by knowing what letterboxing is.
+    expect(readMarketingOverlay(LETTERBOXED).annotated).toBe(false);
   });
 
-  it('names no word, colour, position or font in its CODE', async () => {
-    const source = await import('node:fs').then((fs) => fs.readFileSync(
-      'supabase/functions/_shared/builderStock/marketingOverlay.pure.ts', 'utf8'));
-    // Comments describe the case that produced the module and quote the live
-    // wording; the code may not. Strip the prose and check what is left.
+  it('reads lettering as shape and never as words', () => {
+    const source = readFileSync(
+      'supabase/functions/_shared/builderStock/marketingOverlay.pure.ts', 'utf8');
+    // Comments describe the live case and quote its wording; the code may not.
     const code = source
       .replace(/\/\*[\s\S]*?\*\//g, ' ')
       .replace(/\/\/[^\n]*/g, ' ');
-    // No string or regular-expression literal of any kind: nothing to match a
-    // word, a hex colour or a font against.
+    // No string or regular-expression literal of any kind: nothing to compare
+    // a word, a hex colour or a font name against.
     expect(code).not.toMatch(/['"`]/);
-    expect(code).not.toMatch(/\/[^\s][^\n]*\/[gimsuy]*/);
+    expect(code).not.toMatch(/\/[^\s/][^\n]*\/[gimsuy]*/);
+  });
+
+  it('the text signal is separate, and silent on a clean photograph', () => {
+    // Two independent signals, either of which is enough. On the live source
+    // it is the text signal that catches Lot 13 and Lot 1663; on the drawn
+    // fixtures here it is the block signal, because drawn type is not
+    // photographed type. What matters in both is that a clean photograph
+    // trips neither.
+    expect(measureOverlayText(CLEAN).lineCount).toBe(0);
+    expect(measureOverlayText(CLEAN).heightShare).toBe(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// The decision, and how it is stored
+// Decoding, and failing closed
+// ---------------------------------------------------------------------------
+
+describe('what happens when the pixels cannot be read', () => {
+  const webp = () => {
+    const bytes = new Uint8Array(64);
+    bytes.set([0x52, 0x49, 0x46, 0x46], 0);          // RIFF
+    bytes.set([0x57, 0x45, 0x42, 0x50], 8);          // WEBP
+    bytes.set([0x56, 0x50, 0x38, 0x20], 12);         // VP8␣
+    return bytes;
+  };
+
+  it('TEST Q — a WebP is not decodable here, so it is pending and hidden', async () => {
+    const result = await decodeThumbnailResult(webp());
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toBe('unsupported');
+
+    const decision = await assessMarketplaceEligibility(webp());
+    expect(decision.state).toBe('pending');
+    expect(decision.measured).toBe(false);
+    expect(decision.reason).toBe('decoder_unsupported');
+    expect(isMarketplaceEligible(marketplaceEligibilityDetail(decision))).toBe(false);
+  });
+
+  it('TEST R — a progressive JPEG IS decoded, so it is judged rather than waved through', async () => {
+    // A real progressive file, from this repository.
+    const progressive = readFileSync('public/brand/aurixa-source.jpg');
+    const result = await decodeThumbnailResult(new Uint8Array(progressive));
+    expect(result.ok).toBe(true);
+    const decision = await assessMarketplaceEligibility(new Uint8Array(progressive));
+    expect(decision.measured).toBe(true);
+    expect(decision.state === 'eligible' || decision.state === 'ineligible').toBe(true);
+  });
+
+  it('TEST S — an unsupported container is never eligible', async () => {
+    const decision = await assessMarketplaceEligibility(
+      new TextEncoder().encode('<html>not an image at all</html>'));
+    expect(decision.state).toBe('pending');
+    expect(isMarketplaceEligible(marketplaceEligibilityDetail(decision))).toBe(false);
+  });
+
+  it('TEST AA — a decoder error leaves the row stored and the card empty', async () => {
+    // A PNG signature with a truncated body: the decoder starts and fails.
+    const broken = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+    const decision = await assessMarketplaceEligibility(broken);
+    expect(decision.measured).toBe(false);
+    expect(decision.state).toBe('pending');
+    // The import is unaffected: this never throws.
+    expect(await eligibilityDetailFor(broken, 'primary_property'))
+      .toMatchObject({ marketplace_display_eligible: false });
+  });
+
+  it('names the containers it can actually read', () => {
+    expect(DECODABLE_CONTAINERS).toEqual(['image/png', 'image/jpeg', 'image/gif']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The stored decision
 // ---------------------------------------------------------------------------
 
 describe('the decision is stored beside the role, never instead of it', () => {
   it('an annotated primary keeps its role and loses its eligibility', () => {
     const decision = decideMarketplaceEligibility(readMarketingOverlay(MARKETING_TILE));
-    expect(decision.eligible).toBe(false);
+    expect(decision.state).toBe('ineligible');
     expect(decision.reason).toBe('annotated_marketing_tile');
 
     const detail = { role: 'primary_property', ...marketplaceEligibilityDetail(decision) };
-    // The audit trail still says what the source said.
     expect(detail.role).toBe('primary_property');
     expect(detail.marketplace_display_eligible).toBe(false);
-    expect(detail.marketplace_rejection_reason).toBe('annotated_marketing_tile');
+    expect(detail.marketplace_eligibility_state).toBe('ineligible');
     expect(detail.marketplace_eligibility_version).toBe(MARKETPLACE_ELIGIBILITY_VERSION);
   });
 
-  it('an image nothing can decode stays displayable and says it was not measured', () => {
-    const decision = decideMarketplaceEligibility(null);
-    expect(decision.eligible).toBe(true);
-    expect(decision.measured).toBe(false);
-    expect(isMarketplaceEligible(marketplaceEligibilityDetail(decision))).toBe(true);
+  it('an unjudged image is pending, which is not eligible', () => {
+    expect(readMarketplaceState({ role: 'primary_property' })).toBe('pending');
+    expect(isMarketplaceEligible({ role: 'primary_property' })).toBe(false);
+    expect(needsEligibilityAssessment({ role: 'primary_property' })).toBe(true);
   });
 
-  it('an unjudged image is null, which is not false', () => {
-    expect(readMarketplaceEligible({ role: 'primary_property' })).toBeNull();
-    expect(isMarketplaceEligible({ role: 'primary_property' })).toBe(true);
-    expect(needsEligibilityAssessment({ role: 'primary_property' })).toBe(true);
-    expect(needsEligibilityAssessment(
-      marketplaceEligibilityDetail(decideMarketplaceEligibility(null)))).toBe(false);
+  it('TEST AD — a version bump brings every old decision back for re-audit', () => {
+    const settled = marketplaceEligibilityDetail(
+      decideMarketplaceEligibility(readMarketingOverlay(CLEAN)));
+    expect(needsEligibilityAssessment(settled)).toBe(false);
+    // The same row, judged under an older algorithm, is outstanding again —
+    // without re-uploading anything or touching the source bytes.
+    const older = { ...settled, marketplace_eligibility_version: MARKETPLACE_ELIGIBILITY_VERSION - 1 };
+    expect(readEligibilityVersion(older)).toBe(MARKETPLACE_ELIGIBILITY_VERSION - 1);
+    expect(needsEligibilityAssessment(older)).toBe(true);
+  });
+
+  it('a pending row is always outstanding, so a better decoder revisits it', () => {
+    const pending = marketplaceEligibilityDetail(unmeasured('decoder_unsupported'));
+    expect(readEligibilityVersion(pending)).toBe(MARKETPLACE_ELIGIBILITY_VERSION);
+    expect(needsEligibilityAssessment(pending)).toBe(true);
   });
 });
 
 // ---------------------------------------------------------------------------
-// The display gate — server and client, one rule
+// The display gate
 // ---------------------------------------------------------------------------
 
 type Candidate = Parameters<typeof isDisplayableSourceImage>[0];
 
-const candidate = (over: Partial<Candidate> = {}): Candidate => ({
+const withDecision = (view: Picture, over: Partial<Candidate> = {}, level = 3): Candidate => ({
   id: 'image-1',
   source_stage: 'uploaded_document',
   verification_status: 'source_supplied',
   processing_status: 'ready',
   storage_path: 'org/items/item-1/source/a.png',
   position: 0,
+  ...over,
+  source_detail: {
+    role: 'primary_property',
+    role_evidence_level: level,
+    ...marketplaceEligibilityDetail(decideMarketplaceEligibility(readMarketingOverlay(view))),
+  },
+});
+
+const eligible = (over: Partial<Candidate> = {}, level = 3) => withDecision(CLEAN, over, level);
+const rejected = (over: Partial<Candidate> = {}, level = 3) =>
+  withDecision(MARKETING_TILE, over, level);
+const unjudged = (over: Partial<Candidate> = {}): Candidate => ({
+  ...eligible(over),
   source_detail: { role: 'primary_property', role_evidence_level: 3 },
-  ...over,
 });
-
-const eligible = (over: Partial<Candidate> = {}, level = 3) => candidate({
-  ...over,
-  source_detail: {
-    role: 'primary_property',
-    role_evidence_level: level,
-    ...marketplaceEligibilityDetail(decideMarketplaceEligibility(readMarketingOverlay(CLEAN))),
-  },
-});
-
-const rejected = (over: Partial<Candidate> = {}, level = 3) => candidate({
-  ...over,
-  source_detail: {
-    role: 'primary_property',
-    role_evidence_level: level,
-    ...marketplaceEligibilityDetail(
-      decideMarketplaceEligibility(readMarketingOverlay(MARKETING_TILE))),
-  },
-});
-
-/** A non-primary role: an interior, a floorplan, a map. Never a candidate. */
-const otherRole = (role: string) => candidate({
-  id: `image-${role}`,
+const otherRole = (role: string): Candidate => ({
+  ...eligible({ id: `image-${role}` }),
   source_detail: {
     role,
     role_evidence_level: 1,
@@ -249,7 +292,6 @@ const otherRole = (role: string) => candidate({
 describe('the display gate', () => {
   it('TEST A/D/I — the only primary is a marketing tile: no image at all', () => {
     const tile = rejected({ id: 'tile' });
-    // Stored, and still source_supplied with its role intact.
     expect(tile.source_detail!.role).toBe('primary_property');
     expect(isDisplayableSourceImage(tile)).toBe(false);
     expect(chooseDisplayableImage([tile])).toBeNull();
@@ -266,6 +308,12 @@ describe('the display gate', () => {
     expect(chooseDisplayableImage([eligible({ id: 'hero' }, 2)])!.id).toBe('hero');
   });
 
+  it('the source evidence still orders two eligible candidates', () => {
+    const cover = eligible({ id: 'cover', position: 0 }, 3);
+    const field = eligible({ id: 'field', position: 9 }, 1);
+    expect(chooseDisplayableImage([cover, field])!.id).toBe('field');
+  });
+
   it('TEST J/K — a rejected primary never falls through to another role', () => {
     const tile = rejected({ id: 'tile' });
     for (const role of ['interior', 'floorplan', 'masterplan', 'location_map',
@@ -275,27 +323,19 @@ describe('the display gate', () => {
   });
 
   it('TEST L — a rejected primary beside Google and search rows shows nothing', () => {
-    const google = candidate({
-      id: 'google', source_stage: 'google_maps',
-      verification_status: 'location_derived', processing_status: 'ready',
-      source_detail: { role: 'primary_property' },
-    });
-    const search = candidate({
-      id: 'search', source_stage: 'internet_search',
-      verification_status: 'unverified', processing_status: 'ready',
-      source_detail: { role: 'primary_property' },
-    });
+    const google = { ...eligible({ id: 'google' }), source_stage: 'google_maps',
+      verification_status: 'location_derived' } as Candidate;
+    const search = { ...eligible({ id: 'search' }), source_stage: 'internet_search',
+      verification_status: 'unverified' } as Candidate;
     expect(chooseDisplayableImage([rejected({ id: 'tile' }), google, search])).toBeNull();
   });
 
-  it('TEST O — a legacy image with no verdict never outranks a judged one', () => {
-    const legacy = candidate({ id: 'legacy', position: 0 });
-    const judged = eligible({ id: 'judged', position: 9 }, 3);
+  it('TEST O — an unjudged legacy image never outranks a judged one, and never shows', () => {
+    const legacy = unjudged({ id: 'legacy', position: 0 });
+    const judged = eligible({ id: 'judged', position: 9 });
     expect(chooseDisplayableImage([legacy, judged])!.id).toBe('judged');
-    // And on its own it still shows, rather than the card going dark on deploy.
-    expect(chooseDisplayableImage([legacy])!.id).toBe('legacy');
-    expect(compareMarketplaceEligibility(judged.source_detail, legacy.source_detail))
-      .toBeLessThan(0);
+    // And on its own it shows nothing: unjudged is not clean.
+    expect(chooseDisplayableImage([legacy])).toBeNull();
   });
 });
 
@@ -308,10 +348,7 @@ describe('the client applies the identical rule', () => {
     id: c.id,
     stock_item_id: 'item-1',
     source_stage: c.source_stage as BuilderStockImage['source_stage'],
-    source_reference: null,
-    source_provider: null,
-    source_page_url: null,
-    external_url: null,
+    source_reference: null, source_provider: null, source_page_url: null, external_url: null,
     storage_path: c.storage_path ?? null,
     content_type: 'image/png',
     verification_status: c.verification_status as BuilderStockImage['verification_status'],
@@ -320,17 +357,18 @@ describe('the client applies the identical rule', () => {
     error_message: null,
     position: c.position ?? 0,
     source_detail: c.source_detail ?? null,
-    created_at: '2026-08-15T00:00:00Z',
+    created_at: '2026-08-18T00:00:00Z',
   });
-
   const item = (images: Candidate[], primaryId: string | null = null): BuilderStockItem => ({
     id: 'item-1', primary_image_id: primaryId, images: images.map(asImage),
   } as unknown as BuilderStockItem);
 
   it('hides a rejected tile even when the server still points at it', () => {
-    const tile = rejected({ id: 'tile' });
-    // A stale pointer must not reintroduce it.
-    expect(primaryStockImage(item([tile], 'tile'))).toBeNull();
+    expect(primaryStockImage(item([rejected({ id: 'tile' })], 'tile'))).toBeNull();
+  });
+
+  it('hides an unjudged image even when the server still points at it', () => {
+    expect(primaryStockImage(item([unjudged({ id: 'legacy' })], 'legacy'))).toBeNull();
   });
 
   it('picks the same image the server picks', () => {
@@ -340,11 +378,148 @@ describe('the client applies the identical rule', () => {
       .toBe(chooseDisplayableImage([tile, clean])!.id);
   });
 
-  it('reads the stored verdict rather than measuring anything', async () => {
-    const source = await import('node:fs').then((fs) => fs.readFileSync(
-      'src/lib/builderStock.ts', 'utf8'));
-    // Nothing on the client may decode an image to render a card.
-    expect(source).not.toMatch(/decodeThumbnail|measureFlatColourRegions|readMarketingOverlay/);
+  it('reads the stored verdict rather than measuring anything', () => {
+    const source = readFileSync('src/lib/builderStock.ts', 'utf8');
+    expect(source).not.toMatch(
+      /decodeThumbnail|measureFlatColourRegions|measureOverlayText|readMarketingOverlay/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Settlement of what is already stored
+// ---------------------------------------------------------------------------
+
+/** A database with enough of PostgREST's shape to run a keyset scan. */
+function fakeDb(rows: Array<Record<string, any>>, objects: Record<string, Uint8Array>) {
+  const updates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+  const build = () => {
+    const filters: Array<[string, string, unknown]> = [];
+    let limit = 1000;
+    const builder: any = {
+      eq(column: string, value: unknown) { filters.push(['eq', column, value]); return builder; },
+      gt(column: string, value: unknown) { filters.push(['gt', column, value]); return builder; },
+      order() { return builder; },
+      limit(value: number) { limit = value; return builder; },
+      then(resolve: (v: { data: any[]; error: null }) => unknown, reject?: unknown) {
+        const matched = rows
+          .filter((row) => filters.every(([op, column, value]) =>
+            op === 'eq' ? row[column] === value : String(row[column]) > String(value)))
+          .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+          .slice(0, limit);
+        return Promise.resolve({ data: matched, error: null }).then(resolve, reject as never);
+      },
+    };
+    return builder;
+  };
+  return {
+    updates,
+    from() {
+      return {
+        select: () => build(),
+        update(patch: Record<string, unknown>) {
+          const filters: Array<[string, unknown]> = [];
+          const builder: any = {
+            eq(column: string, value: unknown) { filters.push([column, value]); return builder; },
+            then(resolve: (v: unknown) => unknown, reject?: unknown) {
+              for (const row of rows) {
+                if (filters.every(([column, value]) => row[column] === value)) {
+                  Object.assign(row, patch);
+                  updates.push({ id: row.id, patch });
+                }
+              }
+              return Promise.resolve({ data: null, error: null }).then(resolve, reject as never);
+            },
+          };
+          return builder;
+        },
+      };
+    },
+    storage: {
+      from() {
+        return {
+          download(path: string) {
+            const bytes = objects[path];
+            if (!bytes) return Promise.resolve({ data: null, error: { message: 'missing' } });
+            return Promise.resolve({
+              data: { arrayBuffer: () => Promise.resolve(bytes.buffer.slice(0)) },
+              error: null,
+            });
+          },
+        };
+      },
+    },
+  };
+}
+
+describe('TEST AB — settlement reaches every outstanding row', () => {
+  it('walks past thousands of settled rows to the one that is not', async () => {
+    const { encodePng } = await import(
+      '../../../supabase/functions/_shared/builderStock/rasterPng');
+    const tile = (await encodePng(MARKETING_TILE.pixels,
+      { width: W, height: H, components: 3 }))!;
+
+    // Measured once: judging a clean picture 5,200 times is a test that
+    // measures the test.
+    const settledDetail = marketplaceEligibilityDetail(
+      decideMarketplaceEligibility(readMarketingOverlay(CLEAN)));
+
+    const rows: Array<Record<string, any>> = [];
+    // 5,200 rows already judged, so an in-memory filter over the first page
+    // would see nothing to do and stop for ever.
+    for (let i = 0; i < 5_200; i++) {
+      rows.push({
+        id: `image-${String(i).padStart(6, '0')}`,
+        organisation_id: 'org-a',
+        source_stage: 'uploaded_document',
+        verification_status: 'source_supplied',
+        processing_status: 'ready',
+        storage_bucket: 'builder-stock-images',
+        storage_path: null,
+        source_detail: { role: 'primary_property', ...settledDetail },
+      });
+    }
+    // And one, last by id, that has never been judged.
+    rows.push({
+      id: 'image-999999',
+      organisation_id: 'org-a',
+      source_stage: 'uploaded_document',
+      verification_status: 'source_supplied',
+      processing_status: 'ready',
+      storage_bucket: 'builder-stock-images',
+      storage_path: 'org-a/items/item-z/source/tile.png',
+      source_detail: { role: 'primary_property' },
+    });
+
+    const db = fakeDb(rows, { 'org-a/items/item-z/source/tile.png': tile });
+    const outcome = await settleMarketplaceEligibility(db as any, 'org-a');
+
+    expect(outcome.scanned).toBe(5_201);
+    expect(outcome.outstanding).toBe(1);
+    expect(outcome.assessed).toBe(1);
+    expect(outcome.rejected).toBe(1);
+    expect(rows[rows.length - 1].source_detail.marketplace_display_eligible).toBe(false);
+  });
+});
+
+describe('TEST AC — the autonomous settler picks up eligibility work on its own', () => {
+  it('treats an upload at the current provenance version as outstanding', () => {
+    // Exactly the state every existing upload is in the moment this ships:
+    // its imagery has been settled, and its display eligibility has not.
+    expect(uploadHasWorkOutstanding({
+      source_images_settled_version: 4,
+      marketplace_eligibility_settled_version: null,
+    })).toBe(true);
+  });
+
+  it('stops only when both markers are current', () => {
+    expect(uploadHasWorkOutstanding({
+      source_images_settled_version: 4,
+      marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+    })).toBe(false);
+    expect(uploadHasWorkOutstanding({
+      source_images_settled_version: null,
+      marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+    })).toBe(true);
   });
 });
 
@@ -353,64 +528,183 @@ describe('the client applies the identical rule', () => {
 // ---------------------------------------------------------------------------
 
 describe('TEST P — reprocessing reaches the same verdict as a fresh import', () => {
-  it('is the same function over the same bytes', () => {
-    // Ingestion and reprocessing both call `assessMarketplaceEligibility`, so
-    // the only way they could differ is by being given different bytes — and
-    // reprocessing re-reads the stored object, which IS the imported bytes.
-    const atImport = decideMarketplaceEligibility(readMarketingOverlay(MARKETING_TILE));
-    const atReprocess = decideMarketplaceEligibility(readMarketingOverlay(MARKETING_TILE));
+  it('is the same function over the same bytes', async () => {
+    const { encodePng } = await import(
+      '../../../supabase/functions/_shared/builderStock/rasterPng');
+    const bytes = (await encodePng(MARKETING_TILE.pixels,
+      { width: W, height: H, components: 3 }))!;
+    const atImport = await assessMarketplaceEligibility(bytes);
+    const atReprocess = await assessMarketplaceEligibility(bytes);
     expect(atReprocess).toEqual(atImport);
-    expect(marketplaceEligibilityDetail(atReprocess))
-      .toEqual(marketplaceEligibilityDetail(atImport));
+    expect(atImport.state).toBe('ineligible');
+  });
+
+  it('measures a primary and never a role that could not be shown', async () => {
+    const { encodePng } = await import(
+      '../../../supabase/functions/_shared/builderStock/rasterPng');
+    const bytes = (await encodePng(MARKETING_TILE.pixels,
+      { width: W, height: H, components: 3 }))!;
+    expect(await eligibilityDetailFor(bytes, 'primary_property'))
+      .toMatchObject({ marketplace_display_eligible: false });
+    expect(await eligibilityDetailFor(bytes, 'interior')).toEqual({});
   });
 });
 
 // ---------------------------------------------------------------------------
-// End to end, through the real decoder
+// TEST W/X — the treatments that are not a coloured rectangle
 // ---------------------------------------------------------------------------
 
-describe('the ingestion path, over encoded bytes', () => {
-  const encodeFixture = async (view: { width: number; height: number; pixels: Uint8Array }) => {
-    const { encodePng } = await import(
-      '../../../supabase/functions/_shared/builderStock/rasterPng');
-    return (await encodePng(view.pixels, {
-      width: view.width, height: view.height, components: 3,
-    }))!;
-  };
+/**
+ * These go through the WHOLE path — a picture at source resolution, encoded,
+ * decoded and downscaled — rather than measuring a hand-drawn 400px view.
+ *
+ * That is not ceremony. Type behaves differently at the two scales: a stroke
+ * drawn five pixels wide at thumbnail size has hard edges, and the local
+ * window sits inside it and reads no contrast, so only the stroke's outline
+ * registers. A stroke drawn at source resolution and then downscaled is soft
+ * and solid, which is what production actually measures. A fixture authored
+ * at thumbnail size would have understated the detector and been "fixed" by
+ * loosening a threshold that did not need loosening.
+ */
+const SOURCE_W = 960;
+const SOURCE_H = 497;
 
-  it('decodes a stored image and refuses a marketing tile', async () => {
-    const { assessMarketplaceEligibility } = await import(
-      '../../../supabase/functions/_shared/builderStock/assessSourceImage');
-    const decision = await assessMarketplaceEligibility(await encodeFixture(MARKETING_TILE));
-    expect(decision.measured).toBe(true);
-    expect(decision.eligible).toBe(false);
-    expect(decision.reason).toBe('annotated_marketing_tile');
+const SOURCE = photograph(SOURCE_W, SOURCE_H);
+
+/** TEST W: a scrim across the foot of the picture, with type on it. */
+const SEMI_TRANSPARENT_BANNER = withCaption(
+  withPlate(SOURCE, {
+    x: 0, y: Math.round(SOURCE_H * 0.72), w: SOURCE_W, h: Math.round(SOURCE_H * 0.16),
+  }, [10, 10, 14], 0.6),
+  'SOLERA',
+  { x: Math.round(SOURCE_W * 0.05), y: Math.round(SOURCE_H * 0.745), scale: 8, ink: [250, 250, 250] },
+);
+
+/** TEST X: a word set straight onto the photograph. No plate of any kind. */
+const BARE_TYPOGRAPHY = withCaption(SOURCE, 'SOLERA', {
+  x: Math.round(SOURCE_W * 0.08), y: Math.round(SOURCE_H * 0.12), scale: 11, ink: [12, 12, 14],
+});
+
+/** The same word, pale, over the pale part of the sky. See the test below. */
+const PALE_ON_PALE = withCaption(SOURCE, 'SOLERA', {
+  x: Math.round(SOURCE_W * 0.08), y: Math.round(SOURCE_H * 0.12), scale: 11, ink: [255, 255, 255],
+});
+
+describe('TEST W/X — treatments with no flat coloured rectangle to find', () => {
+  it('TEST W — a semi-transparent banner is refused', async () => {
+    // Nothing here is a flat colour: the photograph's own grain shows through
+    // the scrim, so the block signal finds no region at all. It is refused on
+    // the typography alone, which is the point of having two signals.
+    const verdict = await assessMarketplaceEligibility(jpegOf(SEMI_TRANSPARENT_BANNER));
+    expect(verdict.state).toBe('ineligible');
+    expect(verdict.reason).toBe('annotated_marketing_tile');
+    expect(verdict.overlay!.regionCount).toBe(0);
+    expect(verdict.overlay!.textLineCount).toBeGreaterThan(0);
   });
 
-  it('decodes a stored image and passes a clean render', async () => {
-    const { assessMarketplaceEligibility } = await import(
-      '../../../supabase/functions/_shared/builderStock/assessSourceImage');
-    const decision = await assessMarketplaceEligibility(await encodeFixture(CLEAN));
-    expect(decision.measured).toBe(true);
-    expect(decision.eligible).toBe(true);
+  it('TEST X — large typography straight over the photograph is refused', async () => {
+    const verdict = await assessMarketplaceEligibility(jpegOf(BARE_TYPOGRAPHY));
+    expect(verdict.state).toBe('ineligible');
+    expect(verdict.reason).toBe('annotated_marketing_tile');
+    expect(verdict.overlay!.regionCount).toBe(0);
+    expect(verdict.overlay!.textLineCount).toBeGreaterThan(0);
+    expect(verdict.overlay!.textHeightShare).toBeGreaterThan(0.1);
   });
 
-  it('leaves bytes it cannot decode displayable and unmeasured', async () => {
-    const { assessMarketplaceEligibility } = await import(
-      '../../../supabase/functions/_shared/builderStock/assessSourceImage');
-    const decision = await assessMarketplaceEligibility(
-      new TextEncoder().encode('GIF89a not really an image'));
-    expect(decision.measured).toBe(false);
-    expect(decision.eligible).toBe(true);
+  it('and the clean picture under both of them is not', async () => {
+    expect((await assessMarketplaceEligibility(jpegOf(SOURCE))).state).toBe('eligible');
   });
 
-  it('measures a primary and never a role that could not be shown', async () => {
-    const { eligibilityDetailFor } = await import(
-      '../../../supabase/functions/_shared/builderStock/assessSourceImage');
-    const bytes = await encodeFixture(MARKETING_TILE);
-    expect(await eligibilityDetailFor(bytes, 'primary_property'))
-      .toMatchObject({ marketplace_display_eligible: false });
-    // An interior is not a candidate, so it gets no verdict at all.
-    expect(await eligibilityDetailFor(bytes, 'interior')).toEqual({});
+  /**
+   * A LIMIT OF THIS CLASSIFIER, RECORDED RATHER THAN HIDDEN.
+   *
+   * The typography signal starts from local contrast, and near-white type over
+   * the bright part of a sky has very little of it — after the encode and the
+   * downscale, less than the floor. So this one case passes as clean, and this
+   * test says so out loud instead of leaving a gap nobody knows about.
+   *
+   * It is written as an assertion of the CURRENT behaviour on purpose: when a
+   * later version of the classifier catches it, this test fails, and whoever
+   * bumps `MARKETPLACE_ELIGIBILITY_VERSION` is told exactly what changed. It
+   * is not a claim that the behaviour is right.
+   */
+  it('does NOT yet catch pale type over the pale part of a sky', async () => {
+    const verdict = await assessMarketplaceEligibility(jpegOf(PALE_ON_PALE));
+    expect(verdict.state).toBe('eligible');
+    expect(verdict.overlay!.textLineCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TEST M/N — what the decision may and may not lead to
+// ---------------------------------------------------------------------------
+
+describe('TEST M — the server and the client reach the same answer', () => {
+  const asImage = (c: Candidate): BuilderStockImage => ({
+    id: c.id, stock_item_id: 'item-1',
+    source_stage: c.source_stage as BuilderStockImage['source_stage'],
+    source_reference: null, source_provider: null, source_page_url: null, external_url: null,
+    storage_path: c.storage_path ?? null, content_type: 'image/png',
+    verification_status: c.verification_status as BuilderStockImage['verification_status'],
+    confidence: 1,
+    processing_status: c.processing_status as BuilderStockImage['processing_status'],
+    error_message: null, position: c.position ?? 0, source_detail: c.source_detail ?? null,
+    created_at: '2026-08-18T00:00:00Z',
+  });
+  const item = (images: Candidate[]): BuilderStockItem => ({
+    id: 'item-1', primary_image_id: null, images: images.map(asImage),
+  } as unknown as BuilderStockItem);
+
+  it('over every combination of the three states', () => {
+    const states = [
+      eligible({ id: 'a', position: 0 }, 3),
+      rejected({ id: 'b', position: 1 }, 1),
+      unjudged({ id: 'c', position: 2 }),
+      otherRole('interior'),
+    ];
+    // Every subset, so agreement is a property rather than three examples.
+    for (let mask = 0; mask < 1 << states.length; mask++) {
+      const subset = states.filter((_, index) => mask & (1 << index));
+      const server = chooseDisplayableImage(subset)?.id ?? null;
+      const client = primaryStockImage(item(subset))?.id ?? null;
+      expect(client).toBe(server);
+    }
+  });
+});
+
+describe('TEST N — a refusal is a refusal, not a request for a substitute', () => {
+  it('offers nothing in place of a refused or unjudged primary', () => {
+    // Everything a fallback could reach, present at once: another role of the
+    // same property's own builder imagery, a location-derived row, and a
+    // search result. The answer is still nothing.
+    const everything = [
+      rejected({ id: 'tile' }, 3),
+      unjudged({ id: 'legacy' }),
+      otherRole('interior'),
+      otherRole('floorplan'),
+      otherRole('masterplan'),
+      {
+        id: 'google-1', source_stage: 'google_maps', verification_status: 'location_derived',
+        processing_status: 'ready', position: 0, storage_path: 'g.jpg', source_detail: null,
+      } as Candidate,
+      {
+        id: 'search-1', source_stage: 'internet_search', verification_status: 'unverified',
+        processing_status: 'ready', position: 0, storage_path: 's.jpg', source_detail: null,
+      } as Candidate,
+    ];
+    expect(chooseDisplayableImage(everything)).toBeNull();
+  });
+
+  it('and the refusal never rewrites the picture or its role', async () => {
+    const bytes = jpegOf(annotatedPicture(SOURCE_W, SOURCE_H));
+    const before = Uint8Array.from(bytes);
+    const detail = await eligibilityDetailFor(bytes, 'primary_property');
+    // The bytes handed in are the bytes still held: nothing crops, erases,
+    // blurs or repaints anything, here or anywhere this is called from.
+    expect(Array.from(bytes)).toEqual(Array.from(before));
+    // And the verdict is stored BESIDE the role. It contributes no role key,
+    // so merging it can never restate what the source said.
+    expect(detail).toMatchObject({ marketplace_display_eligible: false });
+    expect(Object.keys(detail).some((key) => key.startsWith('role'))).toBe(false);
   });
 });

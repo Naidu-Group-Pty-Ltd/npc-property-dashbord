@@ -31,7 +31,7 @@ import {
   comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from './sourceImageRole.pure.ts';
 import {
-  compareMarketplaceEligibility, isMarketplaceEligible,
+  isMarketplaceEligible,
 } from './marketplaceEligibility.pure.ts';
 
 /** The stage whose provenance is the builder's own document. */
@@ -100,14 +100,12 @@ export function isDisplayableSourceImage(image: DisplayableImage): boolean {
  * that distinguishes them: same property, same provenance, same role. Ordering
  * by `position` picked whichever the reader enumerated first.
  *
- * NOTHING HERE LOOKS AT THE PICTURE. The wording baked into a marketing tile
- * is not what demotes it and must never be — an appearance test cannot say
- * whose house it is, and a builder's own facade render carrying their own
- * "ARTIST IMPRESSION" line is not a marketing tile. What demotes it is that
- * the source said something stronger about a different image of the same
- * property. Where the source says nothing stronger, the tile stays: it is
- * still the picture the builder published for that property, and an empty
- * frame is not an improvement on it.
+ * ORDERING IS NOT WHAT REFUSES A MARKETING TILE — the display gate above is,
+ * through `isMarketplaceEligible`. An earlier version of this rule kept the
+ * tile whenever the source designated nothing better, and that was wrong: a
+ * facade under a status ribbon is not a card image however impeccable its
+ * provenance. Ordering only decides between candidates that have ALREADY
+ * passed the gate.
  *
  * `position` and then the id remain the tie-break, so re-running enrichment
  * cannot silently swap a card's picture.
@@ -117,10 +115,7 @@ export function chooseDisplayableImage<T extends DisplayableImage>(images: T[]):
   if (!displayable.length) return null;
 
   return [...displayable].sort((a, b) =>
-    // Judged eligible before never judged, so deploying this cannot leave an
-    // unexamined picture in front of an examined one.
-    compareMarketplaceEligibility(a.source_detail, b.source_detail)
-    || comparePrimaryEvidence(
+    comparePrimaryEvidence(
       readStoredEvidenceLevel(a.source_detail), readStoredEvidenceLevel(b.source_detail))
     || (a.position ?? 0) - (b.position ?? 0)
     || String(a.id).localeCompare(String(b.id)))[0];

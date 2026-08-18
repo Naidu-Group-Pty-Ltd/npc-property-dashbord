@@ -19,6 +19,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { CLEAN_VERDICT } from './fixtures/builderStockPictures';
+
 import {
   chooseDisplayableImage, isDisplayableSourceImage,
 } from '../../../supabase/functions/_shared/builderStock/primaryImage';
@@ -217,12 +219,17 @@ const image = (over: Partial<BuilderStockImage>): BuilderStockImage => ({
   processing_status: 'ready',
   error_message: null,
   position: 0,
-  // What the SOURCE presented it as. A stage-1 image without this is imagery
-  // the builder supplied and did not designate, and never a card's picture.
-  source_detail: roleDetail(roleFromStructuralContainer({
-    container: 'the Notion row for this property',
-    designation: 'page cover',
-  })),
+  // What the SOURCE presented it as, and what the marketplace made of the
+  // picture itself. Both are needed: designation is not permission to display,
+  // and an image with no verdict has not been judged, which is not the same
+  // fact as having been judged clean.
+  source_detail: {
+    ...roleDetail(roleFromStructuralContainer({
+      container: 'the Notion row for this property',
+      designation: 'page cover',
+    })),
+    ...CLEAN_VERDICT,
+  },
   created_at: '2026-08-15T00:00:00Z',
   ...over,
 });

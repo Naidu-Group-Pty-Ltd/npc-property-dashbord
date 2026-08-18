@@ -24,69 +24,110 @@
  * it to hide the picture would put a lie in the audit trail. What changes is
  * one extra fact stored beside it, and the display rule reads both.
  *
- * WHAT MAY NOT HAPPEN WHEN AN IMAGE IS REFUSED. Nothing may take its place
- * except another image that independently passes all four questions for the
- * same property. Not an interior, not a floorplan, not a masterplan, not a
- * location map, not another lot's facade, and none of the location or search
- * stages — those were never candidates and are not candidates now. Where there
- * is no such image, the card shows nothing, which is the honest outcome and
- * the one the product asks for.
+ * IT FAILS CLOSED, AND THAT IS THE POINT OF THE THIRD STATE. There are three
+ * answers and not two:
+ *
+ *   eligible     measured, and carries no promotional treatment
+ *   ineligible   measured, and does
+ *   pending      NOT measured — an encoding no decoder here reads, a file that
+ *                broke one, a picture past the resource ceiling
+ *
+ * `pending` is not `eligible`. An unreadable container must never be a way for
+ * a marketing tile to walk past the rule: "we could not look" and "we looked
+ * and it was clean" are different facts and are stored as different values.
+ * The card shows nothing until the image can actually be assessed, and the
+ * version below is what brings it back for assessment when the decoders grow.
+ *
+ * WHAT MAY NOT HAPPEN WHEN AN IMAGE IS REFUSED OR PENDING. Nothing may take
+ * its place except another image that independently passes all four questions
+ * for the same property. Not an interior, not a floorplan, not a masterplan,
+ * not a location map, not another lot's facade, and none of the location or
+ * search stages. Where there is no such image, the card shows nothing.
  *
  * Pure: no imports, no IO, no clock.
  */
 
-/** Bumped when the decision would change for bytes already assessed. */
+/**
+ * Bumped when the decision would change for bytes already assessed.
+ *
+ * DELIBERATELY NOT `PROVENANCE_VERSION`. Provenance is about where bytes came
+ * from and never changes when a display rule does; tying the two would mean
+ * every classifier improvement re-fetched every source, and every source
+ * change re-ran every classification. They move independently, and a row
+ * carries both numbers.
+ *
+ *   1  first release: flat coloured blocks, and prominent overlay typography
+ *      regardless of colour or whether anything is drawn behind it
+ */
 export const MARKETPLACE_ELIGIBILITY_VERSION = 1;
 
+/** The three answers. `pending` is the one that keeps this failing closed. */
+export type MarketplaceEligibilityState = 'eligible' | 'ineligible' | 'pending';
+
 /** Why an image the source designated may not be drawn on a card. */
-export type MarketplaceRejection = 'annotated_marketing_tile';
+export type MarketplaceRejection =
+  /** Measured, and carrying promotional treatment. */
+  | 'annotated_marketing_tile'
+  /** Not measured: no decoder here reads this container. */
+  | 'decoder_unsupported'
+  /** Not measured: the decoder failed, or the picture was past its ceiling. */
+  | 'decoder_failed';
 
 /** What was measured, kept so a decision can be explained without re-reading. */
 export interface MarketplaceOverlaySummary {
   largestShare: number;
   totalShare: number;
   regionCount: number;
+  /** Tallest overlay text as a share of the picture's height, 0 for none. */
+  textHeightShare: number;
+  textLineCount: number;
 }
 
 export interface MarketplaceEligibility {
-  eligible: boolean;
+  state: MarketplaceEligibilityState;
   reason: MarketplaceRejection | null;
-  /**
-   * False when the container could not be decoded at all.
-   *
-   * An unmeasured image stays ELIGIBLE. Refusing to show a builder's
-   * photograph because its format is one we cannot parse would be a worse
-   * defect than the one this exists to fix, and the version field below is
-   * what lets a later decoder revisit it.
-   */
+  /** False when the container could not be decoded at all. */
   measured: boolean;
   overlay: MarketplaceOverlaySummary | null;
 }
 
-/** The eligibility of an image nothing could read. Displayable, unmeasured. */
-export const UNMEASURED: MarketplaceEligibility = {
-  eligible: true, reason: null, measured: false, overlay: null,
-};
+/** The eligibility of an image nothing could read. NOT displayable. */
+export function unmeasured(
+  reason: 'decoder_unsupported' | 'decoder_failed',
+): MarketplaceEligibility {
+  return { state: 'pending', reason, measured: false, overlay: null };
+}
 
 /**
  * Turn an overlay measurement into the display decision.
  *
- * One rule: a picture carrying a promotional graphic laid over it is not a
- * card image. The measurement that establishes "promotional graphic" is
+ * One rule: a picture carrying promotional treatment laid over it is not a
+ * card image. What counts as promotional treatment is
  * `marketingOverlay.pure.ts`, and it names no word, colour, font or position.
  */
 export function decideMarketplaceEligibility(
-  overlay: { annotated: boolean; largestShare: number; totalShare: number; regionCount: number } | null,
+  overlay:
+    | {
+      annotated: boolean;
+      largestShare: number;
+      totalShare: number;
+      regionCount: number;
+      textHeightShare: number;
+      textLineCount: number;
+    }
+    | null,
 ): MarketplaceEligibility {
-  if (!overlay) return UNMEASURED;
+  if (!overlay) return unmeasured('decoder_failed');
   const summary: MarketplaceOverlaySummary = {
     largestShare: overlay.largestShare,
     totalShare: overlay.totalShare,
     regionCount: overlay.regionCount,
+    textHeightShare: overlay.textHeightShare,
+    textLineCount: overlay.textLineCount,
   };
   return overlay.annotated
-    ? { eligible: false, reason: 'annotated_marketing_tile', measured: true, overlay: summary }
-    : { eligible: true, reason: null, measured: true, overlay: summary };
+    ? { state: 'ineligible', reason: 'annotated_marketing_tile', measured: true, overlay: summary }
+    : { state: 'eligible', reason: null, measured: true, overlay: summary };
 }
 
 /**
@@ -94,12 +135,15 @@ export function decideMarketplaceEligibility(
  *
  * Stored beside the role rather than replacing anything in it, so a reader can
  * always see BOTH what the source said and what the marketplace did about it.
+ * `marketplace_display_eligible` stays a boolean for anything already reading
+ * it, and is true ONLY for the eligible state.
  */
 export function marketplaceEligibilityDetail(
   eligibility: MarketplaceEligibility,
 ): Record<string, unknown> {
   return {
-    marketplace_display_eligible: eligibility.eligible,
+    marketplace_display_eligible: eligibility.state === 'eligible',
+    marketplace_eligibility_state: eligibility.state,
     marketplace_rejection_reason: eligibility.reason,
     marketplace_measured: eligibility.measured,
     marketplace_overlay: eligibility.overlay
@@ -107,6 +151,8 @@ export function marketplaceEligibilityDetail(
         largest_share: eligibility.overlay.largestShare,
         total_share: eligibility.overlay.totalShare,
         region_count: eligibility.overlay.regionCount,
+        text_height_share: eligibility.overlay.textHeightShare,
+        text_line_count: eligibility.overlay.textLineCount,
       }
       : null,
     marketplace_eligibility_version: MARKETPLACE_ELIGIBILITY_VERSION,
@@ -114,19 +160,22 @@ export function marketplaceEligibilityDetail(
 }
 
 /**
- * The stored decision, or null where none was ever made.
+ * The stored state, or `pending` where none was ever made.
  *
- * NULL IS NOT FALSE. An image stored before this existed has not been judged,
- * and hiding every one of them the moment this deploys would empty cards whose
- * pictures are perfectly good. They stay displayable and are re-judged by
- * `reprocess_source_images`; until then they simply rank behind anything that
- * HAS been judged eligible — see `compareMarketplaceEligibility`.
+ * AN UNJUDGED IMAGE IS PENDING, WHICH IS NOT ELIGIBLE. A row written before
+ * this existed has not been judged, and treating "never looked" as "looked and
+ * it was fine" is precisely the fail-open this module refuses. The autonomous
+ * settler brings them all through assessment; until it has, their cards show
+ * nothing.
  */
-export function readMarketplaceEligible(
+export function readMarketplaceState(
   sourceDetail: Record<string, unknown> | null | undefined,
-): boolean | null {
-  const raw = (sourceDetail ?? {}).marketplace_display_eligible;
-  return raw === true || raw === false ? raw : null;
+): MarketplaceEligibilityState {
+  const raw = (sourceDetail ?? {}).marketplace_eligibility_state;
+  if (raw === 'eligible' || raw === 'ineligible' || raw === 'pending') return raw;
+  // A row written by the first shape of this feature, which stored only the
+  // boolean. True still means measured-and-clean; anything else is unjudged.
+  return (sourceDetail ?? {}).marketplace_display_eligible === true ? 'eligible' : 'pending';
 }
 
 /** The version the stored decision was made under. 0 when never made. */
@@ -137,32 +186,23 @@ export function readEligibilityVersion(
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
 }
 
-/** May this image be drawn on a card? Only an explicit `false` forbids it. */
+/** May this image be drawn on a card? ONLY an explicit `eligible` may. */
 export function isMarketplaceEligible(
   sourceDetail: Record<string, unknown> | null | undefined,
 ): boolean {
-  return readMarketplaceEligible(sourceDetail) !== false;
+  return readMarketplaceState(sourceDetail) === 'eligible';
 }
 
 /**
- * Order two candidates: judged-eligible first, unjudged after.
+ * Does this stored decision need making again?
  *
- * A legacy image carries no decision, and must never outrank one that has been
- * measured and passed — otherwise deploying this would leave a card showing
- * the older, unexamined picture while the examined one waits behind it.
+ * True for anything never judged, anything judged under an older algorithm,
+ * and anything left `pending` — a pending row is one the decoders could not
+ * read, and the next version's decoders may be able to.
  */
-export function compareMarketplaceEligibility(
-  a: Record<string, unknown> | null | undefined,
-  b: Record<string, unknown> | null | undefined,
-): number {
-  const rank = (detail: Record<string, unknown> | null | undefined) =>
-    readMarketplaceEligible(detail) === true ? 0 : 1;
-  return rank(a) - rank(b);
-}
-
-/** Does this stored decision need making again? */
 export function needsEligibilityAssessment(
   sourceDetail: Record<string, unknown> | null | undefined,
 ): boolean {
-  return readEligibilityVersion(sourceDetail) < MARKETPLACE_ELIGIBILITY_VERSION;
+  if (readEligibilityVersion(sourceDetail) < MARKETPLACE_ELIGIBILITY_VERSION) return true;
+  return readMarketplaceState(sourceDetail) === 'pending';
 }

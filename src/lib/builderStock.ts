@@ -14,7 +14,7 @@ import {
   comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from '../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
 import {
-  compareMarketplaceEligibility, isMarketplaceEligible,
+  isMarketplaceEligible,
 } from '../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
 
 export {
@@ -354,8 +354,7 @@ export function primaryStockImage(item: BuilderStockItem): BuilderStockImage | n
   // it — the strength of the source's own evidence first, then the order the
   // SOURCE gave them, then the id — so the two never disagree.
   return [...displayable].sort((a, b) =>
-    compareMarketplaceEligibility(a.source_detail, b.source_detail)
-    || comparePrimaryEvidence(
+    comparePrimaryEvidence(
       readStoredEvidenceLevel(a.source_detail), readStoredEvidenceLevel(b.source_detail))
     || (a.position ?? 0) - (b.position ?? 0)
     || String(a.id).localeCompare(String(b.id)))[0] ?? null;

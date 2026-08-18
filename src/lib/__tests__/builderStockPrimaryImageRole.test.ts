@@ -34,6 +34,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { ANNOTATED_VERDICT, CLEAN_VERDICT } from './fixtures/builderStockPictures';
+
 import {
   assignPdfMediaRoles, findPropertyCoverPages, packageFactsOn, selectCoverHero,
 } from '../../../supabase/functions/_shared/builderStock/pdfPrimaryImage.pure';
@@ -582,9 +584,15 @@ const storedImage = (over: Record<string, unknown> = {}) => ({
   processing_status: 'ready',
   position: 0,
   storage_path: 'org/items/item-1/source/render.jpg',
-  source_detail: roleDetail(roleFromStructuralContainer({
-    container: 'the Notion row for this property', designation: 'page cover',
-  })),
+  // Designation AND verdict. The source saying "this is the property's
+  // picture" is the third question; whether that picture may go on a card is
+  // the fourth, and a row that has never been asked it is not displayable.
+  source_detail: {
+    ...roleDetail(roleFromStructuralContainer({
+      container: 'the Notion row for this property', designation: 'page cover',
+    })),
+    ...CLEAN_VERDICT,
+  },
   ...over,
 });
 
@@ -793,11 +801,17 @@ describe('W — choosing between two proven primaries for one property', () => {
     processing_status: 'ready',
     storage_path: 'org/items/item-1/source/x.png',
     position: 0,
-    source_detail: { role: 'primary_property', role_evidence_level: 3 },
+    source_detail: { role: 'primary_property', role_evidence_level: 3, ...CLEAN_VERDICT },
     ...over,
   });
 
-  /** The shape the live rows have: a page cover, and nothing else. */
+  /**
+   * The shape the live rows have: a page cover, and nothing else.
+   *
+   * Designated by the source, and MEASURED as carrying promotional treatment —
+   * which is what Lot 13 and Lot 1663 are. It appears here to prove it can
+   * never be chosen, whatever it is ranked against.
+   */
   const marketingTile = candidate({
     id: 'cover-tile',
     position: 0,
@@ -805,6 +819,18 @@ describe('W — choosing between two proven primaries for one property', () => {
       role: 'primary_property',
       role_evidence_level: 3,
       role_evidence: 'the Notion row for this property designates this image as its page cover',
+      ...ANNOTATED_VERDICT,
+    },
+  });
+  /** The same slot, with a picture the measurement found nothing on. */
+  const cleanCover = candidate({
+    id: 'cover-clean',
+    position: 0,
+    source_detail: {
+      role: 'primary_property',
+      role_evidence_level: 3,
+      role_evidence: 'the Notion row for this property designates this image as its page cover',
+      ...CLEAN_VERDICT,
     },
   });
   /** What a source that ALSO names a property-image field supplies. */
@@ -815,35 +841,52 @@ describe('W — choosing between two proven primaries for one property', () => {
       role: 'primary_property',
       role_evidence_level: 1,
       role_evidence: 'the column "Property Image" names this image',
+      ...CLEAN_VERDICT,
     },
   });
 
   it('takes the field the builder named over the cover slot, whatever the order', () => {
-    expect(chooseDisplayableImage([marketingTile, cleanOriginal])!.id).toBe('field-original');
-    expect(chooseDisplayableImage([cleanOriginal, marketingTile])!.id).toBe('field-original');
+    expect(chooseDisplayableImage([cleanCover, cleanOriginal])!.id).toBe('field-original');
+    expect(chooseDisplayableImage([cleanOriginal, cleanCover])!.id).toBe('field-original');
   });
 
   it('a package cover hero beats a row cover, and loses to a named field', () => {
     const packageHero = candidate({
       id: 'package-hero',
       position: 9,
-      source_detail: { role: 'primary_property', role_evidence_level: 2 },
+      source_detail: { role: 'primary_property', role_evidence_level: 2, ...CLEAN_VERDICT },
     });
-    expect(chooseDisplayableImage([marketingTile, packageHero])!.id).toBe('package-hero');
+    expect(chooseDisplayableImage([cleanCover, packageHero])!.id).toBe('package-hero');
     expect(chooseDisplayableImage([packageHero, cleanOriginal])!.id).toBe('field-original');
   });
 
-  it('keeps the tile when the source designates nothing else — Lot 13 and Lot 1663', () => {
-    // The live case. An empty frame is not an improvement on the picture the
-    // builder actually published for the property, and there is nothing else.
-    expect(chooseDisplayableImage([marketingTile])!.id).toBe('cover-tile');
+  /**
+   * THE LIVE CASE, AND THE THING THIS ORDERING MUST NOT BE MISTAKEN FOR.
+   *
+   * Ranking chooses BETWEEN images a card may show. It is not what refuses
+   * one. A designated tile carrying a status ribbon is refused by the display
+   * rule, so being the only candidate promotes it to nothing — the card shows
+   * no image, which is the correct answer for Lot 13 and Lot 1663.
+   */
+  it('shows nothing when the only designated image is a marketing tile', () => {
+    expect(chooseDisplayableImage([marketingTile])).toBeNull();
+  });
+
+  it('and reaches past one to a clean image however weakly designated', () => {
+    const weakerButClean = candidate({
+      id: 'package-hero', position: 9,
+      source_detail: { role: 'primary_property', role_evidence_level: 2, ...CLEAN_VERDICT },
+    });
+    // Level 3 outranks level 2 and still loses, because it is not a candidate.
+    expect(chooseDisplayableImage([marketingTile, weakerButClean])!.id).toBe('package-hero');
   });
 
   it('never lets an unrecorded level outrank a stated one', () => {
     const legacy = candidate({
-      id: 'legacy', position: 0, source_detail: { role: 'primary_property' },
+      id: 'legacy', position: 0,
+      source_detail: { role: 'primary_property', ...CLEAN_VERDICT },
     });
-    expect(chooseDisplayableImage([legacy, marketingTile])!.id).toBe('cover-tile');
+    expect(chooseDisplayableImage([legacy, cleanCover])!.id).toBe('cover-clean');
   });
 
   it('falls through to position and then id when the evidence ties', () => {
@@ -859,9 +902,9 @@ describe('W — choosing between two proven primaries for one property', () => {
     // for the designation itself.
     const notPrimary = candidate({
       id: 'interior',
-      source_detail: { role: 'interior', role_evidence_level: 1 },
+      source_detail: { role: 'interior', role_evidence_level: 1, ...CLEAN_VERDICT },
     });
     expect(chooseDisplayableImage([notPrimary])).toBeNull();
-    expect(chooseDisplayableImage([notPrimary, marketingTile])!.id).toBe('cover-tile');
+    expect(chooseDisplayableImage([notPrimary, cleanCover])!.id).toBe('cover-clean');
   });
 });

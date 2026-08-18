@@ -11,13 +11,28 @@
  * uploaded is not a deployment step; it is a defect with instructions.
  *
  * So this drives the SAME repair from pg_cron. It is a sweep, not a service:
- * every upload carries `source_images_settled_version`, this brings the ones
- * below the current version up to it, and when none are left the migration's
- * cron job unschedules itself. Nothing here is on a read path and nothing runs
- * when there is no work.
+ * every upload carries a settled-version marker, this brings the ones below
+ * the current version up to it, and when none are left the migration's cron
+ * job unschedules itself. Nothing here is on a read path and nothing runs when
+ * there is no work.
  *
- * WHAT IT MAY WRITE. `builder_stock_item_images` rows, the `primary_image_id`
- * those rows earn, and the settlement marker. No stock item is created or
+ * IT NOW CARRIES TWO KINDS OF WORK, UNDER TWO MARKERS. Provenance
+ * (`source_images_settled_version`) is where a row's bytes came from and what
+ * the source designated them as. Marketplace display eligibility
+ * (`marketplace_eligibility_settled_version`) is whether the picture itself may
+ * go on a card — a facade under a status ribbon answers every provenance
+ * question correctly and is still not a card image. They are versioned apart on
+ * purpose: improving the classifier must not re-fetch every Notion page, and
+ * re-reading a source must not re-run a classifier that has not changed. An
+ * upload behind on either is outstanding, and every upload written before the
+ * fourth question existed is behind on the second one — which is what makes
+ * this the thing that repairs production, with nobody pressing anything.
+ *
+ * WHAT IT MAY WRITE. `builder_stock_item_images` rows, the display verdict
+ * inside their `source_detail`, the `primary_image_id` those rows earn, and the
+ * two settlement markers. THE STORED IMAGE IS NEVER REWRITTEN: eligibility
+ * re-READS each object to measure it, and no byte of any picture is altered,
+ * cropped, blurred or replaced by anything. No stock item is created or
  * deleted; no price, availability, configuration, status, selection, builder or
  * project/unit linkage is touched. Those guarantees are `repairSourceImages.ts`'s
  * and are not restated here — this only decides WHICH uploads it runs for.
@@ -32,9 +47,11 @@ import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
 import { internalErrorResponse } from '../_shared/errorResponse.ts';
 import {
-  runSettlementTick, settleUploadSourceImages, SETTLED_VERSION_COLUMN,
+  runSettlementTick, settleUploadSourceImages, uploadHasWorkOutstanding,
+  ELIGIBILITY_SETTLED_VERSION_COLUMN, SETTLED_VERSION_COLUMN,
   type SettlementCandidate,
 } from '../_shared/builderStock/settleSourceImages.ts';
+import { MARKETPLACE_ELIGIBILITY_VERSION } from '../_shared/builderStock/marketplaceEligibility.pure.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 
@@ -95,7 +112,8 @@ Deno.serve(async (req: Request) => {
      */
     const { data: rows, error } = await supabase
       .from('builder_stock_uploads')
-      .select(`id, organisation_id, ${SETTLED_VERSION_COLUMN}`)
+      .select(
+        `id, organisation_id, ${SETTLED_VERSION_COLUMN}, ${ELIGIBILITY_SETTLED_VERSION_COLUMN}`)
       .is('deleted_at', null)
       .order('created_at', { ascending: true })
       .limit(500);
@@ -109,8 +127,15 @@ Deno.serve(async (req: Request) => {
       return json({ success: true, settled: 0, remaining: 0, skipped: 'marker_unavailable' });
     }
 
-    const outstanding = (rows ?? []).filter((row: Record<string, unknown>) =>
-      Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION);
+    /**
+     * Outstanding on EITHER marker.
+     *
+     * Provenance and marketplace display eligibility are versioned
+     * separately — see `settleSourceImages.ts` — so an upload whose imagery is
+     * current can still owe a display verdict, which is exactly the state
+     * every existing upload is in the moment this ships.
+     */
+    const outstanding = (rows ?? []).filter(uploadHasWorkOutstanding);
 
     if (!outstanding.length) {
       // Quiet path. The migration's job unschedules itself on this.
@@ -129,12 +154,18 @@ Deno.serve(async (req: Request) => {
       outstanding.map((row): SettlementCandidate => ({
         id: String(row.id),
         organisation_id: String(row.organisation_id),
+        needsProvenance:
+          Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION,
+        needsEligibility:
+          Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < MARKETPLACE_ELIGIBILITY_VERSION,
       })),
       { maxSettled: MAX_UPLOADS_PER_TICK, deadlineAt },
       (candidate) => settleUploadSourceImages(supabase, {
         organisationId: candidate.organisation_id,
         uploadId: candidate.id,
         deadlineAt,
+        needsProvenance: candidate.needsProvenance,
+        needsEligibility: candidate.needsEligibility,
       }),
     );
 

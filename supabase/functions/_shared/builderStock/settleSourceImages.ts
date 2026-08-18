@@ -29,16 +29,34 @@
 import { repairSourceImagesForUpload, type RepairOutcome } from './repairSourceImages.ts';
 import { PROVENANCE_VERSION, type SourceImageFetcher } from './sourceImages.ts';
 import type { PackageFetcher } from './packageImages.ts';
+import {
+  settleMarketplaceEligibility, type EligibilitySettlement,
+} from './settleMarketplaceEligibility.ts';
+import { MARKETPLACE_ELIGIBILITY_VERSION } from './marketplaceEligibility.pure.ts';
 
 /** The column that records how far an upload's imagery has been brought. */
 export const SETTLED_VERSION_COLUMN = 'source_images_settled_version';
 
+/**
+ * And the column that records how far its DISPLAY ELIGIBILITY has been brought.
+ *
+ * A SECOND MARKER, DELIBERATELY. Provenance and display eligibility are
+ * different questions with different algorithms that change at different
+ * times: improving the marketing-tile classifier must not re-fetch every
+ * Notion page and every Drive package, and re-reading a source must not
+ * re-run a classifier that has not changed. One marker each is what keeps the
+ * two from dragging each other around.
+ */
+export const ELIGIBILITY_SETTLED_VERSION_COLUMN = 'marketplace_eligibility_settled_version';
+
 export interface SettlementOutcome {
   uploadId: string;
-  /** True when this upload is now at the current provenance version. */
+  /** True when this upload is now at BOTH current versions. */
   settled: boolean;
   /** The repair's own report, when one ran. */
   repair?: RepairOutcome;
+  /** The eligibility sweep's report, when one ran. */
+  eligibility?: EligibilitySettlement;
   /** Safe to surface: why settlement could not complete. */
   error?: string;
 }
@@ -60,7 +78,7 @@ export async function uploadsNeedingSettlement(
 ): Promise<string[]> {
   let query = db
     .from('builder_stock_uploads')
-    .select(`id, ${SETTLED_VERSION_COLUMN}`)
+    .select(`id, ${SETTLED_VERSION_COLUMN}, ${ELIGIBILITY_SETTLED_VERSION_COLUMN}`)
     .eq('organisation_id', input.organisationId)
     .is('deleted_at', null)
     .order('created_at', { ascending: true })
@@ -71,15 +89,28 @@ export async function uploadsNeedingSettlement(
   if (error) return [];
 
   return (data ?? [])
-    .filter((row: Record<string, unknown>) =>
-      Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION)
+    .filter((row: Record<string, unknown>) => uploadHasWorkOutstanding(row))
     .map((row: { id: string }) => row.id);
+}
+
+/**
+ * Does this upload row still owe either kind of work?
+ *
+ * Shared by the portal's own read and the autonomous sweep so the two cannot
+ * disagree about what "outstanding" means.
+ */
+export function uploadHasWorkOutstanding(row: Record<string, unknown>): boolean {
+  return Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION
+    || Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < MARKETPLACE_ELIGIBILITY_VERSION;
 }
 
 /** An upload the sweep may pick up, as the queue read returns it. */
 export interface SettlementCandidate {
   id: string;
   organisation_id: string;
+  /** What this upload owes, so a settled half is not redone. */
+  needsProvenance?: boolean;
+  needsEligibility?: boolean;
 }
 
 export interface SettlementTickOutcome {
@@ -142,13 +173,69 @@ export async function runSettlementTick(
  */
 export async function settleUploadSourceImages(
   db: any,
-  input: { organisationId: string; uploadId: string; deadlineAt?: number },
+  input: {
+    organisationId: string;
+    uploadId: string;
+    deadlineAt?: number;
+    /**
+     * What this upload actually owes, read from its markers.
+     *
+     * Both default to true so a caller that has not looked still does the
+     * work — but a sweep that HAS looked can settle an upload whose imagery is
+     * already current and whose display eligibility is not, without re-reading
+     * its Notion page or its Drive package to discover nothing has changed.
+     */
+    needsProvenance?: boolean;
+    needsEligibility?: boolean;
+  },
   deps: {
     fetchPackage?: PackageFetcher;
     fetchImage?: SourceImageFetcher;
     readPageTexts?: (bytes: Uint8Array) => Promise<string[]>;
   } = {},
 ): Promise<SettlementOutcome> {
+  const needsProvenance = input.needsProvenance !== false;
+  const needsEligibility = input.needsEligibility !== false;
+
+  /**
+   * DISPLAY ELIGIBILITY FIRST, and on its own marker.
+   *
+   * It reads stored objects rather than sources, so it is cheap, and it is
+   * what decides whether a card may draw anything at all. Running it before
+   * the source repair means an upload whose imagery is already current still
+   * gets its verdicts on this pass.
+   */
+  let eligibility: EligibilitySettlement | undefined;
+  if (needsEligibility) {
+    eligibility = await settleMarketplaceEligibility(db, input.organisationId, {
+      uploadId: input.uploadId,
+      deadlineAt: input.deadlineAt,
+    });
+    if (!eligibility.incomplete) {
+      const { error: markError } = await db
+        .from('builder_stock_uploads')
+        .update({ [ELIGIBILITY_SETTLED_VERSION_COLUMN]: MARKETPLACE_ELIGIBILITY_VERSION })
+        .eq('id', input.uploadId)
+        .eq('organisation_id', input.organisationId);
+      if (markError) {
+        // The column is missing (migration not applied). The work was done; it
+        // will simply be done again rather than being skipped.
+        console.warn('[builderStock] eligibility marker not written', {
+          upload_id: input.uploadId,
+          phase: 'eligibility_marker',
+          message: String(markError.message ?? markError).slice(0, 200),
+        });
+        return { uploadId: input.uploadId, settled: false, eligibility };
+      }
+    } else {
+      return { uploadId: input.uploadId, settled: false, eligibility };
+    }
+  }
+
+  if (!needsProvenance) {
+    return { uploadId: input.uploadId, settled: true, eligibility };
+  }
+
   let repair: RepairOutcome;
   try {
     repair = await repairSourceImagesForUpload(db, {
@@ -164,7 +251,7 @@ export async function settleUploadSourceImages(
       phase: 'source_image_settlement',
       message,
     });
-    return { uploadId: input.uploadId, settled: false, error: message };
+    return { uploadId: input.uploadId, settled: false, eligibility, error: message };
   }
 
   if (repair.problems.length) {
@@ -186,7 +273,7 @@ export async function settleUploadSourceImages(
    * comes back.
    */
   if (repair.incomplete) {
-    return { uploadId: input.uploadId, settled: false, repair };
+    return { uploadId: input.uploadId, settled: false, repair, eligibility };
   }
   if (repair.error) {
     console.warn('[builderStock] source could not be re-read for settlement', {
@@ -209,8 +296,8 @@ export async function settleUploadSourceImages(
       phase: 'settlement_marker',
       message: String(markError.message ?? markError).slice(0, 200),
     });
-    return { uploadId: input.uploadId, settled: false, repair };
+    return { uploadId: input.uploadId, settled: false, repair, eligibility };
   }
 
-  return { uploadId: input.uploadId, settled: true, repair };
+  return { uploadId: input.uploadId, settled: true, repair, eligibility };
 }

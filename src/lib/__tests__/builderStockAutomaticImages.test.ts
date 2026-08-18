@@ -27,6 +27,10 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import {
+  annotatedPicture, cleanPicture, jpegOf, pngOf,
+} from './fixtures/builderStockPictures';
+
 import { importStockRecords } from '../../../supabase/functions/_shared/builderStock/importStock';
 import { extractStockFile } from '../../../supabase/functions/_shared/builderStock/extract';
 import { classifyStockFile } from '../../../supabase/functions/_shared/builderStock/fileTypes.pure';
@@ -35,6 +39,7 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/primaryImage';
 import { SOURCE_ANCHOR_HEADER } from '../../../supabase/functions/_shared/builderStock/sourceAssets.pure';
 import { PROVENANCE_VERSION } from '../../../supabase/functions/_shared/builderStock/sourceImages';
+import { MARKETPLACE_ELIGIBILITY_VERSION } from '../../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
 import {
   runSettlementTick, settleUploadSourceImages, uploadsNeedingSettlement,
   type SettlementCandidate,
@@ -153,13 +158,22 @@ function fakeDb(seed: { items?: Row[]; uploads?: Row[] } = {}) {
 
 const encoder = new TextEncoder();
 
-function jpeg(fill: number, bytes: number): Uint8Array {
-  const out = new Uint8Array(bytes);
-  out.set([0xff, 0xd8, 0xff, 0xe0], 0);
-  out.fill(fill, 4, bytes - 2);
-  out.set([0xff, 0xd9], bytes - 2);
-  return out;
+/**
+ * A real, decodable baseline JPEG at a stated file size.
+ *
+ * It has to be a real picture. Display eligibility DECODES what it is about to
+ * put on a card and fails closed, so `FFD8FFE0` followed by a fill byte — what
+ * this fixture used to be — is now measured as exactly what it is: something no
+ * decoder can read, which is not displayable. `padTo` only sets the file size,
+ * so the two images in the document still order by size the way the live
+ * contract's do.
+ */
+function jpeg(seed: number, bytes: number): Uint8Array {
+  return jpegOf(seed === CLEAN_SEED ? cleanPicture(320, 166) : annotatedPicture(320, 166), bytes);
 }
+
+/** The fill byte the cover used to carry, kept so the call sites still read. */
+const CLEAN_SEED = 0x11;
 
 const COVER_TEXT = 'LOT 537 KIRRAMINGLY AVENUE DONNYBROOK - BALMAIN ESTATE '
   + 'FIXED PRICE CONTRACT $941,990 Land Size 350 m2 Build Size 209.7 m2 6 bed 2 bath 2 car';
@@ -366,8 +380,7 @@ describe('H — a source with no designated primary', () => {
 describe('D/F/G — row-stated imagery settles automatically', () => {
   it('takes an explicit property-image column and points the property at it', async () => {
     const db = fakeDb();
-    const png = new Uint8Array(4096);
-    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    const png = await pngOf(cleanPicture(320, 166));
 
     const outcome = await importStockRecords(db, {
       organisationId: ORG, uploadId: UPLOAD, builderUserId: 'builder-1',
@@ -398,8 +411,7 @@ describe('D/F/G — row-stated imagery settles automatically', () => {
    */
   it('takes a Notion row cover and points the property at it', async () => {
     const db = fakeDb();
-    const png = new Uint8Array(4096);
-    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    const png = await pngOf(cleanPicture(320, 166));
     const anchor = 'notion:30ccabf9-2010-8099-b502-d7ac23995def';
 
     const outcome = await importStockRecords(db, {
@@ -449,6 +461,7 @@ describe('settlement brings existing sources up to the current rules', () => {
     id: UPLOAD, organisation_id: ORG, deleted_at: null,
     created_at: '2026-08-01T00:00:00Z',
     source_images_settled_version: null,
+    marketplace_eligibility_settled_version: null,
     ...over,
   }]);
 
@@ -459,9 +472,35 @@ describe('settlement brings existing sources up to the current rules', () => {
 
   it('lists nothing once the upload is at the current version', async () => {
     const db = fakeDb({
-      uploads: uploads({ source_images_settled_version: PROVENANCE_VERSION }),
+      uploads: uploads({
+        source_images_settled_version: PROVENANCE_VERSION,
+        marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+      }),
     });
     expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([]);
+  });
+
+  /**
+   * The two markers are separate questions and either one alone is unfinished
+   * work. An upload whose sources were re-read under the current provenance
+   * rules has still never had its pictures JUDGED, and until they are, its
+   * cards show nothing — so the sweep has to keep picking it up.
+   */
+  it('still lists an upload whose images have never been judged', async () => {
+    const db = fakeDb({
+      uploads: uploads({ source_images_settled_version: PROVENANCE_VERSION }),
+    });
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([UPLOAD]);
+  });
+
+  it('and one judged under an older eligibility algorithm', async () => {
+    const db = fakeDb({
+      uploads: uploads({
+        source_images_settled_version: PROVENANCE_VERSION,
+        marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION - 1,
+      }),
+    });
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([UPLOAD]);
   });
 
   /**
