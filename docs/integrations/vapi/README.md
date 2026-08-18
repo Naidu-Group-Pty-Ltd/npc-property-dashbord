@@ -145,6 +145,33 @@ assistant references a `credentialId`**, so the link is visible only from `/cred
 `Vapi-Twilio` is a `byo-sip-trunk` with one gateway, `npc-vapi.pstn.twilio.com`, and
 **`inboundEnabled: false`**.
 
+## What a clone can actually carry
+
+[`snapshot/CLONE-CONTRACT.md`](./snapshot/CLONE-CONTRACT.md) ·
+[`snapshot/clone-contract.json`](./snapshot/clone-contract.json) — every live record
+diffed field by field against the `POST` schema that will have to accept it. **No object in
+this account is missing a required field**, so everything here is expressible. The problem
+is the other direction.
+
+**Nine assistant fields and three tool fields are returned by the live API and appear
+nowhere in the 2 MB spec** — not in the read schema, not in the Create DTO. `serverUrl` is
+not in the document at all. Six non-function tools carry a `function` object that only
+`CreateFunctionToolDTO` declares, and for `transferCall` and `endCall` that object holds the
+description **the model reads to decide when to fire the tool**. Either the spec is
+incomplete or a `POST` discards these values; only a write settles it, and this snapshot
+makes none. **Create one assistant and one `transferCall` tool in the new account, read them
+back, and diff — before cloning the other twenty-six.**
+
+For the NPC fifteen the exposure is small and specific: three assistants carry any of the
+nine, none carries `serverUrl`, and the one that bites is `backgroundDenoisingEnabled: true`
+on `NPC Active Nurturing` and `NPC Strategy Session (Phone) Follow Up`, neither of which has
+a `backgroundSpeechDenoisingPlan` to fall back on.
+
+That file also carries the create order derived from the id references, and the two
+blocked prerequisites: the four **Twilio Account SIDs** are `required` by
+`CreateTwilioPhoneNumberDTO` and are redacted here by design, and all seven provider
+credentials have to be re-authorised by hand because Vapi never returns their values.
+
 ## Observability, reporting and evaluation
 
 [`snapshot/OBSERVABILITY-AND-REPORTING.md`](./snapshot/OBSERVABILITY-AND-REPORTING.md) ·
