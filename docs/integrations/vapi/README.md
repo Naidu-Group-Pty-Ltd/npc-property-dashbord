@@ -145,7 +145,13 @@ assistant references a `credentialId`**, so the link is visible only from `/cred
 `Vapi-Twilio` is a `byo-sip-trunk` with one gateway, `npc-vapi.pstn.twilio.com`, and
 **`inboundEnabled: false`**.
 
-## The clone kit — push leg staged, not fired
+## The clone kit — push executed 2026-08-18, phone numbers pending
+
+**The push has run**: 45 objects — files, tools, structured outputs, scorecard, all 15
+assistants, the squad, the workflow, insights and board — now exist in the new account,
+verified three ways with zero real diffs; only the 4 phone numbers remain, deliberately.
+[`clone-kit/RUN-REPORT.md`](./clone-kit/RUN-REPORT.md) carries the probe verdict (every
+contested field **accepted**) and the full old→new id map.
 
 [`clone-kit/`](./clone-kit/) turns the snapshot into 49 dependency-ordered `POST`
 payloads (validated against the Create DTOs, offline) and a pusher, `push.py`, that is

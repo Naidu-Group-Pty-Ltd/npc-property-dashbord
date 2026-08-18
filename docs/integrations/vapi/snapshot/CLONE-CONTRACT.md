@@ -57,11 +57,13 @@ function tools, yet they carry a `function` object — and it is not decoration:
 that drops them changes behaviour rather than metadata.
 
 **So the spec cannot be used on its own to decide what to send.** Either it is incomplete
-and the API accepts these fields, or a `POST` silently discards them. Both are consistent
-with the evidence here, and the difference is only settleable by writing — which this
-snapshot deliberately does not do. **Verification step for the cutover: create one
-assistant and one `transferCall` tool in the new account carrying these fields, read them
-back, and diff.** Do that before cloning the other twenty-six.
+and the API accepts these fields, or a `POST` silently discards them. Both were consistent
+with the evidence here, and the difference was only settleable by writing.
+
+> **Settled, 2026-08-18.** The probe ran against the new account before the clone:
+> **every contested field was accepted** — all nine on the assistant, and `function` +
+> `async` on a `transferCall` tool. The spec under-documents what the API stores and
+> returns; nothing is discarded. See [`../clone-kit/RUN-REPORT.md`](../clone-kit/RUN-REPORT.md).
 
 ## What this means for the fifteen NPC assistants
 

@@ -56,6 +56,8 @@ def http(method, path, body=None, raw=None, content_type='application/json'):
     data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header('Authorization', f'Bearer {token()}')
+    # Cloudflare rejects urllib's default Python-urllib/x UA with error 1010
+    req.add_header('User-Agent', 'npc-vapi-clone-kit/1.0')
     if data is not None:
         req.add_header('Content-Type', content_type)
     ctx = ssl.create_default_context(cafile=os.environ.get('SSL_CERT_FILE') or None)
@@ -282,7 +284,7 @@ def cmd_probe(args):
         'type': 'transferCall',
         'function': {'name': 'probe_transfer', 'description': 'PROBE - delete me'},
         'async': False,
-        'destinations': [{'type': 'number', 'number': '+61000000000'}],
+        'destinations': [{'type': 'number', 'number': '+61212345678'}],
     }
     probe_assistant = {
         'name': 'ZZ PROBE - delete me',
