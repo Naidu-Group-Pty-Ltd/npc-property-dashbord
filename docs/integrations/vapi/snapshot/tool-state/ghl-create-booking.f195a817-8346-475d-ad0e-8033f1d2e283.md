@@ -1,20 +1,32 @@
 # ghl_create_booking
 
-`f195a817-8346-475d-ad0e-8033f1d2e283` · type `function` · created 2026-05-12 · updated 2026-05-14 17:53:57 · version `—`
+`f195a817-8346-475d-ad0e-8033f1d2e283` · type `function` · async `False` · version `—`
+· created 2026-05-12 · updated 2026-05-14 17:53:57
+· org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 
 ## Server
 
 - **URL**: `https://hook.eu2.make.com/eop70ky2635nobauh7lyof13sctvl0ga`
-- **Timeout**: 20s
-- **Headers**: —
-- **async**: `False`
+- **timeoutSeconds**: `20`
+- **staticIpAddressesEnabled**: `False`
+- **headers**: none
+- **credential**: no authentication
 
 ## Function
 
 - **name**: `ghl_create_booking`
-- **parameters**: 10 (`booking_intent_text`, `caller_context`, `contactId`, `endTime`, `locationId`, `notes`, `preferred_date_text`, `search_reason`, `startTime`, `timezone`)
-- **required**: `booking_intent_text`, `locationId`, `contactId`, `startTime`, `endTime`, `timezone`
+- **strict**: `—`
+- **model-supplied parameters** (10): `booking_intent_text`, `caller_context`, `contactId`, `endTime`, `locationId`, `notes`, `preferred_date_text`, `search_reason`, `startTime`, `timezone`
+- **required**: `booking_intent_text`, `contactId`, `endTime`, `locationId`, `startTime`, `timezone`
 - **description**: 540 chars → [prose](../tool-prose/ghl-create-booking.f195a817-8346-475d-ad0e-8033f1d2e283.md)
+
+## Static body fields
+
+_none_
+
+## Variable extraction
+
+- schema: `{"type": "object", "required": [], "properties": {}}`
 
 ## Messages
 

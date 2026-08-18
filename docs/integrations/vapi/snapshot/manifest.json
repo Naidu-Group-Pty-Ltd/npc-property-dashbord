@@ -16,6 +16,15 @@
       "GET /tool/{id}/version": "404",
       "GET /tool/{id}/versions": "200 \u2014 20 named versions, one per tool",
       "note": "The two assistant endpoints are different systems, not aliases. Both are captured."
+    },
+    "toolViewCoverage": {
+      "assertion": "Every scalar value in every raw tool payload appears in at least one readable view (tool-prose, tool-state or tools-index). Currently 0 unrepresented.",
+      "exclusions": [
+        "orgId",
+        "function.parameters.type \u2014 the constant \"object\" on all 20 tools",
+        "credential header values, which are redacted by design"
+      ],
+      "history": "An earlier version of these views omitted four things that only the raw JSON carried: static body fields (tool.parameters), variableExtractionPlan, tool metadata and function.strict \u2014 plus non-credential header values. The raw JSON was always complete; the readable layer was not. This assertion exists so that cannot recur silently."
     }
   },
   "counts": {

@@ -1,20 +1,36 @@
 # ghl_mcp
 
-`32c907eb-ff8c-4a9e-868d-67eb1144ee42` · type `mcp` · created 2026-05-14 · updated 2026-05-14 09:17:51 · version `—`
+`32c907eb-ff8c-4a9e-868d-67eb1144ee42` · type `mcp` · async `None` · version `—`
+· created 2026-05-14 · updated 2026-05-14 09:17:51
+· org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 
 ## Server
 
 - **URL**: `https://services.leadconnectorhq.com/mcp/`
-- **Timeout**: —s
-- **Headers**: `Authorization`, `locationId`  ⚠️ carries a credential (redacted in the JSON)
-- **async**: `None`
+- **timeoutSeconds**: `—`
+- **staticIpAddressesEnabled**: `—`
+- **headers**: `Authorization` = `{{REDACTED:CREDENTIAL}}`, `locationId` = `H7NNnJKSofGaRJHTkAd3`
+- **credential**: set
 
 ## Function
 
 - **name**: `ghl_mcp`
-- **parameters**: 0 (—)
+- **strict**: `—`
+- **model-supplied parameters** (0): —
 - **required**: —
 - **description**: 278 chars → [prose](../tool-prose/ghl-mcp.32c907eb-ff8c-4a9e-868d-67eb1144ee42.md)
+
+## Static body fields
+
+_none_
+
+## Variable extraction
+
+_none_
+
+## Metadata
+
+- `{"protocol": "shttp"}`
 
 ## Messages
 

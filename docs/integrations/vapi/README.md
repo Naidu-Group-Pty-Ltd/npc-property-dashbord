@@ -91,6 +91,21 @@ the inbound handoff routing has never actually been exercised in production.
 | `snapshot/tool-versions/<tool>.json` | `GET /tool/{id}/versions`. |
 | `snapshot/TOOLS-COMPARISON.md` | All 20 side by side, an assistant × tool matrix, and every orphan and dangling reference. |
 
+**Every scalar value in every raw tool payload is represented in at least one of these views.**
+That is asserted, not assumed — the only exclusions are `orgId`, the constant
+`function.parameters.type`, and credential header values, which are redacted by design.
+The assertion exists because an earlier version of these views silently omitted four things:
+**static body fields** (`tool.parameters`), `variableExtractionPlan`, tool `metadata` and
+`function.strict`. The raw JSON always carried them; the readable layer did not.
+
+Static body fields matter most of the four. They are what the tool sends on **every** call
+regardless of what the model decides — `transfer_to_human` posts `callerPhone`,
+`customer_number`, `vapiCallId`, `calledNumber` and `callType`, all filled from Vapi
+template variables. Four of the twenty tools use them, and `phoneNumber_inject` sends
+thirteen. `variableExtractionPlan.aliases` is the same story in reverse: it binds fields of
+the HTTP response back into Vapi variables, which is how `contactId` and `firstName` become
+available to later turns.
+
 The prose files matter more than they look. A tool's description is what decides whether the
 model calls it at all, and `ghl_create_booking` alone carries a 500-character description
 plus ten documented parameters — that text is the contract, and it is easier to review as
