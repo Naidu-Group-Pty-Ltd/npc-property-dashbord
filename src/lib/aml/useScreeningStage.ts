@@ -136,7 +136,9 @@ export function useScreeningStage(
     return {
       sync: raw.sync,
       readiness, scope, position,
-      stage: describeScreeningStage(scope, readiness),
+      // The server decides whether the provider bears on this case; the
+      // browser must not reach a different conclusion from the same facts.
+      stage: describeScreeningStage(scope, readiness, raw.sync?.provider_relevant),
       loading,
       unavailable: !loading && raw.sync === null,
       reload,

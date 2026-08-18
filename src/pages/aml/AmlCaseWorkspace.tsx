@@ -78,7 +78,9 @@ import { LegacyVerificationHistoryPanel } from "@/components/aml/LegacyVerificat
 import { PartyVerificationPanel } from "@/components/aml/PartyVerificationPanel";
 import { PartyScreeningPanel } from "@/components/aml/PartyScreeningPanel";
 import { ScreeningStageCard } from "@/components/aml/ScreeningStageCard";
+import { SanctionsPerimeterControl } from "@/components/aml/SanctionsPerimeterControl";
 import { useScreeningStage } from "@/lib/aml/useScreeningStage";
+import { ADMIN_AML_CONFIGURATION_PATH } from "@/lib/aml/amlRoutes";
 import { useLiveCaseRefresh } from "@/lib/aml/useLiveCaseRefresh";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
@@ -400,7 +402,12 @@ export default function AmlCaseWorkspace() {
         return;
       }
       case "fix_provider":
-        navigate("/aml/configuration");
+        // `/aml/configuration` is not a route. `/aml` and `/aml/passport` are
+        // the client-facing surfaces; every staff AML page lives under
+        // `/admin/aml/*`, and the sidebar has always linked there. This was
+        // the one navigation that did not, so the single action offered for a
+        // provider fault led to a 404.
+        navigate(ADMIN_AML_CONFIGURATION_PATH);
         return;
       case "await_submission":
       case "await_provider_result":
@@ -658,6 +665,21 @@ export default function AmlCaseWorkspace() {
                 reading={screeningStage}
                 onAct={runScreeningAction}
                 canAct={canWrite}
+              />
+              {/*
+                The lever that makes the per-scope policy reachable. Without
+                it sanctions stayed required on every case by default —
+                correct, and unusable.
+
+                `canClassify` is reviewer/MLRO, matching the server. The
+                backend enforces it independently; this only decides whether
+                an action nobody may take is offered.
+              */}
+              <SanctionsPerimeterControl
+                caseId={caseRow.id}
+                perimeter={screeningStage.sync?.perimeter ?? null}
+                canClassify={access.isMlro || access.roles.has("reviewer")}
+                onChanged={() => { screeningStage.reload(); load(); }}
               />
               {/* Identity and screening share a customer but never share a
                   meaning: separate panels, separate evidence, separate
