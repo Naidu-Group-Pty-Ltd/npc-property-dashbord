@@ -123,11 +123,46 @@ options both named `Land`. The table holds 0 records, so nothing was lost.
 **Five unnamed select options were dropped** from `BRQ Detailed Responses`. All
 12 records are empty on all five of the fields concerned, so this cost 0 cells.
 
+## Automations
+
+Five of the six API-creatable automations were recreated over MCP on 2026-08-18,
+with every `tbl…`/`fld…` reference translated through
+[`automations/migration/id-references.json`](./automations/migration/id-references.json)
+onto the target base's ids. All five report `configurationStatus: valid` and all
+five are **undeployed** — `create_automation` saves the draft only, and these send
+mail to five real addresses, so turning them on is a deliberate act in the UI.
+
+| Automation | New id | Trigger |
+| --- | --- | --- |
+| Link Stage 2 response to applicant | `wflyGxwKaLbVsv14E` | recordMatchesConditions |
+| Link Stage 2 detailed response to applicant | `wfl37KYYbuQv15cRP` | recordMatchesConditions |
+| Link Stage 3 booking to applicant | `wfls49xnPmVibeeLs` | recordMatchesConditions |
+| Send Confirmation Email on New Business Readiness Response | `wflh77ndoCHYMbs6Q` | recordCreated |
+| Notify Aurixa Team on New Business Readiness Submission | `wflbWecuoA3q6sQLj` | recordCreated |
+
+**How they were checked.** Each was read back with `get_automation` and diffed
+against its id-translated source. Airtable mints its own node keys on create, so
+the comparison rewrites every `wac…`/`wde…`/`wtr…` key to a positional token
+before diffing — which also proves the internal `$ref` wiring survived, because a
+mis-wired reference would not land on the same position. **5 of 5 match**, filter
+trees, `fn` expressions, conditional branches and email bodies included.
+
+**`Automation 1` was not created**, and that is the one place this deviates from
+"recreate the 6". It is an empty stub: undeployed, `genericWebhookReceived`, zero
+nodes, `webhookSchemaIsSet: false` — the bundle's own
+[`automations/README.md`](./automations/README.md) says not to migrate it.
+Creating it would mint a fresh live-looking webhook URL in the company account
+that nothing consumes. Say so if you want it anyway for strict parity.
+
+The remaining four carry `customScript` nodes, which the API refuses
+(`readOnlyNodeType`), and are unchanged manual work.
+
 ## Still to do
 
 - Import `Emails` from CSV (5,325 or 2,819 records — see that README).
-- Write the two `Emails` link cells once its rows exist.
 - Add the seven UI-only fields if parity matters.
-- Recreate the 10 automations — [`automations/`](./automations/README.md); 4 of
-  them carry `customScript` and must be pasted by hand.
+- Turn on the five recreated automations once reviewed (all are off).
+- Rebuild the 4 script-bearing automations —
+  [`automations/`](./automations/README.md); each needs its `customScript` node
+  added and its script pasted by hand.
 - Re-point the Make scenarios at the new base and field ids.
