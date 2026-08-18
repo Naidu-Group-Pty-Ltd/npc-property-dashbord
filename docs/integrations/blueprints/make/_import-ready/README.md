@@ -75,8 +75,14 @@ Both were found in the source during this migration and are carried across
 unchanged, because a migration that silently edits behaviour is worse than one
 that reports it:
 
-- The Airtable base id in these blueprints is still `apptyShYE0yzL4IGB` — the
-  **old** base. Repoint it once the Airtable side of the migration lands.
+- ~~The Airtable base id in these blueprints is still `apptyShYE0yzL4IGB`.~~
+  **Done 2026-08-18.** All six now point at the migrated base
+  `appFNPL7iYiuQyHAO`: 6 table ids and 576 field references rewritten via
+  [`_airtable-id-map.json`](./_airtable-id-map.json). Only id tokens changed —
+  masking every `app…`/`tbl…`/`fld…` token makes before and after
+  byte-identical, so the HTML email bodies are provably untouched. How the map
+  was built and validated is in
+  [`../../../make/MAKE_CUTOVER.md`](../../../make/MAKE_CUTOVER.md).
 - `Aurixa Lead Capture`, the Airtable automation these feed, has a busy-wait
   loop, a `Math.random()` token gating the Stage-2 questionnaire URL, and four
   recipient addresses carrying a leading space. See

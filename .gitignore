@@ -64,3 +64,7 @@ ds-bundle/
 # by `npm run templates:library:cards`. Build output, regenerated on demand and
 # pushed to claude.ai/design with the DesignSync tool — never edited by hand.
 .design-system/
+
+# Vapi clone kit runtime state (ids only, but session-local)
+docs/integrations/vapi/clone-kit/clone-state.json
+docs/integrations/vapi/clone-kit/url-map.json
