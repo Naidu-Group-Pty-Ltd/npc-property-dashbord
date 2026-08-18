@@ -69,12 +69,6 @@
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
     },
-    "agreement-centre-render": {
-      "verify_jwt": false,
-      "exposure_class": "human-authenticated",
-      "owner": "agreement-centre",
-      "reviewed": true
-    },
     "ai-dashboard-agent": {
       "verify_jwt": false,
       "exposure_class": "authenticated-staff",
@@ -916,12 +910,6 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
-    },
-    "finance-portal-agreements": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "agreement-centre",
-      "reviewed": true
     },
     "finance-portal-ai-copilot": {
       "verify_jwt": false,
@@ -1869,12 +1857,6 @@
     "manage-loan-writer-undertakings": {
       "verify_jwt": false,
       "exposure_class": "portal-authenticated",
-      "owner": "security-remediation-program",
-      "reviewed": true
-    },
-    "manage-partner-agreements": {
-      "verify_jwt": false,
-      "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",
       "reviewed": true
     },

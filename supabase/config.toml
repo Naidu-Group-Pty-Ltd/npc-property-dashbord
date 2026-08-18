@@ -98,9 +98,6 @@ verify_jwt = false
 [functions.manage-agency-agreements]
 verify_jwt = false
 
-[functions.manage-partner-agreements]
-verify_jwt = false
-
 [functions.manage-loan-writer-undertakings]
 verify_jwt = false
 
@@ -1254,40 +1251,6 @@ verify_jwt = false
 [functions.report-api-usage]
 verify_jwt = false
 
-# Agreement Centre — partner-side agreement room. Portal session token
-# (x-finance-session-token) is the credential; same posture as the other
-# finance-portal-* functions.
-[functions.finance-portal-agreements]
-verify_jwt = false
-request_timeout = 120
-
-# Agreement Centre — staff-side document preview/download. Staff cookie session
-# + agreements module, like partner-agreement-records; long timeout because it
-# calls the PDF service.
-# `verify_jwt = false` because this is called from the browser
-# (`src/hooks/useAgreementCentre.ts`) and authenticates on the app's HttpOnly
-# `__Host-session_token` cookie via `verifyAuth`. A browser holding that cookie
-# has no Supabase JWT to present, so the gateway check could only ever reject
-# it. It read `true` here and is deployed `false` — the only function in the
-# repo whose explicit declaration disagreed with production — because a
-# config.toml edit did not redeploy anything: the deploy's changed-function list
-# was built from `supabase/functions/**` paths alone, so this declaration sat
-# unapplied. That is the mechanism behind the whole class; the workflow now
-# redeploys a function whose block here changes.
-[functions.agreement-centre-render]
-verify_jwt = false
-request_timeout = 300
-
-# MCP server (@lovable.dev/mcp-js). `verify_jwt = false` because MCP clients
-# authenticate to this endpoint with an OAuth bearer token the function issues
-# and verifies itself (via `jose`), not with a Supabase JWT — the gateway would
-# reject every MCP client before the handler ran.
-#
-# This section is not decoration: the function had NO entry here, and the CLI
-# defaults `verify_jwt` to true. The deploy has been failing since 31 July on an
-# unrelated 413 (see supabase/functions/mcp/deno.json), so the default had never
-# been applied. The first successful deploy would otherwise have silently
-# flipped a working endpoint to true and broken every MCP client.
 [functions.mcp]
 verify_jwt = false
 

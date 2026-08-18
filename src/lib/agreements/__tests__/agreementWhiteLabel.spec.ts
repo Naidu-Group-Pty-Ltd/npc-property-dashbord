@@ -49,7 +49,7 @@ const AGREEMENT_SOURCES = [
   'supabase/functions/_shared/agreements/contentFinanceReferral.pure.ts',
   'supabase/functions/_shared/agreements/fields.pure.ts',
   'supabase/functions/_shared/agreements/types.pure.ts',
-  'supabase/functions/_shared/agreements/lifecycle.pure.ts',
+  'supabase/functions/_shared/agreements/templateResource.pure.ts',
   'supabase/functions/_shared/agreements/documentHtml.pure.ts',
   'src/lib/agreements/docx.ts',
   'src/lib/agreements/docxTheme.ts',

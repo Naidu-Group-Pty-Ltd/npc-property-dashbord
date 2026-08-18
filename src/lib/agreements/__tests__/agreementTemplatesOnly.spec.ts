@@ -1,0 +1,195 @@
+/**
+ * The platform offers templates. It does not run agreements.
+ *
+ * This suite exists because the thing being prevented is a REGROWTH, not a
+ * bug. The issuance workflow was built once and could plausibly be rebuilt a
+ * piece at a time — an "issue to partner" action here, a status column read
+ * there — and each piece would look reasonable on its own. What makes it wrong
+ * is the whole: a platform that facilitates and records the formation of a
+ * contract between two independent businesses is exposed to that contract.
+ *
+ * So these assertions are deliberately about ABSENCE, and they are mechanical.
+ * See `_shared/agreements/templateResource.pure.ts` for the position itself.
+ */
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import {
+  AGREEMENT_TEMPLATE_SUMMARIES,
+  TEMPLATE_NEUTRALITY_NOTICE,
+  TEMPLATE_NEUTRALITY_SHORT,
+  TEMPLATE_RESOURCE_INTRO,
+  WORKFLOW_RETIRED_NOTICE,
+  agreementTemplate,
+} from '@/lib/agreements';
+
+const root = (...p: string[]) => join(process.cwd(), ...p);
+const read = (...p: string[]) => readFileSync(root(...p), 'utf8');
+
+describe('the execution machinery is gone', () => {
+  it.each([
+    'supabase/functions/manage-partner-agreements',
+    'supabase/functions/finance-portal-agreements',
+    'supabase/functions/agreement-centre-render',
+  ])('%s no longer exists', (dir) => {
+    // While any of these is deployable, the platform can still issue, accept,
+    // execute or re-render an agreement — regardless of what the UI offers.
+    expect(existsSync(root(dir))).toBe(false);
+  });
+
+  it.each([
+    'lifecycle.pure.ts', 'partnerAccess.pure.ts', 'recipients.pure.ts',
+    'annotations.pure.ts', 'syncStamp.pure.ts', 'portalReceipt.pure.ts',
+    'documentRevision.pure.ts', 'render.ts', 'sendAgreementEmail.ts',
+    'pendingDelivery.ts', 'anchorColumns.ts',
+  ])('the %s module is gone', (mod) => {
+    expect(existsSync(root('supabase/functions/_shared/agreements', mod))).toBe(false);
+  });
+
+  it('leaves only template modules behind', () => {
+    const remaining = readdirSync(root('supabase/functions/_shared/agreements')).sort();
+    expect(remaining).toEqual([
+      'additionalClauses.pure.ts',
+      'contentFinanceReferral.pure.ts',
+      'contentOverrides.pure.ts',
+      'contentStrategicReferral.pure.ts',
+      'documentHtml.pure.ts',
+      'fields.pure.ts',
+      'index.pure.ts',
+      'templateResource.pure.ts',
+      'types.pure.ts',
+    ]);
+  });
+
+  it('no longer declares the removed functions to the gateway or the registry', () => {
+    // A stale `[functions.X]` block asserts a gateway posture for something
+    // that cannot be deployed, and a stale registry entry fails the CI count.
+    const config = read('supabase/config.toml');
+    const registry = read('supabase/functions-registry/SECURITY_REGISTRY.json');
+    for (const fn of ['manage-partner-agreements', 'finance-portal-agreements', 'agreement-centre-render']) {
+      expect(config).not.toContain(`[functions.${fn}]`);
+      expect(registry).not.toContain(`"${fn}"`);
+    }
+  });
+});
+
+describe('nothing reads the agreement register any more', () => {
+  it('referrals do not resolve a governing agreement', () => {
+    // A referral quoting fee terms out of a platform-held register is the
+    // participation being retired, not merely a UI affordance.
+    const src = read('supabase/functions/manage-partner-referrals/index.ts');
+    expect(src).not.toContain("from('partner_agreements')");
+  });
+
+  it('the referral agreement picker answers empty without a query', () => {
+    // Kept rather than removed so an older bundle gets an empty list instead
+    // of `unknown_action`.
+    const src = read('supabase/functions/manage-partner-referrals/index.ts');
+    expect(src).toContain("if (action === 'list_active_agreements')");
+    expect(src).toContain('return json({ agreements: [] }, corsHeaders);');
+  });
+
+  it('login and invitation acceptance no longer sweep for pending agreements', () => {
+    for (const fn of ['finance-portal-login', 'finance-portal-accept-invite']) {
+      expect(read('supabase/functions', fn, 'index.ts'))
+        .not.toContain('deliverPendingAgreementNotifications');
+    }
+  });
+});
+
+describe('the templates survive, on equal terms for both parties', () => {
+  it('still carries both templates with their real content', () => {
+    expect(AGREEMENT_TEMPLATE_SUMMARIES).toHaveLength(2);
+    for (const summary of AGREEMENT_TEMPLATE_SUMMARIES) {
+      const content = agreementTemplate(summary.key);
+      expect(content.title).toBe(summary.title);
+      expect(content.sections.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('describes the flow without describing a workflow', () => {
+    // The summaries used to end with "Issued by the buyer's agency / real
+    // estate agency", which asserts an issuing act the platform no longer
+    // performs.
+    for (const summary of AGREEMENT_TEMPLATE_SUMMARIES) {
+      expect(summary.referralFlow).not.toMatch(/\bIssued by\b/i);
+    }
+  });
+
+  it('is built in the browser, so no request records the download', () => {
+    // The neutral position is architectural: nothing observes that a template
+    // was taken, by whom, or for which partner.
+    const src = read('src/lib/agreements/templateDownloads.ts');
+    expect(src).toContain('buildAgreementDocx');
+    expect(src).not.toMatch(/invokeSecureFunction|invokeFinanceFunction|fetch\(/);
+  });
+
+  it('shows BOTH sides the same component and the same words', () => {
+    const shared = 'components/agreement-templates/AgreementTemplateResources';
+    expect(read('src/pages/AgreementTemplates.tsx')).toContain(shared);
+    expect(read('src/pages/finance-portal/FinancePortalDashboard.tsx')).toContain(shared);
+  });
+});
+
+describe('the position is stated, not implied', () => {
+  it('says what the platform does not do, not merely "seek advice"', () => {
+    const all = TEMPLATE_NEUTRALITY_NOTICE.join(' ');
+    expect(all).toMatch(/not a party/i);
+    expect(all).toMatch(/does not facilitate/i);
+    expect(all).toMatch(/keeps no record/i);
+    expect(all).toMatch(/entirely your choice/i);
+  });
+
+  it('is short enough to be read where space is tight, and still complete', () => {
+    expect(TEMPLATE_NEUTRALITY_SHORT).toMatch(/not a party/i);
+    expect(TEMPLATE_NEUTRALITY_SHORT).toMatch(/keeps no record/i);
+    expect(TEMPLATE_RESOURCE_INTRO).toMatch(/directly between you and the other party/i);
+  });
+
+  it('explains the retirement to whoever lands on an old link', () => {
+    expect(WORKFLOW_RETIRED_NOTICE).toMatch(/retired/i);
+    expect(WORKFLOW_RETIRED_NOTICE).toMatch(/templates are still here/i);
+  });
+
+  it('renders the notice above the downloads, not beneath them', () => {
+    // A notice underneath the thing it qualifies is one most people never reach.
+    const src = read('src/components/agreement-templates/AgreementTemplateResources.tsx');
+    expect(src.indexOf('TEMPLATE_NEUTRALITY_NOTICE'))
+      .toBeLessThan(src.indexOf('AGREEMENT_TEMPLATE_SUMMARIES.map'));
+  });
+
+  it('stops stamping platform attribution onto the document', () => {
+    const src = read('supabase/functions/_shared/agreements/documentHtml.pure.ts');
+    expect(src).not.toContain('Generated securely through Aurixa Systems</div>');
+  });
+});
+
+describe('old links land somewhere honest', () => {
+  const app = read('src/App.tsx');
+
+  it.each([
+    'partner-agreements/new',
+    'partner-agreements/register',
+    'partner-agreements/:id',
+    'partner-agreements/:id/edit',
+  ])('%s redirects instead of 404-ing', (route) => {
+    // These are in bookmarks, emails and activity trails. A 404 reads as a
+    // fault; the template desk reads as an answer.
+    const at = app.indexOf(`path="${route}"`);
+    expect(at).toBeGreaterThan(-1);
+    expect(app.slice(at, at + 220)).toContain('Navigate to="/partner-agreements"');
+  });
+
+  it('sends the partner\'s emailed agreement links to their dashboard', () => {
+    const at = app.indexOf('path="agreements/:id"');
+    expect(at).toBeGreaterThan(-1);
+    expect(app.slice(at, at + 200)).toContain('Navigate to="/finance"');
+  });
+
+  it('drops Agreements from the partner\'s navigation', () => {
+    // Templates are a resource on the dashboard, not a destination that still
+    // looks like an inbox.
+    expect(read('src/components/finance-portal/FinancePortalLayout.tsx'))
+      .not.toContain("label: 'Agreements'");
+  });
+});

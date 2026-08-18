@@ -352,119 +352,26 @@ is the one whose page budget is fitted block by block against real renders rathe
 than summed, the one that clips a section and says so on the page, and the only
 one that writes a PDF a scheduled email later attaches.
 
-## Agreement Centre documents
-Partner agreements are rendered by the same WeasyPrint container as the reports,
-but they are **stored**, and that is the thing to understand before changing
-anything that renders, stores or serves one. Read
-[`docs/agreements/DOCUMENT_REVISIONS.md`](./docs/agreements/DOCUMENT_REVISIONS.md).
-
-An issued version freezes what the agreement *says* — `field_values` and
-`brand_snapshot` on the version row — and the stored PDF is a **cache** of
-those inputs, not the record. Until August 2026 the code froze the bytes as
-well, so a fixed cover reached every future issue and nothing already issued:
-the draft export came out right the same day the fix deployed and the Issued PDF
-kept coming out wrong for ever. The revision now lives in the object's path
-(`issued-r2.pdf`; r1 unsuffixed), `resolveVersionArtefact` is the only place that
-decides, and **a signature freezes an artefact permanently** — re-typesetting
-under a signatory is the one thing this must never do. Bump
-`AGREEMENT_CENTRE_DOCUMENT_REVISION` when the composition changes; nothing needs
-backfilling.
-
-An agreement is addressed to the partner **organisation**
-(`finance_agent_contact_id`), which is how the Finance Portal resolves it too —
-so it can be issued before anybody has a login and be waiting when they
-activate. Read
-[`PARTNER_ACTIVATION.md`](./docs/agreements/PARTNER_ACTIVATION.md) before
-changing what may be issued or what notifies a partner. Two rules that bite:
-`finance_portal_users.is_active` is set when the **invitation is sent**, so it
-never meant "can sign in" — `partnerAccess.pure.ts` is the authority, and only a
-deliberate revocation blocks a digital issue. And a notification raised before
-the portal user exists has nowhere to live, so activation sweeps for whatever
-was issued in the meantime rather than the issue trying to queue it.
-
-A partner asks for a change by **pinning it to the clause**, not by picking a
-section from a dropdown. Read
-[`ANNOTATIONS.md`](./docs/agreements/ANNOTATIONS.md) before touching
-`annotations.pure.ts` or the annotation layer. The anchor is the **same path an
-amendment writes to** (`contentOverrides.pure.ts`), so the request and the
-change answering it name the same node — and because both portals render one
-`DigitalAgreementView` and one `AnnotationRail`, the Command Centre seeing the
-partner's pins is structural rather than a second implementation. Two rules:
-**a stale anchor degrades to a list entry and is never dropped** (`anchor_label`
-is stored, never re-derived — re-pointing a commission comment at a termination
-clause is worse than no pin), and **the migration is optional** — the columns
-are probed, and without them the request still saves with its location in the
-comment.
-
-Getting the document *to* the partner is its own concern:
-[`SENDING.md`](./docs/agreements/SENDING.md). Two rules there. Issuing emails
-the partner as well as notifying the portal — it used to write one in-app
-notification and stop, which is no signal at all to somebody who has never
-logged in. And **the portal's notification feed does not depend on a
-migration**: `finance-portal-notifications` filtered every read on three routing
-columns from a migration that was merged and never applied, so PostgREST
-answered `42703` for the whole statement and the feed returned 500 for three
-weeks — 238 notifications, 236 unread, 0 readable. The boundary is now stated in
-`financeNotificationRouting.pure.ts` and enforced on the columns where they
-exist and on the notification type where they do not.
-
-Once it is there, the two portals have to agree that it is. Read
-[`SYNCHRONISATION.md`](./docs/agreements/SYNCHRONISATION.md) before touching
-`syncStamp.pure.ts`, `useAgreementSync.ts` or either function's `sync`
-operation. "The Finance Portal is not receiving agreements" was measured and is
-not a delivery fault — one production agreement went issued → opened in
-**11 seconds** — it is that **every agreement surface on both sides fetched once,
-on mount**, so an agreement issued into an hour-old tab was invisible until
-somebody reloaded. Realtime is unavailable to the partner *by construction*
-(bespoke session token, service-role-only tables), so both portals poll a
-four-scalar **stamp** and refetch payloads only when it moves. Three rules bite:
-a **null previous stamp is not a change** (or every mount refetches what it just
-fetched), `refetchOnWindowFocus: true` **and** `staleTime: 0` are set against the
-app's global defaults and are the half that actually fixes the reported case,
-and a **receipt is counted on `metadata->>agreement_id`** — `related_entity_id`
-is null on every agreement notification in production. That doc also records why
-`notifyPartner` now returns its outcome: it swallowed its own errors and
-returned void, so an issue whose notification never wrote said the same thing as
-one that landed.
-
-**The partner's session lives in a cookie, and for a long time nothing read
-it.** Read
-[`PARTNER_SESSION_TRANSPORT.md`](./docs/agreements/PARTNER_SESSION_TRANSPORT.md)
-before touching `_shared/financeSessionToken.ts`, `finance-portal-session.ts`
-or any `finance-portal-*` token extraction. WP-11B/C moved the session into an
-HttpOnly `__Host-finance_session_token` cookie and dropped the storage mirror —
-the client keeps an **in-memory copy that does not survive a page load** — but
-only `verify` and `logout` were taught to read the cookie. Every data function
-kept a hand-rolled four-`??` extractor that could not see it, so from the second
-page view onwards a partner got `401 Session token required` on everything: a
-cookie-only request is **byte-identical** to sending no credential at all (both
-54 bytes). The portal looked signed in because the session *check* read the
-cookie and the data calls did not. Three rules: there is **one reader**
-(`extractFinanceSessionToken`) and hand-rolled lookups fail
-`security:finance-session-transport`; the order **header → body → cookie** is
-load-bearing because it keeps every previously working caller on its path; and
-**cookie source implies a CSRF guard** — the cookie is `SameSite=None`, so
-honouring it creates ambient cross-site authority that `enforceCsrf` must cover.
-
-And an agreement must never be *nowhere*. Read
-[`CONTINUITY.md`](./docs/agreements/CONTINUITY.md) before touching the
-register's stage counters, its empty states, or `dashboardGroupForStatus` /
-`stageToFollow` / `isIssued`. "The agreement disappears from the originating
-portal once it is issued" was measured and is not a data fault — the row is
-present, `list` returns it, the timeline is unbroken and the partner opened it —
-it is that **the register partitions by status and issuing changes the
-status**, so the "Ready to Issue" stage you issued from empties and says
-"Nothing in this stage" over a **Create Agreement** button. Four rules: an
-empty state reachable with rows in the register must say so and **never offer
-to create more**; a row that changes stage **says where it went** rather than
-vanishing; **`isIssued` is `issued_at`, never a status** (a withdrawn or voided
-agreement was still issued, and no status ever rendered as "Issued"); and
-`partner_legal_name` is typed while `finance_agent_contact_id` is what the
-portal resolves against — they differ on half the production register, so the
-row shows the linked **portal account** whenever it disagrees.
-
-Deployment is the other half of it, and it has bitten twice:
-[`DEPLOYMENT.md`](./docs/agreements/DEPLOYMENT.md).
+## Partner agreements — TEMPLATES ONLY
+The platform no longer runs the formation of a partner referral/commission
+agreement. Read [`docs/agreements/TEMPLATES_ONLY.md`](./docs/agreements/TEMPLATES_ONLY.md)
+before adding anything to `_shared/agreements/`, restoring a deleted module from
+history, or wiring an agreement into referrals, commissions or compliance.
+Issuance, acceptance, execution, status tracking, cross-portal sync and the
+notifications are **gone**, along with three Edge Functions
+(`manage-partner-agreements`, `finance-portal-agreements`,
+`agreement-centre-render`) and eleven shared modules — facilitating and
+recording a contract between two independent businesses made the platform look
+like a participant in it. One rule carries what is left: **downloading a
+template is the end of the platform's involvement.** The wording lives in
+`templateResource.pure.ts` and both portals render it from there, the Word file
+is built **in the browser** so no request records that a template was taken, and
+`agreementTemplatesOnly.spec.ts` asserts the machinery stays gone. Three things
+that were deliberately NOT removed: the historical rows (nothing was ever
+executed — 0 signatures — but destroying the record is irreversible), the Portal
+Access / AML-CTF **Compliance Passport** agreements in
+`partner-agreement-records` (Aurixa's own terms with its own users), and
+`manage-agency-agreements` (agency ↔ client, a different feature).
 
 ## The PDF-import sidecar (Docling)
 Template Builder's PDF import runs through one Cloud Run container,
