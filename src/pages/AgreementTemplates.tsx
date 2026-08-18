@@ -15,7 +15,7 @@
 import { useEffect } from 'react';
 import { FileSignature } from 'lucide-react';
 import AgreementTemplateResources from '@/components/agreement-templates/AgreementTemplateResources';
-import { WORKFLOW_RETIRED_NOTICE } from '@/lib/agreements';
+
 import { downloadAgreementTemplateDocx } from '@/lib/agreements/templateDownloads';
 
 export default function AgreementTemplates() {
@@ -30,7 +30,7 @@ export default function AgreementTemplates() {
           <FileSignature className="h-6 w-6 text-primary" />
           Agreement Templates
         </h1>
-        <p className="text-sm text-muted-foreground">{WORKFLOW_RETIRED_NOTICE}</p>
+        
       </header>
 
       {/* No brand is applied. The supplied cover is built around a
