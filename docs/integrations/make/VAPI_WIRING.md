@@ -131,3 +131,38 @@ drifts and one stale straggler, all fixed:
 
 Final state: **zero `hook.eu2.make.com` references anywhere in the new Vapi org except
 `transfer_to_human`**, which is flagged above.
+
+## The `vapi2` hook rebind — completed with the new-account connection
+
+The user created **"Aurixa Systems"** (connection `10508414`), a Vapi connection holding
+the new account's key. That unblocked the rebind, done by the path that provably cannot
+touch the legacy org: **new hooks were created rather than the old ones edited**, so Make
+never had a reason to fire an unregister call with the old key.
+
+| Scenario | Old hook (old-key connection, old assistant id) | New hook (conn `10508414`, new assistant id) |
+| --- | --- | --- |
+| NPC Active Nurturing Call Report | `2705105` (`my4fk4f1…`) — parked | `2707363` (`xhh35t8m…`) → assistant `66d3e994…` |
+| Discovery Call Handoff | `2705117` (`8k9ofpk…`) — parked | `2707365` (`pncd1qrc…`) → assistant `b834610e…` |
+
+Three things the operation surfaced and settled:
+
+- **The key check was structural.** The new hooks were bound to *new-account* assistant
+  ids, so if the connection had accidentally held the old key, registration would have
+  404'd and failed harmlessly. Both registrations succeeded (`externalHookId` echoes the
+  new ids) — proof the connection holds the new key.
+- **Hook registration overwrites the assistant's `server.url`** — confirmed live: both
+  assistants briefly pointed at the new hook URLs. Both were restored to the Supabase
+  `vapi-call-webhook` function, which is the live source truth; in the source the same
+  hooks sit registered-but-parked in exactly this way.
+- **`phoneNumber_inject` followed the scenario**: its tool `server.url` was re-pointed
+  from the old handoff hook to the new one (`pncd1qrc…`), since the scenario now listens
+  there.
+
+The two old hooks (`2705105`, `2705117`) are parked, referenced by nothing. **Do not
+delete them until the legacy Vapi account is decommissioned** — deletion is the one
+operation that could make Make unregister against the legacy org with the old key. The
+old connection `10496920` is likewise kept until then.
+
+**Legacy integrity was verified twice by full read-only re-pull** — immediately before
+and immediately after the hook operations: all six resource types byte-identical to the
+pre-push snapshot both times. Nothing in the legacy Vapi org was changed at any point.
