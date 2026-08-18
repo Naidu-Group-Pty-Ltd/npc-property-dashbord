@@ -347,9 +347,30 @@ async function syncScreeningScopeDecision(
   scope: ScreeningScopeDecision,
   perimeterId: string | null,
   subjects: any[],
-): Promise<{ changed: ScreeningScopeKey[]; subjectsChanged: number }> {
-  const { data: current } = await admin.schema('aml').from('case_screening_scopes')
+): Promise<{ changed: ScreeningScopeKey[]; subjectsChanged: number; recorded: boolean }> {
+  /*
+   * ── The migration may not have been applied yet ────────────────────
+   *
+   * Migrations here are applied by a dispatched workflow, one file at a
+   * time, while functions deploy on merge. So the two can land in either
+   * order, and this repository has already paid for assuming otherwise:
+   * `finance-portal-notifications` filtered every read on columns from a
+   * migration that was merged and never applied, PostgREST answered 42703
+   * for the whole statement, and the feed returned 500 for three weeks.
+   *
+   * So the table is PROBED. Without it the decision is still derived and
+   * still governs the stage — it simply is not recorded yet, and the next
+   * sync after the migration lands records it. What it must never do is
+   * take the stage down, and it must never let an unreadable table look
+   * like an exemption: with no perimeter row readable, `deriveScreeningScope`
+   * has already concluded sanctions is required.
+   */
+  const { data: current, error: readError } = await admin.schema('aml')
+    .from('case_screening_scopes')
     .select('*').eq('case_id', caseId).is('superseded_at', null);
+  if (readError) {
+    return { changed: [], subjectsChanged: 0, recorded: false };
+  }
   const byScope = new Map<string, any>(
     (current ?? []).map((r: any) => [String(r.scope), r]));
 
@@ -369,7 +390,8 @@ async function syncScreeningScopeDecision(
       await admin.schema('aml').from('case_screening_scopes')
         .update({ superseded_at: nowIso }).eq('id', existing.id);
     }
-    await admin.schema('aml').from('case_screening_scopes').insert({
+    const { error: insertError } = await admin.schema('aml')
+      .from('case_screening_scopes').insert({
       case_id: caseId,
       scope: key,
       required: decided.required,
@@ -382,6 +404,7 @@ async function syncScreeningScopeDecision(
       material_inputs: scope.evidence,
       perimeter_id: perimeterId,
     });
+    if (insertError) return { changed: [], subjectsChanged: 0, recorded: false };
     changed.push(key);
   }
 
@@ -425,7 +448,7 @@ async function syncScreeningScopeDecision(
     subjectsChanged++;
   }
 
-  return { changed, subjectsChanged };
+  return { changed, subjectsChanged, recorded: true };
 }
 
 async function ensureScreeningSubjects(
@@ -2538,6 +2561,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           next_action: nextAction,
           decision_recorded: decisionRecorded,
           scope_changed: scopeSync.changed,
+          /* False when the scope tables are not present yet. */
+          scope_recorded: scopeSync.recorded,
         });
       }
 

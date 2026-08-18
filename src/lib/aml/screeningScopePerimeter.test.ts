@@ -548,6 +548,38 @@ describe("8-9, 26. the decision is persisted so it can be reconstructed", () => 
   });
 });
 
+describe("the stage survives its migration not being applied yet", () => {
+  const helper = casesFn.slice(
+    casesFn.indexOf("async function syncScreeningScopeDecision"),
+    casesFn.indexOf("async function ensureScreeningSubjects"));
+
+  it("probes the scope table rather than assuming it exists", () => {
+    // Migrations are applied by a dispatched workflow while functions deploy
+    // on merge, so the two land in either order. This repository has already
+    // paid for assuming otherwise: finance-portal-notifications returned 500
+    // for three weeks against a migration that was merged and never applied.
+    expect(helper).toMatch(/const \{ data: current, error: readError \}/);
+    expect(helper).toMatch(/if \(readError\) \{\s*\n\s*return \{ changed: \[\], subjectsChanged: 0, recorded: false \};/);
+    expect(helper).toMatch(/if \(insertError\) return \{ changed: \[\], subjectsChanged: 0, recorded: false \};/);
+  });
+
+  it("an unreadable table can never look like an exemption", () => {
+    // With no perimeter row readable the engine has already concluded
+    // sanctions is required, so a missing table degrades to today's
+    // behaviour rather than to a stood-down control.
+    const readPerimeterFn = casesFn.slice(
+      casesFn.indexOf("async function readCasePerimeter"),
+      casesFn.indexOf("async function syncScreeningScopeDecision"));
+    expect(readPerimeterFn).toMatch(/if \(error\) return null;/);
+    expect(deriveScreeningScope({ ...CLEAN_INPUT, perimeter: null }).sanctions.required)
+      .toBe(true);
+  });
+
+  it("says on the response whether the decision was recorded", () => {
+    expect(casesFn).toMatch(/scope_recorded: scopeSync\.recorded/);
+  });
+});
+
 describe("there is one rule, not two", () => {
   it("decideScreeningPolicy is an adapter over the scope engine", () => {
     // It used to hold the rule itself, with sanctions hardcoded into
