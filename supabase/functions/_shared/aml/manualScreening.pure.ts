@@ -86,6 +86,22 @@ export interface ManualScreeningRejection {
   message: string;
 }
 
+/**
+ * A candidate the MLRO found, after normalisation.
+ *
+ * Normalised HERE rather than at the write, so the columns a caller's
+ * candidate can reach are fixed by this module's own shape. A body that
+ * carries extra keys cannot widen the row: the row is built from this.
+ */
+export interface ManualCandidate {
+  matchedName: string;
+  listName: string | null;
+  reference: string | null;
+  matchBasis: string | null;
+  jurisdiction: string | null;
+  notes: string | null;
+}
+
 export interface ManualScreeningPlan {
   ok: true;
   outcome: ManualOutcome;
@@ -101,6 +117,8 @@ export interface ManualScreeningPlan {
   satisfiesObligation: boolean;
   /** Match rows to write, in the canonical shape. */
   candidateStatus: "open" | "confirmed" | null;
+  /** The candidates, trimmed and capped. Empty unless this is a finding. */
+  normalisedCandidates: ManualCandidate[];
   normalisedSources: ManualSource[];
   normalisedNames: string[];
   rationale: string;
@@ -123,6 +141,23 @@ function normaliseSources(sources: ManualSource[] | undefined): ManualSource[] {
       searched_name: cleanText(s.searched_name, 200) || null,
       searched_at: cleanText(s.searched_at, 40) || null,
       notes: cleanText(s.notes, 1000) || null,
+    }))
+    .slice(0, 25);
+}
+
+/** A candidate that names nothing that matched is not a candidate. */
+function normaliseCandidates(
+  candidates: ManualScreeningInput["candidates"],
+): ManualCandidate[] {
+  return (candidates ?? [])
+    .filter((c) => c && cleanText(c.matchedName, 300))
+    .map((c) => ({
+      matchedName: cleanText(c.matchedName, 300),
+      listName: cleanText(c.listName, 200) || null,
+      reference: cleanText(c.reference, 200) || null,
+      matchBasis: cleanText(c.matchBasis, 500) || null,
+      jurisdiction: cleanText(c.jurisdiction, 100) || null,
+      notes: cleanText(c.notes, 1000) || null,
     }))
     .slice(0, 25);
 }
@@ -168,7 +203,7 @@ export function planManualScreening(
       // stays outstanding in the same state a technical failure produces.
       subjectState: "error",
       satisfiesObligation: false,
-      candidateStatus: null,
+      candidateStatus: null, normalisedCandidates: [],
       normalisedSources: sources, normalisedNames: names,
       rationale, unableReason: reason,
     };
@@ -203,7 +238,7 @@ export function planManualScreening(
       // The obligation is discharged: a screening was performed, by a named
       // person, against recorded sources, and concluded.
       satisfiesObligation: true,
-      candidateStatus: null,
+      candidateStatus: null, normalisedCandidates: [],
       normalisedSources: sources, normalisedNames: names,
       rationale, unableReason: null,
     };
@@ -211,7 +246,8 @@ export function planManualScreening(
 
   // A match must name what matched. "Possible match" with no candidate is not
   // reviewable and cannot be adjudicated.
-  if (!(input.candidates ?? []).some((c) => cleanText(c?.matchedName, 300))) {
+  const candidates = normaliseCandidates(input.candidates);
+  if (candidates.length === 0) {
     return {
       ok: false, code: "candidate_required",
       message: "Record the listed name that matched, so it can be adjudicated "
@@ -230,6 +266,7 @@ export function planManualScreening(
      */
     satisfiesObligation: false,
     candidateStatus: outcome === "confirmed_match" ? "confirmed" : "open",
+    normalisedCandidates: candidates,
     normalisedSources: sources, normalisedNames: names,
     rationale, unableReason: null,
   };

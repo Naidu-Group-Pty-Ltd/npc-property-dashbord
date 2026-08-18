@@ -3397,25 +3397,28 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // escalation and the risk system all treat them identically to an
         // automated finding.
         if (plan.candidateStatus) {
-          const rows = (body.candidates as any[]).
-            filter((c) => String(c?.matchedName ?? c?.matched_name ?? '').trim())
-            .slice(0, 25)
-            .map((c) => ({
-              screening_check_id: check.id,
-              case_id: caseId,
-              match_type: scopeKey,
-              matched_name: String(c.matchedName ?? c.matched_name).trim().slice(0, 300),
-              list_name: c.listName ?? c.list_name ?? null,
-              jurisdiction: c.jurisdiction ?? null,
-              status: plan.candidateStatus,
-              details: {
-                manual: true,
-                reference: c.reference ?? null,
-                match_basis: c.matchBasis ?? c.match_basis ?? null,
-                notes: c.notes ?? null,
-                recorded_by_label: userEmail,
-              },
-            }));
+          /*
+           * Built from the PLAN, never from the request body. The candidates
+           * were normalised, trimmed and capped by `planManualScreening`, so
+           * the columns a caller can reach are fixed by that module's shape:
+           * extra keys on a submitted candidate cannot widen this row.
+           */
+          const rows = plan.normalisedCandidates.map((c) => ({
+            screening_check_id: check.id,
+            case_id: caseId,
+            match_type: scopeKey,
+            matched_name: c.matchedName,
+            list_name: c.listName,
+            jurisdiction: c.jurisdiction,
+            status: plan.candidateStatus,
+            details: {
+              manual: true,
+              reference: c.reference,
+              match_basis: c.matchBasis,
+              notes: c.notes,
+              recorded_by_label: userEmail,
+            },
+          }));
           if (rows.length > 0) {
             const { error: matchError } = await admin.schema('aml')
               .from('screening_matches').insert(rows);

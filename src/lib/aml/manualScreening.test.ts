@@ -245,6 +245,29 @@ describe("manual screening — unable to complete", () => {
     expect(plan.ok && plan.checkStatus).toBe("failed");
   });
 
+  it("normalises and caps the candidates rather than passing the request through", () => {
+    const plan = planManualScreening(evidenced({
+      outcome: "possible_match",
+      candidates: [
+        { matchedName: "  Patrik Exampel  ", listName: " DFAT ", extra: "ignored" } as never,
+        { matchedName: "   " },
+      ],
+    }));
+    expect(plan.ok && plan.normalisedCandidates).toEqual([{
+      matchedName: "Patrik Exampel", listName: "DFAT",
+      reference: null, matchBasis: null, jurisdiction: null, notes: null,
+    }]);
+  });
+
+  it("a candidate cannot introduce a key the module does not name", () => {
+    const plan = planManualScreening(evidenced({
+      outcome: "possible_match",
+      candidates: [{ matchedName: "Patrik Exampel", status: "confirmed" } as never],
+    }));
+    expect(plan.ok && Object.keys(plan.normalisedCandidates[0])).toEqual(
+      ["matchedName", "listName", "reference", "matchBasis", "jurisdiction", "notes"]);
+  });
+
   it("never produces a candidate", () => {
     const plan = planManualScreening({
       outcome: "unable_to_complete", sources: [], searchedNames: [], rationale: "",
@@ -393,6 +416,13 @@ describe("manual screening — the record is honest about what produced it", () 
 
   it("writes candidates to the CANONICAL match table so adjudication is shared", () => {
     expect(op).toMatch(/from\('screening_matches'\)/);
+  });
+
+  it("builds the match rows from the plan, never from the request body", () => {
+    // A `.map` over `body.candidates` is opaque to the mass-assignment gate
+    // and lets a submitted key reach a column nobody named.
+    expect(op).toMatch(/plan\.normalisedCandidates\.map/);
+    expect(op).not.toMatch(/body\.candidates as any\[\]/);
   });
 
   it("advances the freshness clock only when the obligation is discharged", () => {
