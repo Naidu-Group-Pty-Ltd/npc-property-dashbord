@@ -237,19 +237,24 @@ export async function extractPdfPagePhoto(
 }
 
 /**
- * The photograph a document presents, and the page it presents it on.
+ * The photograph a document presents, for a document that IS one property.
  *
- * For a document that IS one property — a package reached through a row's own
- * link, a single-property brochure a builder uploaded — this is the picture it
- * leads with: pages are read in the document's own order and the FIRST that
- * presents a photograph is the answer. Later pages are not searched, so a lot
- * plan on page 4 and an estate masterplan on page 5 are never reached.
+ * ONE PAGE BY DEFAULT, AND THAT IS THE POINT. A package brochure leads with
+ * the property's own render and then goes on to a lot plan, an estate
+ * masterplan and a location map — every one of which is a photograph by every
+ * measure this module has, and none of which is the house. Searching on when
+ * page one yields nothing is how a masterplan of fifty other lots reaches a
+ * client's card, so the search stops where the document's own lead does.
+ *
+ * A caller that has a reason to look further passes `maxPages` and owns the
+ * consequence; the direct-upload path does not use this at all, because it
+ * needs every page's picture separately — see `extractPdfPhotosByPage`.
  */
 export async function extractExactSourcePhotoFromPdf(
   bytes: Uint8Array,
   options: { maxPages?: number } = {},
 ): Promise<PdfPhoto | null> {
-  const limit = Math.max(1, Math.min(options.maxPages ?? MAX_PAGES_SEARCHED, MAX_PAGES_SEARCHED));
+  const limit = Math.max(1, Math.min(options.maxPages ?? 1, MAX_PAGES_SEARCHED));
   for (let index = 0; index < limit; index++) {
     const photo = await extractPdfPagePhoto(bytes, index);
     if (photo) return photo;

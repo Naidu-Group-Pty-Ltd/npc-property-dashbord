@@ -470,6 +470,7 @@ export async function extractStockFile(
     // extractor a package PDF reached through a Notion row goes through, so a
     // brochure uploaded here and the same brochure reached through a link
     // cannot disagree about which picture is the property.
+    let imagesRead = true;
     try {
       const { extractPdfPhotosByPage } = await import('./pdfSourcePhoto.ts');
       const { pdfPageAnchor } = await import('./pdfRowAnchors.pure.ts');
@@ -491,10 +492,13 @@ export async function extractStockFile(
         });
       }
     } catch {
+      // "We could not look" and "we looked and there was nothing" are
+      // different things, and only one of them may be said.
+      imagesRead = false;
       result.warnings.push('Images inside this PDF could not be read.');
     }
 
-    if (!result.media.length) {
+    if (imagesRead && !result.media.length) {
       // Accurate, and it promises nothing: no other imagery is displayable, so
       // saying where a substitute will come from would be a lie.
       result.warnings.push('No property photograph could be identified in this PDF.');

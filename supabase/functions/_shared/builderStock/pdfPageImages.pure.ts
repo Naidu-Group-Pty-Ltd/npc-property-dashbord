@@ -128,11 +128,6 @@ export function indexPdfObjects(bytes: Uint8Array): Map<number, PdfObject> {
   return objects;
 }
 
-function firstReference(fragment: string): number | null {
-  const match = /(\d{1,7})\s+\d{1,5}\s+R/.exec(fragment);
-  return match ? Number(match[1]) : null;
-}
-
 /**
  * The body of the `<< … >>` that begins at `from`, with nesting honoured.
  *

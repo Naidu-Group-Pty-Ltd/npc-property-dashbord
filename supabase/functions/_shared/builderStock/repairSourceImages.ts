@@ -504,7 +504,6 @@ async function repairPdfUpload(
     address_line?: string | null; suburb?: string | null;
   }>;
   outcome.rowsRead = existing.length;
-  outcome.rowsWithImagery = input.media.length;
   if (!existing.length || !input.media.length) return outcome;
 
   // The label the import matched on: the stored normalised record where there
@@ -535,6 +534,9 @@ async function repairPdfUpload(
       uploadId: input.upload.id,
       media: input.media,
       filename: input.upload.original_filename,
+      // A repair is repeatable. See the note on the flag: an unattributed row
+      // cannot be refreshed by the upsert, so re-running would pile them up.
+      attributedOnly: true,
     },
     // Never by order. A page anchor nothing claimed keeps its picture against
     // the upload, and the property's card stays empty.
@@ -551,11 +553,16 @@ async function repairPdfUpload(
     provenByItem.set(record.stockItemId, set);
   }
   outcome.matched = provenByItem.size;
+  outcome.rowsWithImagery = provenByItem.size;
 
   // Same re-audit the row path runs: a stage-1 image on one of these
   // properties that this run did not re-derive from the builder's own PDF is
   // not provably theirs, so it is kept and refused for display.
-  for (const item of existing) {
+  //
+  // Only the properties this run has something to say about: settling
+  // `primary_image_id` on a property the document never named would be this
+  // run reaching past its own evidence.
+  for (const item of existing.filter((row) => provenByItem.has(row.id))) {
     const proven = provenByItem.get(item.id) ?? new Set<string>();
     const { data: rows } = await db
       .from('builder_stock_item_images')

@@ -453,6 +453,37 @@ describe('I — reading a multi-page document', () => {
 });
 
 // ---------------------------------------------------------------------------
+// TEST I2 — the package path still stops at the page the document leads with
+// ---------------------------------------------------------------------------
+
+describe('I2 — a linked package document is read one page deep', () => {
+  it('never reaches a later page for its photograph', async () => {
+    const pack = buildPdf([
+      // Page 1 leads with a floorplan and a logo: no photograph.
+      { inForm: true, text: 'Lot 43 Tringa Street', images: [
+        { name: 'Plan', width: 1700, height: 2400, data: floorplan, filter: 'FlateDecode',
+          cm: [500, 0, 0, 700, 40, 100] },
+        { name: 'Logo', width: 900, height: 600, data: logo, filter: 'DCTDecode',
+          cm: [60, 0, 0, 40, 20, 780] },
+      ] },
+      // Page 2 is the ESTATE MASTERPLAN — a photograph by every measure this
+      // module has, and a picture of fifty other lots.
+      { inForm: true, text: 'MASTERPLAN', images: [
+        { name: 'Masterplan', width: 2000, height: 1414, data: render(0x88),
+          filter: 'DCTDecode', cm: FULL_BLEED },
+      ] },
+    ]);
+
+    // The default is one page, so the answer is nothing rather than the
+    // masterplan. Searching on is what would put it on a client's card.
+    expect(await extractExactSourcePhotoFromPdf(pack)).toBeNull();
+    // And a caller that deliberately asks for more gets it, and owns that.
+    const deeper = await extractExactSourcePhotoFromPdf(pack, { maxPages: 4 });
+    expect(deeper!.provenance.page).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // TEST J — re-reading a PDF that is already imported
 // ---------------------------------------------------------------------------
 
@@ -610,6 +641,40 @@ describe('J — re-reading the stored PDF of an upload already imported', () => 
     expect(image.source_detail.source_sha256).toBe(image.source_detail.stored_sha256);
     // The card now shows it.
     expect(db.tables.builder_stock_items[0].primary_image_id).toBe(image.id);
+  });
+
+  it('can be run again without piling up rows nothing can show', async () => {
+    const { repairSourceImagesForUpload } = await import(
+      '../../../supabase/functions/_shared/builderStock/repairSourceImages');
+    // Two pages present a photograph; only page 1 is the property's, because
+    // the single-property rule takes the page the document leads with.
+    const twoPages = buildPdf([
+      { inForm: true, text: 'Lot 537 Kirramingly Avenue Donnybrook', images: [{
+        name: 'Im0', width: 1700, height: 956, data: render(0x77),
+        filter: 'DCTDecode', cm: FULL_BLEED }] },
+      { inForm: true, text: 'display village', images: [{
+        name: 'Im0', width: 1700, height: 956, data: render(0x78),
+        filter: 'DCTDecode', cm: FULL_BLEED }] },
+    ]);
+    const db = fakeDb({
+      items: [item], uploads: [upload], objects: { [upload.storage_path]: twoPages },
+    });
+
+    await repairSourceImagesForUpload(
+      db as any, { organisationId: 'org-a', uploadId: 'upload-537' });
+    const after = db.tables.builder_stock_item_images.length;
+
+    await repairSourceImagesForUpload(
+      db as any, { organisationId: 'org-a', uploadId: 'upload-537' });
+    await repairSourceImagesForUpload(
+      db as any, { organisationId: 'org-a', uploadId: 'upload-537' });
+
+    // An unattributed row carries a null `stock_item_id`, and Postgres treats
+    // nulls as distinct — so the upsert that refreshes every other row would
+    // INSERT a new one on every run. The repair writes only what it attributed.
+    expect(db.tables.builder_stock_item_images.length).toBe(after);
+    expect(db.tables.builder_stock_item_images
+      .some((row: FakeRow) => row.stock_item_id == null)).toBe(false);
   });
 });
 

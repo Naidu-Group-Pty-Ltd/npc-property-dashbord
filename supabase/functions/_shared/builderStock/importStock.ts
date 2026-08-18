@@ -377,6 +377,18 @@ export async function attachDocumentMedia(
     organisationId: string; uploadId: string; media: ExtractedMedia[];
     /** The document these pictures came out of, recorded on each of them. */
     filename?: string | null;
+    /**
+     * Write only the pictures that reached a property.
+     *
+     * An import runs ONCE per upload, so keeping the unattributed ones costs a
+     * fixed amount and preserves what the document held. A repair can be run
+     * again and again by an operator, and an unattributed row carries a null
+     * `stock_item_id` — which Postgres treats as distinct, so the upsert that
+     * refreshes every other row INSERTS a new one every time. Re-reading a
+     * twenty-page brochure four times would leave twenty-four rows nothing can
+     * ever show. The repair path sets this; the import path does not.
+     */
+    attributedOnly?: boolean;
   },
   itemIdsInOrder: string[],
   itemIdByAnchor: Map<string, string | null>,
@@ -403,6 +415,7 @@ export async function attachDocumentMedia(
   });
 
   for (const [index, media] of input.media.entries()) {
+    if (input.attributedOnly && !attributions[index].stockItemId) continue;
     const path = `${input.organisationId}/${input.uploadId}/document/${index}-${media.name.replace(/[^A-Za-z0-9._-]+/g, '-').slice(-60)}`;
     try {
       const { error: uploadError } = await db.storage
