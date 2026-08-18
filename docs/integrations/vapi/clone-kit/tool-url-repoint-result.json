@@ -1,0 +1,62 @@
+[
+ {
+  "tool": "get_call_context",
+  "newId": "2c726b9d-bcd5-4334-b1a2-0e871554d9f9",
+  "from": "/o51u3jb5g1nn1lxiluziezpr7gh5vvt8",
+  "to": "/7lw416w6whh5gfat56o9190vbbqc10pj"
+ },
+ {
+  "tool": "ghl_check_availability",
+  "newId": "3d407940-f697-404c-a6d4-0137e79a0d9f",
+  "from": "/3xslmou0jpbwxbutg8we362f9jsh96q0",
+  "to": "/ik45qbx1lvykjpndcfkdsy6ljqt9y9v9"
+ },
+ {
+  "tool": "ghl_create_booking",
+  "newId": "7d6b6d41-0059-44a9-a9c5-fdc0c8c6d218",
+  "from": "/eop70ky2635nobauh7lyof13sctvl0ga",
+  "to": "/017xspgxrpxqh93feqi7bms3pmxmv19e"
+ },
+ {
+  "tool": "ghl_resolve_contact",
+  "newId": "05dd96f7-12e5-4d24-85dc-c2c43172bd1e",
+  "from": "/db3ws2lmqi4qh9ozsyt1tvn3j8tbeahm",
+  "to": "/gukfea8c5p61cm2pmdzf3sfl74y9huws"
+ },
+ {
+  "tool": "phoneNumber_inject",
+  "newId": "76dad303-a7fa-4e61-b933-c365b721b0cf",
+  "from": "/2ubukyatwc0ig8zinphjjc4dciwhigqg",
+  "to": "/8k9ofpknay6jvcjuz9h8cg4vbpm51rrw"
+ },
+ {
+  "tool": "ghl_delete_event_npc",
+  "newId": "90dc98c2-3afd-4e58-a5da-0e95e7496be6",
+  "from": "/9inh27jwcxodgecrbwvjosx7i5xedm67",
+  "to": "/jutejxif2dfkrqazi8ynjpq3cotdn0k7"
+ },
+ {
+  "tool": "ghl_delete_event_npc_2",
+  "newId": "263ea8d0-ca99-4ae2-bf97-6edbdead58ac",
+  "from": "/ujov89m0me5kmc012fzc6l5bhn4t8oep",
+  "to": "/asr1irn2e2iti84buwxvxgqnoydwtjkk"
+ },
+ {
+  "tool": "ghl_delete_event_npc_2_1",
+  "newId": "63601bb7-719b-42e8-a7bb-3384db13b4ab",
+  "from": "/w5e69pe59ahue41em25rvh97j91wtxbj",
+  "to": "/brtnxcxdd8onngjgcxvkaiog14w5ovh1"
+ },
+ {
+  "tool": "ghl_delete_event_npc_3",
+  "newId": "908405fb-6def-4dce-8d73-54b371d5b0da",
+  "from": "/ks0eu13idcgwr9wf8tp4ak7a1gqj8e6i",
+  "to": "/h28wac173fn5xh2s28be6jdzb2gw5x5p"
+ },
+ {
+  "tool": "ghl_delete_event_npc_3_1",
+  "newId": "95b925f0-9674-4d18-aab5-4d800867598f",
+  "from": "/u60ggcqrdo9tq4gbiwabe67w9nwg255m",
+  "to": "/f87otoag2wcaol7rz4xeq93g1aythodg"
+ }
+]

@@ -147,6 +147,12 @@ assistant references a `credentialId`**, so the link is visible only from `/cred
 
 ## The clone kit — push executed 2026-08-18, phone numbers pending
 
+**Wired into Make**: the 15 Vapi-referencing scenarios in the new team carry the new
+assistant ids and API key, ten tools' webhooks now point at the us2 hooks
+([`../make/VAPI_WIRING.md`](../make/VAPI_WIRING.md)), and all 15 assistant server URLs
+match live source truth (three synced post-clone). `transfer_to_human` still points at
+eu2 — its Make scenario was never cloned.
+
 **The push has run**: 45 objects — files, tools, structured outputs, scorecard, all 15
 assistants, the squad, the workflow, insights and board — now exist in the new account,
 verified three ways with zero real diffs; only the 4 phone numbers remain, deliberately.

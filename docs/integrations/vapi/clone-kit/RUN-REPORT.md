@@ -87,9 +87,10 @@ structured outputs and the scorecard once the assistants existed.
   validation is configured — or rotate it again at that point.
 - **Dangling toolIds dropped** (3, on `NPC Discovery Call Follow Up` and `…Test 2`)
   — they resolve to nothing in the source org either.
-- The tool `server.url`s still point at the **legacy eu2 Make webhooks**, exactly
-  as captured — re-pointing them is the Make leg, deliberately not this one.
-  The assistant-level server URLs point at us2, exactly as the source does.
+- The tool `server.url`s were pushed exactly as captured (legacy eu2 Make webhooks)
+  and re-pointed to the us2 hooks in a same-day follow-up pass — see
+  [`../../make/VAPI_WIRING.md`](../../make/VAPI_WIRING.md) for the evidence-backed
+  mapping. `transfer_to_human` stays on eu2: its target scenario was never cloned.
 
 ## Not migrated, and why
 

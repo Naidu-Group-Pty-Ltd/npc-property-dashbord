@@ -85,3 +85,49 @@ Authorising it with the new account's key creates "NPC Vapi (new account)" — a
 which the two `vapi2` hooks can be safely repointed (`__IMTCONN__` to the new
 connection, `assistant_id`/`externalHookId` to `66d3e994…` and `b834610e…`), because an
 unregister attempt would then hit the new org, where the old ids resolve to nothing.
+
+## The tool webhooks — re-pointed to us2 (second pass, same day)
+
+A follow-up pass re-pointed the cloned tools' `server.url`s from the legacy eu2 hooks to
+the new team's us2 hooks — a write to the **new** Vapi org only. Every mapping is
+evidence-backed, not name-guessed:
+
+| Tool | New target (us2 hook / scenario) | Evidence |
+| --- | --- | --- |
+| `get_call_context` | `7lw416w6…` NPC Vapi - get_call_context v1 | Old udid observed in that scenario's own samples; name match. |
+| `ghl_check_availability` | `ik45qbx1…` Availability Intent Router (Native) | Only availability scenario; old udid in its samples. |
+| `ghl_create_booking` | `017xspgx…` Booking Intent Router (**Generic HTTP PIT**) | Both routers received booking calls historically; Generic's samples run to **2026-05-14**, Native's end **2025-11-26** — traffic moved to Generic. ⚠️ Generic's GHL call still carries the unfilled `{{SECRET:GHL_PIT_TOKEN_BOOKING}}`, a pre-existing runbook item. |
+| `ghl_resolve_contact` | `gukfea8c…` Contact Resolver **v4 CANONICAL** | Tool's old udid (`db3ws2lm…`) observed in v4's blueprint; v3 holds the older udid. |
+| `phoneNumber_inject` | `8k9ofpk…` Discovery Call Handoff (vapi2 hook) | Tool's old udid matches the handoff's old hook in the cutover table; the scenario answers with an `assistantId`, which is a handoff responder, not a report sink. |
+| `ghl_delete_event_npc` | `jutejxif…` NPC Delete Booking Test | Prompts: Rita's (discovery) reminder-flow delete; only non-IFC/non-strategy delete scenario. |
+| `ghl_delete_event_npc_2` | `asr1irn2…` NPC Delete Strategy Session | Prompts: `_2_1` is the **Zoom** strategy delete, so `_2` is phone. |
+| `ghl_delete_event_npc_2_1` | `brtnxcxd…` NPC Delete Strategy Session (Zoom) | Prompts, verbatim: *"to delete an existing **Zoom strategy session**"*. |
+| `ghl_delete_event_npc_3` | `h28wac17…` NPC Delete IFC Session | Prompts: `original_mode = "phone"` → `_3`. |
+| `ghl_delete_event_npc_3_1` | `f87otoag…` NPC Delete IFC Session (Zoom) | Prompts: *"delete **Zoom** Initial Finance Consult"*. |
+
+`end_call_tool` has no server URL. **`transfer_to_human` stays on eu2** — its target
+scenario, *NPC Vapi - Transfer Caller to Human via Twilio Redirect*, was never cloned
+into the new team, so there is no us2 hook to point it at. Clone that scenario, then
+re-point the tool.
+
+All ten PATCHes verified by read-back: URLs exact, and no other tool field drifted.
+
+## Assistant server URLs — synced to live source truth
+
+Comparing every new-account assistant against a fresh pull of the source found two
+drifts and one stale straggler, all fixed:
+
+- **NPC Active Nurturing** and **NPC Inbound Agent** — the source moved them to the
+  Supabase edge function `…supabase.co/functions/v1/vapi-call-webhook` at 17:29, *after*
+  the clone bundle was captured, so the clone carried the older us2 Make-hook values.
+  Both now match the source (URL + `x-vapi-webhook-secret` header, which carries the
+  **minted** secret, never the leaked one; `staticIpAddressesEnabled: false` mirrored on
+  Inbound Agent).
+- **NPC Discovery Call Follow Up** — the source itself still points at a dead eu2 hook
+  (`xoktvkk0…`, last updated 2025-11-26, belonging to no exported scenario; flagged
+  "must be re-pointed" in `assistant-server-urls.json` since capture). The clone now
+  points at the same Supabase function as its Test twin and every sibling. This is a
+  deliberate divergence: the clone is ahead of the source, which remains stale.
+
+Final state: **zero `hook.eu2.make.com` references anywhere in the new Vapi org except
+`transfer_to_human`**, which is flagged above.
