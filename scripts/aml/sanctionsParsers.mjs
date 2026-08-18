@@ -133,7 +133,51 @@ const DFAT_COLUMNS = {
   address: ['address'],
   additional: ['additional information', 'aka', 'also known as', 'other information'],
   committee: ['committees', 'committee', 'listing information', 'sanctions regime'],
+  // Added by DFAT in the November 2025 revision of the published list.
+  aliasStrength: ['alias strength'],
+  imo: ['imo number', 'imo'],
+  instrument: ['instrument of designation'],
 };
+
+/**
+ * The measures DFAT now publishes per listing, as `TRUE`/`FALSE` columns.
+ * Recorded on the entry so an analyst can see WHICH sanction applies rather
+ * than only that the person is listed.
+ */
+const DFAT_MEASURES = {
+  targeted_financial_sanction: 'targeted financial sanction',
+  travel_ban: 'travel ban',
+  arms_embargo: 'arms embargo',
+  maritime_restriction: 'maritime restriction',
+};
+
+/**
+ * The listing a name row belongs to.
+ *
+ * DFAT used to repeat the listing's reference verbatim on every name row.
+ * It no longer does: the current publication suffixes each additional name
+ * with a letter, so Mohammad Hassan Akhund is reference `2` and his original
+ * script and aliases are `2a`, `2b`, `2c`. Grouping on the raw cell therefore
+ * stopped grouping anything — measured against the list published 21 July
+ * 2026, it produced 10,581 "listings" from 3,846, every one of them a single
+ * name with no aliases and, for two rows in three, an ALIAS standing in as
+ * the sanctioned party's primary name.
+ *
+ * That is not a near miss. A screening hit is an accusation about a named
+ * person, and naming them by an alias with no link to the listing is the kind
+ * of reference-data defect nobody reads a stack trace for.
+ *
+ * Stripping a trailing alpha suffix restores it, and is safe in both
+ * directions: the old repeated-reference format has no suffix to strip, and a
+ * reference that is ENTIRELY alphabetic is left alone rather than collapsed
+ * to nothing. Verified against the published file — 3,846 groups, each with
+ * exactly one `Primary Name` row, and no group whose rows disagree on Type.
+ */
+export function dfatListingKey(reference) {
+  const raw = String(reference ?? '').trim();
+  const stripped = raw.replace(/[A-Za-z]+$/, '');
+  return stripped || raw;
+}
 
 /**
  * Find the header row. DFAT sometimes ships a title/blurb row above the table,
@@ -173,6 +217,7 @@ export function rowsToDfatEntries(rows) {
     return -1;
   };
   const idx = Object.fromEntries(Object.keys(DFAT_COLUMNS).map((k) => [k, col(k)]));
+  const headerIndexOf = (name) => header.indexOf(name);
   if (idx.name < 0) throw new Error('DFAT header located but the name column resolved to -1');
 
   const cell = (row, i) => (i >= 0 ? String(row[i] ?? '').trim() : '');
@@ -183,12 +228,13 @@ export function rowsToDfatEntries(rows) {
     const name = cell(row, idx.name);
     if (!name) continue;
     // Rows without their own reference belong to the listing above them.
-    const ref = cell(row, idx.reference) || `ROW${r}`;
+    const ref = dfatListingKey(cell(row, idx.reference)) || `ROW${r}`;
 
     if (!grouped.has(ref)) {
       grouped.set(ref, {
         reference: ref, primaryName: null, names: [], dobs: [], pobs: [],
         citizenships: [], addresses: [], additional: [], committees: [], type: '',
+        weakAliases: [], imo: '', instruments: [], measures: {},
       });
     }
     const g = grouped.get(ref);
@@ -197,6 +243,22 @@ export function rowsToDfatEntries(rows) {
     // "Primary name" wins; otherwise the first name seen for the reference.
     if (!g.primaryName && (!nameType || /primary|main/i.test(nameType))) g.primaryName = name;
     g.names.push(name);
+
+    // A weak alias is one DFAT itself flags as a loose spelling. It stays
+    // fully searchable — dropping it would lose real hits — but an analyst
+    // adjudicating a match needs to know which kind of name matched.
+    if (/weak/i.test(cell(row, idx.aliasStrength)) && !g.weakAliases.includes(name)) {
+      g.weakAliases.push(name);
+    }
+    if (!g.imo) g.imo = cell(row, idx.imo);
+    for (const [key, header] of Object.entries(DFAT_MEASURES)) {
+      const i = header ? headerIndexOf(header) : -1;
+      if (i < 0) continue;
+      if (/true|yes/i.test(cell(row, i))) g.measures[key] = true;
+      else if (g.measures[key] === undefined) g.measures[key] = false;
+    }
+    const instrument = cell(row, idx.instrument);
+    if (instrument && !g.instruments.includes(instrument)) g.instruments.push(instrument);
 
     const push = (arr, v) => { if (v && !arr.includes(v)) arr.push(v); };
     push(g.dobs, cell(row, idx.dob));
@@ -217,9 +279,14 @@ export function rowsToDfatEntries(rows) {
       external_id: `DFAT-${g.reference}`,
       primary_name: primary,
       aliases,
-      // DFAT's Type column carries "Individual" / "Entity".
+      // DFAT's Type column carries "Individual" / "Entity" / "Vessel".
+      // Vessels arrived with the maritime restrictions and were previously
+      // recorded as 'unknown'; `sanctions_entries` has accepted 'vessel' and
+      // 'aircraft' all along.
       entry_type: /individual/i.test(g.type) ? 'individual'
         : /entity|organisation|organization/i.test(g.type) ? 'entity'
+        : /vessel|ship/i.test(g.type) ? 'vessel'
+        : /aircraft/i.test(g.type) ? 'aircraft'
         : 'unknown',
       date_of_birth: g.dobs[0] ?? null,
       place_of_birth: g.pobs[0] ?? null,
@@ -231,6 +298,10 @@ export function rowsToDfatEntries(rows) {
         additional_information: g.additional.join(' | ').slice(0, 2000),
         committees: g.committees.slice(0, 10),
         name_variants: g.names.length,
+        weak_aliases: g.weakAliases.slice(0, 50),
+        imo_number: g.imo || null,
+        instruments: g.instruments.slice(0, 10),
+        measures: g.measures,
       },
     });
   }

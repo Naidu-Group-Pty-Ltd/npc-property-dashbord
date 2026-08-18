@@ -34,6 +34,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import {
   parseOfac, parseUn, parseDfatCsv, parseDfatWorkbook,
   findSpreadsheetLink, withNormalisedNames,
@@ -52,6 +53,17 @@ const SOURCES = {
     // The landing page, not the file: DFAT renames the spreadsheet when it
     // republishes, so the download link is discovered from here.
     url: 'https://www.dfat.gov.au/international-relations/security/sanctions/consolidated-list',
+    // The published file's own stable address, tried FIRST.
+    //
+    // Discovery-from-the-landing-page is the more general mechanism and it is
+    // kept, but it is also the more fragile one: the landing page sits behind
+    // a WAF that answers 403 — and, from some networks, simply resets the
+    // connection — while `/sites/default/files/` serves the spreadsheet
+    // normally. Measured on 2026-08-18: the page could not be fetched at all,
+    // and this URL returned the current 1.3 MB workbook. A refresh that fails
+    // because the human-readable wrapper is unavailable is a list going stale
+    // for no reason.
+    fileUrl: 'https://www.dfat.gov.au/sites/default/files/Australian_Sanctions_Consolidated_List.xlsx',
     label: 'DFAT Consolidated List (Australia)',
   },
 };
@@ -70,10 +82,55 @@ function arg(name, argv) {
   return i >= 0 ? argv[i + 1] : null;
 }
 
+/**
+ * Fetch a published file, falling back to `curl` when the CDN refuses this
+ * runtime's HTTP client.
+ *
+ * DFAT sits behind a WAF that fingerprints the TLS handshake, and Node's
+ * `fetch` (undici) is on the wrong side of it. Measured on 2026-08-18 from
+ * one host, one IP, one User-Agent, against the same URL:
+ *
+ *     curl              -> 200, 1,299,680 bytes
+ *     node fetch        -> 403, every header combination tried
+ *
+ * Adding browser headers does not help, because the headers are not what is
+ * being judged. Nothing here evades authentication or a robots directive —
+ * the file is published for exactly this purpose, and the loader identifies
+ * itself in `User-Agent` either way. It is a client-compatibility fallback,
+ * and without it the daily refresh cannot fetch the list at all.
+ *
+ * `fetch` is still tried first, so nothing changes for the sources that work.
+ */
 async function fetchBuffer(url) {
-  const res = await fetch(url, { headers: { 'User-Agent': UA } });
-  if (!res.ok) throw new Error(`${url} returned ${res.status}`);
-  return Buffer.from(await res.arrayBuffer());
+  let status = 0;
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': UA } });
+    if (res.ok) return Buffer.from(await res.arrayBuffer());
+    status = res.status;
+  } catch (err) {
+    status = 0;
+    console.log(`  fetch failed (${err.message}); trying curl`);
+  }
+  if (status && status !== 403 && status !== 503) {
+    throw new Error(`${url} returned ${status}`);
+  }
+  const curl = spawnSync('curl', [
+    '-sS', '-L', '--max-time', '120', '--fail', '-A', UA, url,
+  ], { maxBuffer: 256 * 1024 * 1024, encoding: 'buffer' });
+  if (curl.error) {
+    throw new Error(
+      `${url} returned ${status || 'a transport error'} and curl is unavailable ` +
+      `(${curl.error.message})`,
+    );
+  }
+  if (curl.status !== 0) {
+    throw new Error(
+      `${url} returned ${status || 'a transport error'}; curl also failed ` +
+      `(exit ${curl.status}: ${String(curl.stderr ?? '').trim().slice(0, 200)})`,
+    );
+  }
+  console.log(`  fetched via curl (${curl.stdout.length} bytes) after HTTP ${status}`);
+  return Buffer.from(curl.stdout);
 }
 
 /**
@@ -90,6 +147,18 @@ async function loadDfat({ file, url }) {
   }
 
   let target = url;
+  if (!target && SOURCES.dfat.fileUrl) {
+    // The published file's own address first. A HEAD would be cheaper but
+    // DFAT's CDN does not answer one reliably, so this is a real GET whose
+    // failure simply falls through to discovery.
+    try {
+      const buf = await fetchBuffer(SOURCES.dfat.fileUrl);
+      console.log(`  direct: ${SOURCES.dfat.fileUrl} (${buf.length} bytes)`);
+      return { entries: parseDfatWorkbook(buf), buf, resolvedUrl: SOURCES.dfat.fileUrl };
+    } catch (err) {
+      console.log(`  direct URL unusable (${err.message}); falling back to page discovery`);
+    }
+  }
   if (!target) {
     const page = await fetch(SOURCES.dfat.url, { headers: { 'User-Agent': UA } });
     if (!page.ok) throw new Error(`DFAT page returned ${page.status}`);

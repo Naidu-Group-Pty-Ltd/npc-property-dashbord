@@ -230,6 +230,56 @@ describe("a file's own dates decide whether it is the current list", () => {
     expect(r.stale).toBe(false);
   });
 
+  it("reads the month-first two-digit dates the published file actually carries", () => {
+    /*
+     * The list published 21 July 2026, read the way the upload page reads it
+     * (`sheet_to_json` with `raw: false`), yields `3/26/26` and `5/8/26`:
+     * MONTH-first, TWO-digit year. The previous implementation accepted only
+     * `d/m/yyyy` and ISO, so against the current published list it matched
+     * nothing and reported "no readable listing dates" — the guard was inert
+     * on the very file it exists to judge.
+     */
+    const r = assessListRecency(sheet(["3/26/26", "5/8/26", "8/16/12"]), NOW);
+    expect(r.unknown).toBe(false);
+    expect(r.newestListing).toBe("2026-05-08");
+    expect(r.stale).toBe(false);
+  });
+
+  it("decides day-first vs month-first from the column, not the cell", () => {
+    // `5/8/26` alone is ambiguous. `23/07/2026` in the same column is not,
+    // and it settles the whole file as day-first — so `5/8/26` is 5 August.
+    const dayFirst = assessListRecency(sheet(["23/07/2026", "5/8/26"]), NOW);
+    expect(dayFirst.newestListing).toBe("2026-08-05");
+
+    // The mirror image: `3/26/26` proves month-first, so the SAME cell is
+    // 8 May. One value elsewhere in the column changes what this one means.
+    const monthFirst = assessListRecency(sheet(["3/26/26", "5/8/26"]), NOW);
+    expect(monthFirst.newestListing).toBe("2026-05-08");
+  });
+
+  it("takes the OLDER reading when the whole column is ambiguous", () => {
+    /*
+     * Every value at 12 or below in both positions, which across thousands of
+     * listings does not happen by accident. A staleness guard may only err
+     * towards refusing: reading a file as older than it is costs a deliberate
+     * force, reading it as newer admits the out-of-date register.
+     */
+    const r = assessListRecency(sheet(["3/11/2003", "5/8/2004"]), NOW);
+    // month-first reads 2004-05-08; day-first reads 2004-08-05. Older wins.
+    expect(r.newestListing).toBe("2004-05-08");
+    expect(r.stale).toBe(true);
+  });
+
+  it("still refuses a date that rolls over rather than validating", () => {
+    // Date.UTC does not validate — 31/31/9999 becomes year 10001, and one
+    // malformed cell would make an archived file the newest list ever.
+    const r = assessListRecency(sheet(["31/31/9999", "15/12/2014"]), NOW);
+    expect(r.newestListing).toBe("2014-12-15");
+    // 31 April does not exist either, and the range check alone allows it.
+    const april = assessListRecency(sheet(["31/04/2026", "15/12/2014"]), NOW);
+    expect(april.newestListing).toBe("2014-12-15");
+  });
+
   it("is generous enough never to fire on a live list", () => {
     // DFAT amends many times a year; a full year of silence is the wrong file.
     expect(LIST_STALE_AFTER_DAYS).toBe(365);

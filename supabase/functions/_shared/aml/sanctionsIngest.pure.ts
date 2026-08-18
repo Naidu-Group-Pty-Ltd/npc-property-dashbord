@@ -53,7 +53,46 @@ const DFAT_COLUMNS: Record<string, string[]> = {
   address: ['address'],
   additional: ['additional information', 'aka', 'also known as', 'other information'],
   committee: ['committees', 'committee', 'listing information', 'sanctions regime'],
+  // Added by DFAT in the November 2025 revision of the published list.
+  aliasStrength: ['alias strength'],
+  imo: ['imo number', 'imo'],
+  instrument: ['instrument of designation'],
 };
+
+/** The measures DFAT now publishes per listing, as TRUE/FALSE columns. */
+const DFAT_MEASURES: Record<string, string> = {
+  targeted_financial_sanction: 'targeted financial sanction',
+  travel_ban: 'travel ban',
+  arms_embargo: 'arms embargo',
+  maritime_restriction: 'maritime restriction',
+};
+
+/**
+ * The listing a name row belongs to.
+ *
+ * DFAT used to repeat the listing's reference verbatim on every name row. It
+ * no longer does: the current publication suffixes each additional name with
+ * a letter, so Mohammad Hassan Akhund is reference `2` and his original
+ * script and aliases are `2a`, `2b`, `2c`. Grouping on the raw cell therefore
+ * stopped grouping anything — measured against the list published 21 July
+ * 2026, it produced 10,581 "listings" from 3,846, every one a single name
+ * with no aliases and, for two rows in three, an ALIAS standing in as the
+ * sanctioned party's primary name.
+ *
+ * A screening hit is an accusation about a named person. Naming them by an
+ * alias, with no link to the listing that names them, is not cosmetic.
+ *
+ * Stripping a trailing alpha suffix restores it and is safe both ways: the
+ * old repeated-reference format has no suffix to strip, and a reference that
+ * is ENTIRELY alphabetic is left alone rather than collapsed to nothing.
+ * Verified against the published file — 3,846 groups, each with exactly one
+ * `Primary Name` row, and no group whose rows disagree on Type.
+ */
+export function dfatListingKey(reference: unknown): string {
+  const raw = String(reference ?? '').trim();
+  const stripped = raw.replace(/[A-Za-z]+$/, '');
+  return stripped || raw;
+}
 
 
 /**
@@ -79,7 +118,13 @@ export interface SanctionsEntry {
   external_id: string;
   primary_name: string;
   aliases: string[];
-  entry_type: "individual" | "entity" | "unknown";
+  /**
+   * Mirrors `sanctions_entries_entry_type_check`, which has always accepted
+   * 'vessel' and 'aircraft'. DFAT publishes 262 designated vessels; they were
+   * recorded as 'unknown' only because this union was narrower than the
+   * column.
+   */
+  entry_type: "individual" | "entity" | "vessel" | "aircraft" | "unknown";
   date_of_birth: string | null;
   place_of_birth: string | null;
   nationalities: string[];
@@ -136,6 +181,8 @@ export function rowsToDfatEntries(rows: unknown[][]): SanctionsEntry[] {
     reference: string; primaryName: string | null; names: string[];
     dobs: string[]; pobs: string[]; citizenships: string[];
     addresses: string[]; additional: string[]; committees: string[]; type: string;
+    weakAliases: string[]; imo: string; instruments: string[];
+    measures: Record<string, boolean>;
   }
   const grouped = new Map<string, Group>();
 
@@ -144,17 +191,33 @@ export function rowsToDfatEntries(rows: unknown[][]): SanctionsEntry[] {
     const name = cell(row, idx.name);
     if (!name) continue;
     // Rows without their own reference belong to the listing above them.
-    const ref = cell(row, idx.reference) || `ROW${r}`;
+    const ref = dfatListingKey(cell(row, idx.reference)) || `ROW${r}`;
     if (!grouped.has(ref)) {
       grouped.set(ref, {
         reference: ref, primaryName: null, names: [], dobs: [], pobs: [],
         citizenships: [], addresses: [], additional: [], committees: [], type: "",
+        weakAliases: [], imo: "", instruments: [], measures: {},
       });
     }
     const g = grouped.get(ref)!;
     const nameType = cell(row, idx.nameType);
     if (!g.primaryName && (!nameType || /primary|main/i.test(nameType))) g.primaryName = name;
     g.names.push(name);
+    // A weak alias is one DFAT itself flags as a loose spelling. It stays
+    // fully searchable — dropping it would lose real hits — but an analyst
+    // adjudicating a match needs to know which kind of name matched.
+    if (/weak/i.test(cell(row, idx.aliasStrength)) && !g.weakAliases.includes(name)) {
+      g.weakAliases.push(name);
+    }
+    if (!g.imo) g.imo = cell(row, idx.imo);
+    for (const [key, headerName] of Object.entries(DFAT_MEASURES)) {
+      const i = header.indexOf(headerName);
+      if (i < 0) continue;
+      if (/true|yes/i.test(cell(row, i))) g.measures[key] = true;
+      else if (g.measures[key] === undefined) g.measures[key] = false;
+    }
+    const instrument = cell(row, idx.instrument);
+    if (instrument && !g.instruments.includes(instrument)) g.instruments.push(instrument);
     const push = (arr: string[], v: string) => { if (v && !arr.includes(v)) arr.push(v); };
     push(g.dobs, cell(row, idx.dob));
     push(g.pobs, cell(row, idx.pob));
@@ -174,8 +237,13 @@ export function rowsToDfatEntries(rows: unknown[][]): SanctionsEntry[] {
       external_id: `DFAT-${g.reference}`,
       primary_name: primary,
       aliases,
+      // Vessels arrived with the maritime restrictions and were previously
+      // recorded as 'unknown'; `sanctions_entries` has accepted 'vessel' and
+      // 'aircraft' all along.
       entry_type: /individual/i.test(g.type) ? "individual"
         : /entity|organisation|organization/i.test(g.type) ? "entity"
+        : /vessel|ship/i.test(g.type) ? "vessel"
+        : /aircraft/i.test(g.type) ? "aircraft"
         : "unknown",
       date_of_birth: g.dobs[0] ?? null,
       place_of_birth: g.pobs[0] ?? null,
@@ -187,6 +255,10 @@ export function rowsToDfatEntries(rows: unknown[][]): SanctionsEntry[] {
         additional_information: g.additional.join(" | ").slice(0, 2000),
         committees: g.committees.slice(0, 10),
         name_variants: g.names.length,
+        weak_aliases: g.weakAliases.slice(0, 50),
+        imo_number: g.imo || null,
+        instruments: g.instruments.slice(0, 10),
+        measures: g.measures,
       },
     });
   }
@@ -405,6 +477,106 @@ export interface ListRecency {
   reason: string;
 }
 
+
+/** `26` → 2026, `99` → 1999. The usual two-digit pivot. */
+function expandYear(y: number): number {
+  if (y >= 100) return y;
+  return y < 70 ? 2000 + y : 1900 + y;
+}
+
+function utcIfReal(y: number, m: number, d: number): number | null {
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  if (y < 1900 || y > 2200) return null;
+  /*
+   * Ranges are checked before `Date.UTC`, which does not validate: it ROLLS
+   * OVER, so `31/31/9999` becomes year 10001 and a single malformed cell
+   * would make an archived file look like the newest list ever published.
+   * The round trip catches what the range check cannot (31 April).
+   */
+  const t = Date.UTC(y, m - 1, d);
+  const back = new Date(t);
+  if (back.getUTCFullYear() !== y || back.getUTCMonth() !== m - 1 || back.getUTCDate() !== d) {
+    return null;
+  }
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * The newest listing date in the Control Date column, or null.
+ *
+ * ── Why this is not one regex ─────────────────────────────────────────
+ * The column is read from whatever the operator's spreadsheet library made
+ * of it, and the two things it produces are not the same shape. The file
+ * published on 21 July 2026, read the way the upload page reads it
+ * (`sheet_to_json` with `raw: false`), yields `3/26/26` and `5/8/26`:
+ * MONTH-first, and a TWO-digit year. The previous implementation accepted
+ * only `d/m/yyyy` and ISO, so on the current published list it matched
+ * nothing at all and reported "no readable listing dates" — the staleness
+ * guard was inert on the very file it exists to judge, and would have been
+ * equally inert on an archived one exported the same way.
+ *
+ * ── Deciding which number is the month ────────────────────────────────
+ * Per row it is often ambiguous (`5/8/26`); across the column it is not.
+ * One value with a first component above 12 proves month-first for the
+ * file; one with a second component above 12 proves day-first. So the
+ * orientation is decided ONCE from the whole column and then applied
+ * consistently, rather than guessed per cell.
+ *
+ * When the entire column is ambiguous — every date has both components at
+ * 12 or below, which across thousands of listings does not happen by
+ * accident — both readings are computed and the OLDER is taken. A staleness
+ * guard may only ever err towards refusing: reading a file as older than it
+ * is costs a deliberate `force`, while reading it as newer than it is admits
+ * exactly the out-of-date register this whole control exists to keep out.
+ */
+export function newestListingTime(cells: string[]): number | null {
+  const iso: number[] = [];
+  const pairs: Array<{ a: number; b: number; y: number }> = [];
+  for (const raw of cells) {
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+      const t = utcIfReal(+m[1], +m[2], +m[3]);
+      if (t !== null) iso.push(t);
+      continue;
+    }
+    const p = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+    if (p) pairs.push({ a: +p[1], b: +p[2], y: expandYear(+p[3]) });
+  }
+
+  // A component above 12 cannot be a month, so it proves where the month is
+  // NOT. `23/07/2026` proves day-first; `3/26/26` proves month-first.
+  const dayFirst = pairs.some((p) => p.a > 12);
+  const monthFirst = pairs.some((p) => p.b > 12);
+  // Both proved: the column is internally inconsistent and cannot be read.
+  const orientation = monthFirst && dayFirst ? "ambiguous"
+    : monthFirst ? "md" : dayFirst ? "dm" : "ambiguous";
+
+  const read = (p: { a: number; b: number; y: number }, mode: "md" | "dm") =>
+    mode === "md" ? utcIfReal(p.y, p.a, p.b) : utcIfReal(p.y, p.b, p.a);
+
+  const best = (mode: "md" | "dm") => {
+    let top: number | null = null;
+    for (const p of pairs) {
+      const t = read(p, mode);
+      if (t !== null && (top === null || t > top)) top = t;
+    }
+    return top;
+  };
+
+  let fromPairs: number | null;
+  if (orientation === "ambiguous") {
+    const md = best("md");
+    const dm = best("dm");
+    fromPairs = md === null ? dm : dm === null ? md : Math.min(md, dm);
+  } else {
+    fromPairs = best(orientation);
+  }
+
+  let newest: number | null = fromPairs;
+  for (const t of iso) if (newest === null || t > newest) newest = t;
+  return newest;
+}
+
 export function assessListRecency(
   rows: unknown[][],
   nowMs: number,
@@ -420,35 +592,14 @@ export function assessListRecency(
     if (i >= 0) { col = i; break; }
   }
 
-  let newest: number | null = null;
+  const cells: string[] = [];
   if (col >= 0) {
     for (let r = headerIdx + 1; r < rows.length; r++) {
       const raw = String((rows[r] ?? [])[col] ?? "").trim();
-      if (!raw) continue;
-      // DFAT writes d/m/yyyy. ISO is accepted too so a re-exported file works.
-      const dmy = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-      const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      /*
-       * Ranges are checked before `Date.UTC`, which does not validate: it
-       * ROLLS OVER, so `31/31/9999` becomes year 10001 and a single
-       * malformed cell would make an archived file look like the newest
-       * list ever published. Caught by its own test.
-       */
-      const parts = dmy
-        ? { y: +dmy[3], m: +dmy[2], d: +dmy[1] }
-        : iso
-          ? { y: +iso[1], m: +iso[2], d: +iso[3] }
-          : null;
-      if (!parts) continue;
-      if (parts.m < 1 || parts.m > 12 || parts.d < 1 || parts.d > 31) continue;
-      if (parts.y < 1900 || parts.y > 2200) continue;
-      const t = Date.UTC(parts.y, parts.m - 1, parts.d);
-      // A rolled-over value no longer matches what was parsed.
-      const back = new Date(t);
-      if (back.getUTCMonth() !== parts.m - 1 || back.getUTCDate() !== parts.d) continue;
-      if (Number.isFinite(t) && (newest === null || t > newest)) newest = t;
+      if (raw) cells.push(raw);
     }
   }
+  const newest = newestListingTime(cells);
 
   if (newest === null) {
     return {
