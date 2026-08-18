@@ -142,6 +142,9 @@ describe("3. the workspace grants the action to reviewer AND MLRO, and nobody el
     expect(call).toMatch(
       /canClassify=\{access\.isMlro \|\| access\.roles\.has\("reviewer"\)\}/);
     expect(call).not.toMatch(/canClassify=\{canWrite\}/);
+    // ...and the card resolves its own permission per action rather than
+    // taking the blanket write flag.
+    expect(ws).not.toMatch(/canAct=\{canWrite\}/);
   });
 
   it("reloads the stage from the server after a classification", () => {
@@ -163,22 +166,29 @@ describe("the classify next-action lands on this control", () => {
   const repo = join(__dirname, "../../../..");
   const ws = readFileSync(join(repo, "src/pages/aml/AmlCaseWorkspace.tsx"), "utf8");
 
-  it("scrolls to the control rather than navigating anywhere", () => {
-    // The decision is made beside the evidence it rests on, and there is no
-    // second form or endpoint to keep in step with the one that exists.
+  it("opens the existing dialog rather than scrolling or navigating", () => {
+    /*
+     * This originally asserted a scroll, which is what the CTA did and why it
+     * looked broken: the dialog's state was private to the control, so the
+     * prominent button could not open it, and when the control was already on
+     * screen the click had no visible effect at all.
+     */
     const handler = ws.slice(
       ws.indexOf('case "classify_perimeter":'),
       ws.indexOf('case "fix_provider":'));
-    expect(handler).toMatch(/getElementById\("aml-sanctions-perimeter"\)/);
-    expect(handler).toMatch(/scrollIntoView/);
+    expect(handler).toMatch(/setPerimeterDialogOpen\(true\)/);
+    expect(handler).not.toMatch(/scrollIntoView/);
     expect(handler).not.toMatch(/navigate\(/);
   });
 
-  it("the scroll target wraps the control", () => {
-    const target = ws.indexOf('id="aml-sanctions-perimeter"');
-    const control = ws.indexOf("<SanctionsPerimeterControl");
-    expect(target).toBeGreaterThan(-1);
-    expect(target).toBeLessThan(control);
+  it("the parent owns the dialog state and passes it down", () => {
+    // One state, two entry points: this CTA and the control's own button.
+    expect(ws).toMatch(/const \[perimeterDialogOpen, setPerimeterDialogOpen\] = useState\(false\)/);
+    const call = ws.slice(
+      ws.indexOf("<SanctionsPerimeterControl"),
+      ws.indexOf("/>", ws.indexOf("<SanctionsPerimeterControl")));
+    expect(call).toMatch(/open=\{perimeterDialogOpen\}/);
+    expect(call).toMatch(/onOpenChange=\{setPerimeterDialogOpen\}/);
   });
 
   it("an analyst still sees the requirement, and cannot act on it", () => {

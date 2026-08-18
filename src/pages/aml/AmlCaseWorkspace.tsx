@@ -250,6 +250,9 @@ export default function AmlCaseWorkspace() {
    * whether the required determinations have actually been made. Those fail
    * independently and are never shown as one thing.
    */
+  // Owned here because two surfaces open the same dialog: this card's
+  // next-action CTA and the control's own button, further down the page.
+  const [perimeterDialogOpen, setPerimeterDialogOpen] = useState(false);
   const screeningStage = useScreeningStage(caseId, {
     riskRating: caseRow?.risk_rating ?? null,
     enhancedDueDiligence: caseRow?.status === "edd_required",
@@ -407,10 +410,16 @@ export default function AmlCaseWorkspace() {
        * decision beside the evidence it is made from — and there is no second
        * endpoint or duplicate form to keep in step.
        */
+      /*
+       * Open the existing dialog directly.
+       *
+       * This used to scroll to the control and stop. If the control was
+       * already on screen the click did nothing visible at all, and even
+       * when it scrolled, the operator still had to find and press a second
+       * button to reach the same dialog. One CTA, one click, one dialog.
+       */
       case "classify_perimeter":
-        document.getElementById("aml-sanctions-perimeter")?.scrollIntoView({
-          behavior: "smooth", block: "center",
-        });
+        setPerimeterDialogOpen(true);
         return;
       case "fix_provider":
         // `/aml/configuration` is not a route. `/aml` and `/aml/passport` are
@@ -675,7 +684,11 @@ export default function AmlCaseWorkspace() {
               <ScreeningStageCard
                 reading={screeningStage}
                 onAct={runScreeningAction}
-                canAct={canWrite}
+                actor={{
+                  canWrite,
+                  isReviewer: access.roles.has("reviewer"),
+                  isMlro: access.isMlro,
+                }}
               />
               {/*
                 The lever that makes the per-scope policy reachable. Without
@@ -691,6 +704,8 @@ export default function AmlCaseWorkspace() {
                 caseId={caseRow.id}
                 perimeter={screeningStage.sync?.perimeter ?? null}
                 canClassify={access.isMlro || access.roles.has("reviewer")}
+                open={perimeterDialogOpen}
+                onOpenChange={setPerimeterDialogOpen}
                 onChanged={() => { screeningStage.reload(); load(); }}
               />
               </div>

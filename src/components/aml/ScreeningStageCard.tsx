@@ -32,6 +32,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { AmlScreeningNextAction } from "@/lib/aml/amlCasesApi";
+import {
+  canPerformScreeningAction, screeningActionDeniedHeadline,
+  screeningActionDeniedNote, type ScreeningActor,
+} from "@/lib/aml/screeningActionAccess";
 import type { AmlScreeningStageReading } from "@/lib/aml/useScreeningStage";
 import { deriveScreeningStatus } from "@/lib/aml/screeningStatus.pure";
 
@@ -76,12 +80,20 @@ const SCOPE_LABEL: Record<string, string> = {
 };
 
 export function ScreeningStageCard({
-  reading, onAct, canAct,
+  reading, onAct, actor,
 }: {
   reading: AmlScreeningStageReading;
   /** Performs the one action. The card never mutates anything itself. */
   onAct: (action: AmlScreeningNextAction) => void | Promise<void>;
-  canAct: boolean;
+  /**
+   * The caller's roles, not a single boolean.
+   *
+   * `canAct` was one flag and the workspace passed `canWrite` — analyst,
+   * reviewer or MLRO — which is right for most actions and wrong for the two
+   * that are compliance determinations. An analyst was shown a prominent
+   * button for work the server refuses.
+   */
+  actor: ScreeningActor;
 }) {
   const { sync, readiness, scope, position, loading, unavailable } = reading;
   const [busy, setBusy] = useState(false);
@@ -120,6 +132,10 @@ export function ScreeningStageCard({
 
   const action = sync.next_action;
   const status = deriveScreeningStatus(sync.subjects);
+  // Per action, not per session: classifying the perimeter and adjudicating a
+  // match are reviewer/MLRO on the server, everything else follows canWrite.
+  const canAct = canPerformScreeningAction(action.key, actor);
+  const deniedNote = screeningActionDeniedNote(action.key);
   const tone = TONE[action.key] ?? DEFAULT_TONE;
   const { Icon } = tone;
   const stoodDown = sync.policy.notRequired ?? [];
@@ -157,10 +173,21 @@ export function ScreeningStageCard({
               {status.label}
             </Badge>
           </div>
-          <h3 className="mt-1.5 text-lg font-semibold">{action.headline}</h3>
+          <h3 className="mt-1.5 text-lg font-semibold">
+            {(!canAct && screeningActionDeniedHeadline(action.key)) || action.headline}
+          </h3>
           <p className="mt-1 text-sm text-muted-foreground">{action.detail}</p>
 
           <div className="mt-3 flex flex-wrap items-center gap-3">
+            {/*
+              No button at all when the caller cannot perform it — a CTA that
+              the server will refuse reads as the step that unblocks the case.
+              What replaces it says who CAN, so the stage still names the way
+              forward instead of going quiet.
+            */}
+            {!canAct && deniedNote && (
+              <span className="text-xs font-medium text-muted-foreground">{deniedNote}</span>
+            )}
             {action.label && canAct && (
               <Button size="sm" onClick={() => void act()} disabled={busy}>
                 {busy && <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin" />}

@@ -77,7 +77,7 @@ const REASON_LABEL = Object.fromEntries(REASONS.map((r) => [r.value, r.label]));
 const SCOPE_LABEL = Object.fromEntries(SCOPES.map((s) => [s.value, s.label]));
 
 export function SanctionsPerimeterControl({
-  caseId, perimeter, canClassify, onChanged,
+  caseId, perimeter, canClassify, onChanged, open: openProp, onOpenChange,
 }: {
   caseId: string;
   /** The server's operative classification, or null while it is unread. */
@@ -88,8 +88,32 @@ export function SanctionsPerimeterControl({
    */
   canClassify: boolean;
   onChanged: () => void;
+  /**
+   * Optional external control of the dialog.
+   *
+   * Stage 5's own "Classify sanctions screening requirement" CTA has to open
+   * THIS dialog — the one that already exists, with its reasons, its scope
+   * checkboxes and its submit path — rather than a second copy of it. So the
+   * dialog is controlled when the parent supplies `open`, and keeps its own
+   * state when nobody does.
+   *
+   * That is the standard React controlled/uncontrolled pattern rather than a
+   * ref handle, because the parent already needs the state anyway (to open
+   * it from a card rendered above this one) and because it leaves this
+   * component usable on its own, unchanged.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openSelf, setOpenSelf] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openSelf;
+  // One setter for both modes, so every call site — the lower button, the
+  // dialog's own dismiss, the successful submit — moves the same state.
+  const setOpen = (next: boolean) => {
+    if (!controlled) setOpenSelf(next);
+    onOpenChange?.(next);
+  };
   const [busy, setBusy] = useState(false);
   const [classification, setClassification] =
     useState<"designated_service" | "outside_perimeter">("outside_perimeter");
