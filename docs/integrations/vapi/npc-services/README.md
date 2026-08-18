@@ -69,15 +69,20 @@ place:
 
 | Where it points | Count | Action |
 | --- | ---: | --- |
-| Supabase `vapi-call-webhook` | 11 | none — that project is not moving |
-| New Make account (`us2`) | 2 | none — already migrated |
+| Supabase `vapi-call-webhook` | 13 | none — that project is not moving |
 | **Old Make account (`eu2`)** | 1 | **re-point** — `NPC Discovery Call Follow Up` |
+| No server URL set | 1 | — `NPC Discovery Call Follow Up Test 2` |
 
-The two already on `us2` are worth understanding: `NPC Active Nurturing` and
-`NPC Inbound Agent` point at the two `vapi2` hooks minted in the new Make account. Creating a
-Vapi *app* hook in Make writes the URL into the assistant, so those two were re-pointed as a
-side effect of the Make work rather than deliberately. It also means a `vapi2` hook created in
-the wrong account silently repoints a live assistant.
+**Corrected 2026-08-18.** This table previously read 11 / 2 / 1 and said `NPC Active
+Nurturing` and `NPC Inbound Agent` were already on `us2`. They were, for about five hours.
+Creating a Vapi *app* hook in Make writes its URL into the bound assistant, so the Make work
+repointed those two at 12:44 as a side effect rather than deliberately — and at **17:28 and
+17:29 the same day they were pointed back at the Supabase edge function**, not by this
+migration. Net effect: no NPC assistant currently targets the new Make account. The whole
+sequence is in [`../snapshot/history-index.json`](../snapshot/history-index.json).
+
+The mechanism still matters even though the change was undone: a `vapi2` hook created in
+the wrong Make account silently repoints a live assistant.
 
 ## Three things this export found
 

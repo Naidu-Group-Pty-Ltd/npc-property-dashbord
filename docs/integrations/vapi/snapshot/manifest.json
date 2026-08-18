@@ -1,0 +1,64 @@
+{
+  "completeness": {
+    "listVsSingleGet": "verified identical — list payloads are not truncated",
+    "rawVersionHistory": "11.9 MB, not committed; history-index.json summarises it and it is reproducible with GET /assistant/{id}/version?limit=100",
+    "toolVersionHistory": "not available: GET /tool/{id}/version returns 404 for all 20 tools"
+  },
+  "counts": {
+    "assistantVersionsIndexed": 444,
+    "assistants": 28,
+    "filesInOrg": 90,
+    "knowledgeFilesDownloaded": 12,
+    "phoneNumbers": 6,
+    "squads": 3,
+    "testSuites": 2,
+    "tools": 20,
+    "workflows": 1
+  },
+  "npcSplit": {
+    "note": "Vapi has no folder concept; the split is by name prefix and corroborated by squad membership and phone-number naming. Only the NPC set is in scope for migration — see ../npc-services/clone-plan.json.",
+    "npc": 15,
+    "other": 13
+  },
+  "redactions": {
+    "count": 6,
+    "kinds": [
+      "AIRTABLE_PAT",
+      "GHL_PIT_TOKEN",
+      "TWILIO_ACCOUNT_SID"
+    ],
+    "sites": [
+      {
+        "kind": "GHL_PIT_TOKEN",
+        "path": "tool[ghl_mcp].server.headers.Authorization"
+      },
+      {
+        "kind": "AIRTABLE_PAT",
+        "path": "tool[get_contact_airtable_test].server.headers.Authorization"
+      },
+      {
+        "kind": "TWILIO_ACCOUNT_SID",
+        "path": "phone[Naidu Property Consulting Services].twilioAccountSid"
+      },
+      {
+        "kind": "TWILIO_ACCOUNT_SID",
+        "path": "phone[NPC Services].twilioAccountSid"
+      },
+      {
+        "kind": "TWILIO_ACCOUNT_SID",
+        "path": "phone[lavanethaan ravachandran].twilioAccountSid"
+      },
+      {
+        "kind": "TWILIO_ACCOUNT_SID",
+        "path": "phone[Twilio Test].twilioAccountSid"
+      }
+    ]
+  },
+  "source": {
+    "apiBase": "https://api.vapi.ai",
+    "capturedAt": "2026-08-18T17:3x UTC",
+    "method": "GET only — nothing in this org was modified to produce it",
+    "orgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd",
+    "platform": "vapi"
+  }
+}
