@@ -35,6 +35,7 @@ import {
   PROVENANCE_VERSION, storeSourceImages, type SourceImageFetcher,
 } from './sourceImages.ts';
 import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
+import { eligibilityDetailFor } from './assessSourceImage.ts';
 
 /** What `attachDocumentMedia` did with one picture, for a caller that counts. */
 export interface AttachedMedia {
@@ -577,6 +578,9 @@ export async function attachDocumentMedia(
           anchor: media.anchor ?? null,
           reason: attribution.reason,
           ...roleDetail(roles[index]),
+          // Whether the marketplace may DRAW it. Every format lands here or
+          // in `sourceImages.ts`, and both ask the same question of the bytes.
+          ...await eligibilityDetailFor(media.bytes, roles[index].role),
           upload_id: input.uploadId,
           stock_item_id: stockItemId,
           filename: input.filename ?? null,

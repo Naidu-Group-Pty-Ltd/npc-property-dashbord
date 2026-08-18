@@ -30,6 +30,9 @@
 import {
   comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from './sourceImageRole.pure.ts';
+import {
+  compareMarketplaceEligibility, isMarketplaceEligible,
+} from './marketplaceEligibility.pure.ts';
 
 /** The stage whose provenance is the builder's own document. */
 export const SOURCE_SUPPLIED_STAGE = 'uploaded_document';
@@ -72,7 +75,11 @@ export function isDisplayableSourceImage(image: DisplayableImage): boolean {
     && image.verification_status === SOURCE_SUPPLIED_VERIFICATION
     && image.processing_status === 'ready'
     && !!(image.storage_path || image.external_url)
-    && isPrimaryRole(readStoredRole(image.source_detail));
+    && isPrimaryRole(readStoredRole(image.source_detail))
+    // And the sixth: the source designating it is not the same as it being a
+    // picture to draw. A facade under a "$25,000 Rebate" ribbon passes all
+    // five above. See `marketplaceEligibility.pure.ts`.
+    && isMarketplaceEligible(image.source_detail);
 }
 
 /**
@@ -110,7 +117,10 @@ export function chooseDisplayableImage<T extends DisplayableImage>(images: T[]):
   if (!displayable.length) return null;
 
   return [...displayable].sort((a, b) =>
-    comparePrimaryEvidence(
+    // Judged eligible before never judged, so deploying this cannot leave an
+    // unexamined picture in front of an examined one.
+    compareMarketplaceEligibility(a.source_detail, b.source_detail)
+    || comparePrimaryEvidence(
       readStoredEvidenceLevel(a.source_detail), readStoredEvidenceLevel(b.source_detail))
     || (a.position ?? 0) - (b.position ?? 0)
     || String(a.id).localeCompare(String(b.id)))[0];
