@@ -64,3 +64,4 @@ ds-bundle/
 # by `npm run templates:library:cards`. Build output, regenerated on demand and
 # pushed to claude.ai/design with the DesignSync tool — never edited by hand.
 .design-system/
+tests-e2e/manual-screening-dialog/harness/dist/
