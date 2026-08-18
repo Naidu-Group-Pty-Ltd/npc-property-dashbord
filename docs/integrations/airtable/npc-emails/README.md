@@ -11,6 +11,14 @@ table, and they match exactly.
 This is a migration artefact, not a backup of convenience. The source base is
 still the system of record until the cutover is signed off.
 
+## The rebuild already happened — read that first
+
+[`REBUILT_BASE.md`](./REBUILT_BASE.md) describes the **target** base
+(`appFNPL7iYiuQyHAO`), which was built from this bundle on 2026-08-18: its table
+ids, the 212 of 5,537 records that landed, the 11 fields the API could not create
+with their source type, and the five places the target deliberately does not
+match the source. Everything below this line describes the **source**.
+
 ## Automations are a separate bundle
 
 The base's 10 automations are exported to

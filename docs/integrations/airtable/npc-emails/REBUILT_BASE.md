@@ -1,0 +1,133 @@
+# The rebuilt base — what landed in the new account, and what did not
+
+The bundle beside this file describes the **source** base (`apptyShYE0yzL4IGB`).
+This file describes the **target**: base **`appFNPL7iYiuQyHAO`**, still named
+`NPC Emails`, in workspace `wsp6aFpcSUCiVC3Dp` of the company Airtable account.
+It was rebuilt over MCP on 2026-08-18 by replaying
+[`schema/create-plan.json`](./schema/create-plan.json) and the pass-1 batches.
+
+Read this before assuming the two bases are the same shape. Nine of the ten
+tables carry their records; the tenth is a manual import; and eleven fields could
+not be created with the type the source used.
+
+## Table ids
+
+Field ids are minted by the target base and do **not** match the source. Anything
+that addresses a field by id — a Make module, an automation, a script — has to be
+re-pointed. Names survived the move unchanged.
+
+| Table | New table id | Records | Source |
+| --- | --- | ---: | ---: |
+| Opt-In Calls | `tblrWdu0MU3i4No0h` | 32 | 32 |
+| Lead Data Test | `tblotE5pdMly454l3` | 7 | 7 |
+| Emails | `tblc4u4AhVed04lVN` | **0** | 5,325 |
+| Quiz Sub Calls | `tblZlUsxh22DXjOH4` | 0 | 0 |
+| Properties | `tbl7JAawCPdd8QPZP` | 0 | 0 |
+| Strategic Review Bookings | `tblnvoQdMqh8mnvmO` | 2 | 2 |
+| Aurixa Waitlist | `tblaSuqLKa00rqdtu` | 10 | 10 |
+| Business Readiness Responses | `tbl3VGRV7xBvSSGlq` | 1 | 1 |
+| BRQ Detailed Responses | `tblLn0n6v6ubGrTbA` | 12 | 12 |
+| Property Intake Master | `tblumTIRYBn92B2ST` | 148 | 148 |
+
+**212 of 5,537 records.** The gap is `Emails` in its entirety: 5,325 records that
+cannot be passed as inline tool arguments. They are a CSV import a person runs —
+see [`migration/csv/README.md`](./migration/csv/README.md). Every other table
+matches its source count exactly.
+
+**All five link cells in the link plan are satisfied, by three writes.** Airtable
+link fields are bidirectional, so the two `Aurixa Waitlist → BRQ Detailed
+Responses` entries are the reverse side of edges written from the BRQ table and
+did not need writing separately. Verified in the target: 3 of the 12 BRQ rows
+carry an `Applicant` link, which is the whole of the source's link graph. No link
+in this base involves `Emails`, so the missing `Emails` records cost no edges.
+
+## The eleven fields the API cannot create
+
+`create_field` accepts 25 field types. Four that this base uses are not among
+them: `aiText`, `createdTime`, `lastModifiedTime` and `autoNumber`. Eleven fields
+use one of those four, so **none of the eleven was created with its source type.**
+
+**Four have an exact formula equivalent, and were created that way.** Airtable's
+formula language has `CREATED_TIME()` and `LAST_MODIFIED_TIME()`, which return
+the same instant the native field type would. Each carries a description on the
+field saying what it stands in for.
+
+| Table | Field | New field id | Formula |
+| --- | --- | --- | --- |
+| Properties | `Created` | `fld4RX5aE99pzc5R8` | `CREATED_TIME()` |
+| Lead Data Test | `Created at` | `fldw8y4JUFG6Y6sgr` | `CREATED_TIME()` |
+| Property Intake Master | `Created Time` | `fldp5d8j03aOu74sV` | `CREATED_TIME()` |
+| Property Intake Master | `Last Modified Time` | `fldPeld9mzwbEABDX` | `LAST_MODIFIED_TIME()` |
+
+**These read 2026-08-18 for every migrated record, and that is not a defect of the
+substitution.** A created-time value is a property of the row, minted when the row
+is inserted — the native field type would say exactly the same thing. The original
+timestamps are in [`records/`](./records) as `sourceCreatedTime` and cannot be
+written into any computed field, native or formula. If a date matters to a
+downstream query, copy it into a writable `dateTime` column before relying on it.
+
+**Seven have no API equivalent at all and must be added in the UI.** Five are
+`aiText`, whose values Airtable generates itself from a referenced field, and two
+are `autoNumber` primaries.
+
+| Table | Field | Type | Reads from |
+| --- | --- | --- | --- |
+| Emails | `Attachment Summary` | aiText | `Attachments` |
+| Lead Data Test | `Attachment Summary` | aiText | `Attachments` |
+| Aurixa Waitlist | `Bypass URL Summary (Bypass URL)` | aiText | `Bypass URL` |
+| Aurixa Waitlist | `Bypass URL Title (Bypass URL)` | aiText | `Bypass URL` |
+| Aurixa Waitlist | `Bypass URL Headline (Bypass URL)` | aiText | `Bypass URL` |
+| Business Readiness Responses | `Record ID` | autoNumber | — |
+| BRQ Detailed Responses | `Id` | autoNumber | — |
+
+Nothing reads any of the seven. The two autoNumbers were the source primaries and
+were replaced (below). For the aiText fields, `Attachment Summary` does appear in
+the exported Make blueprints — but only inside the output schemas Make generates
+from the table itself, never in a mapper: there is no `{{…Attachment Summary…}}`
+expression anywhere in the 63 exported scenarios. The three `Bypass URL` fields
+appear in no scenario or automation at all.
+
+Worth knowing before recreating them: the one cached sample record in the export
+that carries an `Attachment Summary` value shows
+`{"state": "error", "value": null}` — the field was failing in the source base
+too. Adding these seven is cosmetic parity, not a prerequisite for cutover.
+
+## Deliberate divergences
+
+Each of these is a place the target does not match the source. All five were
+chosen rather than stumbled into, and none of them silently repairs a defect the
+source had — the two inert formulas are omitted and named rather than rewritten.
+
+**Three primary fields changed.** A primary field must be one of a short list of
+writable types, and on three tables the source primary was a formula or an
+autoNumber — none of which qualifies, and all of which were empty. The new
+primaries are `Property Intake Master` → `Address`,
+`Business Readiness Responses` → `Role`, and `BRQ Detailed Responses` →
+`Application ID` (the key the Stage 2 automations actually join on).
+
+**`Address Match Key` and `Project Match Key` were not ported.** Both are
+literally the string `"Unable to generate formula"` in the source — a constant,
+equal for all 148 records, which is why dedup keyed on them matched everything.
+Recreating a constant would carry the defect without carrying any behaviour.
+`Property Unique Key` was ported and works; rebuild the other two from it.
+
+**Rollup aggregations were inferred.** The export captured `options: null` for
+every rollup, so the aggregation function was not recoverable from it. Only
+`Stage 3 Active Bookings` is load-bearing and it was recreated as `SUM`; the date
+rollups use `MIN` and the text rollups `ARRAYJOIN`. Check them against the source
+in the UI before trusting a Stage 2/3 gate.
+
+**One duplicate select option was merged.** `Properties.Property Type` had two
+options both named `Land`. The table holds 0 records, so nothing was lost.
+
+**Five unnamed select options were dropped** from `BRQ Detailed Responses`. All
+12 records are empty on all five of the fields concerned, so this cost 0 cells.
+
+## Still to do
+
+- Import `Emails` from CSV (5,325 or 2,819 records — see that README).
+- Write the two `Emails` link cells once its rows exist.
+- Add the seven UI-only fields if parity matters.
+- Recreate the 10 automations — [`automations/`](./automations/README.md); 4 of
+  them carry `customScript` and must be pasted by hand.
+- Re-point the Make scenarios at the new base and field ids.
