@@ -63,9 +63,14 @@ export function parseTimestamp(value: string | null | undefined, fallback: numbe
  * Progress comes from the server's counters rather than from counting markdown
  * headings in the report body. The old `countSections` regex matched the legacy
  * engine's headings ("## Executive Summary", "## Location Overview"), so it
- * returned 0 for every Compass-40 report — whose sections are "Cover Page",
- * "Client Reading Guide", "Executive Verdict" and so on — and it required
- * shipping the whole ~95KB report body to the browser on every poll to do it.
+ * returned 0 for every Compass report — whose sections are "Cover Page",
+ * "Executive Verdict", "Demand Drivers" and so on — and it required shipping the
+ * whole report body to the browser on every poll to do it.
+ *
+ * `total_sections` on the row wins over the registry count, and that ordering is
+ * load-bearing across a section-list change: the v3.0 registry declares 12 where
+ * v2.0 declared 17, and ~1,120 stored rows carry 17. Reading the registry first
+ * would make every one of them read as over 100% complete.
  */
 export function toReportProgress(row: ProgressRow, now: number): ReportProgress {
   const createdAt = parseTimestamp(row.created_at, now);

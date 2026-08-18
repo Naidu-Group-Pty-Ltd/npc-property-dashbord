@@ -1,19 +1,26 @@
 /**
- * Compass-40 QA Validator — Phase 7
- * ----------------------------------
+ * Compass QA Validator — Phase 7
+ * -------------------------------
  * Runs structural QA on a generated report's markdown. Used by:
+ *   • generate-investment-report (recorded on the report row)
  *   • condense-investment-report (returns assertions in response)
  *   • Deno tests (compassPostProcessor_test.ts)
  *   • Frontend QA panel (mirror in src/lib/reports/)
  *
  * Checks:
- *   1. Page band: Compass 38–42, Financial 18–22
+ *   1. Page band: Compass 20–26, Financial 18–22
  *   2. Financial content exclusion from Compass (no yield/LVR/cashflow tables)
+ *   2b. No unresolved placeholders
+ *   2c. No editorial commentary label survives, in any form
  *   3. Suburb-narrative exclusion from Financial Analysis
  *   4. Duplicate H2 heading detection
- *   5. Duplicate decision-box detection per section
  *   6. Protected sections present
  *   7. Per-section word-cap compliance
+ *   8. Sub-heading density per section
+ *
+ * A finding is a report of fact, never a reason to discard a document. The
+ * generator records this and stores the report either way: a report that exists
+ * and is over its band is more useful to everyone than no report at all.
  */
 
 import {
@@ -23,7 +30,16 @@ import {
   PROTECTED_SECTION_IDS,
   type CompassSectionDefinition,
 } from './compassSectionRegistry';
-import { countWords, estimatePages } from './compassPostProcessor';
+import { countWords, estimatePages, findEditorialLabels } from './compassPostProcessor';
+
+/**
+ * The prompt asks for at most 4 `###` a section; this flags at 6+.
+ *
+ * One of tolerance, deliberately: QA reports on a document that already exists
+ * and a section that runs to a fifth sub-head is not a defect worth a finding.
+ * v2.0 produced 68 `###` a report across 17 sections; 4 a section over 11 is ~44.
+ */
+const MAX_SUBHEADINGS_PER_SECTION = 5;
 
 export type QASeverity = 'error' | 'warning' | 'info';
 
@@ -171,6 +187,24 @@ export function runQAValidation(
     }
   }
 
+  // Rule 2c — no editorial commentary label survives, in any of its three forms.
+  //
+  // This replaces the v2.0 pair of decision-box rules, which counted only
+  // `^#{2,4} what this means` and so found 11 of the 5,043 labels in the
+  // production corpus. It shares its matcher with the post-processor that does
+  // the removing, so the check and the fix cannot disagree about what a label is.
+  const survivingLabels = findEditorialLabels(markdown);
+  if (survivingLabels.length > 0) {
+    const sample = survivingLabels.slice(0, 5).join(' / ');
+    findings.push({
+      rule: 'editorial-label',
+      severity: 'error',
+      message:
+        `Report contains ${survivingLabels.length} editorial commentary label(s) — e.g. ${sample}. ` +
+        'State the finding in the sentence introducing the data instead.',
+    });
+  }
+
   // Rule 3 — suburb-narrative exclusion (Financial only)
   if (tier === 'financial-analysis') {
     for (const pat of SUBURB_KEYWORDS) {
@@ -207,25 +241,6 @@ export function runQAValidation(
     const def = findDef(sec.heading, registry);
     if (!def) continue;
 
-    // 5 — duplicate decision boxes
-    const boxCount = (sec.body.match(/^#{2,4}\s*(what this means|takeaway)/gim) ?? []).length;
-    if (boxCount > 1) {
-      findings.push({
-        rule: 'duplicate-decision-box',
-        severity: 'error',
-        sectionId: def.id,
-        message: `Section "${sec.heading}" has ${boxCount} decision boxes (max 1).`,
-      });
-    }
-    if (boxCount > 0 && !def.allowDecisionBox) {
-      findings.push({
-        rule: 'forbidden-decision-box',
-        severity: 'error',
-        sectionId: def.id,
-        message: `Section "${sec.heading}" has a decision box but allowDecisionBox=false.`,
-      });
-    }
-
     // 7 — per-section word cap
     const w = countWords(sec.body);
     if (def.maxWordCount > 0 && w > def.maxWordCount * 1.1) {
@@ -234,6 +249,18 @@ export function runQAValidation(
         severity: 'warning',
         sectionId: def.id,
         message: `Section "${sec.heading}" has ${w} words, over cap ${def.maxWordCount}.`,
+      });
+    }
+
+    // 8 — heading density. 68 H3s a report across 17 sections was the
+    // structural half of the noise; the prompt asks for at most four.
+    const h3 = (sec.body.match(/^###\s+/gm) ?? []).length;
+    if (h3 > MAX_SUBHEADINGS_PER_SECTION) {
+      findings.push({
+        rule: 'subheading-density',
+        severity: 'warning',
+        sectionId: def.id,
+        message: `Section "${sec.heading}" has ${h3} sub-headings (max ${MAX_SUBHEADINGS_PER_SECTION}).`,
       });
     }
   }

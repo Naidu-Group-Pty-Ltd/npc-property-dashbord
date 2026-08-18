@@ -1,5 +1,14 @@
 # Investment Location & Property Fit — the contract
 
+> **Structure changed in v3.0.** Seventeen sections became eleven plus back
+> matter, and the four-block commentary style this document's examples still
+> show — *Key takeaway / Why this matters / What to watch / NPC view* — was
+> removed outright. Read
+> [`INVESTMENT_STRUCTURE.md`](./INVESTMENT_STRUCTURE.md) first. Everything
+> below about the chart vocabulary, the tables, page economy and the
+> WeasyPrint defects still holds; the section *names* and counts in it are
+> v2.0's.
+
 The largest format in the programme, the highest-volume one by an order of
 magnitude — **1,182 rows in `investment_reports`, 5–18 a week, continuously** —
 and the last to be read against production rather than against a fixture.
