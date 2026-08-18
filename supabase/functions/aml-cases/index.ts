@@ -2487,6 +2487,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           anyConfirmedMatch: required.some((s: any) => s.state === 'confirmed_match'),
           anyMissingPep: required.some((s: any) => !currentDetermination(String(s.id))),
           pepRoute: policy.pepRoute,
+          // An undecided perimeter is a question to ask before a provider is
+          // a problem to fix. The default it falls back to is unchanged.
+          perimeterClassified: scope.perimeter.classified,
           oldestQueuedSeconds,
           errorCategory: required.find((s: any) => s.state === 'error')?.error_category ?? null,
         });
@@ -2549,6 +2552,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           })),
           perimeter: {
             classification: scope.perimeter.classification,
+            classified: scope.perimeter.classified,
             reason_code: scope.perimeter.reasonCode,
             scopes_excluded: scope.perimeter.scopesExcluded,
             recorded_by_label: scope.perimeter.recordedByLabel,
