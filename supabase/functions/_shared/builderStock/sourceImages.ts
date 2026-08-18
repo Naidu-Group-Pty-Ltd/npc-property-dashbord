@@ -29,6 +29,7 @@ import {
   MAX_SOURCE_IMAGE_BYTES, sourceImageObjectPath, validateSourceImageBytes,
   type SourceImageAsset,
 } from './sourceAssets.pure.ts';
+import { eligibilityDetailFor } from './assessSourceImage.ts';
 import { roleDetail } from './sourceImageRole.pure.ts';
 import { sha256Hex } from './rasterPng.ts';
 
@@ -157,6 +158,10 @@ export async function storeSourceImages(
           extraction_method: 'downloaded_asset',
           transformation: null,
           provenance_version: PROVENANCE_VERSION,
+          // Whether the marketplace may DRAW it, which is a different
+          // question from every other one recorded here. See
+          // `marketplaceEligibility.pure.ts`.
+          ...await eligibilityDetailFor(bytes, asset.role.role),
         },
       }, { onConflict: 'stock_item_id,source_stage,source_reference' });
 
@@ -265,6 +270,7 @@ export async function storeSourceImageBytes(
       snapshotted: true,
       provenance_version: PROVENANCE_VERSION,
       ...(input.detail ?? {}),
+      ...await eligibilityDetailFor(input.bytes, (input.detail ?? {}).role),
     },
   }, { onConflict: 'stock_item_id,source_stage,source_reference' });
 

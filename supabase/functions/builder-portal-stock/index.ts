@@ -58,6 +58,7 @@ import {
 } from '../_shared/builderStock/images.ts';
 import type { AnchoredAssets } from '../_shared/builderStock/sourceAssets.pure.ts';
 import { repairSourceImagesForUpload } from '../_shared/builderStock/repairSourceImages.ts';
+import { settleMarketplaceEligibility } from '../_shared/builderStock/settleMarketplaceEligibility.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 import {
   settleUploadSourceImages, uploadsNeedingSettlement,
@@ -772,6 +773,14 @@ Deno.serve(async (req) => {
       }
 
       /**
+       * Judge display eligibility for anything stored before it was judged,
+       * BEFORE primaries are settled — otherwise a picture would be nominated
+       * and only then found to be a marketing tile.
+       */
+      const eligibility = await settleMarketplaceEligibility(
+        supabase, activeOrganisationId, { deadlineAt: startedAt + ENRICHMENT_BUDGET_MS });
+
+      /**
        * Settle EVERY property, not only the ones this run touched.
        *
        * A property whose builder supplied nothing must end the run with no
@@ -784,10 +793,10 @@ Deno.serve(async (req) => {
         builderUserId: me.id, organisationId: activeOrganisationId,
         action: 'builder_stock_source_images_reprocessed',
         entityType: 'stock_upload', entityId: sourceIds[0] ?? null,
-        metadata: { sources: results.length, results, primaries },
+        metadata: { sources: results.length, results, primaries, eligibility },
       });
 
-      return json({ success: true, results, primaries });
+      return json({ success: true, results, primaries, eligibility });
     }
 
     if (operation === 'enrich_images') {

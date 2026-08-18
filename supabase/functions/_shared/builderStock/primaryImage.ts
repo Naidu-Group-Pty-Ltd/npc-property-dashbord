@@ -27,7 +27,12 @@
  * reaches for Google and Perplexity and cannot be loaded outside the edge
  * runtime, and a rule nothing can test is a rule that drifts.
  */
-import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
+import {
+  comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
+} from './sourceImageRole.pure.ts';
+import {
+  isMarketplaceEligible,
+} from './marketplaceEligibility.pure.ts';
 
 /** The stage whose provenance is the builder's own document. */
 export const SOURCE_SUPPLIED_STAGE = 'uploaded_document';
@@ -70,23 +75,49 @@ export function isDisplayableSourceImage(image: DisplayableImage): boolean {
     && image.verification_status === SOURCE_SUPPLIED_VERIFICATION
     && image.processing_status === 'ready'
     && !!(image.storage_path || image.external_url)
-    && isPrimaryRole(readStoredRole(image.source_detail));
+    && isPrimaryRole(readStoredRole(image.source_detail))
+    // And the sixth: the source designating it is not the same as it being a
+    // picture to draw. A facade under a "$25,000 Rebate" ribbon passes all
+    // five above. See `marketplaceEligibility.pure.ts`.
+    && isMarketplaceEligible(image.source_detail);
 }
 
 /**
  * The card's image, from a property's images. Null means "show no image".
  *
  * There is normally exactly one candidate, because at most one image per
- * property can carry `primary_property`. Where a re-import has left two, the
- * source's own ordering decides, with the id as a stable last resort so
- * re-running enrichment cannot silently swap a card's picture.
+ * property can carry `primary_property`. Where a source supplies MORE than
+ * one, the strength of the source's own evidence decides first — see
+ * `comparePrimaryEvidence`.
+ *
+ * THE CASE THAT ADDED THAT STEP. A builder keeps a marketing tile in the row's
+ * page-cover slot: the property's own facade with "$25,000 Rebate", "VIC" and
+ * "LARA" set over it in coloured pills, or "Completed" and "SMSF". It is exact
+ * builder-supplied imagery of that exact property, so it is correctly
+ * `primary_property` on LEVEL 3 — a structural container designating one
+ * image. Where the same property ALSO carries the clean original in a field
+ * the builder named for it, that is LEVEL 1, and the level is the only thing
+ * that distinguishes them: same property, same provenance, same role. Ordering
+ * by `position` picked whichever the reader enumerated first.
+ *
+ * ORDERING IS NOT WHAT REFUSES A MARKETING TILE — the display gate above is,
+ * through `isMarketplaceEligible`. An earlier version of this rule kept the
+ * tile whenever the source designated nothing better, and that was wrong: a
+ * facade under a status ribbon is not a card image however impeccable its
+ * provenance. Ordering only decides between candidates that have ALREADY
+ * passed the gate.
+ *
+ * `position` and then the id remain the tie-break, so re-running enrichment
+ * cannot silently swap a card's picture.
  */
 export function chooseDisplayableImage<T extends DisplayableImage>(images: T[]): T | null {
   const displayable = (images ?? []).filter(isDisplayableSourceImage);
   if (!displayable.length) return null;
 
   return [...displayable].sort((a, b) =>
-    (a.position ?? 0) - (b.position ?? 0)
+    comparePrimaryEvidence(
+      readStoredEvidenceLevel(a.source_detail), readStoredEvidenceLevel(b.source_detail))
+    || (a.position ?? 0) - (b.position ?? 0)
     || String(a.id).localeCompare(String(b.id)))[0];
 }
 

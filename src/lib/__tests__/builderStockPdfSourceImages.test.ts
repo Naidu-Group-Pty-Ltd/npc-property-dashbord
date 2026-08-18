@@ -23,6 +23,8 @@
  * nested inside a single form XObject the way every real exporter emits them.
  */
 import { describe, expect, it } from 'vitest';
+
+import { cleanPicture, jpegOf } from './fixtures/builderStockPictures';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -154,8 +156,17 @@ function buildPdf(pages: FixturePage[]): Uint8Array {
   return concat(parts);
 }
 
-/** A full-bleed render: 1700×956 at a tenth of a byte per pixel. */
-const render = (fill: number) => jpeg(fill, 170_000);
+/**
+ * A full-bleed render: 1700×956 at a tenth of a byte per pixel.
+ *
+ * A REAL, DECODABLE PICTURE, unlike the three below it. This is the image the
+ * document designates as a property's primary, so it is the one display
+ * eligibility decodes and measures before a card may draw it; a marker-shaped
+ * fill would now be measured as unreadable, which is not displayable. The
+ * others are never designated, so they are never measured, and they stay as
+ * they were — the byte counts are what those tests are about.
+ */
+const render = (variant: number) => jpegOf(cleanPicture(340, 191, variant), 170_000);
 /** The live cover's decorative wash: 1300×698 in 10 KB. */
 const wash = jpeg(0x99, 10_211);
 /** A logo. Photographic encoding, tiny on the page. */

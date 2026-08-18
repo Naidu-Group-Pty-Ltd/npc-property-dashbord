@@ -11,13 +11,28 @@
  * uploaded is not a deployment step; it is a defect with instructions.
  *
  * So this drives the SAME repair from pg_cron. It is a sweep, not a service:
- * every upload carries `source_images_settled_version`, this brings the ones
- * below the current version up to it, and when none are left the migration's
- * cron job unschedules itself. Nothing here is on a read path and nothing runs
- * when there is no work.
+ * every upload carries a settled-version marker, this brings the ones below
+ * the current version up to it, and when none are left the migration's cron
+ * job unschedules itself. Nothing here is on a read path and nothing runs when
+ * there is no work.
  *
- * WHAT IT MAY WRITE. `builder_stock_item_images` rows, the `primary_image_id`
- * those rows earn, and the settlement marker. No stock item is created or
+ * IT NOW CARRIES TWO KINDS OF WORK, UNDER TWO MARKERS. Provenance
+ * (`source_images_settled_version`) is where a row's bytes came from and what
+ * the source designated them as. Marketplace display eligibility
+ * (`marketplace_eligibility_settled_version`) is whether the picture itself may
+ * go on a card — a facade under a status ribbon answers every provenance
+ * question correctly and is still not a card image. They are versioned apart on
+ * purpose: improving the classifier must not re-fetch every Notion page, and
+ * re-reading a source must not re-run a classifier that has not changed. An
+ * upload behind on either is outstanding, and every upload written before the
+ * fourth question existed is behind on the second one — which is what makes
+ * this the thing that repairs production, with nobody pressing anything.
+ *
+ * WHAT IT MAY WRITE. `builder_stock_item_images` rows, the display verdict
+ * inside their `source_detail`, the `primary_image_id` those rows earn, and the
+ * two settlement markers. THE STORED IMAGE IS NEVER REWRITTEN: eligibility
+ * re-READS each object to measure it, and no byte of any picture is altered,
+ * cropped, blurred or replaced by anything. No stock item is created or
  * deleted; no price, availability, configuration, status, selection, builder or
  * project/unit linkage is touched. Those guarantees are `repairSourceImages.ts`'s
  * and are not restated here — this only decides WHICH uploads it runs for.
@@ -32,7 +47,9 @@ import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
 import { internalErrorResponse } from '../_shared/errorResponse.ts';
 import {
-  runSettlementTick, settleUploadSourceImages, SETTLED_VERSION_COLUMN,
+  readEligibilityTarget, readOutstandingUploads, runSettlementTick,
+  settleUploadSourceImages,
+  ELIGIBILITY_SETTLED_VERSION_COLUMN, SETTLED_VERSION_COLUMN,
   type SettlementCandidate,
 } from '../_shared/builderStock/settleSourceImages.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
@@ -57,6 +74,14 @@ const corsHeaders = createCorsHeaders();
 const BUDGET_MS = 100_000;
 /** Sources one tick may read. Resumable, so small is safe and slow is not. */
 const MAX_UPLOADS_PER_TICK = 6;
+/**
+ * Outstanding uploads one tick asks the database for.
+ *
+ * Comfortably more than it can settle, so the tick always has the oldest work
+ * in front of it, and bounded so a very large backlog drains over several ticks
+ * rather than arriving in one response.
+ */
+const MAX_QUEUE_ROWS = 100;
 const MAX_BODY_BYTES = 8 * 1024;
 
 const json = (body: unknown, status = 200) =>
@@ -88,33 +113,40 @@ Deno.serve(async (req: Request) => {
 
   try {
     /**
-     * The organisations with work outstanding, oldest source first.
+     * The uploads with work outstanding, oldest source first.
      *
-     * Read straight off the uploads rather than from a queue table: the marker
-     * IS the queue, so there is no second place for the two to disagree.
+     * ASKED OF THE DATABASE, NOT FILTERED IN MEMORY. This used to read the
+     * oldest 500 uploads and filter them here, which meant 500 settled uploads
+     * were enough to hide every outstanding one behind them: the tick found
+     * nothing, reported the queue empty, and the 501st was never reached.
+     * `readOutstandingUploads` asks for the rows that are actually behind, so
+     * the queue drains at 500 uploads and at 50,000.
+     *
+     * The eligibility version it selects against is the DATABASE's target, not
+     * this build's constant — see `readEligibilityTarget`, which is what makes
+     * a later classifier bump wake production rather than change nothing.
      */
-    const { data: rows, error } = await supabase
-      .from('builder_stock_uploads')
-      .select(`id, organisation_id, ${SETTLED_VERSION_COLUMN}`)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: true })
-      .limit(500);
-    if (error) {
-      // The column is missing: the migration has not applied yet. Nothing to
+    const eligibilityTarget = await readEligibilityTarget(supabase);
+    const queue = await readOutstandingUploads(supabase, {
+      limit: MAX_QUEUE_ROWS, eligibilityTarget,
+    });
+
+    if (queue.unavailable) {
+      // The columns are missing: the migration has not applied yet. Nothing to
       // do, and saying so is better than sweeping every source every tick.
       console.warn('[builder-stock-image-settler] uploads not readable', {
         phase: 'settlement_scan',
-        message: String(error.message ?? error).slice(0, 200),
       });
       return json({ success: true, settled: 0, remaining: 0, skipped: 'marker_unavailable' });
     }
 
-    const outstanding = (rows ?? []).filter((row: Record<string, unknown>) =>
-      Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION);
+    const outstanding = queue.rows;
 
     if (!outstanding.length) {
       // Quiet path. The migration's job unschedules itself on this.
-      return json({ success: true, settled: 0, remaining: 0, complete: true });
+      return json({
+        success: true, settled: 0, remaining: 0, complete: true, eligibilityTarget,
+      });
     }
 
     /**
@@ -129,12 +161,18 @@ Deno.serve(async (req: Request) => {
       outstanding.map((row): SettlementCandidate => ({
         id: String(row.id),
         organisation_id: String(row.organisation_id),
+        needsProvenance:
+          Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION,
+        needsEligibility:
+          Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < eligibilityTarget,
       })),
       { maxSettled: MAX_UPLOADS_PER_TICK, deadlineAt },
       (candidate) => settleUploadSourceImages(supabase, {
         organisationId: candidate.organisation_id,
         uploadId: candidate.id,
         deadlineAt,
+        needsProvenance: candidate.needsProvenance,
+        needsEligibility: candidate.needsEligibility,
       }),
     );
 

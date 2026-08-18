@@ -11,8 +11,11 @@
  * would reject.
  */
 import {
-  isPrimaryRole, readStoredRole,
+  comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from '../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
+import {
+  isMarketplaceEligible,
+} from '../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
 
 export {
   stockFileAcceptAttribute,
@@ -313,7 +316,10 @@ export function isDisplayableSourceImage(image: BuilderStockImage): boolean {
     && image.verification_status === 'source_supplied'
     && image.processing_status === 'ready'
     && !!(image.storage_path || image.external_url)
-    && isPrimaryRole(readStoredRole(image.source_detail));
+    && isPrimaryRole(readStoredRole(image.source_detail))
+    // The stored verdict, read — never re-measured. Deciding this per card
+    // would mean decoding every image on every render.
+    && isMarketplaceEligible(image.source_detail);
 }
 
 /**
@@ -344,10 +350,13 @@ export function primaryStockImage(item: BuilderStockItem): BuilderStockImage | n
     const chosen = displayable.find((image) => image.id === item.primary_image_id);
     if (chosen) return chosen;
   }
-  // The stored choice is missing or stale. Pick by the order the SOURCE gave
-  // them, with the id as a stable tie-break, so the two never disagree.
+  // The stored choice is missing or stale. Ranked exactly as the server ranks
+  // it — the strength of the source's own evidence first, then the order the
+  // SOURCE gave them, then the id — so the two never disagree.
   return [...displayable].sort((a, b) =>
-    (a.position ?? 0) - (b.position ?? 0)
+    comparePrimaryEvidence(
+      readStoredEvidenceLevel(a.source_detail), readStoredEvidenceLevel(b.source_detail))
+    || (a.position ?? 0) - (b.position ?? 0)
     || String(a.id).localeCompare(String(b.id)))[0] ?? null;
 }
 

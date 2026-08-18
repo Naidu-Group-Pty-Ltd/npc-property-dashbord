@@ -17,6 +17,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { CLEAN_VERDICT, cleanPicture, jpegOf, pngOf } from './fixtures/builderStockPictures';
+
 import {
   attributeDocumentMedia, sniffImageContentType, sourceImageObjectPath,
   SOURCE_ANCHOR_HEADER, validateSourceImageBytes,
@@ -53,7 +55,12 @@ const PRIMARY_ASSET_ROLE = roleFromStructuralContainer({
   container: 'the Notion row for this property',
   designation: 'page cover',
 });
-const PRIMARY_ROLE_DETAIL = roleDetail(PRIMARY_ASSET_ROLE);
+/**
+ * A settled image: what the source designated it as, AND what the marketplace
+ * measured on the picture. The second half is not optional — an image with no
+ * verdict has never been judged, and the display rule refuses it.
+ */
+const PRIMARY_ROLE_DETAIL = { ...roleDetail(PRIMARY_ASSET_ROLE), ...CLEAN_VERDICT };
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -66,12 +73,19 @@ const ROW_A = '374cabf9-2010-8059-b681-c9aa84ff8b0d';
 const ROW_B = '3accabf9-2010-81b7-9168-f2eb55ecc559';
 const PAGE_URL = 'https://ionized-chalk-a63.notion.site/30ccabf920108099b502d7ac23995def';
 
-/** A real PNG header, padded past the "too small to be a photograph" floor. */
-function pngBytes(size = 4096): Uint8Array {
-  const bytes = new Uint8Array(size);
-  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
-  bytes.fill(0x42, 8);
-  return bytes;
+/**
+ * A real, DECODABLE PNG of a clean photograph.
+ *
+ * It used to be a signature followed by a fill byte, which was enough for
+ * everything that only sniffs a container. It is not enough any more: display
+ * eligibility decodes the picture it is about to allow onto a card and fails
+ * closed, so an undecodable file is `pending` and draws nothing. The `size`
+ * argument survives for the callers that pass one; the picture is sized to
+ * clear the "too small to be a photograph" floor either way.
+ */
+const PNG_BYTES = await pngOf(cleanPicture(320, 166));
+function pngBytes(_size = 4096): Uint8Array {
+  return PNG_BYTES;
 }
 
 function wrap(record: Record<string, unknown>) {
@@ -415,7 +429,7 @@ describe('bringing the source image inside', () => {
       content_type: 'image/png',
     });
     expect(row.storage_bucket).toBe('builder-stock-images');
-    expect(db.stored[row.storage_path as string].bytes.length).toBe(4096);
+    expect(db.stored[row.storage_path as string].bytes.length).toBe(pngBytes().length);
   });
 
   it('snapshots a Notion-hosted file and never keeps its expiring URL', async () => {
@@ -518,7 +532,7 @@ describe('bringing the source image inside', () => {
   it('reads the bytes, not the promise', () => {
     expect(sniffImageContentType(pngBytes())).toBe('image/png');
     expect(validateSourceImageBytes(new TextEncoder().encode('<svg/>'.repeat(200))).ok).toBe(false);
-    expect(validateSourceImageBytes(pngBytes(64)).ok).toBe(false);
+    expect(validateSourceImageBytes(pngBytes().subarray(0, 64)).ok).toBe(false);
     expect(sourceImageObjectPath('org', 'item', 'attachment:x:Cover.png', 'png'))
       .toBe('org/items/item/source/attachment-x-Cover.png.png');
   });
@@ -808,10 +822,9 @@ describe('repairing stock that is already imported', () => {
         + 'Sandpiper Estate,1307585,https://drive.google.com/drive/folders/pack-root-0001',
     ].join('\r\n');
 
-    const jpeg = new Uint8Array(160_000);
-    jpeg.set([0xff, 0xd8, 0xff, 0xe0], 0);
-    jpeg.fill(0x42, 4, 4094);
-    jpeg.set([0xff, 0xd9], 4094);
+    // A real render: the package designates it, so it is the one the display
+    // rule decodes and measures before a card may draw it.
+    const jpeg = jpegOf(cleanPicture(340, 191), 160_000);
 
     const encoder = new TextEncoder();
     const listing = (entries: Array<[string, string, string]>) => {
