@@ -43,7 +43,7 @@
     {
       "id": 2,
       "mapper": {
-        "key": "{{1.message.toolCalls[].function.arguments.vapiCallId}}",
+        "key": "{{1.message.customer.number}}",
         "returnWrapped": true
       },
       "module": "datastore:GetRecord",

@@ -110,6 +110,36 @@ Report generation via PDFMonkey (the `NPC Property Reports` webhook).
 | --- | --- | --- | --- |
 | [`reports/integration-webhooks-pdfmonkey.6965830.json`](reports/integration-webhooks-pdfmonkey.6965830.json) | `6965830` | off | 2 |
 
+## One deliberate divergence from live Make
+
+Every file here is a verbatim export **except** the contact-resolution key, which
+is corrected in two of them:
+
+| File | Module | Was | Now |
+| --- | --- | --- | --- |
+| `voice-agent/vapi-ghl-contact-resolver-v4-…9231443.json` | 11, 12 | `…arguments.vapi_call_id` | `{{1.message.customer.number}}` |
+| `voice-agent/npc-vapi-get-call-context-v1.9232935.json` | 2 | `…arguments.vapiCallId` | `{{1.message.customer.number}}` |
+
+The `GHL Contact IDs` store had two readers keyed differently — `Discovery Call
+Handoff` looked up by `message.customer.number`, `get_call_context v1` by
+`vapiCallId` — and a writer can only have one key. The resolver keyed on the
+Vapi call id, which is unique per call, so its upsert could never match an
+existing row: three contacts had become 74 rows and the phone lookup found
+almost nothing. The evidence is in
+[`../../datastores/`](../../datastores/README.md).
+
+All three scenarios now key on the same expression. `message.customer.number` is
+chosen over the tool arguments deliberately — Vapi fills tool arguments from its
+own templating and it demonstrably fails, reaching the store as the literal
+`{{ customer.number }}` on 9 rows, with `called_number` still arriving as
+`{{ phoneNumber.number }}` today. The envelope value is set by Vapi itself on
+every request and cannot arrive uninterpolated. The two phone fields in each
+`data` object were pointed at the same expression so a row's key and its stored
+phone can never disagree.
+
+Until the same edit is made in Make, these two files describe intended rather
+than deployed behaviour. Nothing else in this directory diverges.
+
 ## Cached execution samples contain live client data
 
 30 of these blueprints carry `metadata.designer.samples` — the sample bundles

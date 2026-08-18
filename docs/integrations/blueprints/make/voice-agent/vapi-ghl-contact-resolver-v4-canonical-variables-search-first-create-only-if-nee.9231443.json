@@ -2059,9 +2059,9 @@
             {
               "id": 12,
               "mapper": {
-                "key": "{{1.message.toolCalls[].function.arguments.vapi_call_id}}",
+                "key": "{{1.message.customer.number}}",
                 "data": {
-                  "phone": "{{1.message.toolWithToolCallList[].toolCall.function.arguments.customer_number}}",
+                  "phone": "{{1.message.customer.number}}",
                   "source": "",
                   "fullName": "{{10.firstName}} {{10.lastName}}",
                   "contactId": "{{10.id}}",
@@ -2069,7 +2069,7 @@
                   "firstName": "{{10.firstName}}",
                   "updatedAt": "{{1.message.call.updatedAt}}",
                   "vapiCallId": "{{1.message.toolWithToolCallList[].toolCall.function.arguments.vapi_call_id}}",
-                  "callerPhone": "{{10.phone}}",
+                  "callerPhone": "{{1.message.customer.number}}",
                   "callerReason": "",
                   "contactFound": false,
                   "contactState": "RESOLVED",
@@ -2313,9 +2313,9 @@
                 ]
               },
               "mapper": {
-                "key": "{{1.message.toolCalls[].function.arguments.vapi_call_id}}",
+                "key": "{{1.message.customer.number}}",
                 "data": {
-                  "phone": "{{1.message.toolWithToolCallList[].toolCall.function.arguments.customer_number}}",
+                  "phone": "{{1.message.customer.number}}",
                   "source": "",
                   "fullName": "{{9.firstName}} {{9.lastName}}",
                   "contactId": "{{9.id}}",
@@ -2323,7 +2323,7 @@
                   "firstName": "{{9.firstName}}",
                   "updatedAt": "{{1.message.call.updatedAt}}",
                   "vapiCallId": "{{1.message.toolWithToolCallList[].toolCall.function.arguments.vapi_call_id}}",
-                  "callerPhone": "{{1.message.toolWithToolCallList[].toolCall.function.arguments.customer_number}}",
+                  "callerPhone": "{{1.message.customer.number}}",
                   "callerReason": "",
                   "contactFound": true,
                   "contactState": "RESOLVED",
