@@ -162,14 +162,44 @@ function checkOutstanding(state: string, subject: string): string {
 
 export interface AmlDeterminationReading {
   scope: AmlScreeningScope;
-  /** Always true for the mandatory pair. */
+  /**
+   * Whether the OBLIGATION exists, as the server decided it. Not a statement
+   * about whether anything was screened.
+   */
   required: boolean;
+  /**
+   * True when the server recorded this scope as `not_required`. Kept separate
+   * from `resolved` on purpose: a scope nobody had to screen is satisfied for
+   * the stage and is NOT a result. Rendering it as "clear" would claim a
+   * customer was screened and found nothing, which nobody did.
+   */
+  notRequired?: boolean;
+  /** The server's reason code for a not-required scope. */
+  reasonCode?: string;
   /** Resolved = this determination no longer holds Stage 5 open. */
   resolved: boolean;
   label: string;
   detail: string;
   /** Recorded basis, for the audit trail. */
   basis?: string;
+}
+
+/**
+ * The server's per-scope decision, verbatim from `sync_screening_stage`.
+ *
+ * When this is present it is the AUTHORITY on what is required. The browser
+ * still reads the evidence — whether a required check produced a result —
+ * because that is a different question, but it no longer decides scope. A
+ * compliance scope decided in a tab is not a decision anyone can audit, and
+ * two derivations of one rule is how they drift.
+ */
+export interface AmlServerScopeDecision {
+  scope: AmlScreeningScope;
+  required: boolean;
+  optional: boolean;
+  state: "required" | "not_required";
+  reason_code: string;
+  reason: string;
 }
 
 export interface AmlScreeningScopeDecision {
@@ -237,29 +267,68 @@ function determinationCurrent(
 export function deriveAmlScreeningScope(
   facts: AmlScreeningScopeFacts | null | undefined,
   readiness?: AmlScreeningReadinessReading | null,
+  serverScopes?: AmlServerScopeDecision[] | null,
 ): AmlScreeningScopeDecision {
   const f: AmlScreeningScopeFacts = facts ?? { answers: null };
   const nowIso = f.now ?? new Date().toISOString();
   const determinations: AmlDeterminationReading[] = [];
   const outstanding: string[] = [];
 
-  /* ── Targeted financial sanctions — mandatory, evidence-driven ───── */
+  /*
+   * The server's decision, when there is one. Absent it, everything is
+   * required — the same answer this module always gave, and the safe one.
+   */
+  const byScope = new Map<string, AmlServerScopeDecision>(
+    (serverScopes ?? []).map((x) => [String(x.scope), x]));
+  const serverSays = (scope: AmlScreeningScope) => byScope.get(scope) ?? null;
+  const isRequired = (scope: AmlScreeningScope, fallback: boolean) => {
+    const d = serverSays(scope);
+    return d ? d.required : fallback;
+  };
+  /**
+   * A scope the policy did not require is SATISFIED for the stage and is not
+   * a result. Both facts are said in one place so no caller can take the
+   * first and quietly imply the second.
+   */
+  const notRequiredReading = (
+    scope: AmlScreeningScope, label: string,
+  ): AmlDeterminationReading => {
+    const d = serverSays(scope)!;
+    return {
+      scope, required: false, notRequired: true, resolved: true,
+      reasonCode: d.reason_code,
+      label,
+      detail: `Not required under AML/CTF policy. ${d.reason}`,
+      basis: d.reason,
+    };
+  };
+
+  /* ── Targeted financial sanctions ────────────────────────────────── */
   const s = String(f.sanctionsState ?? "not_started");
+  const sanctionsRequired = isRequired("sanctions", true);
   const sanctionsResolved = checkResolved(s);
-  determinations.push({
-    scope: "sanctions",
-    required: true,
-    resolved: sanctionsResolved,
-    label: "Targeted financial sanctions",
-    detail: checkDetail(s, "sanctions"),
-  });
-  if (!sanctionsResolved) outstanding.push(checkOutstanding(s, "sanctions"));
+  if (!sanctionsRequired) {
+    determinations.push(notRequiredReading("sanctions", "Targeted financial sanctions"));
+  } else {
+    determinations.push({
+      scope: "sanctions",
+      required: true,
+      resolved: sanctionsResolved,
+      label: "Targeted financial sanctions",
+      detail: checkDetail(s, "sanctions"),
+    });
+    if (!sanctionsResolved) outstanding.push(checkOutstanding(s, "sanctions"));
+  }
 
   /* ── PEP — a determination to be REACHED, never waived ───────────── */
   const d = f.pepDetermination;
+  const pepRequired = isRequired("pep", true);
   const pepResolved = determinationCurrent(d, nowIso);
   const declaration = f.answers?.pep;
 
+  if (!pepRequired) {
+    determinations.push(notRequiredReading("pep", "Politically exposed person"));
+  } else {
   determinations.push({
     scope: "pep",
     required: true,
@@ -287,12 +356,17 @@ export function deriveAmlScreeningScope(
         : "Record the PEP determination.",
     );
   }
+  }
 
   /* ── Adverse media — risk-based, policy-driven ───────────────────── */
   const notRequiredByPolicy: AmlScreeningScopeDecision["notRequiredByPolicy"] = [];
   const triggers = adverseMediaTriggers(f);
   const answersRead = Boolean(f.answers) && answered(f.answers?.adverse);
-  if (triggers.length > 0) {
+  const adverseServer = serverSays("adverse_media");
+  if (adverseServer && !adverseServer.required) {
+    determinations.push(notRequiredReading("adverse_media", "Adverse media"));
+    notRequiredByPolicy.push({ scope: "adverse_media", basis: adverseServer.reason });
+  } else if (adverseServer?.required || triggers.length > 0) {
     const a = String(f.adverseMediaState ?? "not_started");
     const adverseResolved = checkResolved(a);
     determinations.push({

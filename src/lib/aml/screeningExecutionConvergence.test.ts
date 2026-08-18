@@ -227,7 +227,22 @@ describe("the execution paths cannot silently swallow again", () => {
   it("a provider that cannot run fails the request instead of leaving it queued", () => {
     // The self-healing gate had no else-branch: when the provider was not
     // ready, a stalled subject simply stayed queued for ever.
-    expect(cases).toContain("if (canWrite && !providerReadyForAuto)");
+    //
+    // The condition now also requires the sanctions scope to be REQUIRED.
+    // That is not a weakening: a case the policy exempted has no request to
+    // converge, and failing its subject with `provider_not_configured` would
+    // report a blocker on a scope nobody asked for. The else-branch still
+    // exists for every case that does require screening.
+    expect(cases).toContain(
+      "if (canWrite && scope.sanctions.required && !providerReadyForAuto)");
     expect(cases).toMatch(/notReadyCategory/);
+  });
+
+  it("auto-execution never runs a scope the policy did not require", () => {
+    // Auto-recovery bills a provider call. Doing that for an exempt case
+    // would spend money on a check nobody asked for, and would produce
+    // screening evidence the policy record says was not obtained.
+    expect(cases).toContain(
+      "const providerReadyForAuto = providerReady && scope.sanctions.required;");
   });
 });

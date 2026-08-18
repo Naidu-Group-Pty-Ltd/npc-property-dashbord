@@ -348,6 +348,38 @@ export const amlCasesApi = {
    */
   syncScreeningStage: (case_id: string) =>
     invoke<AmlScreeningStageSync>({ op: "sync_screening_stage", case_id }),
+  /**
+   * Record whether the case is inside the sanctions perimeter.
+   *
+   * Reviewer or MLRO only, server-enforced. The caller names a
+   * classification and a reason code from a fixed list — there is no
+   * `required` flag to send, because the server derives the scope and
+   * ignores anything a caller claims about it.
+   */
+  classifyScreeningPerimeter: (args: {
+    case_id: string;
+    classification: "designated_service" | "outside_perimeter";
+    reason_code?: string;
+    scopes_excluded?: AmlScreeningScopeKey[];
+    note?: string;
+  }) => invoke<{ perimeter: Record<string, unknown> }>({
+    op: "classify_screening_perimeter", ...args,
+  }),
+  /**
+   * Run a screening the policy does not require.
+   *
+   * Uses the normal provider pipeline and persists a real check. It never
+   * changes the obligation: `scope_required` comes back false whatever the
+   * run produces. When the provider cannot run, this returns `ran: false`
+   * with a reason and changes nothing — the stage is not blocked, because
+   * the case never needed this screening.
+   */
+  runOptionalScreening: (subject_id: string) =>
+    invoke<{
+      ran?: boolean; converged?: boolean; scope_required: false;
+      code?: string; message?: string; provider_ready?: boolean;
+      subject?: AmlPartyScreeningSubject;
+    }>({ op: "run_optional_screening", subject_id }),
   /** Release a screening request nothing ever picked up. Refuses live work. */
   retryStalledScreening: (subject_id: string) =>
     invoke<{ subject?: AmlPartyScreeningSubject; retired?: number; skipped?: boolean; code?: string }>(
@@ -472,13 +504,43 @@ export interface AmlScreeningNextAction {
   owner: "system" | "analyst" | "reviewer" | "administrator" | "client" | "none";
 }
 
+/** One scope's obligation, exactly as `aml.case_screening_scopes` holds it. */
+export interface AmlCaseScreeningScope {
+  scope: AmlScreeningScopeKey;
+  required: boolean;
+  /** Whether an authorised operator may run it voluntarily. */
+  optional: boolean;
+  state: "required" | "not_required";
+  reason_code: string;
+  reason: string;
+}
+
+export interface AmlScreeningPerimeter {
+  classification: "designated_service" | "outside_perimeter";
+  reason_code: string | null;
+  scopes_excluded: AmlScreeningScopeKey[];
+  recorded_by_label: string | null;
+  recorded_at: string | null;
+}
+
 export interface AmlScreeningStageSync {
   enrolled: number;
   subjects: AmlPartyScreeningSubject[];
   policy: AmlScreeningPolicyDecision;
+  /** The canonical per-scope decision. The authority on what is required. */
+  scopes: AmlCaseScreeningScope[];
+  perimeter: AmlScreeningPerimeter;
+  policy_version: string;
   provider_ready: boolean;
+  /**
+   * Whether provider readiness bears on this case at all. False when no
+   * required scope needs the sanctions provider — in which case an unloaded
+   * list is a fact that does not apply, not a blocker to clear.
+   */
+  provider_relevant: boolean;
   next_action: AmlScreeningNextAction;
   decision_recorded: boolean;
+  scope_changed: AmlScreeningScopeKey[];
 }
 
 export interface AmlPartyScreeningSubject {
@@ -487,6 +549,9 @@ export interface AmlPartyScreeningSubject {
   last_screened_at: string | null; refresh_due_at: string | null;
   adjudicated_at: string | null; adjudication_note: string | null;
   screening_check_id: string | null; error_category: string | null;
+  /** Set when an operator ran this screening voluntarily. */
+  voluntary_run_at?: string | null;
+  voluntary_run_by_label?: string | null;
   /** Canonical candidate matches for this subject's screening check (staff-side). */
   matches?: AmlScreeningCandidateMatch[];
   /** Current (non-superseded) PEP determination for this party, if any. */
