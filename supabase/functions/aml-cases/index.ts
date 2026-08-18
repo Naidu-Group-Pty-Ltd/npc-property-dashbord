@@ -56,6 +56,7 @@ import {
   PERIMETER_REASON_CODES,
   PRIMARY_SUBJECT_PARTY_TYPE,
   providerReadinessRelevant,
+  reconcileSubjectToScope,
   SCREENING_POLICY_VERSION,
   SCREENING_STALL_SECONDS,
   recoverableSubjects,
@@ -385,36 +386,31 @@ async function syncScreeningScopeDecision(
   }
 
   /* ── Reconcile the subjects with the sanctions scope ────────────── */
+  // The DECISION is `reconcileSubjectToScope` in the pure module, unit-tested
+  // there. This applies it and does nothing else, so the interesting rules
+  // cannot only be checked by reading this file.
   const sanctionsRequired = scope.sanctions.required;
-  const HAS_FINDING = ['possible_match', 'confirmed_match'];
-  const HAS_RESULT = ['completed', 'false_positive'];
   let subjectsChanged = 0;
 
   for (const s of subjects ?? []) {
-    const state = String(s.state);
-    if (!sanctionsRequired) {
-      if (HAS_FINDING.includes(state)) continue;          // see the header
-      /*
-       * A voluntary run already in flight is work an operator authorised
-       * seconds ago. Standing the subject down here would cancel it and
-       * leave them looking at "not required" having just pressed Run.
-       */
-      if (['queued', 'processing'].includes(state) && s.voluntary_run_at) continue;
-      if (HAS_RESULT.includes(state)) {
-        if (s.required === false) continue;
-        await admin.schema('aml').from('party_screening_subjects')
-          .update({ required: false, updated_at: nowIso }).eq('id', s.id);
-        subjectsChanged++;
-        continue;
-      }
-      if (s.required === false && state === 'not_required') continue;
-      /*
-       * Retire any queued request for this subject BEFORE standing it down.
-       * A pending outbox row that a worker claims a second later would run
-       * the provider for a scope the policy just said is not required — and
-       * bill for it. Scoped by aggregate_id, which the emitting trigger sets
-       * to the subject id.
-       */
+    const decision = reconcileSubjectToScope(
+      {
+        state: String(s.state),
+        required: s.required === true,
+        voluntaryRunAt: s.voluntary_run_at ?? null,
+      },
+      sanctionsRequired,
+    );
+    if (!decision.patch) continue;
+    /*
+     * Retire any queued request BEFORE standing the subject down. A pending
+     * outbox row that a worker claims a second later would run the provider
+     * for a scope the policy just said is not required — and bill for it.
+     * Scoped by aggregate_id, which the emitting trigger sets to the subject
+     * id; retiring on event_type alone would retire every other case's
+     * pending request too.
+     */
+    if (decision.retireQueued) {
       await admin.from('integration_outbox')
         .update({
           processed_at: nowIso, locked_at: null, locked_by: null,
@@ -423,24 +419,10 @@ async function syncScreeningScopeDecision(
         .eq('event_type', 'aml.screening.requested')
         .eq('aggregate_id', s.id)
         .is('processed_at', null);
-      await admin.schema('aml').from('party_screening_subjects')
-        .update({
-          required: false, state: 'not_required',
-          error_category: null, updated_at: nowIso,
-        }).eq('id', s.id);
-      subjectsChanged++;
-    } else {
-      // Back inside the perimeter: an exemption is withdrawn by restoring the
-      // subject to unscreened, never by inventing a result for it.
-      if (s.required === true && state !== 'not_required') continue;
-      await admin.schema('aml').from('party_screening_subjects')
-        .update({
-          required: true,
-          state: state === 'not_required' ? 'not_started' : state,
-          updated_at: nowIso,
-        }).eq('id', s.id);
-      subjectsChanged++;
     }
+    await admin.schema('aml').from('party_screening_subjects')
+      .update({ ...decision.patch, updated_at: nowIso }).eq('id', s.id);
+    subjectsChanged++;
   }
 
   return { changed, subjectsChanged };

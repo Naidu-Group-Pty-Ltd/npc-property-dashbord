@@ -459,6 +459,87 @@ export function decideScreeningPolicy(input: ScreeningPolicyInput): ScreeningPol
   };
 }
 
+
+/**
+ * What an exemption (or its withdrawal) means for one already-enrolled
+ * subject.
+ *
+ * Pure, because the interesting part is the decision and not the UPDATE.
+ * Four outcomes, and the first two are the ones that matter:
+ *
+ *   keep_finding      a possible or confirmed match exists. The subject
+ *                     stays REQUIRED whatever the perimeter says: once a
+ *                     candidate exists you cannot un-know it, and the duty
+ *                     to deal with a positive result comes from the sanction
+ *                     itself rather than from the screening obligation that
+ *                     surfaced it.
+ *   keep_in_flight    a VOLUNTARY run is queued or processing. Standing it
+ *                     down would cancel work an operator authorised seconds
+ *                     ago and leave them looking at "not required" having
+ *                     just pressed Run.
+ *   release           obligation drops; a completed check keeps its result
+ *                     and only the flag moves, an unscreened subject becomes
+ *                     not_required.
+ *   restore           the exemption is withdrawn: back to unscreened, never
+ *                     to an invented result.
+ */
+export type SubjectScopeAction =
+  | "none" | "keep_finding" | "keep_in_flight" | "release" | "restore";
+
+export interface SubjectScopeReconciliation {
+  action: SubjectScopeAction;
+  /** The columns to write, or null when nothing changes. */
+  patch: { required?: boolean; state?: string; error_category?: null } | null;
+  /** Whether pending queue entries for this subject must be retired first. */
+  retireQueued: boolean;
+}
+
+const FINDING_STATES = ["possible_match", "confirmed_match"];
+const RESULT_STATES = ["completed", "false_positive"];
+const IN_FLIGHT_STATES = ["queued", "processing"];
+
+export function reconcileSubjectToScope(
+  subject: { state: string; required: boolean; voluntaryRunAt?: string | null },
+  sanctionsRequired: boolean,
+): SubjectScopeReconciliation {
+  const state = String(subject.state);
+
+  if (!sanctionsRequired) {
+    if (FINDING_STATES.includes(state)) {
+      return { action: "keep_finding", patch: null, retireQueued: false };
+    }
+    if (IN_FLIGHT_STATES.includes(state) && subject.voluntaryRunAt) {
+      return { action: "keep_in_flight", patch: null, retireQueued: false };
+    }
+    if (RESULT_STATES.includes(state)) {
+      // Evidence survives. Only the obligation moves.
+      return subject.required === false
+        ? { action: "none", patch: null, retireQueued: false }
+        : { action: "release", patch: { required: false }, retireQueued: false };
+    }
+    if (subject.required === false && state === "not_required") {
+      return { action: "none", patch: null, retireQueued: false };
+    }
+    return {
+      action: "release",
+      patch: { required: false, state: "not_required", error_category: null },
+      retireQueued: true,
+    };
+  }
+
+  if (subject.required === true && state !== "not_required") {
+    return { action: "none", patch: null, retireQueued: false };
+  }
+  return {
+    action: "restore",
+    patch: {
+      required: true,
+      state: state === "not_required" ? "not_started" : state,
+    },
+    retireQueued: false,
+  };
+}
+
 /* ─────────────────────────── Enrolment ──────────────────────────────── */
 
 export interface EnrolmentCandidate {

@@ -12,6 +12,7 @@ import type { AmlPartyScreeningSubject } from "@/lib/aml/amlCasesApi";
 
 const listPartyScreening = vi.fn();
 const queuePartyScreening = vi.fn();
+const runOptionalScreening = vi.fn();
 const adjudicatePartyScreening = vi.fn();
 const recordPepDetermination = vi.fn();
 
@@ -19,6 +20,7 @@ vi.mock("@/lib/aml/amlCasesApi", () => ({
   amlCasesApi: {
     listPartyScreening: (...a: unknown[]) => listPartyScreening(...a),
     queuePartyScreening: (...a: unknown[]) => queuePartyScreening(...a),
+    runOptionalScreening: (...a: unknown[]) => runOptionalScreening(...a),
     adjudicatePartyScreening: (...a: unknown[]) => adjudicatePartyScreening(...a),
     recordPepDetermination: (...a: unknown[]) => recordPepDetermination(...a),
   },
@@ -116,6 +118,62 @@ describe("PartyScreeningPanel — canonical candidate adjudication", () => {
     expect(await screen.findByText("error")).toBeTruthy();
     expect(screen.getByText(/list data unavailable/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /retry screening/i })).toBeTruthy();
+  });
+
+  it("7, 10. a not-required subject offers the optional run and nothing else", async () => {
+    // No Retry, no provider blocker, no "upload the sanctions list": none of
+    // those are steps towards anything on a case that is not waiting.
+    listPartyScreening.mockResolvedValue({
+      subjects: [subject({ state: "not_required", required: false, matches: [] })],
+      case_pep_determination: null,
+    });
+    renderPanel();
+    expect(await screen.findByRole(
+      "button", { name: /run optional sanctions screening/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /retry screening/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /start screening/i })).toBeNull();
+    // ...and it is never presented as a screening outcome.
+    expect(screen.queryByText(/\bclear\b/i)).toBeNull();
+    expect(screen.queryByText(/no match/i)).toBeNull();
+  });
+
+  it("16. an unavailable provider says so without offering a dead action", async () => {
+    listPartyScreening.mockResolvedValue({
+      subjects: [subject({ state: "not_required", required: false, matches: [] })],
+      case_pep_determination: null,
+    });
+    renderPanel({ optionalUnavailable: true });
+    expect(await screen.findByText(/optional sanctions screening unavailable/i)).toBeTruthy();
+    expect(screen.getByText(/nothing is blocked/i)).toBeTruthy();
+    expect(screen.queryByRole(
+      "button", { name: /run optional sanctions screening/i })).toBeNull();
+  });
+
+  it("12. running it calls the optional operation, not the mandatory one", async () => {
+    runOptionalScreening.mockResolvedValue({ ran: true, scope_required: false });
+    listPartyScreening.mockResolvedValue({
+      subjects: [subject({ state: "not_required", required: false, matches: [] })],
+      case_pep_determination: null,
+    });
+    renderPanel();
+    fireEvent.click(await screen.findByRole(
+      "button", { name: /run optional sanctions screening/i }));
+    await waitFor(() => expect(runOptionalScreening).toHaveBeenCalledWith(subject().id));
+    expect(queuePartyScreening).not.toHaveBeenCalled();
+  });
+
+  it("labels a voluntary run as one, naming who asked", async () => {
+    listPartyScreening.mockResolvedValue({
+      subjects: [subject({
+        state: "completed", required: false, matches: [],
+        voluntary_run_at: "2026-08-18T00:00:00.000Z",
+        voluntary_run_by_label: "mlro@npcservices.com.au",
+      })],
+      case_pep_determination: null,
+    });
+    renderPanel();
+    expect(await screen.findByText(/run voluntarily by mlro@npcservices\.com\.au/i)).toBeTruthy();
+    expect(screen.getByText(/not required under policy/i)).toBeTruthy();
   });
 
   it("tells an administrator a simulator-mode provider is unfinished, not absent", async () => {
