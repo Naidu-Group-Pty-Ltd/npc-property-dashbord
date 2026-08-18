@@ -32,7 +32,6 @@ function fakeDb(initial: Record<string, Row[]>) {
     let op: "select" | "update" | "insert" = "select";
     let payload: any = null;
     const filters: Array<(r: Row) => boolean> = [];
-    let orFilter: ((r: Row) => boolean) | null = null;
     let orderBy: { col: string; asc: boolean } | null = null;
     let take: number | null = null;
     let wantSingle = false;
@@ -47,13 +46,21 @@ function fakeDb(initial: Record<string, Row[]>) {
       in: (col: string, vs: any[]) => { filters.push((r) => vs.map(String).includes(String(r[col]))); return api; },
       not: () => api,
       overlaps: () => api,
-      or: (expr: string) => {
-        // The consumer's single .or() shape: the claim predicate.
-        const cutoff = expr.match(/updated_at\.lt\.([^)]*)/)?.[1] ?? "";
-        orFilter = (r) => ["queued", "error"].includes(String(r.state)) ||
-          (String(r.state) === "processing" && String(r.updated_at ?? "") < cutoff);
-        return api;
-      },
+      lt: (col: string, v: any) =>
+        { filters.push((r) => String(r[col] ?? "") < String(v)); return api; },
+      /*
+       * THERE IS DELIBERATELY NO `.or()` HERE ANY MORE.
+       *
+       * This fake used to implement it by pulling the cutoff out of the
+       * filter string with a regex and rebuilding the predicate in JS. That
+       * is what let the claim pass every test in this file while PostgREST
+       * refused the very same string in production with
+       * "column party_screening_subjects.state does not exist" — a fake that
+       * parses a filter grammar more forgivingly than the server is not a
+       * test of the server. The consumer now composes typed filters, and if
+       * one is ever reintroduced as a string, these tests fail loudly on the
+       * missing method rather than quietly emulating it.
+       */
       order: (col: string, opts?: { ascending?: boolean }) => {
         orderBy = { col, asc: opts?.ascending !== false }; return api;
       },
@@ -64,7 +71,7 @@ function fakeDb(initial: Record<string, Row[]>) {
     };
     const run = async () => {
       let rows = tables[table].filter((r) =>
-        filters.every((f) => f(r)) && (!orFilter || orFilter(r)));
+        filters.every((f) => f(r)));
       if (op === "select") {
         if (orderBy) {
           const { col, asc } = orderBy;

@@ -1052,11 +1052,12 @@ import {
   classifyEnvironment,
   decideProvider,
   ProviderResolutionError,
+  technicalCategoryForRefusal,
   type AmlEnvironment,
   type ProviderDecision,
 } from "../providerEnvironment.ts";
 
-export { ProviderResolutionError };
+export { ProviderResolutionError, technicalCategoryForRefusal };
 
 export function currentEnvironment(): AmlEnvironment {
   return classifyEnvironment({

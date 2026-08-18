@@ -117,6 +117,21 @@ describe("PartyScreeningPanel — canonical candidate adjudication", () => {
     expect(screen.getByText(/list data unavailable/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /retry screening/i })).toBeTruthy();
   });
+
+  it("tells an administrator a simulator-mode provider is unfinished, not absent", async () => {
+    // The state production converges to while `pep_sanctions` is
+    // `local_lists`, active, mode `simulator`. The consumers used to record
+    // this as `provider_not_configured`, so the panel offered to configure a
+    // provider that already existed and never named the real remedy.
+    listPartyScreening.mockResolvedValue({
+      subjects: [subject({ state: "error", error_category: "provider_misconfigured", matches: [] })],
+      case_pep_determination: null,
+    });
+    renderPanel();
+    expect(await screen.findByText("error")).toBeTruthy();
+    expect(screen.getByText(/provider misconfigured/i)).toBeTruthy();
+    expect(screen.queryByText(/No screening provider is configured/i)).toBeNull();
+  });
 });
 
 describe("PartyScreeningPanel — PEP determination", () => {

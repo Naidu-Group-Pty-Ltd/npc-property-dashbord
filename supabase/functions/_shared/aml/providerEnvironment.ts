@@ -124,3 +124,41 @@ export function decideProvider(input: ProviderDecisionInput): ProviderDecision {
   }
   return { kind: "live" };
 }
+
+/**
+ * Map a typed refusal onto the technical error category recorded against a
+ * check or a screening subject.
+ *
+ * ## Why this is a function and not a ternary at each call site
+ *
+ * There are three refusal codes and the two consumers each collapsed them
+ * with the same expression:
+ *
+ *     err.code === 'provider_misconfigured' ? 'provider_misconfigured'
+ *                                           : 'provider_not_configured'
+ *
+ * which sends `simulator_blocked_in_production` to "not configured". That is
+ * the wrong half of the fork, and it was live: production's screening
+ * provider row is `local_lists`, active, in `simulator` mode — a provider
+ * that IS configured and cannot execute. The operator was told "No screening
+ * provider is configured for this tenant. An administrator must configure
+ * one", so the remedy on offer was to create a provider that already exists,
+ * while the actual remedy — finish configuring the existing one as live, and
+ * load a list for it — was never named.
+ *
+ * `provider_misconfigured` carries exactly that message ("configured but
+ * cannot execute — in production that usually means it is still in simulator
+ * mode"), so the mapping is onto the existing vocabulary rather than a new
+ * code the policy and the UI would have to learn.
+ *
+ * The distinction that matters to whoever reads it: **not configured** means
+ * nothing is there to fix, **misconfigured** means something is there and is
+ * unfinished. Only the absence of a provider is the former.
+ */
+export function technicalCategoryForRefusal(
+  code: ProviderRefusalCode,
+): "provider_not_configured" | "provider_misconfigured" {
+  return code === "provider_not_configured"
+    ? "provider_not_configured"
+    : "provider_misconfigured";
+}
