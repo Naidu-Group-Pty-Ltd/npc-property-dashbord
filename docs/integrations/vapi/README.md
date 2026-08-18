@@ -106,8 +106,25 @@ was the **live** record, which had changed minutes earlier.
 and all 16 point at `hook.eu2.make.com`. They are additional old-Make webhooks that a tool
 inventory alone would never surface.
 
-Two reference types are noted but not yet fetched: `artifactPlan.structuredOutputIds`
-(5 distinct) and `scorecardIds` (1).
+### `artifactPlan` references two more resource types
+
+Both are now resolved — see
+[`snapshot/STRUCTURED-OUTPUTS.md`](./snapshot/STRUCTURED-OUTPUTS.md).
+
+**Structured outputs** live at `GET /structured-output`; six exist and are captured. They are
+the post-call extractions Vapi runs over a transcript — `Appointment Booked`,
+`Appt Time Selected`, `contact_id` and so on. One, `Zoom Call Booked` `468022e7`, is a
+byte-for-byte duplicate of another and no assistant references it.
+
+Their `assistantIds` reverse reference is **stale and should not be trusted** — three of the
+six disagree with the assistants, all naming `NPC Opt In Follow Up`, which has referenced no
+structured outputs since 2026-01-09. Read the forward reference on the assistant.
+
+**Scorecards have no endpoint.** `cf81945a-c941-46a2-a538-2987abffe521` is referenced by
+`NPC Opt In Follow Up` and `NPC Opt In Follow Up Inbound`, and 13 candidate paths — including
+`/scorecard`, `/scorecards`, `/rubric`, `/evaluation` and `/artifact-plan`, each tried as both
+a collection and a by-id lookup — all return **404**. It is a dangling reference of the same
+kind as the four missing tool ids: live in two configs, resolving to nothing.
 
 ## Provider credentials — and the one pointing at the old Make account
 

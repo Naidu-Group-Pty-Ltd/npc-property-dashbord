@@ -9,6 +9,11 @@
       "versionQueryParam": "GET /assistant/{id}?version=vN IGNORES the parameter \u2014 v1, v2, v99 and 'bogus' all return the current record, byte-identical to a plain GET. It is not a way to retrieve historical config; /version and /versions are.",
       "inlineFunctions": "assistant.model.functions[] carries LEGACY inline function definitions with their own serverUrl, separate from model.toolIds and absent from /tool. 16 across 6 assistants, all non-NPC, all pointing at hook.eu2.make.com.",
       "unfetchedReferences": "artifactPlan.structuredOutputIds (5 distinct) and scorecardIds (1) reference resource types not yet retrieved."
+    },
+    "artifactPlanReferences": {
+      "structuredOutputs": "GET /structured-output \u2014 6 records, captured. 5 referenced, 1 orphan duplicate.",
+      "scorecards": "1 id referenced by 2 assistants; 13 candidate paths all 404. Dangling reference.",
+      "reverseReferenceWarning": "structuredOutput.assistantIds disagrees with the assistants on 3 of 6 records and is stale. The forward reference on the assistant is authoritative."
     }
   },
   "counts": {
@@ -20,7 +25,9 @@
     "squads": 3,
     "testSuites": 2,
     "tools": 20,
-    "workflows": 1
+    "workflows": 1,
+    "structuredOutputs": 6,
+    "scorecards": "1 referenced, 0 retrievable \u2014 no endpoint exists"
   },
   "npcSplit": {
     "note": "Vapi has no folder concept; the split is by name prefix and corroborated by squad membership and phone-number naming. Only the NPC set is in scope for migration \u2014 see ../npc-services/clone-plan.json.",
