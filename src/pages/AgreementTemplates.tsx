@@ -30,7 +30,7 @@ export default function AgreementTemplates() {
           <FileSignature className="h-6 w-6 text-primary" />
           Agreement Templates
         </h1>
-        <p className="text-sm text-muted-foreground">{WORKFLOW_RETIRED_NOTICE}</p>
+        
       </header>
 
       {/* No brand is applied. The supplied cover is built around a
