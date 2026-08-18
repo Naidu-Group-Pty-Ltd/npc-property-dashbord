@@ -5,7 +5,6 @@ import {
   dfatListingKey as keyTs,
 } from "../../../supabase/functions/_shared/aml/sanctionsIngest.pure.ts";
 // The copy the scheduled refresh workflow runs (Node).
-// @ts-expect-error — plain JavaScript module, no type declarations.
 import { rowsToDfatEntries as rowsJs, dfatListingKey as keyJs } from "../../../scripts/aml/sanctionsParsers.mjs";
 
 /**
