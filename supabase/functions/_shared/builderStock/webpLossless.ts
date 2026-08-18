@@ -27,6 +27,21 @@
  * and the pixels produced exist only to be measured.
  */
 
+/**
+ * A pixel buffer this module allocated, named with its backing store.
+ *
+ * `Uint32Array` on its own means `Uint32Array<ArrayBufferLike>`, which admits a
+ * `SharedArrayBuffer` — so a function returning one cannot be assigned to a
+ * variable holding a buffer this module made, and the transforms below hand
+ * exactly that back. Every buffer here is a fresh `new Uint32Array(n)`, so
+ * saying so is both accurate and what makes the assignment type-check.
+ *
+ * Deliberately used on RETURNS and locals only. Parameters stay the wide
+ * `Uint32Array`: narrowing what a function will accept would be the opposite
+ * of a fix.
+ */
+type PixelBuffer = Uint32Array<ArrayBuffer>;
+
 /** A decoded picture: 8-bit RGB triples, row-major. */
 export interface WebpRaster {
   width: number;
@@ -431,7 +446,7 @@ function applySubtractGreen(pixels: Uint32Array): void {
 
 /** Expand a palette-indexed row back to full width. */
 function applyColourIndexing(pixels: Uint32Array, packedWidth: number, width: number,
-  height: number, transform: Transform): Uint32Array | null {
+  height: number, transform: Transform): PixelBuffer | null {
   const paletteSize = transform.width;
   const bitsPerPixel = paletteSize <= 2 ? 1 : paletteSize <= 4 ? 2 : paletteSize <= 16 ? 4 : 8;
   const perByte = 8 / bitsPerPixel;
@@ -494,7 +509,7 @@ interface StreamOptions {
  */
 function decodeImageStream(
   reader: LosslessBitReader, width: number, height: number, options: StreamOptions,
-): { pixels: Uint32Array; width: number; height: number } | null {
+): { pixels: PixelBuffer; width: number; height: number } | null {
   if (width <= 0 || height <= 0) return null;
   if (width * height > options.maxPixels) return null;
 

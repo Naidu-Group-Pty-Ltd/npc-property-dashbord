@@ -13,21 +13,26 @@
  * ever stored, served, or used to alter the image the builder supplied — the
  * source bytes are immutable and are uploaded exactly as they arrived.
  *
- * TWO DECODERS, BOTH DELIBERATELY PARTIAL:
+ * FOUR CONTAINERS, ALL OF WHAT BUILDER STOCK ACCEPTS:
  *
- *   PNG   is decoded properly, because it is most of what builders publish
- *         and inflate is already here for the PDF path.
- *   JPEG  is decoded as baseline sequential only — Huffman, dequantise,
- *         inverse DCT, upsample. An eighth-scale DC-only reading was tried
- *         first and is not enough: at one sample per 8×8 block a pill's own
- *         caption shreds it into fragments too small to measure, and the live
- *         Lot 13 tile read as carrying no graphic at all.
+ *   PNG   colour types 0/2/3/4/6, 8- and 16-bit, interlaced or not.
+ *   JPEG  baseline AND progressive — Huffman, dequantise, inverse DCT,
+ *         upsample. An eighth-scale DC-only reading was tried first and is not
+ *         enough: at one sample per 8×8 block a pill's own caption shreds it
+ *         into fragments too small to measure, and the live Lot 13 tile read
+ *         as carrying no graphic at all.
+ *   GIF   the first frame, interlaced or not.
+ *   WebP  both bitstreams, lossy and lossless, in `webp.ts` and its two
+ *         companions.
  *
- * Anything else — WebP, GIF, progressive JPEG, 16-bit, interlaced PNG —
- * returns null, and null means "no measurement", never "rejected". An image
- * this cannot read keeps whatever eligibility it would have had; refusing to
- * display a builder's photograph because we could not parse its container
- * would be a worse defect than the one this exists to fix.
+ * AND WHAT COMES BACK FOR ANYTHING ELSE IS NOT "CLEAN". A container this cannot
+ * read returns `unsupported`, a file that breaks a decoder returns `failed`, and
+ * the caller turns both into a `pending` verdict that shows NO image — see
+ * `marketplaceEligibility.pure.ts`. This comment used to say the opposite: that
+ * an unreadable image "keeps whatever eligibility it would have had". That was
+ * true of an earlier design and is exactly the fail-open the display rule now
+ * refuses, because an unreadable container must never be a way for a marketing
+ * tile to walk past it.
  */
 
 import { decodeWebp } from './webp.ts';

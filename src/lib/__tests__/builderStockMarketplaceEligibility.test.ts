@@ -58,6 +58,7 @@ import {
   readOutstandingUploads, uploadHasWorkOutstanding, SETTLEMENT_TARGET_TABLE,
 } from '../../../supabase/functions/_shared/builderStock/settleSourceImages';
 import { decodeWebp } from '../../../supabase/functions/_shared/builderStock/webp';
+import { lossyWebpOf } from './fixtures/vp8Encoder';
 import { primaryStockImage } from '../../lib/builderStock';
 import {
   annotatedPicture, cleanPicture, jpegOf, losslessWebpOf, photograph, withCaption,
@@ -1017,16 +1018,26 @@ describe('TEST AL — the target version lives in the database', () => {
    * what makes that impossible to do by accident.
    */
   it('and the migrations declare exactly the version this build implements', () => {
+    // The whole migration history, because a LATER migration is exactly how the
+    // target is raised — reading only this programme's own files would miss the
+    // next bump, which is the case this test exists for. A cheap substring test
+    // first: the history is 945 files and most of them are generated seeds
+    // measured in megabytes, and running a regular expression over all of that
+    // is the difference between a second and a dozen.
     const directory = 'supabase/migrations';
-    const declared = readdirSync(directory)
-      .filter((name) => name.endsWith('.sql'))
-      .flatMap((name) => [
-        ...readFileSync(`${directory}/${name}`, 'utf8')
-          .matchAll(/set_builder_stock_eligibility_target\((\d+)\)/g),
-      ].map((match) => Number(match[1])));
+    const CALL = 'set_builder_stock_eligibility_target';
+    const declared: number[] = [];
+    for (const name of readdirSync(directory)) {
+      if (!name.endsWith('.sql')) continue;
+      const text = readFileSync(`${directory}/${name}`, 'utf8');
+      if (!text.includes(CALL)) continue;
+      for (const match of text.matchAll(/set_builder_stock_eligibility_target\((\d+)\)/g)) {
+        declared.push(Number(match[1]));
+      }
+    }
     expect(declared.length).toBeGreaterThan(0);
     expect(Math.max(...declared)).toBe(MARKETPLACE_ELIGIBILITY_VERSION);
-  });
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -1036,18 +1047,36 @@ describe('TEST AL — the target version lives in the database', () => {
 /**
  * Builder Stock accepts WebP, so a clean WebP has to be able to reach a card.
  *
- * The two lossy fixtures are files libwebp itself produced, because nothing
- * here can encode VP8 and interoperating with the real encoder is better
- * evidence than interoperating with our own. The lossless case is encoded in
- * the test, by a writer built from the specification rather than from the
- * decoder it feeds.
+ * BOTH FIXTURES ARE GENERATED HERE, NOT CHECKED IN. No generated image may be
+ * committed to this repository — the release gate refuses any `.png`, `.jpg` or
+ * `.webp` in a change — so the bitstreams are written in memory by encoders
+ * built from RFC 6386 and the WebP lossless specification, independently of the
+ * decoders they feed. An encoder that shares its author's misreadings with the
+ * decoder proves nothing; two written from the specification separately make
+ * the round trip worth something.
+ *
+ * `vp8Encoder.ts` writes the lossy bitstream — the arithmetic coder, the frame
+ * header, key-frame mode records, the forward transform and the token tree —
+ * so the larger and riskier half of the decoder is exercised end to end rather
+ * than left untested for want of a committed file.
  */
 describe('TEST AM/AN/AO — WebP', () => {
-  const fixture = (name: string) =>
-    new Uint8Array(readFileSync(`src/lib/__tests__/fixtures/webp/${name}.webp`));
+  const LOSSY_W = 480;
+  const LOSSY_H = 250;
 
   it('TEST AM — a clean lossy WebP is measured, eligible and displayed', async () => {
-    const verdict = await assessMarketplaceEligibility(fixture('clean-lossy'));
+    const bytes = lossyWebpOf(cleanPicture(LOSSY_W, LOSSY_H));
+    // It really is a lossy WebP: RIFF/WEBP container, VP8 bitstream.
+    expect(String.fromCharCode(...bytes.subarray(0, 4))).toBe('RIFF');
+    expect(String.fromCharCode(...bytes.subarray(8, 12))).toBe('WEBP');
+    expect(String.fromCharCode(...bytes.subarray(12, 16))).toBe('VP8 ');
+
+    const decoded = decodeWebp(bytes, { maxPixels: 40_000_000 });
+    expect(decoded).not.toBeNull();
+    expect(decoded!.width).toBe(LOSSY_W);
+    expect(decoded!.height).toBe(LOSSY_H);
+
+    const verdict = await assessMarketplaceEligibility(bytes);
     expect(verdict.measured).toBe(true);
     expect(verdict.state).toBe('eligible');
     expect(isMarketplaceEligible(marketplaceEligibilityDetail(verdict))).toBe(true);
@@ -1065,46 +1094,71 @@ describe('TEST AM/AN/AO — WebP', () => {
 
   it('TEST AM — and a clean lossless WebP likewise', async () => {
     const bytes = losslessWebpOf(cleanPicture(640, 332));
+    expect(String.fromCharCode(...bytes.subarray(12, 16))).toBe('VP8L');
     const verdict = await assessMarketplaceEligibility(bytes);
     expect(verdict.measured).toBe(true);
     expect(verdict.state).toBe('eligible');
+    expect(isMarketplaceEligible(marketplaceEligibilityDetail(verdict))).toBe(true);
   });
 
   it('TEST AN — an annotated WebP is refused, lossy and lossless alike', async () => {
-    const lossy = await assessMarketplaceEligibility(fixture('annotated-lossy'));
+    const lossy = await assessMarketplaceEligibility(
+      lossyWebpOf(annotatedPicture(LOSSY_W, LOSSY_H)));
     expect(lossy.state).toBe('ineligible');
     expect(lossy.reason).toBe('annotated_marketing_tile');
+    expect(isMarketplaceEligible(marketplaceEligibilityDetail(lossy))).toBe(false);
 
     const lossless = await assessMarketplaceEligibility(
       losslessWebpOf(annotatedPicture(640, 332)));
     expect(lossless.state).toBe('ineligible');
     expect(lossless.reason).toBe('annotated_marketing_tile');
+    expect(isMarketplaceEligible(marketplaceEligibilityDetail(lossless))).toBe(false);
   });
 
   it('TEST AO — a corrupt WebP is pending, hidden, and does not throw', async () => {
-    const good = fixture('clean-lossy');
+    const good = lossyWebpOf(cleanPicture(LOSSY_W, LOSSY_H));
+    const goodLossless = losslessWebpOf(cleanPicture(160, 96));
+
+    // Truncated mid-bitstream; a container whose image chunk is not one this
+    // reads; and a lossless stream cut off after its header.
     const truncated = good.slice(0, 60);
     const headerless = Uint8Array.from(good);
     headerless[12] = 0x41; headerless[13] = 0x42;
     headerless[14] = 0x43; headerless[15] = 0x44;
+    const shortLossless = goodLossless.slice(0, 40);
 
-    for (const bytes of [truncated, headerless]) {
+    for (const bytes of [truncated, headerless, shortLossless]) {
       const verdict = await assessMarketplaceEligibility(bytes);
       expect(verdict.state).toBe('pending');
       expect(verdict.measured).toBe(false);
       expect(isMarketplaceEligible(marketplaceEligibilityDetail(verdict))).toBe(false);
+      // The import survives: a decoder that cannot read a builder's file must
+      // not fail their upload, only refuse to draw it.
+      expect(await eligibilityDetailFor(bytes, 'primary_property'))
+        .toMatchObject({ marketplace_display_eligible: false });
     }
   });
 
-  it('the decoder reproduces the picture rather than approximating it', async () => {
-    // The lossless round trip is exact, which is what "lossless" has to mean:
-    // a decoder that is nearly right is one whose errors nobody can bound.
+  it('the lossless decoder reproduces the picture rather than approximating it', () => {
+    // "Lossless" has to mean exactly that: a decoder that is nearly right is
+    // one whose errors nobody can bound.
     const picture = cleanPicture(320, 200, 3);
     const decoded = decodeWebp(losslessWebpOf(picture), { maxPixels: 40_000_000 });
     expect(decoded).not.toBeNull();
-    expect(decoded!.width).toBe(320);
-    expect(decoded!.height).toBe(200);
     expect(Array.from(decoded!.pixels)).toEqual(Array.from(picture.pixels));
+  });
+
+  it('and the lossy decoder stays close to the picture that was encoded', () => {
+    const picture = cleanPicture(LOSSY_W, LOSSY_H);
+    const decoded = decodeWebp(lossyWebpOf(picture), { maxPixels: 40_000_000 })!;
+    let total = 0;
+    for (let i = 0; i < picture.pixels.length; i++) {
+      total += Math.abs(decoded.pixels[i] - picture.pixels[i]);
+    }
+    // Most of what is lost is the fixture's own grain, which a 4x4 transform at
+    // this quantiser does not keep. A desynchronised arithmetic coder would not
+    // land anywhere near this — it produces noise, not a slightly softer copy.
+    expect(total / picture.pixels.length).toBeLessThan(8);
   });
 });
 
