@@ -47,11 +47,11 @@ import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
 import { internalErrorResponse } from '../_shared/errorResponse.ts';
 import {
-  runSettlementTick, settleUploadSourceImages, uploadHasWorkOutstanding,
+  readEligibilityTarget, readOutstandingUploads, runSettlementTick,
+  settleUploadSourceImages,
   ELIGIBILITY_SETTLED_VERSION_COLUMN, SETTLED_VERSION_COLUMN,
   type SettlementCandidate,
 } from '../_shared/builderStock/settleSourceImages.ts';
-import { MARKETPLACE_ELIGIBILITY_VERSION } from '../_shared/builderStock/marketplaceEligibility.pure.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 
@@ -74,6 +74,14 @@ const corsHeaders = createCorsHeaders();
 const BUDGET_MS = 100_000;
 /** Sources one tick may read. Resumable, so small is safe and slow is not. */
 const MAX_UPLOADS_PER_TICK = 6;
+/**
+ * Outstanding uploads one tick asks the database for.
+ *
+ * Comfortably more than it can settle, so the tick always has the oldest work
+ * in front of it, and bounded so a very large backlog drains over several ticks
+ * rather than arriving in one response.
+ */
+const MAX_QUEUE_ROWS = 100;
 const MAX_BODY_BYTES = 8 * 1024;
 
 const json = (body: unknown, status = 200) =>
@@ -105,41 +113,40 @@ Deno.serve(async (req: Request) => {
 
   try {
     /**
-     * The organisations with work outstanding, oldest source first.
+     * The uploads with work outstanding, oldest source first.
      *
-     * Read straight off the uploads rather than from a queue table: the marker
-     * IS the queue, so there is no second place for the two to disagree.
+     * ASKED OF THE DATABASE, NOT FILTERED IN MEMORY. This used to read the
+     * oldest 500 uploads and filter them here, which meant 500 settled uploads
+     * were enough to hide every outstanding one behind them: the tick found
+     * nothing, reported the queue empty, and the 501st was never reached.
+     * `readOutstandingUploads` asks for the rows that are actually behind, so
+     * the queue drains at 500 uploads and at 50,000.
+     *
+     * The eligibility version it selects against is the DATABASE's target, not
+     * this build's constant — see `readEligibilityTarget`, which is what makes
+     * a later classifier bump wake production rather than change nothing.
      */
-    const { data: rows, error } = await supabase
-      .from('builder_stock_uploads')
-      .select(
-        `id, organisation_id, ${SETTLED_VERSION_COLUMN}, ${ELIGIBILITY_SETTLED_VERSION_COLUMN}`)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: true })
-      .limit(500);
-    if (error) {
-      // The column is missing: the migration has not applied yet. Nothing to
+    const eligibilityTarget = await readEligibilityTarget(supabase);
+    const queue = await readOutstandingUploads(supabase, {
+      limit: MAX_QUEUE_ROWS, eligibilityTarget,
+    });
+
+    if (queue.unavailable) {
+      // The columns are missing: the migration has not applied yet. Nothing to
       // do, and saying so is better than sweeping every source every tick.
       console.warn('[builder-stock-image-settler] uploads not readable', {
         phase: 'settlement_scan',
-        message: String(error.message ?? error).slice(0, 200),
       });
       return json({ success: true, settled: 0, remaining: 0, skipped: 'marker_unavailable' });
     }
 
-    /**
-     * Outstanding on EITHER marker.
-     *
-     * Provenance and marketplace display eligibility are versioned
-     * separately — see `settleSourceImages.ts` — so an upload whose imagery is
-     * current can still owe a display verdict, which is exactly the state
-     * every existing upload is in the moment this ships.
-     */
-    const outstanding = (rows ?? []).filter(uploadHasWorkOutstanding);
+    const outstanding = queue.rows;
 
     if (!outstanding.length) {
       // Quiet path. The migration's job unschedules itself on this.
-      return json({ success: true, settled: 0, remaining: 0, complete: true });
+      return json({
+        success: true, settled: 0, remaining: 0, complete: true, eligibilityTarget,
+      });
     }
 
     /**
@@ -157,7 +164,7 @@ Deno.serve(async (req: Request) => {
         needsProvenance:
           Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION,
         needsEligibility:
-          Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < MARKETPLACE_ELIGIBILITY_VERSION,
+          Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < eligibilityTarget,
       })),
       { maxSettled: MAX_UPLOADS_PER_TICK, deadlineAt },
       (candidate) => settleUploadSourceImages(supabase, {

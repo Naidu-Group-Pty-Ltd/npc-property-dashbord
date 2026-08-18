@@ -376,11 +376,157 @@ const MIN_TEXT_CORE_PROFILE = 0.64;
 /** And the single middle row, as a second look at the same thing. */
 const MIN_TEXT_MIDDLE_PROFILE = 0.45;
 
+/**
+ * The faint pass: what it is for, and why it does not simply lower the floor.
+ *
+ * THE CASE. Pale type over the pale part of a sky. It is plainly there to a
+ * reader and it carries very little absolute contrast — a near-white letter
+ * over a bright sky differs from its neighbourhood by single-figure levels once
+ * the picture has been encoded and scaled down, against a strict floor of
+ * forty. The strict pass therefore found nothing, and "found nothing" was being
+ * reported as "this picture is clean".
+ *
+ * LOWERING `INK_CONTRAST` IS NOT THE FIX. At 26 a clean render's own
+ * architecture starts producing runs that pass every geometric test, and
+ * refusing real photographs is worse than the defect being fixed.
+ *
+ * WHAT SEPARATES THE TWO IS THE NEIGHBOURHOOD, NOT THE MARK. A sky is smooth,
+ * so anything drawn on it stands out however faint. A roofline sits among
+ * gutters, eaves, window reveals and shadow, every one of them stronger than
+ * the mark being tested. So the faint pass looks ONLY where the picture is
+ * quiet, and inside those places it can afford to be very sensitive.
+ *
+ * WHAT IT PRODUCES IS NOT A REFUSAL. A run found only here is `uncertain`, not
+ * `annotated`: the classifier is saying it cannot call this picture clean,
+ * which hides it as `pending` rather than convicting it as a marketing tile.
+ * Eligible has to mean measured-and-established-clean, and this is the whole
+ * difference between that and "the strict detector happened to be silent".
+ *
+ * Every bound below was fitted against the live covers and a set of drawn pale
+ * captions, and reports zero runs on all six clean real pictures.
+ */
+/** Above this local dispersion the picture is not quiet and is not judged here. */
+const FAINT_QUIET_DISPERSION = 8;
+/** An absolute floor even in a perfectly smooth area, so grain is not a mark. */
+const FAINT_INK_FLOOR = 5;
+/** And how far above the neighbourhood's own contrast a faint mark must sit. */
+const FAINT_INK_RATIO = 2.4;
+/**
+ * The window the faint pass measures through, as a share of the height.
+ *
+ * WIDER THAN THE STRICT PASS'S, and that is the point. The mark test is "how
+ * far is this pixel from its neighbourhood's mean", so a window narrower than
+ * the stroke makes the neighbourhood the stroke: the middle of a heavy letter
+ * reads as ordinary and only its outline registers, which is a sparse ring that
+ * then fails every shape test. The bigger the typography, the less of it a
+ * narrow window sees — exactly backwards.
+ */
+const FAINT_INK_WINDOW_SHARE = 0.04;
+/**
+ * The dispersion window, as a multiple of the ink window.
+ *
+ * Wide enough to describe the SURROUNDINGS rather than the mark: a window the
+ * size of the mark measures the mark's own contrast, and every mark then looks
+ * ordinary against itself.
+ */
+const FAINT_DISPERSION_SCALE = 6;
+
+/**
+ * How many of a mark's eight neighbours must also be marks.
+ *
+ * GRAIN IS THE REASON. The faint pass is sensitive by design, and a quiet sky
+ * is exactly where a photograph's own grain stands out most against its
+ * surroundings — so at this sensitivity every speck of grain registers, and a
+ * dense field of specks can be assembled into something with the outline of a
+ * word. What separates the two is not brightness but COHERENCE: a stroke of
+ * type is several pixels across in every direction, and a speck is one pixel.
+ *
+ * Four of eight, which keeps a stroke's interior and its edges and discards
+ * anything isolated or a single pixel thin. Applied to the faint mask only —
+ * the strict pass sits far above the grain to begin with.
+ */
+const FAINT_MIN_NEIGHBOURS = 4;
+
+/** Drop marks with too few neighbours to be part of a stroke. */
+function coherentOnly(ink: Uint8Array, width: number, height: number): Uint8Array {
+  const out = new Uint8Array(ink.length);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+      if (!ink[index]) continue;
+      let neighbours = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          if ((!dx && !dy) || nx < 0 || nx >= width) continue;
+          if (ink[ny * width + nx]) neighbours += 1;
+        }
+      }
+      if (neighbours >= FAINT_MIN_NEIGHBOURS) out[index] = 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * The faint pass's own shape gates, looser than the strict pass's.
+ *
+ * They can be, because this pass raises a doubt rather than a verdict, and
+ * because a mark recovered at very low contrast is always more ragged than one
+ * the strict pass sees. What is NOT relaxed is the requirement to look like a
+ * LINE OF TYPE: horizontal, striped, with its ink in the middle. Noise does not
+ * do that, and neither does a quiet patch of sky.
+ */
+const FAINT_MIN_FILL = 0.2;
+const FAINT_MAX_FILL = 0.95;
+const FAINT_MIN_STRIPES = 4;
+const FAINT_MIN_CORE_PROFILE = 0.55;
+
+/** The strict pass's shape gates, gathered so both passes read the same way. */
+const STRICT_SHAPE: RunShape = {
+  minFill: MIN_TEXT_FILL,
+  maxFill: MAX_TEXT_FILL,
+  minStripes: MIN_TEXT_STRIPES,
+  minCore: MIN_TEXT_CORE_PROFILE,
+  minMiddle: MIN_TEXT_MIDDLE_PROFILE,
+};
+const FAINT_SHAPE: RunShape = {
+  minFill: FAINT_MIN_FILL,
+  maxFill: FAINT_MAX_FILL,
+  minStripes: FAINT_MIN_STRIPES,
+  minCore: FAINT_MIN_CORE_PROFILE,
+  minMiddle: FAINT_MIN_CORE_PROFILE * 0.7,
+};
+
+/** What a component has to look like to count as a line of type. */
+interface RunShape {
+  minFill: number;
+  maxFill: number;
+  minStripes: number;
+  minCore: number;
+  minMiddle: number;
+}
+
 export interface TextMeasurement {
   /** Tallest prominent run, as a share of the picture's height. 0 for none. */
   heightShare: number;
   /** How many prominent runs were found. */
   lineCount: number;
+}
+
+/** Luma, and the local mean it is judged against. Shared by both passes. */
+function lumaField(view: RasterView): { luma: Float32Array; local: Float32Array; radius: number } {
+  const { width, height, pixels } = view;
+  const count = width * height;
+  const luma = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const at = i * 3;
+    luma[i] = pixels[at] * 0.299 + pixels[at + 1] * 0.587 + pixels[at + 2] * 0.114;
+  }
+  const radius = Math.max(2, Math.round(height * INK_WINDOW_SHARE));
+  return { luma, local: boxBlur(luma, width, height, radius), radius };
 }
 
 /**
@@ -396,19 +542,63 @@ export function measureOverlayText(view: RasterView): TextMeasurement {
     return { heightShare: 0, lineCount: 0 };
   }
 
+  const { luma, local } = lumaField(view);
+  const ink = new Uint8Array(count);
+  for (let i = 0; i < count; i++) {
+    if (Math.abs(luma[i] - local[i]) > INK_CONTRAST) ink[i] = 1;
+  }
+  return runsIn(ink, width, height, STRICT_SHAPE);
+}
+
+/**
+ * The same search over marks the strict pass is too blunt to see.
+ *
+ * A mark counts here when it is above a small absolute floor AND well above
+ * what its neighbourhood's own contrast is. See `FAINT_INK_FLOOR`.
+ */
+export function measureFaintOverlayText(view: RasterView): TextMeasurement {
+  const { width, height, pixels } = view;
+  const count = width * height;
+  if (count <= 0 || pixels.length < count * 3 || height < 16) {
+    return { heightShare: 0, lineCount: 0 };
+  }
+
   const luma = new Float32Array(count);
   for (let i = 0; i < count; i++) {
     const at = i * 3;
     luma[i] = pixels[at] * 0.299 + pixels[at + 1] * 0.587 + pixels[at + 2] * 0.114;
   }
-  const radius = Math.max(2, Math.round(height * INK_WINDOW_SHARE));
-  const local = boxBlur(luma, width, height, radius);
 
-  const ink = new Uint8Array(count);
+  const radius = Math.max(2, Math.round(height * FAINT_INK_WINDOW_SHARE));
+  const local = boxBlur(luma, width, height, radius);
+  const deviation = new Float32Array(count);
+  for (let i = 0; i < count; i++) deviation[i] = Math.abs(luma[i] - local[i]);
+  const dispersion = boxBlur(
+    deviation, width, height, Math.max(radius + 1, radius * FAINT_DISPERSION_SCALE));
+
+  const raw = new Uint8Array(count);
   for (let i = 0; i < count; i++) {
-    if (Math.abs(luma[i] - local[i]) > INK_CONTRAST) ink[i] = 1;
+    // Two conditions, and the first is what makes the second safe to make
+    // sensitive: the neighbourhood must be QUIET, and the mark must stand out
+    // within it both absolutely and relative to that quiet.
+    if (dispersion[i] >= FAINT_QUIET_DISPERSION) continue;
+    if (deviation[i] > Math.max(FAINT_INK_FLOOR, dispersion[i] * FAINT_INK_RATIO)) raw[i] = 1;
   }
 
+  return runsIn(coherentOnly(raw, width, height), width, height, FAINT_SHAPE);
+}
+
+/**
+ * The geometry, over whichever ink mask was handed in.
+ *
+ * ONE IMPLEMENTATION FOR BOTH PASSES, on purpose: they differ in what counts as
+ * a mark and in nothing else, and two copies of these gates would drift into
+ * two different ideas of what a word looks like.
+ */
+function runsIn(
+  ink: Uint8Array, width: number, height: number, shape: RunShape,
+): TextMeasurement {
+  const count = width * height;
   const label = new Int32Array(count).fill(-1);
   const stack: number[] = [];
   const minHeight = Math.max(3, height * MIN_PROMINENT_TEXT_SHARE);
@@ -459,11 +649,11 @@ export function measureOverlayText(view: RasterView): TextMeasurement {
     if (runHeight < minHeight || runHeight > maxHeight) continue;
     if (runWidth < runHeight * MIN_TEXT_ASPECT) continue;
     const fill = area / (runWidth * runHeight);
-    if (fill < MIN_TEXT_FILL || fill > MAX_TEXT_FILL) continue;
-    if (stripesAcross(ink, label, width, minX, maxX, minY, maxY) < MIN_TEXT_STRIPES) continue;
+    if (fill < shape.minFill || fill > shape.maxFill) continue;
+    if (stripesAcross(ink, label, width, minX, maxX, minY, maxY) < shape.minStripes) continue;
     const profile = inkProfile(ink, label, width, minX, maxX, minY, maxY);
-    if (profile.core < MIN_TEXT_CORE_PROFILE) continue;
-    if (profile.middle < MIN_TEXT_MIDDLE_PROFILE) continue;
+    if (profile.core < shape.minCore) continue;
+    if (profile.middle < shape.minMiddle) continue;
 
     lines += 1;
     const share = runHeight / height;
@@ -542,30 +732,57 @@ function stripesAcross(
 export interface OverlayVerdict {
   /** True when promotional treatment is laid over the picture. */
   annotated: boolean;
+  /**
+   * True when the picture cannot be called CLEAN with enough confidence.
+   *
+   * Not a weaker `annotated`: it is the absence of the evidence eligibility
+   * requires. Something with the geometry of a line of type is there, faintly,
+   * and the strict pass — the one whose thresholds are fitted so that no real
+   * photograph trips it — did not see enough of it to convict. The caller hides
+   * the picture as `pending` rather than refusing it as a tile.
+   */
+  uncertain: boolean;
   largestShare: number;
   totalShare: number;
   regionCount: number;
   textHeightShare: number;
   textLineCount: number;
+  /** Tallest run the faint pass found, as a share of height. 0 for none. */
+  faintTextHeightShare: number;
+  faintTextLineCount: number;
 }
 
 /**
- * Is this picture a marketing tile?
+ * Is this picture a marketing tile — and if it is not, is that established?
  *
- * EITHER signal is enough. Prominent lettering laid over a photograph is a
- * marketing tile whatever is behind it, and a flat coloured block of ribbon
- * size is one even when it carries no lettering at all.
+ * EITHER STRICT SIGNAL REFUSES IT. Prominent lettering laid over a photograph
+ * is a marketing tile whatever is behind it, and a flat coloured block of
+ * ribbon size is one even when it carries no lettering at all.
+ *
+ * AND SILENCE FROM BOTH IS NOT THE SAME AS CLEAN. The faint pass runs on
+ * everything the strict passes let through, and where it finds the shape of a
+ * line of type against quiet surroundings the answer is `uncertain`. A
+ * classifier that reports "clean" whenever its detectors happen to be quiet is
+ * a classifier that hides its own blind spots, and pale type over a pale sky is
+ * exactly such a blind spot.
  */
 export function readMarketingOverlay(view: RasterView): OverlayVerdict {
   const blocks = measureFlatColourRegions(view);
   const text = measureOverlayText(view);
+  const annotated = blocks.regions.length > 0 || text.lineCount > 0;
+  // Not measured when it cannot change the answer: the picture is already
+  // refused, and a second opinion on a refusal costs a blur of the whole frame.
+  const faint = annotated ? { heightShare: 0, lineCount: 0 } : measureFaintOverlayText(view);
   return {
-    annotated: blocks.regions.length > 0 || text.lineCount > 0,
+    annotated,
+    uncertain: !annotated && faint.lineCount > 0,
     largestShare: Number(blocks.largestShare.toFixed(4)),
     totalShare: Number(blocks.totalShare.toFixed(4)),
     regionCount: blocks.regions.length,
     textHeightShare: Number(text.heightShare.toFixed(4)),
     textLineCount: text.lineCount,
+    faintTextHeightShare: Number(faint.heightShare.toFixed(4)),
+    faintTextLineCount: faint.lineCount,
   };
 }
 

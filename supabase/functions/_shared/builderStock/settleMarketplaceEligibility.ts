@@ -17,6 +17,32 @@
  * every pass and never reached the rest — a sweep that cannot finish is worse
  * than no sweep, because it looks like one. Every pass here starts after the
  * last id it saw, so the scan advances whether or not a row needed work.
+ *
+ * AND IT SEPARATES A DECISION FROM A FAILURE TO REACH ONE. Two things can stop
+ * a row being settled and they are not the same thing:
+ *
+ *   the classifier could not decide     a container no decoder here reads, a
+ *                                       picture past the resource ceiling, an
+ *                                       image this classifier cannot call
+ *                                       clean with enough confidence
+ *                                       → a `pending` verdict, WRITTEN. That is
+ *                                         a completed decision for this
+ *                                         algorithm version: the card shows
+ *                                         nothing, and the next version bump is
+ *                                         what revisits it.
+ *
+ *   the operation failed                no `storage_path`, a download that
+ *                                       errored, bytes that could not be read,
+ *                                       a verdict write that was rejected, a
+ *                                       page query that errored
+ *                                       → NOTHING WRITTEN, counted as
+ *                                         `unresolved`. The upload's marker must
+ *                                         not advance, because the work has not
+ *                                         been done.
+ *
+ * Collapsing the two is how a storage outage would have looked like a finished
+ * sweep: every image skipped, `incomplete` false, marker advanced, cron
+ * unscheduled, and every card empty for ever with nothing left to retry it.
  */
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import { assessMarketplaceEligibility } from './assessSourceImage.ts';
@@ -31,14 +57,30 @@ export interface EligibilitySettlement {
   scanned: number;
   /** Primary images that still needed a verdict. */
   outstanding: number;
-  /** Of those, how many this run measured and wrote. */
+  /** Of those, how many this run measured and WROTE. */
   assessed: number;
   /** Of those, how many may not be drawn on a card. */
   rejected: number;
-  /** Of those, how many no decoder here could read. Not displayable. */
+  /** Of those, how many the classifier could not decide. Not displayable. */
   unmeasured: number;
-  /** True when the budget ran out before the scan finished. */
+  /**
+   * Rows that needed a verdict and did not get one because an OPERATION
+   * failed. Any at all means this pass did not finish its work.
+   */
+  unresolved: number;
+  /** True when the budget or the page ceiling ran out before the scan finished. */
   incomplete: boolean;
+}
+
+/**
+ * May the caller record this upload as settled at the current version?
+ *
+ * The one place the rule lives, so the sweep and its tests cannot disagree
+ * about it. A written `pending` verdict does not block settlement; a failed
+ * download or a rejected write does.
+ */
+export function eligibilitySweepCompleted(outcome: EligibilitySettlement): boolean {
+  return !outcome.incomplete && outcome.unresolved === 0;
 }
 
 /** Rows read per keyset page. Small enough to stay inside any budget. */
@@ -68,7 +110,8 @@ export async function settleMarketplaceEligibility(
   options: { deadlineAt?: number; uploadId?: string | null } = {},
 ): Promise<EligibilitySettlement> {
   const outcome: EligibilitySettlement = {
-    scanned: 0, outstanding: 0, assessed: 0, rejected: 0, unmeasured: 0, incomplete: false,
+    scanned: 0, outstanding: 0, assessed: 0, rejected: 0, unmeasured: 0,
+    unresolved: 0, incomplete: false,
   };
 
   let after = '';
@@ -91,7 +134,14 @@ export async function settleMarketplaceEligibility(
     if (after) query = query.gt('id', after);
 
     const { data, error } = await query;
-    if (error) return outcome;
+    if (error) {
+      // The scan itself failed. Nothing has been established about the rows
+      // beyond the cursor, so this pass has not finished and must not be
+      // mistaken for one that did.
+      outcome.unresolved += 1;
+      outcome.incomplete = true;
+      return outcome;
+    }
     const rows = (data ?? []) as ImageRow[];
     if (!rows.length) return outcome;
 
@@ -103,7 +153,20 @@ export async function settleMarketplaceEligibility(
       if (!isPrimaryRole(readStoredRole(row.source_detail))) continue;
       if (!needsEligibilityAssessment(row.source_detail)) continue;
       outcome.outstanding += 1;
-      if (!row.storage_path) continue;
+
+      /*
+       * A designated primary with nowhere to read its bytes from.
+       *
+       * Not a verdict: the picture exists as far as the row is concerned and
+       * nothing here has looked at it. Left unresolved so the next tick tries
+       * again — an object that has genuinely gone will keep the upload in the
+       * queue, which is visible, and that is better than recording a decision
+       * nobody made.
+       */
+      if (!row.storage_path) {
+        outcome.unresolved += 1;
+        continue;
+      }
 
       if (options.deadlineAt && Date.now() > options.deadlineAt) {
         outcome.incomplete = true;
@@ -113,10 +176,22 @@ export async function settleMarketplaceEligibility(
       const { data: blob, error: downloadError } = await db.storage
         .from(row.storage_bucket || STOCK_IMAGE_BUCKET)
         .download(row.storage_path);
-      if (downloadError || !blob) continue;
+      if (downloadError || !blob) {
+        outcome.unresolved += 1;
+        continue;
+      }
 
-      const eligibility = await assessMarketplaceEligibility(
-        new Uint8Array(await blob.arrayBuffer()));
+      let bytes: Uint8Array;
+      try {
+        bytes = new Uint8Array(await blob.arrayBuffer());
+      } catch {
+        // The object was handed over and could not be read. An operational
+        // fault, not a picture this classifier could not decide about.
+        outcome.unresolved += 1;
+        continue;
+      }
+
+      const eligibility = await assessMarketplaceEligibility(bytes);
 
       const { error: writeError } = await db.from('builder_stock_item_images')
         .update({
@@ -126,7 +201,12 @@ export async function settleMarketplaceEligibility(
           },
         })
         .eq('id', row.id);
-      if (writeError) continue;
+      if (writeError) {
+        // The decision was reached and NOT persisted, so as far as anything
+        // that reads this row is concerned it was never made.
+        outcome.unresolved += 1;
+        continue;
+      }
 
       outcome.assessed += 1;
       if (eligibility.state === 'ineligible') outcome.rejected += 1;

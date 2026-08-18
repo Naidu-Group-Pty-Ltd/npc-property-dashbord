@@ -32,7 +32,7 @@
  * set on a common baseline, over a photograph with grain in it.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 import {
   measureFlatColourRegions, measureOverlayText, readMarketingOverlay,
@@ -51,11 +51,17 @@ import {
 import {
   chooseDisplayableImage, isDisplayableSourceImage,
 } from '../../../supabase/functions/_shared/builderStock/primaryImage';
-import { settleMarketplaceEligibility } from '../../../supabase/functions/_shared/builderStock/settleMarketplaceEligibility';
-import { uploadHasWorkOutstanding } from '../../../supabase/functions/_shared/builderStock/settleSourceImages';
+import {
+  eligibilitySweepCompleted, settleMarketplaceEligibility,
+} from '../../../supabase/functions/_shared/builderStock/settleMarketplaceEligibility';
+import {
+  readOutstandingUploads, uploadHasWorkOutstanding, SETTLEMENT_TARGET_TABLE,
+} from '../../../supabase/functions/_shared/builderStock/settleSourceImages';
+import { decodeWebp } from '../../../supabase/functions/_shared/builderStock/webp';
 import { primaryStockImage } from '../../lib/builderStock';
 import {
-  annotatedPicture, jpegOf, photograph, withCaption, withPlate, type Picture,
+  annotatedPicture, cleanPicture, jpegOf, losslessWebpOf, photograph, withCaption,
+  withPlate, type Picture,
 } from './fixtures/builderStockPictures';
 import type { BuilderStockImage, BuilderStockItem } from '../../lib/builderStock';
 
@@ -71,8 +77,14 @@ import type { BuilderStockImage, BuilderStockItem } from '../../lib/builderStock
 const W = 400;
 const H = 200;
 
+/** The organisation every fixture row belongs to. */
+const ORG = 'org-a';
+
 const LIME: [number, number, number] = [193, 255, 114];
 const CLEAN = photograph();
+/** The verdict a measured, clean picture carries. Measured, never typed. */
+const CLEAN_DETAIL = marketplaceEligibilityDetail(
+  decideMarketplaceEligibility(readMarketingOverlay(CLEAN)));
 
 /** A banner of any colour, with a caption on it. */
 const banner = (plate: [number, number, number], ink: [number, number, number]) =>
@@ -166,12 +178,16 @@ describe('what happens when the pixels cannot be read', () => {
     return bytes;
   };
 
-  it('TEST Q — a WebP is not decodable here, so it is pending and hidden', async () => {
-    const result = await decodeThumbnailResult(webp());
+  it('TEST Q — a container nothing here reads is pending and hidden', async () => {
+    // A TIFF: a real image format, and not one of the four. The point is the
+    // FAIL-CLOSED path rather than the format — an unreadable container must
+    // never be a way past the display rule.
+    const tiff = Uint8Array.from([0x49, 0x49, 0x2a, 0x00, ...new Array(4096).fill(0x40)]);
+    const result = await decodeThumbnailResult(tiff);
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.reason).toBe('unsupported');
 
-    const decision = await assessMarketplaceEligibility(webp());
+    const decision = await assessMarketplaceEligibility(tiff);
     expect(decision.state).toBe('pending');
     expect(decision.measured).toBe(false);
     expect(decision.reason).toBe('decoder_unsupported');
@@ -207,7 +223,8 @@ describe('what happens when the pixels cannot be read', () => {
   });
 
   it('names the containers it can actually read', () => {
-    expect(DECODABLE_CONTAINERS).toEqual(['image/png', 'image/jpeg', 'image/gif']);
+    expect(DECODABLE_CONTAINERS)
+      .toEqual(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
   });
 });
 
@@ -245,10 +262,41 @@ describe('the decision is stored beside the role, never instead of it', () => {
     expect(needsEligibilityAssessment(older)).toBe(true);
   });
 
-  it('a pending row is always outstanding, so a better decoder revisits it', () => {
+  /**
+   * TEST AE — a pending row is HIDDEN, and is not work to be redone.
+   *
+   * These are two different statements and the code used to make only one of
+   * them. `pending` still refuses to display, which is the whole point of the
+   * third state; what it no longer does is come back on every tick. A better
+   * decoder or a better classifier arrives with a version bump, never between
+   * two ticks of the same one — so retrying under the same version re-downloaded
+   * and re-refused the same object every five minutes for ever, while the
+   * upload's own marker said its eligibility work was complete. The two
+   * statements contradicted each other and the sweep could never go quiet.
+   */
+  it('TEST AE — a current-version pending row is hidden and not retried', () => {
     const pending = marketplaceEligibilityDetail(unmeasured('decoder_unsupported'));
     expect(readEligibilityVersion(pending)).toBe(MARKETPLACE_ELIGIBILITY_VERSION);
+    expect(isMarketplaceEligible(pending)).toBe(false);
+    expect(needsEligibilityAssessment(pending)).toBe(false);
+  });
+
+  it('TEST AF — and a version bump brings it back for a real second look', () => {
+    const pending = {
+      ...marketplaceEligibilityDetail(unmeasured('decoder_unsupported')),
+      marketplace_eligibility_version: MARKETPLACE_ELIGIBILITY_VERSION - 1,
+    };
     expect(needsEligibilityAssessment(pending)).toBe(true);
+    expect(isMarketplaceEligible(pending)).toBe(false);
+  });
+
+  it('and an ineligible row is equally terminal until the version moves', () => {
+    const refused = marketplaceEligibilityDetail(
+      decideMarketplaceEligibility(readMarketingOverlay(MARKETING_TILE)));
+    expect(needsEligibilityAssessment(refused)).toBe(false);
+    expect(needsEligibilityAssessment({
+      ...refused, marketplace_eligibility_version: MARKETPLACE_ELIGIBILITY_VERSION - 1,
+    })).toBe(true);
   });
 });
 
@@ -392,6 +440,8 @@ describe('the client applies the identical rule', () => {
 /** A database with enough of PostgREST's shape to run a keyset scan. */
 function fakeDb(rows: Array<Record<string, any>>, objects: Record<string, Uint8Array>) {
   const updates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+  /** Set by a test to make every verdict write fail, as a database would. */
+  const state = { failWrites: false };
   const build = () => {
     const filters: Array<[string, string, unknown]> = [];
     let limit = 1000;
@@ -413,6 +463,7 @@ function fakeDb(rows: Array<Record<string, any>>, objects: Record<string, Uint8A
   };
   return {
     updates,
+    set failWrites(value: boolean) { state.failWrites = value; },
     from() {
       return {
         select: () => build(),
@@ -421,6 +472,10 @@ function fakeDb(rows: Array<Record<string, any>>, objects: Record<string, Uint8A
           const builder: any = {
             eq(column: string, value: unknown) { filters.push([column, value]); return builder; },
             then(resolve: (v: unknown) => unknown, reject?: unknown) {
+              if (state.failWrites) {
+                return Promise.resolve({ data: null, error: { message: 'write rejected' } })
+                  .then(resolve, reject as never);
+              }
               for (const row of rows) {
                 if (filters.every(([column, value]) => row[column] === value)) {
                   Object.assign(row, patch);
@@ -585,9 +640,17 @@ const BARE_TYPOGRAPHY = withCaption(SOURCE, 'SOLERA', {
   x: Math.round(SOURCE_W * 0.08), y: Math.round(SOURCE_H * 0.12), scale: 11, ink: [12, 12, 14],
 });
 
-/** The same word, pale, over the pale part of the sky. See the test below. */
+/** The same word, pale, over the pale part of the sky. See TEST AP. */
 const PALE_ON_PALE = withCaption(SOURCE, 'SOLERA', {
   x: Math.round(SOURCE_W * 0.08), y: Math.round(SOURCE_H * 0.12), scale: 11, ink: [255, 255, 255],
+});
+/** Smaller, and still prominent. */
+const PALE_SMALLER = withCaption(SOURCE, 'SOLERA', {
+  x: Math.round(SOURCE_W * 0.08), y: Math.round(SOURCE_H * 0.12), scale: 8, ink: [255, 255, 255],
+});
+/** And a pale grey, which is what a real scrim-free caption usually is. */
+const PALE_GREY = withCaption(SOURCE, 'SOLERA', {
+  x: Math.round(SOURCE_W * 0.08), y: Math.round(SOURCE_H * 0.12), scale: 11, ink: [225, 232, 240],
 });
 
 describe('TEST W/X — treatments with no flat coloured rectangle to find', () => {
@@ -616,22 +679,32 @@ describe('TEST W/X — treatments with no flat coloured rectangle to find', () =
   });
 
   /**
-   * A LIMIT OF THIS CLASSIFIER, RECORDED RATHER THAN HIDDEN.
+   * TEST AP — pale type over the pale part of a sky.
    *
-   * The typography signal starts from local contrast, and near-white type over
-   * the bright part of a sky has very little of it — after the encode and the
-   * downscale, less than the floor. So this one case passes as clean, and this
-   * test says so out loud instead of leaving a gap nobody knows about.
-   *
-   * It is written as an assertion of the CURRENT behaviour on purpose: when a
-   * later version of the classifier catches it, this test fails, and whoever
-   * bumps `MARKETPLACE_ELIGIBILITY_VERSION` is told exactly what changed. It
-   * is not a claim that the behaviour is right.
+   * THE CASE THAT MUST NOT BE `ELIGIBLE`. It carries almost no absolute
+   * contrast, so the strict pass is silent — and "the strict pass was silent"
+   * is not evidence that a picture is clean. What catches it is the faint pass,
+   * which looks only where the picture is QUIET and can therefore afford to be
+   * very sensitive there. The answer is `pending`: hidden, because the
+   * classifier cannot establish the picture is clean, and not `ineligible`,
+   * because it has not established the opposite either.
    */
-  it('does NOT yet catch pale type over the pale part of a sky', async () => {
-    const verdict = await assessMarketplaceEligibility(jpegOf(PALE_ON_PALE));
-    expect(verdict.state).toBe('eligible');
-    expect(verdict.overlay!.textLineCount).toBe(0);
+  it('TEST AP — pale typography over a pale sky is never eligible', async () => {
+    for (const view of [PALE_ON_PALE, PALE_SMALLER, PALE_GREY]) {
+      const verdict = await assessMarketplaceEligibility(jpegOf(view));
+      expect(verdict.state).not.toBe('eligible');
+      expect(verdict.state).toBe('pending');
+      expect(verdict.reason).toBe('overlay_uncertain');
+      // Measured, and still not eligible: the pixels were read, and what is
+      // missing is confidence rather than the decode.
+      expect(verdict.measured).toBe(true);
+      expect(verdict.overlay!.faintTextLineCount).toBeGreaterThan(0);
+      expect(isMarketplaceEligible(marketplaceEligibilityDetail(verdict))).toBe(false);
+    }
+  });
+
+  it('and the clean picture under them is still eligible', async () => {
+    expect((await assessMarketplaceEligibility(jpegOf(SOURCE))).state).toBe('eligible');
   });
 });
 
@@ -706,5 +779,395 @@ describe('TEST N — a refusal is a refusal, not a request for a substitute', ()
     // so merging it can never restate what the source said.
     expect(detail).toMatchObject({ marketplace_display_eligible: false });
     expect(Object.keys(detail).some((key) => key.startsWith('role'))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TEST AG/AH/AI — an operation that FAILED is not a decision
+// ---------------------------------------------------------------------------
+
+/**
+ * The distinction these pin, which the sweep did not used to make.
+ *
+ * A `pending` verdict that was WRITTEN is a completed decision for this
+ * algorithm version: the classifier looked and could not decide, the card shows
+ * nothing, and the next version bump revisits it. A download that errored, an
+ * object that is not there, a write the database rejected — none of those is a
+ * decision at all, and the upload's marker must not move over them. Collapsing
+ * the two is how a storage outage would have looked like a finished sweep:
+ * every image skipped, nothing outstanding, the cron job unscheduling itself,
+ * and every card empty for ever with nothing left to retry it.
+ */
+describe('TEST AG/AH/AI — operational failures block settlement', () => {
+  const IMAGE_ROW = (over: Record<string, unknown> = {}) => ({
+    id: 'image-1',
+    organisation_id: ORG,
+    upload_id: 'upload-1',
+    source_stage: 'uploaded_document',
+    verification_status: 'source_supplied',
+    processing_status: 'ready',
+    storage_bucket: 'builder-stock-images',
+    storage_path: 'org/items/item-1/source/cover.png',
+    source_detail: { role: 'primary_property', role_evidence_level: 3 },
+    ...over,
+  });
+
+  const cleanBytes = async () => {
+    const { encodePng } = await import(
+      '../../../supabase/functions/_shared/builderStock/rasterPng');
+    return (await encodePng(CLEAN.pixels, { width: W, height: H, components: 3 }))!;
+  };
+
+  it('TEST AI — a designated primary with no stored object leaves work unresolved', async () => {
+    const db = fakeDb([IMAGE_ROW({ storage_path: null })], {});
+    const outcome = await settleMarketplaceEligibility(db as never, ORG);
+    expect(outcome.outstanding).toBe(1);
+    expect(outcome.assessed).toBe(0);
+    expect(outcome.unresolved).toBe(1);
+    expect(eligibilitySweepCompleted(outcome)).toBe(false);
+    // And nothing was written, so the row is still unjudged and still hidden.
+    expect(db.updates).toHaveLength(0);
+  });
+
+  it('TEST AG — a storage download failure leaves work unresolved', async () => {
+    // The row names an object the bucket does not hand over.
+    const db = fakeDb([IMAGE_ROW()], {});
+    const outcome = await settleMarketplaceEligibility(db as never, ORG);
+    expect(outcome.outstanding).toBe(1);
+    expect(outcome.unresolved).toBe(1);
+    expect(eligibilitySweepCompleted(outcome)).toBe(false);
+    expect(db.updates).toHaveLength(0);
+  });
+
+  it('TEST AH — a rejected verdict write leaves work unresolved', async () => {
+    const row = IMAGE_ROW();
+    const db = fakeDb([row], { [row.storage_path as string]: await cleanBytes() });
+    db.failWrites = true;
+    const outcome = await settleMarketplaceEligibility(db as never, ORG);
+    expect(outcome.outstanding).toBe(1);
+    // The decision was reached and not persisted, so as far as anything that
+    // reads this row is concerned it was never made.
+    expect(outcome.assessed).toBe(0);
+    expect(outcome.unresolved).toBe(1);
+    expect(eligibilitySweepCompleted(outcome)).toBe(false);
+  });
+
+  it('a written pending verdict is NOT an unresolved failure', async () => {
+    const row = IMAGE_ROW();
+    // Bytes no decoder here reads: the classifier decides it cannot decide,
+    // writes that, and the sweep is finished with the row.
+    const undecodable = Uint8Array.from([0x49, 0x49, 0x2a, 0x00, ...new Array(4096).fill(9)]);
+    const db = fakeDb([row], { [row.storage_path as string]: undecodable });
+    const outcome = await settleMarketplaceEligibility(db as never, ORG);
+    expect(outcome.assessed).toBe(1);
+    expect(outcome.unmeasured).toBe(1);
+    expect(outcome.unresolved).toBe(0);
+    expect(eligibilitySweepCompleted(outcome)).toBe(true);
+    expect(db.updates).toHaveLength(1);
+  });
+
+  it('and a clean image settles cleanly', async () => {
+    const row = IMAGE_ROW();
+    const db = fakeDb([row], { [row.storage_path as string]: await cleanBytes() });
+    const outcome = await settleMarketplaceEligibility(db as never, ORG);
+    expect(outcome.assessed).toBe(1);
+    expect(outcome.rejected).toBe(0);
+    expect(outcome.unresolved).toBe(0);
+    expect(eligibilitySweepCompleted(outcome)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TEST AJ/AK/AL — the upload queue
+// ---------------------------------------------------------------------------
+
+/**
+ * A fake `builder_stock_uploads` that answers the four narrow reads the queue
+ * makes, rather than the one broad read it used to make.
+ */
+function fakeUploads(rows: Array<Record<string, unknown>>) {
+  const build = () => {
+    const filters: Array<[string, string, unknown]> = [];
+    let limit = 1000;
+    const builder: any = {
+      is(column: string, value: unknown) { filters.push(['is', column, value]); return builder; },
+      lt(column: string, value: unknown) { filters.push(['lt', column, value]); return builder; },
+      eq(column: string, value: unknown) { filters.push(['eq', column, value]); return builder; },
+      order() { return builder; },
+      limit(value: number) { limit = value; return builder; },
+      then(resolve: (v: { data: any[]; error: null }) => unknown, reject?: unknown) {
+        const matched = rows
+          .filter((row) => filters.every(([op, column, value]) => {
+            const current = row[column];
+            if (op === 'is') return (current ?? null) === value;
+            if (op === 'eq') return current === value;
+            // PostgREST's `lt` never matches null, which is exactly why the
+            // queue asks for the null rows separately.
+            return current !== null && current !== undefined && Number(current) < Number(value);
+          }))
+          .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+          .slice(0, limit);
+        return Promise.resolve({ data: matched, error: null }).then(resolve, reject as never);
+      },
+    };
+    return builder;
+  };
+  return {
+    from(table: string) {
+      if (table === SETTLEMENT_TARGET_TABLE) {
+        return {
+          select: () => ({
+            limit: () => Promise.resolve({
+              data: [{ marketplace_eligibility_version: MARKETPLACE_ELIGIBILITY_VERSION }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return { select: () => build() };
+    },
+  };
+}
+
+describe('TEST AJ/AK — the queue reaches work behind a full page of settled uploads', () => {
+  const settledUpload = (index: number) => ({
+    id: `upload-${String(index).padStart(4, '0')}`,
+    organisation_id: ORG,
+    deleted_at: null,
+    created_at: `2026-01-01T00:${String(index % 60).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}Z`,
+    source_images_settled_version: 4,
+    marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+  });
+
+  it('TEST AJ — 500 settled uploads do not hide the 501st', async () => {
+    const rows = Array.from({ length: 500 }, (_, index) => settledUpload(index));
+    rows.push({
+      ...settledUpload(500),
+      id: 'upload-0500',
+      created_at: '2026-06-01T00:00:00Z',
+      marketplace_eligibility_settled_version: null,
+    });
+
+    const queue = await readOutstandingUploads(fakeUploads(rows) as never, { limit: 100 });
+    expect(queue.unavailable).toBe(false);
+    // The old sweep read the oldest 500 and filtered them here, so this row —
+    // the only one with work — was never in the page it looked at.
+    expect(queue.rows.map((row) => row.id)).toEqual(['upload-0500']);
+  });
+
+  it('TEST AK — several pages of outstanding work all drain', async () => {
+    const rows = [
+      ...Array.from({ length: 500 }, (_, index) => settledUpload(index)),
+      ...Array.from({ length: 250 }, (_, index) => ({
+        ...settledUpload(1000 + index),
+        id: `pending-${String(index).padStart(4, '0')}`,
+        created_at: `2026-07-${String((index % 28) + 1).padStart(2, '0')}T00:00:00Z`,
+        marketplace_eligibility_settled_version: null,
+      })),
+    ];
+
+    // One tick asks for at most `limit`; the queue is drained by the ticks that
+    // follow, so the test settles them a page at a time until nothing is left.
+    const seen = new Set<string>();
+    for (let tick = 0; tick < 10; tick++) {
+      const queue = await readOutstandingUploads(fakeUploads(rows) as never, { limit: 40 });
+      if (!queue.rows.length) break;
+      for (const row of queue.rows) {
+        seen.add(String(row.id));
+        const target = rows.find((candidate) => candidate.id === row.id)!;
+        target.marketplace_eligibility_settled_version = MARKETPLACE_ELIGIBILITY_VERSION;
+      }
+    }
+    expect(seen.size).toBe(250);
+    expect(await readOutstandingUploads(fakeUploads(rows) as never, { limit: 40 })
+      .then((queue) => queue.rows)).toHaveLength(0);
+  });
+});
+
+describe('TEST AL — the target version lives in the database', () => {
+  const upload = (marker: number | null) => ({
+    id: 'upload-1', organisation_id: ORG, deleted_at: null,
+    created_at: '2026-01-01T00:00:00Z',
+    source_images_settled_version: 4,
+    marketplace_eligibility_settled_version: marker,
+  });
+
+  it('an upload at marker 1 is outstanding against a target of 2', async () => {
+    const queue = await readOutstandingUploads(
+      fakeUploads([upload(1)]) as never, { limit: 10, eligibilityTarget: 2 });
+    expect(queue.rows.map((row) => row.id)).toEqual(['upload-1']);
+    expect(uploadHasWorkOutstanding(upload(1), 2)).toBe(true);
+  });
+
+  it('and is finished against a target of 1', async () => {
+    const queue = await readOutstandingUploads(
+      fakeUploads([upload(1)]) as never, { limit: 10, eligibilityTarget: 1 });
+    expect(queue.rows).toHaveLength(0);
+    expect(uploadHasWorkOutstanding(upload(1), 1)).toBe(false);
+  });
+
+  /**
+   * The half of the mechanism that lives in SQL.
+   *
+   * The sweep's cron job decides in the database whether any work is left, and
+   * the database cannot see a TypeScript constant. A classifier bump therefore
+   * ships two things in one deployment — the constant, and a migration raising
+   * the target beside it — and a bump that ships only the first changes new
+   * imports while leaving every stored image on the old rules for ever. This is
+   * what makes that impossible to do by accident.
+   */
+  it('and the migrations declare exactly the version this build implements', () => {
+    const directory = 'supabase/migrations';
+    const declared = readdirSync(directory)
+      .filter((name) => name.endsWith('.sql'))
+      .flatMap((name) => [
+        ...readFileSync(`${directory}/${name}`, 'utf8')
+          .matchAll(/set_builder_stock_eligibility_target\((\d+)\)/g),
+      ].map((match) => Number(match[1])));
+    expect(declared.length).toBeGreaterThan(0);
+    expect(Math.max(...declared)).toBe(MARKETPLACE_ELIGIBILITY_VERSION);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TEST AM/AN/AO — WebP
+// ---------------------------------------------------------------------------
+
+/**
+ * Builder Stock accepts WebP, so a clean WebP has to be able to reach a card.
+ *
+ * The two lossy fixtures are files libwebp itself produced, because nothing
+ * here can encode VP8 and interoperating with the real encoder is better
+ * evidence than interoperating with our own. The lossless case is encoded in
+ * the test, by a writer built from the specification rather than from the
+ * decoder it feeds.
+ */
+describe('TEST AM/AN/AO — WebP', () => {
+  const fixture = (name: string) =>
+    new Uint8Array(readFileSync(`src/lib/__tests__/fixtures/webp/${name}.webp`));
+
+  it('TEST AM — a clean lossy WebP is measured, eligible and displayed', async () => {
+    const verdict = await assessMarketplaceEligibility(fixture('clean-lossy'));
+    expect(verdict.measured).toBe(true);
+    expect(verdict.state).toBe('eligible');
+    expect(isMarketplaceEligible(marketplaceEligibilityDetail(verdict))).toBe(true);
+
+    const candidate = {
+      ...eligible({ id: 'webp' }),
+      source_detail: {
+        role: 'primary_property',
+        role_evidence_level: 3,
+        ...marketplaceEligibilityDetail(verdict),
+      },
+    };
+    expect(chooseDisplayableImage([candidate])?.id).toBe('webp');
+  });
+
+  it('TEST AM — and a clean lossless WebP likewise', async () => {
+    const bytes = losslessWebpOf(cleanPicture(640, 332));
+    const verdict = await assessMarketplaceEligibility(bytes);
+    expect(verdict.measured).toBe(true);
+    expect(verdict.state).toBe('eligible');
+  });
+
+  it('TEST AN — an annotated WebP is refused, lossy and lossless alike', async () => {
+    const lossy = await assessMarketplaceEligibility(fixture('annotated-lossy'));
+    expect(lossy.state).toBe('ineligible');
+    expect(lossy.reason).toBe('annotated_marketing_tile');
+
+    const lossless = await assessMarketplaceEligibility(
+      losslessWebpOf(annotatedPicture(640, 332)));
+    expect(lossless.state).toBe('ineligible');
+    expect(lossless.reason).toBe('annotated_marketing_tile');
+  });
+
+  it('TEST AO — a corrupt WebP is pending, hidden, and does not throw', async () => {
+    const good = fixture('clean-lossy');
+    const truncated = good.slice(0, 60);
+    const headerless = Uint8Array.from(good);
+    headerless[12] = 0x41; headerless[13] = 0x42;
+    headerless[14] = 0x43; headerless[15] = 0x44;
+
+    for (const bytes of [truncated, headerless]) {
+      const verdict = await assessMarketplaceEligibility(bytes);
+      expect(verdict.state).toBe('pending');
+      expect(verdict.measured).toBe(false);
+      expect(isMarketplaceEligible(marketplaceEligibilityDetail(verdict))).toBe(false);
+    }
+  });
+
+  it('the decoder reproduces the picture rather than approximating it', async () => {
+    // The lossless round trip is exact, which is what "lossless" has to mean:
+    // a decoder that is nearly right is one whose errors nobody can bound.
+    const picture = cleanPicture(320, 200, 3);
+    const decoded = decodeWebp(losslessWebpOf(picture), { maxPixels: 40_000_000 });
+    expect(decoded).not.toBeNull();
+    expect(decoded!.width).toBe(320);
+    expect(decoded!.height).toBe(200);
+    expect(Array.from(decoded!.pixels)).toEqual(Array.from(picture.pixels));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TEST AQ — a refusal is never a request for a substitute
+// ---------------------------------------------------------------------------
+
+describe('TEST AQ — nothing stands in for a refused or pending primary', () => {
+  const other = (role: string, id: string): Candidate => ({
+    id,
+    source_stage: 'uploaded_document',
+    verification_status: 'source_supplied',
+    processing_status: 'ready',
+    storage_path: `org/items/item-1/source/${id}.png`,
+    position: 0,
+    source_detail: { role, role_evidence_level: 1, ...CLEAN_DETAIL },
+  });
+
+  const provider = (stage: string, verification: string, id: string): Candidate => ({
+    id,
+    source_stage: stage,
+    verification_status: verification,
+    processing_status: 'ready',
+    storage_path: `org/items/item-1/${id}.jpg`,
+    position: 0,
+    source_detail: null,
+  });
+
+  it('not another role of the same property, and not another provider', () => {
+    const everything = [
+      rejected({ id: 'tile' }, 3),
+      unjudged({ id: 'legacy' }),
+      other('interior', 'interior'),
+      other('floorplan', 'floorplan'),
+      other('site_plan', 'site-plan'),
+      other('masterplan', 'masterplan'),
+      other('location_map', 'location-map'),
+      other('materials', 'materials'),
+      provider('google_maps', 'location_derived', 'google'),
+      provider('google_street_view', 'location_derived', 'street-view'),
+      provider('satellite', 'location_derived', 'satellite'),
+      provider('internet_search', 'unverified', 'search'),
+      provider('ai_generated', 'unverified', 'generated'),
+    ];
+    expect(chooseDisplayableImage(everything)).toBeNull();
+  });
+
+  it('and a pending primary is refused exactly as an ineligible one is', () => {
+    const uncertain: Candidate = {
+      ...unjudged({ id: 'uncertain' }),
+      source_detail: {
+        role: 'primary_property',
+        role_evidence_level: 1,
+        ...marketplaceEligibilityDetail(
+          decideMarketplaceEligibility({
+            annotated: false, uncertain: true,
+            largestShare: 0, totalShare: 0, regionCount: 0,
+            textHeightShare: 0, textLineCount: 0,
+            faintTextHeightShare: 0.12, faintTextLineCount: 1,
+          })),
+      },
+    };
+    expect(chooseDisplayableImage([uncertain])).toBeNull();
+    expect(chooseDisplayableImage([uncertain, other('interior', 'interior')])).toBeNull();
   });
 });

@@ -29,6 +29,8 @@
  * display a builder's photograph because we could not parse its container
  * would be a worse defect than the one this exists to fix.
  */
+
+import { decodeWebp } from './webp.ts';
 import { inflate } from './rasterPng.ts';
 
 /**
@@ -72,15 +74,14 @@ export type DecodeResult =
 
 /** The containers this can actually read, for the record and for the tests. */
 export const DECODABLE_CONTAINERS: readonly string[] = [
-  'image/png', 'image/jpeg', 'image/gif',
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
 ];
 
 export async function decodeThumbnailResult(bytes: Uint8Array): Promise<DecodeResult> {
   if (!bytes?.length) return { ok: false, reason: 'failed' };
   if (bytes.length > MAX_DECODE_BYTES) return { ok: false, reason: 'failed' };
-  if (isWebp(bytes)) return { ok: false, reason: 'unsupported' };
 
-  const supported = isPng(bytes) || isJpeg(bytes) || isGif(bytes);
+  const supported = isPng(bytes) || isJpeg(bytes) || isGif(bytes) || isWebp(bytes);
   if (!supported) return { ok: false, reason: 'unsupported' };
 
   try {
@@ -88,11 +89,32 @@ export async function decodeThumbnailResult(bytes: Uint8Array): Promise<DecodeRe
       ? await decodePng(bytes)
       : isJpeg(bytes)
         ? decodeJpeg(bytes)
-        : await decodeGif(bytes);
+        : isGif(bytes)
+          ? await decodeGif(bytes)
+          : decodeWebpThumbnail(bytes);
     return thumbnail ? { ok: true, thumbnail } : { ok: false, reason: 'failed' };
   } catch {
     return { ok: false, reason: 'failed' };
   }
+}
+
+/**
+ * Decode a WebP and reduce it, through the same box filter as everything else.
+ *
+ * The container is resolved in `webp.ts`; both bitstreams come back as RGB, so
+ * there is nothing format-specific left by the time it reaches here — which is
+ * the point. A decoder that produced its own kind of thumbnail would be a
+ * second downscaler, and every threshold in the classifier is fitted against
+ * this one.
+ */
+function decodeWebpThumbnail(bytes: Uint8Array): Thumbnail | null {
+  const raster = decodeWebp(bytes, { maxPixels: MAX_DECODE_PIXELS });
+  if (!raster) return null;
+  const { width, height, pixels } = raster;
+  return box(width, height, (x, y) => {
+    const at = (y * width + x) * 3;
+    return [pixels[at], pixels[at + 1], pixels[at + 2]];
+  });
 }
 
 /** The thumbnail alone, for callers that only need the pixels. */

@@ -53,9 +53,22 @@ export function photograph(width = 400, height = 200, variant = 0): Picture {
         pixels[at + 1] = clamp(165 + Math.floor(y / 2) + grain());
         pixels[at + 2] = clamp(215 + Math.min(30, Math.floor(y / 2)) + grain());
       } else {
-        pixels[at] = clamp(150 + ((x * 11 + y * 5) % 40) + grain());
-        pixels[at + 1] = clamp(140 + ((x * 7 + y * 13) % 40) + grain());
-        pixels[at + 2] = clamp(130 + ((x * 3 + y * 17) % 40) + grain());
+        /*
+         * SMOOTH VARIATION PLUS GRAIN, NOT A MODULO RAMP.
+         *
+         * This used to be `(x * 11 + y * 5) % 40`, which is a sawtooth: it
+         * wraps, and every wrap is a hard diagonal edge repeating on a fixed
+         * period. That is a regular striped pattern in a quiet part of the
+         * frame, which is exactly the shape the faint-typography pass looks
+         * for — so the fixture that stands in for "an ordinary photograph"
+         * behaved like drawn lettering. Nothing photographic has a discontinuity
+         * on a fixed period, so neither does this.
+         */
+        const wash = Math.sin(x * 0.031 + y * 0.017) * 14
+          + Math.sin(x * 0.007 - y * 0.053) * 9;
+        pixels[at] = clamp(150 + Math.round(wash) + grain());
+        pixels[at + 1] = clamp(140 + Math.round(wash * 0.8) + grain());
+        pixels[at + 2] = clamp(130 + Math.round(wash * 0.6) + grain());
       }
     }
   }
@@ -428,3 +441,123 @@ export const measuredDetail = (picture: Picture): Record<string, unknown> =>
 export const CLEAN_VERDICT = measuredDetail(cleanPicture());
 /** A measured picture carrying a ribbon and a word: refused. */
 export const ANNOTATED_VERDICT = measuredDetail(annotatedPicture());
+
+// ---------------------------------------------------------------------------
+// WebP
+// ---------------------------------------------------------------------------
+
+/**
+ * The picture as a real lossless WebP (VP8L).
+ *
+ * WRITTEN HERE RATHER THAN CHECKED IN, and deliberately not written against the
+ * decoder it feeds: an encoder and a decoder built from the same specification
+ * and not from each other is the only round trip worth having. It is the
+ * simplest legal VP8L bitstream — no transforms, no colour cache, no
+ * meta-Huffman, one Huffman group whose literal codes are all eight bits — which
+ * is exactly what makes it useful: it exercises the container, the bit order,
+ * the code-length descriptor and the literal path without depending on any of
+ * the encoder's own cleverness.
+ *
+ * The two LOSSY fixtures beside this are checked-in files produced by libwebp,
+ * because nothing here can encode VP8 and interoperating with the real encoder
+ * is better evidence than interoperating with our own.
+ */
+export function losslessWebpOf(picture: Picture): Uint8Array {
+  const bits = new BitWriter();
+
+  // ── VP8L header ──────────────────────────────────────────────────────────
+  bits.write(0x2f, 8);
+  bits.write(picture.width - 1, 14);
+  bits.write(picture.height - 1, 14);
+  bits.write(0, 1); // no alpha
+  bits.write(0, 3); // version
+
+  bits.write(0, 1); // no transforms
+  bits.write(0, 1); // no colour cache
+  bits.write(0, 1); // no meta-Huffman
+
+  // Four literal codes (green, red, blue, alpha), then the distance code.
+  for (let i = 0; i < 4; i++) writeFlatLiteralCode(bits);
+  // Distance: the "simple" form with a single symbol, which costs no bits to
+  // read and is never used, because nothing here emits a backward reference.
+  bits.write(1, 1); // simple
+  bits.write(0, 1); // one symbol
+  bits.write(0, 1); // stated in one bit rather than eight
+  bits.write(0, 1); // symbol 0
+
+  // ── pixels, as literals ──────────────────────────────────────────────────
+  const { width, height, pixels } = picture;
+  for (let i = 0; i < width * height; i++) {
+    writeFlatSymbol(bits, pixels[i * 3 + 1]); // green
+    writeFlatSymbol(bits, pixels[i * 3]);     // red
+    writeFlatSymbol(bits, pixels[i * 3 + 2]); // blue
+    writeFlatSymbol(bits, 255);               // alpha
+  }
+
+  return riff('VP8L', bits.bytes());
+}
+
+/**
+ * A complete 256-symbol code in which every literal is eight bits.
+ *
+ * Declared through the code-length code rather than as a literal list: the
+ * code-length code itself is given exactly one symbol (the value 8), which the
+ * format reads as costing no bits, and a maximum-symbol count of 256 stops the
+ * run. It is the shortest legal way to say "all 256 literals, eight bits each".
+ */
+function writeFlatLiteralCode(bits: BitWriter): void {
+  bits.write(0, 1);  // not the simple form
+  bits.write(8, 4);  // 8 + 4 = 12 code-length symbols follow, in the fixed order
+  // The fixed order is [17, 18, 0, 1, 2, 3, 4, 5, 16, 6, 7, 8, ...]; only the
+  // twelfth of those, the value 8, is given a length.
+  for (let i = 0; i < 11; i++) bits.write(0, 3);
+  bits.write(1, 3);
+  bits.write(1, 1);   // a maximum symbol count follows
+  bits.write(3, 3);   // stated in 2 + 2 * 3 = 8 bits
+  bits.write(254, 8); // 2 + 254 = 256 symbols
+}
+
+/** An eight-bit canonical code is its own symbol, written most significant first. */
+function writeFlatSymbol(bits: BitWriter, symbol: number): void {
+  for (let bit = 7; bit >= 0; bit--) bits.write((symbol >> bit) & 1, 1);
+}
+
+/** VP8L's bit order: least significant first, within bytes in address order. */
+class BitWriter {
+  private readonly out: number[] = [];
+  private current = 0;
+  private used = 0;
+
+  write(value: number, count: number): void {
+    for (let i = 0; i < count; i++) {
+      this.current |= ((value >> i) & 1) << this.used;
+      if (++this.used === 8) {
+        this.out.push(this.current);
+        this.current = 0;
+        this.used = 0;
+      }
+    }
+  }
+
+  bytes(): Uint8Array {
+    const finished = this.used ? [...this.out, this.current] : this.out;
+    return Uint8Array.from(finished);
+  }
+}
+
+/** Wrap a bitstream in the RIFF container a `.webp` file is. */
+function riff(fourcc: string, body: Uint8Array): Uint8Array {
+  const padded = body.length + (body.length & 1);
+  const out = new Uint8Array(12 + 8 + padded);
+  const view = new DataView(out.buffer);
+  const put = (offset: number, text: string) => {
+    for (let i = 0; i < 4; i++) out[offset + i] = text.charCodeAt(i);
+  };
+  put(0, 'RIFF');
+  view.setUint32(4, 4 + 8 + padded, true);
+  put(8, 'WEBP');
+  put(12, fourcc);
+  view.setUint32(16, body.length, true);
+  out.set(body, 20);
+  return out;
+}
