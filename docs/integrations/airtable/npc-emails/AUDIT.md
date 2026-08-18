@@ -45,8 +45,17 @@ pipelines that no longer run — the July batches wrote nothing at all, the Augu
 batch got as far as stamping a batch id and stopped.
 
 This is not the 30-day purge. That automation **deletes** rows rather than
-blanking them, and per [`../../AIRTABLE_RETENTION.md`](../../AIRTABLE_RETENTION.md)
-it is still a draft with its script step empty, so it has never run.
+blanking them, and every one of the 148 records was created between 2026-07-23
+and 2026-08-04 — all still inside the 30-day window, so the purge would not have
+touched them yet either way.
+
+> **Corrected 2026-08-18.** This paragraph first said the purge "is still a draft
+> with its script step empty, so it has never run", following
+> [`../../AIRTABLE_RETENTION.md`](../../AIRTABLE_RETENTION.md). The automation
+> export showed otherwise: `Delete Property Intake Records After 30 Days` is
+> **deployed** with its script in place. The finding above is unchanged — the
+> records are empty because the pipelines wrote nothing — but the reason given
+> was wrong. See [`automations/README.md`](./automations/README.md).
 
 **Migrate this table as schema only.** Carrying 148 contentless rows into a fresh
 base imports the debris and nothing else. It also means the wide-table half of the

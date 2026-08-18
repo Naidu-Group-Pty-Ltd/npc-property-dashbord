@@ -11,6 +11,15 @@ table, and they match exactly.
 This is a migration artefact, not a backup of convenience. The source base is
 still the system of record until the cutover is signed off.
 
+## Automations are a separate bundle
+
+The base's 10 automations are exported to
+[`automations/`](./automations/README.md) with their script bodies extracted as
+pasteable `.js` files. 6 of the 10 can be recreated through the API; the other 4
+carry `customScript` nodes, which the API refuses to author, so those steps are
+manual. Rebuild the base first — an automation cannot reference tables that do
+not exist yet.
+
 ## Read the audit first
 
 [`AUDIT.md`](./AUDIT.md) is a data-quality sweep of the same base, run after this

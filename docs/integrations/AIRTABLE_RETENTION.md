@@ -23,6 +23,15 @@ column. The window is measured on **`Created Time`**, a `createdTime` column, so
 from when the record entered the table and cannot be moved by a later edit — the same field
 family the original keys off (`Created`, also `createdTime`).
 
+> **Status note (2026-08-18).** The manual step below has since been completed.
+> An export of the base's automations shows `Delete Property Intake Records After
+> 30 Days` is **deployed** with its Run script node (`wacPNnMrRaCKL5iEJ`)
+> populated, so it is live rather than a draft. The instructions are kept as the
+> record of how it was set up, and as the procedure to repeat when the base is
+> rebuilt in the new account — where the script must be pasted by hand again,
+> because the API cannot author a script node. See
+> [`airtable/npc-emails/automations/`](./airtable/npc-emails/automations/README.md).
+
 ## The one manual step
 
 The automation is saved with its trigger and its find step, and **the Run script step is
