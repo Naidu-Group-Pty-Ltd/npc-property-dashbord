@@ -11,6 +11,18 @@ table, and they match exactly.
 This is a migration artefact, not a backup of convenience. The source base is
 still the system of record until the cutover is signed off.
 
+## Read the audit first
+
+[`AUDIT.md`](./AUDIT.md) is a data-quality sweep of the same base, run after this
+export and re-checked against live counts. Its headline changes what is worth
+migrating: **48% of the 5,537 records carry nothing worth moving**, and
+`Property Intake Master` — the 211-column flagship — has **zero** populated
+fields beyond a batch id, because the two scenarios that fill it are switched
+off in Make and these 148 rows are their test debris.
+
+The bundle below still contains every record. Nothing was filtered out; the
+audit reports, it does not prune.
+
 ## Why this is not just a data dump
 
 Three properties of Airtable decide the shape of everything here. None is a
