@@ -29,11 +29,27 @@ Worth stating because it is a trap for a migration script: read the forward refe
 | `Appt Time Selected` | NPC Discovery Call No Show Follow Up, NPC Opt In Follow Up, NPC Quiz Follow Up | NPC Discovery Call No Show Follow Up, NPC Quiz Follow Up |
 | `Zoom Call Booked` | NPC Opt In Follow Up, NPC Quiz Follow Up | NPC Quiz Follow Up |
 
-## Scorecards — no endpoint exists
+## Scorecards — one exists, and it is empty
 
-`NPC Opt In Follow Up` and `NPC Opt In Follow Up Inbound` both reference scorecard `cf81945a-c941-46a2-a538-2987abffe521`. **It cannot be retrieved.** Eleven candidate paths were tried as both a collection and a by-id lookup — `/scorecard`, `/scorecards`, `/score_card`, `/scoreCard`, `/score-card`, `/rubric`, `/rubrics`, `/evaluation`, `/evaluations`, `/assistant-scorecard`, `/call-scorecard`, plus `/artifact` and `/artifact-plan` — and every one returns **404**.
+`NPC Opt In Follow Up` and `NPC Opt In Follow Up Inbound` both reference scorecard
+`cf81945a-c941-46a2-a538-2987abffe521`. **It resolves.** The record is captured at
+[`observability/scorecard.scorecard-for-assistant-npc-opt-in-follow-up.cf81945a-c941-46a2-a538-2987abffe521.json`](./observability/scorecard.scorecard-for-assistant-npc-opt-in-follow-up.cf81945a-c941-46a2-a538-2987abffe521.json).
 
-So this is a dangling reference of the same kind as the four missing tool ids: the id is live in two assistant configs, and the object behind it is either deleted or served by an endpoint this API version does not expose. A clone will carry the id across and it will resolve to nothing.
+> **Correction.** An earlier pass in this file declared the scorecard unretrievable after
+> thirteen candidate paths all returned 404. That conclusion was wrong, and it was wrong
+> because the paths were **guessed** rather than read off the spec. The endpoint is
+> `GET /observability/scorecard/{id}` — an `/observability/` prefix that no amount of
+> guessing at `/scorecard`, `/rubric` or `/evaluation` would have produced. The spec at
+> `https://api.vapi.ai/api-json` names it. See
+> [`OBSERVABILITY-AND-REPORTING.md`](./OBSERVABILITY-AND-REPORTING.md).
+
+It is org-owned (`orgId` matches), created `2025-11-18T03:40:04.782Z` and never updated
+since, and its `assistantIds` reverse reference is — unlike the structured outputs' —
+**correct**: both ids name assistants that really do carry `scorecardIds`.
+
+`metrics` is `[]`. So the scorecard is **inert rather than dangling**: it exists, the
+assistants point at a real object, and that object scores nothing. A clone must carry it
+across for fidelity, but nothing about a call's behaviour depends on it.
 
 ## Not fetched because they are empty
 

@@ -120,11 +120,15 @@ Their `assistantIds` reverse reference is **stale and should not be trusted** �
 six disagree with the assistants, all naming `NPC Opt In Follow Up`, which has referenced no
 structured outputs since 2026-01-09. Read the forward reference on the assistant.
 
-**Scorecards have no endpoint.** `cf81945a-c941-46a2-a538-2987abffe521` is referenced by
-`NPC Opt In Follow Up` and `NPC Opt In Follow Up Inbound`, and 13 candidate paths — including
-`/scorecard`, `/scorecards`, `/rubric`, `/evaluation` and `/artifact-plan`, each tried as both
-a collection and a by-id lookup — all return **404**. It is a dangling reference of the same
-kind as the four missing tool ids: live in two configs, resolving to nothing.
+**The scorecard exists and is empty.** `cf81945a-c941-46a2-a538-2987abffe521`, referenced by
+`NPC Opt In Follow Up` and `NPC Opt In Follow Up Inbound`, resolves at
+`GET /observability/scorecard/{id}` — an endpoint found by reading the OpenAPI spec rather
+than by guessing, after 13 guessed paths had 404'd and this file had wrongly called it a
+dangling reference. The record is org-owned, its `assistantIds` are correct, and its
+`metrics` array is **empty**: inert, not dangling. Captured in
+[`snapshot/observability/`](./snapshot/observability/) and explained in
+[`snapshot/OBSERVABILITY-AND-REPORTING.md`](./snapshot/OBSERVABILITY-AND-REPORTING.md),
+which also lists the five other endpoint groups the spec exposed and probing never found.
 
 ## Provider credentials — and the one pointing at the old Make account
 
@@ -140,6 +144,29 @@ assistant references a `credentialId`**, so the link is visible only from `/cred
 
 `Vapi-Twilio` is a `byo-sip-trunk` with one gateway, `npc-vapi.pstn.twilio.com`, and
 **`inboundEnabled: false`**.
+
+## Observability, reporting and evaluation
+
+[`snapshot/OBSERVABILITY-AND-REPORTING.md`](./snapshot/OBSERVABILITY-AND-REPORTING.md) ·
+These six endpoint groups were found by reading the OpenAPI spec at
+`https://api.vapi.ai/api-json`, not by probing. Four hold data:
+
+| Endpoint | Items | What migrates |
+| --- | --- | --- |
+| `/observability/scorecard` | 1 | The scorecard both `NPC Opt In Follow Up` assistants reference. `metrics: []` — it exists and scores nothing. |
+| `/reporting/insight` | 6 | Six `type: text` counters over the `events` table: voice / model / transcriber request failures, tool failures, call-ended-error, transfer failures. All org-owned. |
+| `/reporting/board` | 1 | "Default Dashboard", `items: []`, `layout: {columns: 6}`. Empty. |
+| `/eval/simulation/personality` | 7 | **Nothing.** All seven ids begin `a0000000-` and none carries this org's `orgId` — they are Vapi platform defaults. |
+
+`/eval/simulation`, `/eval/simulation/scenario`, `/eval/simulation/run`, `/eval/simulation/suite`
+and `/eval/run` all return 0.
+
+**Neither the spec nor probing is sufficient on its own.** The spec exposes
+`/observability/*`, `/reporting/*`, `/eval/simulation/*`, `/v2/phone-number` and
+`/provider/{provider}/{resourceName}`, none of which a path guess would reach. The live API
+serves `/workflow`, `/test-suite`, `/credential`, `/knowledge-base`, `/template`, `/logs` and
+all three version endpoints, none of which appear in the spec at all. This snapshot was taken
+against both.
 
 ## Tool fetching is exhaustive, and that was checked
 
@@ -266,7 +293,20 @@ Tools have named versions of their own at `GET /tool/{id}/versions` — see the 
 
 ## What is redacted
 
-Six credential values, replaced with `{{REDACTED:…}}` placeholders and listed by path in
-`snapshot/manifest.json`: four Twilio Account SIDs, one Airtable personal access token and
-one GoHighLevel PIT token. Nothing else is altered. The last two sit on tools no assistant
-calls, and neither appears on the Make rotation list — both should be rotated.
+Every value under a key in a fixed set, replaced with `{{REDACTED:…}}` placeholders and
+listed by kind in `snapshot/manifest.json`: the Vapi webhook secret, two `serverUrlSecret`
+values, four Twilio Account SIDs, one Airtable personal access token and one GoHighLevel PIT
+token. Nothing else is altered.
+
+The rule is an **exact match on the lowercased key**, not a substring or an anchored regex.
+That matters in both directions: `maxTokens`, `promptCacheKey`, `isServerUrlSecretSet` and a
+static body field literally named `key` must *not* be caught, and `x-vapi-webhook-secret` and
+`serverUrlSecret` must be. An earlier anchored pattern (`^secret$`, `^token$`, …) satisfied
+the first requirement and failed the second, and both of those values reached five pushed
+commits before it was found — [`SECURITY-INCIDENT.md`](./SECURITY-INCIDENT.md) records what
+leaked, where, and what still needs rotating. A value-based sweep over the whole tree now
+runs as a second line of defence, so a key nobody anticipated cannot leak a value that was
+already seen elsewhere.
+
+The Airtable PAT and the GHL PIT sit on tools no assistant calls, and neither appears on the
+Make rotation list — both should be rotated regardless.

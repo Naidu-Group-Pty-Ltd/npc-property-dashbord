@@ -12,8 +12,31 @@
     },
     "artifactPlanReferences": {
       "structuredOutputs": "GET /structured-output \u2014 6 records, captured. 5 referenced, 1 orphan duplicate.",
-      "scorecards": "1 id referenced by 2 assistants; 13 candidate paths all 404. Dangling reference.",
+      "scorecards": "RESOLVED at GET /observability/scorecard/{id}. The earlier 'dangling reference' conclusion was wrong - the path prefix was /observability/, which none of the 13 guessed paths used. The record exists, is org-owned and names both referencing assistants, but its metrics array is EMPTY.",
       "reverseReferenceWarning": "structuredOutput.assistantIds disagrees with the assistants on 3 of 6 records and is stale. The forward reference on the assistant is authoritative."
+    },
+    "specVsLiveApi": {
+      "source": "https://api.vapi.ai/api-json \u2014 OpenAPI 3.0.0, 64 paths, 57 GET operations",
+      "inSpecNotFoundByProbing": [
+        "/observability/scorecard",
+        "/reporting/insight",
+        "/reporting/board",
+        "/eval/simulation/*",
+        "/v2/phone-number",
+        "/provider/{provider}/{resourceName}"
+      ],
+      "liveButAbsentFromSpec": [
+        "/workflow",
+        "/test-suite",
+        "/credential",
+        "/knowledge-base",
+        "/template",
+        "/logs",
+        "/assistant/{id}/version",
+        "/assistant/{id}/versions",
+        "/tool/{id}/versions"
+      ],
+      "conclusion": "The published spec is a subset of what the API serves, and probing is a subset of what the spec documents. Neither alone is sufficient; this capture used both."
     }
   },
   "counts": {
@@ -27,7 +50,10 @@
     "tools": 20,
     "workflows": 1,
     "structuredOutputs": 6,
-    "scorecards": "1 referenced, 0 retrievable \u2014 no endpoint exists"
+    "scorecards": 1,
+    "insights": 6,
+    "boards": 1,
+    "simulationPersonalities": "7 (Vapi platform defaults, not org content)"
   },
   "npcSplit": {
     "note": "Vapi has no folder concept; the split is by name prefix and corroborated by squad membership and phone-number naming. Only the NPC set is in scope for migration \u2014 see ../npc-services/clone-plan.json.",
