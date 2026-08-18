@@ -495,7 +495,8 @@ export interface AmlScreeningPolicyDecision {
 }
 
 export interface AmlScreeningNextAction {
-  key: "none" | "await_submission" | "fix_provider" | "enrol_subjects" | "run_screening"
+  key: "none" | "await_submission" | "classify_perimeter" | "fix_provider"
+    | "enrol_subjects" | "run_screening"
     | "adjudicate_match" | "record_pep" | "await_provider_result" | "screening_stalled"
     | "escalate";
   label: string | null;
@@ -517,6 +518,12 @@ export interface AmlCaseScreeningScope {
 
 export interface AmlScreeningPerimeter {
   classification: "designated_service" | "outside_perimeter";
+  /**
+   * Whether anybody has DECIDED this. An unclassified case and one recorded
+   * as inside both read `designated_service` — same obligation, different
+   * operator situation.
+   */
+  classified?: boolean;
   reason_code: string | null;
   scopes_excluded: AmlScreeningScopeKey[];
   recorded_by_label: string | null;

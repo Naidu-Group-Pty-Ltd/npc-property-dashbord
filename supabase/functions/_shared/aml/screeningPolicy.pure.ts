@@ -209,6 +209,20 @@ export interface PerimeterRecord {
   scopesExcluded: ScreeningScopeKey[];
   recordedByLabel: string | null;
   recordedAt: string | null;
+  /**
+   * Whether anybody has actually DECIDED this, as distinct from the default.
+   *
+   * `classification` cannot carry it: an unclassified case and a case
+   * deliberately recorded as inside both read `designated_service`, because
+   * the default is inside and must stay inside. They are the same obligation
+   * and a different operator situation — one needs a decision, the other has
+   * had one — and Stage 5 has to tell them apart to know what to ask for.
+   *
+   * A malformed or unreadable row counts as UNCLASSIFIED: the sanctions
+   * requirement still fails closed, and the operator is still asked to
+   * decide rather than being told a decision exists that cannot be read.
+   */
+  classified: boolean;
 }
 
 /**
@@ -221,10 +235,20 @@ export function readPerimeter(row: unknown): PerimeterRecord {
   const inside: PerimeterRecord = {
     classification: "designated_service", reasonCode: null,
     scopesExcluded: [], recordedByLabel: null, recordedAt: null,
+    classified: false,
   };
   if (!row || typeof row !== "object") return inside;
   const r = row as Record<string, unknown>;
   if (r.superseded_at) return inside;
+  // An operative row recorded as INSIDE is a decision, and says so.
+  if (String(r.classification ?? "") === "designated_service") {
+    return {
+      ...inside,
+      classified: true,
+      recordedByLabel: typeof r.recorded_by_label === "string" ? r.recorded_by_label : null,
+      recordedAt: typeof r.recorded_at === "string" ? r.recorded_at : null,
+    };
+  }
   if (String(r.classification ?? "") !== "outside_perimeter") return inside;
   const code = String(r.reason_code ?? "");
   if (!(PERIMETER_REASON_CODES as readonly string[]).includes(code)) return inside;
@@ -238,6 +262,7 @@ export function readPerimeter(row: unknown): PerimeterRecord {
   if (excluded.length === 0) return inside;
   return {
     classification: "outside_perimeter",
+    classified: true,
     reasonCode: code as PerimeterReasonCode,
     scopesExcluded: [...new Set(excluded)],
     recordedByLabel: typeof r.recorded_by_label === "string" ? r.recorded_by_label : null,
@@ -669,6 +694,7 @@ export function deriveMissingScreeningSubjects(input: EnrolmentInput): Enrolment
 export type ScreeningNextActionKey =
   | "none"
   | "await_submission"
+  | "classify_perimeter"
   | "fix_provider"
   | "enrol_subjects"
   | "run_screening"
@@ -759,6 +785,14 @@ export interface NextActionInput {
   anyConfirmedMatch: boolean;
   anyMissingPep: boolean;
   pepRoute: ScreeningPolicyDecision["pepRoute"];
+  /**
+   * Whether the sanctions perimeter has been decided for this case.
+   *
+   * Defaults TRUE so an older caller that does not pass it behaves exactly as
+   * before — the classify step is added by supplying the fact, never by
+   * assuming its absence.
+   */
+  perimeterClassified?: boolean;
   /** `error_category` from the most relevant failed subject, if any. */
   errorCategory?: string | null;
   /**
@@ -811,6 +845,39 @@ export function deriveScreeningNextAction(input: NextActionInput): ScreeningNext
           "enrolled until the client submits it.",
         owner: "client",
       };
+  }
+  /*
+   * ── Ask the question that decides the others ───────────────────────
+   *
+   * On an unclassified case sanctions defaults to required — correctly, and
+   * fail-closed — so an unready provider read as the blocker and the stage
+   * told the operator to go and fix the sanctions configuration. That is the
+   * wrong order. Nobody has yet decided whether this case needs sanctions
+   * screening AT ALL, and an administrator restoring a provider for a case
+   * that turns out to be an enquiry has done work nobody needed.
+   *
+   * So an undecided perimeter outranks a provider fault. It outranks ONLY
+   * that: when the provider is healthy the case screens on the default and
+   * there is nothing to interrupt, and a match or a confirmed finding still
+   * comes first because those are facts rather than questions.
+   *
+   * The DEFAULT IS UNCHANGED. Sanctions is still required until somebody
+   * records otherwise; this decides what to ask for, never what is true.
+   */
+  const providerFault = !input.providerReady ||
+    input.errorCategory === "provider_not_configured" ||
+    input.errorCategory === "provider_misconfigured" ||
+    input.errorCategory === "list_data_unavailable";
+  if (input.perimeterClassified === false && providerFault) {
+    return {
+      key: "classify_perimeter", label: "Classify sanctions screening requirement",
+      headline: "Classify sanctions screening requirement",
+      detail: "Confirm whether this case is inside or outside the sanctions screening " +
+        "perimeter. Until that is recorded the case is treated as inside, so sanctions " +
+        "screening is required — but a case that is an enquiry, a duplicate, or a " +
+        "service declined before it commenced may not need it at all.",
+      owner: "reviewer",
+    };
   }
   if (!input.providerReady && input.anyUnscreened) {
     return {

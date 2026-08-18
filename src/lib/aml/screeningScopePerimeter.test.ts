@@ -6,6 +6,7 @@ import {
   decideScreeningPolicy,
   deriveScreeningScope,
   PERIMETER_REASON_CODES,
+  deriveScreeningNextAction,
   providerReadinessRelevant,
   readPerimeter,
   reconcileSubjectToScope,
@@ -626,6 +627,143 @@ describe("the stage survives its migration not being applied yet", () => {
 
   it("says on the response whether the decision was recorded", () => {
     expect(casesFn).toMatch(/scope_recorded: scopeSync\.recorded/);
+  });
+});
+
+describe("an undecided perimeter outranks a provider fault", () => {
+  /*
+   * On an unclassified case sanctions defaults to required — correctly, and
+   * fail-closed — so an unready provider read as THE blocker and Stage 5 told
+   * the operator to go and fix the sanctions configuration. Wrong order:
+   * nobody had yet decided whether this case needs sanctions screening at
+   * all, and an administrator restoring a provider for what turns out to be
+   * an enquiry has done work nobody needed.
+   */
+  const base = {
+    hasSubmission: true, subjectCount: 1,
+    anyUnscreened: true, anyProcessing: false,
+    anyPossibleMatch: false, anyConfirmedMatch: false,
+    anyMissingPep: true, pepRoute: "manual_review" as const,
+  };
+
+  it("unclassified + provider down → classify_perimeter, not fix_provider", () => {
+    const a = deriveScreeningNextAction({
+      ...base, providerReady: false, perimeterClassified: false,
+    });
+    expect(a.key).toBe("classify_perimeter");
+    expect(a.headline).toMatch(/classify sanctions screening requirement/i);
+    expect(a.detail).toMatch(/inside or outside the sanctions screening perimeter/i);
+    expect(a.owner).toBe("reviewer");
+    expect(a.label).not.toMatch(/open screening configuration/i);
+  });
+
+  it("unclassified + an empty DFAT list → classify_perimeter", () => {
+    // An unloaded list reaches this as a provider that is not ready, and as
+    // `list_data_unavailable` once a subject has failed on it. Both defer.
+    for (const errorCategory of [null, "list_data_unavailable"]) {
+      expect(deriveScreeningNextAction({
+        ...base, providerReady: false, perimeterClassified: false, errorCategory,
+      }).key).toBe("classify_perimeter");
+    }
+  });
+
+  it("unclassified + a provider-fault error category → classify_perimeter", () => {
+    for (const errorCategory of ["provider_misconfigured", "provider_not_configured"]) {
+      expect(deriveScreeningNextAction({
+        ...base, providerReady: true, anyUnscreened: false,
+        perimeterClassified: false, errorCategory,
+      }).key).toBe("classify_perimeter");
+    }
+  });
+
+  it("inside perimeter + provider down → fix_provider, exactly as before", () => {
+    const a = deriveScreeningNextAction({
+      ...base, providerReady: false, perimeterClassified: true,
+    });
+    expect(a.key).toBe("fix_provider");
+    expect(a.label).toMatch(/open screening configuration/i);
+  });
+
+  it("outside perimeter with sanctions excluded → no provider blocker at all", () => {
+    /*
+     * The stage passes `providerReady: providerRelevant ? providerReady : true`,
+     * so a case with no provider-backed obligation cannot reach either the
+     * classify branch or the fix_provider branch on account of the provider.
+     */
+    const decision = deriveScreeningScope({ ...CLEAN_INPUT, perimeter: OUTSIDE });
+    expect(providerReadinessRelevant(decision)).toBe(false);
+    const a = deriveScreeningNextAction({
+      ...base, providerReady: true, anyUnscreened: false, perimeterClassified: true,
+    });
+    expect(a.key).not.toBe("fix_provider");
+    expect(a.key).not.toBe("classify_perimeter");
+    expect(a.key).toBe("record_pep");
+  });
+
+  it("a healthy provider is never interrupted to ask the question", () => {
+    // Nothing is blocked, so there is nothing to reprioritise.
+    expect(deriveScreeningNextAction({
+      ...base, providerReady: true, perimeterClassified: false,
+    }).key).not.toBe("classify_perimeter");
+  });
+
+  it("a finding still outranks the question", () => {
+    // A candidate match is a fact. The perimeter question is not more urgent.
+    expect(deriveScreeningNextAction({
+      ...base, providerReady: false, perimeterClassified: false, anyPossibleMatch: true,
+    }).key).toBe("adjudicate_match");
+    expect(deriveScreeningNextAction({
+      ...base, providerReady: false, perimeterClassified: false, anyConfirmedMatch: true,
+    }).key).toBe("escalate");
+  });
+
+  it("an omitted perimeterClassified behaves exactly as before", () => {
+    // The step is added by SUPPLYING the fact, never by assuming its absence.
+    expect(deriveScreeningNextAction({ ...base, providerReady: false }).key)
+      .toBe("fix_provider");
+  });
+
+  it("the default policy is untouched — unclassified still requires sanctions", () => {
+    const d = deriveScreeningScope({ ...CLEAN_INPUT, perimeter: null });
+    expect(d.sanctions.required).toBe(true);
+    expect(d.perimeter.classified).toBe(false);
+  });
+});
+
+describe("classified is a different fact from classification", () => {
+  it("an unclassified case and one recorded INSIDE differ", () => {
+    const none = readPerimeter(null);
+    const inside = readPerimeter({
+      classification: "designated_service", superseded_at: null,
+      recorded_by_label: "reviewer@npcservices.com.au",
+      recorded_at: "2026-08-18T00:00:00.000Z",
+    });
+    // Same obligation...
+    expect(none.classification).toBe("designated_service");
+    expect(inside.classification).toBe("designated_service");
+    // ...different operator situation.
+    expect(none.classified).toBe(false);
+    expect(inside.classified).toBe(true);
+    expect(inside.recordedByLabel).toBe("reviewer@npcservices.com.au");
+  });
+
+  it("a malformed or superseded row counts as undecided", () => {
+    // Still fail-closed on the requirement; the operator is asked to decide
+    // rather than told a decision exists that cannot be read.
+    for (const row of [
+      { ...OUTSIDE, reason_code: "low_risk" },
+      { ...OUTSIDE, scopes_excluded: [] },
+      { ...OUTSIDE, superseded_at: "2026-08-18T01:00:00.000Z" },
+      "outside_perimeter",
+    ]) {
+      const r = readPerimeter(row);
+      expect(r.classified).toBe(false);
+      expect(r.classification).toBe("designated_service");
+    }
+  });
+
+  it("an outside finding is classified", () => {
+    expect(readPerimeter(OUTSIDE).classified).toBe(true);
   });
 });
 
