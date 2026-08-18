@@ -79,8 +79,15 @@ CREATE TABLE IF NOT EXISTS aml.case_screening_perimeter (
   CONSTRAINT case_screening_perimeter_reason_required
     CHECK (classification <> 'outside_perimeter' OR reason_code IS NOT NULL),
   -- ...and one that excludes nothing exempts nothing.
+  --
+  -- `coalesce(..., 0)` is load-bearing: `array_length` of an EMPTY array is
+  -- NULL rather than 0, `NULL >= 1` is NULL, and a CHECK constraint passes on
+  -- NULL. Without it this constraint accepts the one shape it exists to
+  -- refuse. Corrected in 20260920000100 after a probe against the real table
+  -- caught it; kept correct here so a fresh apply is right first time.
   CONSTRAINT case_screening_perimeter_scopes_required
-    CHECK (classification <> 'outside_perimeter' OR array_length(scopes_excluded, 1) >= 1)
+    CHECK (classification <> 'outside_perimeter'
+           OR coalesce(array_length(scopes_excluded, 1), 0) >= 1)
 );
 
 -- At most one operative classification per case. A partial unique index

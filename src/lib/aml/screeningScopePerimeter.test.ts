@@ -546,6 +546,33 @@ describe("8-9, 26. the decision is persisted so it can be reconstructed", () => 
     expect(migration).toMatch(/case_screening_perimeter_reason_required/);
     expect(migration).toMatch(/case_screening_perimeter_scopes_required/);
   });
+
+  it("the empty-array check coalesces, because array_length of empty is NULL", () => {
+    /*
+     * The first version of this constraint was:
+     *
+     *   CHECK (classification <> 'outside_perimeter'
+     *          OR array_length(scopes_excluded, 1) >= 1)
+     *
+     * `array_length(ARRAY[]::text[], 1)` is NULL, not 0. `NULL >= 1` is NULL,
+     * and a CHECK PASSES on NULL — so the constraint accepted the one shape
+     * it existed to refuse, while reading as though it worked. Exercising it
+     * against the real table found it; the assertion above, which only
+     * checks the constraint is NAMED, is true of a constraint that does
+     * nothing.
+     */
+    const fix = read(
+      "supabase/migrations/20260920000100_aml_perimeter_empty_scopes_check.sql");
+    // Both files QUOTE the broken form in a comment explaining it, so the
+    // comments are stripped before the code is judged.
+    const code = (sql: string) =>
+      sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+    for (const sql of [migration, fix]) {
+      expect(code(sql)).toMatch(
+        /coalesce\(array_length\(scopes_excluded, 1\), 0\) >= 1/i);
+      expect(code(sql)).not.toMatch(/[^(]array_length\(scopes_excluded, 1\) >= 1/);
+    }
+  });
 });
 
 describe("the stage survives its migration not being applied yet", () => {
