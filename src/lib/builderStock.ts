@@ -11,7 +11,7 @@
  * would reject.
  */
 import {
-  isPrimaryRole, readStoredRole,
+  comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from '../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
 
 export {
@@ -344,10 +344,13 @@ export function primaryStockImage(item: BuilderStockItem): BuilderStockImage | n
     const chosen = displayable.find((image) => image.id === item.primary_image_id);
     if (chosen) return chosen;
   }
-  // The stored choice is missing or stale. Pick by the order the SOURCE gave
-  // them, with the id as a stable tie-break, so the two never disagree.
+  // The stored choice is missing or stale. Ranked exactly as the server ranks
+  // it — the strength of the source's own evidence first, then the order the
+  // SOURCE gave them, then the id — so the two never disagree.
   return [...displayable].sort((a, b) =>
-    (a.position ?? 0) - (b.position ?? 0)
+    comparePrimaryEvidence(
+      readStoredEvidenceLevel(a.source_detail), readStoredEvidenceLevel(b.source_detail))
+    || (a.position ?? 0) - (b.position ?? 0)
     || String(a.id).localeCompare(String(b.id)))[0] ?? null;
 }
 

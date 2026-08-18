@@ -305,6 +305,55 @@ export function secondaryRole(
 }
 
 /**
+ * How strongly the source stated the hero, read back off a stored image.
+ *
+ * `null` for an image written before levels existed, and for one whose role
+ * was never established. A level is only ever meaningful ALONGSIDE
+ * `primary_property`: it says how the source said so, never whether it did.
+ */
+export function readStoredEvidenceLevel(
+  sourceDetail: Record<string, unknown> | null | undefined,
+): PrimaryEvidenceLevel {
+  const raw = (sourceDetail ?? {}).role_evidence_level;
+  return raw === 1 || raw === 2 || raw === 3 ? raw : null;
+}
+
+/**
+ * Order two PROVEN primary candidates for the same property: best first.
+ *
+ * THIS DECIDES NOTHING ABOUT OWNERSHIP. Both inputs have already been proved
+ * to be this property's, to have come out of the builder's own source, and to
+ * carry `primary_property`. All that is left is which of them the source
+ * designated most strongly, and that is the level:
+ *
+ *   1  an EXPLICIT property-image field — the source named a field for the
+ *      property's picture and put this in it;
+ *   2  a PROPERTY COVER / PACKAGE HERO — a page stating this property's
+ *      identity presented this image with it;
+ *   3  a STRUCTURAL CONTAINER designating one image — a row's page cover.
+ *
+ * WHY IT MATTERS, in the words of the case that produced it. A builder keeps a
+ * marketing tile in the row's page-cover slot — the facade with "$25,000
+ * Rebate", "VIC" and "LARA" set over it in coloured pills — and the clean
+ * original in a field called "Property Image". Both are exact builder-supplied
+ * bytes for that exact property; both are `primary_property`. Ordering them by
+ * `position` picks whichever the reader happened to enumerate first, and the
+ * marketing tile is as likely as not. Ordering them by what the SOURCE SAID
+ * picks the field the builder made for the purpose.
+ *
+ * A level the source did not state sorts LAST rather than first: an image
+ * written before levels existed must not outrank one whose evidence is
+ * recorded. Ties fall through to the caller's stable ordering.
+ */
+export function comparePrimaryEvidence(
+  a: PrimaryEvidenceLevel,
+  b: PrimaryEvidenceLevel,
+): number {
+  const rank = (level: PrimaryEvidenceLevel) => level ?? 99;
+  return rank(a) - rank(b);
+}
+
+/**
  * The `source_detail` keys a role assignment contributes.
  *
  * One shape for every format, because the re-audit and the display rule read it

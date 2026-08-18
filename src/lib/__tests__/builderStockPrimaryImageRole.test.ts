@@ -761,3 +761,107 @@ function asset(url: string): SourceImageAsset {
     role: { role: 'unknown', evidenceLevel: null, evidence: 'none', reason: 'not settled' },
   };
 }
+
+// ---------------------------------------------------------------------------
+// W — an annotated marketing tile beside the clean original
+// ---------------------------------------------------------------------------
+
+/**
+ * WHAT THIS PINS, MEASURED ON THE LIVE NOTION SOURCE.
+ *
+ * Two production cards showed the property's own facade with promotional
+ * wording set over it in coloured pills — "Completed" and "SMSF" on Lot 13
+ * Hummock Rise, "$25,000 Rebate", "VIC" and "LARA" on Lot 1663 Ringer Street.
+ * The audit proved the wording is in the BUILDER'S OWN BYTES: the stored
+ * object and the Notion attachment hash identically, and the row designates no
+ * other image. Nothing may be done about those two, because the only honest
+ * alternatives are editing the pixels or borrowing another lot's house.
+ *
+ * What CAN be fixed is the choice, for any property whose source supplies both.
+ * A marketing tile sits in the row's page-cover slot — LEVEL 3, a structural
+ * container designating one image. A clean original sits in a field the
+ * builder named for it — LEVEL 1. Same property, same provenance, same
+ * `primary_property` role: the level is the only thing that separates them,
+ * and it was never read. `position` decided, which is to say the order the
+ * reader happened to enumerate them in.
+ */
+describe('W — choosing between two proven primaries for one property', () => {
+  const candidate = (over: Partial<Parameters<typeof isDisplayableSourceImage>[0]>) => ({
+    id: 'image-x',
+    source_stage: 'uploaded_document',
+    verification_status: 'source_supplied',
+    processing_status: 'ready',
+    storage_path: 'org/items/item-1/source/x.png',
+    position: 0,
+    source_detail: { role: 'primary_property', role_evidence_level: 3 },
+    ...over,
+  });
+
+  /** The shape the live rows have: a page cover, and nothing else. */
+  const marketingTile = candidate({
+    id: 'cover-tile',
+    position: 0,
+    source_detail: {
+      role: 'primary_property',
+      role_evidence_level: 3,
+      role_evidence: 'the Notion row for this property designates this image as its page cover',
+    },
+  });
+  /** What a source that ALSO names a property-image field supplies. */
+  const cleanOriginal = candidate({
+    id: 'field-original',
+    position: 4,
+    source_detail: {
+      role: 'primary_property',
+      role_evidence_level: 1,
+      role_evidence: 'the column "Property Image" names this image',
+    },
+  });
+
+  it('takes the field the builder named over the cover slot, whatever the order', () => {
+    expect(chooseDisplayableImage([marketingTile, cleanOriginal])!.id).toBe('field-original');
+    expect(chooseDisplayableImage([cleanOriginal, marketingTile])!.id).toBe('field-original');
+  });
+
+  it('a package cover hero beats a row cover, and loses to a named field', () => {
+    const packageHero = candidate({
+      id: 'package-hero',
+      position: 9,
+      source_detail: { role: 'primary_property', role_evidence_level: 2 },
+    });
+    expect(chooseDisplayableImage([marketingTile, packageHero])!.id).toBe('package-hero');
+    expect(chooseDisplayableImage([packageHero, cleanOriginal])!.id).toBe('field-original');
+  });
+
+  it('keeps the tile when the source designates nothing else — Lot 13 and Lot 1663', () => {
+    // The live case. An empty frame is not an improvement on the picture the
+    // builder actually published for the property, and there is nothing else.
+    expect(chooseDisplayableImage([marketingTile])!.id).toBe('cover-tile');
+  });
+
+  it('never lets an unrecorded level outrank a stated one', () => {
+    const legacy = candidate({
+      id: 'legacy', position: 0, source_detail: { role: 'primary_property' },
+    });
+    expect(chooseDisplayableImage([legacy, marketingTile])!.id).toBe('cover-tile');
+  });
+
+  it('falls through to position and then id when the evidence ties', () => {
+    const first = candidate({ id: 'b-second', position: 1 });
+    const second = candidate({ id: 'a-first', position: 1 });
+    expect(chooseDisplayableImage([first, second])!.id).toBe('a-first');
+    expect(chooseDisplayableImage([candidate({ id: 'p2', position: 2 }), first])!.id)
+      .toBe('b-second');
+  });
+
+  it('a stronger level never admits an image the role check refuses', () => {
+    // The level says HOW the source designated a hero; it can never stand in
+    // for the designation itself.
+    const notPrimary = candidate({
+      id: 'interior',
+      source_detail: { role: 'interior', role_evidence_level: 1 },
+    });
+    expect(chooseDisplayableImage([notPrimary])).toBeNull();
+    expect(chooseDisplayableImage([notPrimary, marketingTile])!.id).toBe('cover-tile');
+  });
+});

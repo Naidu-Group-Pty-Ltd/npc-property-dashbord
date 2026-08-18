@@ -27,7 +27,9 @@
  * reaches for Google and Perplexity and cannot be loaded outside the edge
  * runtime, and a rule nothing can test is a rule that drifts.
  */
-import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
+import {
+  comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
+} from './sourceImageRole.pure.ts';
 
 /** The stage whose provenance is the builder's own document. */
 export const SOURCE_SUPPLIED_STAGE = 'uploaded_document';
@@ -77,16 +79,40 @@ export function isDisplayableSourceImage(image: DisplayableImage): boolean {
  * The card's image, from a property's images. Null means "show no image".
  *
  * There is normally exactly one candidate, because at most one image per
- * property can carry `primary_property`. Where a re-import has left two, the
- * source's own ordering decides, with the id as a stable last resort so
- * re-running enrichment cannot silently swap a card's picture.
+ * property can carry `primary_property`. Where a source supplies MORE than
+ * one, the strength of the source's own evidence decides first — see
+ * `comparePrimaryEvidence`.
+ *
+ * THE CASE THAT ADDED THAT STEP. A builder keeps a marketing tile in the row's
+ * page-cover slot: the property's own facade with "$25,000 Rebate", "VIC" and
+ * "LARA" set over it in coloured pills, or "Completed" and "SMSF". It is exact
+ * builder-supplied imagery of that exact property, so it is correctly
+ * `primary_property` on LEVEL 3 — a structural container designating one
+ * image. Where the same property ALSO carries the clean original in a field
+ * the builder named for it, that is LEVEL 1, and the level is the only thing
+ * that distinguishes them: same property, same provenance, same role. Ordering
+ * by `position` picked whichever the reader enumerated first.
+ *
+ * NOTHING HERE LOOKS AT THE PICTURE. The wording baked into a marketing tile
+ * is not what demotes it and must never be — an appearance test cannot say
+ * whose house it is, and a builder's own facade render carrying their own
+ * "ARTIST IMPRESSION" line is not a marketing tile. What demotes it is that
+ * the source said something stronger about a different image of the same
+ * property. Where the source says nothing stronger, the tile stays: it is
+ * still the picture the builder published for that property, and an empty
+ * frame is not an improvement on it.
+ *
+ * `position` and then the id remain the tie-break, so re-running enrichment
+ * cannot silently swap a card's picture.
  */
 export function chooseDisplayableImage<T extends DisplayableImage>(images: T[]): T | null {
   const displayable = (images ?? []).filter(isDisplayableSourceImage);
   if (!displayable.length) return null;
 
   return [...displayable].sort((a, b) =>
-    (a.position ?? 0) - (b.position ?? 0)
+    comparePrimaryEvidence(
+      readStoredEvidenceLevel(a.source_detail), readStoredEvidenceLevel(b.source_detail))
+    || (a.position ?? 0) - (b.position ?? 0)
     || String(a.id).localeCompare(String(b.id)))[0];
 }
 
