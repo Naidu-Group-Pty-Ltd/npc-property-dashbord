@@ -1,0 +1,72 @@
+[
+  {
+    "assistant": "NPC Active Nurturing",
+    "url": "https://hook.us2.make.com/my4fk4f1hyvrtq3qwl88oae8ntiku3v4",
+    "status": "already on the NEW Make account (us2)"
+  },
+  {
+    "assistant": "NPC Discovery Call Follow Up",
+    "url": "https://hook.eu2.make.com/xoktvkk0wxyj8weopjeiqrqd914ad1jg",
+    "status": "OLD Make account (eu2) \u2014 must be re-pointed"
+  },
+  {
+    "assistant": "NPC Discovery Call Follow Up Test",
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+    "status": "Supabase edge function \u2014 project is not moving, no change needed"
+  },
+  {
+    "assistant": "NPC Discovery Call No Show Follow Up",
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+    "status": "Supabase edge function \u2014 project is not moving, no change needed"
+  },
+  {
+    "assistant": "NPC IFC Follow Up",
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+    "status": "Supabase edge function \u2014 project is not moving, no change needed"
+  },
+  {
+    "assistant": "NPC IFC Inbound",
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+    "status": "Supabase edge function \u2014 project is not moving, no change needed"
+  },
+  {
+    "assistant": "NPC IFC No Show Follow Up",
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+    "status": "Supabase edge function \u2014 project is not moving, no change needed"
+  },
+  {
+    "assistant": "NPC Inbound Agent",
+    "url": "https://hook.us2.make.com/8k9ofpknay6jvcjuz9h8cg4vbpm51rrw",
+    "status": "already on the NEW Make account (us2)"
+  },
+  {
+    "assistant": "NPC Opt In Follow Up",
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+    "status": "Supabase edge function \u2014 project is not moving, no change needed"
+  },
+  {
+    "assistant": "NPC Opt In Follow Up Inbound",
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+    "status": "Supabase edge function \u2014 project is not moving, no change needed"
+  },
+  {
+    "assistant": "NPC Quiz Follow Up",
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+    "status": "Supabase edge function \u2014 project is not moving, no change needed"
+  },
+  {
+    "assistant": "NPC Strategy Session (Phone) Follow Up",
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+    "status": "Supabase edge function \u2014 project is not moving, no change needed"
+  },
+  {
+    "assistant": "NPC Strategy Session (Phone) No Show",
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+    "status": "Supabase edge function \u2014 project is not moving, no change needed"
+  },
+  {
+    "assistant": "NPC Strategy Session Inbound",
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+    "status": "Supabase edge function \u2014 project is not moving, no change needed"
+  }
+]

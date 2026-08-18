@@ -3,7 +3,7 @@
 The state of the NPC voice agents in Vapi org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`,
 taken **2026-08-18**, shaped so the set can be rebuilt in a new Vapi account.
 
-**15 assistants · 12 tools · 1 squad · 1 workflow · 4 phone numbers · 2 knowledge files.**
+**15 assistants · 15 tools (12 managed + 3 inline) · 1 squad · 1 workflow · 4 phone numbers · 2 knowledge files.**
 
 ## Read this before trusting the scope
 
@@ -32,7 +32,9 @@ unnamed squads). Their prompts are their own and do not belong in this repo. If 
 | --- | --- |
 | `manifest.json` | Counts, scope evidence, excluded assistants, dangling refs, file hashes |
 | `assistants/` | 15 assistants, full configuration |
-| `tools/` | The 12 tools those assistants reference |
+| `tools/` | The 12 managed tools those assistants reference by id |
+| `tools-audit.json` | **Every tool the clone needs**, including 3 that are not standalone records |
+| `assistant-server-urls.json` | Each assistant's own webhook, and whether it still points at the old account |
 | `tools-unreferenced/` | 7 tools in the org that **no** assistant calls — see below |
 | `squads/`, `workflows/`, `phone-numbers/` | The rest of the closure |
 | `files/` | The 2 knowledge-base documents, downloaded byte-exact, plus Vapi's parsed text |
@@ -41,6 +43,41 @@ unnamed squads). Their prompts are their own and do not belong in this repo. If 
 
 Each collection was checked against an individual `GET` before use: the list payload is
 byte-identical to the single-resource payload, so nothing is truncated.
+
+## Not every tool is a tool record
+
+Twelve tools are managed objects referenced by `model.toolIds`. **Three more are defined
+inline** and would be missed by anything that only reads `/tool` — they are captured inside
+their parent payloads, and `tools-audit.json` is the complete list.
+
+| Inline tool | Lives in | Why it matters |
+| --- | --- | --- |
+| `handoff_to_assistant` | squad → `members[0].assistantOverrides['tools:append']` | The routing brain of the inbound squad. Its **three destination `assistantId`s must be remapped** on clone, or the handoff points at the old org and fails silently. |
+| `transferCall` | workflow → `nodes[22]` | `destinations` is an **empty array** — the node cannot transfer to anything. |
+| `endCall` | workflow → `nodes[23]` | Says *"Thank you for calling **Wellness Partners**"* — a leftover from the template this workflow was built from. |
+
+The audit was done two ways, because the first was not enough. Matching every UUID in every
+string against the `/tool` list proves no *managed* tool hides on an unexpected path. But the
+handoff tool sits under the key `tools:append` — a colon in the key name, which a plain
+`tools` check skips. The second pass walks every object under any key containing "tool",
+and that is what found it.
+
+## Assistants have their own webhooks, separate from their tools
+
+Fourteen of the fifteen set an assistant-level `server.url`, and they are not all in the same
+place:
+
+| Where it points | Count | Action |
+| --- | ---: | --- |
+| Supabase `vapi-call-webhook` | 11 | none — that project is not moving |
+| New Make account (`us2`) | 2 | none — already migrated |
+| **Old Make account (`eu2`)** | 1 | **re-point** — `NPC Discovery Call Follow Up` |
+
+The two already on `us2` are worth understanding: `NPC Active Nurturing` and
+`NPC Inbound Agent` point at the two `vapi2` hooks minted in the new Make account. Creating a
+Vapi *app* hook in Make writes the URL into the assistant, so those two were re-pointed as a
+side effect of the Make work rather than deliberately. It also means a `vapi2` hook created in
+the wrong account silently repoints a live assistant.
 
 ## Three things this export found
 

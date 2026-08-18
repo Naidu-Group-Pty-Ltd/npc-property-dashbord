@@ -5,8 +5,9 @@
     "files": 2,
     "phoneNumbers": 4,
     "squads": 1,
-    "tools": 12,
-    "workflows": 1
+    "workflows": 1,
+    "toolsManaged": 12,
+    "toolsInline": 3
   },
   "danglingToolReferences": {
     "199be122-72f1-4bbb-ada3-aedba74b59b1": [
@@ -65,7 +66,7 @@
       "the 'NPC ' assistant-name prefix"
     ],
     "excluded": 13,
-    "note": "Vapi's API exposes no folder concept — /folder, /folders, /workspace, /project all 404, and no assistant carries a folder field. The NPC set below is computed from evidence, not read.",
+    "note": "Vapi's API exposes no folder concept \u2014 /folder, /folders, /workspace, /project all 404, and no assistant carries a folder field. The NPC set below is computed from evidence, not read.",
     "npcAssistants": 15
   },
   "source": {
@@ -73,5 +74,13 @@
     "exportedAt": "2026-08-18",
     "orgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd",
     "platform": "vapi"
+  },
+  "toolsAudit": "see tools-audit.json \u2014 12 managed + 3 inline; the inline ones live inside the squad and workflow payloads",
+  "assistantServerUrls": {
+    "onNewMakeUs2": 2,
+    "onOldMakeEu2": 1,
+    "onSupabaseEdgeFunction": 11,
+    "none": 1,
+    "detail": "assistant-server-urls.json"
   }
 }
