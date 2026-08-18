@@ -151,6 +151,29 @@ the server disagreed, and a contract test now fails any interpolated filter.
 And **production never runs the simulator and never screens against an empty
 or stale list** — refusal is visible, a confident clear against nothing is not.
 
+## AML screening scope
+Read [`docs/aml/SCREENING_SCOPE.md`](./docs/aml/SCREENING_SCOPE.md) before
+touching `deriveScreeningScope`, `reconcileSubjectToScope` or the
+`case_screening_scopes` / `case_screening_perimeter` tables. Every scope is
+decided independently, so sanctions can be `not_required` while PEP stays
+mandatory. **The only lever that reaches sanctions is the PERIMETER, never the
+risk rating** — targeted financial sanctions bind every dealing under the
+Charter of the UN Act 1945 and the Autonomous Sanctions Act 2011, so a test
+asserts no reason code can even be spelled in terms of risk; what can be true
+is that a case is not a dealing (an enquiry, a duplicate, a service declined
+before it commenced).
+
+Three rules bite. The perimeter is **recorded by a reviewer or MLRO, never
+inferred** — nothing in the schema says whether a designated service is
+provided, and the default is always INSIDE, so an unclassified case, an
+unknown reason code or a finding that excludes nothing all resolve to
+sanctions required. **`not_required` is not `clear`**: it means no obligation
+arose and nobody was screened, and the client reading keeps `notRequired`
+separate from `resolved` so it can never render as a result. And **readiness
+is a property of a scope** — `provider_relevant` is the second question, so an
+unloaded DFAT list is irrelevant to a case with no sanctions obligation rather
+than a blocker.
+
 ## Stamp duty
 Every duty figure in the product comes from `supabase/functions/_shared/stampDuty/`
 and nowhere else; `src/utils/stampDutyCalculator.ts` is a one-line re-export.
