@@ -1,0 +1,34 @@
+{
+  "endpoint": "GET /tool/{id}/versions",
+  "id": "bbbf6fb6-685d-411e-b0e1-bec5acc4fa8e",
+  "name": "end_call_tool",
+  "versionCount": 1,
+  "versions": [
+    {
+      "async": false,
+      "configHash": "9acfeca777888513bf41e95bc2fe57b935f41afee38997d0e1b0c30cc321947c",
+      "createdAt": "2026-08-18T18:06:16.706Z",
+      "function": {
+        "description": "This tool should be called only after the agent has completed the closing sequence \nand said goodbye to the caller.",
+        "name": "end_call_tool",
+        "parameters": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        }
+      },
+      "id": "5e569c07-5a4f-4b6d-9c7f-26c12ad714a7",
+      "messages": [
+        {
+          "blocking": true,
+          "content": "",
+          "type": "request-start"
+        }
+      ],
+      "orgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd",
+      "toolId": "bbbf6fb6-685d-411e-b0e1-bec5acc4fa8e",
+      "type": "endCall",
+      "version": "v1"
+    }
+  ]
+}

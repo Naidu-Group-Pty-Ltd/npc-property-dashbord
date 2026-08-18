@@ -261,5 +261,9 @@
     "count": 7,
     "where": "tools-unreferenced/",
     "note": "Present in the org, called by no assistant. Captured because two carry live credentials and one (get_contact_airtable_test) points at the OLD Airtable base. Not required by the clone."
+  },
+  "versionHistory": {
+    "correction": "This bundle previously implied tools have no version history. They do \u2014 GET /tool/{id}/versions (plural). The singular form 404s, which is what produced the wrong conclusion.",
+    "captured": "../snapshot/tool-versions/"
   }
 }

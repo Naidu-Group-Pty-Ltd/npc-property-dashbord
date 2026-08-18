@@ -1,0 +1,35 @@
+{
+  "endpoint": "GET /tool/{id}/versions",
+  "id": "e525406e-acaa-4e9d-b806-7ae9d21c358e",
+  "name": "go_high_level_mcp_contact_get_tool",
+  "versionCount": 1,
+  "versions": [
+    {
+      "configHash": "7787ae7bef6643d4bc2398cab916ed0601ff3e0efa0d5c64c1defc63f5b1b1c4",
+      "createdAt": "2026-08-18T18:06:29.769Z",
+      "function": {
+        "description": "Extract lead metadata such as full name, phone number, discovery call time.",
+        "name": "go_high_level_mcp_contact_get_tool",
+        "parameters": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        }
+      },
+      "id": "e38d8952-d4af-4dbe-b20d-31ab8dd18548",
+      "messages": [
+        {
+          "blocking": false,
+          "type": "request-start"
+        }
+      ],
+      "metadata": {
+        "customerPhoneEnabled": true
+      },
+      "orgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd",
+      "toolId": "e525406e-acaa-4e9d-b806-7ae9d21c358e",
+      "type": "gohighlevel.contact.get",
+      "version": "v1"
+    }
+  ]
+}

@@ -82,6 +82,40 @@ have never taken a call** — `NPC IFC Inbound`, `NPC Strategy Session Inbound` 
 `NPC Opt In Follow Up Inbound` are all at zero. Only `NPC Inbound Agent` (37) has traffic, so
 the inbound handoff routing has never actually been exercised in production.
 
+## Tool state is captured the same four ways
+
+| Path | What it is |
+| --- | --- |
+| `snapshot/tool-prose/<tool>.md` | **Everything an LLM reads about the tool**: the function description, every parameter description, the spoken `request-start` / `request-complete` / `request-failed` messages, and any transfer destination. Verified verbatim against the JSON. |
+| `snapshot/tool-state/<tool>.md` | Server URL, timeout, header names, async flag, function signature, messages, and which assistants use it. |
+| `snapshot/tool-versions/<tool>.json` | `GET /tool/{id}/versions`. |
+| `snapshot/TOOLS-COMPARISON.md` | All 20 side by side, an assistant × tool matrix, and every orphan and dangling reference. |
+
+The prose files matter more than they look. A tool's description is what decides whether the
+model calls it at all, and `ghl_create_booking` alone carries a 500-character description
+plus ten documented parameters — that text is the contract, and it is easier to review as
+Markdown than buried in JSON escapes.
+
+### Correction: tools *do* have version history
+
+An earlier pass in this session reported that they do not. That was wrong, and the cause was
+a path assumption: assistants expose `/assistant/{id}/version` (**singular**), so the same
+form was tried on tools, where it 404s. The working path is `/versions` (**plural**).
+
+Worse, the two assistant forms are not aliases — they are different systems, and both are
+now captured:
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /assistant/{id}/version` | 444 auto-snapshots, full config under a `data` key |
+| `GET /assistant/{id}/versions` | 33 **named** versions (v1/v2/v3) with `configHash`, `parentVersion` and **`createdBy`** |
+| `GET /tool/{id}/versions` | 20 named versions, one per tool |
+| `GET /tool/{id}/version` | 404 |
+
+`createdBy` is the useful addition: it attributes each named version to an account. It is
+what confirms the 17:29 server-URL change on `NPC Active Nurturing` was made by
+`lavan.smi@gmail.com`, and it is blank on versions the platform generated itself.
+
 ## Assistant version history
 
 `GET /assistant/{id}/version` returns a full historical configuration per version — **444
@@ -90,7 +124,7 @@ versions across the 28 assistants**, 11.9 MB. That raw history is *not* committe
 its timestamp, server URL, LLM model, voice ID and a hash of the system prompt, which is
 enough to see when any of those changed and to fetch the full record on demand.
 
-Tools have no equivalent: `GET /tool/{id}/version` returns **404** for all 20.
+Tools have named versions of their own at `GET /tool/{id}/versions` — see the correction above.
 
 ## What is redacted
 
