@@ -29,10 +29,15 @@ because the API refuses it (`readOnlyNodeType`).
 | `structure-delete-records-after-30-days.json` | `wflz5O9df5UjBzd3X` | 1 |
 | `structure-delete-property-intake-records-after-30-days.json` | `wflOrWaQohUvhvcFb` | 1 |
 
-`Auto-generate report` has no file here because it could not be created: its only
-two nodes are the `customScript` and a `conditionalGroup` with an empty branch
-(`emptyBranchNotNested` outside a loop), and an automation must have at least one
-node. Build it by hand from [`../../source/`](../source).
+| `structure-auto-generate-report.json` | `wflIvnXu2Jcs7eQ95` | 1 (and it must be edited) |
+
+`Auto-generate report` is the exception in two ways. It is the only automation
+here that contains a node **not in the source** — an inert placeholder
+`findRecords` inside the conditional branch, present only because the API refuses
+both an empty branch outside a loop and a script node, which between them leave
+no creatable node at all. And it is the only one whose exported script must not
+be pasted as-is. Both are covered in
+[`AUTO_GENERATE_REPORT.md`](./AUTO_GENERATE_REPORT.md).
 
 **`noOp` does not work as a script placeholder.** It is in the type enum but is
 rejected as `readOnlyNodeType`. An empty `repeatingGroup` body is accepted, which

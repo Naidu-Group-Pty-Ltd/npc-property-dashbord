@@ -168,6 +168,7 @@ file from [`automations/scripts/`](./automations/scripts) belongs in it.
 | Aurixa Lead Capture | `wflEQ1wsJH1x7GQhL` | trigger + the notification email | 2 scripts |
 | Delete Records After 30 Days | `wflz5O9df5UjBzd3X` | cron + findRecords + empty loop | 1 script |
 | Delete Property Intake Records After 30 Days | `wflOrWaQohUvhvcFb` | cron + findRecords + empty loop | 1 script |
+| Auto-generate report | `wflIvnXu2Jcs7eQ95` | trigger + conditional + a placeholder | 1 script, and it must be edited first |
 
 **A script slot cannot be marked with a placeholder node.** `noOp` is in
 `create_automation`'s type enum but is rejected as `readOnlyNodeType` just like
@@ -176,15 +177,23 @@ file from [`automations/scripts/`](./automations/scripts) belongs in it.
 exists and iterates, and does nothing until a script is added. That is also why
 they are safe to leave in place: a purge with an empty body deletes nothing.
 
-**`Auto-generate report` could not be created at all**, and this is a structural
-impossibility rather than a decision. Its only two nodes are the `customScript`
-(refused) and a `conditionalGroup` whose single branch has **zero nodes** —
-refused as `emptyBranchNotNested`, because an empty branch is legal only inside a
-loop. With both nodes refused the payload has no nodes, and `create_automation`
-requires at least one. It has to be built by hand. Nothing is lost by the delay:
-it triggers on `Properties`, which holds 0 records, its conditional was inert in
-the source too, and its script POSTs to the **old** Supabase project and needs
-re-pointing regardless.
+**`Auto-generate report` needed one invented node to exist at all.** Its only two
+source nodes are the `customScript` (refused as `readOnlyNodeType`) and a
+`conditionalGroup` whose single branch has **zero nodes** (refused as
+`emptyBranchNotNested` — an empty branch is legal only inside a loop). With both
+refused the payload has no nodes, and an automation must have at least one. So
+`wflIvnXu2Jcs7eQ95` carries the trigger and the real condition, plus **one inert
+placeholder `findRecords` inside the branch** that is not in the source. It reads
+a single `Properties` row and discards it, and its own description says to delete
+it. That is the only fabricated node anywhere in this migration.
+
+Finishing it is a UI job with two prerequisites that are not obvious, both
+written up in
+[`AUTO_GENERATE_REPORT.md`](./automations/migration/rebuilt/AUTO_GENERATE_REPORT.md):
+the nine input variables the script expects, and the fact that **the exported
+script no longer works**. It is also the one automation whose defects could not
+simply be carried across, because carrying them would have shipped something
+that silently reports success while doing nothing.
 
 **Verification.** Same method as the five above, with `customScript` nodes
 stripped from the source before comparing: **3 of 3 match**, including both cron
@@ -220,6 +229,7 @@ records.
 - Paste the four scripts into the three structure-only automations
   ([`automations/scripts/`](./automations/scripts)), and decide the Property
   Intake purge question above before deploying that one.
-- Build `Auto-generate report` by hand — the API cannot create it — and re-point
-  its script at the migrated Supabase project.
+- Finish `Auto-generate report` in the UI —
+  [`AUTO_GENERATE_REPORT.md`](./automations/migration/rebuilt/AUTO_GENERATE_REPORT.md).
+  Its URL is fine; its credential is not.
 - Re-point the Make scenarios at the new base and field ids.
