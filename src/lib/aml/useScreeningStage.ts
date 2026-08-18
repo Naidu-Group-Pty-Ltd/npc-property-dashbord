@@ -35,6 +35,7 @@ import {
 import {
   sanctionsListFactsFrom, screeningProviderFactsFrom, screeningSubjectFactsFrom,
 } from "./screeningStageFacts";
+import { resolveScreeningNextAction } from "./screeningNextAction";
 
 export interface AmlScreeningStageReading {
   /** The server's own answer. `null` while loading, or if the read failed. */
@@ -133,8 +134,23 @@ export function useScreeningStage(
       ...position.facts,
     }, readiness, raw.sync?.scopes ?? null);
 
+    /*
+     * The one place the offered action is settled, so the card and the
+     * workspace's handler cannot disagree about it. A `fix_provider` for a
+     * case whose perimeter nobody has decided becomes `classify_perimeter`
+     * here — see `screeningNextAction.ts` for why the browser holds this
+     * line rather than trusting how old the response is.
+     */
+    const sync = raw.sync
+      ? {
+        ...raw.sync,
+        next_action: resolveScreeningNextAction(
+          raw.sync.next_action, raw.sync.perimeter) ?? raw.sync.next_action,
+      }
+      : null;
+
     return {
-      sync: raw.sync,
+      sync,
       readiness, scope, position,
       // The server decides whether the provider bears on this case; the
       // browser must not reach a different conclusion from the same facts.
