@@ -5956,6 +5956,24 @@ export type Database = {
           },
         ]
       }
+      builder_stock_settlement_target: {
+        Row: {
+          id: boolean
+          marketplace_eligibility_version: number
+          updated_at: string
+        }
+        Insert: {
+          id?: boolean
+          marketplace_eligibility_version?: number
+          updated_at?: string
+        }
+        Update: {
+          id?: boolean
+          marketplace_eligibility_version?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       builder_stock_uploads: {
         Row: {
           byte_size: number | null
@@ -5971,6 +5989,7 @@ export type Database = {
           final_url: string | null
           id: string
           image_stage_summary: Json
+          marketplace_eligibility_settled_version: number | null
           organisation_id: string
           original_filename: string
           parse_strategy: string | null
@@ -5981,6 +6000,7 @@ export type Database = {
           records_imported: number
           records_updated: number
           retrieved_at: string | null
+          source_images_settled_version: number | null
           source_title: string | null
           source_type: string
           source_url: string | null
@@ -6004,6 +6024,7 @@ export type Database = {
           final_url?: string | null
           id?: string
           image_stage_summary?: Json
+          marketplace_eligibility_settled_version?: number | null
           organisation_id: string
           original_filename: string
           parse_strategy?: string | null
@@ -6014,6 +6035,7 @@ export type Database = {
           records_imported?: number
           records_updated?: number
           retrieved_at?: string | null
+          source_images_settled_version?: number | null
           source_title?: string | null
           source_type?: string
           source_url?: string | null
@@ -6037,6 +6059,7 @@ export type Database = {
           final_url?: string | null
           id?: string
           image_stage_summary?: Json
+          marketplace_eligibility_settled_version?: number | null
           organisation_id?: string
           original_filename?: string
           parse_strategy?: string | null
@@ -6047,6 +6070,7 @@ export type Database = {
           records_imported?: number
           records_updated?: number
           retrieved_at?: string | null
+          source_images_settled_version?: number | null
           source_title?: string | null
           source_type?: string
           source_url?: string | null
@@ -39214,6 +39238,10 @@ export type Database = {
       }
       seed_sample_schools: { Args: never; Returns: undefined }
       seed_settlement_runway: { Args: { _file_id: string }; Returns: undefined }
+      set_builder_stock_eligibility_target: {
+        Args: { p_version: number }
+        Returns: number
+      }
       set_cross_portal_firm_rollout: {
         Args: {
           _actor_id: string
@@ -39260,6 +39288,14 @@ export type Database = {
           _reason: string
         }
         Returns: Json
+      }
+      settle_builder_stock_marketplace_eligibility_tick: {
+        Args: never
+        Returns: undefined
+      }
+      settle_builder_stock_source_images_tick: {
+        Args: never
+        Returns: undefined
       }
       solicitor_legacy_permissions_to_tri_state: {
         Args: { value: Json }
