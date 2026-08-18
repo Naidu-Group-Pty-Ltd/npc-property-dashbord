@@ -15,7 +15,7 @@
 import { useEffect } from 'react';
 import { FileSignature } from 'lucide-react';
 import AgreementTemplateResources from '@/components/agreement-templates/AgreementTemplateResources';
-import { WORKFLOW_RETIRED_NOTICE } from '@/lib/agreements';
+
 import { downloadAgreementTemplateDocx } from '@/lib/agreements/templateDownloads';
 
 export default function AgreementTemplates() {
