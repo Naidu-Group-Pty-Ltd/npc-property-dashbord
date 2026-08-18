@@ -17,7 +17,7 @@ import XLSX from 'xlsx';
 
 import {
   normaliseName, parseCsv, parseOfac, parseUn,
-  parseDfatCsv, parseDfatWorkbook, rowsToDfatEntries,
+  parseDfatCsv, parseDfatWorkbook, rowsToDfatEntries, dfatListingKey,
   findSpreadsheetLink, withNormalisedNames,
   HONORIFICS, ENTITY_SUFFIXES, PARTICLES,
 } from '../../scripts/aml/sanctionsParsers.mjs';
@@ -102,6 +102,76 @@ test('DFAT aliases are searchable — every variant lands in normalised_names', 
 
 test('DFAT header is found even when it is not the first row', () => {
   assert.equal(rowsToDfatEntries(DFAT_ROWS).length, 2);
+});
+
+/* ── DFAT: the format published since November 2025 ─────────────────────── */
+
+/**
+ * The shape DFAT actually publishes now: one row per name variant, but each
+ * additional name carries the listing's reference with a LETTER APPENDED
+ * rather than repeated verbatim. Grouping on the raw cell stopped grouping
+ * anything — against the list published 21 July 2026 it turned 3,846 listings
+ * into 10,581, each a single name with no aliases and, for two rows in three,
+ * an alias standing in as the sanctioned party's primary name.
+ */
+const DFAT_2025_HEADER = [
+  'Reference', 'Name of Individual or Entity', 'Type', 'Name Type',
+  'Alias Strength', 'Date of Birth', 'Place of Birth', 'Citizenship',
+  'Address', 'Additional Information', 'Listing Information', 'IMO Number',
+  'Committees', 'Control Date', 'Instrument of Designation',
+  'Targeted Financial Sanction', 'Travel Ban', 'Arms Embargo',
+  'Maritime Restriction',
+];
+
+const DFAT_2025_ROWS = [
+  DFAT_2025_HEADER,
+  ['2', 'MOHAMMAD HASSAN AKHUND', 'Individual', 'Primary Name', '', '1945',
+   'Kandahar', 'Afghanistan', 'Kabul', 'Taliban', '', '', '1988 (Taliban)',
+   '3/26/26', 'Taliban Regulation 2013', 'TRUE', 'TRUE', 'FALSE', 'FALSE'],
+  ['2a', 'محمد حسن أخوند', 'Individual', 'Original Script', '', '', '', '', '',
+   '', '', '', '', '3/26/26', '', 'TRUE', 'TRUE', 'FALSE', 'FALSE'],
+  ['2b', 'Haji Mudir', 'Individual', 'Alias', 'Weak', '', '', '', '', '', '',
+   '', '', '3/26/26', '', 'TRUE', 'TRUE', 'FALSE', 'FALSE'],
+  ['417', 'ANDAMAN SKIES', 'Vessel', 'Primary Name', '', '', '', '', '', '',
+   '', '9288693', '', '5/8/26', 'Russia Instrument 2025', 'FALSE', 'FALSE',
+   'FALSE', 'TRUE'],
+];
+
+test('DFAT suffixed references group back onto one listing', () => {
+  const entries = rowsToDfatEntries(DFAT_2025_ROWS);
+  assert.equal(entries.length, 2, 'references 2 / 2a / 2b are ONE listing');
+
+  const akhund = entries.find((e) => e.external_id === 'DFAT-2');
+  assert.equal(akhund.primary_name, 'MOHAMMAD HASSAN AKHUND');
+  assert.deepEqual(akhund.aliases.sort(), ['Haji Mudir', 'محمد حسن أخوند'].sort());
+  assert.equal(akhund.entry_type, 'individual');
+});
+
+test('a reference that is entirely alphabetic is not collapsed to nothing', () => {
+  // Stripping the suffix must never empty the key — that would merge every
+  // such listing into one.
+  assert.equal(dfatListingKey('ABC'), 'ABC');
+  assert.equal(dfatListingKey('2a'), '2');
+  assert.equal(dfatListingKey('AF001'), 'AF001');
+  assert.equal(dfatListingKey('AF001b'), 'AF001');
+});
+
+test('DFAT weak aliases stay searchable and are recorded as weak', () => {
+  const [akhund] = rowsToDfatEntries(DFAT_2025_ROWS)
+    .filter((e) => e.external_id === 'DFAT-2');
+  // Dropping a weak alias would lose real hits, so it is still an alias...
+  assert.ok(akhund.aliases.includes('Haji Mudir'));
+  // ...but the adjudicating analyst is told which kind of name matched.
+  assert.deepEqual(akhund.listing_detail.weak_aliases, ['Haji Mudir']);
+});
+
+test('DFAT vessels are typed as vessels and keep their IMO and measures', () => {
+  const vessel = rowsToDfatEntries(DFAT_2025_ROWS)
+    .find((e) => e.external_id === 'DFAT-417');
+  assert.equal(vessel.entry_type, 'vessel');
+  assert.equal(vessel.listing_detail.imo_number, '9288693');
+  assert.equal(vessel.listing_detail.measures.maritime_restriction, true);
+  assert.equal(vessel.listing_detail.measures.targeted_financial_sanction, false);
 });
 
 test('DFAT parsing refuses to guess when no name column resolves', () => {

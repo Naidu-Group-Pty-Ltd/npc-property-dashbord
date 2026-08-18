@@ -6,8 +6,9 @@ name: AML sanctions refresh
 # workflow, which is the alert.
 #
 # Required repository secrets:
-#   SUPABASE_URL                  project URL
 #   SUPABASE_SERVICE_ROLE_KEY     service role key (writes aml.sanctions_entries)
+#
+# The project URL is NOT a secret and is read from supabase/config.toml.
 #
 # Missing credentials FAIL the job. The scheduled run is the production
 # refresh: silently downgrading it to a dry run is how a list goes stale
@@ -63,19 +64,36 @@ jobs:
       - name: Test sanctions parsers
         run: npm run test:aml-sanctions
 
+      # The project URL is not a secret and never was: it is the project's
+      # public hostname, it appears verbatim in `cron.job` commands, and it is
+      # checked in as `project_id` in supabase/config.toml. Reading it from
+      # there removes a dependency on a repository secret that is NOT
+      # configured — the same absent `SUPABASE_URL` that stopped the internal
+      # secret rotation dead on its first run. A refresh that cannot run
+      # because of a missing non-secret is a list going stale for no reason.
+      - name: Resolve the project URL from the checked-in config
+        id: project
+        run: |
+          set -euo pipefail
+          REF="$(sed -n 's/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' supabase/config.toml | head -1)"
+          if [ -z "$REF" ]; then
+            echo '::error title=No project ref::supabase/config.toml has no project_id.'
+            exit 1
+          fi
+          echo "url=https://${REF}.supabase.co" >> "$GITHUB_OUTPUT"
+
       - name: Check credentials
         id: creds
         if: github.event.inputs.dry_run != 'true'
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           # A refresh run without write credentials is an operational fault,
           # not a reason to quietly do nothing. Fail loudly (never echoing the
-          # values); an intentional dry run is requested explicitly via
+          # value); an intentional dry run is requested explicitly via
           # workflow_dispatch dry_run=true and skips this check entirely.
-          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
-            echo "::error::SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not configured — the scheduled sanctions refresh cannot write, so the list WILL go stale and screening will fail closed. Configure the repository secrets, or run workflow_dispatch with dry_run=true for a deliberate dry run."
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::SUPABASE_SERVICE_ROLE_KEY is not configured — the scheduled sanctions refresh cannot write, so the list WILL go stale and screening will fail closed. Add the repository secret, or run workflow_dispatch with dry_run=true for a deliberate dry run."
             exit 1
           fi
           echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -83,7 +101,7 @@ jobs:
       - name: Load sanctions lists
         if: github.event.inputs.dry_run != 'true'
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_URL: ${{ steps.project.outputs.url }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: node scripts/aml/load-sanctions-lists.mjs --list "${{ github.event.inputs.lists || 'un,ofac,dfat' }}"
 
