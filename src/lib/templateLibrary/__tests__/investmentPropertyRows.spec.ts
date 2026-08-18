@@ -104,7 +104,7 @@ function render(row: unknown): string {
   // The spacious variants are the ones that give the property its own page; one
   // of each arrangement is enough for a binding question.
   const masters = INVESTMENT_COMPASS_TEMPLATES.filter((t) => /-(01|03)-/.test(String((t as { slug?: string }).slug ?? '')));
-  return masters.map((t) => renderTemplateToHtml((t as { schema: never }).schema, { data }).html).join('\n');
+  return masters.map((t) => renderTemplateToHtml((t as unknown as { schema: never }).schema, { data }).html).join('\n');
 }
 
 describe('the Investment Compass property table against the stored record', () => {
@@ -208,7 +208,7 @@ describe('the cover title against the longest address in production', () => {
   };
 
   const covers = INVESTMENT_COMPASS_TEMPLATES.map((t) => {
-    const schema = (t as { schema: { pages: Array<{ blocks: Array<Record<string, never>> }> } }).schema;
+    const schema = (t as unknown as { schema: { pages: Array<{ blocks: Array<Record<string, never>> }> } }).schema;
     const blocks = schema.pages[0].blocks as unknown as Array<{
       name?: string; conditional?: string; props: Record<string, number | string>;
     }>;
