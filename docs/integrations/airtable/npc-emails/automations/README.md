@@ -75,10 +75,19 @@ across as they stand.
 **`Auto-generate report` has never fired, and cannot.** It triggers on record
 creation in `Properties`, which holds **0 records**. It also contains a
 `conditionalGroup` whose only branch has an empty node list, so even if it fired
-the conditional would do nothing. Its script POSTs to
-`https://dduzbchuswwbefdunfct.supabase.co/functions/v1/auto-report-webhook` —
-a hard dependency on the Supabase project that is also being migrated, so this
-one needs re-pointing at the new project rather than a straight copy.
+the conditional would do nothing.
+
+> **Corrected 2026-08-18.** This paragraph used to end by saying the script's
+> Supabase URL "needs re-pointing at the new project". That was wrong twice
+> over, and
+> [`migration/rebuilt/AUTO_GENERATE_REPORT.md`](./migration/rebuilt/AUTO_GENERATE_REPORT.md)
+> records the checks. `dduzbchuswwbefdunfct` is the **live** NPC Property
+> Dashboard project and `auto-report-webhook` is deployed and active there, so
+> the URL is correct as written. What is actually broken is the credential: the
+> function has failed closed since **2026-08-15** (commit `c76bcd9`), requiring
+> `x-webhook-secret`, and the exported script sends none — so it gets a **401**
+> which it logs as a result and reports as success. Use
+> [`scripts/auto-generate-report.CORRECTED.js`](./scripts/auto-generate-report.CORRECTED.js).
 
 **`Delete Records After 30 Days` has nothing to purge**, for the same reason:
 it targets `Properties`, which is empty.
