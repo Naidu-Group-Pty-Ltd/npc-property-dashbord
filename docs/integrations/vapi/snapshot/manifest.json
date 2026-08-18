@@ -1,8 +1,15 @@
 {
   "completeness": {
-    "listVsSingleGet": "verified identical — list payloads are not truncated",
+    "listVsSingleGet": "verified identical \u2014 list payloads are not truncated",
     "rawVersionHistory": "11.9 MB, not committed; history-index.json summarises it and it is reproducible with GET /assistant/{id}/version?limit=100",
-    "toolVersionHistory": "not available: GET /tool/{id}/version returns 404 for all 20 tools"
+    "toolVersionHistory": "not available: GET /tool/{id}/version returns 404 for all 20 tools",
+    "assistantScopedEndpoints": {
+      "GET /assistant/{id}": "200 \u2014 identical to the list payload",
+      "GET /assistant/{id}/version": "200 \u2014 full config per version, captured",
+      "GET /assistant/{id}?version=vN": "200",
+      "GET /assistant/{id}/analytics|call|metrics": "404 \u2014 do not exist",
+      "GET /call?assistantId=": "200 \u2014 used for counts only"
+    }
   },
   "counts": {
     "assistantVersionsIndexed": 444,
@@ -13,10 +20,13 @@
     "squads": 3,
     "testSuites": 2,
     "tools": 20,
-    "workflows": 1
+    "workflows": 1,
+    "systemPromptBlocksStored": 286,
+    "assistantVersionsCaptured": 444,
+    "stateCards": 28
   },
   "npcSplit": {
-    "note": "Vapi has no folder concept; the split is by name prefix and corroborated by squad membership and phone-number naming. Only the NPC set is in scope for migration — see ../npc-services/clone-plan.json.",
+    "note": "Vapi has no folder concept; the split is by name prefix and corroborated by squad membership and phone-number naming. Only the NPC set is in scope for migration \u2014 see ../npc-services/clone-plan.json.",
     "npc": 15,
     "other": 13
   },
@@ -57,8 +67,16 @@
   "source": {
     "apiBase": "https://api.vapi.ai",
     "capturedAt": "2026-08-18T17:3x UTC",
-    "method": "GET only — nothing in this org was modified to produce it",
+    "method": "GET only \u2014 nothing in this org was modified to produce it",
     "orgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd",
     "platform": "vapi"
+  },
+  "assistantDeepCapture": {
+    "prompts": "prompts/<sha16>.md \u2014 every distinct system-prompt block across current state AND all version history, stored once, as readable text.",
+    "history": "history/<assistant>.json \u2014 every version's full configuration, verbatim, with system prompts replaced by promptRef into the store.",
+    "lossless": "Verified: all 444 versions rehydrate to a byte-identical match against the raw API payload, and every live prompt block is present unaltered.",
+    "state": "state/<assistant>.md \u2014 one readable card per assistant covering model, voice, transcriber, server, tools, messages, behaviour flags, prompt refs and call counts.",
+    "comparison": "COMPARISON.md \u2014 the 15 NPC assistants side by side, plus a tool matrix.",
+    "callVolume": "call-volume.json \u2014 COUNTS ONLY. No transcript, recording, phone number or any other call content was requested or stored."
   }
 }

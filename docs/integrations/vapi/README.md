@@ -38,7 +38,8 @@ records.
 Two pulls a few hours apart in the same session are not identical, and the difference is
 not noise. **`NPC Active Nurturing` and `NPC Inbound Agent` had their `server.url` changed
 at 17:28 and 17:29 on 2026-08-18**, from the new Make account back to the Supabase edge
-function. Their version counters went v2 → v3.
+function. Their version counters went v2 → v3. **The account owner made those changes
+deliberately** — they are recorded here because the snapshot spans them, not as an anomaly.
 
 Version history records the whole sequence — for `NPC Active Nurturing`:
 
@@ -54,6 +55,32 @@ the Make work rather than deliberately. The 17:29 entry undid it. Net effect: **
 assistant now points at the new Make account.**
 
 Treat this snapshot as a point-in-time capture, not a stable baseline.
+
+## Assistant state is captured four ways
+
+The JSON records are the source of truth; these make them usable.
+
+| Path | What it is |
+| --- | --- |
+| `snapshot/prompts/<sha16>.md` | **286 distinct system-prompt blocks** as plain text — every prompt in the current state *and* in all 444 historical versions, stored once and readable. |
+| `snapshot/state/<assistant>.md` | One card per assistant: model, voice with every parameter, transcriber, server, tools (flagging the ones that 404), messages, behaviour flags, prompt links, call counts. |
+| `snapshot/history/<assistant>.json` | Every version's **full** configuration, verbatim, with prompts by reference. |
+| `snapshot/COMPARISON.md` | The 15 NPC assistants side by side, plus a tool matrix — built for checking against the dashboard. |
+
+**The prompt store is lossless, and that is verified rather than assumed.** All 444 versions
+rehydrate to a byte-identical match against the raw API payload, and every live prompt block
+is present unaltered. Storing prompts once turns 11.9 MB of near-duplicate JSON into 7.5 MB
+of readable Markdown plus 1.2 MB of configuration.
+
+### Call volume — counts only
+
+`snapshot/call-volume.json` records how many calls each assistant has and when the most
+recent was. **No transcript, recording, phone number or any other call content was requested
+or stored.** It is there to separate live assistants from dormant ones, and it shows
+something worth knowing before migrating: **three of the four `NPC Sales Force` squad members
+have never taken a call** — `NPC IFC Inbound`, `NPC Strategy Session Inbound` and
+`NPC Opt In Follow Up Inbound` are all at zero. Only `NPC Inbound Agent` (37) has traffic, so
+the inbound handoff routing has never actually been exercised in production.
 
 ## Assistant version history
 
