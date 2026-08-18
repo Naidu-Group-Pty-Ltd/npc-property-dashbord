@@ -669,9 +669,20 @@ export default function AmlCaseWorkspace() {
                 canAdjudicate={access.isMlro || access.roles.has("reviewer")}
                 onChanged={() => { load(); screeningStage.reload(); }}
                 screeningBlocked={
-                  screeningStage.sync && !screeningStage.sync.provider_ready
+                  /*
+                   * Only a case that actually needs the provider can be
+                   * blocked by it. `provider_relevant` is false when no
+                   * required scope uses it, and then an unready provider is
+                   * a fact that does not apply rather than a blocker.
+                   */
+                  screeningStage.sync
+                    && screeningStage.sync.provider_relevant !== false
+                    && !screeningStage.sync.provider_ready
                     ? "Screening cannot run — see the action above"
                     : null
+                }
+                optionalUnavailable={
+                  Boolean(screeningStage.sync && !screeningStage.sync.provider_ready)
                 }
               />
               </div>
