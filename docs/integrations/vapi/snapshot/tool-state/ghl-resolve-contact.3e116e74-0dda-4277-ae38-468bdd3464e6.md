@@ -1,6 +1,6 @@
 # ghl_resolve_contact
 
-`3e116e74-0dda-4277-ae38-468bdd3464e6` · type `function` · async `False` · version `—`
+`3e116e74-0dda-4277-ae38-468bdd3464e6` · type `function` · async `False` · version `v1`
 · created 2026-05-11 · updated 2026-05-14 06:15:49
 · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 

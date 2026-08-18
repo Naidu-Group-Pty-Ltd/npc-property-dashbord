@@ -20,6 +20,7 @@
     "name": "transfer_to_human"
   },
   "id": "3a6a892d-2907-4da0-b2f8-a55d5b404a84",
+  "latestVersion": "v1",
   "messages": [
     {
       "blocking": false,

@@ -1,6 +1,6 @@
 # get_call_context
 
-`0bd36de8-6d3a-43e5-9c3f-25ca6de97662` · type `function` · async `False` · version `—`
+`0bd36de8-6d3a-43e5-9c3f-25ca6de97662` · type `function` · async `False` · version `v1`
 · created 2026-05-14 · updated 2026-05-14 10:17:52
 · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 

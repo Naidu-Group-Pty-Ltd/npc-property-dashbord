@@ -1,6 +1,6 @@
 # checkAvailability
 
-`326c7c81-e4c2-4bcb-bcf3-134a1af73f49` · type `function` · async `False` · version `—`
+`326c7c81-e4c2-4bcb-bcf3-134a1af73f49` · type `function` · async `False` · version `v1`
 · created 2024-07-18 · updated 2024-07-18 14:46:42
 · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 

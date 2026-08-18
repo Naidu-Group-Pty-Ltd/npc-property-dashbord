@@ -1,6 +1,6 @@
 # end_call_tool
 
-`bbbf6fb6-685d-411e-b0e1-bec5acc4fa8e` · type `endCall` · async `False` · version `—`
+`bbbf6fb6-685d-411e-b0e1-bec5acc4fa8e` · type `endCall` · async `False` · version `v1`
 · created 2026-01-05 · updated 2026-01-12 06:28:36
 · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 

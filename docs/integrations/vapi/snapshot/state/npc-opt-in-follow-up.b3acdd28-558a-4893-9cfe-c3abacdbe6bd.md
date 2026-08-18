@@ -1,11 +1,10 @@
 # NPC Opt In Follow Up
 
-`b3acdd28-558a-4893-9cfe-c3abacdbe6bd` · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd` · created 2025-11-18 · updated 2026-07-22 05:47:27 · version `v1`
+`b3acdd28-558a-4893-9cfe-c3abacdbe6bd` · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd` · created 2025-11-18 · updated 2026-08-18 18:03:28 · version `v2`
 
 ## Model
 
-- **Provider / model**: openai · `gpt-5.2-chat-latest`
-- **temperature**: `0.9`
+- **Provider / model**: openai · `gpt-5.6-luna`
 - **maxTokens**: `10000`
 
 ## Voice

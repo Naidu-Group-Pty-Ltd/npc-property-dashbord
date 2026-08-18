@@ -887,7 +887,7 @@
     "knowledgeBaseFileIds": [
       "9fff4149-3aec-48f0-9378-d56760390216"
     ],
-    "latestVersion": "v1",
+    "latestVersion": "v2",
     "maxDurationSeconds": 1444,
     "model": {
       "emotionRecognitionEnabled": null,
@@ -933,6 +933,11 @@
         "id": "5c0c334c-6bbf-4399-b748-a3c50207e754",
         "name": "transfer_to_human",
         "resolves": true
+      },
+      {
+        "id": "f195a817-8346-475d-ad0e-8033f1d2e283",
+        "name": "ghl_create_booking",
+        "resolves": true
       }
     ],
     "transcriber": {
@@ -940,7 +945,7 @@
       "model": "flux-general-en",
       "provider": "deepgram"
     },
-    "updatedAt": "2026-07-28T05:35:04.018Z",
+    "updatedAt": "2026-08-18T18:22:26.101Z",
     "voice": {
       "model": "eleven_flash_v2_5",
       "provider": "11labs",
@@ -1119,14 +1124,14 @@
     "knowledgeBaseFileIds": [
       "9fff4149-3aec-48f0-9378-d56760390216"
     ],
-    "latestVersion": "v1",
+    "latestVersion": "v2",
     "maxDurationSeconds": 929,
     "model": {
       "emotionRecognitionEnabled": null,
       "maxTokens": 10000,
-      "model": "gpt-5.2-chat-latest",
+      "model": "gpt-5.6-luna",
       "provider": "openai",
-      "temperature": 0.9
+      "temperature": null
     },
     "name": "NPC Opt In Follow Up",
     "recordingEnabled": null,
@@ -1172,7 +1177,7 @@
       "model": "flux-general-en",
       "provider": "deepgram"
     },
-    "updatedAt": "2026-07-22T05:47:27.452Z",
+    "updatedAt": "2026-08-18T18:03:28.910Z",
     "voice": {
       "model": "eleven_flash_v2_5",
       "provider": "11labs",

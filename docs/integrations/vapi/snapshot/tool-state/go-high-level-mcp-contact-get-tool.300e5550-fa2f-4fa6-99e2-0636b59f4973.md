@@ -1,6 +1,6 @@
 # go_high_level_mcp_contact_get_tool
 
-`300e5550-fa2f-4fa6-99e2-0636b59f4973` · type `gohighlevel.contact.get` · async `None` · version `—`
+`300e5550-fa2f-4fa6-99e2-0636b59f4973` · type `gohighlevel.contact.get` · async `None` · version `v1`
 · created 2026-05-11 · updated 2026-05-11 03:06:18
 · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 

@@ -1,6 +1,6 @@
 # google_sheets_tool
 
-`a1124ce2-f0f0-476d-969d-bdff57937775` · type `google.sheets.row.append` · async `None` · version `—`
+`a1124ce2-f0f0-476d-969d-bdff57937775` · type `google.sheets.row.append` · async `None` · version `v1`
 · created 2025-11-12 · updated 2025-11-12 07:36:34
 · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 

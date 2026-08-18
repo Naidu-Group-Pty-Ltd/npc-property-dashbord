@@ -2,41 +2,17 @@
   "completeness": {
     "listVsSingleGet": "verified identical \u2014 list payloads are not truncated",
     "rawVersionHistory": "11.9 MB, not committed; history-index.json summarises it and it is reproducible with GET /assistant/{id}/version?limit=100",
-    "assistantScopedEndpoints": {
-      "GET /assistant/{id}": "200 \u2014 identical to the list payload",
-      "GET /assistant/{id}/version": "200 \u2014 full config per version, captured",
-      "GET /assistant/{id}?version=vN": "200",
-      "GET /assistant/{id}/analytics|call|metrics": "404 \u2014 do not exist",
-      "GET /call?assistantId=": "200 \u2014 used for counts only"
-    },
-    "versionEndpoints": {
-      "correction": "An earlier pass reported 'tools have no version history'. That was wrong: it tested /tool/{id}/version (singular), which 404s. The working path is /versions (plural).",
-      "GET /assistant/{id}/version": "200 \u2014 444 auto-snapshots, full config under a `data` key",
-      "GET /assistant/{id}/versions": "200 \u2014 33 NAMED versions (v1/v2/v3) with configHash, parentVersion and createdBy; a different and smaller set",
-      "GET /tool/{id}/version": "404",
-      "GET /tool/{id}/versions": "200 \u2014 20 named versions, one per tool",
-      "note": "The two assistant endpoints are different systems, not aliases. Both are captured."
-    },
-    "toolViewCoverage": {
-      "assertion": "Every scalar value in every raw tool payload appears in at least one readable view (tool-prose, tool-state or tools-index). Currently 0 unrepresented.",
-      "exclusions": [
-        "orgId",
-        "function.parameters.type \u2014 the constant \"object\" on all 20 tools",
-        "credential header values, which are redacted by design"
-      ],
-      "history": "An earlier version of these views omitted four things that only the raw JSON carried: static body fields (tool.parameters), variableExtractionPlan, tool metadata and function.strict \u2014 plus non-credential header values. The raw JSON was always complete; the readable layer was not. This assertion exists so that cannot recur silently."
-    },
-    "toolFetchExhaustiveness": {
-      "listEndpoint": "GET /tool returns a bare array of 20 with no pagination wrapper. limit works; unknown query params are rejected with 400, so there are no hidden filters or expansions. 20 is the complete set.",
-      "perTool": "GET /tool/{id} is byte-identical to the list entry.",
-      "versions": "GET /tool/{id}/versions carries the full per-version payload; GET /tool/{id}?version=vN was cross-checked against it for all 20 and adds nothing new.",
-      "danglingTools": "The 4 ids referenced by assistants but absent from /tool are unrecoverable \u2014 base, /versions and ?version= all 404.",
-      "adjacent": "A sweep of 33 candidate endpoints found /credential (7 items, now captured) and /template (0 items). /logs is the API ACCESS log (1,198 entries, type API) and records requests to Vapi rather than tool invocations \u2014 not captured, as it is largely this session's own reads.",
-      "notAvailable": "No tool-call/analytics endpoint exists: /tool/{id}/analytics, /log, /metrics all 404."
+    "toolVersionHistory": "not available: GET /tool/{id}/version returns 404 for all 20 tools",
+    "assistantFetchExhaustiveness": {
+      "listEndpoint": "GET /assistant is a bare array of 28, no pagination wrapper. limit works; unknown query params are rejected with 400. createdAtGe/updatedAtGe are the only extra filters.",
+      "assistantScopedSweep": "22 candidate sub-paths probed; only /version and /versions exist. analytics, call, calls, metrics, log, logs, tool, tools, file, files, squad, test, eval, transcript, usage, cost, export, clone and duplicate all 404.",
+      "versionQueryParam": "GET /assistant/{id}?version=vN IGNORES the parameter \u2014 v1, v2, v99 and 'bogus' all return the current record, byte-identical to a plain GET. It is not a way to retrieve historical config; /version and /versions are.",
+      "inlineFunctions": "assistant.model.functions[] carries LEGACY inline function definitions with their own serverUrl, separate from model.toolIds and absent from /tool. 16 across 6 assistants, all non-NPC, all pointing at hook.eu2.make.com.",
+      "unfetchedReferences": "artifactPlan.structuredOutputIds (5 distinct) and scorecardIds (1) reference resource types not yet retrieved."
     }
   },
   "counts": {
-    "assistantVersionsIndexed": 444,
+    "assistantVersionsIndexed": 443,
     "assistants": 28,
     "filesInOrg": 90,
     "knowledgeFilesDownloaded": 12,
@@ -44,18 +20,7 @@
     "squads": 3,
     "testSuites": 2,
     "tools": 20,
-    "workflows": 1,
-    "systemPromptBlocksStored": 286,
-    "assistantVersionsCaptured": 444,
-    "stateCards": 28,
-    "toolProseCards": 20,
-    "toolStateCards": 20,
-    "toolNamedVersions": 20,
-    "assistantNamedVersions": 33,
-    "squadStateCards": 3,
-    "phoneStateCards": 6,
-    "workflowStateCards": 1,
-    "providerCredentials": 7
+    "workflows": 1
   },
   "npcSplit": {
     "note": "Vapi has no folder concept; the split is by name prefix and corroborated by squad membership and phone-number naming. Only the NPC set is in scope for migration \u2014 see ../npc-services/clone-plan.json.",
@@ -63,38 +28,16 @@
     "other": 13
   },
   "redactions": {
-    "count": 6,
     "kinds": [
+      "VAPI_WEBHOOK_SECRET",
+      "VAPI_SERVER_URL_SECRET",
+      "TWILIO_ACCOUNT_SID",
       "AIRTABLE_PAT",
       "GHL_PIT_TOKEN",
-      "TWILIO_ACCOUNT_SID"
+      "CREDENTIAL"
     ],
-    "sites": [
-      {
-        "kind": "GHL_PIT_TOKEN",
-        "path": "tool[ghl_mcp].server.headers.Authorization"
-      },
-      {
-        "kind": "AIRTABLE_PAT",
-        "path": "tool[get_contact_airtable_test].server.headers.Authorization"
-      },
-      {
-        "kind": "TWILIO_ACCOUNT_SID",
-        "path": "phone[Naidu Property Consulting Services].twilioAccountSid"
-      },
-      {
-        "kind": "TWILIO_ACCOUNT_SID",
-        "path": "phone[NPC Services].twilioAccountSid"
-      },
-      {
-        "kind": "TWILIO_ACCOUNT_SID",
-        "path": "phone[lavanethaan ravachandran].twilioAccountSid"
-      },
-      {
-        "kind": "TWILIO_ACCOUNT_SID",
-        "path": "phone[Twilio Test].twilioAccountSid"
-      }
-    ]
+    "rule": "Exact match on the lowercased key against a fixed set, so maxTokens, promptCacheKey, isServerUrlSecretSet and the static-body-field 'key' are NOT caught while every credential key is. Backed by a value-based sweep over the whole tree as a second line of defence.",
+    "incident": "An earlier anchored regex (^secret$ etc.) failed to match the header key 'x-vapi-webhook-secret' and the field 'serverUrlSecret'. Both were committed. See SECURITY-INCIDENT.md."
   },
   "source": {
     "apiBase": "https://api.vapi.ai",
@@ -102,42 +45,5 @@
     "method": "GET only \u2014 nothing in this org was modified to produce it",
     "orgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd",
     "platform": "vapi"
-  },
-  "assistantDeepCapture": {
-    "prompts": "prompts/<sha16>.md \u2014 every distinct system-prompt block across current state AND all version history, stored once, as readable text.",
-    "history": "history/<assistant>.json \u2014 every version's full configuration, verbatim, with system prompts replaced by promptRef into the store.",
-    "lossless": "Verified: all 444 versions rehydrate to a byte-identical match against the raw API payload, and every live prompt block is present unaltered.",
-    "state": "state/<assistant>.md \u2014 one readable card per assistant covering model, voice, transcriber, server, tools, messages, behaviour flags, prompt refs and call counts.",
-    "comparison": "COMPARISON.md \u2014 the 15 NPC assistants side by side, plus a tool matrix.",
-    "callVolume": "call-volume.json \u2014 COUNTS ONLY. No transcript, recording, phone number or any other call content was requested or stored."
-  },
-  "toolDeepCapture": {
-    "prose": "tool-prose/<tool>.md \u2014 the function description, every parameter description, the spoken request-start/complete/failed messages and any transfer destination. This is everything an LLM reads when deciding whether and how to call the tool. Verified verbatim against the JSON.",
-    "state": "tool-state/<tool>.md \u2014 server URL/timeout/header names, async flag, function signature, messages and the list of assistants that use it.",
-    "versions": "tool-versions/<tool>.json \u2014 GET /tool/{id}/versions.",
-    "comparison": "TOOLS-COMPARISON.md \u2014 all 20 side by side, an assistant\u00d7tool matrix, and the orphans and dangling references."
-  },
-  "squadPhoneWorkflowCapture": {
-    "squad-state": "one card per squad: every member, every override, and the inline handoff tool expanded with its destinations, the condition each is chosen on, and the variables it extracts.",
-    "phone-state": "one card per number: what it routes to, sipUri, fallbackDestination, smsEnabled, server, and whether it can be carried across at all.",
-    "workflow-state": "the workflow as a mermaid graph plus every conversation-node prompt, first message, tool node and edge condition, all verbatim.",
-    "versionHistory": "none exists \u2014 /version and /versions both 404 for squad, phone-number and workflow. ?version=v1 returns 200 but is byte-identical to the current record, so the parameter is ignored rather than serving history."
-  },
-  "findings": {
-    "workflowIsAnUncustomisedSample": {
-      "workflow": "NPC Follow Up",
-      "id": "81f2958a-90cb-4ab0-b76a-1e0940babe42",
-      "evidence": {
-        "Wellness Partners": 6,
-        "Riley": 3,
-        "patient": 38,
-        "Naidu": 0,
-        "property": 0,
-        "discovery call": 0,
-        "NPC": "1 \u2014 the name on the record"
-      },
-      "referencedBy": "nothing \u2014 no phone number, assistant or squad points at it",
-      "conclusion": "a Vapi health-clinic sample template with an NPC name. Decide what it is for before migrating it; as it stands it carries no NPC content and no traffic."
-    }
   }
 }

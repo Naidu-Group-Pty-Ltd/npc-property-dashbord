@@ -133,7 +133,7 @@
           "conversation-update"
         ],
         "serverUrl": "https://na-runtime.voiceglow.org/v2/agents/r0x0zyb31z7qsimc/vapi-event",
-        "serverUrlSecret": "vg_SBcDfWcmRroMRnr7Ickz",
+        "serverUrlSecret": "{{REDACTED:VAPI_SERVER_URL_SECRET}}",
         "silenceTimeoutSeconds": 16,
         "transcriber": {
           "language": "en",

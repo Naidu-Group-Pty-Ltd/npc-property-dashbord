@@ -1,6 +1,6 @@
 # ghl_mcp
 
-`32c907eb-ff8c-4a9e-868d-67eb1144ee42` · type `mcp` · async `None` · version `—`
+`32c907eb-ff8c-4a9e-868d-67eb1144ee42` · type `mcp` · async `None` · version `v1`
 · created 2026-05-14 · updated 2026-05-14 09:17:51
 · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 

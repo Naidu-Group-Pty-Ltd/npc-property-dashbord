@@ -5,6 +5,7 @@
     "name": "ghl_mcp"
   },
   "id": "32c907eb-ff8c-4a9e-868d-67eb1144ee42",
+  "latestVersion": "v1",
   "metadata": {
     "protocol": "shttp"
   },

@@ -178,7 +178,7 @@
           "conversation-update"
         ],
         "serverUrl": "https://na-gcp-api.vg-stuff.com/v2/agents/NE4wWwtA5BGy5Cm/vapi-event",
-        "serverUrlSecret": "vg-RdAVepCVNvbldus6WLF1",
+        "serverUrlSecret": "{{REDACTED:VAPI_SERVER_URL_SECRET}}",
         "transcriber": {
           "language": "en",
           "model": "nova-2",
@@ -243,7 +243,7 @@
           "conversation-update"
         ],
         "serverUrl": "https://na-gcp-api.vg-stuff.com/v2/agents/NE4wWwtA5BGy5Cm/vapi-event",
-        "serverUrlSecret": "vg-RdAVepCVNvbldus6WLF1",
+        "serverUrlSecret": "{{REDACTED:VAPI_SERVER_URL_SECRET}}",
         "transcriber": {
           "language": "en",
           "model": "nova-2",
@@ -308,7 +308,7 @@
           "conversation-update"
         ],
         "serverUrl": "https://na-gcp-api.vg-stuff.com/v2/agents/NE4wWwtA5BGy5Cm/vapi-event",
-        "serverUrlSecret": "vg-RdAVepCVNvbldus6WLF1",
+        "serverUrlSecret": "{{REDACTED:VAPI_SERVER_URL_SECRET}}",
         "transcriber": {
           "language": "en",
           "model": "nova-2",
@@ -373,7 +373,7 @@
           "conversation-update"
         ],
         "serverUrl": "https://na-gcp-api.vg-stuff.com/v2/agents/NE4wWwtA5BGy5Cm/vapi-event",
-        "serverUrlSecret": "vg-RdAVepCVNvbldus6WLF1",
+        "serverUrlSecret": "{{REDACTED:VAPI_SERVER_URL_SECRET}}",
         "transcriber": {
           "language": "en",
           "model": "nova-2",

@@ -4,7 +4,7 @@
     "id": "326c7c81-e4c2-4bcb-bcf3-134a1af73f49",
     "type": "function",
     "async": false,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2024-07-18T14:06:24.643Z",
     "updatedAt": "2024-07-18T14:46:42.071Z",
     "server": {
@@ -38,7 +38,7 @@
     "id": "bbbf6fb6-685d-411e-b0e1-bec5acc4fa8e",
     "type": "endCall",
     "async": false,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2026-01-05T09:57:06.341Z",
     "updatedAt": "2026-01-12T06:28:36.694Z",
     "server": {
@@ -87,7 +87,7 @@
     "id": "0bd36de8-6d3a-43e5-9c3f-25ca6de97662",
     "type": "function",
     "async": false,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2026-05-14T10:17:52.591Z",
     "updatedAt": "2026-05-14T10:17:52.591Z",
     "server": {
@@ -192,7 +192,7 @@
     "id": "11317eb2-1b44-4e9e-ae7f-e6baaee0d77b",
     "type": "function",
     "async": true,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2025-11-12T07:44:07.443Z",
     "updatedAt": "2025-11-14T06:04:01.328Z",
     "server": {
@@ -237,7 +237,7 @@
     "id": "6587bc7d-7382-4e33-a38d-95f5740df52a",
     "type": "function",
     "async": null,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2026-05-11T22:57:43.778Z",
     "updatedAt": "2026-05-14T16:50:42.125Z",
     "server": {
@@ -306,7 +306,7 @@
     "id": "f195a817-8346-475d-ad0e-8033f1d2e283",
     "type": "function",
     "async": false,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2026-05-12T07:49:39.353Z",
     "updatedAt": "2026-05-14T17:53:57.196Z",
     "server": {
@@ -366,6 +366,7 @@
       "NPC Discovery Call Follow Up Test",
       "NPC Discovery Call No Show Follow Up",
       "NPC IFC Follow Up",
+      "NPC IFC Inbound",
       "NPC IFC No Show Follow Up",
       "NPC Opt In Follow Up",
       "NPC Opt In Follow Up Inbound",
@@ -374,14 +375,14 @@
       "NPC Strategy Session (Phone) No Show",
       "NPC Strategy Session Inbound"
     ],
-    "usedByCount": 11
+    "usedByCount": 12
   },
   {
     "name": "ghl_delete_event_npc",
     "id": "5934c762-0223-4112-bfb7-88931da17652",
     "type": "function",
     "async": true,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2025-11-26T03:21:28.748Z",
     "updatedAt": "2025-11-26T04:59:54.305Z",
     "server": {
@@ -426,7 +427,7 @@
     "id": "87fb4ce8-b696-4925-bfbf-8bd9678d4e36",
     "type": "function",
     "async": true,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2025-11-28T14:09:33.704Z",
     "updatedAt": "2025-12-02T07:28:21.105Z",
     "server": {
@@ -470,7 +471,7 @@
     "id": "a34b05ef-5218-4771-bf2b-4b171ad8f9c9",
     "type": "function",
     "async": true,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2025-12-01T05:03:15.413Z",
     "updatedAt": "2025-12-04T09:32:59.823Z",
     "server": {
@@ -514,7 +515,7 @@
     "id": "006be564-14c2-4db9-9c90-6821d363b123",
     "type": "function",
     "async": true,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2025-12-07T15:06:31.324Z",
     "updatedAt": "2025-12-07T15:10:20.712Z",
     "server": {
@@ -558,7 +559,7 @@
     "id": "ba13974d-8005-487d-81b9-4dc569a9f6d4",
     "type": "function",
     "async": true,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2025-12-07T14:58:10.891Z",
     "updatedAt": "2025-12-07T15:04:38.981Z",
     "server": {
@@ -601,7 +602,7 @@
     "id": "32c907eb-ff8c-4a9e-868d-67eb1144ee42",
     "type": "mcp",
     "async": null,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2026-05-14T09:17:51.843Z",
     "updatedAt": "2026-05-14T09:17:51.843Z",
     "server": {
@@ -639,7 +640,7 @@
     "id": "3e116e74-0dda-4277-ae38-468bdd3464e6",
     "type": "function",
     "async": false,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2026-05-11T20:31:17.833Z",
     "updatedAt": "2026-05-14T06:15:49.375Z",
     "server": {
@@ -777,7 +778,7 @@
     "id": "300e5550-fa2f-4fa6-99e2-0636b59f4973",
     "type": "gohighlevel.contact.get",
     "async": null,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2026-05-11T03:06:18.897Z",
     "updatedAt": "2026-05-11T03:06:18.897Z",
     "server": {
@@ -807,7 +808,7 @@
     "id": "e525406e-acaa-4e9d-b806-7ae9d21c358e",
     "type": "gohighlevel.contact.get",
     "async": null,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2025-11-12T07:43:12.766Z",
     "updatedAt": "2025-11-12T07:43:43.216Z",
     "server": {
@@ -844,7 +845,7 @@
     "id": "a1124ce2-f0f0-476d-969d-bdff57937775",
     "type": "google.sheets.row.append",
     "async": null,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2025-11-12T07:36:34.595Z",
     "updatedAt": "2025-11-12T07:36:34.595Z",
     "server": {
@@ -874,7 +875,7 @@
     "id": "c40722f1-a359-42e1-ba80-e99ef706a916",
     "type": "function",
     "async": false,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2026-05-14T06:38:31.146Z",
     "updatedAt": "2026-05-14T06:38:31.146Z",
     "server": {
@@ -1006,7 +1007,7 @@
     "id": "9789b720-ee13-4389-ba33-678883eaa891",
     "type": "function",
     "async": false,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2025-12-15T09:03:06.956Z",
     "updatedAt": "2026-01-29T01:52:26.064Z",
     "server": {
@@ -1130,7 +1131,7 @@
     "id": "3a6a892d-2907-4da0-b2f8-a55d5b404a84",
     "type": "transferCall",
     "async": false,
-    "latestVersion": null,
+    "latestVersion": "v1",
     "createdAt": "2026-05-07T09:10:01.056Z",
     "updatedAt": "2026-05-19T09:49:58.158Z",
     "server": {

@@ -2,8 +2,83 @@
   "assistant": "NPC IFC Inbound",
   "assistantId": "7770a48b-68d1-48df-a03a-9cc5b9e91ad8",
   "note": "System prompts are replaced by promptRef; the text is in ../prompts/<ref>.md. Everything else is the API response verbatim.",
-  "versionCount": 27,
+  "versionCount": 28,
   "versions": [
+    {
+      "createdAt": "2026-08-18T18:22:26.241Z",
+      "data": {
+        "compliancePlan": {
+          "hipaaEnabled": false,
+          "pciEnabled": false,
+          "zdrEnabled": false
+        },
+        "createdAt": "2025-12-15T18:30:39.240Z",
+        "endCallMessage": "Goodbye.",
+        "firstMessage": "Hi {{firstName}}. I'm Sandra, from Naidu Property Consulting Services. How can I help you today?",
+        "firstMessageMode": "assistant-speaks-first",
+        "id": "7770a48b-68d1-48df-a03a-9cc5b9e91ad8",
+        "maxDurationSeconds": 1444,
+        "model": {
+          "knowledgeBase": {
+            "fileIds": [
+              "9fff4149-3aec-48f0-9378-d56760390216"
+            ],
+            "provider": "google"
+          },
+          "messages": [
+            {
+              "chars": 41289,
+              "promptRef": "e9ff28456b09fa38",
+              "role": "system"
+            }
+          ],
+          "model": "gpt-5.6-luna",
+          "provider": "openai",
+          "toolIds": [
+            "006be564-14c2-4db9-9c90-6821d363b123",
+            "bbbf6fb6-685d-411e-b0e1-bec5acc4fa8e",
+            "3e116e74-0dda-4277-ae38-468bdd3464e6",
+            "6587bc7d-7382-4e33-a38d-95f5740df52a",
+            "5c0c334c-6bbf-4399-b748-a3c50207e754",
+            "f195a817-8346-475d-ad0e-8033f1d2e283"
+          ]
+        },
+        "name": "NPC IFC Inbound",
+        "orgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd",
+        "server": {
+          "headers": {
+            "x-vapi-webhook-secret": "{{REDACTED:VAPI_WEBHOOK_SECRET}}"
+          },
+          "staticIpAddressesEnabled": false,
+          "timeoutSeconds": 20,
+          "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook"
+        },
+        "transcriber": {
+          "language": "en",
+          "model": "flux-general-en",
+          "provider": "deepgram"
+        },
+        "updatedAt": "2026-08-18T18:22:26.101Z",
+        "voice": {
+          "model": "eleven_flash_v2_5",
+          "provider": "11labs",
+          "similarityBoost": 0.75,
+          "stability": 0.5,
+          "voiceId": "02y4x5i9YrzYlFvGo1pp"
+        },
+        "voicemailDetection": {
+          "backoffPlan": {
+            "frequencySeconds": 5,
+            "maxRetries": 6,
+            "startAtSeconds": 5
+          },
+          "beepMaxAwaitSeconds": 12,
+          "provider": "vapi"
+        },
+        "voicemailMessage": "Hi, this is Sandra from Naidu Property Consulting Services, just a quick reminder about your upcoming initial finance consult. If you're unable to attend, please call us back on this number so we can schedule a new slot that works for you."
+      },
+      "versionId": "c397e312-9b31-11f1-9b8c-3f1aa3be3963"
+    },
     {
       "createdAt": "2026-07-28T05:35:04.036Z",
       "data": {
@@ -46,7 +121,7 @@
         "orgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd",
         "server": {
           "headers": {
-            "x-vapi-webhook-secret": "vapi_wh_dfc85e7ab32da6b7d20c5a0ea52c24e56ad20dd6ce0f0bddbe8a1a784c4d7701"
+            "x-vapi-webhook-secret": "{{REDACTED:VAPI_WEBHOOK_SECRET}}"
           },
           "staticIpAddressesEnabled": false,
           "timeoutSeconds": 20,
@@ -121,7 +196,7 @@
         "orgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd",
         "server": {
           "headers": {
-            "x-vapi-webhook-secret": "vapi_wh_dfc85e7ab32da6b7d20c5a0ea52c24e56ad20dd6ce0f0bddbe8a1a784c4d7701"
+            "x-vapi-webhook-secret": "{{REDACTED:VAPI_WEBHOOK_SECRET}}"
           },
           "staticIpAddressesEnabled": false,
           "timeoutSeconds": 20,

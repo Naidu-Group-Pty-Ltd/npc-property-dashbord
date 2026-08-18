@@ -1,6 +1,6 @@
 # ghl_create_booking
 
-`f195a817-8346-475d-ad0e-8033f1d2e283` · type `function` · async `False` · version `—`
+`f195a817-8346-475d-ad0e-8033f1d2e283` · type `function` · async `False` · version `v1`
 · created 2026-05-12 · updated 2026-05-14 17:53:57
 · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 
@@ -33,12 +33,13 @@ _none_
 - `request-start`: Perfect, I’ll go ahead and book that in for you now.
 - `request-complete`: All set, your appointment has been booked.
 
-## Used by 11 assistant(s)
+## Used by 12 assistant(s)
 
 - NPC Active Nurturing
 - NPC Discovery Call Follow Up Test
 - NPC Discovery Call No Show Follow Up
 - NPC IFC Follow Up
+- NPC IFC Inbound
 - NPC IFC No Show Follow Up
 - NPC Opt In Follow Up
 - NPC Opt In Follow Up Inbound

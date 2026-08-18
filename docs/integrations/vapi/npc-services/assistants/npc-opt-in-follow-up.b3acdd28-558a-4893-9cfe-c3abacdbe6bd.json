@@ -49,7 +49,7 @@
   "orgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd",
   "server": {
     "headers": {
-      "x-vapi-webhook-secret": "vapi_wh_dfc85e7ab32da6b7d20c5a0ea52c24e56ad20dd6ce0f0bddbe8a1a784c4d7701"
+      "x-vapi-webhook-secret": "{{REDACTED:VAPI_WEBHOOK_SECRET}}"
     },
     "timeoutSeconds": 20,
     "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook"

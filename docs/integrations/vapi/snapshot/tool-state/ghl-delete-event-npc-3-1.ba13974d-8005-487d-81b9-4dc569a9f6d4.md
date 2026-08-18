@@ -1,6 +1,6 @@
 # ghl_delete_event_npc_3_1
 
-`ba13974d-8005-487d-81b9-4dc569a9f6d4` · type `function` · async `True` · version `—`
+`ba13974d-8005-487d-81b9-4dc569a9f6d4` · type `function` · async `True` · version `v1`
 · created 2025-12-07 · updated 2025-12-07 15:04:38
 · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 

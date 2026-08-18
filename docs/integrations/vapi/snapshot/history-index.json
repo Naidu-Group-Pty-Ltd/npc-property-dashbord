@@ -1502,8 +1502,16 @@
   {
     "assistant": "NPC IFC Inbound",
     "assistantId": "7770a48b-68d1-48df-a03a-9cc5b9e91ad8",
-    "versionCount": 27,
+    "versionCount": 28,
     "versions": [
+      {
+        "createdAt": "2026-08-18T18:22:26.241Z",
+        "model": "gpt-5.6-luna",
+        "promptChars": 41289,
+        "promptSha256_16": "e9ff28456b09fa38",
+        "serverUrl": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+        "voiceId": "02y4x5i9YrzYlFvGo1pp"
+      },
       {
         "createdAt": "2026-07-28T05:35:04.036Z",
         "model": "gpt-5.6-luna",
@@ -2123,8 +2131,16 @@
   {
     "assistant": "NPC Opt In Follow Up",
     "assistantId": "b3acdd28-558a-4893-9cfe-c3abacdbe6bd",
-    "versionCount": 35,
+    "versionCount": 33,
     "versions": [
+      {
+        "createdAt": "2026-08-18T18:03:28.955Z",
+        "model": "gpt-5.6-luna",
+        "promptChars": 36674,
+        "promptSha256_16": "62305c9c0b68fc68",
+        "serverUrl": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
+        "voiceId": "cJi4iYb9fQ8QIRKkX8Fd"
+      },
       {
         "createdAt": "2026-07-22T05:47:27.470Z",
         "model": "gpt-5.2-chat-latest",
@@ -2378,30 +2394,6 @@
         "model": "gpt-5.2-chat-latest",
         "promptChars": 15000,
         "promptSha256_16": "85a89e14c1575ec3",
-        "serverUrl": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
-        "voiceId": "cJi4iYb9fQ8QIRKkX8Fd"
-      },
-      {
-        "createdAt": "2026-01-09T09:26:37.355Z",
-        "model": "gpt-5.2-chat-latest",
-        "promptChars": 14480,
-        "promptSha256_16": "3eff022cdabd5b4d",
-        "serverUrl": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
-        "voiceId": "cJi4iYb9fQ8QIRKkX8Fd"
-      },
-      {
-        "createdAt": "2026-01-09T09:24:35.105Z",
-        "model": "gpt-5.2-chat-latest",
-        "promptChars": 14469,
-        "promptSha256_16": "ee7d1ad53c4b5f38",
-        "serverUrl": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
-        "voiceId": "cJi4iYb9fQ8QIRKkX8Fd"
-      },
-      {
-        "createdAt": "2026-01-09T09:11:18.745Z",
-        "model": "gpt-5.2-chat-latest",
-        "promptChars": 14305,
-        "promptSha256_16": "8344dac684911120",
         "serverUrl": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook",
         "voiceId": "cJi4iYb9fQ8QIRKkX8Fd"
       }

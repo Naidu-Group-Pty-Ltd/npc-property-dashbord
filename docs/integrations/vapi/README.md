@@ -1,5 +1,9 @@
 # Vapi — org snapshot and migration bundle
 
+> ⚠️ **Two secrets were committed here and need rotating** — the Vapi webhook secret and two
+> `serverUrlSecret` values. The working tree is clean; the values remain in five pushed
+> commits. See [`SECURITY-INCIDENT.md`](./SECURITY-INCIDENT.md).
+
 Two things live here, and they are not the same thing.
 
 | Directory | What it is |
@@ -81,6 +85,29 @@ something worth knowing before migrating: **three of the four `NPC Sales Force` 
 have never taken a call** — `NPC IFC Inbound`, `NPC Strategy Session Inbound` and
 `NPC Opt In Follow Up Inbound` are all at zero. Only `NPC Inbound Agent` (37) has traffic, so
 the inbound handoff routing has never actually been exercised in production.
+
+## Assistant fetching is exhaustive, and that was checked
+
+| Question | Answer |
+| --- | --- |
+| Is the list complete? | Yes — bare array of 28. `limit` works; unknown query params **400**. Only `createdAtGe`/`updatedAtGe` exist as extra filters. |
+| Any assistant sub-endpoint missed? | 22 probed; only `/version` and `/versions` exist. `analytics`, `call`, `metrics`, `logs`, `tools`, `files`, `squad`, `usage`, `cost`, `export`, `clone` and 11 more all **404**. |
+| Does `?version=vN` retrieve history? | **No — the parameter is ignored.** `v1`, `v2`, `v99` and `bogus` all return the current record, byte-identical to a plain `GET`. Only `/version` and `/versions` serve history. |
+
+That last one produced a false alarm worth recording: `?version=v1` on `NPC IFC Inbound`
+appeared to show a tool the version history said was never attached. It was not history — it
+was the **live** record, which had changed minutes earlier.
+
+### Assistants can carry inline functions, and six do
+
+`assistant.model.functions[]` holds legacy inline function definitions with their **own
+`serverUrl`**, separate from `model.toolIds` and absent from `/tool` entirely. There are
+**16 across 6 assistants** — all non-NPC (Sham Dental, Ashwini, Farah, Mandy, Aishu, Raya) —
+and all 16 point at `hook.eu2.make.com`. They are additional old-Make webhooks that a tool
+inventory alone would never surface.
+
+Two reference types are noted but not yet fetched: `artifactPlan.structuredOutputIds`
+(5 distinct) and `scorecardIds` (1).
 
 ## Provider credentials — and the one pointing at the old Make account
 

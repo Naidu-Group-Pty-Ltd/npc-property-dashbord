@@ -1,6 +1,6 @@
 # ghl_check_availability
 
-`6587bc7d-7382-4e33-a38d-95f5740df52a` · type `function` · async `None` · version `—`
+`6587bc7d-7382-4e33-a38d-95f5740df52a` · type `function` · async `None` · version `v1`
 · created 2026-05-11 · updated 2026-05-14 16:50:42
 · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 

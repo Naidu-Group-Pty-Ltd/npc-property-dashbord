@@ -10,7 +10,7 @@
   "firstMessageMode": "assistant-speaks-first",
   "id": "7770a48b-68d1-48df-a03a-9cc5b9e91ad8",
   "isServerUrlSecretSet": false,
-  "latestVersion": "v1",
+  "latestVersion": "v2",
   "maxDurationSeconds": 1444,
   "model": {
     "knowledgeBase": {
@@ -32,14 +32,15 @@
       "bbbf6fb6-685d-411e-b0e1-bec5acc4fa8e",
       "3e116e74-0dda-4277-ae38-468bdd3464e6",
       "6587bc7d-7382-4e33-a38d-95f5740df52a",
-      "5c0c334c-6bbf-4399-b748-a3c50207e754"
+      "5c0c334c-6bbf-4399-b748-a3c50207e754",
+      "f195a817-8346-475d-ad0e-8033f1d2e283"
     ]
   },
   "name": "NPC IFC Inbound",
   "orgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd",
   "server": {
     "headers": {
-      "x-vapi-webhook-secret": "vapi_wh_dfc85e7ab32da6b7d20c5a0ea52c24e56ad20dd6ce0f0bddbe8a1a784c4d7701"
+      "x-vapi-webhook-secret": "{{REDACTED:VAPI_WEBHOOK_SECRET}}"
     },
     "staticIpAddressesEnabled": false,
     "timeoutSeconds": 20,
@@ -50,7 +51,7 @@
     "model": "flux-general-en",
     "provider": "deepgram"
   },
-  "updatedAt": "2026-07-28T05:35:04.018Z",
+  "updatedAt": "2026-08-18T18:22:26.101Z",
   "voice": {
     "model": "eleven_flash_v2_5",
     "provider": "11labs",

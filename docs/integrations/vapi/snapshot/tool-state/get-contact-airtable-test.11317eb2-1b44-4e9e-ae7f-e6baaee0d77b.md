@@ -1,6 +1,6 @@
 # get_contact_airtable_test
 
-`11317eb2-1b44-4e9e-ae7f-e6baaee0d77b` · type `function` · async `True` · version `—`
+`11317eb2-1b44-4e9e-ae7f-e6baaee0d77b` · type `function` · async `True` · version `v1`
 · created 2025-11-12 · updated 2025-11-14 06:04:01
 · org `c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd`
 
