@@ -1,4 +1,9 @@
-# Finance portal — Flutter plan (phase 1)
+# Finance — Flutter app (phase 2)
+
+> **Its own binary**, with its own B2B product page (master plan `R-ARCH-1`).
+> It drives the financial-services declarations on every store, so its facts
+> must be stated precisely. Read
+> [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) before starting.
 
 Broker partners working purchase files, pipeline, compliance and commissions.
 B2B surface, but it drives the app's **financial-services declarations** on
@@ -18,7 +23,7 @@ inbox) · Messages · Compliance workspace · AML case snapshot · Earnings ·
 Insights · Lender intelligence · Reports · Partner referral inbox ·
 Settings · Login / AcceptInvite / ChangePassword.
 
-Phase-1 cut: Dashboard, Purchase files (+ detail), Pipeline, Clients,
+First release cut: Dashboard, Purchase files (+ detail), Pipeline, Clients,
 Messages, Settings, auth screens. Compliance workspace and AML snapshot in
 phase 1 only if the demo account can exercise them safely (S-6).
 

@@ -1,0 +1,16 @@
+# Inherits the workspace lint policy (../../analysis_options.yaml).
+#
+# `flutter create` generates a standalone file here that includes only
+# `flutter_lints`, which would analyse this app under weaker rules than the
+# packages it depends on. Only the native-host excludes are app-local.
+include: ../../analysis_options.yaml
+
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**

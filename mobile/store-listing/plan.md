@@ -1,9 +1,24 @@
 # Store listing & launch playbook — App Store · Google Play · Huawei AppGallery
 
-How the app is *presented, released and maintained* on the three stores.
+How the apps are *presented, released and maintained* on the three stores.
 The master plan's rule catalog (`../plan.md`, Part 3) covers what gets an app
 rejected; this file covers what gets an approved app found, trusted, and
 reviewed well — and the listing-level mistakes that also cause rejections.
+
+**Five apps, four listings.** The estate ships per audience (`R-ARCH-1`), and
+they are not five equivalent store entries:
+
+| App | Store presence |
+|---|---|
+| Command Centre | **Not listed.** Apple Business Manager custom app; Play managed/private. Nothing in §2-§5 applies to it except the asset and identity rules. |
+| Client | The public consumer listing. Everything below is written for this one first. |
+| Finance · Solicitor · Builder | Public B2B listings, each with its own product page, screenshots and description written for that profession. |
+
+Section 2's invitation framing and section 8's traps apply to all four public
+listings. **The apps must read as four different products** — same seller, same
+design language, genuinely different audiences and feature sets. Four
+near-identical entries is what Apple Guideline 4.3 catches, and the defence is
+that they are not near-identical, so the listings must show it.
 
 Everything here inherits the master plan's honesty rule: policy-dated
 specifics are tagged `[re-verify]` and must be checked against current store
@@ -43,7 +58,7 @@ Why this is a best practice and not just honesty:
 
 | Field | App Store | Google Play | AppGallery |
 |---|---|---|---|
-| Name (indexed) | 30 chars — "NPC Portals" + strongest term | Title, 30 chars | App name `[re-verify length]` |
+| Name (indexed) | 30 chars — "NPC" + the audience ("Client", "Finance", …) + strongest term | Title, 30 chars | App name `[re-verify length]` |
 | Second line | Subtitle, 30 chars — the invitation line or value line | Short description, 80 chars, **indexed** | Brief intro `[re-verify]` |
 | Long text | Description (not meaningfully indexed) — write for humans | Full description, 4 000 chars, **indexed** — natural keyword coverage, no stuffing | Detailed intro `[re-verify]` |
 | Hidden keywords | 100-char keyword field — no spaces after commas, no competitor names, no duplicates of name/subtitle | — (indexing comes from title + descriptions) | Keyword field per AGC `[re-verify]` |
@@ -70,13 +85,13 @@ Rules that apply to all three:
 - First two screenshots carry the entire message (most users never swipe):
   1) client deal-progress view, 2) documents/messages. Ship light **and**
   dark sets — the glass design system is the visual identity; show it.
-- Portal-targeted acquisition, without polluting the main listing:
-  - Apple **custom product pages** — a broker-facing page (pipeline,
-    purchase files) linked from finance-partner invite emails; a
-    client-facing default page.
-  - Play **custom store listings** — same split, URL-targeted.
-  - This is the correct home for per-portal marketing; the master listing
-    stays client-first.
+- Each app carries its own screenshot set drawn from its own UI. Reusing one
+  app's screenshots across the four is both misleading metadata **and** the
+  clearest possible evidence for a 4.3 finding — do not do it.
+- Apple **custom product pages** / Play **custom store listings** remain useful
+  *within* an app (e.g. a purchase-file-led page for finance partners linked
+  from invite emails), now as segmentation inside one listing rather than as a
+  substitute for separate apps.
 - Play feature graphic and AppGallery banner assets from the same brand kit
   (`npc-services-design` skill owns the marks; no text-heavy icons, and the
   email-signature banner files in this repo are **not** app icons — see
@@ -134,6 +149,8 @@ Rules that apply to all three:
 
 ```
 [ ] Seller identity = AML entity on all three consoles; DUNS verifications complete
+[ ] Command Centre confirmed private (ABM / Play managed), absent from public search
+[ ] The four public listings read as four distinct products, not one app four times
 [ ] Privacy / support / deletion / marketing URLs live and linked
 [ ] Invitation-gated wording present in subtitle or first description line
 [ ] Screenshots regenerated from current build + demo data, light and dark

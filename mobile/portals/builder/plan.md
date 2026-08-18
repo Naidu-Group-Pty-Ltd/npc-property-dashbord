@@ -1,4 +1,8 @@
-# Builder portal — Flutter plan (phase 2)
+# Builder — Flutter app (phase 3)
+
+> **Its own binary** (master plan `R-ARCH-1`). The widest screen surface and the
+> only one with organisation switching, so it goes last. Read
+> [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) before starting.
 
 Builder/developer partners: projects, construction, inventory, transactions.
 The widest screen surface of the four portals and the only one with an

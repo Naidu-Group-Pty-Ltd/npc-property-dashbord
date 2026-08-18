@@ -64,3 +64,13 @@ ds-bundle/
 # by `npm run templates:library:cards`. Build output, regenerated on demand and
 # pushed to claude.ai/design with the DesignSync tool — never edited by hand.
 .design-system/
+
+# Flutter workspace (mobile/) build artefacts.
+# `pubspec.lock` IS committed: the app targets pin their dependency graph, and
+# an unpinned mobile build is one that cannot be reproduced for a store review.
+mobile/.dart_tool/
+mobile/**/.dart_tool/
+mobile/**/build/
+mobile/**/local.properties
+mobile/**/.flutter-plugins-dependencies
+mobile/**/*.iml

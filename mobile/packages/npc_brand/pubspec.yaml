@@ -1,0 +1,15 @@
+name: npc_brand
+description: Applies a tenant's whitelabel_settings over the NPC design system.
+publish_to: none
+version: 0.1.0
+resolution: workspace
+environment:
+  sdk: ^3.13.0
+dependencies:
+  flutter:
+    sdk: flutter
+  npc_design_system: ^0.1.0
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter

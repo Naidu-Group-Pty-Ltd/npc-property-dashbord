@@ -1,4 +1,8 @@
-# Solicitor portal — Flutter plan (phase 2)
+# Solicitor — Flutter app (phase 3)
+
+> **Its own binary** (master plan `R-ARCH-1`). Cheapest last: it shares nearly
+> everything structural with the finance app. Read
+> [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) before starting.
 
 Legal partners: matters, pipeline, compliance, workspace. Deferred to phase 2
 — it shares nearly everything structural with the finance portal, so it

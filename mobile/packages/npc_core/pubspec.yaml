@@ -1,0 +1,12 @@
+name: npc_core
+description: Flavors, configuration, results and logging shared by every NPC app.
+publish_to: none
+version: 0.1.0
+resolution: workspace
+environment:
+  sdk: ^3.13.0
+dependencies:
+  meta: ^1.16.0
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  test: ^1.25.0

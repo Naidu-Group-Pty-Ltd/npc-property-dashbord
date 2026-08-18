@@ -1,0 +1,26 @@
+name: npc_builder
+description: NPC Builder portal — its own app (mobile/plan.md R-ARCH-1).
+publish_to: none
+version: 0.1.0+1
+resolution: workspace
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  npc_api: ^0.1.0
+  npc_auth: ^0.1.0
+  npc_brand: ^0.1.0
+  npc_portal: ^0.1.0
+  npc_core: ^0.1.0
+  npc_design_system: ^0.1.0
+  npc_tenant: ^0.1.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

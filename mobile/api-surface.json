@@ -5,10 +5,10 @@
     "supabase/config.toml"
   ],
   "counts": {
-    "staff": 240,
+    "staff": 242,
     "public": 40,
-    "portal": 69,
-    "server-only": 67
+    "portal": 70,
+    "server-only": 71
   },
   "functions": [
     {
@@ -72,6 +72,12 @@
       "verify_jwt": false
     },
     {
+      "name": "agreement-centre-render",
+      "exposure_class": "human-authenticated",
+      "mobileScope": "staff",
+      "verify_jwt": true
+    },
+    {
       "name": "ai-dashboard-agent",
       "exposure_class": "authenticated-staff",
       "mobileScope": "staff",
@@ -118,6 +124,12 @@
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
       "verify_jwt": false
+    },
+    {
+      "name": "aml-idv-retention",
+      "exposure_class": "cron-worker",
+      "mobileScope": "server-only",
+      "verify_jwt": true
     },
     {
       "name": "aml-launch-ops",
@@ -196,6 +208,12 @@
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
       "verify_jwt": false
+    },
+    {
+      "name": "aml-verification-processor",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
+      "verify_jwt": true
     },
     {
       "name": "analytics-query",
@@ -678,7 +696,19 @@
       "verify_jwt": true
     },
     {
+      "name": "didit-webhook",
+      "exposure_class": "webhook-secret",
+      "mobileScope": "server-only",
+      "verify_jwt": false
+    },
+    {
       "name": "dispatch-marketing-reports",
+      "exposure_class": "cron-worker",
+      "mobileScope": "server-only",
+      "verify_jwt": false
+    },
+    {
+      "name": "dispatch-workflow-triggers",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
       "verify_jwt": false
@@ -784,6 +814,12 @@
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
       "verify_jwt": true
+    },
+    {
+      "name": "finance-portal-agreements",
+      "exposure_class": "portal-authenticated",
+      "mobileScope": "portal",
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-ai-copilot",
@@ -1368,6 +1404,12 @@
       "verify_jwt": true
     },
     {
+      "name": "google-fonts-catalog",
+      "exposure_class": "authenticated-staff",
+      "mobileScope": "staff",
+      "verify_jwt": false
+    },
+    {
       "name": "google-places-autocomplete",
       "exposure_class": "public",
       "mobileScope": "public",
@@ -1755,7 +1797,7 @@
       "name": "mcp",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "message-governance",
