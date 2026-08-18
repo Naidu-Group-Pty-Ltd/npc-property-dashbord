@@ -10,7 +10,7 @@ every write without `--execute`, and every write additionally requires
 | File | What it is |
 | --- | --- |
 | `payloads/` | 49 generated POST bodies in ten dependency-ordered phases: 2 files, 12 tools, 6 structured outputs, 1 scorecard, 15 assistants, 1 squad, 1 workflow, 4 phone numbers, and (optional) 6 insights + 1 board. |
-| `index.json` | Per payload: the Create DTO it targets, its endpoint, every cross-reference as a JSON pointer (117 total), the env vars it needs, and its warnings. |
+| `index.json` | Per payload: the Create DTO it targets, its endpoint, every cross-reference as a JSON pointer (104 create-time + 13 deferred), the env vars it needs, and its warnings. |
 | `build_payloads.py` | Regenerates all of the above from `../npc-services` and `../snapshot`. Deterministic, offline, validates every payload against `create-dtos.json` and exits non-zero on any mismatch. |
 | `create-dtos.json` | The 38 Create DTO top-level shapes distilled from the pinned OpenAPI document by `distill_spec.py` — so validation works without the 2 MB spec. |
 | `push.py` | The executor. Dry-run (`plan`) by default; `probe`, `run`, `verify` subcommands. |
@@ -38,9 +38,12 @@ every write without `--execute`, and every write additionally requires
    legacy eu2 webhooks until Make cutover, which keeps working but couples the two
    migrations. `push.py` refuses a map with unfilled entries.
 6. **`python3 push.py run --execute [--url-map url-map.json] [--include-optional]`** —
-   creates everything in dependency order, remaps all 117 references onto the new ids as
-   they are minted, substitutes secrets from the environment in memory only, and
-   read-back-diffs every create. Resumable: `clone-state.json` records progress and a
+   creates everything in dependency order, remaps all 104 create-time references onto the
+   new ids as they are minted, substitutes secrets from the environment in memory only,
+   and read-back-diffs every create. After the assistants exist it **backfills** the 13
+   deferred reverse references (`assistantIds` on the structured outputs and the
+   scorecard) with a PATCH each — those form a cycle with the assistants that forward-
+   reference them, so they cannot ride on the create. Resumable: `clone-state.json` records progress and a
    re-run skips what exists. `--strict` aborts on any dropped field.
    For the two Twilio numbers, also `export TWILIO_ACCOUNT_SID=…` (both share one SID)
    and optionally `TWILIO_AUTH_TOKEN`.
@@ -58,6 +61,12 @@ every write without `--execute`, and every write additionally requires
 - **Remap + substitution exercised against all 47 JSON payloads** with a fake id map:
   every reference pointer rewrites, and no `{{REDACTED:*}}` placeholder, legacy Make
   URL, or source-org id survives into a request body.
+- **Topology asserted**: every create-time reference points at a strictly earlier phase,
+  every deferred reference resolves within the set, no core payload references an
+  optional one, and the three dangling toolIds appear nowhere. The final sweep caught the
+  one violation — `assistantIds` on phases 02/03 pointing forward at phase 04 would have
+  aborted a live run mid-flight; it is now the deferred backfill above, and `verify`
+  checks the backfilled field too.
 - **A missing env var aborts** before anything is sent; secrets never touch disk —
   `clone-state.json` holds only ids and timestamps.
 

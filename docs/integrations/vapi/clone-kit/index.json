@@ -238,26 +238,19 @@
       "oldId": "94648165-f08f-4d2e-ad13-91ec7f41d443",
       "name": "Appointment Booked",
       "optional": false,
-      "refs": {
-        "/assistantIds/0": {
-          "resource": "assistant",
-          "oldId": "b3acdd28-558a-4893-9cfe-c3abacdbe6bd"
-        },
-        "/assistantIds/1": {
-          "resource": "assistant",
-          "oldId": "72cebdc8-8ea2-4ed3-8ae5-bbbeb5fa782f"
-        },
-        "/assistantIds/2": {
-          "resource": "assistant",
-          "oldId": "38e71746-75f8-4a7f-b527-f0b7528d76f0"
-        },
-        "/assistantIds/3": {
-          "resource": "assistant",
-          "oldId": "e1b76e7c-b9a2-461b-a951-e6b253a4d0d7"
-        }
-      },
+      "refs": {},
       "env": [],
-      "warnings": []
+      "warnings": [
+        "assistantIds deferred to a post-assistant PATCH (cycle: assistants reference this object and are created later)"
+      ],
+      "deferred": {
+        "assistantIds": [
+          "b3acdd28-558a-4893-9cfe-c3abacdbe6bd",
+          "72cebdc8-8ea2-4ed3-8ae5-bbbeb5fa782f",
+          "38e71746-75f8-4a7f-b527-f0b7528d76f0",
+          "e1b76e7c-b9a2-461b-a951-e6b253a4d0d7"
+        ]
+      }
     },
     {
       "file": "payloads/02-structured-output/appointment-cancelled.00d9c6e4-6383-4b59-97be-b7dba41f0ace.json",
@@ -268,14 +261,16 @@
       "oldId": "00d9c6e4-6383-4b59-97be-b7dba41f0ace",
       "name": "Appointment Cancelled",
       "optional": false,
-      "refs": {
-        "/assistantIds/0": {
-          "resource": "assistant",
-          "oldId": "38e71746-75f8-4a7f-b527-f0b7528d76f0"
-        }
-      },
+      "refs": {},
       "env": [],
-      "warnings": []
+      "warnings": [
+        "assistantIds deferred to a post-assistant PATCH (cycle: assistants reference this object and are created later)"
+      ],
+      "deferred": {
+        "assistantIds": [
+          "38e71746-75f8-4a7f-b527-f0b7528d76f0"
+        ]
+      }
     },
     {
       "file": "payloads/02-structured-output/appt-time-selected.e783bfd6-fd93-4462-b5a4-abd97aac60e1.json",
@@ -286,22 +281,18 @@
       "oldId": "e783bfd6-fd93-4462-b5a4-abd97aac60e1",
       "name": "Appt Time Selected",
       "optional": false,
-      "refs": {
-        "/assistantIds/0": {
-          "resource": "assistant",
-          "oldId": "b3acdd28-558a-4893-9cfe-c3abacdbe6bd"
-        },
-        "/assistantIds/1": {
-          "resource": "assistant",
-          "oldId": "72cebdc8-8ea2-4ed3-8ae5-bbbeb5fa782f"
-        },
-        "/assistantIds/2": {
-          "resource": "assistant",
-          "oldId": "e1b76e7c-b9a2-461b-a951-e6b253a4d0d7"
-        }
-      },
+      "refs": {},
       "env": [],
-      "warnings": []
+      "warnings": [
+        "assistantIds deferred to a post-assistant PATCH (cycle: assistants reference this object and are created later)"
+      ],
+      "deferred": {
+        "assistantIds": [
+          "b3acdd28-558a-4893-9cfe-c3abacdbe6bd",
+          "72cebdc8-8ea2-4ed3-8ae5-bbbeb5fa782f",
+          "e1b76e7c-b9a2-461b-a951-e6b253a4d0d7"
+        ]
+      }
     },
     {
       "file": "payloads/02-structured-output/contact-id.e6a0c195-3ef9-4661-951f-bd66a801cd62.json",
@@ -312,14 +303,16 @@
       "oldId": "e6a0c195-3ef9-4661-951f-bd66a801cd62",
       "name": "contact_id",
       "optional": false,
-      "refs": {
-        "/assistantIds/0": {
-          "resource": "assistant",
-          "oldId": "cc46d882-55c0-454c-82e2-ef00ae000aec"
-        }
-      },
+      "refs": {},
       "env": [],
-      "warnings": []
+      "warnings": [
+        "assistantIds deferred to a post-assistant PATCH (cycle: assistants reference this object and are created later)"
+      ],
+      "deferred": {
+        "assistantIds": [
+          "cc46d882-55c0-454c-82e2-ef00ae000aec"
+        ]
+      }
     },
     {
       "file": "payloads/02-structured-output/zoom-call-booked.468022e7-2ba9-4154-8178-927586daf240.json",
@@ -343,18 +336,17 @@
       "oldId": "a5b2f26a-dcfc-4e2f-82d9-87bcaa572782",
       "name": "Zoom Call Booked",
       "optional": false,
-      "refs": {
-        "/assistantIds/0": {
-          "resource": "assistant",
-          "oldId": "72cebdc8-8ea2-4ed3-8ae5-bbbeb5fa782f"
-        },
-        "/assistantIds/1": {
-          "resource": "assistant",
-          "oldId": "b3acdd28-558a-4893-9cfe-c3abacdbe6bd"
-        }
-      },
+      "refs": {},
       "env": [],
-      "warnings": []
+      "warnings": [
+        "assistantIds deferred to a post-assistant PATCH (cycle: assistants reference this object and are created later)"
+      ],
+      "deferred": {
+        "assistantIds": [
+          "72cebdc8-8ea2-4ed3-8ae5-bbbeb5fa782f",
+          "b3acdd28-558a-4893-9cfe-c3abacdbe6bd"
+        ]
+      }
     },
     {
       "file": "payloads/03-scorecard/scorecard.scorecard-for-assistant-npc-opt-in-follow-up.cf81945a-c941-46a2-a538-2987abffe521.json",
@@ -365,18 +357,17 @@
       "oldId": "cf81945a-c941-46a2-a538-2987abffe521",
       "name": "scorecard for assistant NPC Opt In Follow Up",
       "optional": false,
-      "refs": {
-        "/assistantIds/0": {
-          "resource": "assistant",
-          "oldId": "b3acdd28-558a-4893-9cfe-c3abacdbe6bd"
-        },
-        "/assistantIds/1": {
-          "resource": "assistant",
-          "oldId": "739b47bf-9adb-4ac6-aca4-976d815f673e"
-        }
-      },
+      "refs": {},
       "env": [],
-      "warnings": []
+      "warnings": [
+        "assistantIds deferred to a post-assistant PATCH (cycle: assistants reference this object and are created later)"
+      ],
+      "deferred": {
+        "assistantIds": [
+          "b3acdd28-558a-4893-9cfe-c3abacdbe6bd",
+          "739b47bf-9adb-4ac6-aca4-976d815f673e"
+        ]
+      }
     },
     {
       "file": "payloads/04-assistant/npc-active-nurturing.cc46d882-55c0-454c-82e2-ef00ae000aec.json",
@@ -1235,8 +1226,8 @@
       "TWILIO_ACCOUNT_SID",
       "VAPI_WEBHOOK_SECRET"
     ],
-    "crossReferences": 117,
-    "warnings": 15,
+    "crossReferences": 104,
+    "warnings": 21,
     "legacyMakeUrls": 12,
     "sourceOrgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd"
   }

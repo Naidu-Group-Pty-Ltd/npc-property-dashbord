@@ -1,10 +1,4 @@
 {
-  "assistantIds": [
-    "b3acdd28-558a-4893-9cfe-c3abacdbe6bd",
-    "72cebdc8-8ea2-4ed3-8ae5-bbbeb5fa782f",
-    "38e71746-75f8-4a7f-b527-f0b7528d76f0",
-    "e1b76e7c-b9a2-461b-a951-e6b253a4d0d7"
-  ],
   "description": "Tracks successful appointment bookings from customer calls",
   "name": "Appointment Booked",
   "schema": {

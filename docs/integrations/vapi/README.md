@@ -151,7 +151,8 @@ assistant references a `credentialId`**, so the link is visible only from `/cred
 payloads (validated against the Create DTOs, offline) and a pusher, `push.py`, that is
 dry-run by default: every write requires `--execute` plus a `VAPI_TARGET_TOKEN` for the
 new account, fingerprints the target so it cannot write into the source org, remaps all
-117 cross-references as ids are minted, substitutes secrets from the environment in
+104 create-time references as ids are minted and backfills the 13 deferred reverse
+references by PATCH once the assistants exist, substitutes secrets from the environment in
 memory only, and read-back-diffs every create. Its `probe` subcommand is the experiment
 `CLONE-CONTRACT.md` calls for. **Nothing has been executed** — the runbook in that
 directory carries the cutover order, starting with rotating the webhook secret.

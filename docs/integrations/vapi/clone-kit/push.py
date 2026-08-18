@@ -237,7 +237,40 @@ def cmd_run(args):
                 die('--strict: POST response is missing fields that were sent')
         else:
             print(f"uploaded file {p['name']} -> {new_id}")
+    backfill(index, st, phases)
     print('\nrun complete. now: push.py verify')
+
+
+def backfill(index, st, phases=None):
+    """PATCH the deferred reverse references (structured-output / scorecard
+    assistantIds) once the assistants they name exist. Breaks the create cycle:
+    assistants forward-reference these objects, these objects reverse-reference
+    the assistants."""
+    for p in index['payloads']:
+        deferred = p.get('deferred')
+        if not deferred or p['file'] not in st['done']:
+            continue
+        if phases and p['phase'] not in phases:
+            continue
+        key = f"backfill:{p['file']}"
+        if key in st['done']:
+            continue
+        body = {}
+        for field, old_ids in deferred.items():
+            mapped = [st['idMap'].get(i) for i in old_ids]
+            missing = [i for i, m in zip(old_ids, mapped) if m is None]
+            if missing:
+                die(f'backfill for {p["file"]}: unmapped assistant ids {missing} - '
+                    f'run phase 04-assistant first')
+            body[field] = mapped
+        path = p['endpoint'].split(' ', 1)[1] + '/' + st['done'][p['file']]
+        code, got = http('PATCH', path, body=body)
+        if code != 200:
+            die(f'backfill PATCH {path} -> {code} {json.dumps(got)[:300]}')
+        st['done'][key] = True
+        st['log'].append({'file': key, 'at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())})
+        save_state(st)
+        print(f"backfilled {p['resource']:18} {str(p['name'])[:40]:42} {list(body)}")
 
 
 def cmd_probe(args):
@@ -297,6 +330,12 @@ def cmd_verify(args):
             want = st['idMap'].get(ref['oldId'])
             if want and want not in json.dumps(got):
                 print(f'DANGLING in target: {p["name"]} {pointer} should hold {want}')
+                bad += 1
+        for field, old_ids in (p.get('deferred') or {}).items():
+            have = set(got.get(field) or [])
+            want = {st['idMap'][i] for i in old_ids if i in st['idMap']}
+            if want - have:
+                print(f'BACKFILL MISSING on {p["name"]}: {field} lacks {sorted(want - have)}')
                 bad += 1
     print(f'\nverify: {len(st["done"])} objects checked, {bad} problems')
     sys.exit(1 if bad else 0)

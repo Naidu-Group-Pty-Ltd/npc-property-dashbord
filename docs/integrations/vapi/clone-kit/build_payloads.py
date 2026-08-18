@@ -98,12 +98,21 @@ def main():
 
     for phase, res, src, rec, optional, extra in phases:
         payload = {k: v for k, v in rec.items() if k not in SERVER_FIELDS}
-        warnings, refs, env = [], {}, set()
+        warnings, refs, env, deferred = [], {}, set(), {}
         old_id = rec.get('id')
 
         if res == 'phone-number' and rec.get('provider') == 'vapi':
             if payload.pop('sipUri', None):
                 warnings.append('sipUri dropped: minted per org; SIP callers must be re-pointed at the new URI')
+
+        # Break the assistant <-> structured-output/scorecard reference cycle.
+        # Both Create DTOs accept assistantIds, but assistants are created two
+        # phases later, so the reverse reference is deferred to a PATCH that
+        # push.py issues after phase 04-assistant. Carried verbatim - including
+        # the reverse refs the source org let go stale (see STRUCTURED-OUTPUTS.md).
+        if res in ('structured-output', 'scorecard') and payload.get('assistantIds'):
+            deferred['assistantIds'] = payload.pop('assistantIds')
+            warnings.append('assistantIds deferred to a post-assistant PATCH (cycle: assistants reference this object and are created later)')
 
         # drop dangling references (only toolIds are known to dangle)
         tool_ids = (payload.get('model') or {}).get('toolIds') if res == 'assistant' else None
@@ -156,13 +165,16 @@ def main():
             json.dump(payload, f, indent=2)
             f.write('\n')
 
-        index['payloads'].append({
+        entry = {
             'file': rel, 'phase': phase, 'resource': res, 'dto': dto_name,
             'endpoint': dtos[res]['endpoint'], 'oldId': old_id,
             'name': rec.get('name') or (rec.get('function') or {}).get('name'),
             'optional': optional, 'refs': refs, 'env': sorted(env),
             'warnings': warnings, **extra,
-        })
+        }
+        if deferred:
+            entry['deferred'] = deferred
+        index['payloads'].append(entry)
         counts[phase] += 1
 
     index['phases'] = [{'phase': p, 'count': c} for p, c in sorted(counts.items())]
