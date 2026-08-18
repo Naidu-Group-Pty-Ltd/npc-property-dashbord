@@ -116,6 +116,18 @@ now captured:
 what confirms the 17:29 server-URL change on `NPC Active Nurturing` was made by
 `lavan.smi@gmail.com`, and it is blank on versions the platform generated itself.
 
+## Start here for the inbound squad
+
+[`snapshot/SQUAD-NPC-SALES-FORCE.md`](./snapshot/SQUAD-NPC-SALES-FORCE.md) is a deep-dive on
+`NPC Sales Force` — the only place in the org where a caller is routed between assistants,
+and the part of the estate with the most moving pieces. Call flow, all four members, the
+inline handoff tool, seven findings and what migration has to get right. **Every factual
+claim in it is asserted against the raw API data by a check that passes 20/20.**
+
+The headline: the handoff wiring itself is correct and complete, but `NPC IFC Inbound` is
+instructed 15 times to call a booking tool it does not have, and the whole squad has never
+executed a single handoff in production.
+
 ## Squads, phone numbers and the workflow
 
 | Path | What it is |
