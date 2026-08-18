@@ -16,6 +16,7 @@ import {
   runWithMetrics,
   currentEnvironment,
   ProviderResolutionError,
+  technicalCategoryForRefusal,
 } from '../_shared/aml/providers/index.ts';
 import { stripImagePayloads } from '../_shared/aml/verificationEvidence.pure.ts';
 import { canonicalOutcome } from '../_shared/aml/verificationOutcome.pure.ts';
@@ -135,10 +136,7 @@ export async function processVerificationEvent(db: any, event: any): Promise<voi
     await runProviderForCheck(db, check);
   } catch (err: any) {
     if (err instanceof ProviderResolutionError) {
-      await technical(
-        err.code === 'provider_misconfigured' ? 'provider_misconfigured' : 'provider_not_configured',
-        err.message,
-      );
+      await technical(technicalCategoryForRefusal(err.code), err.message);
     } else if (/storage_unreadable/.test(String(err?.message))) {
       await technical('storage_unreadable', String(err.message));
     } else if (/timeout|timed out/i.test(String(err?.message))) {

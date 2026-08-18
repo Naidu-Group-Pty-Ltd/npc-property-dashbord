@@ -55,6 +55,7 @@ import {
   runWithMetrics,
   currentEnvironment,
   ProviderResolutionError,
+  technicalCategoryForRefusal,
   type StandaloneIdvProvider,
 } from './providers/index.ts';
 import {
@@ -239,8 +240,8 @@ export async function runStandaloneVerification(
     provider = getStandaloneIdvProvider({ resolved, admin: db });
   } catch (err: any) {
     const category = err instanceof ProviderResolutionError
-      && err.code === 'provider_misconfigured'
-      ? 'provider_misconfigured' : 'provider_not_configured';
+      ? technicalCategoryForRefusal(err.code)
+      : 'provider_not_configured';
     await recordTechnical(db, check, category, String(err?.message ?? err));
     return { checkId, outcome: 'technical_failure' };
   }

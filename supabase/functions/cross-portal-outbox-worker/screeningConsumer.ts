@@ -16,6 +16,7 @@ import {
   resolveTenantProvider,
   runWithMetrics,
   ProviderResolutionError,
+  technicalCategoryForRefusal,
   type ScreeningScope,
 } from '../_shared/aml/providers/index.ts';
 import {
@@ -235,10 +236,7 @@ export async function processScreeningEvent(db: any, event: any): Promise<void> 
   } catch (err: any) {
     const message = String(err?.message ?? 'screening_failure');
     if (err instanceof ProviderResolutionError) {
-      await technical(
-        err.code === 'provider_misconfigured' ? 'provider_misconfigured' : 'provider_not_configured',
-        message,
-      );
+      await technical(technicalCategoryForRefusal(err.code), message);
     } else if (/sanctions_list_unavailable/.test(message)) {
       await technical('list_data_unavailable', message);
     } else if (/timeout|timed out/i.test(message)) {
