@@ -163,12 +163,41 @@ export async function processScreeningEvent(db: any, event: any): Promise<void> 
   // the provider runs at most once per delivery. The conditional predicate is
   // authoritative; the JS decision above is only routing.
   const stuckCutoff = new Date(Date.now() - STUCK_PROCESSING_MINUTES * 60_000).toISOString();
-  const { data: claimed, error: claimError } = await db.schema('aml')
-    .from('party_screening_subjects')
+
+  /*
+   * THE CLAIM PREDICATE, EXPRESSED AS FILTERS RATHER THAN A STRING.
+   *
+   * This was a single `.or()` built by interpolating an ISO timestamp:
+   *
+   *   .or(`state.in.(queued,error),and(state.eq.processing,updated_at.lt.${cutoff})`)
+   *
+   * PostgREST could not parse it. The timestamp carries the `.` and `:` that
+   * its grammar treats as structural, so the embedded `and(...)` group broke
+   * and the whole filter was read as a column reference. Production returned:
+   *
+   *   column party_screening_subjects.state does not exist
+   *
+   * So the claim has NEVER succeeded — not once, for any subject. Combined
+   * with the discarded `error` (fixed above), that failure was reported as
+   * "another worker has it, retry" and the subject was left exactly as found.
+   * That is the whole reason a screening request could sit `queued` for hours
+   * with no check, no category and no case event.
+   *
+   * The two branches are now separate, simple filters. Each is unambiguous,
+   * neither interpolates a value into a filter grammar, and the predicate is
+   * still evaluated by Postgres inside the UPDATE — so this remains one
+   * atomic conditional claim and the provider still runs at most once. The
+   * routing decision above chooses the branch; Postgres remains the authority.
+   */
+  const claimBase = db.schema('aml').from('party_screening_subjects')
     .update({ state: 'processing', updated_at: new Date().toISOString() })
-    .eq('id', subjectId)
-    .or(`state.in.(queued,error),and(state.eq.processing,updated_at.lt.${stuckCutoff})`)
-    .select('id').maybeSingle();
+    .eq('id', subjectId);
+  const claimQuery = String(subject.state) === 'processing'
+    // Reclaiming a holder that died: only if it is still stale at write time.
+    ? claimBase.eq('state', 'processing').lt('updated_at', stuckCutoff)
+    // Fresh work: claimable only while it is still unclaimed.
+    : claimBase.in('state', ['queued', 'error']);
+  const { data: claimed, error: claimError } = await claimQuery.select('id').maybeSingle();
 
   /*
    * A DATABASE FAILURE IS NOT A RACE.
