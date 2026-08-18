@@ -34,7 +34,10 @@
     "toolProseCards": 20,
     "toolStateCards": 20,
     "toolNamedVersions": 20,
-    "assistantNamedVersions": 33
+    "assistantNamedVersions": 33,
+    "squadStateCards": 3,
+    "phoneStateCards": 6,
+    "workflowStateCards": 1
   },
   "npcSplit": {
     "note": "Vapi has no folder concept; the split is by name prefix and corroborated by squad membership and phone-number naming. Only the NPC set is in scope for migration \u2014 see ../npc-services/clone-plan.json.",
@@ -95,5 +98,28 @@
     "state": "tool-state/<tool>.md \u2014 server URL/timeout/header names, async flag, function signature, messages and the list of assistants that use it.",
     "versions": "tool-versions/<tool>.json \u2014 GET /tool/{id}/versions.",
     "comparison": "TOOLS-COMPARISON.md \u2014 all 20 side by side, an assistant\u00d7tool matrix, and the orphans and dangling references."
+  },
+  "squadPhoneWorkflowCapture": {
+    "squad-state": "one card per squad: every member, every override, and the inline handoff tool expanded with its destinations, the condition each is chosen on, and the variables it extracts.",
+    "phone-state": "one card per number: what it routes to, sipUri, fallbackDestination, smsEnabled, server, and whether it can be carried across at all.",
+    "workflow-state": "the workflow as a mermaid graph plus every conversation-node prompt, first message, tool node and edge condition, all verbatim.",
+    "versionHistory": "none exists \u2014 /version and /versions both 404 for squad, phone-number and workflow. ?version=v1 returns 200 but is byte-identical to the current record, so the parameter is ignored rather than serving history."
+  },
+  "findings": {
+    "workflowIsAnUncustomisedSample": {
+      "workflow": "NPC Follow Up",
+      "id": "81f2958a-90cb-4ab0-b76a-1e0940babe42",
+      "evidence": {
+        "Wellness Partners": 6,
+        "Riley": 3,
+        "patient": 38,
+        "Naidu": 0,
+        "property": 0,
+        "discovery call": 0,
+        "NPC": "1 \u2014 the name on the record"
+      },
+      "referencedBy": "nothing \u2014 no phone number, assistant or squad points at it",
+      "conclusion": "a Vapi health-clinic sample template with an NPC name. Decide what it is for before migrating it; as it stands it carries no NPC content and no traffic."
+    }
   }
 }

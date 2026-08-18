@@ -116,6 +116,43 @@ now captured:
 what confirms the 17:29 server-URL change on `NPC Active Nurturing` was made by
 `lavan.smi@gmail.com`, and it is blank on versions the platform generated itself.
 
+## Squads, phone numbers and the workflow
+
+| Path | What it is |
+| --- | --- |
+| `snapshot/squad-state/<squad>.md` | Every member, every override, and the **inline `handoff_to_assistant` tool expanded** — its destinations, the condition each is chosen on, and the variables it extracts. |
+| `snapshot/phone-state/<number>.md` | What each number routes to, plus `sipUri`, `fallbackDestination`, `smsEnabled`, server — and whether it can be carried across at all. |
+| `snapshot/workflow-state/<workflow>.md` | The workflow as a **mermaid graph**, plus every conversation-node prompt, first message, tool node and edge condition, verbatim. |
+
+**None of the three has version history.** `/version` and `/versions` both 404 for squad,
+phone-number and workflow. `?version=v1` returns 200 but is byte-identical to the current
+record — the parameter is ignored rather than serving history. Assistants and tools are the
+only versioned resources.
+
+### `NPC Follow Up` is an uncustomised Vapi sample
+
+The one workflow in the org carries an NPC name and no NPC content. Counted across its
+whole payload:
+
+| Term | Mentions |
+| --- | ---: |
+| Wellness Partners | 6 |
+| patient | 38 |
+| Riley | 3 |
+| Naidu / property / discovery call | **0** |
+| NPC | 1 — the name on the record |
+
+Its start node opens *"You are Riley, appointment scheduling assistant for Wellness Partners
+health clinic."* **Nothing references it** — no phone number, assistant or squad. Its
+`transferCall` node has an empty `destinations` array, so it could not transfer even if
+reached. Decide what it is for before migrating it.
+
+### Two numbers route nowhere
+
+`+61286093299` (*Naidu Property Consulting Services*) and `+61281056305` (*NPC Services*)
+have no `assistantId`, `squadId` or `workflowId`. Inbound calls to them are unrouted. The
+`NPC Services` **Vapi** number is the one wired to the `NPC Sales Force` squad.
+
 ## Assistant version history
 
 `GET /assistant/{id}/version` returns a full historical configuration per version — **444
