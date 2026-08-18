@@ -114,6 +114,13 @@ export function useScreeningStage(
     const serverStoodDownAdverse = Boolean(
       raw.sync?.policy?.notRequired?.some((n) => n.scope === "adverse_media"));
 
+    /*
+     * The server's per-scope decision, passed straight through. It is the
+     * AUTHORITY on what is required; the derivation below still reads the
+     * evidence, which is a different question. Older servers do not send it,
+     * and `undefined` means the browser falls back to requiring everything —
+     * the answer it always gave, and the safe one.
+     */
     const scope = deriveAmlScreeningScope({
       answers: serverStoodDownAdverse
         ? { pep: "no", adverse: "no", thirdParty: "no", overseasFunding: "no" }
@@ -124,7 +131,7 @@ export function useScreeningStage(
       adverseMediaState: "not_started",
       now: nowIso,
       ...position.facts,
-    }, readiness);
+    }, readiness, raw.sync?.scopes ?? null);
 
     return {
       sync: raw.sync,

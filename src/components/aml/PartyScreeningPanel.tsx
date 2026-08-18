@@ -32,9 +32,19 @@ const PEP_TYPES = ["foreign", "domestic", "international_organisation"] as const
 const PEP_RELATIONSHIPS = ["self", "family_member", "close_associate"] as const;
 
 export function PartyScreeningPanel({
-  caseId, canWrite, canAdjudicate, onChanged, screeningBlocked,
+  caseId, canWrite, canAdjudicate, onChanged, screeningBlocked, optionalUnavailable,
 }: {
   caseId: string; canWrite: boolean; canAdjudicate: boolean; onChanged: () => void;
+  /**
+   * Whether an OPTIONAL run could not execute right now.
+   *
+   * Deliberately separate from `screeningBlocked`. A blocked required
+   * screening is a compliance problem someone must fix; an unavailable
+   * optional one is not a problem at all, because the case never needed it.
+   * Rendering them the same way would put "provider misconfigured" in front
+   * of an operator whose case is complete.
+   */
+  optionalUnavailable?: boolean;
   /**
    * Why screening cannot execute right now, or null when it can.
    *
@@ -70,6 +80,31 @@ export function PartyScreeningPanel({
       await load(); onChanged();
     } catch (e: any) {
       toast({ title: "Could not queue screening", description: e?.message, variant: "destructive" });
+    } finally { setBusyId(null); }
+  };
+
+  /**
+   * Run a screening the policy does not require, at the operator's choice.
+   *
+   * A refusal here is reported as information, never as a failure: the
+   * server changes nothing when the provider cannot run, and the case is
+   * not waiting on this.
+   */
+  const runOptional = async (id: string) => {
+    setBusyId(id);
+    try {
+      const r = await amlCasesApi.runOptionalScreening(id);
+      toast({
+        title: r.ran === false ? "Optional screening did not run" : "Optional screening started",
+        description: r.ran === false
+          ? (r.message ?? "The provider is not ready. Nothing is blocked — this case does "
+            + "not require sanctions screening.")
+          : "Run at your request. The case's obligation is unchanged: sanctions screening "
+            + "remains not required under policy.",
+      });
+      await load(); onChanged();
+    } catch (e: any) {
+      toast({ title: "Could not run optional screening", description: e?.message, variant: "destructive" });
     } finally { setBusyId(null); }
   };
 
@@ -206,6 +241,10 @@ export function PartyScreeningPanel({
                         {s.refresh_due_at && <> · refresh due {displayDate(s.refresh_due_at)}</>}
                         {s.state === "error" && s.error_category && <> · {s.error_category.replace(/_/g, " ")}</>}
                         {s.adjudication_note && <> · adjudicated</>}
+                        {s.voluntary_run_at && (
+                          <> · run voluntarily{s.voluntary_run_by_label
+                            ? ` by ${s.voluntary_run_by_label}` : ""} — not required under policy</>
+                        )}
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -220,16 +259,46 @@ export function PartyScreeningPanel({
                       ) : (
                         <Badge variant="outline">PEP determination outstanding</Badge>
                       )}
-                      {canWrite && screeningBlocked
-                        && ["not_started", "error"].includes(s.state) && (
-                        <span className="text-xs text-muted-foreground">{screeningBlocked}</span>
-                      )}
-                      {canWrite && !screeningBlocked
-                        && ["not_started", "error", "completed", "false_positive"].includes(s.state) && (
-                        <Button size="sm" variant="outline" disabled={busyId === s.id} onClick={() => void queue(s.id)}>
-                          {busyId === s.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="mr-1.5 h-3.5 w-3.5" />}
-                          {["completed", "false_positive"].includes(s.state) ? "Re-screen" : s.state === "error" ? "Retry screening" : "Start screening"}
-                        </Button>
+                      {/*
+                        A subject the policy does not require gets the
+                        OPTIONAL action and nothing else. No Retry, no
+                        provider blocker, no "upload the sanctions list" —
+                        none of those are steps towards anything, because
+                        this case is not waiting on a screening.
+                      */}
+                      {s.state === "not_required" ? (
+                        canWrite && (
+                          optionalUnavailable ? (
+                            <span className="text-xs text-muted-foreground">
+                              Optional sanctions screening unavailable — the provider or its
+                              list is not ready. Nothing is blocked.
+                            </span>
+                          ) : (
+                            <Button
+                              size="sm" variant="outline" disabled={busyId === s.id}
+                              onClick={() => void runOptional(s.id)}
+                            >
+                              {busyId === s.id
+                                ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                : <PlayCircle className="mr-1.5 h-3.5 w-3.5" />}
+                              Run optional sanctions screening
+                            </Button>
+                          )
+                        )
+                      ) : (
+                        <>
+                          {canWrite && screeningBlocked
+                            && ["not_started", "error"].includes(s.state) && (
+                            <span className="text-xs text-muted-foreground">{screeningBlocked}</span>
+                          )}
+                          {canWrite && !screeningBlocked
+                            && ["not_started", "error", "completed", "false_positive"].includes(s.state) && (
+                            <Button size="sm" variant="outline" disabled={busyId === s.id} onClick={() => void queue(s.id)}>
+                              {busyId === s.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="mr-1.5 h-3.5 w-3.5" />}
+                              {["completed", "false_positive"].includes(s.state) ? "Re-screen" : s.state === "error" ? "Retry screening" : "Start screening"}
+                            </Button>
+                          )}
+                        </>
                       )}
                       {canAdjudicate && (!pep || pepReviewDue) && (
                         <>

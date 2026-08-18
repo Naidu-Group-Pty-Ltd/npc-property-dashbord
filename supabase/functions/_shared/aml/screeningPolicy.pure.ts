@@ -54,6 +54,10 @@ export const MANDATORY_SCOPES: readonly ScreeningScopeKey[] = ["sanctions", "pep
 /** The only scopes a risk policy may conclude are not proportionate. */
 export const RISK_BASED_SCOPES: readonly ScreeningScopeKey[] = ["adverse_media", "watchlist"] as const;
 
+/** Every scope the programme knows about, in display order. */
+export const ALL_SCREENING_SCOPES: readonly ScreeningScopeKey[] =
+  ["sanctions", "pep", "adverse_media", "watchlist"] as const;
+
 /**
  * Bump when the rule below changes meaning. It is stamped on every recorded
  * decision so an audit can tell which policy produced which outcome, and so
@@ -128,33 +132,237 @@ export function adverseMediaTriggers(input: ScreeningPolicyInput): string[] {
   return out;
 }
 
-export function decideScreeningPolicy(input: ScreeningPolicyInput): ScreeningPolicyDecision {
+
+/* ══════════════════════ The sanctions perimeter ══════════════════════ */
+
+/**
+ * Whether this case is one the sanctions obligation attaches to at all.
+ *
+ * ── Why the perimeter, and not the risk rating ────────────────────────
+ * Targeted financial sanctions under the Charter of the United Nations Act
+ * 1945 and the Autonomous Sanctions Act 2011 bind every person and every
+ * dealing. They are not a risk-based control, and no rating, profile or
+ * questionnaire answer reduces them — which is why this module refused for
+ * so long to let anything stand sanctions down, and why "low risk" is the
+ * one basis that must never appear here.
+ *
+ * What CAN be true is that a case is not a dealing at all. A record opened
+ * for an enquiry that never became an engagement, an administrative
+ * duplicate of the case that actually carries the CDD, a service declined
+ * before it commenced — in none of those is NPC providing a designated
+ * service, so there is nothing for the obligation to attach to. That is a
+ * question of PERIMETER, and it is answerable from stored facts.
+ *
+ * ── Why it is recorded rather than inferred ───────────────────────────
+ * Nothing on the case says today whether a designated service is being
+ * provided; the concept exists in the agreements and the consent catalogue
+ * and nowhere in the schema. Inferring it from incidental columns — an empty
+ * `purchase_file_id`, a terminated service gate — would be guessing about
+ * the one fact this whole exemption rests on, and a wrong guess reads as
+ * "no sanctions screening required" on a case that needed it.
+ *
+ * So the perimeter is an explicit classification a reviewer or MLRO records,
+ * with a reason code from a fixed list, and the DEFAULT IS ALWAYS INSIDE.
+ * An unclassified case is in the perimeter. A case whose classification
+ * cannot be read is in the perimeter. There is no input to this module that
+ * produces an exemption by accident.
+ */
+export type PerimeterClassification = "designated_service" | "outside_perimeter";
+
+/**
+ * Why a case sits outside the perimeter. A fixed list rather than free text,
+ * because an exemption defended by prose nobody can aggregate is not
+ * defensible at all.
+ */
+export const PERIMETER_REASON_CODES = [
+  "no_designated_service",
+  "enquiry_only",
+  "duplicate_record",
+  "service_declined_pre_commencement",
+] as const;
+export type PerimeterReasonCode = (typeof PERIMETER_REASON_CODES)[number];
+
+export const PERIMETER_REASON_TEXT: Record<PerimeterReasonCode, string> = {
+  no_designated_service:
+    "No designated service is being, or will be, provided to this customer on " +
+    "this case.",
+  enquiry_only:
+    "This record exists for an enquiry or quotation only. The customer " +
+    "relationship was never entered into.",
+  duplicate_record:
+    "This is an administrative duplicate. The customer's identification and " +
+    "screening are carried by the case this one duplicates.",
+  service_declined_pre_commencement:
+    "The service was declined before it commenced, so no designated service " +
+    "was provided.",
+};
+
+export interface PerimeterRecord {
+  classification: PerimeterClassification;
+  reasonCode: PerimeterReasonCode | null;
+  /**
+   * Which obligations the finding removes. Recorded rather than assumed: a
+   * perimeter finding is not automatically a finding about every control,
+   * and defaulting it to "all of them" would silently stand down PEP on the
+   * strength of a sanctions decision.
+   */
+  scopesExcluded: ScreeningScopeKey[];
+  recordedByLabel: string | null;
+  recordedAt: string | null;
+}
+
+/**
+ * Read a stored perimeter row into a decision this module will act on.
+ *
+ * Anything malformed, unknown or absent resolves to INSIDE the perimeter.
+ * This function has no path that turns bad data into an exemption.
+ */
+export function readPerimeter(row: unknown): PerimeterRecord {
+  const inside: PerimeterRecord = {
+    classification: "designated_service", reasonCode: null,
+    scopesExcluded: [], recordedByLabel: null, recordedAt: null,
+  };
+  if (!row || typeof row !== "object") return inside;
+  const r = row as Record<string, unknown>;
+  if (r.superseded_at) return inside;
+  if (String(r.classification ?? "") !== "outside_perimeter") return inside;
+  const code = String(r.reason_code ?? "");
+  if (!(PERIMETER_REASON_CODES as readonly string[]).includes(code)) return inside;
+  const excluded = Array.isArray(r.scopes_excluded)
+    ? (r.scopes_excluded as unknown[])
+      .map((s) => String(s))
+      .filter((s): s is ScreeningScopeKey =>
+        (ALL_SCREENING_SCOPES as readonly string[]).includes(s))
+    : [];
+  // A perimeter finding that excludes nothing is not an exemption.
+  if (excluded.length === 0) return inside;
+  return {
+    classification: "outside_perimeter",
+    reasonCode: code as PerimeterReasonCode,
+    scopesExcluded: [...new Set(excluded)],
+    recordedByLabel: typeof r.recorded_by_label === "string" ? r.recorded_by_label : null,
+    recordedAt: typeof r.recorded_at === "string" ? r.recorded_at : null,
+  };
+}
+
+/* ══════════════════════ The canonical scope engine ══════════════════════ */
+
+/** One scope's outcome. `required` and `optional` are independent facts. */
+export interface ScopeOutcome {
+  scope: ScreeningScopeKey;
+  required: boolean;
+  /**
+   * Whether an authorised operator may run this scope voluntarily. A scope
+   * that is not required is always optional — never unavailable — because
+   * "we did not have to" is not a reason to prevent someone who wants to.
+   */
+  optional: boolean;
+  reasonCode: string;
+  reason: string;
+}
+
+export interface ScreeningScopeInput extends ScreeningPolicyInput {
+  /** The stored perimeter classification for this case, if any. */
+  perimeter?: unknown;
+}
+
+export interface ScreeningScopeDecision {
+  sanctions: ScopeOutcome;
+  pep: ScopeOutcome;
+  adverse_media: ScopeOutcome;
+  watchlist: ScopeOutcome;
+  perimeter: PerimeterRecord;
+  policyVersion: string;
+  /** Verbatim inputs the decision was made on, for reconstruction. */
+  evidence: Record<string, string>;
+}
+
+/**
+ * Every screening scope, decided independently, server-side.
+ *
+ * The scopes do not travel together. A case can be sanctions `not_required`
+ * with PEP still mandatory, or the reverse, and each carries its own reason
+ * code — because they answer to different obligations and coupling them
+ * would mean one finding silently standing down a control nobody assessed.
+ *
+ * `not_required` means ONE thing: no obligation to perform this screening
+ * arose under the policy in force. It is not "clear", not "no match" and not
+ * "screened". Nothing in this module produces a screening outcome.
+ */
+export function deriveScreeningScope(input: ScreeningScopeInput): ScreeningScopeDecision {
+  const perimeter = readPerimeter(input.perimeter);
+  const outside = (scope: ScreeningScopeKey) =>
+    perimeter.classification === "outside_perimeter" &&
+    perimeter.scopesExcluded.includes(scope);
+
+  const excludedOutcome = (scope: ScreeningScopeKey): ScopeOutcome => ({
+    scope, required: false, optional: true,
+    reasonCode: `perimeter:${perimeter.reasonCode}`,
+    reason: `${PERIMETER_REASON_TEXT[perimeter.reasonCode as PerimeterReasonCode]} ` +
+      "No screening obligation for this scope arose under AML/CTF policy " +
+      `${SCREENING_POLICY_VERSION}. This is not a screening result: nobody has ` +
+      "been screened and nobody has been cleared.",
+  });
+
+  // ── Sanctions ──────────────────────────────────────────────────────
+  // Inside the perimeter this is absolute. It answers to sanctions law,
+  // not to the risk-based CDD programme, so no rating, answer or profile
+  // reaches it — only the question of whether a dealing exists at all.
+  const sanctions: ScopeOutcome = outside("sanctions")
+    ? excludedOutcome("sanctions")
+    : {
+      scope: "sanctions", required: true, optional: false,
+      reasonCode: "tfs_obligation",
+      reason: "Targeted financial sanctions screening is required for every " +
+        "designated service. It is not risk-based and cannot be stood down.",
+    };
+
+  // ── PEP ────────────────────────────────────────────────────────────
+  const pep: ScopeOutcome = outside("pep")
+    ? excludedOutcome("pep")
+    : {
+      scope: "pep", required: true, optional: false,
+      reasonCode: "pep_determination_required",
+      reason: "A politically-exposed-person determination must be established " +
+        "for every customer. The client's own answer is evidence towards it, " +
+        "never a substitute for it.",
+    };
+
+  // ── The risk-based two ─────────────────────────────────────────────
   const a = input.answers;
-  // Every risk input must have been READ. "The client did not say" and "the
-  // client said no" are different facts and only the second is evidence, so
-  // a partly-answered questionnaire stands nothing down.
   const answersComplete = Boolean(a) &&
     answered(a?.pep) && answered(a?.adverse) &&
     answered(a?.thirdParty) && answered(a?.overseasFunding);
-
   const triggers = adverseMediaTriggers(input);
-  const required: ScreeningScopeKey[] = ["sanctions", "pep"];
-  const notRequired: ScreeningPolicyDecision["notRequired"] = [];
 
-  if (!answersComplete) {
-    // Unknown risk evidence is not a low-risk profile.
-    required.push("adverse_media", "watchlist");
-  } else if (triggers.length > 0) {
-    required.push("adverse_media", "watchlist");
-  } else {
-    const basis =
-      "Not triggered for this profile under AML/CTF policy " +
-      `${SCREENING_POLICY_VERSION}: the customer is an individual, the case is not ` +
-      "rated high or prohibited risk and is not in enhanced due diligence, no PEP " +
-      "finding applies to any party, and the client declared no overseas funding, " +
-      "no third-party involvement and no adverse media.";
-    notRequired.push({ scope: "adverse_media", basis }, { scope: "watchlist", basis });
-  }
+  const riskBased = (scope: ScreeningScopeKey): ScopeOutcome => {
+    if (outside(scope)) return excludedOutcome(scope);
+    if (!answersComplete) {
+      return {
+        scope, required: true, optional: false,
+        reasonCode: "risk_evidence_incomplete",
+        reason: "The client's risk answers are incomplete. Unknown risk " +
+          "evidence is not a low-risk profile, so nothing is stood down.",
+      };
+    }
+    if (triggers.length > 0) {
+      return {
+        scope, required: true, optional: false,
+        reasonCode: "risk_triggered",
+        reason: `Proportionate because ${triggers.join(", and ")}.`,
+      };
+    }
+    return {
+      scope, required: false, optional: true,
+      reasonCode: "risk_not_triggered",
+      reason: "Not triggered for this profile under AML/CTF policy " +
+        `${SCREENING_POLICY_VERSION}: the customer is an individual, the case ` +
+        "is not rated high or prohibited risk and is not in enhanced due " +
+        "diligence, no PEP finding applies to any party, and the client " +
+        "declared no overseas funding, no third-party involvement and no " +
+        "adverse media. Nobody has been screened for this scope.",
+    };
+  };
 
   const evidence: Record<string, string> = {
     "personal_details.pep": String(a?.pep ?? "not answered"),
@@ -164,7 +372,65 @@ export function decideScreeningPolicy(input: ScreeningPolicyInput): ScreeningPol
     "purchasing_structure.entity_type": String(input.entityType ?? "not answered"),
     "case.risk_rating": String(input.riskRating ?? "unrated"),
     "case.enhanced_due_diligence": input.enhancedDueDiligence ? "yes" : "no",
+    "case.perimeter": perimeter.classification,
+    "case.perimeter_reason": String(perimeter.reasonCode ?? "n/a"),
+    "case.perimeter_scopes_excluded": perimeter.scopesExcluded.join(",") || "none",
   };
+
+  return {
+    sanctions, pep,
+    adverse_media: riskBased("adverse_media"),
+    watchlist: riskBased("watchlist"),
+    perimeter,
+    policyVersion: SCREENING_POLICY_VERSION,
+    evidence,
+  };
+}
+
+/** The scopes a case must complete, derived from the canonical decision. */
+export function requiredScopes(d: ScreeningScopeDecision): ScreeningScopeKey[] {
+  return ALL_SCREENING_SCOPES.filter((s) => d[s].required);
+}
+
+/**
+ * Whether provider readiness is relevant at all.
+ *
+ * Readiness is a property of a SCOPE, not of the stage. A case with no
+ * required scope that needs the sanctions provider must not be held up by
+ * an unloaded list — that is the whole point of deciding scope first.
+ */
+export function providerReadinessRelevant(
+  d: ScreeningScopeDecision,
+  opts: { voluntaryRunRequested?: boolean } = {},
+): boolean {
+  if (opts.voluntaryRunRequested) return true;
+  return d.sanctions.required || d.adverse_media.required || d.watchlist.required;
+}
+
+/**
+ * The legacy shape, derived from the canonical engine.
+ *
+ * This used to hold the rule itself, with sanctions and PEP hardcoded into
+ * `required`. It is now an ADAPTER over `deriveScreeningScope` so there is
+ * exactly one rule in the codebase rather than two that agree until they do
+ * not — the failure mode this repository has paid for more than once.
+ *
+ * `ScreeningPolicyInput` has no perimeter field, so a caller on this path
+ * gets the inside-the-perimeter answer: sanctions and PEP required. That is
+ * the correct default and the same answer this function always gave.
+ */
+export function decideScreeningPolicy(input: ScreeningPolicyInput): ScreeningPolicyDecision {
+  const scope = deriveScreeningScope(input as ScreeningScopeInput);
+  const required = requiredScopes(scope);
+  const notRequired = ALL_SCREENING_SCOPES
+    .filter((k) => !scope[k].required)
+    .map((k) => ({ scope: k, basis: scope[k].reason }));
+  const triggers = adverseMediaTriggers(input);
+
+  const a = input.answers;
+  const answersComplete = Boolean(a) &&
+    answered(a?.pep) && answered(a?.adverse) &&
+    answered(a?.thirdParty) && answered(a?.overseasFunding);
 
   /*
    * The declaration route is available only when the client answered the PEP
@@ -177,15 +443,100 @@ export function decideScreeningPolicy(input: ScreeningPolicyInput): ScreeningPol
       ? "declaration_supported"
       : "manual_review";
 
+  const sanctionsStoodDown = !scope.sanctions.required;
   return {
-    required, notRequired, triggers, pepRoute, evidence,
-    policyVersion: SCREENING_POLICY_VERSION,
-    summary: notRequired.length > 0
-      ? "Reduced scope: sanctions and PEP only. Adverse media and internal watchlist " +
-        "research are not proportionate for this profile."
-      : !answersComplete
-        ? "Full scope: the client's risk answers are incomplete, so no control can be stood down."
-        : `Full scope: ${triggers.join(", and ")}.`,
+    required, notRequired, triggers, pepRoute,
+    evidence: scope.evidence,
+    policyVersion: scope.policyVersion,
+    summary: sanctionsStoodDown
+      ? `Outside the sanctions perimeter: ${scope.sanctions.reason}`
+      : notRequired.length > 0
+        ? "Reduced scope: sanctions and PEP only. Adverse media and internal watchlist " +
+          "research are not proportionate for this profile."
+        : !answersComplete
+          ? "Full scope: the client's risk answers are incomplete, so no control can be stood down."
+          : `Full scope: ${triggers.join(", and ")}.`,
+  };
+}
+
+
+/**
+ * What an exemption (or its withdrawal) means for one already-enrolled
+ * subject.
+ *
+ * Pure, because the interesting part is the decision and not the UPDATE.
+ * Four outcomes, and the first two are the ones that matter:
+ *
+ *   keep_finding      a possible or confirmed match exists. The subject
+ *                     stays REQUIRED whatever the perimeter says: once a
+ *                     candidate exists you cannot un-know it, and the duty
+ *                     to deal with a positive result comes from the sanction
+ *                     itself rather than from the screening obligation that
+ *                     surfaced it.
+ *   keep_in_flight    a VOLUNTARY run is queued or processing. Standing it
+ *                     down would cancel work an operator authorised seconds
+ *                     ago and leave them looking at "not required" having
+ *                     just pressed Run.
+ *   release           obligation drops; a completed check keeps its result
+ *                     and only the flag moves, an unscreened subject becomes
+ *                     not_required.
+ *   restore           the exemption is withdrawn: back to unscreened, never
+ *                     to an invented result.
+ */
+export type SubjectScopeAction =
+  | "none" | "keep_finding" | "keep_in_flight" | "release" | "restore";
+
+export interface SubjectScopeReconciliation {
+  action: SubjectScopeAction;
+  /** The columns to write, or null when nothing changes. */
+  patch: { required?: boolean; state?: string; error_category?: null } | null;
+  /** Whether pending queue entries for this subject must be retired first. */
+  retireQueued: boolean;
+}
+
+const FINDING_STATES = ["possible_match", "confirmed_match"];
+const RESULT_STATES = ["completed", "false_positive"];
+const IN_FLIGHT_STATES = ["queued", "processing"];
+
+export function reconcileSubjectToScope(
+  subject: { state: string; required: boolean; voluntaryRunAt?: string | null },
+  sanctionsRequired: boolean,
+): SubjectScopeReconciliation {
+  const state = String(subject.state);
+
+  if (!sanctionsRequired) {
+    if (FINDING_STATES.includes(state)) {
+      return { action: "keep_finding", patch: null, retireQueued: false };
+    }
+    if (IN_FLIGHT_STATES.includes(state) && subject.voluntaryRunAt) {
+      return { action: "keep_in_flight", patch: null, retireQueued: false };
+    }
+    if (RESULT_STATES.includes(state)) {
+      // Evidence survives. Only the obligation moves.
+      return subject.required === false
+        ? { action: "none", patch: null, retireQueued: false }
+        : { action: "release", patch: { required: false }, retireQueued: false };
+    }
+    if (subject.required === false && state === "not_required") {
+      return { action: "none", patch: null, retireQueued: false };
+    }
+    return {
+      action: "release",
+      patch: { required: false, state: "not_required", error_category: null },
+      retireQueued: true,
+    };
+  }
+
+  if (subject.required === true && state !== "not_required") {
+    return { action: "none", patch: null, retireQueued: false };
+  }
+  return {
+    action: "restore",
+    patch: {
+      required: true,
+      state: state === "not_required" ? "not_started" : state,
+    },
+    retireQueued: false,
   };
 }
 

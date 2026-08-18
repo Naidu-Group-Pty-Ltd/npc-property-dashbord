@@ -209,27 +209,55 @@ export function ScreeningStageCard({
             </Badge>
           </div>
 
+          {/*
+            Rendered from the SERVER's per-scope decision, not from a
+            derivation here. Three states, and the difference between the
+            last two is the whole point of this screen:
+
+              required      an obligation exists
+              not required  no obligation arose — nobody was screened
+              (never)       screened and clear, which is a RESULT and lives
+                            with the subject below, not in this list
+          */}
           <ul className="space-y-1.5">
-            {sync.policy.required.map((s) => (
-              <li key={s} className="flex items-start gap-2 text-sm">
-                <ShieldCheck aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+            {(sync.scopes ?? []).map((sc) => (
+              <li key={sc.scope} className="flex items-start gap-2 text-sm">
+                {sc.required ? (
+                  <ShieldCheck aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                ) : (
+                  <Info aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                )}
                 <span>
-                  <span className="font-medium">{SCOPE_LABEL[s] ?? s}</span>
-                  <span className="text-muted-foreground"> — required</span>
-                </span>
-              </li>
-            ))}
-            {stoodDown.map((n) => (
-              <li key={n.scope} className="flex items-start gap-2 text-sm">
-                <Info aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <span>
-                  <span className="font-medium">{SCOPE_LABEL[n.scope] ?? n.scope}</span>
-                  <span className="text-muted-foreground"> — not proportionate for this case</span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">{n.basis}</span>
+                  <span className="font-medium">{SCOPE_LABEL[sc.scope] ?? sc.scope}</span>
+                  <span className="text-muted-foreground">
+                    {sc.required ? " — required" : " — not required"}
+                  </span>
+                  {!sc.required && (
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {sc.reason}
+                    </span>
+                  )}
                 </span>
               </li>
             ))}
           </ul>
+
+          {/*
+            The perimeter finding that produced an exemption, named with the
+            person who recorded it. An exemption nobody can attribute is not
+            one anybody can defend.
+          */}
+          {sync.perimeter?.classification === "outside_perimeter" && (
+            <p className="rounded-md border border-border/60 bg-muted/40 p-3 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">Outside the sanctions perimeter.</span>{" "}
+              Recorded{sync.perimeter.recorded_by_label
+                ? ` by ${sync.perimeter.recorded_by_label}` : ""}
+              {sync.perimeter.recorded_at
+                ? ` on ${new Date(sync.perimeter.recorded_at).toLocaleDateString()}` : ""}
+              {sync.perimeter.reason_code ? ` (${sync.perimeter.reason_code})` : ""}.
+              This is a statement about obligation, not a screening result.
+            </p>
+          )}
 
           {/*
             The answers the decision rests on, on the page rather than in a
