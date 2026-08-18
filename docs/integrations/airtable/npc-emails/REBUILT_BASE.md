@@ -154,15 +154,72 @@ nodes, `webhookSchemaIsSet: false` — the bundle's own
 Creating it would mint a fresh live-looking webhook URL in the company account
 that nothing consumes. Say so if you want it anyway for strict parity.
 
-The remaining four carry `customScript` nodes, which the API refuses
-(`readOnlyNodeType`), and are unchanged manual work.
+### The four script-bearing ones, structure only
+
+The remaining four carry `customScript` nodes, which the API refuses with
+`readOnlyNodeType`. Three of the four had their **structure** rebuilt on
+2026-08-18 — everything except the script — so the manual step is pasting a
+script into an automation that already exists rather than building one from
+nothing. All three are undeployed, and each carries a description saying which
+file from [`automations/scripts/`](./automations/scripts) belongs in it.
+
+| Automation | New id | What is there | What is missing |
+| --- | --- | --- | --- |
+| Aurixa Lead Capture | `wflEQ1wsJH1x7GQhL` | trigger + the notification email | 2 scripts |
+| Delete Records After 30 Days | `wflz5O9df5UjBzd3X` | cron + findRecords + empty loop | 1 script |
+| Delete Property Intake Records After 30 Days | `wflOrWaQohUvhvcFb` | cron + findRecords + empty loop | 1 script |
+
+**A script slot cannot be marked with a placeholder node.** `noOp` is in
+`create_automation`'s type enum but is rejected as `readOnlyNodeType` just like
+`customScript`, so there is no marker node to leave behind. An **empty
+`repeatingGroup` body is accepted**, which is what the two purges use — the loop
+exists and iterates, and does nothing until a script is added. That is also why
+they are safe to leave in place: a purge with an empty body deletes nothing.
+
+**`Auto-generate report` could not be created at all**, and this is a structural
+impossibility rather than a decision. Its only two nodes are the `customScript`
+(refused) and a `conditionalGroup` whose single branch has **zero nodes** —
+refused as `emptyBranchNotNested`, because an empty branch is legal only inside a
+loop. With both nodes refused the payload has no nodes, and `create_automation`
+requires at least one. It has to be built by hand. Nothing is lost by the delay:
+it triggers on `Properties`, which holds 0 records, its conditional was inert in
+the source too, and its script POSTs to the **old** Supabase project and needs
+re-pointing regardless.
+
+**Verification.** Same method as the five above, with `customScript` nodes
+stripped from the source before comparing: **3 of 3 match**, including both cron
+schedules (`daily`, `Asia/Kuala_Lumpur`, midnight) and the 30-day `daysAgo`
+filters. One cosmetic loss — the Property Intake loop's `name` is the empty
+string in the source and `create_automation` drops it.
+
+### The two purges now measure a clock the migration reset
+
+Both filter on the fields substituted earlier in this document:
+`Delete Records After 30 Days` reads `Properties.Created` and
+`Delete Property Intake Records After 30 Days` reads
+`Property Intake Master.Created Time` — both now `CREATED_TIME()` formulas.
+
+For Property Intake that changes what the purge will do. Its 148 rows were
+created between **2026-07-23 and 2026-08-04** in the source; in this base they
+all read **2026-08-18**. So the 30-day window restarted at migration: turning the
+purge on now deletes nothing, and around **2026-09-17** the entire set ages out
+on the same day rather than trickling out over a fortnight. A native `createdTime`
+field would behave identically — this is a consequence of re-creating records,
+not of the formula substitution — but it is the difference between a purge that
+removes a few rows a day and one that empties the table at once. Decide that
+before deploying it.
+
+`Delete Records After 30 Days` is unaffected in practice: `Properties` holds 0
+records.
 
 ## Still to do
 
 - Import `Emails` from CSV (5,325 or 2,819 records — see that README).
 - Add the seven UI-only fields if parity matters.
 - Turn on the five recreated automations once reviewed (all are off).
-- Rebuild the 4 script-bearing automations —
-  [`automations/`](./automations/README.md); each needs its `customScript` node
-  added and its script pasted by hand.
+- Paste the four scripts into the three structure-only automations
+  ([`automations/scripts/`](./automations/scripts)), and decide the Property
+  Intake purge question above before deploying that one.
+- Build `Auto-generate report` by hand — the API cannot create it — and re-point
+  its script at the migrated Supabase project.
 - Re-point the Make scenarios at the new base and field ids.

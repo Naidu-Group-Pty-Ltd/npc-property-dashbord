@@ -17,6 +17,27 @@ not from the live base.
 | `send-confirmation-email-on-new-business-readiness-response.json` | `wflh77ndoCHYMbs6Q` |
 | `notify-aurixa-team-on-new-business-readiness-submission.json` | `wflbWecuoA3q6sQLj` |
 
+## The three `structure-*.json` files
+
+These are the **structure-only** rebuilds of the script-bearing automations, as
+the target base returned them — trigger and nodes with the `customScript` removed,
+because the API refuses it (`readOnlyNodeType`).
+
+| File | Created as | Scripts still to paste |
+| --- | --- | ---: |
+| `structure-aurixa-lead-capture.json` | `wflEQ1wsJH1x7GQhL` | 2 |
+| `structure-delete-records-after-30-days.json` | `wflz5O9df5UjBzd3X` | 1 |
+| `structure-delete-property-intake-records-after-30-days.json` | `wflOrWaQohUvhvcFb` | 1 |
+
+`Auto-generate report` has no file here because it could not be created: its only
+two nodes are the `customScript` and a `conditionalGroup` with an empty branch
+(`emptyBranchNotNested` outside a loop), and an automation must have at least one
+node. Build it by hand from [`../../source/`](../source).
+
+**`noOp` does not work as a script placeholder.** It is in the type enum but is
+rejected as `readOnlyNodeType`. An empty `repeatingGroup` body is accepted, which
+is how both purges hold the shape open.
+
 ## Two things to know before reusing these
 
 **Node keys in these files are the source's, and Airtable ignores them.** The
