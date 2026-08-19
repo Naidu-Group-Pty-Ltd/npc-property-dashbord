@@ -97,6 +97,16 @@ const MAX_UPLOADS_PER_TICK = 6;
 const MAX_QUEUE_ROWS = 100;
 const MAX_BODY_BYTES = 8 * 1024;
 
+/**
+ * How often the phase rotation advances.
+ *
+ * The cron interval, so one tick is one phase and the next tick is the next
+ * one. Reading the clock rather than a counter keeps this function stateless;
+ * the only property required is that consecutive ticks land on consecutive
+ * indices, which any period at or below the cron's gives.
+ */
+const TICK_ROTATION_MS = 5 * 60 * 1000;
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -292,11 +302,33 @@ Deno.serve(async (req: Request) => {
      * running them first would be spending the expensive budget deciding about
      * a smaller set than the one we are about to have.
      */
-    const phase = candidates.some((candidate) => candidate.needsProvenance)
-      ? 'provenance'
-      : candidates.some((candidate) => candidate.needsEligibility)
-        ? 'eligibility'
-        : 'sanitization';
+    /*
+     * ROTATED, NOT PRIORITISED, AND THE FIRST SHAPE OF THIS WAS WRONG.
+     *
+     * Strict priority — provenance, then eligibility, then sanitization —
+     * starves everything behind the first phase that has work. Provenance on
+     * this deployment is one upload of seventy rows settled four at a time, so
+     * it holds every tick for hours; it discovered twenty-six builder primaries
+     * and not one of them could be DRAWN, because the eligibility sweep that
+     * judges a newly stored picture never got a tick to run in. A phase that
+     * cannot run is a phase whose work never finishes.
+     *
+     * So the tick rotates through the phases that have work. The index comes
+     * from the wall clock rather than from stored state — this function keeps
+     * none, and a counter in the database would be one more thing to get wrong
+     * — so consecutive ticks take consecutive phases and each gets its share.
+     * A phase with nothing outstanding is not in the rotation at all, so a
+     * quiet queue does not spend ticks on it.
+     */
+    const withWork = ([
+      ['provenance', (c: typeof candidates[number]) => c.needsProvenance],
+      ['eligibility', (c: typeof candidates[number]) => c.needsEligibility],
+      ['sanitization', (c: typeof candidates[number]) => c.needsSanitization],
+    ] as const).filter(([, has]) => candidates.some(has)).map(([name]) => name);
+
+    const phase = withWork.length
+      ? withWork[Math.floor(startedAt / TICK_ROTATION_MS) % withWork.length]
+      : 'provenance';
 
     const { attempted, settled, organisations } = await runSettlementTick(
       candidates,
