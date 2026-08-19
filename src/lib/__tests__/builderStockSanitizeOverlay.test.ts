@@ -200,6 +200,36 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
     expect(sample(60, 40)).toBeGreaterThan(sample(60, 18));
   });
 
+  it('REFUSES a badge lying across two very different colours', () => {
+    /*
+     * THE MEASURE THAT MATTERS, AND IT TOOK A BAD RENDER TO FIND IT.
+     *
+     * Laplace's equation interpolates between the boundary values, so a hole
+     * whose ring is all one colour fills invisibly and a hole with two very
+     * different colours on opposite sides fills with a RAMP between them — a
+     * visible streak exactly the shape of the hole. Both rings can be locally
+     * smooth, so the neighbour-difference test says nothing about it: on the
+     * real bytes Lot 13 Hummock Rise scores 2.46 there and the Brownsplains
+     * badge scores 3.18, and Lot 13 is the one that came out as two grey smears.
+     * On the spread measure they are 41.8 and 22.0.
+     */
+    const split = sky(W, H);
+    // A dark band across the lower half: sky above, something very dark below.
+    for (let y = 60; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const at = (y * W + x) * 3;
+        split[at] = 34; split[at + 1] = 30; split[at + 2] = 28;
+      }
+    }
+    // The badge straddles the join.
+    badge(split, W, { x: 40, y: 44, w: 120, h: 32 });
+
+    const { result } = run(split);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('background_too_detailed');
+  });
+
   it('REFUSES a badge sitting on detail, rather than smearing it', () => {
     const busy = foliage(W, H);
     badge(busy, W, { x: 40, y: 40, w: 70, h: 26 });

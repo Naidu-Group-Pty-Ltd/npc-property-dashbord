@@ -58,6 +58,31 @@ const EDGE_GROW = 3;
 const MAX_BOUNDARY_DETAIL = 6;
 
 /**
+ * And how far the surroundings may be from ONE colour.
+ *
+ * Mean absolute deviation of the ring's pixels from the ring's own mean, on
+ * 0-255. This is the measure that matters and it took a bad render to find.
+ *
+ * WHAT THE DETAIL TEST MISSES. Laplace's equation interpolates between the
+ * boundary values, so a hole whose ring is all one colour fills invisibly and a
+ * hole with two very different colours on opposite sides fills with a RAMP
+ * between them — a visible streak, exactly the shape of the hole. Both rings
+ * can be locally smooth, so the neighbour-difference test says nothing about
+ * it: measured on the real bytes, Lot 13 Hummock Rise scores 2.46 and the
+ * Brownsplains badge scores 3.18, and Lot 13 is the one that came out as two
+ * grey smears while Brownsplains is indistinguishable from an unbadged render.
+ *
+ * On THIS measure they are 41.8 and 22.0. Lot 13's badges lie across sky on one
+ * side and dark timber cladding on the other; the Brownsplains badge lies on
+ * open sky. Thirty sits in the middle of a gap that is nearly twice as wide as
+ * either value's distance from it.
+ *
+ * A picture refused here still reaches the generative route, which does not
+ * interpolate and does not care that the two sides differ.
+ */
+const MAX_BOUNDARY_SPREAD = 30;
+
+/**
  * And how big any ONE hole may be.
  *
  * A second gate because the first is not sufficient: a badge can sit on quiet
@@ -158,16 +183,24 @@ function grow(mask: Uint8Array, width: number, height: number, by: number): Uint
  */
 function boundaryDetail(
   pixels: Uint8Array, mask: Uint8Array, width: number, height: number,
-): number {
+): { detail: number; spread: number } {
   const near = grow(mask, width, height, EDGE_GROW * 2);
   let total = 0;
   let n = 0;
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  let ring = 0;
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const at = y * width + x;
       // The ring: close to the hole, but real photograph rather than graphic.
       if (!near[at] || mask[at]) continue;
       const p = at * 3;
+      sumR += pixels[p];
+      sumG += pixels[p + 1];
+      sumB += pixels[p + 2];
+      ring += 1;
       for (const step of [3, width * 3]) {
         total += Math.abs(pixels[p] - pixels[p + step])
           + Math.abs(pixels[p + 1] - pixels[p + step + 1])
@@ -176,7 +209,21 @@ function boundaryDetail(
       }
     }
   }
-  return n ? total / n : 0;
+  if (!ring) return { detail: 0, spread: 0 };
+  const meanR = sumR / ring;
+  const meanG = sumG / ring;
+  const meanB = sumB / ring;
+  let deviation = 0;
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const at = y * width + x;
+      if (!near[at] || mask[at]) continue;
+      const p = at * 3;
+      deviation += Math.abs(pixels[p] - meanR) + Math.abs(pixels[p + 1] - meanG)
+        + Math.abs(pixels[p + 2] - meanB);
+    }
+  }
+  return { detail: n ? total / n : 0, spread: deviation / ring / 3 };
 }
 
 /**
@@ -344,11 +391,14 @@ export function sanitizeOverlay(input: SanitizeInput): SanitizeResult {
     return { ok: false, reason: 'too_much_to_rebuild' };
   }
 
-  const detail = boundaryDetail(pixels, mask, width, height);
-  if (detail > MAX_BOUNDARY_DETAIL) {
-    // The badge is sitting on the building or in a tree, not on open sky.
-    // Reconstructing here would be inventing what it covered, which is the one
-    // thing this must not do — and it looks like it, too.
+  const boundary = boundaryDetail(pixels, mask, width, height);
+  if (boundary.detail > MAX_BOUNDARY_DETAIL || boundary.spread > MAX_BOUNDARY_SPREAD) {
+    /*
+     * The badge is sitting on the building, in a tree, or across the join
+     * between two very different things. Reconstructing here would be inventing
+     * what it covered — and it looks like it, too: a busy ring smears and a
+     * two-coloured ring ramps.
+     */
     return { ok: false, reason: 'background_too_detailed' };
   }
 
@@ -359,6 +409,6 @@ export function sanitizeOverlay(input: SanitizeInput): SanitizeResult {
     pixels: diffuse(pixels, mask, width, height),
     repairedShare,
     regionsRemoved: input.regions,
-    boundaryDetail: detail,
+    boundaryDetail: boundary.detail,
   };
 }
