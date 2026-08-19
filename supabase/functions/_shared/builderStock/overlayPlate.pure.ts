@@ -88,7 +88,7 @@ const MAX_PLATE_SHARE = 0.2;
  * pass called prominent overlay typography.
  */
 export function overlayPlateMask(
-  view: RasterLike, textBoxes: Box[],
+  view: RasterLike, textBoxes: Box[], flatRegions: Box[] = [],
 ): { mask: Uint8Array; plates: Box[] } {
   const { width, height, pixels } = view;
   const count = width * height;
@@ -99,7 +99,25 @@ export function overlayPlateMask(
   }
 
   for (const text of textBoxes) {
-    const plate = plateAround(pixels, width, height, text);
+    /*
+     * TWO WAYS TO FIND THE STICKER, AND BOTH REQUIRE THE TYPE.
+     *
+     * The flood is the better one — it finds the plate's real extent, including
+     * the parts of it the classifier's flat-colour pass split or missed. But a
+     * plate that is translucent, or gradient-filled, or printed over a busy
+     * enough photograph, has no single colour to flood, and refusing those
+     * outright cost four production repairs that the flat pass had found
+     * perfectly well.
+     *
+     * So where the flood cannot settle it, a flat region that FULLY CONTAINS
+     * the run of type is accepted instead. The containment is what keeps this
+     * honest: the region has words printed on it, which a black garage door
+     * does not — on Lot 13 Hummock Rise this admits the green pill and
+     * excludes both the garage door and the patch of sky, because neither has a
+     * line of type inside it.
+     */
+    const plate = plateAround(pixels, width, height, text)
+      ?? flatRegionAround(text, flatRegions, count);
     if (!plate) continue;
     plates.push(plate);
     for (let y = plate.top; y <= plate.bottom; y++) {
@@ -107,6 +125,21 @@ export function overlayPlateMask(
     }
   }
   return { mask, plates };
+}
+
+/** The smallest flat block that has this line of type printed inside it. */
+function flatRegionAround(text: Box, regions: Box[], count: number): Box | null {
+  let best: Box | null = null;
+  for (const region of regions) {
+    if (region.left > text.left || region.top > text.top) continue;
+    if (region.right < text.right || region.bottom < text.bottom) continue;
+    const area = (region.right - region.left + 1) * (region.bottom - region.top + 1);
+    if (area > MAX_PLATE_SHARE * count) continue;
+    if (!best) { best = region; continue; }
+    const bestArea = (best.right - best.left + 1) * (best.bottom - best.top + 1);
+    if (area < bestArea) best = region;
+  }
+  return best;
 }
 
 /** The plate one run of type sits on, or null when it sits on the photograph. */

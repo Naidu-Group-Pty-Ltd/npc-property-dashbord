@@ -37,7 +37,9 @@
  * refusal deliberately carries no candidate for a caller to fall back to.
  */
 import { decodeFullRaster, decodeThumbnailResult } from './sourceImageRaster.ts';
-import { overlayTextBoxes, readMarketingOverlay } from './marketingOverlay.pure.ts';
+import {
+  measureFlatColourRegions, overlayTextBoxes, readMarketingOverlay,
+} from './marketingOverlay.pure.ts';
 import { overlayPlateMask } from './overlayPlate.pure.ts';
 import { growOverlayMask, sanitizeOverlay } from './sanitizeOverlay.pure.ts';
 import { inpaintOverlay, type InpaintInput } from './inpaintOverlay.ts';
@@ -148,7 +150,11 @@ export async function sanitizeSourceImage(
      * falls through to `nothing_to_remove`, is recorded as refused, and keeps
      * its blank card.
      */
-    const plates = overlayPlateMask(thumbnail.thumbnail, overlayTextBoxes(thumbnail.thumbnail));
+    const plates = overlayPlateMask(
+      thumbnail.thumbnail,
+      overlayTextBoxes(thumbnail.thumbnail),
+      measureFlatColourRegions(thumbnail.thumbnail).regions.map((region) => region.box),
+    );
     if (!plates.plates.length) {
       return {
         ok: false, reason: 'nothing_to_remove',

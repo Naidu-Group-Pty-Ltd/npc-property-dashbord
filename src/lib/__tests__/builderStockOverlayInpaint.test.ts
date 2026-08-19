@@ -206,6 +206,29 @@ describe('what may be removed is a plate with WORDS on it, and nothing else', ()
     }
   });
 
+  it('the flat-region fallback is gated on containment, so it cannot reach the door', () => {
+    /*
+     * The fallback exists because a translucent or gradient plate has no single
+     * colour to flood, and refusing those cost four production repairs the
+     * flat-colour pass had found perfectly well. What keeps it honest is
+     * CONTAINMENT: the block must have the line of type printed inside it.
+     */
+    const pixels = sky(W, H);
+    plainBlock(pixels, W, { x: 60, y: 120, w: 130, h: 60 }, [30, 30, 32]);
+    stamp(pixels, W, { x: 20, y: 14, w: 96, h: 30 });
+    const view = { width: W, height: H, pixels };
+    const text = overlayTextBoxes(view);
+
+    // Offered the garage door as a candidate region, it is still not taken:
+    // no line of type sits inside it.
+    const withDoor = overlayPlateMask(view, text, [
+      { left: 60, top: 120, right: 189, bottom: 179 },
+    ]);
+    for (let y = 120; y < 180; y++) {
+      for (let x = 60; x < 190; x++) expect(withDoor.mask[y * W + x]).toBe(0);
+    }
+  });
+
   it('type set straight onto the photograph has no plate, and nothing is removed', () => {
     const pixels = sky(W, H);
     // A caption with no block behind it: there is no honest extent to remove,
