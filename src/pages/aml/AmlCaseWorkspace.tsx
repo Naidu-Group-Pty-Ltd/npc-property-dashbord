@@ -715,6 +715,13 @@ export default function AmlCaseWorkspace() {
               totalStages={JOURNEY_STAGES.length}
               onOpenSection={setSection}
               onPerform={performStageAction}
+              /*
+               * Stage 5's numbered path carries the same action and its own
+               * progress. Repeating both here put one act on the screen three
+               * times, in three sets of words, above two progress readings
+               * that counted different things.
+               */
+              deferToSurfaceBelow={section === "ownership" && Boolean(screeningStage.sync)}
             />
           )}
 
@@ -939,6 +946,8 @@ export default function AmlCaseWorkspace() {
                 caseStage={caseRow.case_stage ?? null}
                 manualScreeningRequest={manualScreeningRequest}
                 pepRequest={pepRequest}
+                /* The customer's own answer, shown to the person determining it. */
+                pepDeclaration={screeningStage.sync?.pep_declaration ?? null}
                 onChanged={() => { load(); screeningStage.reload(); }}
                 screeningBlocked={
                   /*
@@ -1056,6 +1065,8 @@ export default function AmlCaseWorkspace() {
             // the only place they appear.
             showAttention={section !== "overview"}
             showNextAction={section !== "overview"}
+            /* So it never offers to take the operator where they already are. */
+            currentSection={section}
             onOpenSection={setSection}
           />
           <AmlContextActionPanel

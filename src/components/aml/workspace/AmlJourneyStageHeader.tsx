@@ -57,6 +57,15 @@ export interface AmlJourneyStageHeaderProps {
    * back to the navigation it always did.
    */
   onPerform?: (action: NonNullable<AmlJourneyStage["primaryAction"]>) => void;
+  /**
+   * Whether the stage's own surface below already carries the action and the
+   * progress reading.
+   *
+   * Set for Stage 5, whose numbered path owns both. It suppresses the repeat
+   * here rather than in the path, because the path is the surface an operator
+   * works in and the header is the surface they orient by.
+   */
+  deferToSurfaceBelow?: boolean;
   className?: string;
 }
 
@@ -66,6 +75,7 @@ export function AmlJourneyStageHeader({
   onOpenSection,
   onPerform,
   className,
+  deferToSurfaceBelow = false,
 }: AmlJourneyStageHeaderProps) {
   const readinessTotal = stage.completedItems.length + stage.outstandingItems.length;
 
@@ -155,8 +165,22 @@ export function AmlJourneyStageHeader({
         </ul>
       )}
 
+      {/*
+        ── The act, and the count, are said ONCE on a screen ──────────
+        Stage 5 renders a numbered path that owns the same action and keeps
+        its own progress. Before this, one screen carried the act three times
+        — this header, the path's open step, and the right rail — in three
+        sets of words, plus TWO different progress readings ("2 of 3 items on
+        this stage complete" beside "3 of 5 settled"). Both counts were true
+        and they counted different things, which is worse than either alone.
+
+        So when the surface below owns the action, this header states where
+        the stage is and stops. Nothing is hidden that is not being said
+        better a few centimetres further down; on every other stage, which
+        has no such surface, the header behaves exactly as it did.
+      */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        {stage.primaryAction && (
+        {stage.primaryAction && !deferToSurfaceBelow && (
           <Button
             size="sm"
             onClick={() => {
@@ -169,7 +193,7 @@ export function AmlJourneyStageHeader({
             <ArrowRight aria-hidden className="ml-1.5 h-3.5 w-3.5" />
           </Button>
         )}
-        {readinessTotal > 0 && (
+        {readinessTotal > 0 && !deferToSurfaceBelow && (
           <p className="text-xs text-muted-foreground" aria-live="polite">
             {stage.completedItems.length} of {readinessTotal} item
             {readinessTotal === 1 ? "" : "s"} on this stage complete

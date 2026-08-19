@@ -2,6 +2,7 @@ import { invokeSecureFunction } from "@/lib/secureInvoke";
 
 import { invokeAmlFunction } from "./invokeAmlFunction";
 import type { PepDeclarationReading } from "./pepDeclaration";
+import type { PepDeferralReason, PepSourceKind } from "./pepEvidence";
 
 /** What a reset returns, whether it ran or was refused. */
 export interface AmlClientResetResult {
@@ -469,10 +470,41 @@ export const amlCasesApi = {
     pep_type?: "foreign" | "domestic" | "international_organisation";
     pep_relationship?: "self" | "family_member" | "close_associate";
     position_held?: string; jurisdiction?: string; holds_position_currently?: boolean;
-    methods: Array<{ source: string; reference?: string; note?: string }>;
+    /*
+     * Structured rows, not free text. The server already stored `methods` as
+     * jsonb with a reference and a note per source; the old dialog collapsed
+     * every source into one textarea and sent `{ source }` alone, throwing
+     * away the two fields that make a check reconstructable later. `kind` and
+     * `result` complete it: what sort of source, and what came back.
+     */
+    methods: Array<{
+      kind?: PepSourceKind; source: string;
+      reference?: string | null; result?: string | null; note?: string | null;
+    }>;
     rationale: string; review_months?: number;
   }) =>
     invoke<{ determination: AmlPepDetermination }>({ op: "record_pep_determination", ...payload }),
+
+  /**
+   * Record that a determination cannot be reached yet.
+   *
+   * Deliberately NOT a third `result`: nothing is written to
+   * `pep_determinations`, the scope stays outstanding and Stage 5 stays
+   * blocked. What is recorded is what was checked, why it did not settle the
+   * question, and what is needed.
+   */
+  deferPepDetermination: (payload: {
+    case_id: string;
+    party_screening_subject_id?: string | null;
+    reason: PepDeferralReason;
+    needed: string;
+    methods: Array<{
+      kind?: PepSourceKind; source: string;
+      reference?: string | null; result?: string | null; note?: string | null;
+    }>;
+  }) =>
+    invoke<{ deferred: boolean; subject_name: string }>(
+      { op: "defer_pep_determination", ...payload }),
 };
 
 export interface AmlReconciliationItem {
