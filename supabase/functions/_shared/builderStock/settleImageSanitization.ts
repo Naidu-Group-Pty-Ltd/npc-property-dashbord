@@ -77,7 +77,7 @@ const PAGE = 200;
 const MAX_PAGES = 200;
 
 /**
- * How many pictures one invocation may actually repair.
+ * How many pictures one INVOCATION may actually repair.
  *
  * DELIBERATELY VERY SMALL, and fitted the way the other caps in this programme
  * were: against the edge worker's RESOURCE limit rather than against the wall
@@ -86,11 +86,26 @@ const MAX_PAGES = 200;
  * over it or makes up to four model calls, encodes a PNG and then decodes it
  * again to check. Two is what fits.
  *
- * The sweep is resumable, so a small cap costs ticks and never coverage: what a
- * large one costs is a 546 with nothing written, which is how this programme
- * spent its first week.
+ * AND IT IS AN INVOCATION BUDGET, NOT A PER-UPLOAD ONE, which is the mistake
+ * every other cap in this area has already been through. A tick settles up to
+ * six uploads; a per-upload cap of two is a per-tick cap of twelve, and twelve
+ * of these is a `CPU Time exceeded` with nothing written and no marker moved —
+ * the exact failure mode that cost this programme its first week. The caller
+ * makes ONE budget and threads it through every upload in the tick.
+ *
+ * The sweep is resumable, so a small budget costs ticks and never coverage.
  */
 const MAX_REPAIRS_PER_RUN = 2;
+
+/** A repair allowance shared by every upload in one invocation. */
+export interface RepairBudget {
+  remaining: number;
+}
+
+/** One tick's allowance. Made by the caller, spent by every upload it settles. */
+export function newRepairBudget(): RepairBudget {
+  return { remaining: MAX_REPAIRS_PER_RUN };
+}
 
 interface ImageRow {
   id: string;
@@ -123,6 +138,12 @@ export async function settleImageSanitization(
   options: {
     deadlineAt?: number;
     uploadId?: string | null;
+    /**
+     * The invocation's shared repair allowance. Omitted, this upload gets one
+     * of its own — which is right for a single call and wrong for a tick, so
+     * the tick makes one and passes it to every upload.
+     */
+    budget?: RepairBudget;
     /** Injected in tests. Production passes nothing and the real repair runs. */
     sanitize?: typeof sanitizeSourceImage;
   } = {},
@@ -131,6 +152,7 @@ export async function settleImageSanitization(
     scanned: 0, outstanding: 0, repaired: 0, refused: 0, unresolved: 0, incomplete: false,
   };
   const sanitize = options.sanitize ?? sanitizeSourceImage;
+  const budget = options.budget ?? newRepairBudget();
 
   let after = '';
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -185,10 +207,11 @@ export async function settleImageSanitization(
         outcome.unresolved += 1;
         continue;
       }
-      if (outcome.repaired + outcome.refused >= MAX_REPAIRS_PER_RUN) {
+      if (budget.remaining <= 0) {
         outcome.incomplete = true;
         return outcome;
       }
+      budget.remaining -= 1;
       if (options.deadlineAt && Date.now() > options.deadlineAt) {
         outcome.incomplete = true;
         return outcome;

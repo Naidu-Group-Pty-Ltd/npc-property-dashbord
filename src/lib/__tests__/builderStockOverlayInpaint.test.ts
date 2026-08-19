@@ -38,7 +38,7 @@ import {
   SANITIZATION_VERSION, type SanitizedDerivative,
 } from '../../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
 import {
-  settleImageSanitization, sanitizationSweepCompleted,
+  newRepairBudget, settleImageSanitization, sanitizationSweepCompleted,
 } from '../../../supabase/functions/_shared/builderStock/settleImageSanitization';
 import {
   isDisplayableSourceImage,
@@ -723,6 +723,47 @@ describe('the derivative is stored once, with provenance, and served frozen', ()
     expect(outcome.scanned).toBe(3);
     expect(outcome.outstanding).toBe(0);
     expect(db.uploads).toHaveLength(0);
+  });
+});
+
+describe('the repair allowance is spent once per invocation, not once per upload', () => {
+  it('two uploads share one budget', async () => {
+    const { clean, badged } = badgedPicture();
+    const mask = maskFor(badged);
+    const bytes = (await encodePng(badged, { width: W, height: H, components: 3 }))!;
+
+    const rows = await Promise.all([0, 1, 2].map(async (n) => ({
+      ...await refusedRow(bytes), id: `image-${n}`, storage_path: `${PATH}.${n}`,
+    })));
+    const objects: Record<string, Uint8Array> = {};
+    for (const row of rows) objects[row.storage_path] = bytes;
+
+    /*
+     * THE DEFECT THIS PINS. A tick settles up to six uploads. A per-upload cap
+     * of two is a per-tick cap of twelve full-resolution repairs, and twelve of
+     * these is the `CPU Time exceeded` with nothing written that this whole
+     * settlement programme exists because of.
+     */
+    const budget = newRepairBudget();
+    const started = budget.remaining;
+    expect(started).toBeGreaterThan(0);
+
+    const first = await settleImageSanitization(fakeDb([rows[0]], objects) as never, ORG, {
+      budget, sanitize: (input) => sanitizeSourceImage(input, { edit: honestModel(clean, mask) }),
+    });
+    const second = await settleImageSanitization(
+      fakeDb(rows.slice(1), objects) as never, ORG, {
+        budget,
+        sanitize: (input) => sanitizeSourceImage(input, { edit: honestModel(clean, mask) }),
+      });
+
+    const done = first.repaired + first.refused + second.repaired + second.refused;
+    expect(done).toBeLessThanOrEqual(started);
+    expect(budget.remaining).toBeLessThan(started);
+    // And the one that ran out says so, so its marker cannot advance.
+    if (done === started && second.outstanding > second.repaired + second.refused) {
+      expect(sanitizationSweepCompleted(second)).toBe(false);
+    }
   });
 });
 

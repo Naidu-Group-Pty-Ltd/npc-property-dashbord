@@ -64,6 +64,7 @@ import {
   SETTLED_VERSION_COLUMN,
   type SettlementCandidate,
 } from '../_shared/builderStock/settleSourceImages.ts';
+import { newRepairBudget } from '../_shared/builderStock/settleImageSanitization.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 
@@ -255,6 +256,18 @@ Deno.serve(async (req: Request) => {
       if (!candidate.needsEligibility) await enforce(candidate.organisation_id);
     }
 
+    /*
+     * ONE overlay-repair allowance for the whole tick, not one per upload.
+     *
+     * A repair is a full-resolution decode plus a reconstruction or up to four
+     * model calls; the worker's resource limit is what kills this function, and
+     * it kills it long before the wall clock above expires. Six uploads each
+     * spending their own allowance is twelve of them and a 546 with nothing
+     * written — which is the failure this whole settlement programme exists
+     * because of. The budget is shared, so the tick spends it once.
+     */
+    const repairBudget = newRepairBudget();
+
     const { attempted, settled, organisations } = await runSettlementTick(
       candidates,
       { maxSettled: MAX_UPLOADS_PER_TICK, deadlineAt },
@@ -265,6 +278,7 @@ Deno.serve(async (req: Request) => {
         needsProvenance: candidate.needsProvenance,
         needsEligibility: candidate.needsEligibility,
         needsSanitization: candidate.needsSanitization,
+        repairBudget,
       }),
     );
 

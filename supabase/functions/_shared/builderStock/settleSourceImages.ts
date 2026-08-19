@@ -34,7 +34,8 @@ import {
 } from './settleMarketplaceEligibility.ts';
 import { MARKETPLACE_ELIGIBILITY_VERSION } from './marketplaceEligibility.pure.ts';
 import {
-  sanitizationSweepCompleted, settleImageSanitization, type SanitizationSettlement,
+  sanitizationSweepCompleted, settleImageSanitization,
+  type RepairBudget, type SanitizationSettlement,
 } from './settleImageSanitization.ts';
 import { SANITIZATION_VERSION } from './sanitizedDerivative.pure.ts';
 
@@ -505,6 +506,11 @@ export async function settleUploadSourceImages(
     needsProvenance?: boolean;
     needsEligibility?: boolean;
     needsSanitization?: boolean;
+    /**
+     * The tick's shared repair allowance, so six uploads cannot each spend a
+     * per-upload one. See `newRepairBudget`.
+     */
+    repairBudget?: RepairBudget;
   },
   deps: {
     fetchPackage?: PackageFetcher;
@@ -598,6 +604,7 @@ export async function settleUploadSourceImages(
     sanitization = await settleImageSanitization(db, input.organisationId, {
       uploadId: input.uploadId,
       deadlineAt: input.deadlineAt,
+      budget: input.repairBudget,
       sanitize: deps.sanitize,
     });
     if (sanitizationSweepCompleted(sanitization)) {
