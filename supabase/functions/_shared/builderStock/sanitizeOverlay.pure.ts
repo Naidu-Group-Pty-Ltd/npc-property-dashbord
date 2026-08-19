@@ -32,7 +32,7 @@
  * byte for byte.
  */
 
-import { type OverlayMeasurement } from './marketingOverlay.pure.ts';
+
 
 /**
  * How far the mask is grown before filling.
@@ -84,20 +84,24 @@ export interface SanitizeInput {
   /** RGB triples, row-major. Not mutated. */
   pixels: Uint8Array;
   /**
-   * The detector's own verdict, and the size it was reached at.
+   * WHERE THE STICKER IS, one byte per pixel, at the size it was measured.
    *
-   * THE MASK IS MEASURED ON THE THUMBNAIL AND SCALED UP, NOT MEASURED AGAIN
-   * HERE, and that is not a shortcut — it is the only correct order. Every
-   * threshold in the detector is fitted against the 400px reduction: at full
-   * size `BRIDGE_GAP` spans a third as much of the picture, so a badge stops
-   * flooding across its own lettering and fragments into slivers that each fail
-   * the size and straightness tests. Measured at 1200px the Lot 13 pills were
-   * not found at all while the sky around them was, and the "repair" blurred
-   * the photograph and left the marketing intact.
+   * From `overlayPlate.pure.ts`, which derives it from the lines of type the
+   * classifier found rather than from flat colour. That distinction is the most
+   * important one in the repair: a flat-colour mask on Lot 13 Hummock Rise
+   * covered the black garage door and a patch of sky and missed one of the two
+   * badges, and repairing it took the garage door off the house.
+   *
+   * MEASURED ON THE THUMBNAIL AND SCALED UP, NOT MEASURED AGAIN HERE, and that
+   * is not a shortcut — it is the only correct order. Every threshold in the
+   * detector is fitted against the 400px reduction; measured at 1200px the
+   * Lot 13 badges were not found at all while the sky around them was.
    */
-  overlay: OverlayMeasurement;
+  mask: Uint8Array;
   maskWidth: number;
   maskHeight: number;
+  /** How many separate stickers that mask represents, for the record. */
+  regions: number;
 }
 
 export type SanitizeResult =
@@ -254,12 +258,12 @@ function diffuse(
  * that was judged too hard to rebuild.
  */
 export function growOverlayMask(
-  overlay: OverlayMeasurement,
+  source: Uint8Array,
   maskWidth: number, maskHeight: number, width: number, height: number,
 ): Uint8Array | null {
   const count = width * height;
   if (count <= 0 || maskWidth <= 0 || maskHeight <= 0) return null;
-  if (overlay.mask.length !== maskWidth * maskHeight) return null;
+  if (source.length !== maskWidth * maskHeight) return null;
 
   const scaleX = maskWidth / width;
   const scaleY = maskHeight / height;
@@ -268,7 +272,7 @@ export function growOverlayMask(
     const sy = Math.min(maskHeight - 1, Math.floor(y * scaleY));
     for (let x = 0; x < width; x++) {
       const sx = Math.min(maskWidth - 1, Math.floor(x * scaleX));
-      scaled[y * width + x] = overlay.mask[sy * maskWidth + sx];
+      scaled[y * width + x] = source[sy * maskWidth + sx];
     }
   }
   const spread = Math.max(1, Math.round(Math.max(width / maskWidth, height / maskHeight)));
@@ -282,12 +286,14 @@ export function growOverlayMask(
  * ever remove something that pass called a laid-over graphic.
  */
 export function sanitizeOverlay(input: SanitizeInput): SanitizeResult {
-  const { width, height, pixels, overlay, maskWidth, maskHeight } = input;
+  const { width, height, pixels, maskWidth, maskHeight } = input;
   const count = width * height;
   if (count <= 0 || pixels.length < count * 3) return { ok: false, reason: 'unusable_input' };
-  if (!overlay.regions.length) return { ok: false, reason: 'nothing_to_remove' };
+  let source = 0;
+  for (let i = 0; i < input.mask.length; i++) source += input.mask[i];
+  if (!source) return { ok: false, reason: 'nothing_to_remove' };
 
-  const mask = growOverlayMask(overlay, maskWidth, maskHeight, width, height);
+  const mask = growOverlayMask(input.mask, maskWidth, maskHeight, width, height);
   if (!mask) return { ok: false, reason: 'unusable_input' };
   let masked = 0;
   for (let i = 0; i < count; i++) masked += mask[i];
@@ -313,7 +319,7 @@ export function sanitizeOverlay(input: SanitizeInput): SanitizeResult {
     height,
     pixels: diffuse(pixels, mask, width, height),
     repairedShare,
-    regionsRemoved: overlay.regions.length,
+    regionsRemoved: input.regions,
     boundaryDetail: detail,
   };
 }

@@ -9,8 +9,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  measureFlatColourRegions,
+  overlayTextBoxes,
 } from '../../../supabase/functions/_shared/builderStock/marketingOverlay.pure';
+import {
+  overlayPlateMask,
+} from '../../../supabase/functions/_shared/builderStock/overlayPlate.pure';
+import { withCaption, withPlate } from './fixtures/builderStockPictures';
 import {
   sanitizeOverlay,
 } from '../../../supabase/functions/_shared/builderStock/sanitizeOverlay.pure';
@@ -58,7 +62,7 @@ function foliage(width: number, height: number): Uint8Array {
   return pixels;
 }
 
-/** Stamp a flat coloured badge, the shape a detector calls a laid-over graphic. */
+/** Stamp a flat coloured plate. */
 function stamp(
   pixels: Uint8Array, width: number,
   box: { x: number; y: number; w: number; h: number }, colour: [number, number, number],
@@ -73,16 +77,55 @@ function stamp(
   }
 }
 
+/**
+ * A badge: a plate with WORDS on it.
+ *
+ * The lettering is not decoration. The repair's mask is derived from the type
+ * the classifier found — see `overlayPlate.pure.ts` — so a plate with nothing
+ * written on it is, correctly, not something this may remove: a flat coloured
+ * block is a black garage door as often as it is a sticker, and Lot 13 Hummock
+ * Rise is the production case where the difference mattered.
+ *
+ * Drawn with the shared caption fixture, so what these tests stamp is the same
+ * shape the classifier's own tests are written against.
+ */
+function badge(
+  pixels: Uint8Array, width: number,
+  box: { x: number; y: number; w: number; h: number },
+  colour: [number, number, number] = [193, 255, 114],
+): void {
+  const plated = withPlate({ width, height: H, pixels }, box, colour);
+  const scale = Math.max(1, Math.floor((box.h * 0.55) / 7));
+  const captioned = withCaption(plated, 'SOLERA'.slice(0, Math.max(2,
+    Math.floor((box.w - box.h * 0.5) / (6 * scale)))), {
+    x: box.x + Math.round(box.h * 0.25),
+    y: box.y + Math.round((box.h - 7 * scale) / 2),
+    scale,
+    ink: [10, 10, 10],
+  });
+  pixels.set(captioned.pixels);
+}
+
 const W = 400;
 const H = 200;
 
+/**
+ * The mask the pipeline builds, on the same pixels.
+ *
+ * Derived from the TYPE the badge carries — see `overlayPlate.pure.ts` — which
+ * is why every fixture below stamps lettering on its badge rather than a plain
+ * rectangle. A plain coloured block is a garage door as often as it is a
+ * sticker, and the repair may not remove one.
+ */
 const run = (pixels: Uint8Array) => {
-  const overlay = measureFlatColourRegions({ width: W, height: H, pixels });
+  const plates = overlayPlateMask(
+    { width: W, height: H, pixels }, overlayTextBoxes({ width: W, height: H, pixels }));
   return {
-    overlay,
+    plates,
     // Same size for mask and picture here: the scaling is exercised separately.
     result: sanitizeOverlay({
-      width: W, height: H, pixels, overlay, maskWidth: W, maskHeight: H,
+      width: W, height: H, pixels, mask: plates.mask, regions: plates.plates.length,
+      maskWidth: W, maskHeight: H,
     }),
   };
 };
@@ -90,9 +133,9 @@ const run = (pixels: Uint8Array) => {
 describe('removing a marketing badge from the builder\'s own photograph', () => {
   it('leaves a clean picture completely alone', () => {
     const clean = sky(W, H);
-    const { overlay, result } = run(clean);
+    const { plates, result } = run(clean);
 
-    expect(overlay.regions).toHaveLength(0);
+    expect(plates.plates).toHaveLength(0);
     // Not "cleaned to the same thing" — never touched at all.
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -103,10 +146,10 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
     const original = sky(W, H);
     const badged = new Uint8Array(original);
     const box = { x: 20, y: 14, w: 96, h: 30 };
-    stamp(badged, W, box, [180, 240, 60]);
+    badge(badged, W, box);
 
-    const { overlay, result } = run(badged);
-    expect(overlay.regions.length).toBeGreaterThan(0);
+    const { plates, result } = run(badged);
+    expect(plates.plates.length).toBeGreaterThan(0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -145,7 +188,7 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
   it('reconstructs the sky it covered rather than filling it flat', () => {
     const original = sky(W, H);
     const badged = new Uint8Array(original);
-    stamp(badged, W, { x: 20, y: 14, w: 96, h: 30 }, [180, 240, 60]);
+    badge(badged, W, { x: 20, y: 14, w: 96, h: 30 });
 
     const { result } = run(badged);
     expect(result.ok).toBe(true);
@@ -159,7 +202,7 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
 
   it('REFUSES a badge sitting on detail, rather than smearing it', () => {
     const busy = foliage(W, H);
-    stamp(busy, W, { x: 40, y: 40, w: 70, h: 26 }, [180, 240, 60]);
+    badge(busy, W, { x: 40, y: 40, w: 70, h: 26 });
 
     const { result } = run(busy);
     expect(result.ok).toBe(false);
@@ -171,9 +214,9 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
     const original = sky(W, H);
     const badged = new Uint8Array(original);
     // Three big plates, the Lot 13 shape: quiet surroundings, far too much area.
-    stamp(badged, W, { x: 10, y: 10, w: 150, h: 40 }, [180, 240, 60]);
-    stamp(badged, W, { x: 200, y: 10, w: 150, h: 40 }, [180, 240, 60]);
-    stamp(badged, W, { x: 100, y: 120, w: 180, h: 40 }, [180, 240, 60]);
+    badge(badged, W, { x: 10, y: 10, w: 150, h: 40 });
+    badge(badged, W, { x: 200, y: 10, w: 150, h: 40 });
+    badge(badged, W, { x: 100, y: 120, w: 180, h: 40 });
 
     const { result } = run(badged);
     expect(result.ok).toBe(false);
@@ -184,7 +227,7 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
   it('is deterministic — the same picture always cleans to the same bytes', () => {
     const make = () => {
       const p = sky(W, H);
-      stamp(p, W, { x: 20, y: 14, w: 96, h: 30 }, [180, 240, 60]);
+      badge(p, W, { x: 20, y: 14, w: 96, h: 30 });
       return p;
     };
     const a = run(make()).result;

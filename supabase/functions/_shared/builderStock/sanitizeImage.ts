@@ -37,7 +37,8 @@
  * refusal deliberately carries no candidate for a caller to fall back to.
  */
 import { decodeFullRaster, decodeThumbnailResult } from './sourceImageRaster.ts';
-import { measureFlatColourRegions, readMarketingOverlay } from './marketingOverlay.pure.ts';
+import { overlayTextBoxes, readMarketingOverlay } from './marketingOverlay.pure.ts';
+import { overlayPlateMask } from './overlayPlate.pure.ts';
 import { growOverlayMask, sanitizeOverlay } from './sanitizeOverlay.pure.ts';
 import { inpaintOverlay, type InpaintInput } from './inpaintOverlay.ts';
 import { encodePng } from './rasterPng.ts';
@@ -129,19 +130,26 @@ export async function sanitizeSourceImage(
     }
 
     /*
-     * THE MASK COMES FROM THE FLAT-COLOUR PASS AND ONLY FROM IT.
+     * THE MASK IS DERIVED FROM THE TYPE, NEVER FROM FLAT COLOUR.
      *
-     * The verdict above can also be reached by the TEXT pass — prominent
-     * lettering laid straight onto a photograph with no block behind it — and
-     * that pass measures where the type is but not what shape the graphic
-     * covering the picture is. There is nothing here to remove without
-     * guessing an extent, so such a picture falls through to
-     * `nothing_to_remove` below, is recorded as refused, and keeps its blank
-     * card. Inventing a rectangle around some lettering would rebuild
-     * photograph that was never covered.
+     * The classifier's flat-colour pass is the right instrument for "is there
+     * promotional treatment here", where a false positive costs a blank card.
+     * It is the WRONG instrument for "which pixels may I rebuild", where a
+     * false positive removes whatever was there — and Lot 13 Hummock Rise is
+     * the proof: its flat regions are the black garage door, a patch of sky,
+     * and ONE of its two badges. Repairing that mask took the garage door off
+     * the house and left the marketing on it.
+     *
+     * `overlayPlateMask` takes the lines of type the strict pass already found
+     * and floods outward to find the plate each one is set on. A garage door
+     * has no words on it and is never reached; neither is sky, a roof or a
+     * wall. Type set straight onto the photograph has no plate, and that
+     * contributes nothing rather than a guessed rectangle — such a picture
+     * falls through to `nothing_to_remove`, is recorded as refused, and keeps
+     * its blank card.
      */
-    const overlay = measureFlatColourRegions(thumbnail.thumbnail);
-    if (!overlay.regions.length) {
+    const plates = overlayPlateMask(thumbnail.thumbnail, overlayTextBoxes(thumbnail.thumbnail));
+    if (!plates.plates.length) {
       return {
         ok: false, reason: 'nothing_to_remove',
         transformation: 'deterministic_overlay_reconstruction', model: null,
@@ -162,7 +170,8 @@ export async function sanitizeSourceImage(
       width: raster.width,
       height: raster.height,
       pixels: raster.pixels,
-      overlay,
+      mask: plates.mask,
+      regions: plates.plates.length,
       maskWidth: thumbnail.thumbnail.width,
       maskHeight: thumbnail.thumbnail.height,
     });
@@ -201,7 +210,7 @@ export async function sanitizeSourceImage(
     }
 
     const mask = growOverlayMask(
-      overlay, thumbnail.thumbnail.width, thumbnail.thumbnail.height,
+      plates.mask, thumbnail.thumbnail.width, thumbnail.thumbnail.height,
       raster.width, raster.height);
     if (!mask) {
       return {

@@ -18,8 +18,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  measureFlatColourRegions, readMarketingOverlay,
+  overlayTextBoxes, readMarketingOverlay,
 } from '../../../supabase/functions/_shared/builderStock/marketingOverlay.pure';
+import {
+  overlayPlateMask,
+} from '../../../supabase/functions/_shared/builderStock/overlayPlate.pure';
+import { withCaption, withPlate } from './fixtures/builderStockPictures';
 import {
   growOverlayMask,
 } from '../../../supabase/functions/_shared/builderStock/sanitizeOverlay.pure';
@@ -68,18 +72,32 @@ function sky(width: number, height: number): Uint8Array {
   return pixels;
 }
 
+/**
+ * A badge: a plate with WORDS on it.
+ *
+ * The lettering is what makes it removable. The repair's mask is derived from
+ * the type the classifier found, never from flat colour — a flat coloured block
+ * is a black garage door as often as it is a sticker, and on Lot 13 Hummock
+ * Rise the flat-colour mask covered the garage door, covered a patch of sky,
+ * and missed one of the two badges entirely.
+ */
 function stamp(
   pixels: Uint8Array, width: number,
-  box: { x: number; y: number; w: number; h: number }, colour: [number, number, number],
+  box: { x: number; y: number; w: number; h: number },
+  colour: [number, number, number] = [193, 255, 114],
+  height = H,
 ): void {
-  for (let y = box.y; y < box.y + box.h; y++) {
-    for (let x = box.x; x < box.x + box.w; x++) {
-      const at = (y * width + x) * 3;
-      pixels[at] = colour[0];
-      pixels[at + 1] = colour[1];
-      pixels[at + 2] = colour[2];
-    }
-  }
+  const plated = withPlate({ width, height, pixels }, box, colour);
+  const scale = Math.max(1, Math.floor((box.h * 0.55) / 7));
+  const letters = Math.max(2, Math.min(6,
+    Math.floor((box.w - box.h * 0.5) / (6 * scale))));
+  const captioned = withCaption(plated, 'SOLERA'.slice(0, letters), {
+    x: box.x + Math.round(box.h * 0.25),
+    y: box.y + Math.round((box.h - 7 * scale) / 2),
+    scale,
+    ink: [10, 10, 10],
+  });
+  pixels.set(captioned.pixels);
 }
 
 /**
@@ -98,14 +116,15 @@ const BADGES = [
 function badgedPicture(): { clean: Uint8Array; badged: Uint8Array } {
   const clean = sky(W, H);
   const badged = new Uint8Array(clean);
-  for (const box of BADGES) stamp(badged, W, box, [180, 240, 60]);
+  for (const box of BADGES) stamp(badged, W, box);
   return { clean, badged };
 }
 
 /** The mask the pipeline itself would build, so the tests repair what it does. */
 function maskFor(badged: Uint8Array): Uint8Array {
-  const overlay = measureFlatColourRegions({ width: W, height: H, pixels: badged });
-  const mask = growOverlayMask(overlay, W, H, W, H);
+  const view = { width: W, height: H, pixels: badged };
+  const plates = overlayPlateMask(view, overlayTextBoxes(view));
+  const mask = growOverlayMask(plates.mask, W, H, W, H);
   expect(mask).not.toBeNull();
   return mask as Uint8Array;
 }
@@ -132,6 +151,73 @@ async function hostileModel(): Promise<Uint8Array> {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// RULE 5 — the mask never reaches a feature of the house
+// ---------------------------------------------------------------------------
+
+describe('what may be removed is a plate with WORDS on it, and nothing else', () => {
+  /** A flat block with no type on it: a black garage door, a dark window. */
+  function plainBlock(
+    pixels: Uint8Array, width: number,
+    box: { x: number; y: number; w: number; h: number },
+    colour: [number, number, number],
+  ): void {
+    for (let y = box.y; y < box.y + box.h; y++) {
+      for (let x = box.x; x < box.x + box.w; x++) {
+        const at = (y * width + x) * 3;
+        pixels[at] = colour[0];
+        pixels[at + 1] = colour[1];
+        pixels[at + 2] = colour[2];
+      }
+    }
+  }
+
+  it('LOT 13 — a black garage door is not a sticker and is never masked', () => {
+    /*
+     * THE PRODUCTION DEFECT THIS PINS, and it is the worst one in this change.
+     *
+     * The classifier's flat-colour pass is the right instrument for "is there
+     * promotional treatment on this picture", where a false positive costs a
+     * blank card. It is the WRONG instrument for "which pixels may I rebuild",
+     * where a false positive REMOVES whatever was there. Measured on the real
+     * Lot 13 Hummock Rise bytes, that pass returns three regions: the black
+     * garage door at 7.5% of the frame, a patch of pale sky at 6.7%, and one of
+     * the two green pills at 4.5% — the other pill is not a region at all.
+     *
+     * Repairing that mask took the garage door off a house and left the
+     * marketing on it. I have the render.
+     */
+    const pixels = sky(W, H);
+    plainBlock(pixels, W, { x: 60, y: 120, w: 130, h: 60 }, [30, 30, 32]);
+    stamp(pixels, W, { x: 20, y: 14, w: 96, h: 30 });
+
+    const view = { width: W, height: H, pixels };
+    const plates = overlayPlateMask(view, overlayTextBoxes(view));
+
+    // The badge is found...
+    expect(plates.plates.length).toBe(1);
+    const plate = plates.plates[0];
+    expect(plate.top).toBeLessThan(60);
+
+    // ...and not one pixel of the garage door is in the mask.
+    for (let y = 120; y < 180; y++) {
+      for (let x = 60; x < 190; x++) expect(plates.mask[y * W + x]).toBe(0);
+    }
+  });
+
+  it('type set straight onto the photograph has no plate, and nothing is removed', () => {
+    const pixels = sky(W, H);
+    // A caption with no block behind it: there is no honest extent to remove,
+    // and inventing a rectangle would rebuild photograph that was never
+    // covered.
+    const captioned = withCaption({ width: W, height: H, pixels }, 'SOLERA', {
+      x: 40, y: 30, scale: 4, ink: [10, 10, 10],
+    });
+    const view = { width: W, height: H, pixels: captioned.pixels };
+    expect(overlayPlateMask(view, overlayTextBoxes(view)).plates).toHaveLength(0);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // RULE 1 / 11 — the only visual input is that property's own image
@@ -340,9 +426,10 @@ describe('the validation gate refuses rather than shipping something wrong', () 
     const clean = sky(W, H);
     const wide = new Uint8Array(clean);
     // One plate wider than the frame is tall: the shape that used to refuse.
-    stamp(wide, W, { x: 30, y: 84, w: 300, h: 28 }, [180, 240, 60]);
-    const overlay = measureFlatColourRegions({ width: W, height: H, pixels: wide });
-    const mask = growOverlayMask(overlay, W, H, W, H) as Uint8Array;
+    stamp(wide, W, { x: 30, y: 84, w: 300, h: 28 });
+    const view = { width: W, height: H, pixels: wide };
+    const mask = growOverlayMask(
+      overlayPlateMask(view, overlayTextBoxes(view)).mask, W, H, W, H) as Uint8Array;
     const plan = planInpaintPatches(mask, W, H);
 
     expect(plan.uncovered).toBe(false);
@@ -365,9 +452,10 @@ describe('the validation gate refuses rather than shipping something wrong', () 
   it('the padding it sees is the picture\'s own edge, and is not editable', () => {
     const clean = sky(W, H);
     const wide = new Uint8Array(clean);
-    stamp(wide, W, { x: 30, y: 84, w: 300, h: 28 }, [180, 240, 60]);
-    const overlay = measureFlatColourRegions({ width: W, height: H, pixels: wide });
-    const mask = growOverlayMask(overlay, W, H, W, H) as Uint8Array;
+    stamp(wide, W, { x: 30, y: 84, w: 300, h: 28 });
+    const view = { width: W, height: H, pixels: wide };
+    const mask = growOverlayMask(
+      overlayPlateMask(view, overlayTextBoxes(view)).mask, W, H, W, H) as Uint8Array;
     const patch = planInpaintPatches(mask, W, H).patches.find((p) => p.size > H);
     expect(patch).toBeTruthy();
     if (!patch) return;
@@ -403,10 +491,11 @@ describe('the validation gate refuses rather than shipping something wrong', () 
      */
     const clean = sky(W, H);
     const banner = new Uint8Array(clean);
-    stamp(banner, W, { x: 4, y: 80, w: 60, h: 30 }, [180, 240, 60]);
-    stamp(banner, W, { x: 336, y: 80, w: 60, h: 30 }, [180, 240, 60]);
-    const overlay = measureFlatColourRegions({ width: W, height: H, pixels: banner });
-    const mask = growOverlayMask(overlay, W, H, W, H) as Uint8Array;
+    stamp(banner, W, { x: 4, y: 80, w: 60, h: 30 });
+    stamp(banner, W, { x: 336, y: 80, w: 60, h: 30 });
+    const view = { width: W, height: H, pixels: banner };
+    const mask = growOverlayMask(
+      overlayPlateMask(view, overlayTextBoxes(view)).mask, W, H, W, H) as Uint8Array;
     const plan = planInpaintPatches(mask, W, H);
 
     // Either the plan covers the mask, or it refuses. Never a partial repair.
@@ -441,10 +530,11 @@ describe('the validation gate refuses rather than shipping something wrong', () 
     const wide = 1200;
     const tall = 600;
     const frame = sky(wide, tall);
-    stamp(frame, wide, { x: 70, y: 60, w: 460, h: 90 }, [180, 240, 60]);
-    stamp(frame, wide, { x: 710, y: 60, w: 450, h: 90 }, [180, 240, 60]);
-    const overlay = measureFlatColourRegions({ width: wide, height: tall, pixels: frame });
-    const mask = growOverlayMask(overlay, wide, tall, wide, tall) as Uint8Array;
+    stamp(frame, wide, { x: 70, y: 60, w: 460, h: 90 }, [193, 255, 114], tall);
+    stamp(frame, wide, { x: 710, y: 60, w: 450, h: 90 }, [193, 255, 114], tall);
+    const view = { width: wide, height: tall, pixels: frame };
+    const mask = growOverlayMask(
+      overlayPlateMask(view, overlayTextBoxes(view)).mask, wide, tall, wide, tall) as Uint8Array;
     const plan = planInpaintPatches(mask, wide, tall);
 
     expect(plan.uncovered).toBe(false);
@@ -487,10 +577,11 @@ describe('the validation gate refuses rather than shipping something wrong', () 
     const clean = sky(W, H);
     const many = new Uint8Array(clean);
     for (let i = 0; i < MAX_PATCHES + 3; i++) {
-      stamp(many, W, { x: 8 + i * 46, y: 8 + (i % 2) * 150, w: 34, h: 22 }, [180, 240, 60]);
+      stamp(many, W, { x: 8 + i * 46, y: 8 + (i % 2) * 150, w: 34, h: 22 });
     }
-    const overlay = measureFlatColourRegions({ width: W, height: H, pixels: many });
-    const mask = growOverlayMask(overlay, W, H, W, H) as Uint8Array;
+    const view = { width: W, height: H, pixels: many };
+    const mask = growOverlayMask(
+      overlayPlateMask(view, overlayTextBoxes(view)).mask, W, H, W, H) as Uint8Array;
     const plan = planInpaintPatches(mask, W, H);
     if (plan.tooMany) {
       expect(plan.patches).toHaveLength(0);
@@ -520,7 +611,7 @@ describe('the order the two repairs are tried in', () => {
 
   it('a small badge on quiet ground is repaired WITHOUT a model', async () => {
     const pixels = sky(W, H);
-    stamp(pixels, W, { x: 20, y: 14, w: 96, h: 30 }, [180, 240, 60]);
+    stamp(pixels, W, { x: 20, y: 14, w: 96, h: 30 });
     let modelCalled = 0;
     const result = await sanitizeSourceImage(await bytesOf(pixels), {
       edit: async () => { modelCalled += 1; return null; },
@@ -568,7 +659,7 @@ describe('the order the two repairs are tried in', () => {
   it('the generative route can be withheld without losing the deterministic one',
     async () => {
       const pixels = sky(W, H);
-      stamp(pixels, W, { x: 20, y: 14, w: 96, h: 30 }, [180, 240, 60]);
+      stamp(pixels, W, { x: 20, y: 14, w: 96, h: 30 });
       const small = await sanitizeSourceImage(await bytesOf(pixels), {
         allowGenerative: false,
       });

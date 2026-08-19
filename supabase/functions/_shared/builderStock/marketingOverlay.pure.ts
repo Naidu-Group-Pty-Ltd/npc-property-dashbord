@@ -145,6 +145,15 @@ const MAX_REGION_SHARE = 0.55;
 export interface OverlayRegion {
   /** Share of the picture the region covers. */
   share: number;
+  /**
+   * Where it sits, in the measured raster's own pixels.
+   *
+   * Carried so a CALLER can reason about the region — the overlay repair has to
+   * decide whether a flat block is a badge or a black garage door, and it
+   * cannot ask that question of a share and a colour. Nothing in this module
+   * reads it, and no threshold here is expressed in terms of it.
+   */
+  box: { left: number; top: number; right: number; bottom: number };
   /** Mean row occupancy across the rows it touches. */
   rowFill: number;
   /** Straightness of its sides. Low is rectangular. */
@@ -290,6 +299,7 @@ export function measureFlatColourRegions(view: RasterView): OverlayMeasurement {
     acceptedFills.add(currentFill);
     regions.push({
       share,
+      box: { left: minX, top: minY, right: maxX, bottom: maxY },
       rowFill,
       edgeSpread,
       chroma,
@@ -621,9 +631,35 @@ export function measureFaintOverlayText(view: RasterView): TextMeasurement {
  * a mark and in nothing else, and two copies of these gates would drift into
  * two different ideas of what a word looks like.
  */
+/**
+ * Where the strict pass found lines of type, in the measured raster's pixels.
+ *
+ * ADDITIVE, AND IT MOVES NO THRESHOLD. It re-runs the same search the verdict
+ * uses and reports the boxes it already computes and then discards. The overlay
+ * repair needs them: a promotional badge is a coloured block WITH TYPE ON IT,
+ * and a black garage door is a coloured block without. Telling those apart is
+ * the difference between taking a sticker off a photograph and removing a
+ * feature of the house.
+ */
+export function overlayTextBoxes(view: RasterView): Array<{
+  left: number; top: number; right: number; bottom: number;
+}> {
+  const { width, height, pixels } = view;
+  const count = width * height;
+  if (count <= 0 || pixels.length < count * 3 || height < 16) return [];
+  const { luma, local } = lumaField(view);
+  const ink = new Uint8Array(count);
+  for (let i = 0; i < count; i++) {
+    if (Math.abs(luma[i] - local[i]) > INK_CONTRAST) ink[i] = 1;
+  }
+  return runsIn(ink, width, height, STRICT_SHAPE, true).boxes ?? [];
+}
+
 function runsIn(
-  ink: Uint8Array, width: number, height: number, shape: RunShape,
-): TextMeasurement {
+  ink: Uint8Array, width: number, height: number, shape: RunShape, keepBoxes = false,
+): TextMeasurement & { boxes?: Array<{
+  left: number; top: number; right: number; bottom: number;
+}> } {
   const count = width * height;
   const label = new Int32Array(count).fill(-1);
   const stack: number[] = [];
@@ -631,6 +667,7 @@ function runsIn(
   const maxHeight = height * MAX_TEXT_HEIGHT_SHARE;
   let tallest = 0;
   let lines = 0;
+  const boxes: Array<{ left: number; top: number; right: number; bottom: number }> = [];
 
   for (let seed = 0; seed < count; seed++) {
     if (!ink[seed] || label[seed] !== -1) continue;
@@ -682,11 +719,14 @@ function runsIn(
     if (profile.middle < shape.minMiddle) continue;
 
     lines += 1;
+    if (keepBoxes) boxes.push({ left: minX, top: minY, right: maxX, bottom: maxY });
     const share = runHeight / height;
     if (share > tallest) tallest = share;
   }
 
-  return { heightShare: tallest, lineCount: lines };
+  return keepBoxes
+    ? { heightShare: tallest, lineCount: lines, boxes }
+    : { heightShare: tallest, lineCount: lines };
 }
 
 /**
