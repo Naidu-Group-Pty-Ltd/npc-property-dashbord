@@ -70,7 +70,9 @@ import {
 import {
   UNABLE_REASON_TEXT,
   planManualScreening,
+  type ManualScreeningRejection,
 } from "../../../supabase/functions/_shared/aml/manualScreening.pure";
+
 
 const OUTCOMES: Array<{ value: AmlManualOutcome; label: string; detail: string }> = [
   {
