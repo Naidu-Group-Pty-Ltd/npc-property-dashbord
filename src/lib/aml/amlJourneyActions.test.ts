@@ -119,7 +119,11 @@ describe("reopening actually resumes the journey", () => {
   it("names the PEP determination as the outstanding work", () => {
     const journey = deriveAmlJourney(reopened());
     const stage = journey.stages.find((s) => s.id === "screening")!;
-    expect(stage.outstandingItems.map((o) => o.key)).toContain("pep_outstanding");
+    // A required determination with no record BLOCKS the stage — it is not a
+    // waiting item. That is what lets the sequence hold the journey position
+    // and the Attention panel report it.
+    expect(stage.blockers.map((b) => b.key)).toContain("pep_outstanding");
+    expect(stage.blocking).toBe(true);
     expect(stage.primaryAction?.label).toBe("Record PEP determination");
   });
 });

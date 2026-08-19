@@ -947,16 +947,26 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
       if (enrolled.length === 0) {
         // Nobody enrolled cannot mean everybody determined.
         pepState = "not_started";
-        outstanding.push(note("pep_no_parties", "PEP determination outstanding", "waiting", {
+        blockers.push(note("pep_no_parties", "PEP determination outstanding", "attention", {
           detail: "No party is enrolled yet, so no determination can have been made.",
         }));
         if (owner === "none") owner = "analyst";
       } else if (undetermined.length > 0) {
         pepState = "not_started";
-        outstanding.push(
+        /*
+         * A BLOCKER, not a waiting item.
+         *
+         * It was `outstanding`/`waiting`, which reads as "somebody else is
+         * working on it" — so the stage never set `blocking`, the rail let a
+         * LATER stage claim the journey position, and the Attention panel
+         * could say "nothing on this case is unresolved" while Stage 5
+         * plainly had a required determination with no record against it.
+         * Nobody is working on it; it is owed, and it holds the stage.
+         */
+        blockers.push(
           note("pep_outstanding",
             `PEP determination outstanding for ${undetermined.length} part${undetermined.length === 1 ? "y" : "ies"}`,
-            "waiting", {
+            "attention", {
               detail: "Recorded by a reviewer or the MLRO with the sources checked and a "
                 + "rationale. A client declaration is evidence that supports it; it is "
                 + "never the determination itself.",
@@ -1009,7 +1019,7 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
   }
 
   // Whether the PEP determination is the thing actually holding this stage.
-  const pepIsTheWork = outstanding.some((o) => o.key.startsWith("pep_"))
+  const pepIsTheWork = blockers.some((b) => b.key.startsWith("pep_"))
     && !blockers.some((b) => ["confirmed", "possible", "no_subjects"].includes(b.key));
 
   const states: AmlEvidenceState[] = [screeningState, pepState, ownershipState].filter(
@@ -1697,9 +1707,40 @@ const STAGE_READERS: Record<AmlJourneyStageId, (facts: AmlWorkspaceFacts) => Sta
  * stage reached" — a case whose Passport is issued but whose documents were
  * never accepted has a real problem at stage 3, and the rail should say so.
  */
+/** Statuses that represent real, readable, outstanding work. */
+const WORKING_STATES: ReadonlyArray<AmlEvidenceState> = [
+  "attention", "in_progress", "not_started",
+];
+
 function currentStage(stages: AmlJourneyStage[]): AmlJourneyStageId {
-  const blocking = stages.find((s) => s.blocking && s.applicable);
-  if (blocking) return blocking.id;
+  /*
+   * THE SEQUENCE DECIDES, and it decides first.
+   *
+   * This used to scan every stage for `blocking` before considering order,
+   * so a LATER blocking stage outranked an EARLIER stage that merely had
+   * outstanding work. Measured on the reopened case: Stage 5 held a required
+   * PEP determination with no record (`not_started`, no blocker) while Stage
+   * 7 had a submission to review (`attention`, blocking) — and the journey
+   * reported "6 of 10" and then "Go to stage 7", stepping straight over a
+   * requirement that genuinely holds Stage 5.
+   *
+   * The stages are sequential. A case cannot be AT stage 7 while stage 5 is
+   * unfinished, whatever the relative urgency, so the first applicable stage
+   * with real outstanding work wins.
+   *
+   * `unknown` is deliberately not "work". It means the fact could not be
+   * read, and parking the whole journey on a failed read would be noise —
+   * `unavailableFacts` already reports it honestly. It is still not
+   * `complete`, so the fallback below catches it once nothing is outstanding.
+   */
+  const working = stages.find(
+    (s) => s.applicable && WORKING_STATES.includes(s.status),
+  );
+  if (working) return working.id;
+
+  // Nothing is outstanding: rest on the first stage that is merely unread,
+  // and on the last stage only when every applicable one is settled. This is
+  // the behaviour the original second rule had.
   const open = stages.find(
     (s) => s.applicable && s.status !== "complete" && s.status !== "not_applicable",
   );

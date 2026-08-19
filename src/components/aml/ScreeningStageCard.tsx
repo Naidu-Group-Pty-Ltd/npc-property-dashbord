@@ -60,7 +60,8 @@ import type { AmlScreeningStageReading } from "@/lib/aml/useScreeningStage";
 import { deriveScreeningStatus } from "@/lib/aml/screeningStatus.pure";
 import {
   buildDeterminationRows, deriveStageHeadline, METHOD_LABEL, OBLIGATION_LABEL,
-  OUTCOME_LABEL, STAGE_HEADLINE_LABEL, type DeterminationRow,
+  OUTCOME_LABEL, SANCTIONS_SOURCE_LABEL, STAGE_HEADLINE_LABEL,
+  type DeterminationRow,
 } from "@/lib/aml/screeningResolution.pure";
 
 const OWNER_LABEL: Record<string, string> = {
@@ -89,6 +90,12 @@ const TONE: Record<string, { surface: string; text: string; Icon: typeof Info }>
   none: { surface: "border-success/40 bg-success/10", text: "text-success", Icon: CheckCircle2 },
 };
 const DEFAULT_TONE = { surface: "border-primary/40 bg-primary/5", text: "text-primary", Icon: ArrowRight };
+
+/** Compact names for the per-person badges. */
+const SCOPE_SHORT: Record<string, string> = {
+  sanctions: "sanctions", pep: "PEP",
+  adverse_media: "adverse media", watchlist: "watchlist",
+};
 
 /** The five statuses, toned by whether they hold the journey. */
 const STATUS_TONE: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -147,7 +154,7 @@ function DeterminationRowView({ row }: { row: DeterminationRow }) {
 }
 
 export function ScreeningStageCard({
-  reading, onAct, actor, onContinue,
+  reading, onAct, actor, onContinue, onReviewPerimeter, onOpenListHealth,
 }: {
   reading: AmlScreeningStageReading;
   /**
@@ -157,6 +164,10 @@ export function ScreeningStageCard({
    * stage is exactly where somebody would otherwise read a sign-off.
    */
   onContinue?: () => void;
+  /** Open the perimeter classification dialog. */
+  onReviewPerimeter?: () => void;
+  /** Open the sanctions list health surface. */
+  onOpenListHealth?: () => void;
   /** Performs the one action. The card never mutates anything itself. */
   onAct: (action: AmlScreeningNextAction) => void | Promise<void>;
   /**
@@ -169,7 +180,7 @@ export function ScreeningStageCard({
    */
   actor: ScreeningActor;
 }) {
-  const { sync, readiness, scope, position, loading, unavailable } = reading;
+  const { sync, readiness, scope, position, source, loading, unavailable } = reading;
   const [busy, setBusy] = useState(false);
 
   if (loading && !sync) {
@@ -214,6 +225,26 @@ export function ScreeningStageCard({
     providerRelevant: sync.provider_relevant !== false,
   });
   const requiredRows = rows.filter((r) => r.obligation === "required");
+  /*
+   * Per-check obligations, read from the server's own scope decision. The
+   * party badges below render one status per CHECK; nothing here decides
+   * whether a check is owed.
+   */
+  const scopeRequired = (k: string) =>
+    (sync.scopes ?? []).find((x) => x.scope === k)?.required === true;
+  const sanctionsRequired = scopeRequired("sanctions");
+  const pepRequired = scopeRequired("pep");
+  const riskScopeRequired = ["adverse_media", "watchlist"].filter(scopeRequired);
+  const canClassify = actor.isReviewer || actor.isMlro;
+  /*
+   * A case that was stood down as an enquiry and is being worked again.
+   * `case_closed` is false here — the lifecycle says active — while the
+   * recorded perimeter still says the relationship never began. That is a
+   * question to put to a reviewer, not a contradiction to resolve silently.
+   */
+  const perimeterNeedsReview = !caseClosed
+    && sync.perimeter?.classification === "outside_perimeter"
+    && sync.perimeter?.reason_code === "enquiry_only";
   const otherRows = rows.filter((r) => r.obligation !== "required");
   /*
    * The OTHER lawful route, when the server named one. Which of the two is
@@ -408,6 +439,106 @@ export function ScreeningStageCard({
         </CardContent>
       </Card>
 
+      {/*
+        ── A reopened enquiry needs its classification re-examined ─────
+        The classification is NOT changed here and nothing is inferred from
+        the reopen: a perimeter finding is a compliance determination and it
+        stays exactly as recorded until a reviewer records another one. What
+        changes is that the question is ASKED, at the top, instead of leaving
+        an operator to find "Reclassify perimeter" at the foot of the page
+        and know to look for it.
+      */}
+      {perimeterNeedsReview && (
+        <Card className="border-primary/40 bg-primary/5">
+          <CardContent className="space-y-2 p-5">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <ShieldQuestion aria-hidden className="h-4 w-4 text-primary" />
+              Case classification requires review
+            </p>
+            <p className="text-sm text-muted-foreground">
+              This case was previously classified as{" "}
+              <span className="font-medium text-foreground">an enquiry only</span>, which is
+              why no sanctions screening is required. It has since been reopened and is
+              being worked again. Confirm whether the relationship is now progressing to a
+              designated service before continuing.
+            </p>
+            {canClassify && onReviewPerimeter && (
+              <Button size="sm" variant="outline" onClick={onReviewPerimeter}>
+                Review case classification
+              </Button>
+            )}
+            {!canClassify && (
+              <p className="text-xs text-muted-foreground">
+                A reviewer or the MLRO records this classification.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/*
+        ── The Australian sanctions source ────────────────────────────
+        Shown only where a sanctions obligation actually exists. An operator
+        signing off a determination has to be able to see WHICH source the
+        system screens against and whether it is usable; an administrator has
+        to be able to see that it is the thing to fix. Every value is live —
+        an unread source reports as unread rather than as ready.
+      */}
+      {sanctionsRequired && (
+        <Card>
+          <CardContent className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  Australian sanctions source
+                </p>
+                <p className="mt-0.5 text-sm font-medium">{SANCTIONS_SOURCE_LABEL}</p>
+              </div>
+              <Badge
+                variant={source.state === "current" ? "default"
+                  : source.state === "unknown" ? "outline" : "destructive"}
+                className="text-[10px]"
+              >
+                {source.label}
+              </Badge>
+            </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">{source.detail}</p>
+            <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+              <div>
+                <dt className="text-muted-foreground">Entries loaded</dt>
+                <dd className="font-medium">
+                  {source.entryCount === null
+                    ? "Not established"
+                    : source.entryCount.toLocaleString()}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Last loaded</dt>
+                <dd className="font-medium">
+                  {source.lastLoadedAt
+                    ? new Date(source.lastLoadedAt).toLocaleDateString()
+                    : "Never"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Automated screening</dt>
+                <dd className="font-medium">
+                  {source.automatedReady ? "Ready" : "Not available"}
+                </dd>
+              </div>
+            </dl>
+            {onOpenListHealth && (
+              <Button
+                size="sm" variant="outline" className="mt-3"
+                onClick={onOpenListHealth}
+              >
+                View list health
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── The scope, and the answers that produced it ──────────────── */}
       <Card>
         <CardContent className="space-y-4 p-5">
@@ -522,7 +653,7 @@ export function ScreeningStageCard({
         <Card>
           <CardContent className="p-5">
             <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              Parties in scope
+              People to assess
             </p>
             {sync.enrolled > 0 && (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -541,19 +672,41 @@ export function ScreeningStageCard({
                       {" · "}{s.partyType.replace(/_/g, " ")}
                     </span>
                   </span>
+                  {/*
+                    ── One status PER CHECK, never one for the person ──────
+                    This was a single `not in scope` badge whenever the
+                    party's SANCTIONS obligation had been stood down. On the
+                    reported case that put "not in scope" beside the primary
+                    customer of an active AML file who still owed a PEP
+                    determination — which reads as "this customer is outside
+                    AML", the most alarming thing this panel could say and
+                    the opposite of the truth.
+                    A person is not in or out of scope. Each check is.
+                  */}
                   <span className="flex flex-wrap items-center gap-1.5">
-                    {!s.required
-                      ? <Badge variant="secondary" className="text-[10px]">not in scope</Badge>
-                      : (
-                        <>
-                          <Badge variant={s.sanctions.resolved ? "secondary" : "outline"} className="text-[10px]">
-                            sanctions · {s.sanctions.state.replace(/_/g, " ")}
-                          </Badge>
-                          <Badge variant={s.pep.resolved ? "secondary" : "outline"} className="text-[10px]">
-                            PEP · {s.pep.resolved ? "determined" : "outstanding"}
-                          </Badge>
-                        </>
-                      )}
+                    <Badge
+                      variant={!sanctionsRequired ? "secondary"
+                        : s.sanctions.resolved ? "default" : "outline"}
+                      className="text-[10px]"
+                    >
+                      sanctions · {!sanctionsRequired
+                        ? "not required"
+                        : s.sanctions.state.replace(/_/g, " ")}
+                    </Badge>
+                    <Badge
+                      variant={!pepRequired ? "secondary"
+                        : s.pep.resolved ? "default" : "outline"}
+                      className="text-[10px]"
+                    >
+                      PEP · {!pepRequired
+                        ? "not required"
+                        : s.pep.resolved ? "determined" : "action required"}
+                    </Badge>
+                    {riskScopeRequired.map((sc) => (
+                      <Badge key={sc} variant="outline" className="text-[10px]">
+                        {SCOPE_SHORT[sc] ?? sc} · required
+                      </Badge>
+                    ))}
                   </span>
                 </li>
               ))}

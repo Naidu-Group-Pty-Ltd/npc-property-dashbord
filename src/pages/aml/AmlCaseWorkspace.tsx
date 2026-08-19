@@ -80,7 +80,9 @@ import { PartyScreeningPanel } from "@/components/aml/PartyScreeningPanel";
 import { ScreeningStageCard } from "@/components/aml/ScreeningStageCard";
 import { SanctionsPerimeterControl } from "@/components/aml/SanctionsPerimeterControl";
 import { useScreeningStage } from "@/lib/aml/useScreeningStage";
-import { ADMIN_AML_CONFIGURATION_PATH } from "@/lib/aml/amlRoutes";
+import {
+  ADMIN_AML_CONFIGURATION_PATH, ADMIN_AML_VERIFICATION_PATH,
+} from "@/lib/aml/amlRoutes";
 import { useLiveCaseRefresh } from "@/lib/aml/useLiveCaseRefresh";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
@@ -774,6 +776,8 @@ export default function AmlCaseWorkspace() {
                 reading={screeningStage}
                 onAct={runScreeningAction}
                 onContinue={nextStage ? () => goToStage(nextStage.id) : undefined}
+                onReviewPerimeter={() => setPerimeterDialogOpen(true)}
+                onOpenListHealth={() => navigate(ADMIN_AML_VERIFICATION_PATH)}
                 actor={{
                   canWrite,
                   isReviewer: access.roles.has("reviewer"),

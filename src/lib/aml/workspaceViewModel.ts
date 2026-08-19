@@ -1020,6 +1020,46 @@ function nextActionCandidates(facts: AmlWorkspaceFacts): Candidate[] {
       (s) => s.required !== false && s.state === "not_started",
     );
 
+    /*
+     * ── The PEP determination ─────────────────────────────────────
+     * There was no candidate for it at all, so this derivation could not
+     * name the one thing genuinely holding Stage 5 — and the rail fell
+     * through to a LATER stage's blocker ("Review the client submission ·
+     * Go to stage 7") while Stage 5 said "PEP determination outstanding".
+     * One case, two derivations, two answers.
+     *
+     * It reads the same facts the journey reads, so the two agree by
+     * construction rather than by being kept in step. `section: "ownership"`
+     * places it at journey position 5, ahead of anything later.
+     *
+     * Ranked BELOW a match: a candidate or a confirmed finding is a fact
+     * about a customer and still leads.
+     */
+    if (facts.screening.pepRequired === true) {
+      // `subjects` here is every ENROLLED party, unfiltered — which is the
+      // right population: PEP is owed per party under its own scope, not per
+      // party whose sanctions screening is owed.
+      const undetermined = subjects.filter((s) => !s.pep_determination?.result);
+      // Nobody enrolled cannot mean everybody determined.
+      if (subjects.length === 0 || undetermined.length > 0) {
+        out.push({
+          key: "pep_determination",
+          label: "Record PEP determination",
+          explanation: subjects.length === 0
+            ? "No party is enrolled yet, so no PEP determination can have been made."
+            : `${undetermined.length} part${undetermined.length === 1 ? "y needs" : "ies need"} `
+              + "a politically-exposed-person determination. A client declaration is "
+              + "evidence that supports it; it is never the determination itself.",
+          attention: "attention",
+          section: "ownership",
+          blocking: true,
+          actionType: "record_pep",
+          facts: ["case_screening_scopes.pep.required = true",
+            `pep_determinations missing (${undetermined.length || "no parties"})`],
+        });
+      }
+    }
+
     if (confirmed.length > 0) {
       out.push({
         key: "screening_confirmed",
