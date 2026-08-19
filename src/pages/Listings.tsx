@@ -3,7 +3,7 @@ import type { ElementType, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@/contexts/SearchContext';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
-import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, HardHat, LayoutGrid, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
+import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, HardHat, LayoutGrid, FilterX, Inbox, Database, Map as MapIcon, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -420,7 +420,7 @@ export default function Listings() {
 }
 
 
-function ListingsMarketplace() {
+function ListingsMarketplace({ sectionTabs }: { sectionTabs?: ReactNode } = {}) {
   const { canEdit: canEditListings, canDelete: canDeleteListings } = useModulePermissions('listings');
   const { globalSearchQuery, setGlobalSearchQuery } = useSearch();
   const [selectedListings, setSelectedListings] = useState<Set<string>>(new Set());
