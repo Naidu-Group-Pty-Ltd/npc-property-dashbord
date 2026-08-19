@@ -195,11 +195,44 @@ describe("the stage CTAs do what they say", () => {
       /!blockers\.some\(\(b\) => \["confirmed", "possible", "no_subjects"\]\.includes\(b\.key\)\)/);
   });
 
-  it("the panel opens the PEP dialog on the nonce, for a party that needs one", () => {
+  it("the panel opens the PEP flow on the nonce, for a party that needs one", () => {
     const code = strip(panelSrc);
     expect(code).toMatch(/lastPepRequest/);
     expect(code).toMatch(/subjects\.find\(\(s\) => !s\.pep_determination\)/);
-    expect(code).toMatch(/recordPep\(target, "not_pep"\)/);
+    expect(code).toMatch(/setPepChoiceSubject\(target\)/);
+  });
+
+  /*
+   * The CTA opens the determination; it does not make it.
+   *
+   * This effect used to call `recordPep(target, "not_pep")`, so pressing
+   * "Record PEP determination" opened a dialog headed "Record not-PEP
+   * determination". The conclusion IS the determination, and a default
+   * answer to it is the one default this product cannot carry.
+   */
+  it("the nonce never presumes the conclusion", () => {
+    const code = strip(panelSrc);
+    const effect = code.slice(code.indexOf("const lastPepRequest"));
+    const body = effect.slice(0, effect.indexOf("}, [pepRequest,"));
+    expect(body).not.toMatch(/recordPep\(/);
+    // Both conclusions are offered, and each carries the same evidence prompt.
+    expect(code).toMatch(/recordPep\(subject, "not_pep"\)/);
+    expect(code).toMatch(/recordPep\(subject, "pep"\)/);
+  });
+
+  /*
+   * Stage 5's own card had the second copy of this action, and it only
+   * scrolled. On a case whose sanctions obligation is not required — the
+   * shape of the reopened production case — the PEP determination is the
+   * ONLY thing Stage 5 is waiting for, so that card is exactly where the
+   * CTA is pressed.
+   */
+  it("the screening card's PEP action opens the dialog too", () => {
+    const code = strip(workspaceSrc);
+    const from = code.indexOf("const runScreeningAction");
+    const handler = code.slice(from, code.indexOf("const connectedPortals", from));
+    expect(from).toBeGreaterThan(-1);
+    expect(handler).toMatch(/case "record_pep":\s*\n\s*setPepRequest\(\(n\) => n \+ 1\)/);
   });
 
   it("a nonce, not a boolean — the CTA can be pressed twice", () => {
