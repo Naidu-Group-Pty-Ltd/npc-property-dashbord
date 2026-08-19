@@ -25,6 +25,7 @@ const migration = read("supabase/migrations/20260807120000_aml_screening_repair.
 const refreshWorkflow = read(".github/workflows/aml-sanctions-refresh.yml");
 const clientPortal = read("supabase/functions/aml-client-portal/index.ts");
 const financePortal = read("supabase/functions/aml-finance/index.ts");
+const evidenceModule = read("supabase/functions/_shared/aml/pepEvidence.pure.ts");
 
 describe("Defect B — provider selection is server-side only", () => {
   it("run_screening never passes a request-controlled provider hint", () => {
@@ -185,8 +186,44 @@ describe("Defect E — auditable PEP determination", () => {
     ]) expect(pepOp).toContain(needle);
   });
 
-  it("a not_pep without recorded methods is rejected — a guess is not a determination", () => {
-    expect(pepOp).toContain("At least one method/source");
+  it("the evidence is judged by the shared contract, not by a literal in this handler", () => {
+    // The rule moved to `_shared/aml/pepEvidence.pure.ts` so the dialog that
+    // ASKS for the evidence and the endpoint that ACCEPTS it cannot drift into
+    // two standards. A determination with no sources, with only the customer's
+    // own declaration, or with a source that recorded no result is refused
+    // there — a guess is still not a determination.
+    expect(pepOp).toContain("normalisePepMethods");
+    expect(pepOp).toContain("assessPepEvidence");
+    expect(pepOp).toContain("pep_evidence_insufficient");
+    // The handler must not re-implement the judgement it delegates.
+    expect(pepOp).not.toContain("methods.length === 0 ?");
+  });
+
+  it("a sanctions register is refused as a source of political-exposure information", () => {
+    // Absence from the DFAT consolidated list is not evidence that somebody is
+    // not a PEP; it was the dialog's own worked example, which is how the
+    // record came to rest on it.
+    expect(evidenceModule).toContain("namesSanctionsRegister");
+    expect(evidenceModule).toContain("dfat consolidated");
+    expect(evidenceModule).toContain("sanctions list");
+    expect(evidenceModule).toContain("ofac");
+  });
+
+  it("at least one source independent of the customer, and a searched source says what came back", () => {
+    expect(evidenceModule).toContain("independentMethods");
+    expect(evidenceModule).toContain("At least one source independent of the customer");
+    expect(evidenceModule).toContain("A source with no result is");
+  });
+
+  it("a deferral records no determination — it is not a third outcome", () => {
+    const deferOp = cases.slice(
+      cases.indexOf("case 'defer_pep_determination'"),
+      cases.indexOf("case 'defer_pep_determination'") + 4000);
+    expect(cases).toContain("case 'defer_pep_determination'");
+    expect(deferOp).toContain("assessPepDeferral");
+    expect(deferOp).toContain("determination_recorded: false");
+    expect(deferOp).not.toContain("from('pep_determinations').insert");
+    expect(deferOp).toContain("roles.has('reviewer') || roles.has('mlro')");
   });
 
   it("a pep result requires the AUSTRAC classification", () => {

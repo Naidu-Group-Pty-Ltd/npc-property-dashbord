@@ -199,7 +199,7 @@ describe("the stage CTAs do what they say", () => {
     const code = strip(panelSrc);
     expect(code).toMatch(/lastPepRequest/);
     expect(code).toMatch(/subjects\.find\(\(s\) => !s\.pep_determination\)/);
-    expect(code).toMatch(/setPepChoiceSubject\(target\)/);
+    expect(code).toMatch(/setPepSubject\(target\)/);
   });
 
   /*
@@ -214,10 +214,15 @@ describe("the stage CTAs do what they say", () => {
     const code = strip(panelSrc);
     const effect = code.slice(code.indexOf("const lastPepRequest"));
     const body = effect.slice(0, effect.indexOf("}, [pepRequest,"));
-    expect(body).not.toMatch(/recordPep\(/);
-    // Both conclusions are offered, and each carries the same evidence prompt.
-    expect(code).toMatch(/recordPep\(subject, "not_pep"\)/);
-    expect(code).toMatch(/recordPep\(subject, "pep"\)/);
+    // Nothing in the opening path names an outcome.
+    expect(body).not.toMatch(/not_pep/);
+    expect(body).not.toMatch(/"pep"/);
+    // The dialog is opened on the subject alone; the determination is made
+    // inside it, after the evidence step rather than before it.
+    expect(code).toMatch(/<PepDeterminationDialog/);
+    expect(code).toMatch(/subject=\{pepSubject\}/);
+    // The panel offers ONE button, because the outcome is not a way in.
+    expect(code).not.toMatch(/Record not-PEP determination/);
   });
 
   /*

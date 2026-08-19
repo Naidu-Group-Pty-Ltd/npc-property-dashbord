@@ -291,6 +291,41 @@ rather than as a "no", and a corrected answer's detail is pruned at the write
 boundary. `record_pep` was also missing from the reviewer-or-MLRO list, so an
 analyst was offered a button `record_pep_determination` answers with 403.
 
+## The PEP determination — what it rests on
+Read [`docs/aml/PEP_DETERMINATION_EVIDENCE.md`](./docs/aml/PEP_DETERMINATION_EVIDENCE.md)
+before touching `_shared/aml/pepEvidence.pure.ts`, `pepSearchLinks.pure.ts`,
+`PepDeterminationDialog` or the `record_pep_determination` /
+`defer_pep_determination` operations. Sanctions is a **match against a
+register**; a PEP determination is a **conclusion a person reaches** on
+reasonable grounds, and there is no register that settles it — so the record
+has to show the sources checked, what was searched and what came back. The old
+flow was a prompt with two free-text boxes that had already chosen the answer
+before it opened.
+
+Three rules carry it. **A sanctions register is not a PEP source** — the
+dialog's own worked example was the DFAT consolidated list, and absence from a
+sanctions register is not evidence that somebody is not politically exposed;
+the asymmetry is why a HIT is surfaced as a signal while a MISS says nothing,
+and `sanctionsSignalForPep` is deliberately silent for "screened, no match".
+**One rule, rendered and enforced** — `assessPepEvidence` is the module the
+dialog renders from and the edge function enforces, so what an operator is
+asked for and what the server accepts cannot become two standards; above the
+statutory floor it requires one source independent of the customer and a
+recorded result for every source searched. And **a deferral is not a third
+outcome**: `defer_pep_determination` writes no determination row, stamps the
+event `determination_recorded: false` and leaves Stage 5 open, because forcing
+an operator to pick "not a PEP" to close a dialog is how an unfounded
+conclusion gets written down.
+
+The assisted search **builds URLs and nothing else** — no request, no result,
+no decision. Nothing in it can return "no match", because a partial index
+reporting "no match" is the confident-clear-against-nothing failure this
+platform has already had once. What the public sources do not reach (foreign
+office holders, family and close associates, somebody who has left a post) is
+rendered beside them every time. `holds_position_currently` is an attribute of
+the determination and never a softer outcome: leaving office is a risk
+assessment, not an expiry date.
+
 ## AML screening scope
 Read [`docs/aml/SCREENING_SCOPE.md`](./docs/aml/SCREENING_SCOPE.md) before
 touching `deriveScreeningScope`, `reconcileSubjectToScope` or the

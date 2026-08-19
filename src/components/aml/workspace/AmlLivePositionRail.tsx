@@ -73,6 +73,14 @@ export interface AmlLivePositionRailProps {
   showAttention?: boolean;
   showNextAction?: boolean;
   onOpenSection: (section: AmlWorkspaceSection) => void;
+  /**
+   * The section the operator is looking at, when the caller knows it.
+   *
+   * Used only to stop the rail offering to navigate to where they already
+   * are — "Go to stage 5" beside stage 5's own open step was the third copy
+   * of one act on a single screen.
+   */
+  currentSection?: AmlWorkspaceSection;
   className?: string;
 }
 
@@ -86,7 +94,11 @@ export function AmlLivePositionRail({
   showNextAction = true,
   onOpenSection,
   className,
+  currentSection,
 }: AmlLivePositionRailProps) {
+  /* The rail names what is next; it does not offer to navigate to here. */
+  const alreadyOnSection = currentSection !== undefined
+    && currentSection === nextAction.section;
   const done = stage.completedItems.length;
   const total = done + stage.outstandingItems.length;
   const ranked = attention.slice(0, 6);
@@ -238,7 +250,14 @@ export function AmlLivePositionRail({
             can legitimately be several stages away, which reads as the
             system skipping ahead rather than checking and finding nothing.
           */}
-          {nextAction.key !== "none" && (
+          {/*
+            And say nothing when the operator is already there.
+            "Go to stage 5" rendered beside stage 5's own open step is an
+            instruction to stay put, and it was the third copy of one act on
+            a single screen. The rail keeps naming what is next — that is its
+            job — and stops offering to take you somewhere you are.
+          */}
+          {nextAction.key !== "none" && !alreadyOnSection && (
             <Button
               variant="outline"
               size="sm"

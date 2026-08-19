@@ -388,7 +388,10 @@ describe("PartyScreeningPanel — sanctions not required, provider down, MLRO", 
 
     // PEP: untouched, still its own outstanding obligation.
     expect(screen.getByText(/determination outstanding/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /not a pep/i })).toBeTruthy();
+    // ONE control, which opens the determination rather than answering it.
+    expect(screen.getByRole(
+      "button", { name: /record pep determination/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^not a pep$/i })).toBeNull();
     expect(screen.getByRole("button", { name: /record pep/i })).toBeTruthy();
   });
 

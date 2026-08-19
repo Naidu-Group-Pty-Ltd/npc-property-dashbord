@@ -46,6 +46,11 @@ import { readSanctionsDeclaration } from "../_shared/aml/sanctionsDeclaration.pu
 // What the customer said about political exposure. Evidence towards the
 // determination a reviewer or the MLRO records; never the determination.
 import { readPepDeclaration } from "../_shared/aml/pepDeclaration.pure.ts";
+// What a determination must rest on, and why a sanctions register is not a
+// PEP source. Shared with the dialog that collects it.
+import {
+  assessPepDeferral, assessPepEvidence, normalisePepMethods,
+} from "../_shared/aml/pepEvidence.pure.ts";
 import { planCaseReopen, resumeStatusFor } from "../_shared/aml/caseReopen.pure.ts";
 import {
   AML_PURGE_ORDER, AML_UNLINKED_CASE_TABLES, decideClientReset,
@@ -3867,21 +3872,34 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             return jsonResponse({ error: 'pep_relationship (self|family_member|close_associate) is required for a pep result' }, 400);
           }
         }
-        if (rationale.length < 10) {
-          return jsonResponse({ error: 'A rationale of at least 10 characters is required — record why the conclusion was reasonable' }, 400);
-        }
-        // Sources/methods are the evidence trail: at least one, references
-        // and metadata only. A "not PEP" with no recorded method is a guess,
-        // not a determination.
-        const cleanMethods = methods
-          .filter((m: any) => m && typeof m === 'object' && typeof m.source === 'string' && m.source.trim())
-          .map((m: any) => ({
-            source: String(m.source).slice(0, 300),
-            reference: typeof m.reference === 'string' ? m.reference.slice(0, 500) : null,
-            note: typeof m.note === 'string' ? m.note.slice(0, 500) : null,
-          })).slice(0, 20);
-        if (cleanMethods.length === 0) {
-          return jsonResponse({ error: 'At least one method/source (e.g. list checked, register consulted) is required' }, 400);
+        /*
+         * The evidence the conclusion rests on, judged by the SAME module the
+         * dialog renders from (`pepEvidence.pure.ts`), so what an operator is
+         * asked for and what this accepts cannot drift into two standards.
+         *
+         * It enforces three things this used to leave to the operator's
+         * judgement, each of which had produced a defensible-looking record
+         * that was not actually defensible:
+         *
+         *   - a SANCTIONS register is refused as a PEP source. The dialog's
+         *     own example was "DFAT consolidated list", which is a targeted
+         *     financial sanctions register: absence from it is not evidence
+         *     that somebody is not politically exposed.
+         *   - at least one source INDEPENDENT of the customer. Their own
+         *     declaration is the thing being tested.
+         *   - a searched source must record what came back.
+         *
+         * `rationale` is judged there too, against the statutory wording.
+         */
+        const cleanMethods = normalisePepMethods(methods);
+        const evidence = assessPepEvidence({ result: result as 'not_pep' | 'pep',
+          methods: cleanMethods, rationale });
+        if (!evidence.ok) {
+          return jsonResponse({
+            error: evidence.errors[0].message,
+            code: 'pep_evidence_insufficient',
+            errors: evidence.errors,
+          }, 400);
         }
         const { data: caseRow } = await admin.schema('aml').from('cases')
           .select('id, tenant_id, subject_display_name').eq('id', caseId).maybeSingle();
@@ -3985,6 +4003,86 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           }, userId, userEmail);
 
         return jsonResponse({ determination });
+      }
+
+      /**
+       * Record that a PEP determination CANNOT be made yet.
+       *
+       * ── Why this is not a third determination outcome ─────────────
+       * `pep_determinations` records determinations. A row in it means
+       * somebody established a position on reasonable grounds — that is what
+       * every reader of that table, and every downstream control, takes it to
+       * mean.
+       *
+       * An operator who has reached the end of the available checking and is
+       * NOT satisfied has established nothing. Until now the dialog offered
+       * only "not a PEP" or "PEP", so the way out of that position was to
+       * assert one of them: an unfounded conclusion, written down, indexed,
+       * and indistinguishable afterwards from a real one. AUSTRAC expressly
+       * contemplates the opposite — that further information is collected
+       * when the entity is not yet satisfied.
+       *
+       * So this writes NO determination. It records what was checked, why it
+       * did not settle the question and what is needed, on the case audit
+       * trail. The PEP scope stays outstanding, the step stays blocking, and
+       * the stage stays open — which is the honest state.
+       */
+      case 'defer_pep_determination': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const partySubjectId = body.party_screening_subject_id
+          ? String(body.party_screening_subject_id) : null;
+
+        const deferMethods = normalisePepMethods(body.methods);
+        const verdict = assessPepDeferral({
+          reason: body.reason ?? null,
+          needed: body.needed ?? null,
+          methods: deferMethods,
+        });
+        if (!verdict.ok) {
+          return jsonResponse({
+            error: verdict.errors[0].message,
+            code: 'pep_deferral_incomplete',
+            errors: verdict.errors,
+          }, 400);
+        }
+
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, subject_display_name').eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        // Identity is derived, exactly as it is for a determination: a
+        // caller-supplied name could attach one person's deferral to another.
+        let subjectName = String(caseRow.subject_display_name ?? '').trim();
+        if (partySubjectId) {
+          const { data: partySubject } = await admin.schema('aml')
+            .from('party_screening_subjects')
+            .select('id, case_id, screened_name').eq('id', partySubjectId).maybeSingle();
+          if (!partySubject || String(partySubject.case_id) !== caseId) {
+            return jsonResponse({
+              error: 'party_screening_subject_id does not belong to this case',
+            }, 400);
+          }
+          subjectName = String(partySubject.screened_name ?? '').trim();
+        }
+
+        await appendCaseEvent(admin, caseId, 'pep_determination_deferred',
+          `PEP determination deferred for ${subjectName}: ${String(body.reason)}`,
+          {
+            party_screening_subject_id: partySubjectId,
+            subject_name: subjectName.slice(0, 300),
+            reason: String(body.reason),
+            needed: String(body.needed).slice(0, 2000),
+            methods: deferMethods,
+            /* Stated in the record itself, so no future reader can mistake
+               this event for a determination that was reached. */
+            determination_recorded: false,
+          }, userId, userEmail);
+
+        return jsonResponse({ deferred: true, subject_name: subjectName });
       }
 
       default:
