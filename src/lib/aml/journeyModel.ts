@@ -1733,6 +1733,21 @@ function currentStage(stages: AmlJourneyStage[]): AmlJourneyStageId {
    * `unavailableFacts` already reports it honestly. It is still not
    * `complete`, so the fallback below catches it once nothing is outstanding.
    */
+  /*
+   * A stage that is BLOCKING outranks one that is merely unfinished, and the
+   * earliest blocking stage wins. Both halves matter:
+   *
+   *   without "blocking first", a stage waiting on the CLIENT (intake, still
+   *   in progress) claimed the position ahead of a determination the MLRO
+   *   actually owed at stage 5 — measured in production, the rail read
+   *   "2 of 10 · Client intake" while Stage 5 held the only actionable work;
+   *
+   *   without "earliest", a later blocking stage claimed it instead — which
+   *   is how "6 of 10" and "Go to stage 7" appeared over the same blocker.
+   */
+  const blocking = stages.find((s) => s.applicable && s.blocking);
+  if (blocking) return blocking.id;
+
   const working = stages.find(
     (s) => s.applicable && WORKING_STATES.includes(s.status),
   );
