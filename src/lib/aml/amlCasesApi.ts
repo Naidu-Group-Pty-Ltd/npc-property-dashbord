@@ -3,6 +3,7 @@ import { invokeSecureFunction } from "@/lib/secureInvoke";
 import { invokeAmlFunction } from "./invokeAmlFunction";
 import type { PepDeclarationReading } from "./pepDeclaration";
 import type { PepDeferralReason, PepSourceKind } from "./pepEvidence";
+import type { PepIndexVerdict } from "./pepOfficeholderIndex";
 
 /** What a reset returns, whether it ran or was refused. */
 export interface AmlClientResetResult {
@@ -493,6 +494,20 @@ export const amlCasesApi = {
    * blocked. What is recorded is what was checked, why it did not settle the
    * question, and what is needed.
    */
+  /**
+   * Search the public office-holder index for one party.
+   *
+   * Returns the verdict, the candidates and the index's own COVERAGE — the
+   * three together, always. A caller that renders "0 candidates" without the
+   * coverage beside it has turned a partial index into a clearance, which is
+   * the one thing this index must never be able to say.
+   */
+  searchPepOfficeholders: (payload: {
+    case_id: string;
+    party_screening_subject_id?: string | null;
+  }) =>
+    invoke<PepIndexVerdict>({ op: "search_pep_officeholders", ...payload }),
+
   deferPepDetermination: (payload: {
     case_id: string;
     party_screening_subject_id?: string | null;

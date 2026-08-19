@@ -215,6 +215,39 @@ describe("Defect E — auditable PEP determination", () => {
     expect(evidenceModule).toContain("A source with no result is");
   });
 
+  it("the office-holder index can surface a candidate and never a clearance", () => {
+    const searchOp = cases.slice(
+      cases.indexOf("case 'search_pep_officeholders'"),
+      cases.indexOf("case 'defer_pep_determination'"));
+    expect(searchOp.length).toBeGreaterThan(0);
+    // Reviewer or MLRO, and the identity is derived like a determination's.
+    expect(searchOp).toContain("roles.has('reviewer') || roles.has('mlro')");
+    expect(searchOp).toContain("party_screening_subject_id does not belong to this case");
+    // The verdict is the shared module's, so a caller cannot get a bare
+    // candidate list with no coverage beside it.
+    expect(searchOp).toContain("searchVerdict");
+    expect(searchOp).toContain("describeCoverage");
+    // Coverage is gathered BEFORE the search and returned on every branch,
+    // including the empty one — which is the branch that needs it.
+    expect(searchOp.indexOf("describeCoverage"))
+      .toBeLessThan(searchOp.indexOf("overlaps('normalised_names'"));
+    // A database fault is never returned as "nothing found".
+    expect(searchOp).toContain("pep_index_search_failed");
+    // Read-only: it writes no determination, no source and no event.
+    expect(searchOp).not.toContain(".insert(");
+    expect(searchOp).not.toContain("appendCaseEvent");
+  });
+
+  it("names are searched with the SAME normalisation the index is written with", () => {
+    // A query that normalised differently from the loader would match
+    // nothing, which looks exactly like an index that works.
+    const searchOp = cases.slice(
+      cases.indexOf("case 'search_pep_officeholders'"),
+      cases.indexOf("case 'defer_pep_determination'"));
+    expect(searchOp).toContain("normaliseName(searchName)");
+    expect(cases).toContain('from "../_shared/aml/matching.ts"');
+  });
+
   it("a deferral records no determination — it is not a third outcome", () => {
     const deferOp = cases.slice(
       cases.indexOf("case 'defer_pep_determination'"),
