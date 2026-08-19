@@ -127,6 +127,28 @@ way, but the guard cannot tell one from the other and should not have to. So the
 write boundary owns both prunes behind `normaliseQuestionnaireSection`, and the
 caller applies one neutrally-named rule.
 
+## The deployment order is not interchangeable
+
+`aml-cases` and `aml-client-portal` change here, and only ONE of them may ship
+ahead of the front end.
+
+`aml-cases` adds `pep_declaration` to the `sync_screening_stage` response. That
+is purely additive — a browser that has never heard of the field ignores it —
+so it is safe to deploy at any time.
+
+**`aml-client-portal` is not.** Its validation now refuses a declared exposure
+that does not name the position, the jurisdiction and the relationship, and the
+inputs that collect those three ship with the SPA. Deploy the function ahead of
+the site build and a customer who answers "yes" is blocked at submit, on three
+fields the page they are looking at does not contain.
+
+Measured on 2026-08-19: both functions were deployed from the branch before
+merge, the hazard was spotted in review, and `aml-client-portal` was
+redeployed from `main` within four minutes. The rule that follows is simply:
+**a validation the customer's own page cannot satisfy ships with that page,
+never before it** — which the ordinary merge does by itself, since the deploy
+workflow and the site build both run off `main`.
+
 ## Verified in a browser, not only in jsdom
 
 `tests-e2e/stage5-path` builds the real component and measures it at 1280, 1366,
