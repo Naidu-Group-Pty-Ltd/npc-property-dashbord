@@ -70,6 +70,7 @@ interface ResolveResponse {
       origin?: unknown;
       width?: unknown;
       height?: unknown;
+      bytes?: unknown;
       expiresAt?: unknown;
     }>
   >;
@@ -107,6 +108,9 @@ function toStoredImages(listingId: string, raw: unknown): StoredListingImage[] {
       origin,
       width: number(entry?.width),
       height: number(entry?.height),
+      // Carried so the browser can tell a photograph from a thumbnail-strip
+      // asset without downloading it. See `listingImageSelection.pure.ts`.
+      bytes: number(entry?.bytes),
       expiresAt: number(entry?.expiresAt) ?? Date.now() + 30 * 60_000,
     });
   }
