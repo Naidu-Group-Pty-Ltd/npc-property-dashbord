@@ -33,7 +33,9 @@ import {
 import {
   isMarketplaceEligible, needsEligibilityAssessment,
 } from './marketplaceEligibility.pure.ts';
-import { servableDerivativeFor } from './sanitizedDerivative.pure.ts';
+import {
+  servableClearanceFor, servableDerivativeFor,
+} from './sanitizedDerivative.pure.ts';
 
 /** The stage whose provenance is the builder's own document. */
 export const SOURCE_SUPPLIED_STAGE = 'uploaded_document';
@@ -88,8 +90,16 @@ export function isDisplayableSourceImage(image: DisplayableImage): boolean {
     // image: the record names the exact original by id and by SHA-256, and a
     // row whose object has since changed stops resolving one. See
     // `sanitizedDerivative.pure.ts`.
+    //
+    // OR THE SAME PHOTOGRAPH WITH NOTHING WRONG WITH IT. A clearance is the
+    // precise inspection's finding that the coarse classifier convicted this
+    // picture for a feature of the HOUSE — Lot 537 Kirramingly's white garage
+    // door — and that there is no promotional treatment on it at all. It
+    // serves the ORIGINAL, unaltered, because nothing needed changing. See
+    // `overlayClearance.pure.ts`.
     && (isMarketplaceEligible(image.source_detail)
-      || !!servableDerivativeFor(image.source_detail));
+      || !!servableDerivativeFor(image.source_detail)
+      || !!servableClearanceFor(image.source_detail));
 }
 
 /**

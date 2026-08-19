@@ -17,6 +17,7 @@ import {
   isMarketplaceEligible,
 } from '../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
 import {
+  servableClearanceFor,
   servableDerivativeFor,
 } from '../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
 
@@ -327,8 +328,14 @@ export function isDisplayableSourceImage(image: BuilderStockImage): boolean {
     // derivative of THESE bytes, named by id and by SHA-256 and re-measured by
     // the same classifier, not a substitute picture. Mirrors the server's
     // `primaryImage.ts`, and both read the one rule.
+    //
+    // Or the same photograph with nothing wrong with it: a clearance, which is
+    // the precise inspection's finding that the classifier convicted this
+    // picture for a feature of the house rather than for a badge. That serves
+    // the ORIGINAL — nothing was made and nothing was changed.
     && (isMarketplaceEligible(image.source_detail)
-      || !!servableDerivativeFor(image.source_detail));
+      || !!servableDerivativeFor(image.source_detail)
+      || !!servableClearanceFor(image.source_detail));
 }
 
 /**

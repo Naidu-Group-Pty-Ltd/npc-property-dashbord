@@ -38,9 +38,12 @@
  */
 import { decodeFullRaster, decodeThumbnailResult } from './sourceImageRaster.ts';
 import {
-  measureFlatColourRegions, overlayTextBoxes, readMarketingOverlay,
+  measureFaintOverlayText, measureFlatColourRegions, overlayTextBoxes, readMarketingOverlay,
 } from './marketingOverlay.pure.ts';
-import { overlayPlateMask } from './overlayPlate.pure.ts';
+import { overlayPlateMask, promotionalRegions } from './overlayPlate.pure.ts';
+import {
+  decideOverlayClearance, type OverlayInspection,
+} from './overlayClearance.pure.ts';
 import { growOverlayMask, sanitizeOverlay } from './sanitizeOverlay.pure.ts';
 import { inpaintOverlay, type InpaintInput } from './inpaintOverlay.ts';
 import { encodePng } from './rasterPng.ts';
@@ -82,6 +85,30 @@ export type SanitizeImageResult =
      * improvement guesswork.
      */
     rejected?: { bytes: Uint8Array; width: number; height: number };
+    /**
+     * TRUE WHEN NOTHING WAS LEARNED ABOUT THE PICTURE.
+     *
+     * A decoder that fell over, a mask that could not be placed, a model that
+     * could not be reached — none of these is an answer about whether this
+     * photograph carries a badge, and none may be written down as one. The
+     * caller leaves the row untouched and comes back, exactly as it does for a
+     * download that failed. Writing an operational fault into the ledger parks
+     * a picture on "we tried" until the next version bump, which is how one
+     * billing outage could permanently blank a card.
+     */
+    operational?: boolean;
+    /**
+     * THE PICTURE WAS INSPECTED AND CARRIES NOTHING TO REMOVE.
+     *
+     * Present only on the `nothing_to_remove` and `not_annotated` paths, and
+     * only when every test in `overlayClearance.pure.ts` passed. It is not a
+     * softer refusal: it licenses the caller to serve the builder's ORIGINAL,
+     * which is the one thing a refusal must never do. A caller that ignores it
+     * behaves exactly as before, which is what keeps this safe to add.
+     */
+    clearance?: OverlayInspection;
+    /** Why no clearance was granted, when one was considered and refused. */
+    clearanceRefusal?: string | null;
   };
 
 export interface SanitizeImageOptions {
@@ -110,8 +137,11 @@ export async function sanitizeSourceImage(
   try {
     const thumbnail = await decodeThumbnailResult(bytes);
     if (thumbnail.ok === false) {
+      // A picture nothing could decode is not a picture anything was learned
+      // about. Operational, so the caller retries rather than recording it.
       return {
         ok: false, reason: 'unusable_input', transformation: null, model: null,
+        operational: true,
         detail: `the picture could not be read (${thumbnail.reason})`,
       };
     }
@@ -126,10 +156,50 @@ export async function sanitizeSourceImage(
      * to loosen the rule that made it blank.
      */
     const verdict = readMarketingOverlay(thumbnail.thumbnail);
+
+    /*
+     * THE PRECISE INSPECTION, MEASURED ONCE AND USED BY BOTH DECISIONS.
+     *
+     * Everything below — which pixels to rebuild, and whether there is anything
+     * to rebuild at all — comes out of these four measurements, so the mask and
+     * the clearance are reading one set of facts rather than two. Two readings
+     * of the same picture is how a repair comes to remove a badge the clearance
+     * has already decided is not there.
+     *
+     * THE FAINT PASS IS RUN HERE DELIBERATELY. `readMarketingOverlay` skips it
+     * on a picture it has already convicted, and reports zero — which means "not
+     * asked", not "asked and silent". A clearance built on that zero would be a
+     * clearance built on a question nobody put.
+     */
+    const textBoxes = overlayTextBoxes(thumbnail.thumbnail);
+    const flat = measureFlatColourRegions(thumbnail.thumbnail);
+    const flatBoxes = flat.regions.map((region) => region.box);
+    const promotional = promotionalRegions(thumbnail.thumbnail, flatBoxes);
+    const faint = measureFaintOverlayText(thumbnail.thumbnail);
+
+    const inspect = (plateCount: number): OverlayInspection => ({
+      measured: true,
+      textRunCount: textBoxes.length,
+      strictTextLines: verdict?.textLineCount ?? 0,
+      faintTextLines: faint.lineCount,
+      flatRegionCount: flat.regions.length,
+      promotionalRegionCount: promotional.length,
+      plateCount,
+    });
+
     if (!verdict || !verdict.annotated) {
+      /*
+       * The classifier that convicted this picture and a fresh reading of the
+       * same bytes disagree. That is a question for the eligibility sweep — but
+       * it is also, on its own terms, a picture with nothing on it, so the
+       * clearance is offered here too rather than only on the path below.
+       */
+      const clearance = decideOverlayClearance(inspect(0));
       return {
         ok: false, reason: 'not_annotated', transformation: null, model: null,
         detail: 'the detector found no laid-over graphic on this picture',
+        clearance: clearance.cleared ? inspect(0) : undefined,
+        clearanceRefusal: clearance.refusal,
       };
     }
 
@@ -152,16 +222,34 @@ export async function sanitizeSourceImage(
      * falls through to `nothing_to_remove`, is recorded as refused, and keeps
      * its blank card.
      */
-    const plates = overlayPlateMask(
-      thumbnail.thumbnail,
-      overlayTextBoxes(thumbnail.thumbnail),
-      measureFlatColourRegions(thumbnail.thumbnail).regions.map((region) => region.box),
-    );
+    const plates = overlayPlateMask(thumbnail.thumbnail, textBoxes, flatBoxes);
     if (!plates.plates.length) {
+      /*
+       * NOTHING TO REMOVE — AND THAT IS NOW TWO DIFFERENT ANSWERS.
+       *
+       * It can mean the picture is clean and the classifier convicted it for a
+       * feature of the house, which is Lot 537 Kirramingly: no type anywhere,
+       * one flat region, and that region is a WHITE GARAGE DOOR at 0.045
+       * saturation. That picture gets a clearance and the builder's own file
+       * goes on the card.
+       *
+       * Or it can mean there IS a badge and this could not find its extent —
+       * type set straight onto the photograph with no plate under it. That gets
+       * no clearance and keeps its blank card, exactly as before.
+       *
+       * The difference is decided in `overlayClearance.pure.ts` on measured
+       * evidence, never on the absence of a mask. A mask that came out empty is
+       * a fact about the mask builder; it is not a fact about the picture.
+       */
+      const clearance = decideOverlayClearance(inspect(0));
       return {
         ok: false, reason: 'nothing_to_remove',
         transformation: 'deterministic_overlay_reconstruction', model: null,
-        detail: 'the graphic on this picture has no measurable extent to remove',
+        detail: clearance.cleared
+          ? 'this picture carries no promotional treatment to remove'
+          : 'the graphic on this picture has no measurable extent to remove',
+        clearance: clearance.cleared ? inspect(0) : undefined,
+        clearanceRefusal: clearance.refusal,
       };
     }
 
@@ -169,6 +257,7 @@ export async function sanitizeSourceImage(
     if (!raster) {
       return {
         ok: false, reason: 'unusable_input', transformation: null, model: null,
+        operational: true,
         detail: 'the picture decoded as a thumbnail and not at full size',
       };
     }
@@ -225,6 +314,7 @@ export async function sanitizeSourceImage(
       return {
         ok: false, reason: 'unusable_input',
         transformation: 'generative_overlay_inpaint', model: null,
+        operational: true,
         detail: 'the mask could not be placed on the full-size picture',
       };
     }
@@ -250,8 +340,11 @@ export async function sanitizeSourceImage(
       generated.model,
       plates.mask, thumbnail.thumbnail.width, thumbnail.thumbnail.height);
   } catch (error) {
+    // A thrown decoder, a thrown encoder, a thrown anything. Nothing was
+    // established about the picture, so nothing is written down about it.
     return {
       ok: false, reason: 'unusable_input', transformation: null, model: null,
+      operational: true,
       detail: String((error as { message?: string })?.message ?? error).slice(0, 200),
     };
   }
@@ -272,8 +365,10 @@ async function finish(
 ): Promise<SanitizeImageResult> {
   const bytes = await encodePng(pixels, { width, height, components: 3 });
   if (!bytes) {
+    // An encoder that failed says nothing about the badge. Operational.
     return {
       ok: false, reason: 'storage_failed', transformation, model,
+      operational: true,
       detail: 'the repaired picture could not be encoded',
     };
   }

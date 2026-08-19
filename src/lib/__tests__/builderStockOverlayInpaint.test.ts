@@ -23,7 +23,7 @@ import {
 import {
   overlayPlateMask,
 } from '../../../supabase/functions/_shared/builderStock/overlayPlate.pure';
-import { withCaption, withPlate } from './fixtures/builderStockPictures';
+import { photograph, withCaption, withPlate } from './fixtures/builderStockPictures';
 import {
   growOverlayMask,
 } from '../../../supabase/functions/_shared/builderStock/sanitizeOverlay.pure';
@@ -38,7 +38,8 @@ import {
   sanitizeSourceImage,
 } from '../../../supabase/functions/_shared/builderStock/sanitizeImage';
 import {
-  derivativeDetail, readServableDerivative, sanitizationSettled, servableDerivativeFor,
+  derivativeDetail, readServableDerivative, sanitizationSettled, servableClearanceFor,
+  servableDerivativeFor, CLEARANCE_KEY, DERIVATIVE_KEY, FAILURE_KEY,
   SANITIZATION_VERSION, type SanitizedDerivative,
 } from '../../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
 import {
@@ -1200,17 +1201,147 @@ describe('the display gate', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The settler, on a picture that turns out to carry nothing
+// ---------------------------------------------------------------------------
+
+describe('the settler, when the inspection finds nothing to remove', () => {
+  it('records a CLEARANCE and makes the builder\'s original displayable', async () => {
+    /*
+     * Lot 537 Kirramingly's shape. The classifier convicted the picture, the
+     * repair inspected it and found no type, no brand colour and no plate. The
+     * card must show the builder's own file — not a repair of it, and not an
+     * empty frame.
+     */
+    const bytes = (await encodePng(photograph(W, H, 11).pixels,
+      { width: W, height: H, components: 3 }))!;
+    const row = await refusedRow(bytes);
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    const outcome = await settleImageSanitization(db as never, ORG, {
+      sanitize: async () => ({
+        ok: false as const,
+        reason: 'nothing_to_remove' as const,
+        transformation: 'deterministic_overlay_reconstruction' as const,
+        model: null,
+        detail: 'this picture carries no promotional treatment to remove',
+        clearance: {
+          measured: true,
+          textRunCount: 0,
+          strictTextLines: 0,
+          faintTextLines: 0,
+          flatRegionCount: 1,
+          promotionalRegionCount: 0,
+          plateCount: 0,
+        },
+        clearanceRefusal: null,
+      }),
+    });
+
+    expect(outcome.cleared).toBe(1);
+    expect(outcome.refused).toBe(0);
+    expect(outcome.repaired).toBe(0);
+    expect(outcome.unresolved).toBe(0);
+    expect(sanitizationSweepCompleted(outcome)).toBe(true);
+
+    const stored = row.source_detail as Record<string, unknown>;
+    // NO DERIVATIVE WAS MADE. Nothing was written to storage and nothing was
+    // encoded: the card serves the row's own bytes.
+    expect(stored[DERIVATIVE_KEY]).toBeNull();
+    expect(servableClearanceFor(stored)).not.toBeNull();
+    expect(isDisplayableSourceImage(row as never)).toBe(true);
+  });
+
+  it('leaves an OPERATIONAL fault unresolved and retryable, never recorded', async () => {
+    /*
+     * A decoder that fell over is not an answer about the picture. Writing it
+     * down as one parks the card until the next version bump — the same rule
+     * that keeps a model outage from permanently blanking a property.
+     */
+    const bytes = (await encodePng(photograph(W, H, 12).pixels,
+      { width: W, height: H, components: 3 }))!;
+    const row = await refusedRow(bytes);
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    const outcome = await settleImageSanitization(db as never, ORG, {
+      sanitize: async () => ({
+        ok: false as const,
+        reason: 'unusable_input' as const,
+        transformation: null,
+        model: null,
+        operational: true,
+        detail: 'the picture could not be read (decoder_failed)',
+      }),
+    });
+
+    expect(outcome.unresolved).toBe(1);
+    expect(outcome.cleared).toBe(0);
+    expect(outcome.refused).toBe(0);
+    // Nothing written, so the marker cannot advance and the next tick retries.
+    expect(sanitizationSweepCompleted(outcome)).toBe(false);
+    const stored = row.source_detail as Record<string, unknown>;
+    expect(stored[FAILURE_KEY]).toBeUndefined();
+    expect(stored[CLEARANCE_KEY]).toBeUndefined();
+    expect(isDisplayableSourceImage(row as never)).toBe(false);
+  });
+
+  it('a real badge is still REFUSED, and stays hidden', async () => {
+    const bytes = (await encodePng(photograph(W, H, 13).pixels,
+      { width: W, height: H, components: 3 }))!;
+    const row = await refusedRow(bytes);
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    const outcome = await settleImageSanitization(db as never, ORG, {
+      sanitize: async () => ({
+        ok: false as const,
+        reason: 'nothing_to_remove' as const,
+        transformation: 'deterministic_overlay_reconstruction' as const,
+        model: null,
+        detail: 'the graphic on this picture has no measurable extent to remove',
+        // Inspected, and a brand colour was found. No clearance.
+        clearanceRefusal: 'promotional_plate_present',
+      }),
+    });
+
+    expect(outcome.refused).toBe(1);
+    expect(outcome.cleared).toBe(0);
+    const stored = row.source_detail as Record<string, unknown>;
+    expect(stored[CLEARANCE_KEY]).toBeNull();
+    expect(isDisplayableSourceImage(row as never)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The version has two halves and they must agree
 // ---------------------------------------------------------------------------
 
 describe('the deployment ships both halves of the version', () => {
-  it('the migration raises the target to exactly SANITIZATION_VERSION', async () => {
-    const { readFileSync } = await import('node:fs');
-    const sql = readFileSync(
-      'supabase/migrations/20260925000000_builder_stock_image_sanitization_settlement.sql',
-      'utf8');
-    const match = sql.match(/set_builder_stock_sanitization_target\((\d+)\)/);
-    expect(match).toBeTruthy();
-    expect(Number(match![1])).toBe(SANITIZATION_VERSION);
+  /*
+   * EVERY MIGRATION, NOT ONE NAMED FILE.
+   *
+   * The version has a half in TypeScript and a half in the database, and the
+   * database half is what the cron job reads to decide whether any repair work
+   * is outstanding — SQL cannot see the constant. Shipping only the TypeScript
+   * half changes what new imports get and silently leaves every stored image on
+   * the old rules, which is the exact failure the target column exists to stop.
+   *
+   * This used to read the one migration that introduced the target, which meant
+   * the guard stopped working the moment a bump arrived in a NEW file — and a
+   * bump in a new file is the correct way to ship one, because editing an
+   * applied migration changes nothing in a database that has already run it.
+   * So: scan them all, take the highest target anyone asks for, and require it
+   * to be the version this code is written to.
+   */
+  it('some migration raises the target to exactly SANITIZATION_VERSION', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs');
+    const targets: number[] = [];
+    for (const file of readdirSync('supabase/migrations')) {
+      if (!file.endsWith('.sql')) continue;
+      const sql = readFileSync(`supabase/migrations/${file}`, 'utf8');
+      for (const match of sql.matchAll(/set_builder_stock_sanitization_target\((\d+)\)/g)) {
+        targets.push(Number(match[1]));
+      }
+    }
+    expect(targets.length).toBeGreaterThan(0);
+    expect(Math.max(...targets)).toBe(SANITIZATION_VERSION);
   });
 });

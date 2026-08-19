@@ -43,13 +43,28 @@
  *
  *   1  first release: Laplace reconstruction for small quiet patches, masked
  *      generative inpainting for the rest, both gated on the same detector
+ *   2  badges that carry no readable words are found by the colour of their
+ *      plate (`overlayPlate.pure.ts`), and a picture proved to carry no
+ *      promotional treatment at all is CLEARED rather than left blank
+ *      (`overlayClearance.pure.ts`)
  */
-export const SANITIZATION_VERSION = 1;
+export const SANITIZATION_VERSION = 2;
 
 /** Where the record lives inside `source_detail`. */
 export const DERIVATIVE_KEY = 'sanitized_derivative';
 /** And where a refusal does. Never the same key: they are not the same fact. */
 export const FAILURE_KEY = 'sanitization_failure';
+/**
+ * And where "we looked, and there is nothing on this picture" does.
+ *
+ * A THIRD KEY BECAUSE IT IS A THIRD FACT. A derivative says "here are new bytes
+ * with the badge removed"; a failure says "we could not remove it"; a clearance
+ * says "there was never anything to remove, serve the builder's own file". They
+ * license different things — the first serves a NEW object, the third serves
+ * the ORIGINAL, the second serves nothing — and collapsing any two of them into
+ * one key would make the display rule guess which it was reading.
+ */
+export const CLEARANCE_KEY = 'sanitization_clearance';
 
 /**
  * How the overlay was taken off.
@@ -156,6 +171,74 @@ export interface SanitizationFailure {
 }
 
 /**
+ * The record that says a picture the classifier refused carries nothing to
+ * remove, and that the builder's ORIGINAL is therefore what the card shows.
+ *
+ * IT NAMES NO NEW OBJECT, and that is the whole shape of it. There is no
+ * storage path, no derivative hash, no width and no height, because nothing was
+ * made: the bytes this licenses are the ones already in the row. A clearance
+ * that carried a path would be a derivative wearing a different name, and the
+ * one thing this must never do is put a second set of pixels on a card while
+ * claiming nothing was changed.
+ *
+ * The evidence is recorded in full, because a clearance is the one outcome here
+ * that OVERRIDES a refusal, and an override nobody can audit is an override
+ * nobody should trust.
+ */
+export interface SanitizationClearance {
+  sanitization_version: number;
+  /** The exact original, named twice, exactly as a derivative names it. */
+  original_image_id: string;
+  original_sha256: string;
+  stock_item_id: string;
+  organisation_id: string;
+  source_reference: string | null;
+  /** What the inspection measured. See `overlayClearance.pure.ts`. */
+  evidence: {
+    text_run_count: number;
+    strict_text_lines: number;
+    faint_text_lines: number;
+    flat_region_count: number;
+    promotional_region_count: number;
+    plate_count: number;
+  };
+  cleared_at: string;
+}
+
+/**
+ * Read a stored clearance, if it is one this code may act on.
+ *
+ * THE SAME FOUR TESTS A DERIVATIVE GETS, for the same reason and with one extra
+ * consequence. A clearance is a claim about SPECIFIC BYTES — "there is no badge
+ * on these" — so a row whose object has been replaced since must not go on
+ * serving under it. A builder who swaps the file has swapped the premise, and
+ * the new file gets inspected on its own account.
+ */
+export function readServableClearance(
+  sourceDetail: Record<string, unknown> | null | undefined,
+  originalSha256: string | null | undefined,
+): SanitizationClearance | null {
+  const raw = (sourceDetail ?? {})[CLEARANCE_KEY];
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Partial<SanitizationClearance>;
+
+  const version = Number(record.sanitization_version);
+  if (!Number.isFinite(version) || version < SANITIZATION_VERSION) return null;
+
+  if (typeof record.original_sha256 !== 'string' || !record.original_sha256) return null;
+  if (!originalSha256 || record.original_sha256 !== originalSha256) return null;
+
+  return record as SanitizationClearance;
+}
+
+/** The clearance a card may draw the ORIGINAL under, or null. */
+export function servableClearanceFor(
+  sourceDetail: Record<string, unknown> | null | undefined,
+): SanitizationClearance | null {
+  return readServableClearance(sourceDetail, storedOriginalSha(sourceDetail));
+}
+
+/**
  * Read a stored derivative, if it is one this code may serve.
  *
  * FOUR THINGS ARE CHECKED AND EVERY ONE OF THEM CAN REFUSE, because a
@@ -253,7 +336,7 @@ export function sanitizationSettled(
   originalSha256: string | null | undefined,
 ): boolean {
   const detail = sourceDetail ?? {};
-  for (const key of [DERIVATIVE_KEY, FAILURE_KEY]) {
+  for (const key of [DERIVATIVE_KEY, FAILURE_KEY, CLEARANCE_KEY]) {
     const raw = detail[key];
     if (!raw || typeof raw !== 'object') continue;
     const record = raw as { sanitization_version?: unknown; original_sha256?: unknown };
@@ -272,7 +355,27 @@ export function derivativeDetail(
 ): Record<string, unknown> {
   // The failure key is cleared: a repair that has now succeeded must not leave
   // a refusal standing beside it for an operator to read as the current state.
-  return { [DERIVATIVE_KEY]: derivative, [FAILURE_KEY]: null };
+  //
+  // And the clearance with it. A repair that ran found something to remove, so
+  // any standing "there is nothing on this picture" is now false — and leaving
+  // it would license the badged ORIGINAL onto a card beside the cleaned copy.
+  return { [DERIVATIVE_KEY]: derivative, [FAILURE_KEY]: null, [CLEARANCE_KEY]: null };
+}
+
+/**
+ * The `source_detail` keys a clearance contributes.
+ *
+ * The failure key is cleared for the same reason a derivative clears it: a
+ * picture now known to carry nothing must not leave "we could not remove the
+ * badge" standing beside that for an operator to read as the current state. The
+ * DERIVATIVE key is cleared too, and only here — a clearance means no repair
+ * was warranted, so a derivative from an earlier version being served alongside
+ * it would put rebuilt pixels on a card this record says needs none.
+ */
+export function clearanceDetail(
+  clearance: SanitizationClearance,
+): Record<string, unknown> {
+  return { [CLEARANCE_KEY]: clearance, [FAILURE_KEY]: null, [DERIVATIVE_KEY]: null };
 }
 
 /** And the keys a refusal contributes. */
@@ -282,5 +385,11 @@ export function failureDetail(
   // The derivative key is NOT cleared here. A previously servable derivative
   // whose original has not changed stays servable; a failure recorded against
   // NEW bytes will not match its SHA-256 and so will not be served anyway.
-  return { [FAILURE_KEY]: failure };
+  //
+  // THE CLEARANCE IS, and it is not the same call. A failure means a badge WAS
+  // found and could not be taken off, which contradicts a clearance outright —
+  // and of the two contradictory records the one that hides the picture is the
+  // one to keep, because the cost of being wrong that way is a blank card and
+  // the cost of being wrong the other way is marketing on a client's screen.
+  return { [FAILURE_KEY]: failure, [CLEARANCE_KEY]: null };
 }

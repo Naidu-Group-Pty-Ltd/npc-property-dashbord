@@ -51,8 +51,9 @@ import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import { sanitizeSourceImage } from './sanitizeImage.ts';
 import { sha256Hex } from './rasterPng.ts';
 import {
-  derivativeDetail, failureDetail, sanitizationSettled, storedOriginalSha,
-  SANITIZATION_VERSION, type SanitizationFailure, type SanitizedDerivative,
+  clearanceDetail, derivativeDetail, failureDetail, sanitizationSettled, storedOriginalSha,
+  SANITIZATION_VERSION, type SanitizationClearance, type SanitizationFailure,
+  type SanitizedDerivative,
 } from './sanitizedDerivative.pure.ts';
 import { readMarketplaceState } from './marketplaceEligibility.pure.ts';
 import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
@@ -66,6 +67,14 @@ export interface SanitizationSettlement {
   repaired: number;
   /** Of those, how many the repair refused — recorded, terminal for now. */
   refused: number;
+  /**
+   * Of those, how many were found to carry nothing to remove.
+   *
+   * NOT a repair and not a refusal: the classifier was wrong about the picture,
+   * the builder's ORIGINAL is what the card shows, and no second object was
+   * made. See `overlayClearance.pure.ts`.
+   */
+  cleared: number;
   /** Rows that needed work and did not get an answer because an OPERATION failed. */
   unresolved: number;
   /** True when the budget, the page ceiling or the repair cap ran out. */
@@ -155,7 +164,8 @@ export async function settleImageSanitization(
   } = {},
 ): Promise<SanitizationSettlement> {
   const outcome: SanitizationSettlement = {
-    scanned: 0, outstanding: 0, repaired: 0, refused: 0, unresolved: 0, incomplete: false,
+    scanned: 0, outstanding: 0, repaired: 0, refused: 0, cleared: 0,
+    unresolved: 0, incomplete: false,
   };
   const sanitize = options.sanitize ?? sanitizeSourceImage;
   const budget = options.budget ?? newRepairBudget();
@@ -275,6 +285,63 @@ export async function settleImageSanitization(
             phase: 'image_sanitization',
             detail: String(result.detail ?? '').slice(0, 200),
           });
+          outcome.unresolved += 1;
+          continue;
+        }
+
+        /*
+         * THE PICTURE WAS INSPECTED AND CARRIES NOTHING TO REMOVE.
+         *
+         * The classifier convicted it for something that is part of the house —
+         * Lot 537 Kirramingly's white garage door is the case this was built
+         * for — and the precise inspection found no type, no brand colour and
+         * no plate. So the CLEARANCE is recorded and the builder's own file is
+         * what the card draws.
+         *
+         * NOTHING IS WRITTEN TO STORAGE AND NO DERIVATIVE IS MADE. There is no
+         * repair to store: the bytes that go on the card are the bytes already
+         * in the row, unaltered, and a "cleaned copy" of a picture that was
+         * never dirty would be a change to a photograph for no reason.
+         *
+         * It is checked BEFORE the operational test below on purpose. A
+         * clearance is a finding, and a finding is never an operational fault.
+         */
+        if (result.clearance) {
+          const clearance: SanitizationClearance = {
+            sanitization_version: SANITIZATION_VERSION,
+            original_image_id: row.id,
+            original_sha256: actualSha,
+            stock_item_id: String(row.stock_item_id ?? ''),
+            organisation_id: String(row.organisation_id ?? organisationId),
+            source_reference: row.source_reference ?? null,
+            evidence: {
+              text_run_count: result.clearance.textRunCount,
+              strict_text_lines: result.clearance.strictTextLines,
+              faint_text_lines: result.clearance.faintTextLines,
+              flat_region_count: result.clearance.flatRegionCount,
+              promotional_region_count: result.clearance.promotionalRegionCount,
+              plate_count: result.clearance.plateCount,
+            },
+            cleared_at: new Date().toISOString(),
+          };
+          const { error: clearError } = await db.from('builder_stock_item_images')
+            .update({ source_detail: { ...detail, ...clearanceDetail(clearance) } })
+            .eq('id', row.id);
+          if (clearError) {
+            outcome.unresolved += 1;
+            continue;
+          }
+          outcome.cleared += 1;
+          continue;
+        }
+
+        /*
+         * AN OPERATION THAT FAILED IS NOT AN ANSWER EITHER. A decoder that fell
+         * over, an encoder that did, a mask that could not be placed: the
+         * picture is exactly as unexamined afterwards as before, and recording
+         * a refusal would park it until the next version bump.
+         */
+        if (result.operational) {
           outcome.unresolved += 1;
           continue;
         }

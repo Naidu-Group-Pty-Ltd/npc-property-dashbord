@@ -22,6 +22,30 @@
  * colour outward to find the plate the words sit on. A black garage door has no
  * words on it and is never reached. Neither is sky, a roof or a wall.
  *
+ * AND THERE IS A SECOND KIND OF PLATE, WHICH COST FOUR CARDS TO FIND. A badge
+ * does not always carry words this detector can read. Cloverton Registered
+ * carries "Registered" in 60px type on a green pill, and the strict pass finds
+ * ZERO runs on it at every resolution from 400px to full size — so a mask
+ * derived from type alone is empty, the repair reports "nothing to remove", and
+ * four production cards sat blank while the classifier went on refusing the
+ * picture. The pill itself, meanwhile, is exactly the flat region the
+ * classifier DID find.
+ *
+ * What separates that pill from Lot 13's black garage door is not words: it is
+ * COLOUR. Measured on the production set, every promotional plate is a
+ * chromatic fill — the green pills at 0.54-0.90 saturation, the red at 0.69,
+ * Brownsplains' blue at 0.70, Coridale's at 0.70, none below 112 chroma — and
+ * the architectural regions are neutral: Lot 537 Kirramingly's white garage
+ * door measures 0.045 saturation and 10 chroma, and a black door measures less.
+ * That is not a narrow margin to fit a threshold into, it is an order of
+ * magnitude, and it has a physical reason: a photoreal render is made of
+ * material colours, and a brand badge is a colour chosen so that it cannot be
+ * mistaken for one.
+ *
+ * So a flat region whose fill is chromatic is a plate in its own right. A
+ * neutral one never is, whatever its size or position — which is what keeps
+ * every garage door, roof, wall, driveway and patch of sky out of the mask.
+ *
  * AND IT REFUSES RATHER THAN GUESSES. A run whose surroundings are not one
  * colour has no plate — it is type set straight onto the photograph, and there
  * is no honest extent to remove — so it contributes nothing and the picture
@@ -81,6 +105,98 @@ const MAX_PLATE_TO_TEXT = 10;
 const MAX_PLATE_SHARE = 0.2;
 
 /**
+ * How chromatic a flat region's fill must be before it is a badge and not a
+ * building.
+ *
+ * TWO NUMBERS AND BOTH MUST HOLD, because either alone has a failure mode: a
+ * near-black pixel can post a high saturation off a chroma of three, and a pale
+ * wash can post a chroma of sixty off almost no saturation. Requiring both is
+ * what makes this a statement about a COLOUR rather than about an arithmetic
+ * artefact of one.
+ *
+ * Fitted against the production set, and deliberately not fitted tightly. The
+ * promotional plates measure 0.54-0.90 saturation and 112-174 chroma; the
+ * architectural regions measure 0.045 and 10. These sit between the two, far
+ * enough from the badges that a duller brand colour still reads as one, and far
+ * enough from the architecture that a warm white or a beige render never does.
+ *
+ * SATURATION IS HSV's — (max - min) / max — and chroma is (max - min) on 0-255,
+ * both taken on the region's MEAN fill. The mean is right here and the mode is
+ * right in `plateAround`: there, a stray sky pixel in a ring would poison an
+ * average; here, the region is already known to be one flat colour, and its
+ * average is that colour.
+ */
+const MIN_PLATE_SATURATION = 0.35;
+const MIN_PLATE_CHROMA = 60;
+
+/** A region's mean fill, and the two numbers that say whether it is a colour. */
+export interface RegionFill {
+  r: number;
+  g: number;
+  b: number;
+  saturation: number;
+  chroma: number;
+}
+
+/** The mean colour inside a box, with its saturation and chroma. */
+export function regionFill(view: RasterLike, box: Box): RegionFill | null {
+  const { width, height, pixels } = view;
+  const left = Math.max(0, Math.min(width - 1, box.left));
+  const right = Math.max(0, Math.min(width - 1, box.right));
+  const top = Math.max(0, Math.min(height - 1, box.top));
+  const bottom = Math.max(0, Math.min(height - 1, box.bottom));
+  if (right < left || bottom < top) return null;
+  if (pixels.length < width * height * 3) return null;
+
+  let sr = 0, sg = 0, sb = 0, n = 0;
+  for (let y = top; y <= bottom; y++) {
+    for (let x = left; x <= right; x++) {
+      const at = (y * width + x) * 3;
+      sr += pixels[at];
+      sg += pixels[at + 1];
+      sb += pixels[at + 2];
+      n += 1;
+    }
+  }
+  if (!n) return null;
+  const r = sr / n, g = sg / n, b = sb / n;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const chroma = max - min;
+  return { r, g, b, chroma, saturation: max <= 0 ? 0 : chroma / max };
+}
+
+/**
+ * Is this fill a brand colour rather than a building material?
+ *
+ * The whole of the colour rule, in one place, so the mask and the clearance
+ * cannot come to different conclusions about the same region — one deciding
+ * there is a badge to remove while the other decides the picture is clean would
+ * be the worst outcome available here.
+ */
+export function isPromotionalFill(fill: RegionFill | null): boolean {
+  if (!fill) return false;
+  return fill.saturation >= MIN_PLATE_SATURATION && fill.chroma >= MIN_PLATE_CHROMA;
+}
+
+/**
+ * The flat regions whose fill is a brand colour, small enough to be a badge.
+ *
+ * The size ceiling is the same one a flooded plate is held to: something a
+ * fifth of the picture is not a sticker, and rebuilding it would be rebuilding
+ * the picture.
+ */
+export function promotionalRegions(view: RasterLike, regions: Box[]): Box[] {
+  const count = view.width * view.height;
+  if (count <= 0) return [];
+  return (regions ?? []).filter((box) => {
+    const area = (box.right - box.left + 1) * (box.bottom - box.top + 1);
+    if (area <= 0 || area > MAX_PLATE_SHARE * count) return false;
+    return isPromotionalFill(regionFill(view, box));
+  });
+}
+
+/**
  * The plates the given lines of type are set on.
  *
  * `textBoxes` comes from the strict pass in `marketingOverlay.pure.ts` — the
@@ -94,9 +210,14 @@ export function overlayPlateMask(
   const count = width * height;
   const mask = new Uint8Array(Math.max(0, count));
   const plates: Box[] = [];
-  if (count <= 0 || pixels.length < count * 3 || !textBoxes.length) {
-    return { mask, plates };
-  }
+  if (count <= 0 || pixels.length < count * 3) return { mask, plates };
+
+  const paint = (plate: Box) => {
+    plates.push(plate);
+    for (let y = plate.top; y <= plate.bottom; y++) {
+      for (let x = plate.left; x <= plate.right; x++) mask[y * width + x] = 1;
+    }
+  };
 
   for (const text of textBoxes) {
     /*
@@ -119,11 +240,28 @@ export function overlayPlateMask(
     const plate = plateAround(pixels, width, height, text)
       ?? flatRegionAround(text, flatRegions, count);
     if (!plate) continue;
-    plates.push(plate);
-    for (let y = plate.top; y <= plate.bottom; y++) {
-      for (let x = plate.left; x <= plate.right; x++) mask[y * width + x] = 1;
-    }
+    paint(plate);
   }
+
+  /*
+   * AND THE BADGES THAT CARRY NO READABLE WORDS.
+   *
+   * Added last and only where the type found nothing, so a plate the flood
+   * settled is never widened by a coarser region containing it — the flood's
+   * extent is the better one and it wins wherever it exists.
+   *
+   * A region already inside the mask is skipped rather than added twice: the
+   * same pill can be both a flooded plate and a flat region, and a duplicate
+   * would inflate `plates.length`, which is what the deterministic route counts
+   * to decide how much of the picture it is being asked to rebuild.
+   */
+  for (const region of promotionalRegions(view, flatRegions)) {
+    const cy = Math.min(height - 1, Math.max(0, (region.top + region.bottom) >> 1));
+    const cx = Math.min(width - 1, Math.max(0, (region.left + region.right) >> 1));
+    if (mask[cy * width + cx]) continue;
+    paint(region);
+  }
+
   return { mask, plates };
 }
 

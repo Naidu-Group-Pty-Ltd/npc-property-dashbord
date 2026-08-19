@@ -637,6 +637,7 @@ export async function settleUploadSourceImages(
         outstanding: sanitization.outstanding,
         repaired: sanitization.repaired,
         refused: sanitization.refused,
+        cleared: sanitization.cleared,
         unresolved: sanitization.unresolved,
       });
       return {
