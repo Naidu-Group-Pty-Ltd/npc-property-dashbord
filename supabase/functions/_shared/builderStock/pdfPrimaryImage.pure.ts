@@ -90,11 +90,120 @@ function tokenise(value: string): string[] {
 const MIN_IDENTITY_TOKENS = 2;
 const MAX_IDENTITY_TOKENS = 8;
 
+/**
+ * The lot or unit numbers a piece of text designates.
+ *
+ * "Lot 51", "LOT 914", "Unit 3" — the word and the number that follows it. This
+ * is the one token in a property's label that DISCRIMINATES: an estate's
+ * documents all repeat the estate, the suburb and the state, and only the lot
+ * number says which house.
+ */
+function lotDesignations(value: string): string[] {
+  const tokens = tokenise(value);
+  const found: string[] = [];
+  for (let index = 0; index < tokens.length - 1; index++) {
+    if (tokens[index] !== 'lot' && tokens[index] !== 'unit') continue;
+    const next = tokens[index + 1];
+    if (/^\d{1,5}$/.test(next)) found.push(next);
+  }
+  return found;
+}
+
+/**
+ * The design or product a label names in brackets — "[Miami 190]".
+ *
+ * The SECOND discriminator, and on the live list it is the only one that
+ * separates seven stock rows from each other: Lot 51 carries Miami 190, Miami
+ * 196, Stradbroke 180, Stradbroke 197, Bishop 258, Bravo 217 and Echo 236, all
+ * at the same address and the same lot. A rule that ignored it would let one
+ * design's cover be served for another design's row.
+ */
+function designTokens(label: string): string[] {
+  const bracketed = String(label ?? '').match(/\[([^\]]{1,60})\]/g) ?? [];
+  return bracketed.flatMap((part) => tokenise(part));
+}
+
+/**
+ * Does this page state that it is about THIS property?
+ *
+ * WHAT THIS REPLACES, AND WHY IT WAS WRONG. The rule used to be "every one of
+ * the label's first eight tokens appears on the page", and it is the reason
+ * twenty-five live properties show no photograph. The label comes from the
+ * stock list — "Lot 51 - Tringa Street, Sandpiper Estate, Tweed Heads South NSW
+ * 2486 [Miami 190]" — and the builder's own package cover for that exact
+ * property says "Lot 51, Sandpiper Estate, Tweed Heads NSW · Miami 190,
+ * Spectral façade". It names the lot, the estate, the suburb, the state and the
+ * design. It does not name the STREET, and it writes "Tweed Heads" where the
+ * list writes "Tweed Heads South". So `tringa` and `street` are missing, the
+ * conjunction fails, and a page that could not identify the property more
+ * plainly is refused.
+ *
+ * Demanding every token is not strictness, it is a demand that two independent
+ * documents word an address identically — which nothing makes them do. What
+ * actually needs to hold is that the page IDENTIFIES this property and
+ * CONTRADICTS nothing about it, and those are the four tests below:
+ *
+ *   1  THE LOT IS STATED. The label's lot or unit number must appear on the
+ *      page as a lot or unit designation. This is the discriminator; without it
+ *      there is no identification at all.
+ *
+ *   2  NO OTHER LOT IS STATED. Every lot the page designates must be this
+ *      property's. A page naming Lot 52 is not Lot 51's cover however much of
+ *      the rest it shares, and this is what makes relaxing (1)'s neighbours
+ *      safe rather than sloppy.
+ *
+ *   3  THE DESIGN IS STATED, when the label names one. Seven rows share Lot 51
+ *      and differ only here, so this is the difference between attributing a
+ *      picture and guessing.
+ *
+ *   4  SOMETHING ELSE CORROBORATES. At least one further label token — the
+ *      estate, the suburb, the street where the document does name it — must
+ *      appear, so a bare "Lot 51" on an unrelated page cannot qualify.
+ *
+ * A label with no lot or unit number keeps the OLD conjunction exactly, because
+ * for those rows the tokens are all there is and there is no discriminator to
+ * lean on. Nothing about this is a similarity score: every test is a statement
+ * the document either makes or does not make.
+ */
 function pageStatesIdentity(pageText: string, label: string): boolean {
-  const tokens = tokenise(label).slice(0, MAX_IDENTITY_TOKENS);
-  if (tokens.length < MIN_IDENTITY_TOKENS) return false;
+  const labelTokens = tokenise(label);
+  if (labelTokens.length < MIN_IDENTITY_TOKENS) return false;
+
   const haystack = ` ${tokenise(pageText).join(' ')} `;
-  return tokens.every((token) => haystack.includes(` ${token} `));
+  const states = (token: string) => haystack.includes(` ${token} `);
+
+  const labelLots = lotDesignations(label);
+  if (!labelLots.length) {
+    // No discriminator of its own. The old rule, unchanged.
+    return labelTokens.slice(0, MAX_IDENTITY_TOKENS).every(states);
+  }
+
+  // 1 — the lot is stated, as a lot.
+  const pageLots = lotDesignations(pageText);
+  if (!pageLots.some((lot) => labelLots.includes(lot))) return false;
+
+  // 2 — and no other lot is.
+  if (pageLots.some((lot) => !labelLots.includes(lot))) return false;
+
+  // 3 — the design, when the label names one.
+  const design = designTokens(label);
+  if (design.length && !design.every(states)) return false;
+
+  /*
+   * 4 — and at least one corroborating token that is not the lot itself.
+   *
+   * WHEN THE LABEL HAS NOTHING ELSE, the lot designation IS the whole of its
+   * identity and there is nothing to corroborate with. A row whose source gave
+   * it only "Lot 7" is accepted on the lot alone — exactly as the previous rule
+   * accepted it, since its every token was then the lot too. Requiring
+   * corroboration a label cannot supply would refuse those rows for being
+   * sparsely described, which is not evidence about the document.
+   */
+  const corroborating = labelTokens.filter((token) =>
+    token !== 'lot' && token !== 'unit' && !labelLots.includes(token)
+    && !design.includes(token));
+  if (!corroborating.length) return true;
+  return corroborating.some(states);
 }
 
 /** The package facts a page states, in the order they are defined above. */

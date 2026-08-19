@@ -296,6 +296,33 @@ async function extractFromDocument(
       detail: 'That document\'s text could not be read (no pages came back).',
     };
   }
+  /*
+   * AND PAGES THAT CAME BACK EMPTY ARE THE SAME FAULT AGAIN.
+   *
+   * A package whose every page yields no text at all is not a package that says
+   * nothing about the property — it is a package this reader cannot read. The
+   * live list has them: "LOT 914 • COVELLA • GREENBANK QLD.pdf" is three pages
+   * of designed brochure exported as images, and its first page carries the
+   * lot, the estate, the suburb, the price, the land and house sizes and the
+   * facade render, all of it drawn rather than set. Text extraction returns
+   * zero characters from every page.
+   *
+   * Recording that as "the document names no image for this property" banks a
+   * finished negative produced by a reader that never read the document — and
+   * `negativeProvenanceStillStands` would then suppress the source until a
+   * version bump. So it is operational, and the property is asked again: the
+   * answer changes for free the day this can read a drawn page.
+   *
+   * PARTIAL emptiness is deliberately NOT this. A document with text on some
+   * pages was read; that it says nothing identifying on the others is a fact
+   * about the document.
+   */
+  if (textResult.pages.every((text) => !String(text ?? '').trim())) {
+    return {
+      status: 'unreachable',
+      detail: 'That document\'s pages carry no extractable text, so it could not be read.',
+    };
+  }
   const pageTexts = textResult.pages;
   const selection = await selectPdfPropertyPrimary(bytes, { label, pageTexts });
   const photo = selection.primary;
