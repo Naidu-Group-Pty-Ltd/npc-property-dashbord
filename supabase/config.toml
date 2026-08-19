@@ -1184,8 +1184,6 @@ verify_jwt = false
 [functions.builder-stock-image-settler]
 verify_jwt = false
 
-[functions.builder-stock-inpaint-probe]
-verify_jwt = false
 
 [functions.builder-stock-marketplace]
 verify_jwt = false
