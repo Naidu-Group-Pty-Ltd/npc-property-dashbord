@@ -8,7 +8,7 @@
  * too, with sources and rationale. No screening detail ever reaches the
  * client or the Finance Portal.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,8 +48,8 @@ const manualAdmissible = (s: AmlPartyScreeningSubject) =>
   manualScreeningAdmissible({ state: s.state });
 
 export function PartyScreeningPanel({
-  caseId, canWrite, canAdjudicate, isMlro, caseStatus,
-  onChanged, screeningBlocked, optionalUnavailable,
+  caseId, canWrite, canAdjudicate, isMlro, caseStatus, caseStage,
+  manualScreeningRequest, onChanged, screeningBlocked, optionalUnavailable,
 }: {
   caseId: string; canWrite: boolean; canAdjudicate: boolean; onChanged: () => void;
   /**
@@ -74,6 +74,22 @@ export function PartyScreeningPanel({
    * leaving an operator to guess from a control that silently works.
    */
   caseStatus?: string | null;
+  /**
+   * The canonical lifecycle dimension. Preferred over `caseStatus`, which is
+   * the legacy one — the two diverged in production and every other surface
+   * reads this.
+   */
+  caseStage?: string | null;
+  /**
+   * A nonce from Stage 5's "Complete sanctions screening manually" action.
+   *
+   * Each increment opens the manual dialog for the first party that can still
+   * take one. It is deliberately not a boolean: the CTA can be pressed again
+   * after a dismissal, and a flag already `true` gives this nothing to react
+   * to. Nothing about admissibility or evidence changes — this only saves the
+   * MLRO finding the same button a second time.
+   */
+  manualScreeningRequest?: number;
   /**
    * Whether an OPTIONAL run could not execute right now.
    *
@@ -245,8 +261,27 @@ export function PartyScreeningPanel({
     } finally { setBusyId(null); }
   };
 
+  /*
+   * Open the manual dialog when Stage 5 asks for it, on the first party the
+   * server would actually accept one for. `manualScreeningAdmissible` is the
+   * same rule the edge function applies, so this can never open a dialog
+   * whose submission is refused.
+   */
+  const lastRequest = useRef(manualScreeningRequest ?? 0);
+  useEffect(() => {
+    const n = manualScreeningRequest ?? 0;
+    if (n === lastRequest.current) return;
+    lastRequest.current = n;
+    if (!isMlro || !subjects) return;
+    const target = subjects.find(
+      (s) => s.state !== "not_required" && manualAdmissible(s).ok)
+      ?? subjects.find((s) => manualAdmissible(s).ok);
+    if (target) setManualSubject(target);
+  }, [manualScreeningRequest, isMlro, subjects]);
+
   const now = new Date().toISOString();
-  const caseClosed = String(caseStatus ?? "") === "closed";
+  const caseClosed = String(caseStage ?? "") === "closed"
+    || String(caseStatus ?? "") === "closed";
 
   return (
     <Card>

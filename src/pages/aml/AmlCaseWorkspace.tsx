@@ -253,6 +253,13 @@ export default function AmlCaseWorkspace() {
   // Owned here because two surfaces open the same dialog: this card's
   // next-action CTA and the control's own button, further down the page.
   const [perimeterDialogOpen, setPerimeterDialogOpen] = useState(false);
+  /**
+   * A nonce, not a boolean. The Stage 5 CTA may be pressed again after the
+   * dialog is dismissed, and a boolean that is already `true` produces no
+   * change for the panel to react to — which is how a CTA comes to do nothing
+   * on its second press.
+   */
+  const [manualScreeningRequest, setManualScreeningRequest] = useState(0);
   const screeningStage = useScreeningStage(caseId, {
     riskRating: caseRow?.risk_rating ?? null,
     enhancedDueDiligence: caseRow?.status === "edd_required",
@@ -429,6 +436,28 @@ export default function AmlCaseWorkspace() {
         // provider fault led to a 404.
         navigate(ADMIN_AML_CONFIGURATION_PATH);
         return;
+      /*
+       * A closed case resumes through the ONE authorised reopen operation,
+       * with its recorded reason — never through an ordinary status advance.
+       * The dialog and the server call already exist; this only routes to
+       * them, so there is no second reopening path to keep in step.
+       */
+      case "reopen_case":
+        void reopenCase();
+        return;
+      /*
+       * The MLRO's route when the provider cannot run. It opens the existing
+       * manual dialog for the first party that still needs screening — the
+       * same dialog, the same evidence rules and the same server operation.
+       * A CTA that merely scrolled taught us that naming an action and then
+       * not performing it is worse than not offering it.
+       */
+      case "complete_manually":
+        setManualScreeningRequest((n) => n + 1);
+        document.getElementById("aml-party-screening")?.scrollIntoView({
+          block: "start", behavior: "smooth",
+        });
+        return;
       case "await_submission":
       case "await_provider_result":
         screeningStage.reload();
@@ -444,7 +473,7 @@ export default function AmlCaseWorkspace() {
         });
         return;
     }
-  }, [screeningStage, load, navigate]);
+  }, [screeningStage, load, navigate, reopenCase]);
 
   const connectedPortals = useMemo(
     () =>
@@ -719,6 +748,8 @@ export default function AmlCaseWorkspace() {
                 canAdjudicate={access.isMlro || access.roles.has("reviewer")}
                 isMlro={access.isMlro}
                 caseStatus={caseRow.status}
+                caseStage={caseRow.case_stage ?? null}
+                manualScreeningRequest={manualScreeningRequest}
                 onChanged={() => { load(); screeningStage.reload(); }}
                 screeningBlocked={
                   /*
@@ -837,6 +868,7 @@ export default function AmlCaseWorkspace() {
             caseRow={caseRow}
             canWrite={canWrite}
             isMlro={access.isMlro}
+            onReopen={() => void reopenCase()}
             onChanged={load}
           />
         </aside>
