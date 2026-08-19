@@ -43,15 +43,35 @@
 export const FEATHER = 2;
 
 /**
- * How much photograph goes around the graphic in the patch.
+ * How much photograph goes around the graphic, as a share of the SHORT edge.
  *
  * The model is reconstructing a continuation, so it needs to see what it is
  * continuing: sky above and beside the badge, the roofline it interrupts, the
- * render it sits on. Below about 1.5 the patch is mostly graphic and the result
- * is invention; far above it the mask becomes a speck in a 1024-square and the
+ * render it sits on. Too little and the patch is mostly graphic and the result
+ * is invention; too much and the mask becomes a speck in a 1024-square and the
  * detail comes back soft.
+ *
+ * ADDITIVE, NOT MULTIPLICATIVE, AND PRODUCTION IS WHY. A margin of "twice the
+ * graphic" is fine for a badge and absurd for a banner: Lot 13 Hummock Rise
+ * carries two 460px pills on a 1200px frame, and at 2x each one demanded a
+ * 920px square. The two squares then overlapped, merged, and became a single
+ * patch covering the ENTIRE photograph — so the model was handed the whole
+ * picture, took one pill off, left the other, and drew timber cladding across
+ * a patch of sky. Which is every failure mode the patch design exists to
+ * prevent, arrived at by arithmetic.
  */
-const CONTEXT = 2.0;
+const CONTEXT_SHARE = 0.2;
+
+/**
+ * How much bigger a merge may make a patch before it is not worth making.
+ *
+ * Merging exists so two overlapping requests do not each rebuild part of the
+ * other's work. It is NOT worth turning two local repairs into one global one:
+ * past this the squares stay separate and overlap, which the cumulative
+ * composite handles correctly — the second request simply sees the first
+ * repair as context.
+ */
+const MERGE_GROWTH = 1.2;
 
 /** Patches smaller than this are enlarged: a tiny crop upscales to mush. */
 const MIN_PATCH = 96;
@@ -186,10 +206,9 @@ export function planInpaintPatches(
   let squares = boxes.map((box) => {
     const boxWidth = box.right - box.left + 1;
     const boxHeight = box.bottom - box.top + 1;
-    const size = Math.min(
-      ceiling,
-      Math.max(MIN_PATCH, Math.ceil(Math.max(boxWidth, boxHeight) * CONTEXT)),
-    );
+    const longest = Math.max(boxWidth, boxHeight);
+    const margin = Math.min(longest, Math.round(CONTEXT_SHARE * Math.min(width, height)));
+    const size = Math.min(ceiling, Math.max(MIN_PATCH, longest + 2 * margin));
     const cx = (box.left + box.right) / 2;
     const cy = (box.top + box.bottom) / 2;
     return place(Math.round(cx - size / 2), Math.round(cy - size / 2), size, width, height);
@@ -213,6 +232,8 @@ export function planInpaintPatches(
         const size = Math.max(right - left, bottom - top);
         // The clamp that would silently drop coverage. See the header.
         if (size > ceiling) continue;
+        // And the merge that would turn two local repairs into one global one.
+        if (size > Math.max(one.size, two.size) * MERGE_GROWTH) continue;
         squares = squares.filter((_, i) => i !== a && i !== b);
         squares.push(place(left, top, size, width, height));
         merged = true;

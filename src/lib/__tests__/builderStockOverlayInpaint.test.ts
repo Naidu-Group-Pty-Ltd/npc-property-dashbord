@@ -425,6 +425,47 @@ describe('the validation gate refuses rather than shipping something wrong', () 
     }
   });
 
+  it('LOT 13 — two wide pills stay TWO local repairs, never one global one', () => {
+    /*
+     * THE PRODUCTION FAILURE THIS PINS, and it is worth stating exactly.
+     *
+     * Lot 13 Hummock Rise carries two ~460px status pills across the top of a
+     * 1200x600 photograph. The first geometry asked for a margin of twice the
+     * graphic, so each pill demanded a 920px square; the two squares
+     * overlapped, the merge rule joined them, and the result was ONE patch
+     * covering the entire picture. The model was handed the whole photograph,
+     * removed one pill, left the other in place, and drew timber cladding
+     * across a patch of sky — every failure the patch design exists to
+     * prevent, reached by arithmetic rather than by the model misbehaving.
+     */
+    const wide = 1200;
+    const tall = 600;
+    const frame = sky(wide, tall);
+    stamp(frame, wide, { x: 70, y: 60, w: 460, h: 90 }, [180, 240, 60]);
+    stamp(frame, wide, { x: 710, y: 60, w: 450, h: 90 }, [180, 240, 60]);
+    const overlay = measureFlatColourRegions({ width: wide, height: tall, pixels: frame });
+    const mask = growOverlayMask(overlay, wide, tall, wide, tall) as Uint8Array;
+    const plan = planInpaintPatches(mask, wide, tall);
+
+    expect(plan.uncovered).toBe(false);
+    expect(plan.patches.length).toBe(2);
+    // Neither may be the whole picture: that is the thing that went wrong.
+    for (const patch of plan.patches) {
+      expect(patch.size).toBeLessThan(wide);
+      const covers = patch.x <= 0 && patch.x + patch.size >= wide;
+      expect(covers).toBe(false);
+    }
+    // And between them they still cover every masked pixel.
+    for (let y = 0; y < tall; y++) {
+      for (let x = 0; x < wide; x++) {
+        if (!mask[y * wide + x]) continue;
+        expect(plan.patches.some((patch) =>
+          x >= patch.x && x < patch.x + patch.size
+          && y >= patch.y && y < patch.y + patch.size)).toBe(true);
+      }
+    }
+  });
+
   it('every plan it returns covers every masked pixel', () => {
     const { badged } = badgedPicture();
     const mask = maskFor(badged);
