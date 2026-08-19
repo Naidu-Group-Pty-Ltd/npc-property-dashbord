@@ -133,6 +133,14 @@ export interface SanitizationFailure {
   detail: string;
   model: string | null;
   failed_at: string;
+  /**
+   * Where the refused render was kept, when there was one.
+   *
+   * NOT a derivative and never served: nothing reads this path except a person
+   * looking at what the repair produced. It is here because "we tried and the
+   * graphic is still there" is a claim somebody has to be able to check.
+   */
+  rejected_path?: string | null;
 }
 
 /**

@@ -259,6 +259,28 @@ export async function settleImageSanitization(
           outcome.outstanding -= 1;
           continue;
         }
+        /*
+         * A REFUSED RENDER IS KEPT WHERE NOTHING SERVES IT.
+         *
+         * `rejected/` is not a derivative path and no reader looks in it: the
+         * only thing that reaches a card is a record under `sanitized_derivative`
+         * whose verdict is `eligible`, and a refusal writes no such record. What
+         * this buys is the ability to LOOK at what the repair produced, which is
+         * the difference between improving it and guessing at it. An upload that
+         * fails here is not itself a failure — the refusal still gets written.
+         */
+        let rejectedPath: string | null = null;
+        if (result.rejected && row.storage_path) {
+          const path = `${derivativePath(row.storage_path, row.id)
+            .replace(/\/[^/]+$/, '')}/rejected/${row.id}.png`;
+          const { error: rejectedError } = await db.storage.from(bucket).upload(
+            path,
+            new Blob([result.rejected.bytes as unknown as BlobPart], { type: 'image/png' }),
+            { contentType: 'image/png', upsert: true },
+          );
+          if (!rejectedError) rejectedPath = path;
+        }
+
         const failure: SanitizationFailure = {
           transformation: result.transformation,
           sanitization_version: SANITIZATION_VERSION,
@@ -268,6 +290,7 @@ export async function settleImageSanitization(
           detail: String(result.detail ?? '').slice(0, 300),
           model: result.model,
           failed_at: new Date().toISOString(),
+          rejected_path: rejectedPath,
         };
         const { error: writeError } = await db.from('builder_stock_item_images')
           .update({ source_detail: { ...detail, ...failureDetail(failure) } })

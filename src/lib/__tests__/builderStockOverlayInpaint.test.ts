@@ -519,7 +519,8 @@ describe('the order the two repairs are tried in', () => {
       // classifier refuses it a second time.
       expect(result.reason).toBe('still_annotated');
       expect(result.transformation).toBe('generative_overlay_inpaint');
-      // And there is no picture in the refusal for anything to fall back to.
+      // And there is no picture in the refusal for anything to fall back TO: the
+      // rejected render is named as rejected and is not a candidate.
       expect((result as Record<string, unknown>).bytes).toBeUndefined();
     });
 
@@ -726,10 +727,17 @@ describe('the derivative is stored once, with provenance, and served frozen', ()
       // A refusal is a finished answer, so the sweep can still settle.
       expect(sanitizationSweepCompleted(outcome)).toBe(true);
 
-      expect(db.uploads).toHaveLength(0);
+      /*
+       * A refused render IS kept — under `rejected/`, which nothing serves —
+       * so somebody can look at what the repair produced rather than guess.
+       * What must not exist is a DERIVATIVE record, because that is the only
+       * thing a card can reach.
+       */
+      expect(db.uploads.every((upload) => upload.path.includes('/rejected/'))).toBe(true);
       expect(row.source_detail.sanitized_derivative).toBeUndefined();
       const failure = row.source_detail.sanitization_failure as Record<string, unknown>;
       expect(failure.reason).toBe('still_annotated');
+      expect(String(failure.rejected_path ?? '')).toContain('/rejected/');
       expect(failure.original_image_id).toBe('image-1');
       expect(failure.original_sha256).toBe(await sha256Hex(bytes));
       // The source is still there for a retry or a debug.

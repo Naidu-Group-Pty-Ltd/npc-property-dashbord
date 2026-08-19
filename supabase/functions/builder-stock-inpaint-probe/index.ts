@@ -64,8 +64,21 @@ Deno.serve(async (req: Request) => {
           path: derivative.storage_path,
         }
         : null,
-      failure: failure ? { reason: failure.reason, detail: failure.detail } : null,
+      failure: failure
+        ? { reason: failure.reason, detail: failure.detail, model: failure.model }
+        : null,
     };
+
+    if (failure?.rejected_path) {
+      const { data: rejectedSigned } = await supabase.storage
+        .from(image.storage_bucket || STOCK_IMAGE_BUCKET)
+        .createSignedUrl(failure.rejected_path, 3600);
+      entry.rejected_url = rejectedSigned?.signedUrl ?? null;
+      const { data: originalSigned } = await supabase.storage
+        .from(image.storage_bucket || STOCK_IMAGE_BUCKET)
+        .createSignedUrl(image.storage_path, 3600);
+      entry.original_url = originalSigned?.signedUrl ?? null;
+    }
 
     if (derivative?.storage_path) {
       const { data: signed } = await supabase.storage

@@ -60,8 +60,24 @@ export type SanitizeImageResult =
     /** The classifier's verdict on the REPAIR, not on the original. */
     verdict: 'eligible' | 'ineligible' | 'pending';
   }
-  | { ok: false; reason: SanitizationFailureReason | 'not_annotated'; detail: string;
-      transformation: SanitizationTransformation | null; model: string | null };
+  | {
+    ok: false;
+    reason: SanitizationFailureReason | 'not_annotated';
+    detail: string;
+    transformation: SanitizationTransformation | null;
+    model: string | null;
+    /**
+     * THE REPAIR THAT WAS REFUSED, KEPT SO SOMEBODY CAN LOOK AT IT.
+     *
+     * Deliberately not called `bytes`, and deliberately never returned on any
+     * path that could be mistaken for a result: this is a rejected render, and
+     * the caller stores it under its own name where nothing serves it. "We
+     * tried and the graphic is still there" is a claim an operator has to be
+     * able to check, and a refusal that throws the evidence away makes the next
+     * improvement guesswork.
+     */
+    rejected?: { bytes: Uint8Array; width: number; height: number };
+  };
 
 export interface SanitizeImageOptions {
   /**
@@ -271,6 +287,7 @@ async function finish(
     return {
       ok: false, reason: 'still_annotated', transformation, model,
       detail: `the repaired picture is still not one to draw (${verdict.reason ?? verdict.state})`,
+      rejected: { bytes, width, height },
     };
   }
 
