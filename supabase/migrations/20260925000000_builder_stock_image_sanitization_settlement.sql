@@ -171,6 +171,26 @@ BEGIN
 END;
 $$;
 
+/*
+ * AND IT IS ACTUALLY RESTRICTED, WHICH IT WAS NOT.
+ *
+ * The migration that introduced this tick declared it SECURITY DEFINER and said
+ * in its comment that it was "restricted to postgres/service_role" — and never
+ * revoked anything. `CREATE` grants EXECUTE to PUBLIC by default, so the live
+ * ACL read `{=X/postgres, postgres=X, anon=X, authenticated=X, service_role=X}`:
+ * PUBLIC and `anon` both held it. Anyone with the publishable key in the browser
+ * bundle could call a definer-rights function that fires an internal edge
+ * function through `cron_invoke_signed_function`.
+ *
+ * `CREATE OR REPLACE` preserves existing grants, so re-creating it here would
+ * have carried that forward silently. Revoking from `anon` alone is a no-op
+ * while PUBLIC holds it, which is why this names PUBLIC first.
+ */
+REVOKE ALL ON FUNCTION public.settle_builder_stock_marketplace_eligibility_tick()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.settle_builder_stock_marketplace_eligibility_tick()
+  TO postgres, service_role;
+
 COMMENT ON FUNCTION public.settle_builder_stock_marketplace_eligibility_tick() IS
   'One tick of the Builder Stock image deployment repair. Invokes '
   'builder-stock-image-settler while any upload is behind on provenance, '
