@@ -79,6 +79,19 @@ logo over the photograph on two real listings, because a logo lockup is called a
 gallery is shared, or is entirely furniture, keeps every image in its own order,
 which is why nothing here can blank a card.
 
+One property can also arrive as several records. Read
+[`DUPLICATE_RECORDS.md`](./docs/listings/DUPLICATE_RECORDS.md) before touching
+`_shared/listingDuplicates.pure.ts` or `propertyDataService.buildResult`: the
+marketplace was showing **148 listings for 107 properties** because the intake
+scenario re-processes a message it has already written — `14 Yillowra St` exists
+four times, three minutes apart, from one forwarded newsletter. `airtable-proxy`
+has always TAGGED duplicates and deliberately removed none, leaving the decision
+to the client, and no client ever made it. The rule that makes it is **address +
+price + type + beds + land**, and the constraint is that **an address with no
+street number is never a key** — eleven different City Beach properties share
+one, because their street numbers never got extracted, and merging on address
+alone deletes nine real listings.
+
 Column names for that table live in `_shared/airtableIntakeFields.pure.ts` and nowhere else.
 Airtable returns `undefined` for a column that does not exist exactly as it does for one
 that is empty, so a mistyped name is invisible — that file's header records what that cost
