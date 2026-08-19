@@ -87,11 +87,31 @@ describe("the journey cannot step over a genuine Stage 5 requirement", () => {
     expect(stage.blockers.map((b) => b.key)).toContain("pep_outstanding");
   });
 
-  it("the sequence decides, not the loudest stage", () => {
+  it("the EARLIEST blocking stage wins, not a later one", () => {
     const code = strip(journeySrc);
-    // The old rule scanned every stage for `blocking` first.
-    expect(code).not.toMatch(/const blocking = stages\.find\(\(s\) => s\.blocking && s\.applicable\)/);
+    expect(code).toMatch(/const blocking = stages\.find\(\(s\) => s\.applicable && s\.blocking\)/);
     expect(code).toMatch(/WORKING_STATES\.includes\(s\.status\)/);
+  });
+
+  it("a blocking stage outranks an earlier stage that is only unfinished", () => {
+    /*
+     * Measured in production after the first attempt at this: intake sat
+     * `in_progress` waiting on the CLIENT and claimed the position ahead of
+     * the determination the MLRO actually owed at stage 5 — the rail read
+     * "2 of 10 · Client intake" over the only actionable work on the case.
+     * Unfinished is not the same as blocking.
+     */
+    const facts = reopenedEnquiry({
+      consent: { satisfied: true, outstanding: [] },
+      portalAccess: { hasAccount: true, isActive: true } as never,
+      identity: { checks: [{ party_label: "Test Subject", status: "passed" }] },
+      documents: { requirements: [{ label: "Passport", required: true, status: "accepted" }] },
+    });
+    const journey = deriveAmlJourney(facts);
+    const intake = journey.stages.find((s) => s.id === "intake")!;
+    expect(intake.status).not.toBe("complete");
+    expect(intake.blocking).toBe(false);
+    expect(journey.currentStageId).toBe("screening");
   });
 
   it("an UNREAD stage never claims the position", () => {
