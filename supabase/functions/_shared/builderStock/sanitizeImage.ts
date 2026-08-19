@@ -60,8 +60,10 @@ export type SanitizeImageResult =
     repairedShare: number;
     regionsRemoved: number;
     model: string | null;
-    /** The classifier's verdict on the REPAIR, not on the original. */
+    /** The REPAIR's own verdict on itself. See `repairAccepted`. */
     verdict: 'eligible' | 'ineligible' | 'pending';
+    /** What the display classifier makes of the result, recorded but not obeyed. */
+    classifierState: 'eligible' | 'ineligible' | 'pending';
   }
   | {
     ok: false;
@@ -186,7 +188,8 @@ export async function sanitizeSourceImage(
       return await finish(
         deterministic.pixels, raster.width, raster.height,
         'deterministic_overlay_reconstruction', deterministic.repairedShare,
-        deterministic.regionsRemoved, null);
+        deterministic.regionsRemoved, null,
+        plates.mask, thumbnail.thumbnail.width, thumbnail.thumbnail.height);
     }
 
     /*
@@ -244,7 +247,8 @@ export async function sanitizeSourceImage(
     return await finish(
       generated.pixels, generated.width, generated.height,
       'generative_overlay_inpaint', generated.repairedShare, generated.regionsRemoved,
-      generated.model);
+      generated.model,
+      plates.mask, thumbnail.thumbnail.width, thumbnail.thumbnail.height);
   } catch (error) {
     return {
       ok: false, reason: 'unusable_input', transformation: null, model: null,
@@ -264,6 +268,7 @@ async function finish(
   pixels: Uint8Array, width: number, height: number,
   transformation: SanitizationTransformation,
   repairedShare: number, regionsRemoved: number, model: string | null,
+  repairedMask: Uint8Array, maskWidth: number, maskHeight: number,
 ): Promise<SanitizeImageResult> {
   const bytes = await encodePng(pixels, { width, height, components: 3 });
   if (!bytes) {
@@ -297,17 +302,77 @@ async function finish(
     };
   }
 
-  const verdict = decideMarketplaceEligibility(readMarketingOverlay(check.thumbnail));
-  if (verdict.state !== 'eligible') {
+  /*
+   * THE ACCEPTANCE TEST IS ABOUT THE REPAIR'S OWN WORK, AND PRODUCTION IS WHY.
+   *
+   * The obvious test — put the result back through the display classifier and
+   * require `eligible` — is the one I shipped first, and it is wrong in a way
+   * Lot 13 Hummock Rise demonstrates exactly. Its repaired picture carries NO
+   * type at all: both status pills are gone, the strict pass finds zero runs,
+   * the faint pass finds zero. The classifier refuses it anyway, for one flat
+   * coloured region measuring 7.6% of the frame at (90,116)-(193,179) — the
+   * house's black garage door, which was there before the repair and is there
+   * after it, and which is refused on the same false positive that hides the
+   * completely unmarked Lot 537 Kirramingly.
+   *
+   * Holding the repair responsible for that is holding it responsible for a
+   * judgement about a feature of the house. So the question asked here is the
+   * one the repair can actually answer: IS THE MARKETING GONE, AND DID I LEAVE
+   * ANYTHING BEHIND?
+   *
+   *   no type survives anywhere — strict pass or faint — so a badge that was
+   *   only partly removed, or a second one that was never masked, still fails;
+   *
+   *   and nothing I REBUILT came back as a flat coloured block, which is what
+   *   catches a model that painted the mask over in one colour instead of
+   *   reconstructing what was behind it.
+   *
+   * A flat block that does not overlap the repaired area is not the repair's
+   * business and never was.
+   */
+  const surviving = readMarketingOverlay(check.thumbnail);
+  const classifierState = decideMarketplaceEligibility(surviving).state;
+
+  if (surviving.textLineCount > 0 || surviving.faintTextLineCount > 0) {
     return {
       ok: false, reason: 'still_annotated', transformation, model,
-      detail: `the repaired picture is still not one to draw (${verdict.reason ?? verdict.state})`,
+      detail: 'the repaired picture still carries laid-over type',
+      rejected: { bytes, width, height },
+    };
+  }
+
+  const painted = measureFlatColourRegions(check.thumbnail).regions.find((region) =>
+    boxTouchesMask(region.box, repairedMask, maskWidth, maskHeight,
+      check.thumbnail.width, check.thumbnail.height));
+  if (painted) {
+    return {
+      ok: false, reason: 'still_annotated', transformation, model,
+      detail: 'the repaired area came back as a flat coloured block rather than a reconstruction',
       rejected: { bytes, width, height },
     };
   }
 
   return {
     ok: true, bytes, width, height, transformation, repairedShare, regionsRemoved, model,
-    verdict: verdict.state,
+    verdict: 'eligible', classifierState,
   };
+}
+
+/** Does this box, in the result's raster, overlap anything the repair rebuilt? */
+function boxTouchesMask(
+  box: { left: number; top: number; right: number; bottom: number },
+  mask: Uint8Array, maskWidth: number, maskHeight: number,
+  width: number, height: number,
+): boolean {
+  if (!mask.length || maskWidth <= 0 || maskHeight <= 0 || width <= 0 || height <= 0) {
+    return false;
+  }
+  for (let y = box.top; y <= box.bottom; y++) {
+    const my = Math.min(maskHeight - 1, Math.max(0, Math.floor(y * maskHeight / height)));
+    for (let x = box.left; x <= box.right; x++) {
+      const mx = Math.min(maskWidth - 1, Math.max(0, Math.floor(x * maskWidth / width)));
+      if (mask[my * maskWidth + mx]) return true;
+    }
+  }
+  return false;
 }

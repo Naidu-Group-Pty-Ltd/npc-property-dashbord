@@ -93,15 +93,27 @@ export interface SanitizedDerivative {
   generated_at: string;
 
   /**
-   * The display verdict measured ON THE DERIVATIVE'S OWN BYTES.
+   * THE REPAIR'S VERDICT ON ITS OWN WORK, measured on the derivative's bytes.
    *
-   * The whole point of the repair is that the overlay is gone, and the only
-   * honest way to claim that is to put the result back through the same
-   * classifier that refused the original. A derivative that still measures as
-   * annotated is stored and NOT served — the work is recorded, the card stays
-   * empty, and nobody has to guess whether the repair worked.
+   * `eligible` means two things were checked and both held: no laid-over type
+   * survives anywhere in the result, and nothing the repair rebuilt came back
+   * as a flat coloured block. Anything else is stored and NOT served — the work
+   * is recorded, the card stays empty, and nobody has to guess.
+   *
+   * DELIBERATELY NOT "the display classifier now passes it". That test is the
+   * one this shipped with and it was wrong: Lot 13 Hummock Rise's repaired
+   * picture carries no type at all, and the classifier refuses it for the
+   * house's black garage door — a flat coloured block that was there before the
+   * repair and after it, and the same false positive that hides the completely
+   * unmarked Lot 537 Kirramingly. A repair cannot be held responsible for a
+   * judgement about a feature of the house.
    */
   verdict: 'eligible' | 'ineligible' | 'pending';
+  /**
+   * And what the display classifier makes of the result, recorded and not
+   * obeyed. Kept because the disagreement above is worth being able to see.
+   */
+  classifier_state?: 'eligible' | 'ineligible' | 'pending';
 }
 
 /** Why a repair did not produce a servable picture. */

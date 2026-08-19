@@ -333,6 +333,7 @@ export async function settleImageSanitization(
         model: result.model,
         generated_at: new Date().toISOString(),
         verdict: result.verdict,
+        classifier_state: result.classifierState,
       };
 
       const { error: recordError } = await db.from('builder_stock_item_images')

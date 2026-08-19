@@ -662,6 +662,45 @@ describe('the order the two repairs are tried in', () => {
     expect(readMarketingOverlay({ width: W, height: H, pixels: badged }).annotated).toBe(true);
   });
 
+  it('accepts a repair the DISPLAY classifier would still refuse for the house itself',
+    async () => {
+      /*
+       * LOT 13 HUMMOCK RISE, AND THE REASON THE ACCEPTANCE TEST IS NOT
+       * "does the classifier pass it now".
+       *
+       * Its repaired picture carries no type at all — both status pills gone,
+       * strict pass zero runs, faint pass zero. The classifier refuses it for
+       * ONE flat coloured region: the house's black garage door, which was
+       * there before the repair and after it, and which is refused on the same
+       * false positive that hides the completely unmarked Lot 537 Kirramingly.
+       *
+       * A repair cannot be held responsible for a judgement about a feature of
+       * the house. What it must answer for is its own work.
+       */
+      const clean = sky(W, H);
+      const withDoor = new Uint8Array(clean);
+      for (let y = 120; y < 180; y++) {
+        for (let x = 60; x < 190; x++) {
+          const at = (y * W + x) * 3;
+          withDoor[at] = 30; withDoor[at + 1] = 30; withDoor[at + 2] = 32;
+        }
+      }
+      const badged = new Uint8Array(withDoor);
+      stamp(badged, W, { x: 20, y: 14, w: 96, h: 30 });
+
+      // The classifier refuses the CLEAN picture, on the door alone.
+      expect(readMarketingOverlay({ width: W, height: H, pixels: withDoor }).annotated).toBe(true);
+
+      const bytes = (await encodePng(badged, { width: W, height: H, components: 3 }))!;
+      const result = await sanitizeSourceImage(bytes);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // Accepted on its own work...
+      expect(result.verdict).toBe('eligible');
+      // ...while recording, without obeying, that the classifier still objects.
+      expect(result.classifierState).toBe('ineligible');
+    });
+
   it('RULE 14 — a repair that leaves the graphic legible is refused, not served',
     async () => {
       const { badged } = badgedPicture();
