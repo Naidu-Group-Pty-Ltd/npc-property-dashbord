@@ -233,7 +233,24 @@ async function main() {
         .map((e) => withNormalisedNames(e, code, sync?.id))
         .filter((r) => r.normalised_names.length > 0);
 
-      const offices = new Set(rows.map((r) => r.position_title));
+      /*
+       * Count EVERY office a row records, not just the one it leads with.
+       *
+       * `position_title` is the office shown on the candidate — the current
+       * one, else the most recent — so counting those answers "how many
+       * different offices do people lead with", which is not a coverage
+       * number. On the first corrected load it read 371 while 676 offices
+       * were actually represented. Understating is the safer direction, but
+       * a number that does not mean what it says is the same defect as the
+       * one this file was just rewritten for.
+       */
+      const offices = new Set();
+      for (const r of rows) {
+        for (const p of r.source_detail?.positions ?? []) {
+          if (p?.title) offices.add(p.title);
+        }
+        if (r.position_title) offices.add(r.position_title);
+      }
       console.log(`  parsed ${parsed.length}, searchable ${rows.length}, `
         + `${offices.size} distinct offices, sha256 ${sha.slice(0, 16)}…`);
       if (dryRun) {

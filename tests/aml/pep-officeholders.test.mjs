@@ -257,6 +257,17 @@ test('what the load actually reached is recorded beside it', () => {
   assert.match(loader, /sample_offices/);
 });
 
+test('the office count counts EVERY office recorded, not just the one shown', () => {
+  /*
+   * `position_title` is the office a candidate LEADS with — the current one,
+   * else the most recent. Counting those answers "how many offices do people
+   * lead with", which is not a coverage number: the first corrected load
+   * measured 371 while 676 offices were actually represented.
+   */
+  assert.match(loader, /source_detail\?\.positions/);
+  assert.doesNotMatch(loader, /new Set\(rows\.map\(\(r\) => r\.position_title\)\)/);
+});
+
 /* ── what the table itself promises ───────────────────────────────────── */
 
 test('the table says out loud that it cannot clear anybody', () => {

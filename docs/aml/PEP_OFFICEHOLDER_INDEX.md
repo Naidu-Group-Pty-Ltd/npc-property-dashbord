@@ -78,6 +78,12 @@ number the loader measured can be.
 `officeCount` is `null` when a load recorded no detail, never `0` — unknown
 and none are different facts and only one of them is alarming.
 
+The count is over **every office a row records**, not the one it leads with.
+`position_title` is the office shown on the candidate — the current one, else
+the most recent — so counting those answers "how many offices do people lead
+with", which is not a coverage number: the first corrected load measured 371
+while 676 offices were actually represented, out of 724 queried.
+
 ### `pep_type` is left NULL, deliberately
 
 The AUSTRAC category — foreign, domestic, international organisation — belongs
