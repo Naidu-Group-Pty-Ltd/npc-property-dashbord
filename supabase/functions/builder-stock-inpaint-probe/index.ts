@@ -74,6 +74,11 @@ Deno.serve(async (req: Request) => {
         .from(image.storage_bucket || STOCK_IMAGE_BUCKET)
         .createSignedUrl(failure.rejected_path, 3600);
       entry.rejected_url = rejectedSigned?.signedUrl ?? null;
+    }
+
+    // The original, always: a refusal is exactly the case somebody needs to
+    // look at the builder's own file for.
+    if (image.storage_path) {
       const { data: originalSigned } = await supabase.storage
         .from(image.storage_bucket || STOCK_IMAGE_BUCKET)
         .createSignedUrl(image.storage_path, 3600);
@@ -85,10 +90,6 @@ Deno.serve(async (req: Request) => {
         .from(derivative.storage_bucket || STOCK_IMAGE_BUCKET)
         .createSignedUrl(derivative.storage_path, 3600);
       entry.derivative_url = signed?.signedUrl ?? null;
-      const { data: originalSigned } = await supabase.storage
-        .from(image.storage_bucket || STOCK_IMAGE_BUCKET)
-        .createSignedUrl(image.storage_path, 3600);
-      entry.original_url = originalSigned?.signedUrl ?? null;
     }
     report.push(entry);
   }
