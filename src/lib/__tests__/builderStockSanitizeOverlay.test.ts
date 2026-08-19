@@ -210,18 +210,36 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
     expect(result.reason).toBe('background_too_detailed');
   });
 
-  it('REFUSES when too much of the picture would have to be rebuilt', () => {
+  it('REFUSES a single hole too wide to fill', () => {
     const original = sky(W, H);
     const badged = new Uint8Array(original);
-    // Three big plates, the Lot 13 shape: quiet surroundings, far too much area.
-    badge(badged, W, { x: 10, y: 10, w: 150, h: 40 });
-    badge(badged, W, { x: 200, y: 10, w: 150, h: 40 });
-    badge(badged, W, { x: 100, y: 120, w: 180, h: 40 });
+    // ONE plate covering more than a tenth of the frame: the distance from the
+    // middle of that hole to the nearest real pixel is what makes a diffusion
+    // read as a smear.
+    badge(badged, W, { x: 40, y: 40, w: 300, h: 40 });
 
     const { result } = run(badged);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe('too_much_to_rebuild');
+  });
+
+  it('and does NOT refuse two small holes merely because they add up', () => {
+    /*
+     * THE FITTING ERROR THIS PINS. The cap was on the TOTAL, on the evidence
+     * that Lot 13 Hummock Rise "covers 23% of the frame between its badges" —
+     * and that 23% was measured against a mask since shown to be wrong, one
+     * that included the house's black garage door and a patch of sky. Its two
+     * real badges are 6.2% each. Two small holes at opposite ends of a
+     * photograph are two small reconstructions; summing them describes neither.
+     */
+    const badged = sky(W, H);
+    badge(badged, W, { x: 12, y: 14, w: 130, h: 34 });
+    badge(badged, W, { x: 250, y: 14, w: 130, h: 34 });
+
+    const { plates, result } = run(badged);
+    expect(plates.plates.length).toBe(2);
+    expect(result.ok).toBe(true);
   });
 
   it('is deterministic — the same picture always cleans to the same bytes', () => {

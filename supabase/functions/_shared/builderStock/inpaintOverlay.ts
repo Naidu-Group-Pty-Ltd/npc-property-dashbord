@@ -52,12 +52,23 @@ const REQUEST_TIMEOUT_MS = 60_000;
  * style, quality, lighting or appeal, and no word that invites the model to
  * improve anything — an "attractive modern home" in this string is how a
  * client comes to be shown a house that was never built.
+ *
+ * THE CLAUSE ABOUT NOT EXTENDING THE BUILDING IS THERE BECAUSE OF LOT 13
+ * HUMMOCK RISE. Its two status pills sit across the top of the frame, half over
+ * sky and half over the edge of a timber-clad upper storey, and asked to
+ * "reconstruct the background" the model continued the CLADDING across both
+ * rectangles — a house a foot wider and a storey taller than the one that was
+ * photographed. The gate caught it, as a flat coloured block where a
+ * reconstruction should be. Naming what the background is, and naming what it
+ * is not, is the narrowest way to ask for the right thing.
  */
 export const INPAINT_PROMPT =
   'Remove the overlaid promotional graphic or text and reconstruct only the '
   + 'background that was hidden directly behind the masked area, continuing the '
-  + 'surrounding photograph. Do not change anything outside the masked area and '
-  + 'do not redesign the property.';
+  + 'surrounding photograph: if sky was behind it, sky; if landscaping, '
+  + 'landscaping. Do not extend any building, roof, wall or structure into the '
+  + 'masked area. Do not change anything outside the masked area and do not '
+  + 'redesign the property.';
 
 export type InpaintResult =
   | {

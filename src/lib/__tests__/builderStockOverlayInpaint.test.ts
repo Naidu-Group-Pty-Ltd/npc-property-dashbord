@@ -290,6 +290,7 @@ describe('the model sees the builder\'s own photograph and nothing else', () => 
     expect(prompt).toContain('reconstruct only the background');
     expect(prompt).toContain('do not change anything outside the masked area');
     expect(prompt).toContain('do not redesign the property');
+    expect(prompt).toContain('do not extend any building');
     // Nothing that invites a nicer house than the one that was photographed.
     for (const word of ['beautiful', 'attractive', 'modern', 'improve', 'enhance',
       'photorealistic', 'render a', 'generate a house', 'style']) {

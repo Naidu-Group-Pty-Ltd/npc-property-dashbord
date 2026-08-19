@@ -58,21 +58,28 @@ const EDGE_GROW = 3;
 const MAX_BOUNDARY_DETAIL = 6;
 
 /**
- * And how much of the picture may be rebuilt at all.
+ * And how big any ONE hole may be.
  *
- * A second gate because the first is not sufficient, which production proved:
- * the Lot 13 badges sit on quiet enough surroundings to pass the detail test
- * (5.3) and still cover 23% of the frame between them, and no diffusion fills a
- * fifth of a photograph without it reading as a smear. Both must hold.
+ * A second gate because the first is not sufficient: a badge can sit on quiet
+ * enough surroundings to pass the detail test and still be too big to fill,
+ * because what makes a diffusion read as a smear is the distance from the
+ * middle of the hole to the nearest real pixel.
  *
- * The two together were fitted against the real covers: the Brownsplains badge
- * (7.2% of the frame, detail 2.9, sitting on open sky) is removed so completely
- * that the result is indistinguishable from an unbadged render, while the
- * Cloverton "Registered" pill (2.8% but detail 11.2, sitting over a tree) and
- * both Lot 13 and Lot 1663 (23% and 21%) are refused — every one of which
- * produced a visible blur where the badge had been.
+ * PER REGION, NOT PER PICTURE, AND THE FIRST VERSION HAD THIS WRONG. It capped
+ * the TOTAL, on the evidence that Lot 13 Hummock Rise "covers 23% of the frame
+ * between its badges" — but that 23% was measured against a mask which has
+ * since been shown to be wrong, one that included the house's black garage door
+ * and a patch of sky. Its two actual badges are 6.2% each. Two small holes at
+ * opposite ends of a photograph are two small reconstructions; summing them
+ * describes nothing about either.
+ *
+ * Fitted against the real covers: the Brownsplains badge (7.6% of the frame,
+ * detail 2.9, sitting on open sky) is removed so completely that the result is
+ * indistinguishable from an unbadged render, while the Cloverton "Registered"
+ * pill (2.8% but detail 11.2, sitting over a tree) is refused for the detail
+ * test rather than this one.
  */
-const MAX_REPAIRED_SHARE = 0.10;
+const MAX_REGION_SHARE = 0.10;
 
 /** Relaxation sweeps. Enough for the patch sizes a badge produces. */
 const SWEEPS = 96;
@@ -243,6 +250,38 @@ function diffuse(
   return out;
 }
 
+/** The area of the biggest connected hole, which is what a fill has to cross. */
+function largestRegion(mask: Uint8Array, width: number, height: number): number {
+  const seen = new Uint8Array(mask.length);
+  const stack: number[] = [];
+  let largest = 0;
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || seen[start]) continue;
+    let area = 0;
+    stack.length = 0;
+    stack.push(start);
+    seen[start] = 1;
+    while (stack.length) {
+      const at = stack.pop() as number;
+      area += 1;
+      const x = at % width;
+      const y = (at - x) / width;
+      if (x > 0 && mask[at - 1] && !seen[at - 1]) { seen[at - 1] = 1; stack.push(at - 1); }
+      if (x + 1 < width && mask[at + 1] && !seen[at + 1]) {
+        seen[at + 1] = 1; stack.push(at + 1);
+      }
+      if (y > 0 && mask[at - width] && !seen[at - width]) {
+        seen[at - width] = 1; stack.push(at - width);
+      }
+      if (y + 1 < height && mask[at + width] && !seen[at + width]) {
+        seen[at + width] = 1; stack.push(at + width);
+      }
+    }
+    if (area > largest) largest = area;
+  }
+  return largest;
+}
+
 /**
  * The detector's mask, on the builder's own pixels.
  *
@@ -300,8 +339,8 @@ export function sanitizeOverlay(input: SanitizeInput): SanitizeResult {
   if (!masked) return { ok: false, reason: 'nothing_to_remove' };
 
   const repairedShare = masked / count;
-  if (repairedShare > MAX_REPAIRED_SHARE) {
-    // Too much of the photograph to rebuild, however quiet its edges are.
+  if (largestRegion(mask, width, height) / count > MAX_REGION_SHARE) {
+    // One hole too wide to fill, however quiet its edges are.
     return { ok: false, reason: 'too_much_to_rebuild' };
   }
 
