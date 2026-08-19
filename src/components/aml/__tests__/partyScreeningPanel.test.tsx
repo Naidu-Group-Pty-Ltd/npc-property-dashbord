@@ -288,9 +288,9 @@ describe("PartyScreeningPanel — PEP determination", () => {
   it("will not accept the customer's declaration as the only source", async () => {
     renderPanel({
       pepDeclaration: {
-        answered: true, answer: "no",
+        answered: true, answer: "no", complete: true,
         summary: "The customer answered no to the political-exposure question.",
-        country: null,
+        relationship: null, role: null, country: null,
       },
     });
     fireEvent.click(await screen.findByRole(
