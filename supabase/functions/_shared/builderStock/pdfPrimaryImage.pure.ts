@@ -342,12 +342,58 @@ export function assignPdfMediaRoles(input: {
   pageTexts: string[];
   pageOrderAuthoritative: boolean;
   media: PdfMediaPlacement[];
+  /**
+   * THE DOCUMENT IS ALREADY KNOWN TO BE THIS PROPERTY'S, AND IT CANNOT SAY SO.
+   *
+   * Set only where the containing document was tied to exactly one stock row by
+   * the builder's OWN structure — one folder named for the lot, one PDF in it
+   * naming that lot and that design, `selectPackageDocument`'s exactly-one-or-
+   * nothing — and where the document's pages then yielded no extractable text
+   * whatsoever.
+   *
+   * That combination is a real document in the live library:
+   * "LOT 914 • COVELLA • GREENBANK QLD.pdf" is three pages of designed brochure
+   * exported as images, whose first page carries the lot, the estate, the price,
+   * both sizes and the facade render, all drawn rather than set. Nothing on that
+   * page can be read, so `findPropertyCoverPages` can never designate it — and
+   * the property has a photograph the source names perfectly well.
+   *
+   * WHAT THIS IS NOT. It is emphatically not "a PDF with no text, so use page
+   * one": that rule would attribute the first picture in any unreadable
+   * document to whichever property happened to be asking. The attribution here
+   * does not come from the page at all — it was already made, by name, before a
+   * byte was downloaded — and this only supplies the page number that
+   * attribution implies. Where the folder named two candidate documents, or
+   * none, there is no tie and nothing reaches this.
+   *
+   * AND IT STILL HAS TO BE A COVER. `selectCoverHero` runs unchanged below, so
+   * a first page presenting no photograph, or presenting several, or presenting
+   * only artwork the document repeats elsewhere, yields nothing exactly as it
+   * would for a page whose text was read. A floorplan or a masterplan on page 1
+   * is not promoted by this; it is refused by the same rule that refuses it
+   * today.
+   */
+  structuralCoverPage?: number | null;
 }): SourceImageRoleAssignment[] {
   const media = input.media ?? [];
   const covers = input.pageOrderAuthoritative
     ? findPropertyCoverPages(input.pageTexts ?? [], input.label)
     : [];
-  const cover = covers.length === 1 ? covers[0] : null;
+  const structural = input.pageOrderAuthoritative
+    && Number.isInteger(input.structuralCoverPage)
+    && (input.structuralCoverPage as number) > 0
+    && !covers.length
+    // Only where NOTHING could be read. A document whose text was read and did
+    // not name this property has answered the question, and this must not
+    // overrule it.
+    && (input.pageTexts ?? []).every((text) => !String(text ?? '').trim())
+    ? {
+      page: input.structuralCoverPage as number,
+      identity: String(input.label ?? ''),
+      packageFacts: ['the builder\'s own folder names this document for this property'],
+    }
+    : null;
+  const cover = covers.length === 1 ? covers[0] : structural;
 
   const onCover = cover
     ? media

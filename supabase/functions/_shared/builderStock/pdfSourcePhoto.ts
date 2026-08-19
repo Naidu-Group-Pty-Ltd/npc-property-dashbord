@@ -473,6 +473,15 @@ export async function selectPdfPropertyPrimary(
     label?: string | null;
     pageTexts?: string[];
     maxPages?: number;
+    /**
+     * The page the CONTAINING DOCUMENT's own identification implies is this
+     * property's cover, for a document that yielded no text at all.
+     *
+     * Passed only by a caller that tied the document to exactly one stock row
+     * from the builder's folder structure before downloading it. See
+     * `assignPdfMediaRoles`.
+     */
+    structuralCoverPage?: number | null;
   } = {},
 ): Promise<{
   assets: PdfSourceAsset[];
@@ -487,6 +496,7 @@ export async function selectPdfPropertyPrimary(
     pageTexts: options.pageTexts ?? [],
     pageOrderAuthoritative: found.pageOrderAuthoritative,
     media: found.assets.map((asset) => asset.placement),
+    structuralCoverPage: options.structuralCoverPage ?? null,
   });
 
   let primary: PdfSourceAsset | null = null;

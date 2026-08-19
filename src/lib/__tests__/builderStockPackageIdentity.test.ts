@@ -32,8 +32,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  findPropertyCoverPages, packageFactsOn,
+  assignPdfMediaRoles, findPropertyCoverPages, packageFactsOn,
 } from '../../../supabase/functions/_shared/builderStock/pdfPrimaryImage.pure';
+import {
+  selectPackageDocument,
+} from '../../../supabase/functions/_shared/builderStock/drivePackage.pure';
 import {
   COVELLA_ADDRESS, COVELLA_LOT_914_PAGE_1, LOT_51_MIAMI_190_PAGE_1,
   LOT_51_MIAMI_196_PAGE_1, LOT_52_MIAMI_190_PAGE_1, SANDPIPER_ADDRESS,
@@ -142,5 +145,90 @@ describe('a document that could not be read is not a document that said nothing'
      */
     expect(COVELLA_LOT_914_PAGE_1.trim()).toBe('');
     expect(findPropertyCoverPages([COVELLA_LOT_914_PAGE_1], COVELLA_ADDRESS)).toHaveLength(0);
+  });
+});
+
+
+describe('which document in the folder is this property\'s package', () => {
+  const pdf = (name: string, i: number) =>
+    ({ id: `f${i}`, name, mimeType: 'application/pdf' });
+
+  /* The real listing of the Sandpiper Lot 51 package folder. */
+  const LOT_51_FOLDER = [
+    'Lot 51 - Bishop 258 - Property Package.pdf',
+    'Lot 51 - Bravo 217 - Property Package.pdf',
+    'Lot 51 - Echo 236 - Property Package.pdf',
+    'Lot 51 - Miami 190 - Property Package.pdf',
+    'Lot 51 - Miami 196 - Property Package.pdf',
+    'Lot 51 - Stradbroke 180 - Property Package.pdf',
+    'Lot 51 - Stradbroke 197 - Property Package.pdf',
+  ].map(pdf);
+
+  /* And the real listing of the Covella Lot 914 folder. */
+  const COVELLA_FOLDER = [
+    'LOT 914 • COVELLA • GREENBANK QLD.pdf',
+    'OTP_Land_Contract_P1_-_Rana_-_Lot_914_Covella.pdf',
+    'QLD_Premium Inclusions(D).pdf',
+    'Rental Appraisal_ Lot 914, Covella Estate, Greenbank QLD .pdf',
+  ].map(pdf);
+
+  it('ties each Sandpiper design to its own document', () => {
+    expect(selectPackageDocument(LOT_51_FOLDER, { lot: '51', design: 'miami 190' })?.name)
+      .toBe('Lot 51 - Miami 190 - Property Package.pdf');
+    expect(selectPackageDocument(LOT_51_FOLDER, { lot: '51', design: 'miami 196' })?.name)
+      .toBe('Lot 51 - Miami 196 - Property Package.pdf');
+  });
+
+  it('refuses when the lot alone cannot say which document', () => {
+    // Seven documents name Lot 51. Without the design there is no tie.
+    expect(selectPackageDocument(LOT_51_FOLDER, { lot: '51', design: null })).toBeNull();
+  });
+
+  it('refuses the Covella folder, where THREE documents name the lot', () => {
+    /*
+     * THE REASON LOT 914 COVELLA STILL SHOWS NO PHOTOGRAPH, and it is not the
+     * one it looks like. Its package PDF is real and its first page is a hero
+     * facade — but the same folder holds an OTP land contract and a rental
+     * appraisal, both of which also name Lot 914, and the row carries no design
+     * to separate them. The builder's structure does not say which document is
+     * the property package, so nothing may be recovered from any of them. This
+     * is upstream of every image rule: no cover path, structural or textual,
+     * is ever reached.
+     */
+    expect(selectPackageDocument(COVELLA_FOLDER, { lot: '914', design: null })).toBeNull();
+  });
+});
+
+describe('the structural cover, for a document that can say nothing', () => {
+  const media = [
+    { page: 1, name: 'Im0', placementsOnPage: 1, pagesDrawnOn: 1 },
+    { page: 2, name: 'Im1', placementsOnPage: 1, pagesDrawnOn: 1 },
+  ];
+  const roles = (over: Record<string, unknown>) => assignPdfMediaRoles({
+    label: 'Lot 914 - Covella Estate, Greenbank QLD 4124',
+    pageTexts: ['', '', ''],
+    pageOrderAuthoritative: true,
+    media: media as never,
+    ...over,
+  });
+
+  it('designates page 1 only when the caller supplies the tie', () => {
+    expect(roles({ structuralCoverPage: 1 })[0].role).toBe('primary_property');
+    // The second page is never promoted by it.
+    expect(roles({ structuralCoverPage: 1 })[1].role).not.toBe('primary_property');
+  });
+
+  it('does NOTHING without that tie — there is no text-free-means-page-1 rule', () => {
+    expect(roles({})[0].role).not.toBe('primary_property');
+    expect(roles({ structuralCoverPage: null })[0].role).not.toBe('primary_property');
+  });
+
+  it('never overrules a document whose text WAS read', () => {
+    // Read, and it did not name this property. That is an answer, and a
+    // structural page number must not be allowed to contradict it.
+    expect(roles({
+      structuralCoverPage: 1,
+      pageTexts: ['Lot 52, Sandpiper Estate · $1,401,306 · 4 bed 2 bath', '', ''],
+    })[0].role).not.toBe('primary_property');
   });
 });

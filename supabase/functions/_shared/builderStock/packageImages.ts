@@ -154,7 +154,8 @@ export async function recoverPackageImage(
   const directFileId = driveFileId(input.packageUrl);
   if (directFileId) {
     return await extractFromDocument(
-      fetchPackage, readPageTexts, directFileId, 'the linked document', input.label);
+      fetchPackage, readPageTexts, directFileId, 'the linked document', input.label,
+      'direct_link');
   }
 
   const rootId = driveFolderId(input.packageUrl);
@@ -183,7 +184,8 @@ export async function recoverPackageImage(
   }
 
   return await extractFromDocument(
-    fetchPackage, readPageTexts, document.id, document.name, input.label);
+    fetchPackage, readPageTexts, document.id, document.name, input.label,
+    'folder_structure');
 }
 
 /**
@@ -237,6 +239,22 @@ async function extractFromDocument(
   documentName: string,
   /** The property this package is supposed to be about. */
   label: string,
+  /**
+   * HOW THIS DOCUMENT CAME TO BE THIS PROPERTY'S.
+   *
+   * `folder_structure` means the builder's own library tied it to exactly one
+   * stock row before anything was downloaded: one folder named for the lot, one
+   * PDF in it naming that lot and that design, and `selectPackageDocument`
+   * returning null for anything other than exactly one. That tie is what
+   * licenses the structural cover below.
+   *
+   * `direct_link` means the row linked a file rather than a folder, so nothing
+   * has been established about WHICH property the document is about except that
+   * the row pointed at it — and on the live list one folder is shared by
+   * forty-four rows, so pointing is not naming. Those documents must state
+   * their property in text like everything else.
+   */
+  identifiedBy: 'folder_structure' | 'direct_link',
 ): Promise<PackageOutcome> {
   const url = driveDownloadUrl(fileId);
   let bytes: Uint8Array;
@@ -317,16 +335,37 @@ async function extractFromDocument(
    * pages was read; that it says nothing identifying on the others is a fact
    * about the document.
    */
-  if (textResult.pages.every((text) => !String(text ?? '').trim())) {
+  const textFree = textResult.pages.every((text) => !String(text ?? '').trim());
+  if (textFree && identifiedBy !== 'folder_structure') {
     return {
       status: 'unreachable',
       detail: 'That document\'s pages carry no extractable text, so it could not be read.',
     };
   }
   const pageTexts = textResult.pages;
-  const selection = await selectPdfPropertyPrimary(bytes, { label, pageTexts });
+  const selection = await selectPdfPropertyPrimary(bytes, {
+    label,
+    pageTexts,
+    // Supplied ONLY when the builder's folder already named this document for
+    // this one property and the document itself can say nothing. See
+    // `assignPdfMediaRoles`.
+    structuralCoverPage: textFree ? 1 : null,
+  });
   const photo = selection.primary;
   if (!photo) {
+    /*
+     * A document nothing could be read from has still established nothing, even
+     * where its first page was structurally eligible and presented no single
+     * photograph. Recording a negative for it would bank an answer this reader
+     * never earned, so it stays operational and the property is asked again.
+     */
+    if (textFree) {
+      return {
+        status: 'unreachable',
+        detail: 'That document\'s pages carry no extractable text and its first page '
+          + 'presents no single photograph, so it could not be read.',
+      };
+    }
     return {
       status: 'not_identified',
       detail: 'That document does not present a page as this property\'s package cover, '
