@@ -257,7 +257,7 @@ describe('1 — a clean legacy primary with no verdict is assessed and restored'
     expect(settled.role).toBe('primary_property');
     expect(settled.source_sha256).toBe('a'.repeat(64));
 
-    expect(chooseDisplayableImage([row as never])?.id).toBe('image-1');
+    expect((chooseDisplayableImage([row as never]) as { id?: string } | null)?.id).toBe('image-1');
 
     const enforced = await enforceStrictPrimaryImages(db as never, ORG);
     expect(enforced.skipped).toBe(0);

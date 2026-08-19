@@ -280,7 +280,7 @@ async function extractFromDocument(
   if (!textResult.ok) {
     return {
       status: 'unreachable',
-      detail: `That document's text could not be read (${textResult.reason}).`,
+      detail: `That document’s text could not be read (${"reason" in textResult ? textResult.reason : "unknown"}).`,
     };
   }
   /*
