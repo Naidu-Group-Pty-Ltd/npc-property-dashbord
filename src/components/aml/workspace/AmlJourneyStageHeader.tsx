@@ -43,6 +43,20 @@ export interface AmlJourneyStageHeaderProps {
   stage: AmlJourneyStage;
   totalStages: number;
   onOpenSection: (section: AmlWorkspaceSection) => void;
+  /**
+   * Perform the stage's primary action, when it names one.
+   *
+   * The button used to do nothing but `onOpenSection`, and a stage's own
+   * primary action usually points at the section the stage OPENS ON — so
+   * from the place it is most often pressed it navigated to where the
+   * operator already was and nothing happened at all. A CTA that names a
+   * specific act ("Ask the client for something", "Record PEP
+   * determination") has to perform it.
+   *
+   * Optional: without a handler, or for an action nothing routes, this falls
+   * back to the navigation it always did.
+   */
+  onPerform?: (action: NonNullable<AmlJourneyStage["primaryAction"]>) => void;
   className?: string;
 }
 
@@ -50,6 +64,7 @@ export function AmlJourneyStageHeader({
   stage,
   totalStages,
   onOpenSection,
+  onPerform,
   className,
 }: AmlJourneyStageHeaderProps) {
   const readinessTotal = stage.completedItems.length + stage.outstandingItems.length;
@@ -142,7 +157,14 @@ export function AmlJourneyStageHeader({
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         {stage.primaryAction && (
-          <Button size="sm" onClick={() => onOpenSection(stage.primaryAction!.section)}>
+          <Button
+            size="sm"
+            onClick={() => {
+              const action = stage.primaryAction!;
+              if (onPerform) onPerform(action);
+              else onOpenSection(action.section);
+            }}
+          >
             {stage.primaryAction.label}
             <ArrowRight aria-hidden className="ml-1.5 h-3.5 w-3.5" />
           </Button>

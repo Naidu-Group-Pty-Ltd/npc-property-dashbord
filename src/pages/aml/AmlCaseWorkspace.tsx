@@ -280,6 +280,8 @@ export default function AmlCaseWorkspace() {
    * on its second press.
    */
   const [manualScreeningRequest, setManualScreeningRequest] = useState(0);
+  /** Same nonce pattern, for the PEP determination dialog. */
+  const [pepRequest, setPepRequest] = useState(0);
   /**
    * Keep the open case current. A document the client uploads, a screening
    * result landing or a stage completing now reaches a tab that is already
@@ -352,6 +354,48 @@ export default function AmlCaseWorkspace() {
    * server refuses anything this page should not have offered — the button
    * is a shortcut to the right place, never a second authority.
    */
+  /**
+   * Perform a stage's primary action, rather than only navigating to it.
+   *
+   * Every one of these opens the surface that PERFORMS the named act. The
+   * navigation still happens — the operator needs to see where the work
+   * lives — but it is no longer the whole of the behaviour, which is why
+   * these buttons appeared dead when the section was already open.
+   *
+   * Nothing here mutates. Each route opens an existing dialog or form whose
+   * own server operation carries the authorisation and the audit record.
+   */
+  const performStageAction = useCallback((action: {
+    section: SectionKey; actionType?: string;
+  }) => {
+    setSection(action.section);
+    switch (action.actionType) {
+      case "record_pep":
+        // The determination is recorded in the party screening panel's own
+        // dialog, with its sources and rationale. Open it directly.
+        setSection("ownership");
+        setPepRequest((n) => n + 1);
+        window.setTimeout(() => {
+          document.getElementById("aml-party-screening")?.scrollIntoView({
+            block: "start", behavior: "smooth",
+          });
+        }, 0);
+        return;
+      case "client_request":
+        // The request form lives in this section and is often already on
+        // screen, so focus it: a click that changes nothing visible is
+        // indistinguishable from a broken button.
+        window.setTimeout(() => {
+          const form = document.getElementById("aml-client-request");
+          form?.scrollIntoView({ block: "start", behavior: "smooth" });
+          form?.querySelector<HTMLElement>("input, textarea, button")?.focus();
+        }, 0);
+        return;
+      default:
+        return;
+    }
+  }, []);
+
   const runScreeningAction = useCallback(async (action: AmlScreeningNextAction) => {
     switch (action.key) {
       case "enrol_subjects":
@@ -611,6 +655,7 @@ export default function AmlCaseWorkspace() {
               stage={activeStage}
               totalStages={JOURNEY_STAGES.length}
               onOpenSection={setSection}
+              onPerform={performStageAction}
             />
           )}
 
@@ -766,6 +811,7 @@ export default function AmlCaseWorkspace() {
                 caseStatus={caseRow.status}
                 caseStage={caseRow.case_stage ?? null}
                 manualScreeningRequest={manualScreeningRequest}
+                pepRequest={pepRequest}
                 onChanged={() => { load(); screeningStage.reload(); }}
                 screeningBlocked={
                   /*
@@ -2266,7 +2312,9 @@ function RequestsSection({
   return (
     <div className="space-y-4">
       {canWrite && (
-        <Card>
+        // The id is what Stage 2's primary action focuses. Without it that
+        // button navigated to a section the operator was already on.
+        <Card id="aml-client-request" className="scroll-mt-24">
           <CardHeader className="pb-2"><CardTitle className="text-sm">Ask the client for something</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">

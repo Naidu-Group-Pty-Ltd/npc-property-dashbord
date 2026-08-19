@@ -49,7 +49,7 @@ const manualAdmissible = (s: AmlPartyScreeningSubject) =>
 
 export function PartyScreeningPanel({
   caseId, canWrite, canAdjudicate, isMlro, caseStatus, caseStage,
-  manualScreeningRequest, onChanged, screeningBlocked, optionalUnavailable,
+  manualScreeningRequest, pepRequest, onChanged, screeningBlocked, optionalUnavailable,
 }: {
   caseId: string; canWrite: boolean; canAdjudicate: boolean; onChanged: () => void;
   /**
@@ -90,6 +90,15 @@ export function PartyScreeningPanel({
    * MLRO finding the same button a second time.
    */
   manualScreeningRequest?: number;
+  /**
+   * A nonce from the stage header's "Record PEP determination" action.
+   *
+   * Opens the not-PEP determination dialog for the first party still
+   * missing one. The dialog, its required sources and rationale, and its
+   * server operation are all unchanged — this only saves the operator
+   * hunting for the button the CTA just named.
+   */
+  pepRequest?: number;
   /**
    * Whether an OPTIONAL run could not execute right now.
    *
@@ -278,6 +287,21 @@ export function PartyScreeningPanel({
       ?? subjects.find((s) => manualAdmissible(s).ok);
     if (target) setManualSubject(target);
   }, [manualScreeningRequest, isMlro, subjects]);
+
+  /*
+   * Open the PEP determination dialog when the stage header asks for it, on
+   * the first party that still needs one. `recordPep` is the existing
+   * prompt-driven flow: nothing about what it collects changes.
+   */
+  const lastPepRequest = useRef(pepRequest ?? 0);
+  useEffect(() => {
+    const n = pepRequest ?? 0;
+    if (n === lastPepRequest.current) return;
+    lastPepRequest.current = n;
+    if (!canAdjudicate || !subjects) return;
+    const target = subjects.find((s) => !s.pep_determination);
+    if (target) void recordPep(target, "not_pep");
+  }, [pepRequest, canAdjudicate, subjects]);
 
   const now = new Date().toISOString();
   const caseClosed = String(caseStage ?? "") === "closed"

@@ -579,7 +579,17 @@ function intakeStage(facts: AmlWorkspaceFacts): StageReading {
     outstandingItems: outstanding,
     primaryAction: settled
       ? null
-      : { key: "request", label: "Ask the client for something", section: "requests" },
+      /*
+         `actionType` matters as much as `section` here. Navigating to a
+         section the operator is ALREADY on does nothing visible, and this
+         action's own section is the one Stage 2 opens on — so the button
+         named a specific act and then, from the place it is most often
+         pressed, performed none of it.
+      */
+      : {
+        key: "request", label: "Ask the client for something",
+        section: "requests", actionType: "client_request",
+      },
     secondaryActions: [{ key: "requests", label: "Open request history", section: "requests" }],
     sourceFacts,
     unavailableFacts,
@@ -998,6 +1008,10 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
     unavailableFacts.push("linked entities");
   }
 
+  // Whether the PEP determination is the thing actually holding this stage.
+  const pepIsTheWork = outstanding.some((o) => o.key.startsWith("pep_"))
+    && !blockers.some((b) => ["confirmed", "possible", "no_subjects"].includes(b.key));
+
   const states: AmlEvidenceState[] = [screeningState, pepState, ownershipState].filter(
     (s) => s !== "not_applicable",
   );
@@ -1037,11 +1051,14 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
               // Name the actual work. "Open screening & ownership" on a case
               // whose only outstanding item is a PEP determination tells an
               // operator where to click and nothing about what to do there.
-              : outstanding.some((o) => o.key.startsWith("pep_"))
+              : pepIsTheWork
                 ? "Record PEP determination"
                 : "Open screening & ownership",
             section: "ownership",
-            actionType: "screening_adjudication",
+            // Naming the act is only half of it — the workspace opens the
+            // determination dialog for this type rather than navigating to a
+            // section the operator is usually already looking at.
+            actionType: pepIsTheWork ? "record_pep" : "screening_adjudication",
           },
     sourceFacts,
     unavailableFacts,
@@ -1705,7 +1722,22 @@ function currentStage(stages: AmlJourneyStage[]): AmlJourneyStageId {
  * conditions. This is the journey saying the same thing.
  */
 function isFinished(facts: AmlWorkspaceFacts): boolean {
-  return caseStage(facts.caseRow) === "closed" || serviceGateStatus(facts.caseRow) === "terminated";
+  /*
+   * The LIFECYCLE decides this, and the service gate does not.
+   *
+   * `|| terminated` was added for `AML-2026-00002`, which is closed AND
+   * terminated — but the two are different facts and only one of them means
+   * the work is over. A terminated gate says the customer may not be SERVED;
+   * it says nothing about whether the case is being worked.
+   *
+   * Reopening is exactly the state where they diverge: it restores the
+   * ability to work the case and deliberately leaves the gate terminated. So
+   * the reopened case reported "10 of 10 · Partners & ongoing CDD", rested on
+   * the retention end of the journey, silenced Stage 5's outstanding PEP
+   * determination, and told the operator "Case closed" — which made reopening
+   * a no-op in every surface that mattered.
+   */
+  return caseStage(facts.caseRow) === "closed";
 }
 
 export function deriveAmlJourney(facts: AmlWorkspaceFacts): AmlJourney {

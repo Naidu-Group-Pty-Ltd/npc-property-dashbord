@@ -2516,9 +2516,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // the two cannot describe different cases.
         const policy = decideScreeningPolicy(policyInput);
 
+        /*
+         * Two populations, and using the wrong one produced a next action
+         * that contradicted the same card's own determination rows.
+         *
+         * `required` is the subjects whose SCREENING is owed. On a case whose
+         * perimeter stood sanctions down that list is empty — so
+         * `subjectCount: required.length` was 0 and the stage answered
+         * "Nobody is enrolled for screening yet · Prepare screening" for a
+         * case that had an enrolled party and needed no screening at all.
+         * `anyMissingPep` was `.some()` over the same empty list, so the one
+         * genuinely outstanding obligation could never be the next action.
+         *
+         * Enrolment is about the PARTIES; screening is about the obligation.
+         */
+        const enrolled = (enrol.subjects ?? []) as any[];
         const nextAction = deriveScreeningNextAction({
           hasSubmission: enrol.hasSubmission,
-          subjectCount: required.length,
+          subjectCount: enrolled.length,
           // A provider nobody needs is never the blocker.
           providerReady: providerRelevant ? providerReady : true,
           anyUnscreened: required.some((s: any) =>
@@ -2526,7 +2541,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           anyProcessing: required.some((s: any) => ['queued', 'processing'].includes(s.state)),
           anyPossibleMatch: required.some((s: any) => s.state === 'possible_match'),
           anyConfirmedMatch: required.some((s: any) => s.state === 'confirmed_match'),
-          anyMissingPep: required.some((s: any) => !currentDetermination(String(s.id))),
+          /*
+           * PEP is owed per PARTY under its own scope decision, so it is read
+           * over the enrolled parties and only when the scope requires it. A
+           * party whose sanctions obligation was stood down still needs a PEP
+           * determination, and an empty list is never "everybody determined".
+           */
+          anyMissingPep: scope.pep.required === true
+            && (enrolled.length === 0
+              || enrolled.some((s: any) => !currentDetermination(String(s.id)))),
           pepRoute: policy.pepRoute,
           // An undecided perimeter is a question to ask before a provider is
           // a problem to fix. The default it falls back to is unchanged.
