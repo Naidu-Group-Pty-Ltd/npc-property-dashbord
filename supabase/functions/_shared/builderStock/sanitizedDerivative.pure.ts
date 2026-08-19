@@ -208,11 +208,25 @@ export interface SanitizationClearance {
 /**
  * Read a stored clearance, if it is one this code may act on.
  *
- * THE SAME FOUR TESTS A DERIVATIVE GETS, for the same reason and with one extra
- * consequence. A clearance is a claim about SPECIFIC BYTES — "there is no badge
- * on these" — so a row whose object has been replaced since must not go on
- * serving under it. A builder who swaps the file has swapped the premise, and
- * the new file gets inspected on its own account.
+ * THE SAME ORIGIN TEST A DERIVATIVE GETS, for the same reason: a row whose
+ * object has been replaced must not go on serving under a finding made about
+ * the old one. A builder who swaps the file has swapped the premise.
+ *
+ * AND THE OPPOSITE VERSION RULE, DELIBERATELY. A derivative stays servable
+ * across a version bump; a clearance does NOT, and the asymmetry is the point.
+ *
+ * They are claims of different kinds. A derivative says a graphic WAS THERE and
+ * was removed and the result was measured — evidence of presence, acted on, and
+ * a later improvement to the inspection cannot make it false. A clearance says
+ * nothing was found — evidence of ABSENCE, which is exactly the claim a better
+ * inspection is most likely to overturn, since a version bump usually exists
+ * because something was being missed. Version 2 is itself that: version 1 could
+ * not see a badge whose words it could not read.
+ *
+ * So a clearance expires with the inspection that made it, and the picture is
+ * hidden until the current one re-establishes it. Each rule fails in the safe
+ * direction: a stale derivative shows a cleaned photograph, and a stale
+ * clearance would show whatever the old inspection could not see.
  */
 export function readServableClearance(
   sourceDetail: Record<string, unknown> | null | undefined,
@@ -247,16 +261,31 @@ export function servableClearanceFor(
  * can any longer prove came from that property's own file.
  *
  *   SHAPE     anything malformed is not a derivative
- *   VERSION   `<` rather than `!==`, so a record from a FUTURE version (a
- *             rollback, a restored snapshot) is not overruled by this code
+ *   VERSION   only that it is a real number, and see below
  *   ORIGIN    the SHA-256 named must be the SHA-256 the row currently holds —
  *             a builder who replaces the file has replaced the premise
  *   VERDICT   only `eligible`. A repair that did not remove the graphic is a
  *             record of work done, not a picture to draw.
  *
- * Fails closed in every direction. The cost of refusing wrongly is a blank
- * card, which is the state this whole area is trying to leave and is still
- * strictly better than showing a client an image nothing can vouch for.
+ * SERVING AND SCHEDULING ARE DIFFERENT QUESTIONS, AND THIS ANSWERS ONLY THE
+ * FIRST. It used to refuse any record below `SANITIZATION_VERSION`, on the
+ * reading that a stale repair should not be served — and that is wrong in a way
+ * only a version bump reveals. The eleven repaired production images all carry
+ * version-1 records; raising the constant to 2 would have un-served every one
+ * of them the instant it shipped, and the four that need the generative route
+ * cannot be remade while the vendor account is out of credit. Cards that had
+ * been fixed would have gone blank, for a reason that has nothing to do with
+ * the pictures.
+ *
+ * A derivative is a claim about SPECIFIC BYTES: this graphic was on them, it
+ * was removed, and the result was measured. A better inspection arriving later
+ * does not make that false. So the version governs `sanitizationSettled` — is
+ * this row due another look — and nothing here. The two questions were
+ * conflated because one number answered both, and one of the answers was wrong.
+ *
+ * Fails closed in every other direction. The cost of refusing wrongly is a
+ * blank card, which is the state this whole area is trying to leave and is
+ * still strictly better than showing a client an image nothing can vouch for.
  */
 export function readServableDerivative(
   sourceDetail: Record<string, unknown> | null | undefined,
@@ -270,7 +299,7 @@ export function readServableDerivative(
     && record.transformation !== 'generative_overlay_inpaint') return null;
 
   const version = Number(record.sanitization_version);
-  if (!Number.isFinite(version) || version < SANITIZATION_VERSION) return null;
+  if (!Number.isFinite(version) || version < 1) return null;
 
   if (typeof record.storage_path !== 'string' || !record.storage_path) return null;
   if (typeof record.derivative_sha256 !== 'string' || !record.derivative_sha256) return null;

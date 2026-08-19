@@ -254,10 +254,74 @@ describe('what a stored clearance licenses', () => {
     expect(isDisplayableSourceImage(image)).toBe(false);
   });
 
-  it('is ignored when it was written by an older version of the inspection', () => {
+  it('EXPIRES with the inspection that made it', () => {
+    /*
+     * A clearance is evidence of ABSENCE, and a version bump usually exists
+     * because the previous inspection was missing something — version 2 is
+     * exactly that. So it does not survive one, and the picture is hidden
+     * again until the current inspection re-establishes it.
+     */
     const image = row(clearanceDetail({ ...clearance, sanitization_version: 0 }));
     expect(servableClearanceFor(image.source_detail)).toBeNull();
     expect(isDisplayableSourceImage(image)).toBe(false);
+  });
+
+  it('but a DERIVATIVE from an older version keeps serving, which is the opposite', () => {
+    /*
+     * THE ASYMMETRY, AND WHY IT IS NOT AN OVERSIGHT.
+     *
+     * Eleven production images carry version-1 derivatives. Raising the
+     * constant to 2 under the old rule would have un-served every one of them
+     * the instant it shipped — and the four that need the generative route
+     * cannot be remade while the vendor account is out of credit, so cards that
+     * had been FIXED would have gone blank for a reason unconnected to the
+     * pictures. A derivative is evidence of presence, acted on: the graphic was
+     * there, it was removed, the result was measured, and a later improvement
+     * cannot make that false.
+     */
+    const older = row(derivativeDetail({
+      transformation: 'generative_overlay_inpaint',
+      sanitization_version: 1,
+      original_image_id: 'image-1',
+      original_sha256: 'abc123',
+      stock_item_id: 'item-1',
+      organisation_id: 'org-1',
+      source_reference: null,
+      storage_bucket: 'builder-stock-images',
+      storage_path: 'org/items/item-1/source/sanitized/v1/image-1.png',
+      derivative_sha256: 'def456',
+      width: 1200,
+      height: 600,
+      repaired_share: 0.152,
+      regions_removed: 2,
+      model: 'gpt-image-1',
+      generated_at: '2026-08-19T00:00:00.000Z',
+      verdict: 'eligible',
+    }));
+    expect(isDisplayableSourceImage(older)).toBe(true);
+  });
+
+  it('and a derivative the repair itself refused is still never served', () => {
+    const refused = row(derivativeDetail({
+      transformation: 'generative_overlay_inpaint',
+      sanitization_version: SANITIZATION_VERSION,
+      original_image_id: 'image-1',
+      original_sha256: 'abc123',
+      stock_item_id: 'item-1',
+      organisation_id: 'org-1',
+      source_reference: null,
+      storage_bucket: 'builder-stock-images',
+      storage_path: 'org/items/item-1/source/sanitized/v2/image-1.png',
+      derivative_sha256: 'def456',
+      width: 1200,
+      height: 600,
+      repaired_share: 0.152,
+      regions_removed: 2,
+      model: 'gpt-image-1',
+      generated_at: '2026-08-19T00:00:00.000Z',
+      verdict: 'ineligible',
+    }));
+    expect(isDisplayableSourceImage(refused)).toBe(false);
   });
 
   it('leaves a refused picture exactly as hidden as it was', () => {
