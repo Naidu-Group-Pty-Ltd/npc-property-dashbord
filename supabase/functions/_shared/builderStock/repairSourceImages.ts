@@ -187,6 +187,25 @@ const STAGE1_ROWS_PER_ITEM = 200;
  */
 const MAX_ITEMS_RESTORED_PER_RUN = 4;
 
+/**
+ * And a TIGHTER bound on the expensive kind of restore.
+ *
+ * The cap above counts a property whose imagery this run re-fetched, and it was
+ * fitted against the row-asset path: fetch a picture, validate it, hash it,
+ * upload it. A linked-package recovery is a different order of work — fetch a
+ * whole PDF, parse it, read every page's text, choose the cover, extract and
+ * re-encode the image — and four of those in one invocation still logged
+ * `CPU Time exceeded`, which is how upload f7e0d4d1's last six rows stalled
+ * after the other 44 had been answered.
+ *
+ * ONE. Not a lowering of the fitted cap — that stays at 4 for the cheap path —
+ * but a separate ceiling on the costly one, so the two cannot be traded against
+ * each other. It costs a tick per outstanding package and the sweep runs every
+ * five minutes, which is nothing against a backlog that is answered once and
+ * then never re-read.
+ */
+const MAX_PACKAGE_RECOVERIES_PER_RUN = 1;
+
 async function readStage1Images(
   db: any,
   stockItemIds: string[],
@@ -425,6 +444,8 @@ export async function repairSourceImagesForUpload(
   const provenByItem = new Map<string, Set<string>>();
   /** Properties whose imagery this run actually re-fetched. The CPU bound. */
   let restored = 0;
+  /** Of those, the ones that cost a whole PDF parse. The tighter bound. */
+  let recoveries = 0;
   const prove = (itemId: string, reference: string) => {
     const set = provenByItem.get(itemId) ?? new Set<string>();
     set.add(reference.slice(0, 400));
@@ -572,9 +593,11 @@ export async function repairSourceImagesForUpload(
     }
 
     if (restored >= MAX_ITEMS_RESTORED_PER_RUN) { outcome.incomplete = true; break; }
+    if (recoveries >= MAX_PACKAGE_RECOVERIES_PER_RUN) { outcome.incomplete = true; break; }
     if (input.deadlineAt && Date.now() > input.deadlineAt) { outcome.incomplete = true; break; }
 
     restored += 1;
+    recoveries += 1;
 
     /**
      * THREE OUTCOMES, AND ONLY ONE OF THEM IS KNOWLEDGE.

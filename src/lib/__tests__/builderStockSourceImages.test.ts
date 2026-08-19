@@ -1489,7 +1489,7 @@ describe('a package that named no image is not read again', () => {
     const perTick: number[] = [];
     let ticks = 0;
     let outcome = { incomplete: true } as { incomplete: boolean };
-    while (outcome.incomplete && ticks < 40) {
+    while (outcome.incomplete && ticks < 200) {
       ticks += 1;
       const drive = readableButEmpty();
       outcome = await run(db, { fetchPackage: drive.fetchPackage });
@@ -1500,7 +1500,13 @@ describe('a package that named no image is not read again', () => {
     // It ENDS. That is the whole point.
     expect(outcome.incomplete).toBe(false);
     // And never did more per run than the CPU bound allows.
-    for (const answered of perTick) expect(answered).toBeLessThanOrEqual(4);
+    // A package recovery parses a whole PDF, so it carries the tighter of the
+    // two bounds: four in one invocation is what still logged `CPU Time
+    // exceeded` in production after 44 of these rows had been answered.
+    for (const answered of perTick) expect(answered).toBeLessThanOrEqual(1);
+    // It took a tick per outstanding package and no more — the banked answers
+    // are what stop it re-reading, so the count is the backlog, not a loop.
+    expect(ticks).toBe(57);
     // Every one of the 57 is now a banked answer, and none of the 13 was touched.
     const answeredRows = db.tables.builder_stock_items
       .filter((row: FakeRow) => row.source_provenance_result);
