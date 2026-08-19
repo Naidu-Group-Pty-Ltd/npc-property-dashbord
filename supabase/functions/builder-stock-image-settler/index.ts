@@ -16,7 +16,7 @@
  * job unschedules itself. Nothing here is on a read path and nothing runs when
  * there is no work.
  *
- * IT NOW CARRIES TWO KINDS OF WORK, UNDER TWO MARKERS. Provenance
+ * IT NOW CARRIES THREE KINDS OF WORK, UNDER THREE MARKERS. Provenance
  * (`source_images_settled_version`) is where a row's bytes came from and what
  * the source designated them as. Marketplace display eligibility
  * (`marketplace_eligibility_settled_version`) is whether the picture itself may
@@ -28,11 +28,22 @@
  * fourth question existed is behind on the second one — which is what makes
  * this the thing that repairs production, with nobody pressing anything.
  *
- * WHAT IT MAY WRITE. `builder_stock_item_images` rows, the display verdict
- * inside their `source_detail`, the `primary_image_id` those rows earn, and the
- * two settlement markers. THE STORED IMAGE IS NEVER REWRITTEN: eligibility
- * re-READS each object to measure it, and no byte of any picture is altered,
- * cropped, blurred or replaced by anything. No stock item is created or
+ * AND A THIRD: THE OVERLAY REPAIR (`image_sanitization_settled_version`). Where
+ * the display gate refused a picture for carrying a promotional graphic laid
+ * over it, the graphic is taken off the builder's OWN file and the result is
+ * stored once, beside the original, as a versioned derivative. It is on its own
+ * marker for the same reason the other two are: a better repair must not
+ * re-fetch every source, and a better classifier must not re-run every repair.
+ * It is by far the most expensive of the three and is capped hardest.
+ *
+ * WHAT IT MAY WRITE. `builder_stock_item_images` rows, the display verdict and
+ * the derivative record inside their `source_detail`, sanitized derivative
+ * objects in the image bucket, the `primary_image_id` those rows earn, and the
+ * three settlement markers. NO STORED IMAGE IS EVER REWRITTEN: eligibility
+ * re-READS each object to measure it, and the overlay repair writes a NEW
+ * object and leaves the builder's file, its hashes and its provenance exactly
+ * as they are. No picture is replaced by another picture — not a map, not a
+ * street view, not a search result, not stock imagery, not another property. No stock item is created or
  * deleted; no price, availability, configuration, status, selection, builder or
  * project/unit linkage is touched. Those guarantees are `repairSourceImages.ts`'s
  * and are not restated here — this only decides WHICH uploads it runs for.
@@ -47,11 +58,13 @@ import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
 import { internalErrorResponse } from '../_shared/errorResponse.ts';
 import {
-  readEligibilityTarget, readOutstandingUploads, readSettlementReadiness,
-  runSettlementTick, settleUploadSourceImages,
-  ELIGIBILITY_SETTLED_VERSION_COLUMN, SETTLED_VERSION_COLUMN,
+  readEligibilityTarget, readOutstandingUploads, readSanitizationTarget,
+  readSettlementReadiness, runSettlementTick, settleUploadSourceImages,
+  ELIGIBILITY_SETTLED_VERSION_COLUMN, SANITIZATION_SETTLED_VERSION_COLUMN,
+  SETTLED_VERSION_COLUMN,
   type SettlementCandidate,
 } from '../_shared/builderStock/settleSourceImages.ts';
+import { newRepairBudget } from '../_shared/builderStock/settleImageSanitization.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 
@@ -147,7 +160,8 @@ Deno.serve(async (req: Request) => {
         missing: readiness.missing,
         remedy: 'apply supabase/migrations/*_builder_stock_*settlement*.sql, '
           + '*_builder_stock_eligibility_target_version.sql and '
-          + '*_builder_stock_terminal_negative_provenance.sql',
+          + '*_builder_stock_terminal_negative_provenance.sql and '
+          + '*_builder_stock_image_sanitization_settlement.sql',
       });
       return json({
         success: false,
@@ -158,8 +172,9 @@ Deno.serve(async (req: Request) => {
     }
 
     const eligibilityTarget = await readEligibilityTarget(supabase);
+    const sanitizationTarget = await readSanitizationTarget(supabase);
     const queue = await readOutstandingUploads(supabase, {
-      limit: MAX_QUEUE_ROWS, eligibilityTarget,
+      limit: MAX_QUEUE_ROWS, eligibilityTarget, sanitizationTarget,
     });
 
     if (queue.unavailable) {
@@ -179,7 +194,7 @@ Deno.serve(async (req: Request) => {
       // Quiet path. The migration's job unschedules itself on this.
       return json({
         success: true, settled: 0, remaining: 0, complete: true,
-        deploymentReady: true, eligibilityTarget,
+        deploymentReady: true, eligibilityTarget, sanitizationTarget,
       });
     }
 
@@ -198,6 +213,8 @@ Deno.serve(async (req: Request) => {
         Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION,
       needsEligibility:
         Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < eligibilityTarget,
+      needsSanitization:
+        Number(row[SANITIZATION_SETTLED_VERSION_COLUMN] ?? 0) < sanitizationTarget,
     }));
 
     const enforced = new Set<string>();
@@ -239,6 +256,18 @@ Deno.serve(async (req: Request) => {
       if (!candidate.needsEligibility) await enforce(candidate.organisation_id);
     }
 
+    /*
+     * ONE overlay-repair allowance for the whole tick, not one per upload.
+     *
+     * A repair is a full-resolution decode plus a reconstruction or up to four
+     * model calls; the worker's resource limit is what kills this function, and
+     * it kills it long before the wall clock above expires. Six uploads each
+     * spending their own allowance is twelve of them and a 546 with nothing
+     * written — which is the failure this whole settlement programme exists
+     * because of. The budget is shared, so the tick spends it once.
+     */
+    const repairBudget = newRepairBudget();
+
     const { attempted, settled, organisations } = await runSettlementTick(
       candidates,
       { maxSettled: MAX_UPLOADS_PER_TICK, deadlineAt },
@@ -248,6 +277,8 @@ Deno.serve(async (req: Request) => {
         deadlineAt,
         needsProvenance: candidate.needsProvenance,
         needsEligibility: candidate.needsEligibility,
+        needsSanitization: candidate.needsSanitization,
+        repairBudget,
       }),
     );
 

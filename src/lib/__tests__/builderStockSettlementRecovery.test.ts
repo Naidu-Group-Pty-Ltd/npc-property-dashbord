@@ -44,6 +44,9 @@ import {
   MARKETPLACE_ELIGIBILITY_VERSION, decideMarketplaceEligibility,
   isMarketplaceEligible, marketplaceEligibilityDetail,
 } from '../../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
+import {
+  SANITIZATION_VERSION,
+} from '../../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
 import { readMarketingOverlay } from '../../../supabase/functions/_shared/builderStock/marketingOverlay.pure';
 import { eligibilityDetailFor } from '../../../supabase/functions/_shared/builderStock/assessSourceImage';
 import { encodePng } from '../../../supabase/functions/_shared/builderStock/rasterPng';
@@ -625,11 +628,12 @@ describe('a missing migration is an operational failure, never a quiet success',
       },
     });
 
-    it('K — an upload current on BOTH dimensions leaves the queue empty', async () => {
+    it('K — an upload current on ALL THREE dimensions leaves the queue empty', async () => {
       const outstanding = await readOutstandingUploads(
         queueDb([upload({
           source_images_settled_version: PROVENANCE_VERSION,
           marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+          image_sanitization_settled_version: SANITIZATION_VERSION,
         })]) as never,
         { limit: 100 },
       );
@@ -643,6 +647,7 @@ describe('a missing migration is an operational failure, never a quiet success',
         queueDb([upload({
           source_images_settled_version: PROVENANCE_VERSION,
           marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+          image_sanitization_settled_version: SANITIZATION_VERSION,
         })]) as never,
         { limit: 100 },
       );
@@ -655,6 +660,7 @@ describe('a missing migration is an operational failure, never a quiet success',
         queueDb([upload({
           source_images_settled_version: null,
           marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+          image_sanitization_settled_version: SANITIZATION_VERSION,
         })]) as never,
         { limit: 100 },
       );
