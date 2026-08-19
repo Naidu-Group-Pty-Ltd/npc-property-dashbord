@@ -1,6 +1,6 @@
 import React from 'react';
-import { Outlet } from 'react-router-dom';
 import { SidebarProvider } from '@/components/ui/sidebar';
+import { ClientFacingOutlet } from '@/components/auth/ClientFacingGate';
 import { DashboardSidebar } from './DashboardSidebar';
 import { DashboardHeader } from './DashboardHeader';
 import { MobileHeader } from './MobileHeader';
@@ -41,7 +41,7 @@ export function DashboardLayout() {
                 <PlanChangeBanner />
                 <FeedbackPromptBanner />
                 <TokenBalanceBanner />
-                <Outlet />
+                <ClientFacingOutlet />
               </DashboardPageShell>
             </ErrorBoundary>
           </div>
@@ -76,7 +76,7 @@ export function DashboardLayout() {
                   <PlanChangeBanner />
                   <FeedbackPromptBanner />
                   <TokenBalanceBanner />
-                  <Outlet />
+                  <ClientFacingOutlet />
                 </DashboardPageShell>
               </ErrorBoundary>
             </div>
