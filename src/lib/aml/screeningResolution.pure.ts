@@ -301,3 +301,117 @@ export function deriveStageHeadline(args: {
   if (key === "await_submission") return "in_progress";
   return "action_required";
 }
+
+
+/* ═══════════════ The Australian sanctions source, at a glance ══════════ */
+
+/**
+ * What the operator needs to know about the data behind an automated
+ * screening, without being shown three thousand rows of it.
+ *
+ * Stage 5 could say a screening was "unavailable" and never say WHY, or which
+ * Australian source it would have used. An MLRO signing off a determination
+ * has to be able to see that — and an administrator has to be able to see
+ * that it is the thing to fix.
+ *
+ * Every field is derived from canonical live data. Nothing here is a default,
+ * a placeholder or a hard-coded count: an unread source reports as unread.
+ */
+export type SanctionsSourceState =
+  | "current"
+  | "stale"
+  | "not_loaded"
+  | "sync_failed"
+  | "unknown";
+
+export interface SanctionsSourceReading {
+  state: SanctionsSourceState;
+  label: string;
+  /** One sentence an operator can act on. */
+  detail: string;
+  /** Entries actually loaded, or null when the count could not be read. */
+  entryCount: number | null;
+  /** When the list was last loaded successfully, or null. */
+  lastLoadedAt: string | null;
+  /** Whether automated screening can run against this source right now. */
+  automatedReady: boolean;
+}
+
+export const SANCTIONS_SOURCE_LABEL = "DFAT Consolidated List";
+
+export function readSanctionsSource(args: {
+  /** `sanctions_list_syncs` rows, newest first is not assumed. */
+  syncs: Array<{
+    list_code?: string | null; status?: string | null;
+    entry_count?: number | null; completed_at?: string | null;
+  }> | null | undefined;
+  /** Total rows in `aml.sanctions_entries`, or null when unread. */
+  entryCount: number | null | undefined;
+  /** Whether the SERVER says an automated check could execute. */
+  providerReady: boolean;
+  /** Days after which a loaded list is treated as stale. */
+  staleAfterDays: number;
+  nowMs: number;
+}): SanctionsSourceReading {
+  const { syncs, entryCount, providerReady, staleAfterDays, nowMs } = args;
+
+  // An unread source is never reported as ready, and never as absent either.
+  if (syncs === null || syncs === undefined) {
+    return {
+      state: "unknown", label: "Not established",
+      detail: "The sanctions source could not be read. That is not evidence it is "
+        + "loaded, and not evidence it is missing.",
+      entryCount: entryCount ?? null, lastLoadedAt: null, automatedReady: false,
+    };
+  }
+
+  const succeeded = syncs
+    .filter((x) => x.status === "succeeded" && Number(x.entry_count ?? 0) > 0)
+    .sort((a, b) => Date.parse(b.completed_at ?? "") - Date.parse(a.completed_at ?? ""));
+  const latest = succeeded[0] ?? null;
+
+  if (!latest) {
+    const failed = syncs.some((x) => x.status === "failed");
+    return failed
+      ? {
+        state: "sync_failed", label: "Last load failed",
+        detail: "The most recent attempt to load the sanctions list did not succeed, so "
+          + "no automated screening can run against it.",
+        entryCount: entryCount ?? null, lastLoadedAt: null, automatedReady: false,
+      }
+      : {
+        state: "not_loaded", label: "Not loaded",
+        detail: "The sanctions list has never been loaded. An automated check would be "
+          + "screening against nothing, so it is refused rather than run.",
+        entryCount: entryCount ?? 0, lastLoadedAt: null, automatedReady: false,
+      };
+  }
+
+  const loadedAt = latest.completed_at ?? null;
+  const ageMs = loadedAt ? nowMs - Date.parse(loadedAt) : Number.NaN;
+  const stale = Number.isFinite(ageMs) && ageMs > staleAfterDays * 24 * 60 * 60 * 1000;
+
+  if (stale) {
+    return {
+      state: "stale", label: "Out of date",
+      detail: `The loaded list is older than ${staleAfterDays} days. Screening against it `
+        + "would produce confident results against a world that has changed, so it is "
+        + "refused until it is reloaded.",
+      entryCount: entryCount ?? latest.entry_count ?? null,
+      lastLoadedAt: loadedAt, automatedReady: false,
+    };
+  }
+
+  return {
+    state: "current", label: "Current",
+    detail: providerReady
+      ? "Loaded and inside the freshness window. Automated screening runs against this."
+      : "Loaded and inside the freshness window, but the screening engine is not ready, "
+        + "so an automated check cannot run yet.",
+    entryCount: entryCount ?? latest.entry_count ?? null,
+    lastLoadedAt: loadedAt,
+    // The source being good is necessary and not sufficient — the server
+    // decides whether a check can actually execute.
+    automatedReady: providerReady,
+  };
+}

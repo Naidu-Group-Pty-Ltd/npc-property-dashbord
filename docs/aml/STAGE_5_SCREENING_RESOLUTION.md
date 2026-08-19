@@ -136,6 +136,75 @@ back to the old navigation for anything unrouted, and neither mutates
 anything — each opens an existing surface whose own server operation carries
 the authorisation and the audit record.
 
+## One case, one position, one next action
+
+The screenshots showed a single case answering the same question three ways:
+Stage 5 said the PEP determination was outstanding, Live Position said
+"6 of 10 · Funding & transaction", Next Action said "Review the client
+submission — Go to stage 7", and Attention said "nothing on this case is
+unresolved". Each was individually derived and internally consistent.
+
+Two causes, and both were about the same missing fact.
+
+**A required determination with no record was only an OUTSTANDING item.** It
+was pushed to `outstandingItems` with a `waiting` tone — which reads as
+"somebody else is working on it" — so Stage 5 never set `blocking`, and the
+Attention panel, which derives from blockers, had nothing to report. It is now
+a **blocker**: nobody is working on it, it is owed, and it holds the stage.
+
+**And `currentStage` scanned every stage for a blocker BEFORE considering
+order.** So a later stage's blocker (a submission awaiting review at 7)
+outranked an earlier stage's work (a determination owed at 5), and the journey
+stepped straight over the requirement. The stages are sequential — a case
+cannot be *at* 7 while 5 is unfinished, whatever the relative urgency — so the
+first applicable stage with real outstanding work now wins.
+
+`unknown` is deliberately not "work". It means the fact could not be read, and
+parking the whole journey on a failed read would be noise; `unavailableFacts`
+already reports it honestly.
+
+**`nextActionCandidates` had no PEP candidate at all**, so the rail could not
+name the determination even in principle. It now has one, reading the same
+facts the journey reads — so the two agree by construction rather than by being
+kept in step — placed at journey position 5 and ranked below a finding, because
+a candidate or a confirmed match is a fact about a customer and still leads.
+
+## A person is not in or out of scope — each check is
+
+The parties list carried a single `not in scope` badge whenever a party's
+*sanctions* obligation had been stood down. On the reported case that put
+**"not in scope"** beside the primary customer of an active AML file who still
+owed a PEP determination: the most alarming thing that panel could say, and the
+opposite of the truth.
+
+Each person now carries a status **per check**, taken from the server's own
+scope decision, and the section is called *People to assess*.
+
+## The Australian sanctions source
+
+Stage 5 could say a screening was unavailable and never say which Australian
+source it would have used or why it could not run. `readSanctionsSource`
+derives five honest states — `current`, `stale`, `not_loaded`, `sync_failed`,
+`unknown` — from `sanctions_list_syncs` and the live entry count, and the card
+shows the entry count, the load date and whether automated screening is ready.
+
+Every value is live. A test asserts no count, date or freshness is hard-coded,
+and an unread source reports as **unknown** and never as ready. A `succeeded`
+sync that loaded zero entries is not a loaded list.
+
+## A reopened enquiry asks the question
+
+A case stood down as an enquiry and then reopened is a contradiction worth
+raising: the lifecycle says it is being worked, the recorded perimeter says the
+relationship never began. Stage 5 now prompts **Case classification requires
+review** at the top, for a reviewer or the MLRO.
+
+It changes nothing and infers nothing from the reopen. The perimeter is a
+compliance determination and stays exactly as recorded until somebody records
+another one; what changed is that the question is asked where it can be seen,
+instead of leaving an operator to find *Reclassify perimeter* at the foot of
+the page and know to look for it.
+
 ## The way on
 
 When every required determination is genuinely recorded, Stage 5 offers
