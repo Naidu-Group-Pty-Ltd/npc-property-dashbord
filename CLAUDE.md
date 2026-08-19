@@ -43,6 +43,23 @@ before touching `Sender Email`/`Sender Name`, the contact fallback in
 also records the one rule that keeps biting: an address on our side of the pipeline is never
 the answer, in any column.
 
+Photographs are a separate concern from intake, and the one place a listing can
+contradict itself on screen. Read
+[`IMAGE_LIBRARY.md`](./docs/listings/IMAGE_LIBRARY.md) before touching
+`_shared/listingImage*.pure.ts`, `signStoredImages`, `harvestListing` or
+`useListingGallery`. **`imageIdentity` answers "same URL"; a gallery needs "same
+picture"**, and the two diverge constantly — 240 of 4,807 stored rows were a
+second copy of a photograph the same listing already held, one listing carrying
+35 rows of four pictures. De-duplication is three layers (checksum → asset key →
+perceptual signature), absent evidence never merges, and the guarantee is
+enforced on the **read** path as well as the write path, because the table will
+always accumulate copies and a repair migration has to be dispatched by hand.
+Two rules bite. An asset key is **only ever compared within one listing**, which
+is what makes its filename rule safe. And ordering **demotes and never
+promotes** — a filename-hint version of "pick the best photo" promoted an agency
+logo over the photograph on two real listings, because a logo lockup is called a
+*main* lockup.
+
 Column names for that table live in `_shared/airtableIntakeFields.pure.ts` and nowhere else.
 Airtable returns `undefined` for a column that does not exist exactly as it does for one
 that is empty, so a mistyped name is invisible — that file's header records what that cost

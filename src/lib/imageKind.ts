@@ -1,4 +1,19 @@
 /**
+ * What the pixels say about an image: is it a floor plan, how big is it, and
+ * which picture is it?
+ *
+ * All three answers come out of one decode. The canvas draw was already
+ * happening for the plan classifier, so the perceptual signature and the
+ * natural dimensions are free — and both are load-bearing for the gallery:
+ *
+ * - the **signature** is the last de-duplication layer, the only one that
+ *   catches a re-encode sharing neither bytes nor URL structure with the copy
+ *   beside it (`listingImageSelection.pure.ts`);
+ * - the **dimensions** are how an agent's headshot is told from a room. Nothing
+ *   else on a stored row can say it: `width`/`height` are null on every one of
+ *   the 4,807 rows in production, because the harvester only fills them from an
+ *   Airtable attachment and these arrive as scraped URLs.
+ *
  * Telling a floor plan from a photograph by looking at it.
  *
  * The URL heuristic in `listingImageOrder.pure` catches assets that are named
@@ -63,11 +78,59 @@ export function statsFromPixels(data: Uint8ClampedArray): ImagePixelStats {
   return { whiteFraction: white / pixels, colorfulFraction: colorful / pixels };
 }
 
+/**
+ * A 64-bit difference hash of the decoded image, as 16 hex characters.
+ *
+ * Row-wise brightness comparisons on an 8×9 grid: bit `i` is "this cell is
+ * brighter than the one to its right". That makes it indifferent to scale, to
+ * JPEG quality and to a mild exposure shift — which is exactly the set of
+ * differences between two copies of one photograph — while two different rooms
+ * disagree on roughly half the bits.
+ *
+ * Sampled from the same 48×48 draw the plan classifier uses, so it costs a
+ * handful of array reads and no extra network or decode.
+ */
+export function signatureFromPixels(data: Uint8ClampedArray, sampleSize: number): string {
+  const cell = sampleSize / 8;
+  const luma = (col: number, row: number): number => {
+    // Centre of the cell, clamped inside the sampled square.
+    const x = Math.min(sampleSize - 1, Math.floor((col + 0.5) * (cell * 8) / 9));
+    const y = Math.min(sampleSize - 1, Math.floor((row + 0.5) * cell));
+    const at = (y * sampleSize + x) * 4;
+    return 0.299 * data[at] + 0.587 * data[at + 1] + 0.114 * data[at + 2];
+  };
+
+  let hex = '';
+  for (let row = 0; row < 8; row += 1) {
+    let nibble = 0;
+    for (let col = 0; col < 8; col += 1) {
+      nibble = (nibble << 1) | (luma(col, row) > luma(col + 1, row) ? 1 : 0);
+      if (col % 4 === 3) {
+        hex += nibble.toString(16);
+        nibble = 0;
+      }
+    }
+  }
+  return hex;
+}
+
+/** Everything one decode can tell us. */
+export interface ImageInspection {
+  kind: ImageKind;
+  /** 16 hex characters, or null when the pixels could not be read. */
+  signature: string | null;
+  /** Natural pixel dimensions, or null. */
+  width: number | null;
+  height: number | null;
+}
+
+const UNREADABLE: ImageInspection = { kind: 'unknown', signature: null, width: null, height: null };
+
 const SAMPLE_SIZE = 48;
 const LOAD_TIMEOUT_MS = 10_000;
 const MAX_CONCURRENT = 3;
 
-const cache = new Map<string, ImageKind>();
+const cache = new Map<string, ImageInspection>();
 let inFlight = 0;
 const waiters: Array<() => void> = [];
 
@@ -111,14 +174,16 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 /**
- * Classify one image URL. Never throws; anything that cannot be decoded and
- * measured is 'unknown', which downstream treats as a photograph.
+ * Read one image URL. Never throws; anything that cannot be decoded and
+ * measured comes back as `UNREADABLE`, whose `kind` is 'unknown' (which
+ * downstream treats as a photograph) and whose signature is null (which never
+ * merges anything).
  */
-export async function classifyImageUrl(url: string): Promise<ImageKind> {
+export async function inspectImageUrl(url: string): Promise<ImageInspection> {
   const key = cacheKey(url);
   const hit = cache.get(key);
   if (hit) return hit;
-  if (typeof document === 'undefined' || typeof Image === 'undefined') return 'unknown';
+  if (typeof document === 'undefined' || typeof Image === 'undefined') return UNREADABLE;
 
   await acquireSlot();
   try {
@@ -131,21 +196,30 @@ export async function classifyImageUrl(url: string): Promise<ImageKind> {
     canvas.width = SAMPLE_SIZE;
     canvas.height = SAMPLE_SIZE;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return 'unknown';
+    if (!ctx) return UNREADABLE;
     ctx.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-    const kind = decideImageKind(
-      statsFromPixels(ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data),
-    );
-    cache.set(key, kind);
-    return kind;
+    const pixels = ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+    const inspection: ImageInspection = {
+      kind: decideImageKind(statsFromPixels(pixels)),
+      signature: signatureFromPixels(pixels, SAMPLE_SIZE),
+      width: img.naturalWidth || null,
+      height: img.naturalHeight || null,
+    };
+    cache.set(key, inspection);
+    return inspection;
   } catch {
     // Tainted canvas, network failure, decode failure — no verdict, and no
     // caching of the non-verdict: a transient failure should not condemn the
     // URL to permanent ignorance within the session.
-    return 'unknown';
+    return UNREADABLE;
   } finally {
     releaseSlot();
   }
+}
+
+/** Just the plan/photo verdict, for callers that want nothing else. */
+export async function classifyImageUrl(url: string): Promise<ImageKind> {
+  return (await inspectImageUrl(url)).kind;
 }
 
 /** Test seam. */
@@ -154,6 +228,6 @@ export function clearImageKindCache(): void {
 }
 
 /** Test seam: lets tests preload verdicts without canvas machinery. */
-export function primeImageKind(url: string, kind: ImageKind): void {
-  cache.set(cacheKey(url), kind);
+export function primeImageKind(url: string, kind: ImageKind, extra: Partial<ImageInspection> = {}): void {
+  cache.set(cacheKey(url), { ...UNREADABLE, ...extra, kind });
 }
