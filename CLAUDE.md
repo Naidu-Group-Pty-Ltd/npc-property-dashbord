@@ -144,6 +144,30 @@ percentages — and getting it wrong renders a plausible number rather than an
 error; both are pinned by tests. And **readiness is not a second opinion**:
 blocking is exactly what the report route refuses, everything else is disclosed.
 
+## The sanctions register itself
+Read [`docs/aml/SANCTIONS_LIST_LOADING.md`](./docs/aml/SANCTIONS_LIST_LOADING.md)
+before touching `scripts/aml/load-sanctions-lists.mjs`, the
+`ingest_sanctions_list` operation or the refresh workflow. `aml.sanctions_entries`
+was empty from the day the platform was built, for **three** independent
+reasons, and each one on its own explained it: the refresh has never had the
+repository secret it needs to write; DFAT answers a scripted client with a 403;
+and the prune step **failed every load it was part of** — on a mutation,
+PostgREST resolves the columns inside a logical `or=(…)` against the RETURNING
+projection rather than the table, so `.delete().or('sync_id…').select('id')`
+answers `42703 column … does not exist` while the same filter on a GET
+succeeds. That third one is the one that would have survived fixing the first:
+the loader records the run as failed, and the provider fails closed on a
+required list whose latest attempt failed — a complete, current list in the
+table and every screening refusing to run.
+
+Two rules bite. **Freshness of the load is not currency of the data** —
+`assessListRecency` reads the file's own Control Dates, because every other
+control measures when we synced and a four-year-old file uploaded today passes
+all of them. And **normalisation is server-side, always**: names are indexed
+with the same function the screening query uses, so a browser that normalised
+differently writes entries no query can ever match, which looks exactly like a
+list that works.
+
 ## AML screening execution
 Read [`docs/aml/SCREENING_EXECUTION.md`](./docs/aml/SCREENING_EXECUTION.md)
 before touching `cross-portal-outbox-worker/screeningConsumer.ts`, the inline
