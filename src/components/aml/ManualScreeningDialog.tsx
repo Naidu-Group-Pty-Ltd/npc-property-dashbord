@@ -564,7 +564,8 @@ export function ManualScreeningDialog({
               ? (plan.satisfiesObligation
                 ? "Will be recorded as a completed screening, performed by you."
                 : "This does not discharge the screening obligation.")
-              : plan.message}
+              : rejection?.message}
+
           </p>
           <div className="flex shrink-0 items-center justify-end gap-2">
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
