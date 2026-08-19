@@ -24,17 +24,23 @@
  * eligibility sweep does and for the same reason:
  *
  *   the repair refused        the gates said the reconstruction would be a
- *                             guess, the model was unreachable, the validation
- *                             gate rejected the result, or the result still
- *                             measures as annotated
+ *                             guess, the validation gate rejected the result,
+ *                             or the result still measures as annotated
  *                             → a FAILURE RECORD, WRITTEN. That is a completed
  *                               answer for this version: the card shows
  *                               nothing, and a version bump is what revisits it.
  *
  *   the operation failed      no `storage_path`, a download that errored, an
  *                             upload that was rejected, a row write that failed
+ *                             — AND a model that could not be reached: no
+ *                             credential, a network fault, a rate limit, a
+ *                             vendor account out of credit
  *                             → NOTHING WRITTEN, counted as `unresolved`. The
  *                               upload's marker must not advance.
+ *
+ * The model being unreachable belongs in the second column and I had it in the
+ * first until production proved it: one billing outage would have parked every
+ * unrepaired picture on a "we tried" record until the next version bump.
  *
  * AND IT IS CAPPED HARD, because this is the most expensive thing in the whole
  * programme: a full-resolution decode, a reconstruction, up to four model
@@ -248,6 +254,31 @@ export async function settleImageSanitization(
       const result = await sanitize(bytes, {});
 
       if (!result.ok) {
+        /*
+         * AN OPERATIONAL FAILURE IS NOT AN ANSWER ABOUT THE PICTURE, and I had
+         * this wrong until production proved it. A model that could not be
+         * reached — no credential, a network fault, a rate limit, a vendor
+         * account with no credit left — tells us nothing about whether this
+         * photograph can be repaired. Writing it down as a refusal parks the
+         * picture on "we tried" until the next version bump, so one billing
+         * outage would permanently blank every card it touched.
+         *
+         * It is exactly the distinction the eligibility sweep makes and the
+         * same one the terminal-negative-provenance work was built on: "we
+         * looked and there is nothing" is knowledge, "we could not look" is
+         * not, and only the first may stop us looking again. Left unresolved,
+         * so the marker does not advance and the next tick tries again.
+         */
+        if (result.reason === 'inpaint_unavailable' || result.reason === 'inpaint_failed') {
+          console.warn('[builderStock] overlay repair could not reach the model', {
+            image_id: row.id,
+            phase: 'image_sanitization',
+            detail: String(result.detail ?? '').slice(0, 200),
+          });
+          outcome.unresolved += 1;
+          continue;
+        }
+
         if (result.reason === 'not_annotated') {
           /*
            * The stored verdict says annotated and a fresh reading of the same

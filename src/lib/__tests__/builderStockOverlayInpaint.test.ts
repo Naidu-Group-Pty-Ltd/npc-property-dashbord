@@ -941,6 +941,41 @@ describe('the derivative is stored once, with provenance, and served frozen', ()
       expect(isDisplayableSourceImage(row as never)).toBe(false);
     });
 
+  it('a model that cannot be reached is OPERATIONAL, not an answer', async () => {
+    /*
+     * PRODUCTION PROVED THIS ONE. The vendor account ran out of credit
+     * mid-backfill and the endpoint answered 429. That tells us nothing about
+     * whether the photograph can be repaired — and written down as a refusal it
+     * parks the picture on "we tried" until the next version bump, so one
+     * billing outage permanently blanks every card it touches.
+     *
+     * Same distinction the eligibility sweep makes: "we looked and there is
+     * nothing" is knowledge, "we could not look" is not, and only the first may
+     * stop us looking again.
+     */
+    const { badged } = badgedPicture();
+    const bytes = (await encodePng(badged, { width: W, height: H, components: 3 }))!;
+    const row = await refusedRow(bytes);
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    const outcome = await settleImageSanitization(db as never, ORG, {
+      sanitize: async () => ({
+        ok: false as const,
+        reason: 'inpaint_failed' as const,
+        detail: 'the image editor refused the request (429) no credits remaining',
+        transformation: 'generative_overlay_inpaint' as const,
+        model: null,
+      }),
+    });
+
+    expect(outcome.unresolved).toBe(1);
+    expect(outcome.refused).toBe(0);
+    // Nothing written, so the marker cannot advance and the next tick retries.
+    expect(sanitizationSweepCompleted(outcome)).toBe(false);
+    expect(row.source_detail.sanitization_failure).toBeUndefined();
+    expect(row.source_detail.sanitized_derivative).toBeUndefined();
+  });
+
   it('an OPERATIONAL failure writes nothing and blocks settlement', async () => {
     const { clean, badged } = badgedPicture();
     const mask = maskFor(badged);
