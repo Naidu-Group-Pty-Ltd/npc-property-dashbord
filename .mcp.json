@@ -21,6 +21,13 @@
       "headers": {
         "x-api-key": "${TWENTY_FIRST_API_KEY}"
       }
+    },
+    "vapi-mcp": {
+      "type": "http",
+      "url": "https://mcp.vapi.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${VAPI_TOKEN}"
+      }
     }
   }
 }

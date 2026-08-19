@@ -181,6 +181,8 @@ export function ManualScreeningDialog({
     rationale, unableReason, candidates: parsedCandidates,
   }), [outcome, parsedSources, parsedNames, rationale, unableReason, parsedCandidates]);
 
+  const rejection = plan.ok ? null : plan;
+
   const isUnable = outcome === "unable_to_complete";
   const isMatch = outcome === "possible_match" || outcome === "confirmed_match";
 

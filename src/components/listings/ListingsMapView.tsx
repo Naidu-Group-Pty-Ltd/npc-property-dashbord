@@ -1,3 +1,4 @@
+/// <reference types="leaflet.markercluster" />
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Circle, MapContainer, TileLayer, Marker, Popup, ScaleControl, useMap } from 'react-leaflet';
 import L from 'leaflet';

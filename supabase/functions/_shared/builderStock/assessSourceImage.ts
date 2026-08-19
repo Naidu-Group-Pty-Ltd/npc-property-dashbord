@@ -35,7 +35,7 @@ export async function assessMarketplaceEligibility(
 ): Promise<MarketplaceEligibility> {
   try {
     const result = await decodeThumbnailResult(bytes);
-    if (!result.ok) {
+    if (result.ok === false) {
       return unmeasured(
         result.reason === 'unsupported' ? 'decoder_unsupported' : 'decoder_failed');
     }

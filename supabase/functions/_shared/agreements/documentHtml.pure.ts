@@ -59,7 +59,6 @@ import type {
   WorkflowBlock,
 } from './types.pure.ts';
 import { EXECUTION_PANEL_LINES } from './types.pure.ts';
-import { AGREEMENT_STATUS_LABELS } from './lifecycle.pure.ts';
 
 // ── Inputs ───────────────────────────────────────────────────────────────────
 
@@ -507,13 +506,16 @@ export function buildAgreementDocument(input: AgreementDocumentInput): Agreement
     body.push(renderCompanyPage({ block: brand.company, lockup: brand.lockup }));
   }
 
-  if (input.showPlatformAttribution === true) {
-    body.push('<div class="agc-attribution">Generated securely through Aurixa Systems</div>');
-  }
+  // `showPlatformAttribution` used to stamp "Generated securely through Aurixa
+  // Systems" onto the document. It is deliberately inert now: the platform no
+  // longer issues, records or stands behind any agreement between two
+  // independent parties, and a line on the page saying otherwise is the exact
+  // implication being removed. The input is kept so existing callers still
+  // type-check; it prints nothing. See `templateResource.pure.ts`.
 
-  const statusLabel = input.statusKey
-    ? (AGREEMENT_STATUS_LABELS as Record<string, string>)[input.statusKey] ?? input.statusKey
-    : null;
+  // A plain label, not a lifecycle status. The state machine went with the
+  // workflow, and a blank template has no status to report.
+  const statusLabel = input.statusKey ?? null;
 
   return {
     html: renderDocument({

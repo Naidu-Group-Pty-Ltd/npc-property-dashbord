@@ -1,16 +1,31 @@
 # Finance Portal templates
 
-White-label document pack served from `public/templates/finance-portal/`. Every
-file is generated from source — edit the builder and regenerate, never hand-edit
-the `.docx` / `.xlsx` in the repo, or the next build will overwrite the change.
+White-label document pack served from `public/templates/finance-portal/`.
 
-| File | Format | Purpose |
-| --- | --- | --- |
-| `Aurixa_Strategic_Property_Referral_Agreement.docx` | Word, A4, 12 pp | Buyer's agency issues to a finance partner. Referral relationship, commercial schedule, registration form. |
-| `Aurixa_Finance_Referral_and_Commission_Agreement.docx` | Word, A4, 16 pp | Buyer's agency refers to a finance partner. Commission share, clawbacks, consent form, loan-writer undertaking, banking details. |
-| `Aurixa_White_Label_Client_Fact_Find.xlsx` | Excel, 6 sheets | Client-facing intake form plus a print-ready summary. |
+**Two of the three files are not generated, and must never be.** The referral
+agreements are the documents their author maintains, shipped byte-for-byte —
+read [`agreements/TEMPLATES_ONLY.md`](./agreements/TEMPLATES_ONLY.md) before
+touching them. Only the workbook is built from source here.
 
-## Regenerating
+| File | Format | Source | Purpose |
+| --- | --- | --- | --- |
+| `Strategic_Property_Referral_Agreement.docx` | Word | **Supplied** | Buyer's agency issues to a finance partner. Referral relationship, commercial schedule, registration form. |
+| `Finance_Referral_and_Commission_Agreement.docx` | Word | **Supplied** | Buyer's agency refers to a finance partner. Commission share, clawbacks, consent form, loan-writer undertaking, banking details. |
+| `Aurixa_White_Label_Client_Fact_Find.xlsx` | Excel, 6 sheets | Generated | Client-facing intake form plus a print-ready summary. |
+
+The two agreements are declared in
+`supabase/functions/_shared/agreements/templateFiles.pure.ts` (file name, byte
+length, SHA-256, supplied date) and checked clause by clause against the locked
+content modules by `src/lib/agreements/__tests__/agreementTemplateFiles.spec.ts`.
+That suite is the authority on them; nothing in this directory's Python is.
+
+This directory used to build them too, which meant three separate typesettings
+of the same two legal instruments existed at once and the generated pair had
+gone stale — still carrying a section the document owner withdrew. The builders
+are deleted rather than disabled, and `verify_templates.py` fails if any Word
+file appears here that is not one of the two shipped agreements.
+
+## Regenerating the workbook
 
 ```bash
 python3 scripts/finance-portal-templates/build_all.py      # writes to public/templates/finance-portal
@@ -19,32 +34,32 @@ python3 scripts/finance-portal-templates/verify_templates.py
 
 Requires `python-docx` and `openpyxl` (`pip install python-docx openpyxl`).
 
-`verify_templates.py` is the regression net. It re-opens each artefact and
-asserts that every section is present, that the merge tokens survived, and —
-most importantly — that the workbook's summary sheet still reads the fact-find
-rows it claims to. The first draft of the workbook drifted by three rows and
-printed the start date under "Employer"; the binding check exists so that
-cannot happen again silently.
+`verify_templates.py` is the regression net for the workbook: it re-opens the
+artefact and asserts that the summary sheet still reads the fact-find rows it
+claims to. The first draft drifted by three rows and printed the start date
+under "Employer"; the binding check exists so that cannot happen again
+silently. It also checks the two shipped agreements are present with their
+merge tokens intact, and that no builder has written a Word file beside them.
 
 ## Source layout
 
 ```
 scripts/finance-portal-templates/
   aurixa_brand.py     Palette, typography, layout metrics, BrandProfile
-  docx_kit.py         Word primitives + visual blocks (cover, bands, grids, clauses)
-  xlsx_kit.py         Excel equivalents (banners, field rows, KPI tiles, print setup)
-  build_buyers_agent_agreement.py
-  build_finance_referral_agreement.py
+  xlsx_kit.py         Excel primitives (banners, field rows, KPI tiles, print setup)
   build_client_fact_find.py
   build_all.py        Orchestrator; --out and --brand flags
   verify_templates.py Structural regression checks
   example-brand.json  Sample partner override file
 ```
 
+Do not add an agreement builder back here.
+
 ## Design system
 
-The documents mirror `src/styles/tokens.css` so printed collateral and the
-dashboard read as one system. `aurixa_brand.py` documents the token → hex
+The workbook mirrors `src/styles/tokens.css` so printed collateral and the
+dashboard read as one system. (The two agreements carry their author's own
+design and are not built from these tokens.) `aurixa_brand.py` documents the token → hex
 mapping and ships `hsl_to_hex()` for re-deriving values if the tokens move.
 
 | Role | Token | Hex | Used for |
@@ -70,30 +85,26 @@ opens the file. Change them in one place: `Typography` in `aurixa_brand.py`.
 
 ## White-labelling
 
-Three routes, in increasing order of automation.
+### The agreements — find and replace
 
-### 1. Find and replace (no tooling)
-
-Every partner-specific value is a `<<TOKEN>>`. Open the document, press
-`Ctrl+H` / `Cmd+H`, replace each token once. The **Brand & Customisation Panel**
-page inside each document lists every token and where it appears.
+Every partner-specific value in the two supplied agreements is a `<<TOKEN>>`.
+Open the document, press `Ctrl+H` / `Cmd+H`, replace each token once.
 
 | Token | Appears in |
 | --- | --- |
-| `<<COMPANY NAME>>` | Cover, running header, e-mail sign-off, contact strip |
-| `<<TRADING NAME>>` | Agreement details grid |
-| `<<PHONE>>` `<<EMAIL>>` `<<WEBSITE>>` `<<BUSINESS ADDRESS>>` | Cover contact strip, e-mail sign-off |
-| `<<DATE>>` | Cover metadata, agreement details, forms |
-| `<<STATE OR TERRITORY>>` | Agreement details, governing-law clause |
-| `<<DISCLAIMER>>` | Page footer |
-| `<<INSERT>>` | Every blank field cell |
-| `<<NUMBER>>` `<<TIMEFRAME>>` `<<INSERT %>>` | Negotiated terms in the schedules |
-| `<<RECIPIENT ORGANISATION>>` `<<SENDER NAME>>` `<<TITLE>>` `<<REF>>` | Cover issue-control strip and e-mail template |
+| `<<COMPANY NAME>>` | Cover wordmark, running header, e-mail sign-off |
+| `<<INSERT>>` | Every blank field cell, including party names and ABN / ACN |
+| `<<DATE>>` | Cover particulars, agreement details, forms |
+| `<<NUMBER>>` | Negotiated notice periods, timeframes and dispute windows |
+| `<<SENDER NAME>>` `<<TITLE>>` `<<PHONE>>` `<<EMAIL>>` `<<WEBSITE>>` | E-mail template sign-off |
+| `<<BUYER\'S AGENCY NAME>>` `<<FINANCE PARTNER NAME>>` `<<FIRST NAME>>` | E-mail template body |
 
-Replace the dashed **`[ INSERT PARTNER LOGO ]`** box on the cover with the
-partner's mark, keeping it inside the box so the cover grid stays aligned.
+There is no pre-branded build and no platform-generated variant for these. The
+platform ships one neutral document and both portals hand over the same bytes —
+see [`agreements/TEMPLATES_ONLY.md`](./agreements/TEMPLATES_ONLY.md) for why a
+tenant-stamped copy of a blank template is the wrong artefact.
 
-### 2. Pre-branded build
+### The workbook — pre-branded build
 
 ```bash
 python3 scripts/finance-portal-templates/build_all.py \
@@ -106,40 +117,11 @@ The JSON accepts any subset of `BrandProfile` fields — see
 underline in one pass; `platform_note: ""` removes the Aurixa footer
 attribution for a fully unbranded partner copy.
 
-### 3. Platform generation
-
 The Finance Portal's branding settings (`whitelabel_settings`, see
 [`WHITE_LABEL_TOKEN_CONTRACT.md`](./WHITE_LABEL_TOKEN_CONTRACT.md)) map onto
 `BrandProfile` one-to-one: `primary_color` → `primary`, the brand accent →
-`accent`, logo slots → the cover logo box. Build a profile from the tenant's
-settings and call `build_all.main()` with it.
-
-## Document anatomy
-
-Both agreements use the same block vocabulary, so a reader who learns one knows
-the other:
-
-- **Cover panel** — obsidian, gold-ruled, logo slot, title, status chips,
-  version/date metadata, then the legal caveat band and an issue-control strip.
-  No running header on page 1.
-- **Document map** — contents table keyed to the section numbers.
-- **Brand & customisation panel** — the white-label control sheet. Marked
-  *delete before issue*.
-- **Section band** — gold number chip + obsidian title bar. Opens every section.
-- **Guidance card** — pale gold, heavy gold left rule. Advisory, removable.
-- **Note card** — closing principle for a section; tone carries the meaning
-  (brand / info / success / alert).
-- **Field grid** — sand label cell, pale-gold input cell with a gold underline.
-  `Tab` moves between cells, which is what makes the documents completable
-  on screen without content controls.
-- **Clause block** — obsidian left rule, serif heading, hanging-indent
-  sub-clauses with gold numbers.
-- **Workflow ladder** — numbered stage rows (referral workflow).
-- **Signature panel** — gold top rule, ruled signature lines, side-by-side.
-
-Section bands are set `keepNext`, and every table row is `cantSplit`, so a
-heading never lands alone at the foot of a page and a field row never breaks
-across pages.
+`accent`. Build a profile from the tenant's settings and call `build_all.main()`
+with it.
 
 ## Workbook structure
 
@@ -183,15 +165,18 @@ Carried over from the initial ChatGPT-generated workbook and fixed here:
 | Summary cover printed `'White Label Setup'!B8` | Displayed the hex string `#12345B` where the tagline belonged | Reads the tagline cell |
 | `Living Expenses` shipped with `600` in Registration | A blank template arrived pre-populated with one arbitrary figure | All lines seeded at zero |
 | Setup sheet said "Orixa" | Platform misspelled in the client-facing note | Corrected to Aurixa |
-| Clause 7 heading read "Reciept Created Tax Invoices" | Misspelling in an executed legal document | Corrected to "Recipient Created Tax Invoices" |
 
 ## Content scope
 
-The legal and commercial wording is carried over from the source templates
-unchanged apart from the two spelling corrections above. The additions are
-structural — document map, brand panel, activation checklists, completion
-guidance, totals rows and the category roll-up. Nothing in the operative clauses
-or the commercial schedules was rewritten.
+The workbook's additions over the source are structural — completion guidance,
+totals rows and the category roll-up.
+
+The two agreements are carried unchanged. Nothing in this repository rewrites,
+renumbers or restyles a clause of them; the wording is mirrored in the locked
+content modules only so it can be checked, never so it can be redrawn. (The
+generated pair this replaced did correct one spelling — clause 7 of Agreement
+02 reads "Reciept" in the source — and that correction is gone with them. The
+supplied document says what its author wrote.)
 
 These remain templates. They still require legal, licensing, privacy and
 aggregator review before use, as the cover of each document states.

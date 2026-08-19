@@ -25,7 +25,6 @@ import {
   INCIDENT_TYPE_LABELS,
   RETENTION_STATE_LABELS,
 } from '@/hooks/usePartnerCompliance';
-import { usePartnerAgreements } from '@/hooks/usePartnerAgreements';
 import PrivacyIncidentDialog from '@/components/partner-compliance/PrivacyIncidentDialog';
 import AgreementTerminationDialog from '@/components/partner-compliance/AgreementTerminationDialog';
 
@@ -46,7 +45,12 @@ export default function PartnerCompliance() {
 
   const { data: overview, isLoading: overviewLoading, refetch: refetchOverview, isFetching } =
     usePartnerComplianceOverview();
-  const { data: agreements = [] } = usePartnerAgreements();
+  // The platform no longer issues or executes partner agreements, so there is
+  // no register to read an "active agreement" from and no new one can appear.
+  // Held as an empty list rather than tearing out the termination panel and the
+  // incident linkage: those are compliance features in their own right, and the
+  // shapes below are what they consume.
+  const agreements: { id: string; partner_legal_name?: string | null; version?: number | null; status?: string | null; direction?: string | null; effective_date?: string | null }[] = [];
 
   const auditFilters = useMemo(
     () => (auditCategory === 'all' ? { limit: 200 } : { category: auditCategory, limit: 200 }),
@@ -184,7 +188,7 @@ export default function PartnerCompliance() {
                 </div>
               ) : auditEvents.length === 0 ? (
                 <p className="py-6 text-sm text-muted-foreground">
-                  No compliance events recorded yet. Events appear here as agreements and referrals move through
+                  No compliance events recorded yet. Events appear here as referrals move through
                   their lifecycle.
                 </p>
               ) : (
@@ -496,7 +500,7 @@ export default function PartnerCompliance() {
                   {activeAgreements.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
-                        No active agreements. Execute an agreement in the Partner Agreements register first.
+                        Partner agreements are no longer entered into through the platform, so there is nothing to terminate here. Any agreement is between the parties directly.
                       </TableCell>
                     </TableRow>
                   ) : (

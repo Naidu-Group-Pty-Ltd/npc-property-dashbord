@@ -24,7 +24,7 @@ import { deriveScreeningNextAction } from "../../../supabase/functions/_shared/a
 const repo = join(__dirname, "../../..");
 const read = (p: string) => readFileSync(join(repo, p), "utf8");
 
-const FIX: never = {
+const FIX = {
   key: "fix_provider", label: "Open screening configuration",
   headline: "Screening cannot run yet",
   detail: "The screening provider and its sanctions data must be restored.",

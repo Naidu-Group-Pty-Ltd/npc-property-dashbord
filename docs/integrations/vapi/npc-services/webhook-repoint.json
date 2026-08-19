@@ -1,0 +1,180 @@
+[
+  {
+    "tool": "checkAvailability",
+    "toolId": "326c7c81-e4c2-4bcb-bcf3-134a1af73f49",
+    "oldUrl": "https://hook.eu2.make.com/9hr5vgh78dqq4sl19lpgsfji716rtu1o",
+    "oldUdid": "9hr5vgh78dqq4sl19lpgsfji716rtu1o",
+    "usedByNpcAssistants": [],
+    "usedByOther": [
+      "Xenochrome Assistant"
+    ]
+  },
+  {
+    "tool": "get_call_context",
+    "toolId": "0bd36de8-6d3a-43e5-9c3f-25ca6de97662",
+    "oldUrl": "https://hook.eu2.make.com/o51u3jb5g1nn1lxiluziezpr7gh5vvt8",
+    "oldUdid": "o51u3jb5g1nn1lxiluziezpr7gh5vvt8",
+    "usedByNpcAssistants": [
+      "NPC Inbound Agent"
+    ],
+    "usedByOther": []
+  },
+  {
+    "tool": "ghl_check_availability",
+    "toolId": "6587bc7d-7382-4e33-a38d-95f5740df52a",
+    "oldUrl": "https://hook.eu2.make.com/3xslmou0jpbwxbutg8we362f9jsh96q0",
+    "oldUdid": "3xslmou0jpbwxbutg8we362f9jsh96q0",
+    "usedByNpcAssistants": [
+      "NPC Active Nurturing",
+      "NPC Discovery Call Follow Up Test",
+      "NPC Discovery Call No Show Follow Up",
+      "NPC IFC Follow Up",
+      "NPC IFC Inbound",
+      "NPC IFC No Show Follow Up",
+      "NPC Opt In Follow Up",
+      "NPC Opt In Follow Up Inbound",
+      "NPC Quiz Follow Up",
+      "NPC Strategy Session (Phone) Follow Up",
+      "NPC Strategy Session (Phone) No Show",
+      "NPC Strategy Session Inbound"
+    ],
+    "usedByOther": []
+  },
+  {
+    "tool": "ghl_create_booking",
+    "toolId": "f195a817-8346-475d-ad0e-8033f1d2e283",
+    "oldUrl": "https://hook.eu2.make.com/eop70ky2635nobauh7lyof13sctvl0ga",
+    "oldUdid": "eop70ky2635nobauh7lyof13sctvl0ga",
+    "usedByNpcAssistants": [
+      "NPC Active Nurturing",
+      "NPC Discovery Call Follow Up Test",
+      "NPC Discovery Call No Show Follow Up",
+      "NPC IFC Follow Up",
+      "NPC IFC No Show Follow Up",
+      "NPC Opt In Follow Up",
+      "NPC Opt In Follow Up Inbound",
+      "NPC Quiz Follow Up",
+      "NPC Strategy Session (Phone) Follow Up",
+      "NPC Strategy Session (Phone) No Show",
+      "NPC Strategy Session Inbound"
+    ],
+    "usedByOther": []
+  },
+  {
+    "tool": "ghl_delete_event_npc",
+    "toolId": "5934c762-0223-4112-bfb7-88931da17652",
+    "oldUrl": "https://hook.eu2.make.com/9inh27jwcxodgecrbwvjosx7i5xedm67",
+    "oldUdid": "9inh27jwcxodgecrbwvjosx7i5xedm67",
+    "usedByNpcAssistants": [
+      "NPC Discovery Call Follow Up",
+      "NPC Discovery Call Follow Up Test",
+      "NPC Discovery Call Follow Up Test 2"
+    ],
+    "usedByOther": []
+  },
+  {
+    "tool": "ghl_delete_event_npc_2",
+    "toolId": "87fb4ce8-b696-4925-bfbf-8bd9678d4e36",
+    "oldUrl": "https://hook.eu2.make.com/ujov89m0me5kmc012fzc6l5bhn4t8oep",
+    "oldUdid": "ujov89m0me5kmc012fzc6l5bhn4t8oep",
+    "usedByNpcAssistants": [
+      "NPC Strategy Session (Phone) Follow Up",
+      "NPC Strategy Session Inbound"
+    ],
+    "usedByOther": []
+  },
+  {
+    "tool": "ghl_delete_event_npc_2_1",
+    "toolId": "a34b05ef-5218-4771-bf2b-4b171ad8f9c9",
+    "oldUrl": "https://hook.eu2.make.com/w5e69pe59ahue41em25rvh97j91wtxbj",
+    "oldUdid": "w5e69pe59ahue41em25rvh97j91wtxbj",
+    "usedByNpcAssistants": [
+      "NPC Strategy Session (Phone) Follow Up",
+      "NPC Strategy Session Inbound"
+    ],
+    "usedByOther": []
+  },
+  {
+    "tool": "ghl_delete_event_npc_3",
+    "toolId": "006be564-14c2-4db9-9c90-6821d363b123",
+    "oldUrl": "https://hook.eu2.make.com/ks0eu13idcgwr9wf8tp4ak7a1gqj8e6i",
+    "oldUdid": "ks0eu13idcgwr9wf8tp4ak7a1gqj8e6i",
+    "usedByNpcAssistants": [
+      "NPC IFC Follow Up",
+      "NPC IFC Inbound"
+    ],
+    "usedByOther": []
+  },
+  {
+    "tool": "ghl_delete_event_npc_3_1",
+    "toolId": "ba13974d-8005-487d-81b9-4dc569a9f6d4",
+    "oldUrl": "https://hook.eu2.make.com/u60ggcqrdo9tq4gbiwabe67w9nwg255m",
+    "oldUdid": "u60ggcqrdo9tq4gbiwabe67w9nwg255m",
+    "usedByNpcAssistants": [
+      "NPC IFC Follow Up"
+    ],
+    "usedByOther": []
+  },
+  {
+    "tool": "ghl_resolve_contact",
+    "toolId": "3e116e74-0dda-4277-ae38-468bdd3464e6",
+    "oldUrl": "https://hook.eu2.make.com/db3ws2lmqi4qh9ozsyt1tvn3j8tbeahm",
+    "oldUdid": "db3ws2lmqi4qh9ozsyt1tvn3j8tbeahm",
+    "usedByNpcAssistants": [
+      "NPC Active Nurturing",
+      "NPC Discovery Call Follow Up Test",
+      "NPC Discovery Call No Show Follow Up",
+      "NPC IFC Follow Up",
+      "NPC IFC Inbound",
+      "NPC IFC No Show Follow Up",
+      "NPC Inbound Agent",
+      "NPC Opt In Follow Up",
+      "NPC Opt In Follow Up Inbound",
+      "NPC Quiz Follow Up",
+      "NPC Strategy Session (Phone) Follow Up",
+      "NPC Strategy Session (Phone) No Show",
+      "NPC Strategy Session Inbound"
+    ],
+    "usedByOther": []
+  },
+  {
+    "tool": "phoneNumber_inject",
+    "toolId": "c40722f1-a359-42e1-ba80-e99ef706a916",
+    "oldUrl": "https://hook.eu2.make.com/ryb05h6kzpzv8fnwi6lki6r8lldokomy",
+    "oldUdid": "ryb05h6kzpzv8fnwi6lki6r8lldokomy",
+    "usedByNpcAssistants": [],
+    "usedByOther": []
+  },
+  {
+    "tool": "phoneNumber_inject",
+    "toolId": "9789b720-ee13-4389-ba33-678883eaa891",
+    "oldUrl": "https://hook.eu2.make.com/2ubukyatwc0ig8zinphjjc4dciwhigqg",
+    "oldUdid": "2ubukyatwc0ig8zinphjjc4dciwhigqg",
+    "usedByNpcAssistants": [
+      "NPC Inbound Agent"
+    ],
+    "usedByOther": []
+  },
+  {
+    "tool": "transfer_to_human",
+    "toolId": "5c0c334c-6bbf-4399-b748-a3c50207e754",
+    "oldUrl": "https://hook.eu2.make.com/jb85m14jchgktf09sfxt4jmf8yggaw32",
+    "oldUdid": "jb85m14jchgktf09sfxt4jmf8yggaw32",
+    "usedByNpcAssistants": [
+      "NPC Active Nurturing",
+      "NPC Discovery Call Follow Up Test",
+      "NPC Discovery Call No Show Follow Up",
+      "NPC IFC Follow Up",
+      "NPC IFC Inbound",
+      "NPC IFC No Show Follow Up",
+      "NPC Inbound Agent",
+      "NPC Opt In Follow Up",
+      "NPC Opt In Follow Up Inbound",
+      "NPC Quiz Follow Up",
+      "NPC Strategy Session (Phone) Follow Up",
+      "NPC Strategy Session (Phone) No Show",
+      "NPC Strategy Session Inbound"
+    ],
+    "usedByOther": []
+  }
+]

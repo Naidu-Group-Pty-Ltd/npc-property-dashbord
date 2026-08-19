@@ -17,7 +17,6 @@ import {
   agreementFieldDefs,
   agreementTemplate,
   rowPatchFromValues,
-  templateContentHash,
   substitutePlain,
   templateKeyForDirection,
   validateForIssue,
@@ -77,8 +76,8 @@ describe('locked template binding contract', () => {
     });
 
     it(`${key}: the content hash is stable within a build`, () => {
-      expect(templateContentHash(key)).toBe(agreementContentHash(content));
-      expect(templateContentHash(key)).toMatch(/^[0-9a-f]{16}$/);
+      expect(agreementContentHash(agreementTemplate(key))).toBe(agreementContentHash(content));
+      expect(agreementContentHash(agreementTemplate(key))).toMatch(/^[0-9a-f]{16}$/);
     });
 
     it(`${key}: direction round-trips`, () => {
@@ -87,8 +86,8 @@ describe('locked template binding contract', () => {
   }
 
   it('the two templates carry distinct content hashes', () => {
-    expect(templateContentHash('strategic_property_referral'))
-      .not.toBe(templateContentHash('finance_referral_commission'));
+    expect(agreementContentHash(agreementTemplate('strategic_property_referral')))
+      .not.toBe(agreementContentHash(agreementTemplate('finance_referral_commission')));
   });
 
   it('template summaries make direction unmistakable', () => {

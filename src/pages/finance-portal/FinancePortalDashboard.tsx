@@ -16,7 +16,8 @@ import {
 import { TodayPanel } from '@/components/finance-portal/TodayPanel';
 import { DocumentExpiryWatchlist } from '@/components/finance-portal/DocumentExpiryWatchlist';
 import { EngagementHeader } from '@/components/finance-portal/EngagementHeader';
-import { AgreementActionCard } from '@/components/finance-portal/AgreementActionCard';
+import AgreementTemplateResources from '@/components/agreement-templates/AgreementTemplateResources';
+import { downloadAgreementTemplateDocx } from '@/lib/agreements/templateDownloads';
 import { GoalsProgressCard } from '@/components/finance-portal/GoalsProgressCard';
 import { AiRiskSnifferWidget } from '@/components/finance-portal/AiRiskSnifferWidget';
 import { AiCoachWidget } from '@/components/finance-portal/AiCoachWidget';
@@ -207,10 +208,20 @@ export default function FinancePortalDashboard() {
           </p>
         </motion.div>
 
-        {/* Anything waiting on the partner, above everything else. The bell
-            is a notification about a notification; this is the thing itself,
-            and it renders nothing when there is nothing to do. */}
-        <AgreementActionCard />
+        {/* Agreement templates — a resource, not a queue.
+            This slot used to hold an ACTION CARD for an agreement issued to
+            this partner through the platform. That workflow is retired: the
+            platform no longer issues, records or stands behind an agreement
+            between the partner and anyone else. What is left is the blank
+            template, offered on exactly the same terms to both sides. */}
+        <Card>
+          <CardContent className="p-4 sm:p-5">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+              Agreement Templates
+            </h2>
+            <AgreementTemplateResources onDownloadDocx={downloadAgreementTemplateDocx} />
+          </CardContent>
+        </Card>
 
         {/* Engagement: streak + what changed since last visit */}
         <EngagementHeader />

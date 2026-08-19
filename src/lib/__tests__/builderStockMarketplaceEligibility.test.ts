@@ -239,7 +239,7 @@ describe('the decision is stored beside the role, never instead of it', () => {
     expect(decision.state).toBe('ineligible');
     expect(decision.reason).toBe('annotated_marketing_tile');
 
-    const detail = { role: 'primary_property', ...marketplaceEligibilityDetail(decision) };
+    const detail: Record<string, unknown> = { role: 'primary_property', ...marketplaceEligibilityDetail(decision) };
     expect(detail.role).toBe('primary_property');
     expect(detail.marketplace_display_eligible).toBe(false);
     expect(detail.marketplace_eligibility_state).toBe('ineligible');
