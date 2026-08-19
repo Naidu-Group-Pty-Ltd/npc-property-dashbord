@@ -1,0 +1,305 @@
+/**
+ * Builder stock — taking the marketing sticker off the builder's own photograph.
+ *
+ * THE PICTURE IS THE BUILDER'S AND STAYS THE BUILDER'S. This removes a graphic
+ * that was laid ON TOP of a photograph and rebuilds only what that graphic was
+ * covering. It is not a generator: nothing here invents a house, and there is
+ * no model, no network call and no randomness anywhere in it. The same bytes in
+ * produce the same bytes out, on any runtime, for ever.
+ *
+ * HOW THE HOLE IS FILLED. The overlay's own pixels are discarded and replaced
+ * by solving Laplace's equation across the hole with the surrounding
+ * photograph as the boundary condition — the smoothest surface that meets the
+ * real pixels at every edge of the patch. On sky, render gradients, grass and
+ * roof sheeting, which is where builders put these badges, that reconstruction
+ * is what was behind them to within a shade. It is seeded by pushing the
+ * nearest real pixel inward first so the relaxation starts from something
+ * plausible rather than from grey, which is what stops a large patch settling
+ * into a visible flat blob.
+ *
+ * AND IT REFUSES WHEN IT WOULD BE GUESSING. Diffusion reconstructs a smooth
+ * field, so it is right exactly when the covered area was smooth and wrong when
+ * the badge sat across a window, a roofline or a tree. `boundaryDetail`
+ * measures how busy the real pixels immediately around the hole are, and a
+ * patch whose surroundings are structured is REFUSED rather than smeared:
+ * a plausible-looking wrong facade is worse than no photograph, because nobody
+ * can tell it happened. That refusal is reported, never silently swallowed.
+ *
+ * WHAT IT WILL NOT DO. It does not crop, it does not scale, it does not
+ * recolour, it does not touch a pixel outside the mask, and it does not run at
+ * all on a picture the detector called clean. Everything outside the removed
+ * graphic is the builder's original pixel, unchanged, and a test asserts that
+ * byte for byte.
+ */
+
+import { type OverlayMeasurement } from './marketingOverlay.pure.ts';
+
+/** Bumped when the reconstruction changes, so stored results can be re-made. */
+export const SANITIZATION_VERSION = 1;
+
+/**
+ * How far the mask is grown before filling.
+ *
+ * A badge is composited with soft edges, so the pixels just outside the
+ * detector's region are a blend of graphic and photograph. Leaving them behind
+ * draws a ghost outline exactly where the badge was — the one artefact that
+ * makes a repair obvious. Three pixels covers the anti-aliasing on the sizes
+ * builders actually publish without eating into the picture.
+ */
+const EDGE_GROW = 3;
+
+/**
+ * How busy the surroundings may be before the fill is refused.
+ *
+ * Mean absolute neighbour difference of the real pixels within `EDGE_GROW * 2`
+ * of the hole, on 0-255. Sky and render gradients sit in the low single
+ * figures; a roofline, a window frame or foliage runs far above this. Fitted
+ * against the production covers rather than picked: the badges this exists to
+ * remove sit on flat ground, and the ones that do not are the ones where a
+ * diffusion fill would invent architecture.
+ */
+const MAX_BOUNDARY_DETAIL = 6;
+
+/**
+ * And how much of the picture may be rebuilt at all.
+ *
+ * A second gate because the first is not sufficient, which production proved:
+ * the Lot 13 badges sit on quiet enough surroundings to pass the detail test
+ * (5.3) and still cover 23% of the frame between them, and no diffusion fills a
+ * fifth of a photograph without it reading as a smear. Both must hold.
+ *
+ * The two together were fitted against the real covers: the Brownsplains badge
+ * (7.2% of the frame, detail 2.9, sitting on open sky) is removed so completely
+ * that the result is indistinguishable from an unbadged render, while the
+ * Cloverton "Registered" pill (2.8% but detail 11.2, sitting over a tree) and
+ * both Lot 13 and Lot 1663 (23% and 21%) are refused — every one of which
+ * produced a visible blur where the badge had been.
+ */
+const MAX_REPAIRED_SHARE = 0.10;
+
+/** Relaxation sweeps. Enough for the patch sizes a badge produces. */
+const SWEEPS = 96;
+
+export interface SanitizeInput {
+  /** The picture at the size the builder supplied it. */
+  width: number;
+  height: number;
+  /** RGB triples, row-major. Not mutated. */
+  pixels: Uint8Array;
+  /**
+   * The detector's own verdict, and the size it was reached at.
+   *
+   * THE MASK IS MEASURED ON THE THUMBNAIL AND SCALED UP, NOT MEASURED AGAIN
+   * HERE, and that is not a shortcut — it is the only correct order. Every
+   * threshold in the detector is fitted against the 400px reduction: at full
+   * size `BRIDGE_GAP` spans a third as much of the picture, so a badge stops
+   * flooding across its own lettering and fragments into slivers that each fail
+   * the size and straightness tests. Measured at 1200px the Lot 13 pills were
+   * not found at all while the sky around them was, and the "repair" blurred
+   * the photograph and left the marketing intact.
+   */
+  overlay: OverlayMeasurement;
+  maskWidth: number;
+  maskHeight: number;
+}
+
+export type SanitizeResult =
+  | {
+    ok: true;
+    width: number;
+    height: number;
+    /** A new buffer: the original is left exactly as it came in. */
+    pixels: Uint8Array;
+    /** How much of the picture was rebuilt, as a share. */
+    repairedShare: number;
+    regionsRemoved: number;
+    boundaryDetail: number;
+  }
+  | {
+    ok: false;
+    reason: 'nothing_to_remove' | 'background_too_detailed' | 'too_much_to_rebuild'
+      | 'unusable_input';
+  };
+
+/** Grow the mask so the graphic's soft edge goes with it. */
+function grow(mask: Uint8Array, width: number, height: number, by: number): Uint8Array {
+  let current = mask;
+  for (let pass = 0; pass < by; pass++) {
+    const next = new Uint8Array(current);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const at = y * width + x;
+        if (current[at]) continue;
+        if ((x > 0 && current[at - 1])
+          || (x + 1 < width && current[at + 1])
+          || (y > 0 && current[at - width])
+          || (y + 1 < height && current[at + width])) next[at] = 1;
+      }
+    }
+    current = next;
+  }
+  return current;
+}
+
+/**
+ * How structured the real photograph is immediately around the hole.
+ *
+ * Measured on the pixels that will BE the boundary condition, because those are
+ * the ones the reconstruction has to agree with. A high number means the fill
+ * would be interpolating across detail it cannot know.
+ */
+function boundaryDetail(
+  pixels: Uint8Array, mask: Uint8Array, width: number, height: number,
+): number {
+  const near = grow(mask, width, height, EDGE_GROW * 2);
+  let total = 0;
+  let n = 0;
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const at = y * width + x;
+      // The ring: close to the hole, but real photograph rather than graphic.
+      if (!near[at] || mask[at]) continue;
+      const p = at * 3;
+      for (const step of [3, width * 3]) {
+        total += Math.abs(pixels[p] - pixels[p + step])
+          + Math.abs(pixels[p + 1] - pixels[p + step + 1])
+          + Math.abs(pixels[p + 2] - pixels[p + step + 2]);
+        n += 3;
+      }
+    }
+  }
+  return n ? total / n : 0;
+}
+
+/**
+ * Rebuild the masked pixels from the photograph around them.
+ *
+ * Two stages, and both matter. The push-in seeds every hole pixel with the
+ * nearest real colour so the relaxation starts near the answer; the sweeps then
+ * average each hole pixel against its four neighbours, which is Laplace's
+ * equation solved by Gauss-Seidel and reads, on a picture, as the surrounding
+ * gradient continued through the gap.
+ */
+function diffuse(
+  source: Uint8Array, mask: Uint8Array, width: number, height: number,
+): Uint8Array {
+  const out = new Uint8Array(source);
+
+  // Stage one: march the nearest real colour inward, four directions, so no
+  // hole pixel begins from nothing however wide the patch is.
+  const filled = new Uint8Array(mask.length);
+  for (let i = 0; i < mask.length; i++) filled[i] = mask[i] ? 0 : 1;
+  const sweep = (xs: number[], ys: number[]) => {
+    for (const y of ys) {
+      for (const x of xs) {
+        const at = y * width + x;
+        if (filled[at]) continue;
+        const neighbours = [
+          x > 0 ? at - 1 : -1,
+          x + 1 < width ? at + 1 : -1,
+          y > 0 ? at - width : -1,
+          y + 1 < height ? at + width : -1,
+        ];
+        for (const n of neighbours) {
+          if (n < 0 || !filled[n]) continue;
+          out[at * 3] = out[n * 3];
+          out[at * 3 + 1] = out[n * 3 + 1];
+          out[at * 3 + 2] = out[n * 3 + 2];
+          filled[at] = 1;
+          break;
+        }
+      }
+    }
+  };
+  const forwardX = Array.from({ length: width }, (_, i) => i);
+  const forwardY = Array.from({ length: height }, (_, i) => i);
+  const backX = [...forwardX].reverse();
+  const backY = [...forwardY].reverse();
+  sweep(forwardX, forwardY);
+  sweep(backX, backY);
+  sweep(forwardX, backY);
+  sweep(backX, forwardY);
+
+  // Stage two: relax. Only masked pixels move; the photograph holds the edges.
+  for (let pass = 0; pass < SWEEPS; pass++) {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const at = y * width + x;
+        if (!mask[at]) continue;
+        const p = at * 3;
+        for (let c = 0; c < 3; c++) {
+          let sum = 0;
+          let n = 0;
+          if (x > 0) { sum += out[p - 3 + c]; n++; }
+          if (x + 1 < width) { sum += out[p + 3 + c]; n++; }
+          if (y > 0) { sum += out[p - width * 3 + c]; n++; }
+          if (y + 1 < height) { sum += out[p + width * 3 + c]; n++; }
+          if (n) out[p + c] = Math.round(sum / n);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Take the graphic off, or say why not.
+ *
+ * The mask comes from the detector that refused the picture, so this can only
+ * ever remove something that pass called a laid-over graphic.
+ */
+export function sanitizeOverlay(input: SanitizeInput): SanitizeResult {
+  const { width, height, pixels, overlay, maskWidth, maskHeight } = input;
+  const count = width * height;
+  if (count <= 0 || pixels.length < count * 3) return { ok: false, reason: 'unusable_input' };
+  if (!overlay.regions.length) return { ok: false, reason: 'nothing_to_remove' };
+  if (maskWidth <= 0 || maskHeight <= 0) return { ok: false, reason: 'unusable_input' };
+  if (overlay.mask.length !== maskWidth * maskHeight) {
+    return { ok: false, reason: 'unusable_input' };
+  }
+
+  /*
+   * Scale the verdict's mask onto the builder's pixels, then grow it BY THE
+   * SCALE: one thumbnail pixel is several here, so the edge of the badge lands
+   * that much less precisely and the ghost outline would be that much wider.
+   */
+  const scaleX = maskWidth / width;
+  const scaleY = maskHeight / height;
+  const scaled = new Uint8Array(count);
+  for (let y = 0; y < height; y++) {
+    const sy = Math.min(maskHeight - 1, Math.floor(y * scaleY));
+    for (let x = 0; x < width; x++) {
+      const sx = Math.min(maskWidth - 1, Math.floor(x * scaleX));
+      scaled[y * width + x] = overlay.mask[sy * maskWidth + sx];
+    }
+  }
+  const spread = Math.max(1, Math.round(Math.max(width / maskWidth, height / maskHeight)));
+  const mask = grow(scaled, width, height, EDGE_GROW * spread);
+  let masked = 0;
+  for (let i = 0; i < count; i++) masked += mask[i];
+  if (!masked) return { ok: false, reason: 'nothing_to_remove' };
+
+  const repairedShare = masked / count;
+  if (repairedShare > MAX_REPAIRED_SHARE) {
+    // Too much of the photograph to rebuild, however quiet its edges are.
+    return { ok: false, reason: 'too_much_to_rebuild' };
+  }
+
+  const detail = boundaryDetail(pixels, mask, width, height);
+  if (detail > MAX_BOUNDARY_DETAIL) {
+    // The badge is sitting on the building or in a tree, not on open sky.
+    // Reconstructing here would be inventing what it covered, which is the one
+    // thing this must not do — and it looks like it, too.
+    return { ok: false, reason: 'background_too_detailed' };
+  }
+
+  return {
+    ok: true,
+    width,
+    height,
+    pixels: diffuse(pixels, mask, width, height),
+    repairedShare,
+    regionsRemoved: overlay.regions.length,
+    boundaryDetail: detail,
+  };
+}
