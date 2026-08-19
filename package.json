@@ -77,6 +77,7 @@
     "security:builder-portal": "node scripts/builder-portal/security-check.mjs",
     "test:e2e:pdf-import": "playwright test tests-e2e/pdfImportRenderParity.e2e.ts",
     "test:e2e:manual-screening": "vite build --config tests-e2e/manual-screening-dialog/harness/vite.config.ts && playwright test tests-e2e/manual-screening-dialog",
+    "test:e2e:stage5-path": "vite build --config tests-e2e/stage5-path/harness/vite.config.ts && playwright test tests-e2e/stage5-path",
     "test:e2e:pdf-v3": "playwright test tests-e2e/pdf-extraction-v3",
     "security:inventory": "node scripts/security/security-inventory.mjs --write",
     "security:registry": "node scripts/security/check-function-registry.mjs",
