@@ -47,10 +47,18 @@ function CoverageNote({ verdict }: { verdict: PepIndexVerdict }) {
             <span className="font-medium text-foreground">{c.label}</span>
             {" — "}
             {c.entryCount > 0 && c.lastSyncStatus === "succeeded"
-              ? `${c.entryCount.toLocaleString()} entries`
+              ? `${c.entryCount.toLocaleString()} people`
               : "not loaded"}
+            {/* MEASURED, not claimed. A load holding two offices used to read
+                identically to one holding seven hundred. */}
+            {c.officeCount !== null && ` across ${c.officeCount.toLocaleString()} offices`}
             {c.sourceAsAt && `, current to ${c.sourceAsAt}`}.
             <span className="block">Covers {c.covers}</span>
+            {c.sampleOffices.length > 0 && (
+              <span className="block">
+                For example: {c.sampleOffices.slice(0, 6).join("; ")}.
+              </span>
+            )}
             <span className="block font-medium text-foreground">
               Does not cover {c.excludes}
             </span>

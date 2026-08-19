@@ -4092,7 +4092,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const coverage = [];
         for (const source of PEP_INDEX_SOURCES) {
           const { data: sync } = await admin.schema('aml').from('pep_officeholder_syncs')
-            .select('entry_count, source_as_at, completed_at, started_at, status')
+            // `detail` carries what the load actually reached. The coverage
+            // an operator sees is derived from it rather than from a
+            // sentence, because a sentence cannot be checked against a load.
+            .select('entry_count, source_as_at, completed_at, started_at, status, detail')
             .eq('source_code', source.code)
             .order('started_at', { ascending: false }).limit(1).maybeSingle();
           coverage.push(describeCoverage(source.code, sync ?? null));

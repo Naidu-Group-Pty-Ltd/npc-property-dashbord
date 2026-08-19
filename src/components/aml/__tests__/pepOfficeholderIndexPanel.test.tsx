@@ -29,6 +29,10 @@ const coverage = (over = {}) => ({
   ...describeCoverage("wikidata_au_public_office", {
     entry_count: 12000, source_as_at: "2026-08-19",
     completed_at: "2026-08-19T00:00:00.000Z", status: "succeeded",
+    detail: {
+      office_count: 724, distinct_offices: 724,
+      sample_offices: ["Prime Minister of Australia", "Justice of the High Court of Australia"],
+    },
   }),
   ...over,
 });
@@ -37,7 +41,7 @@ const candidate = (over = {}) => ({
   externalId: "Q42", sourceCode: "wikidata_au_public_office",
   fullName: "Pat Example", aliases: ["Patricia Example"],
   positionTitle: "Member of the Australian House of Representatives",
-  pepType: "domestic" as const, jurisdiction: "Australia",
+  pepType: null, jurisdiction: "Australia",
   positionStart: "2016-07-02", positionEnd: null, currentlyHeld: true,
   confirmUrl: "https://en.wikipedia.org/wiki/Pat_Example", score: 0.94,
   ...over,
@@ -86,7 +90,11 @@ describe("the empty reading", () => {
     expect(await screen.findByText(/not an answer to the question/i)).toBeTruthy();
     expect(screen.getByText(/what this index holds/i)).toBeTruthy();
     expect(screen.getAllByText(/does not cover/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/12,000 entries/i)).toBeTruthy();
+    expect(screen.getByText(/12,000 people/i)).toBeTruthy();
+    // The measured office count, which is the fact a coverage SENTENCE got
+    // wrong: a load holding two offices read identically to one holding 724.
+    expect(screen.getByText(/across 724 offices/i)).toBeTruthy();
+    expect(screen.getByText(/Prime Minister of Australia/)).toBeTruthy();
     expect(screen.getByText(/current to 2026-08-19/i)).toBeTruthy();
   });
 
