@@ -311,6 +311,69 @@ const MARKETPLACE_SECTIONS: ReadonlyArray<{
   { id: 'builder_stock', label: 'Builder Stock', description: 'Builder and developer opportunities', icon: HardHat },
 ];
 
+/**
+ * The section switcher, rendered *inside* the Property Marketplace header so
+ * the two sections read as parts of one page rather than as a strip floating
+ * above it.
+ */
+function MarketplaceSectionTabs({
+  tab,
+  onChange,
+}: {
+  tab: MarketplaceTab;
+  onChange: (next: MarketplaceTab) => void;
+}) {
+  return (
+    <div className="mt-5 border-t border-border/50 pt-4 dark:border-white/10">
+      <div className="mb-2.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/70">
+        <Layers className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+        Marketplace sections
+      </div>
+      <div
+        className={LISTINGS_SECTION_SWITCHER}
+        role="tablist"
+        aria-label="Property Marketplace sections"
+      >
+        {MARKETPLACE_SECTIONS.map((section) => {
+          const isActive = tab === section.id;
+          return (
+            <button
+              key={section.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => onChange(section.id)}
+              className={cn(
+                LISTINGS_SECTION_TAB,
+                'relative overflow-hidden',
+                isActive ? LISTINGS_SECTION_TAB_ACTIVE : LISTINGS_SECTION_TAB_INACTIVE,
+              )}
+            >
+              {isActive && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] bg-gradient-to-r from-transparent via-primary to-transparent"
+                />
+              )}
+              <span className={cn(LISTINGS_SECTION_TAB_ICON, isActive && LISTINGS_SECTION_TAB_ICON_ACTIVE)}>
+                <section.icon className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <span className="min-w-0 text-left">
+                <span className="block truncate text-sm font-bold tracking-[-0.01em] text-foreground">
+                  {section.label}
+                </span>
+                <span className="block truncate text-xs font-medium text-muted-foreground">
+                  {section.description}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function Listings() {
   const { enabled: builderStockEnabled } = useBuilderStockMarketplaceFlag();
   const [tab, setTab] = useState<MarketplaceTab>('listings');
@@ -324,57 +387,38 @@ export default function Listings() {
 
   if (!builderStockEnabled) return <ListingsMarketplace />;
 
-  return (
-    <div className="space-y-0">
-      <div className={cn(LISTINGS_SHELL, 'pb-0 pt-3')}>
-        <div
-          className={LISTINGS_SECTION_SWITCHER}
-          role="tablist"
-          aria-label="Property Marketplace sections"
-        >
-          {MARKETPLACE_SECTIONS.map((section) => {
-            const isActive = tab === section.id;
-            return (
-              <button
-                key={section.id}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                onClick={() => setTab(section.id)}
-                className={cn(
-                  LISTINGS_SECTION_TAB,
-                  isActive ? LISTINGS_SECTION_TAB_ACTIVE : LISTINGS_SECTION_TAB_INACTIVE,
-                )}
-              >
-                <span className={cn(LISTINGS_SECTION_TAB_ICON, isActive && LISTINGS_SECTION_TAB_ICON_ACTIVE)}>
-                  <section.icon className="h-5 w-5" aria-hidden="true" />
-                </span>
-                <span className="min-w-0 text-left">
-                  <span className="block truncate text-sm font-bold tracking-[-0.01em] text-foreground">
-                    {section.label}
-                  </span>
-                  <span className="block truncate text-xs font-medium text-muted-foreground">
-                    {section.description}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+  const sectionTabs = <MarketplaceSectionTabs tab={tab} onChange={setTab} />;
 
-      {tab === 'listings' ? <ListingsMarketplace /> : (
-        <div className={cn(LISTINGS_SHELL, 'space-y-5 md:space-y-7')}>
-          <ErrorBoundary>
-            <Suspense fallback={<Skeleton className="h-72 rounded-2xl" />}>
-              <BuilderStockTab />
-            </Suspense>
-          </ErrorBoundary>
+  if (tab === 'listings') return <ListingsMarketplace sectionTabs={sectionTabs} />;
+
+  return (
+    <div className={cn(LISTINGS_SHELL, 'space-y-5 md:space-y-7')}>
+      <section
+        className={`${LISTINGS_SECTION_SURFACE} relative overflow-hidden bg-gradient-to-br from-card/95 via-card/80 to-primary/5 dark:from-background/80 dark:via-background/55 dark:to-primary/10`}
+      >
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/45 to-transparent" />
+        <div className="min-w-0 max-w-3xl">
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/90 shadow-sm dark:border-primary/20 dark:bg-primary/10">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_14px_rgba(245,158,11,0.55)]" />
+            Property Intelligence
+          </div>
+          <h1 className="text-4xl font-bold tracking-[-0.06em] text-foreground md:text-5xl">Property Marketplace</h1>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground/90 md:text-base">
+            Off-Market · On Market · Builder Opportunities
+          </p>
         </div>
-      )}
+        {sectionTabs}
+      </section>
+
+      <ErrorBoundary>
+        <Suspense fallback={<Skeleton className="h-72 rounded-2xl" />}>
+          <BuilderStockTab />
+        </Suspense>
+      </ErrorBoundary>
     </div>
   );
 }
+
 
 function ListingsMarketplace() {
   const { canEdit: canEditListings, canDelete: canDeleteListings } = useModulePermissions('listings');
