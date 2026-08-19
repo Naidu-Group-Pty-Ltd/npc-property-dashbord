@@ -234,6 +234,17 @@ export default function AmlCaseWorkspace() {
    * every stage. It replaces five self-fetching cards; the heavy stage
    * bodies still load their own detail only when their stage is opened.
    */
+  /*
+   * Read BEFORE the case summary, which now takes the PEP scope decision from
+   * it. Declared afterwards this is a temporal dead zone — the options object
+   * is evaluated eagerly, so the page would throw on mount rather than
+   * degrade.
+   */
+  const screeningStage = useScreeningStage(caseId, {
+    riskRating: caseRow?.risk_rating ?? null,
+    enhancedDueDiligence: caseRow?.status === "edd_required",
+  });
+
   const { loading: summaryLoading, evidence, facts, summary, journey } = useAmlCaseSummary(
     caseRow,
     caseRow ? openRequests.length : undefined,
@@ -241,6 +252,15 @@ export default function AmlCaseWorkspace() {
       enabled: access.hasAnyRole && access.flagEnabled && Boolean(caseRow),
       canReadMatter: canInvestigate,
       clientId: caseRow?.client_id ?? null,
+      /*
+       * The scope decision the stage read already holds. Passing it here is
+       * what lets the journey rail name the PEP determination as the
+       * outstanding item instead of reporting "screening has not been run" on
+       * a case whose screening obligation was stood down. Until that read
+       * lands it is `null`, which reads as owed — the safe direction.
+       */
+      pepRequired: screeningStage.sync?.scopes?.find(
+        (x) => x.scope === "pep")?.required ?? null,
     },
   );
 
@@ -260,11 +280,6 @@ export default function AmlCaseWorkspace() {
    * on its second press.
    */
   const [manualScreeningRequest, setManualScreeningRequest] = useState(0);
-  const screeningStage = useScreeningStage(caseId, {
-    riskRating: caseRow?.risk_rating ?? null,
-    enhancedDueDiligence: caseRow?.status === "edd_required",
-  });
-
   /**
    * Keep the open case current. A document the client uploads, a screening
    * result landing or a stage completing now reaches a tab that is already
@@ -713,6 +728,7 @@ export default function AmlCaseWorkspace() {
               <ScreeningStageCard
                 reading={screeningStage}
                 onAct={runScreeningAction}
+                onContinue={nextStage ? () => goToStage(nextStage.id) : undefined}
                 actor={{
                   canWrite,
                   isReviewer: access.roles.has("reviewer"),

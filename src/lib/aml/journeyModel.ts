@@ -823,8 +823,9 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
   let owner: AmlJourneyOwner = "none";
 
   if (loaded(facts.screening)) {
-    const subjects = facts.screening.subjects.filter((s) => s.state !== "not_required");
-    sourceFacts.push(`party_screening_subjects (${subjects.length})`);
+    const enrolled = facts.screening.subjects;
+    const subjects = enrolled.filter((s) => s.state !== "not_required");
+    sourceFacts.push(`party_screening_subjects (${subjects.length} of ${enrolled.length} in scope)`);
     const openMatches = subjects.reduce(
       (n, s) => n + (s.matches ?? []).filter((m) => m.status === "open").length,
       0,
@@ -835,7 +836,28 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
     const pending = subjects.filter((s) => ["not_started", "queued", "processing"].includes(s.state));
     const settled = subjects.filter((s) => ["completed", "false_positive"].includes(s.state));
 
-    if (subjects.length === 0) {
+    if (subjects.length === 0 && enrolled.length > 0) {
+      /*
+       * Enrolled, and nothing to screen.
+       *
+       * Every party's screening obligation was stood down by the recorded
+       * perimeter decision, so there is no screening to run. This branch used
+       * to fall through to "Screening has not been run" — an obligation
+       * reported as an unfinished task — which sat on the page beside a card
+       * correctly saying sanctions was not required, and left an operator
+       * reconciling two true statements that appeared to contradict.
+       *
+       * Not run and not owed are different facts. This one is settled.
+       */
+      screeningState = "complete";
+      screeningSummary = "No screening is required for this case.";
+      completed.push(
+        note("screening_not_required", "Screening not required under the recorded scope", "steady", {
+          detail: "No obligation arose, so nobody was screened. This is a policy decision, "
+            + "not a screening result.",
+        }),
+      );
+    } else if (subjects.length === 0) {
       screeningState = "not_started";
       screeningSummary = "No screening subjects recorded.";
       owner = "analyst";
@@ -880,6 +902,66 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
     unavailableFacts.push("party screening");
   }
 
+  /*
+   * ── The PEP determination ─────────────────────────────────────────
+   * Read here because it is a Stage 5 obligation and this stage could not
+   * see it. On the reported case sanctions was stood down and the PEP
+   * determination was the ONLY thing outstanding — so the stage reported
+   * "screening has not been run", named no owner for the real work, and the
+   * one item holding Stage 5 open appeared nowhere in the rail.
+   *
+   * Established by a recorded determination per party. Absent is outstanding.
+   */
+  let pepState: AmlEvidenceState = "unknown";
+  if (loaded(facts.screening)) {
+    const enrolled = facts.screening.subjects;
+    /*
+     * Three answers, not two.
+     *
+     *   false      no determination is owed — excluded from the stage
+     *   true       owed, so the determinations decide the state
+     *   unread     `unknown`, which fails closed for stage completion
+     *              WITHOUT inventing an outstanding item or claiming an
+     *              owner. Reporting unread work as outstanding work is its
+     *              own kind of lie, and it would fire on every case whose
+     *              scope read has not landed yet.
+     */
+    const pepOwed = facts.screening.pepRequired;
+    if (pepOwed === false) {
+      pepState = "not_applicable";
+    } else if (pepOwed !== true) {
+      pepState = "unknown";
+      unavailableFacts.push("PEP scope decision");
+    } else {
+      const undetermined = enrolled.filter((s) => !s.pep_determination?.result);
+      if (enrolled.length === 0) {
+        // Nobody enrolled cannot mean everybody determined.
+        pepState = "not_started";
+        outstanding.push(note("pep_no_parties", "PEP determination outstanding", "waiting", {
+          detail: "No party is enrolled yet, so no determination can have been made.",
+        }));
+        if (owner === "none") owner = "analyst";
+      } else if (undetermined.length > 0) {
+        pepState = "not_started";
+        outstanding.push(
+          note("pep_outstanding",
+            `PEP determination outstanding for ${undetermined.length} part${undetermined.length === 1 ? "y" : "ies"}`,
+            "waiting", {
+              detail: "Recorded by a reviewer or the MLRO with the sources checked and a "
+                + "rationale. A client declaration is evidence that supports it; it is "
+                + "never the determination itself.",
+            }),
+        );
+        // Only when nothing more urgent already owns the stage. A candidate
+        // awaiting adjudication outranks an outstanding determination.
+        if (owner === "none") owner = "reviewer";
+      } else {
+        pepState = "complete";
+        completed.push(note("pep_done", "PEP determination recorded for every party", "steady"));
+      }
+    }
+  }
+
   // ── Ownership & control. Individual customers genuinely have none — that
   //    is a property of the case, not an unfinished task.
   const subjectType = facts.caseRow.subject_type;
@@ -916,7 +998,7 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
     unavailableFacts.push("linked entities");
   }
 
-  const states: AmlEvidenceState[] = [screeningState, ownershipState].filter(
+  const states: AmlEvidenceState[] = [screeningState, pepState, ownershipState].filter(
     (s) => s !== "not_applicable",
   );
   const status: AmlEvidenceState = states.includes("attention")
@@ -932,10 +1014,15 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
   return {
     status,
     owner: status === "complete" ? "none" : owner,
-    summary:
-      ownershipState === "not_applicable"
-        ? screeningSummary
-        : `${screeningSummary} Ownership: ${EVIDENCE_STATE_LABELS[ownershipState].toLowerCase()}.`,
+    summary: [
+      screeningSummary,
+      pepState === "not_applicable" ? null
+        : pepState === "complete" ? "PEP determined."
+          : pepState === "not_started" ? "PEP determination outstanding."
+            : null,
+      ownershipState === "not_applicable" ? null
+        : `Ownership: ${EVIDENCE_STATE_LABELS[ownershipState].toLowerCase()}.`,
+    ].filter(Boolean).join(" "),
     blockers,
     warnings,
     completedItems: completed,
@@ -947,7 +1034,12 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
             key: "screening",
             label: blockers.some((b) => b.key === "confirmed" || b.key === "possible")
               ? "Adjudicate screening"
-              : "Open screening & ownership",
+              // Name the actual work. "Open screening & ownership" on a case
+              // whose only outstanding item is a PEP determination tells an
+              // operator where to click and nothing about what to do there.
+              : outstanding.some((o) => o.key.startsWith("pep_"))
+                ? "Record PEP determination"
+                : "Open screening & ownership",
             section: "ownership",
             actionType: "screening_adjudication",
           },

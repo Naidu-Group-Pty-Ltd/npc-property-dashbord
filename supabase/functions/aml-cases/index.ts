@@ -2648,9 +2648,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const reason = typeof body.reason === 'string' ? body.reason : null;
         if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
 
-        const { data: caseRow } = await admin.schema('aml').from('cases')
-          .select('id, case_reference, status, service_gate_status, client_id')
+        let { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, case_reference, status, case_stage, service_gate_status, client_id')
           .eq('id', caseId).maybeSingle();
+        if (!caseRow) {
+          ({ data: caseRow } = await admin.schema('aml').from('cases')
+            .select('id, case_reference, status, service_gate_status, client_id')
+            .eq('id', caseId).maybeSingle());
+        }
         if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
 
         const [{ data: consents }, { data: subjects }, { data: submission },
@@ -2668,6 +2673,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const plan = planCaseReopen({
           caseId, caseReference: String(caseRow.case_reference ?? caseId),
           status: String(caseRow.status ?? ''),
+          // The canonical dimension, so a case the rest of the product calls
+          // closed can actually be reopened — and reopening is what puts the
+          // two dimensions back into agreement.
+          caseStage: caseRow.case_stage ?? null,
           serviceGateStatus: caseRow.service_gate_status ?? null,
           consents: (consents ?? []).map((c: any) => ({
             kind: String(c.kind), version: c.version ?? null,
