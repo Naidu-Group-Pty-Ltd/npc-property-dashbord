@@ -30,6 +30,20 @@
  * is a lead rather than a source. Every row carries `confirm_url` — the
  * official register the operator confirms against — and the evidence a
  * determination rests on is what they record from THAT, never from here.
+ *
+ * ── Coverage is MEASURED, not claimed ─────────────────────────────────
+ * `covers` used to be a sentence: "Commonwealth, state and territory
+ * parliamentarians, ministers, judges, heads of agency…". The first real
+ * load wrote 1,254 people across TWO offices — the House of Representatives
+ * and its Speaker — because the query walked the wrong root. The load was
+ * green, the number was plausible, and the sentence on screen was false.
+ *
+ * A claim nobody measures is a claim nobody can check, and an overstated
+ * coverage line is worse than an unavailable index: it tells an operator
+ * that an absence means more than it does. So the prose now describes the
+ * SHAPE of the source, and the specifics an operator relies on — how many
+ * offices were reached, how many people, which ones — are read off the load
+ * itself and rendered beside it.
  */
 
 export const PEP_INDEX_SOURCES = [
@@ -38,14 +52,17 @@ export const PEP_INDEX_SOURCES = [
     label: "Australian public office holders (Wikidata)",
     /** The register an operator confirms a candidate against. */
     confirmAgainst: "the official register for the office named",
-    /** Said on screen with every result. Plain, and pessimistic. */
+    /**
+     * The SHAPE of what the source holds. Anything countable — how many
+     * offices, how many people, which ones — comes off the load instead.
+     */
     covers:
-      "Commonwealth, state and territory parliamentarians, ministers, judges, "
-      + "heads of agency and senior office holders who have a public record — "
-      + "current and former.",
+      "offices whose jurisdiction is Australia or one of its states and "
+      + "territories, and the people recorded as having held them — current "
+      + "and former",
     excludes:
-      "Family members and close associates, foreign office holders, and anybody "
-      + "whose office has no public record.",
+      "family members and close associates, office holders with no public "
+      + "record, and foreign offices held overseas",
     collaborative: true,
   },
 ] as const;
@@ -60,6 +77,15 @@ export interface PepIndexCoverage {
   /** Whether the source is collaboratively edited, said out loud. */
   collaborative: boolean;
   entryCount: number;
+  /**
+   * How many distinct offices the load actually reached, and a sample.
+   *
+   * Measured by the loader and rendered on screen, because this is exactly
+   * the fact a coverage sentence got wrong: a load holding two offices read
+   * identically to one holding seven hundred.
+   */
+  officeCount: number | null;
+  sampleOffices: string[];
   /** When the source itself says it is current to — not when we synced. */
   sourceAsAt: string | null;
   lastSyncedAt: string | null;
@@ -72,7 +98,11 @@ export interface PepIndexCandidate {
   fullName: string;
   aliases: string[];
   positionTitle: string;
-  pepType: "foreign" | "domestic" | "international_organisation";
+  /**
+   * Null, and it stays null. The AUSTRAC category is part of the
+   * determination the operator reaches, not something an index asserts.
+   */
+  pepType: "foreign" | "domestic" | "international_organisation" | null;
   jurisdiction: string | null;
   positionStart: string | null;
   positionEnd: string | null;
@@ -113,9 +143,20 @@ export function describeCoverage(
     completed_at?: string | null;
     started_at?: string | null;
     status?: string | null;
+    detail?: {
+      office_count?: number | null;
+      distinct_offices?: number | null;
+      sample_offices?: unknown;
+    } | null;
   } | null,
 ): PepIndexCoverage {
   const source = PEP_INDEX_SOURCES.find((s) => s.code === sourceCode);
+  const detail = sync?.detail ?? null;
+  const offices = detail?.distinct_offices ?? detail?.office_count ?? null;
+  const sample = Array.isArray(detail?.sample_offices)
+    ? (detail!.sample_offices as unknown[])
+      .map((o) => String(o ?? "").trim()).filter(Boolean).slice(0, 12)
+    : [];
   return {
     sourceCode,
     label: source?.label ?? sourceCode,
@@ -123,6 +164,8 @@ export function describeCoverage(
     excludes: source?.excludes ?? "",
     collaborative: source?.collaborative ?? true,
     entryCount: Number(sync?.entry_count ?? 0),
+    officeCount: typeof offices === "number" && Number.isFinite(offices) ? offices : null,
+    sampleOffices: sample,
     sourceAsAt: sync?.source_as_at ?? null,
     lastSyncedAt: sync?.completed_at ?? sync?.started_at ?? null,
     lastSyncStatus: sync?.status ?? "never",

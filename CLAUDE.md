@@ -334,9 +334,21 @@ operation or `PepOfficeholderIndexPanel`. It is the second register this
 platform loads and **not the same kind of thing as the first**: a sanctions
 match is an outcome, an index hit is a lead.
 
-**A hit is a candidate; a miss is nothing.** No public source lists every
+**A hit is a candidate; a miss is nothing** — and the worse failure is not the
+empty reading but the OVERSTATED one. The first load walked a subclass tree
+from an entity that is itself an office, wrote 1,254 people across two, and
+the product told operators it covered ministers, judges and every state.
+Offices are found by jurisdiction (`P1001`) now, coverage prose carries no
+numbers at all (a test asserts it), and everything countable is measured by
+the loader into `pep_officeholder_syncs.detail` and rendered from there.
+`pep_type` is left NULL because the AUSTRAC category belongs to the
+determination, not the index. The endpoint also fails by lying — 200 with the
+JSON cut off at its own 60s limit — so the query groups server-side, reads
+offices in batches, and names an unparseable body a truncated download.
+
+No public source lists every
 prominent public function and none lists family members or close associates,
-so the danger is the EMPTY reading — zero rows for somebody the index never
+so the danger is also the EMPTY reading — zero rows for somebody the index never
 covered looks exactly like zero rows for somebody who holds no office, which
 is the shape `sanctions_entries` already shipped once. So `searchVerdict` has
 four readings and a test asserts none can be paraphrased into a clearance;

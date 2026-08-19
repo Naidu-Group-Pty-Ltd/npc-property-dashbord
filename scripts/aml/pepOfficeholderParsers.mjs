@@ -1,7 +1,7 @@
 /**
  * Parse public office-holder sources into index rows.
  *
- * Pure: takes bytes or parsed JSON, returns rows. Every I/O concern lives in
+ * Pure: takes parsed JSON, returns rows. Every I/O concern lives in
  * `load-pep-officeholders.mjs`, so this file can be unit-tested without a
  * network or a database.
  *
@@ -14,32 +14,74 @@
 import { normaliseName } from './sanctionsParsers.mjs';
 
 /**
- * The SPARQL query behind the Wikidata source.
+ * Which offices count as Australian public offices.
  *
- * `wdt:P279*` walks the subclass tree from "public office of Australia", so
- * this picks up parliamentarians, ministers, judges, heads of agency and the
- * state and territory equivalents without naming each one — a hand-written
- * list of offices is a list that goes out of date silently.
+ * ── Why P1001 and not a subclass tree ─────────────────────────────────
+ * The first version of this walked `wdt:P279*` up from a single root and
+ * loaded 1,254 people across TWO offices — the House of Representatives and
+ * its Speaker. No senators, no ministers, no judges, nothing from any state
+ * or territory. The root it used, `Q18912794`, is not a class of Australian
+ * public offices at all: it IS "member of the Australian House of
+ * Representatives". The load succeeded, the count looked plausible, and the
+ * coverage the product then stated on screen was false.
+ *
+ * `P1001` ("applies to jurisdiction") is the axis that actually holds. The
+ * jurisdiction is Australia itself or anything whose country (`P17`) is
+ * Australia, which reaches the states and territories without naming them —
+ * a hand-written list of eight is a list that goes stale silently.
+ *
+ * Measured 2026-08-19: 724 offices, 10,569 people.
+ *
+ * `FILTER EXISTS` drops offices nobody has ever held. They are not coverage,
+ * they are 400 extra chunks of nothing.
+ */
+export const WIKIDATA_AU_OFFICES_QUERY = `
+SELECT DISTINCT ?pos WHERE {
+  ?pos wdt:P1001 ?jur .
+  ?jur wdt:P17? wd:Q408 .
+  FILTER EXISTS { ?someone p:P39/ps:P39 ?pos }
+}
+`.trim();
+
+/**
+ * The holders of a batch of offices, ONE ROW PER PERSON.
+ *
+ * The grouping is not a nicety. Asking for aliases and positions as plain
+ * OPTIONALs returns their cross-product: 60 offices produced 8.5 MB, the
+ * endpoint hit its own 60-second ceiling, and it answered **HTTP 200 with
+ * the JSON cut off mid-value and no error in the body**. Collapsing the two
+ * multi-valued things with GROUP_CONCAT moves that work to the server: the
+ * same shape at 20 offices is 198 KB in 2.5 seconds.
+ *
+ * Labels come from `rdfs:label` rather than the label service, because a
+ * grouped query cannot reference the service's generated variables, and
+ * because it is faster.
  *
  * Position dates are kept and never used to FILTER. A former office holder
  * is assessed on risk rather than written off by the passage of time, so the
  * index carries them and the determination decides.
  */
-export const WIKIDATA_AU_QUERY = `
-SELECT ?person ?personLabel ?positionLabel ?start ?end ?altLabel ?article WHERE {
-  ?person p:P39 ?statement .
-  ?statement ps:P39 ?position .
-  ?position wdt:P279* wd:Q18912794 .
-  OPTIONAL { ?statement pq:P580 ?start }
-  OPTIONAL { ?statement pq:P582 ?end }
-  OPTIONAL {
-    ?article schema:about ?person ;
-             schema:isPartOf <https://en.wikipedia.org/> .
-  }
-  OPTIONAL { ?person skos:altLabel ?altLabel FILTER (lang(?altLabel) = "en") }
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+export function buildWikidataOfficeholderQuery(officeQids) {
+  const values = officeQids.map((q) => `wd:${q}`).join(' ');
+  return `
+SELECT ?person ?personLabel ?article
+       (GROUP_CONCAT(DISTINCT ?alias; separator="||") AS ?aliases)
+       (GROUP_CONCAT(DISTINCT ?posline; separator="||") AS ?positions)
+WHERE {
+  VALUES ?position { ${values} }
+  ?person p:P39 ?st .
+  ?st ps:P39 ?position .
+  ?person rdfs:label ?personLabel . FILTER(LANG(?personLabel) = "en")
+  ?position rdfs:label ?posLabel . FILTER(LANG(?posLabel) = "en")
+  OPTIONAL { ?st pq:P580 ?s }
+  OPTIONAL { ?st pq:P582 ?e }
+  BIND(CONCAT(?posLabel, "~", COALESCE(STR(?s), ""), "~", COALESCE(STR(?e), "")) AS ?posline)
+  OPTIONAL { ?article schema:about ?person ; schema:isPartOf <https://en.wikipedia.org/> . }
+  OPTIONAL { ?person skos:altLabel ?alias . FILTER(LANG(?alias) = "en") }
 }
+GROUP BY ?person ?personLabel ?article
 `.trim();
+}
 
 const text = (b, k) => {
   const v = b?.[k]?.value;
@@ -54,62 +96,67 @@ const asDate = (v) => {
 };
 
 /**
- * A Wikidata label that is really a Q-id ("Q23939864") is the label service
- * having no English label for the entity. Indexing that as a NAME would put
- * an unsearchable string in the table and, worse, could match a real query
- * token; indexing it as a POSITION would show an operator a machine id where
- * the office should be.
+ * A label that is really a Q-id ("Q23939864") means Wikidata has no English
+ * label for the entity. Indexed as a NAME that is an unsearchable string;
+ * shown as a POSITION it is a machine id where the office should be.
  */
 const isQid = (s) => typeof s === 'string' && /^Q\d+$/.test(s);
 
-/**
- * SPARQL JSON → index rows, one per person (positions merged).
- *
- * One row per person rather than per position, because the operator's
- * question is "is this person an office holder", and five rows for five
- * terms of the same seat is five times the reading for no more information.
- * The positions are carried in `source_detail` so nothing is lost.
- */
-export function parseWikidataOfficeholders(json) {
-  const bindings = json?.results?.bindings;
-  if (!Array.isArray(bindings)) return [];
+/** `title~start~end` → `{ title, start, end }`, or null if unusable. */
+function parsePositionLine(line) {
+  const parts = String(line ?? '').split('~');
+  const title = (parts[0] ?? '').trim();
+  if (!title || isQid(title)) return null;
+  return { title, start: asDate(parts[1]), end: asDate(parts[2]) };
+}
 
-  const byPerson = new Map();
+/**
+ * Merge one batch of grouped results into an accumulator keyed by person.
+ *
+ * The accumulator is threaded across batches because offices are queried in
+ * chunks and one person holds offices in several of them — the Prime
+ * Minister is also a member of the House. Merging at the end of every chunk
+ * rather than upserting per chunk is what keeps a person's positions in one
+ * row instead of whichever chunk wrote last.
+ */
+export function accumulateWikidataOfficeholders(json, into = new Map()) {
+  const bindings = json?.results?.bindings;
+  if (!Array.isArray(bindings)) return into;
+
   for (const b of bindings) {
     const uri = text(b, 'person');
     const name = text(b, 'personLabel');
-    const position = text(b, 'positionLabel');
-    if (!uri || !name || !position) continue;
-    if (isQid(name) || isQid(position)) continue;
+    if (!uri || !name || isQid(name)) continue;
+
+    const positions = String(b?.positions?.value ?? '')
+      .split('||').map(parsePositionLine).filter(Boolean);
+    if (positions.length === 0) continue;
 
     const qid = uri.split('/').pop();
-    let row = byPerson.get(qid);
+    let row = into.get(qid);
     if (!row) {
-      row = {
-        external_id: qid,
-        full_name: name,
-        aliases: new Set(),
-        positions: [],
-        article: text(b, 'article'),
-      };
-      byPerson.set(qid, row);
+      row = { external_id: qid, full_name: name, aliases: new Set(), positions: [], article: null };
+      into.set(qid, row);
     }
-    const alias = text(b, 'altLabel');
-    if (alias && !isQid(alias) && alias !== name) row.aliases.add(alias);
     if (!row.article) row.article = text(b, 'article');
-
-    const start = asDate(text(b, 'start'));
-    const end = asDate(text(b, 'end'));
-    const key = `${position}|${start ?? ''}|${end ?? ''}`;
-    if (!row.positions.some((p) => p.key === key)) {
-      row.positions.push({ key, title: position, start, end });
+    for (const alias of String(b?.aliases?.value ?? '').split('||')) {
+      const a = alias.trim();
+      if (a && a !== name && !isQid(a)) row.aliases.add(a);
+    }
+    for (const p of positions) {
+      const key = `${p.title}|${p.start ?? ''}|${p.end ?? ''}`;
+      if (!row.positions.some((x) => x.key === key)) row.positions.push({ key, ...p });
     }
   }
+  return into;
+}
 
-  return [...byPerson.values()].map((row) => {
-    // The office to SHOW is the one that is current, else the most recent —
+/** Turn the accumulator into index entries. */
+export function officeholderEntries(acc) {
+  return [...acc.values()].map((row) => {
+    // The office to SHOW is the one currently held, else the most recent —
     // an operator scanning candidates needs the position that makes this
-    // person worth a second look, not whichever term the query emitted first.
+    // person worth a second look, not whichever chunk arrived first.
     const sorted = row.positions.slice().sort((a, b) => {
       const aOpen = a.end === null, bOpen = b.end === null;
       if (aOpen !== bOpen) return aOpen ? -1 : 1;
@@ -118,10 +165,10 @@ export function parseWikidataOfficeholders(json) {
     const lead = sorted[0];
     /*
      * `currently_held` is null when the source does not say, NEVER false.
-     * An open-ended statement on Wikidata means "no end date recorded",
-     * which is not the same as "still in office" — but a start date with no
-     * end is the only positive signal the source has, so it is reported as
-     * `true` and the absence of any date at all is reported as unknown.
+     * An open-ended statement means "no end date recorded", which is not the
+     * same as "still in office" — but a start with no end is the only
+     * positive signal the source has, so that reads as true and a statement
+     * with no dates at all reads as unknown.
      */
     const currentlyHeld = lead.end !== null ? false : (lead.start !== null ? true : null);
     return {
@@ -129,13 +176,19 @@ export function parseWikidataOfficeholders(json) {
       full_name: row.full_name,
       aliases: [...row.aliases].slice(0, 12),
       position_title: lead.title,
-      pep_type: 'domestic',
+      /*
+       * NOT asserted. The AUSTRAC category — foreign, domestic or
+       * international organisation — is part of the DETERMINATION a person
+       * reaches, and this index does not make determinations. It also
+       * cannot: an "applies to jurisdiction: Australia" office includes
+       * foreign ambassadors posted here, so stamping every row `domestic`
+       * would be wrong on the face of the data as well as in principle.
+       */
+      pep_type: null,
       jurisdiction: 'Australia',
       position_start: lead.start,
       position_end: lead.end,
       currently_held: currentlyHeld,
-      // Where an operator goes to read about the candidate before deciding
-      // it is worth confirming against the official register.
       confirm_url: row.article ?? `https://www.wikidata.org/wiki/${row.external_id}`,
       source_detail: {
         positions: sorted.map(({ title, start, end }) => ({ title, start, end })),
@@ -143,6 +196,11 @@ export function parseWikidataOfficeholders(json) {
       },
     };
   });
+}
+
+/** One batch, standalone — the shape the tests exercise. */
+export function parseWikidataOfficeholders(json) {
+  return officeholderEntries(accumulateWikidataOfficeholders(json));
 }
 
 /**
@@ -162,7 +220,7 @@ export function withNormalisedNames(entry, sourceCode, syncId) {
     aliases: entry.aliases ?? [],
     normalised_names: normalised,
     position_title: entry.position_title,
-    pep_type: entry.pep_type ?? 'domestic',
+    pep_type: entry.pep_type ?? null,
     jurisdiction: entry.jurisdiction ?? null,
     position_start: entry.position_start ?? null,
     position_end: entry.position_end ?? null,

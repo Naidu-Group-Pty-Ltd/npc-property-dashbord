@@ -41,17 +41,30 @@ import { createClient } from '@supabase/supabase-js';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import {
-  WIKIDATA_AU_QUERY, parseWikidataOfficeholders, withNormalisedNames,
+  WIKIDATA_AU_OFFICES_QUERY, accumulateWikidataOfficeholders,
+  buildWikidataOfficeholderQuery, officeholderEntries, withNormalisedNames,
 } from './pepOfficeholderParsers.mjs';
 
 const SOURCES = {
   wikidata_au_public_office: {
     label: 'Australian public office holders (Wikidata)',
     endpoint: 'https://query.wikidata.org/sparql',
-    query: WIKIDATA_AU_QUERY,
-    parse: parseWikidataOfficeholders,
   },
 };
+
+/*
+ * Offices per query.
+ *
+ * Not a tuning knob so much as a hard constraint. The endpoint's own ceiling
+ * is 60 seconds, and it does not fail cleanly when it hits one: 60 offices
+ * answered HTTP 200 with 8.5 MB of JSON cut off mid-value and no error
+ * anywhere in the body. 20 offices is 198 KB in about 2.5 seconds, which
+ * leaves the ceiling a wide margin.
+ */
+const OFFICES_PER_QUERY = 20;
+
+/* Wikidata throttles. 429 and 5xx are both retried, and both are transient. */
+const MAX_ATTEMPTS = 5;
 
 /* A shrunken index is far more likely to be a truncated or throttled
    response than a mass exit from public life. */
@@ -66,17 +79,102 @@ function arg(name, argv) {
   return i >= 0 ? argv[i + 1] : undefined;
 }
 
-async function runSparql(source) {
-  const url = `${source.endpoint}?query=${encodeURIComponent(source.query)}`;
-  const res = await fetch(url, {
-    headers: { Accept: 'application/sparql-results+json', 'User-Agent': UA },
-    // The full query is minutes of work on the public endpoint. A short
-    // timeout here would produce a partial index, which is worse than none.
-    signal: AbortSignal.timeout(20 * 60 * 1000),
-  });
-  if (!res.ok) throw new Error(`${source.endpoint} answered ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  return { json: JSON.parse(buf.toString('utf8')), buf };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * One SPARQL request, with backoff.
+ *
+ * The truncation check is the important line. This endpoint answers **200
+ * with a body cut off mid-value** when it exceeds its own time limit — no
+ * error field, no marker, nothing to test but the parse. A response that is
+ * not valid JSON is therefore treated as a TRUNCATED DOWNLOAD by name, not
+ * as a malformed source, because that is what it is and because the
+ * distinction is what tells the next person which lever to pull.
+ */
+async function runSparql(endpoint, query) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    let res;
+    try {
+      res = await fetch(`${endpoint}?query=${encodeURIComponent(query)}`, {
+        headers: { Accept: 'application/sparql-results+json', 'User-Agent': UA },
+        signal: AbortSignal.timeout(3 * 60 * 1000),
+      });
+    } catch (e) {
+      lastError = e;
+      await sleep(2000 * attempt);
+      continue;
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (res.status === 429 || res.status >= 500) {
+      lastError = new Error(`${endpoint} answered ${res.status}`);
+      // Honour Retry-After when the server states one; otherwise back off.
+      const stated = Number(res.headers.get('retry-after'));
+      await sleep(Number.isFinite(stated) && stated > 0
+        ? Math.min(stated, 120) * 1000
+        : 3000 * attempt);
+      continue;
+    }
+    if (!res.ok) throw new Error(`${endpoint} answered ${res.status}`);
+    try {
+      return { json: JSON.parse(buf.toString('utf8')), buf };
+    } catch {
+      lastError = new Error(
+        `${endpoint} answered 200 with a truncated body (${buf.length} bytes) — the `
+        + 'endpoint cuts the response at its own time limit without reporting an error',
+      );
+      await sleep(3000 * attempt);
+    }
+  }
+  throw lastError ?? new Error('the SPARQL endpoint could not be read');
+}
+
+const chunk = (xs, n) => {
+  const out = [];
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+  return out;
+};
+
+/**
+ * Every Australian public office holder, in batches of offices.
+ *
+ * Batched because one query for all of them cannot finish inside the
+ * endpoint's limit, and a query that does not finish comes back looking like
+ * a smaller answer rather than like a failure. The accumulator is threaded
+ * through every batch so a person who holds offices in several of them ends
+ * up as one row rather than as whichever batch wrote last.
+ */
+async function loadWikidata(source, log) {
+  const officeRes = await runSparql(source.endpoint, WIKIDATA_AU_OFFICES_QUERY);
+  const offices = (officeRes.json?.results?.bindings ?? [])
+    .map((b) => String(b?.pos?.value ?? '').split('/').pop())
+    .filter((q) => /^Q\d+$/.test(q));
+  if (offices.length === 0) {
+    throw new Error('the office list came back empty — refusing to publish an empty index');
+  }
+  log(`  ${offices.length} offices to read`);
+
+  const batches = chunk(offices, OFFICES_PER_QUERY);
+  const acc = new Map();
+  const hashes = [];
+  for (const [i, batch] of batches.entries()) {
+    const res = await runSparql(source.endpoint, buildWikidataOfficeholderQuery(batch));
+    accumulateWikidataOfficeholders(res.json, acc);
+    hashes.push(createHash('sha256').update(res.buf).digest('hex'));
+    process.stdout.write(`\r  batch ${i + 1}/${batches.length}, ${acc.size} people`);
+    // Polite: the endpoint is a shared public service and it throttles.
+    if (i < batches.length - 1) await sleep(1500);
+  }
+  console.log('');
+
+  return {
+    entries: officeholderEntries(acc),
+    officeCount: offices.length,
+    // One digest over the batch digests: the payload is many responses, and
+    // a single fingerprint over all of them is what makes a re-run
+    // comparable to the last one.
+    payloadSha: createHash('sha256').update(hashes.join('')).digest('hex'),
+  };
 }
 
 async function main() {
@@ -111,17 +209,18 @@ async function main() {
     }
 
     try {
-      let json, payload;
+      let parsed, officeCount = null, sha;
       if (file) {
-        payload = readFileSync(file);
-        json = JSON.parse(payload.toString('utf8'));
+        const payload = readFileSync(file);
         console.log(`  read ${file} (${payload.length} bytes)`);
+        const acc = accumulateWikidataOfficeholders(JSON.parse(payload.toString('utf8')));
+        parsed = officeholderEntries(acc);
+        sha = createHash('sha256').update(payload).digest('hex');
       } else {
-        const r = await runSparql(source);
-        json = r.json; payload = r.buf;
+        const r = await loadWikidata(source, (m) => console.log(m));
+        parsed = r.entries; officeCount = r.officeCount; sha = r.payloadSha;
       }
 
-      const parsed = source.parse(json);
       if (parsed.length === 0) {
         // The sanctions rule, and it applies here for a different reason:
         // an empty index is not "nobody is an office holder", it is a
@@ -130,12 +229,13 @@ async function main() {
         throw new Error('parser produced 0 entries — refusing to publish an empty index');
       }
 
-      const sha = createHash('sha256').update(payload).digest('hex');
       const rows = parsed
         .map((e) => withNormalisedNames(e, code, sync?.id))
         .filter((r) => r.normalised_names.length > 0);
 
-      console.log(`  parsed ${parsed.length}, searchable ${rows.length}, sha256 ${sha.slice(0, 16)}…`);
+      const offices = new Set(rows.map((r) => r.position_title));
+      console.log(`  parsed ${parsed.length}, searchable ${rows.length}, `
+        + `${offices.size} distinct offices, sha256 ${sha.slice(0, 16)}…`);
       if (dryRun) {
         console.log('  dry run — not written');
         console.log('  sample:', JSON.stringify(rows[0], null, 2).slice(0, 800));
@@ -189,6 +289,18 @@ async function main() {
         // date can be years older than the day it was downloaded.
         source_as_at: new Date().toISOString().slice(0, 10),
         completed_at: new Date().toISOString(),
+        /*
+         * What the load actually reached, recorded beside it. The coverage
+         * an operator is shown is derived from THIS rather than from a
+         * sentence somebody typed once — the first version of this loader
+         * wrote 1,254 people across two offices while the product claimed
+         * on screen to cover ministers, judges and every state.
+         */
+        detail: {
+          office_count: officeCount,
+          distinct_offices: offices.size,
+          sample_offices: [...offices].slice(0, 12),
+        },
       }).eq('id', sync.id);
       console.log(`  ✓ ${code} loaded (${rows.length} entries, ${pruned} pruned)`);
     } catch (e) {

@@ -46,13 +46,71 @@ a policy document:
 
 | | |
 | --- | --- |
-| `wikidata_au_public_office` | Commonwealth, state and territory parliamentarians, ministers, judges, heads of agency and senior office holders, **current and former**. |
+| `wikidata_au_public_office` | Offices whose **jurisdiction** is Australia or one of its states and territories, and the people recorded as having held them — current and former. Measured 2026-08-19: **724 offices, 10,569 people**. |
+
+### The query, and the one that was wrong
+
+Offices are found by `P1001` — *applies to jurisdiction* — where the
+jurisdiction is Australia itself or anything whose country (`P17`) is
+Australia. That reaches the states and territories without naming them; a
+hand-written list of eight is a list that goes stale in silence.
+
+**The first version walked a subclass tree from `wd:Q18912794` and was
+wrong.** That entity is not a class of Australian public offices — it *is*
+"member of the Australian House of Representatives". The load succeeded, wrote
+**1,254 people across two offices** (the House and its Speaker), and the
+product then told operators on screen that it covered ministers, judges, heads
+of agency and every state. No senators. No ministers. Nothing from any state.
+
+That is the worst failure this feature can have, and it is not the empty one.
+An unavailable index says it has not looked. An **overstated** index tells an
+operator that an absence means more than it does.
+
+### Coverage is measured, not claimed
+
+So the prose in `PEP_INDEX_SOURCES` now describes only the *shape* of the
+source, and a test asserts it **contains no digits at all**. Everything
+countable — how many offices were reached, how many people, which ones — is
+recorded by the loader into `pep_officeholder_syncs.detail` and rendered from
+there. A sentence somebody typed once cannot be checked against a load; a
+number the loader measured can be.
+
+`officeCount` is `null` when a load recorded no detail, never `0` — unknown
+and none are different facts and only one of them is alarming.
+
+### `pep_type` is left NULL, deliberately
+
+The AUSTRAC category — foreign, domestic, international organisation — belongs
+to the **determination a person reaches**, not to an index that surfaces a
+candidate. It is also not available here: an Australian-jurisdiction office
+correctly includes foreign ambassadors posted to Australia, so stamping every
+row `domestic` was wrong on the face of the data as well as in principle.
 
 Wikidata is the only reachable public source that carries **former** holders,
 which is the gap the current government directory leaves and the one AUSTRAC
 is most explicit about: leaving office does not end the risk, and the
 treatment is a risk assessment rather than an expiry date. So the loader
 carries the dates and never filters on them.
+
+### The endpoint fails by lying
+
+`query.wikidata.org` enforces a 60-second limit, and it does **not** fail
+cleanly when a query exceeds it. A batch of 60 offices answered **HTTP 200
+with 8.5 MB of JSON cut off mid-value** — no error field, no marker, nothing
+to test but the parse.
+
+Two consequences are built in. The holder query collapses aliases and
+positions with `GROUP_CONCAT` so the server does that work: the same shape at
+20 offices is 198 KB in about 2.5 seconds, which leaves the ceiling a wide
+margin. And a response that does not parse is reported as a **truncated
+download by name**, because that is what it is and because the distinction
+tells the next person which lever to pull. Offices are read in batches of 20,
+and the accumulator is threaded through all of them so a person holding
+offices in several batches ends up as one row rather than as whichever batch
+wrote last.
+
+Throttling (`429`) and gateway errors are retried with backoff, honouring
+`Retry-After` where the server states one. Neither is a failed load.
 
 It is also **collaboratively edited**, which is precisely why a hit from it is
 a lead rather than a source. Every row carries `confirm_url`, the panel says

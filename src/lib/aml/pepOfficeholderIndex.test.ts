@@ -25,7 +25,7 @@ const candidate = (over: Partial<PepIndexCandidate> = {}): PepIndexCandidate => 
   fullName: "Pat Example",
   aliases: ["Patricia Example"],
   positionTitle: "Member of the Australian House of Representatives",
-  pepType: "domestic",
+  pepType: null,
   jurisdiction: "Australia",
   positionStart: "2016-07-02",
   positionEnd: null,
@@ -39,6 +39,10 @@ const coverage = (over: Partial<PepIndexCoverage> = {}): PepIndexCoverage => ({
   ...describeCoverage("wikidata_au_public_office", {
     entry_count: 12000, source_as_at: "2026-08-19",
     completed_at: "2026-08-19T00:00:00.000Z", status: "succeeded",
+    detail: {
+      office_count: 724, distinct_offices: 724,
+      sample_offices: ["Prime Minister of Australia", "member of the Australian Senate"],
+    },
   }),
   ...over,
 });
@@ -65,6 +69,9 @@ describe("the empty reading is never a clearance", () => {
     expect(v.coverage).toHaveLength(1);
     expect(v.coverage[0].excludes).toMatch(/family members/i);
     expect(v.coverage[0].entryCount).toBe(12000);
+    // Measured, not claimed.
+    expect(v.coverage[0].officeCount).toBe(724);
+    expect(v.coverage[0].sampleOffices).toContain("Prime Minister of Australia");
   });
 
   it("no reading anywhere can be paraphrased into a determination", () => {
@@ -189,5 +196,45 @@ describe("coverage prose", () => {
 
   it("an unknown source code still produces a coverage row rather than throwing", () => {
     expect(describeCoverage("something_new", null).sourceCode).toBe("something_new");
+  });
+
+  /*
+   * The defect this replaced. `covers` was a sentence naming ministers,
+   * judges and every state; the first real load reached TWO offices, and
+   * nothing anywhere could tell the difference. Anything an operator counts
+   * on now comes off the load.
+   */
+  it("counts nothing in the prose — the numbers come off the load", () => {
+    for (const s of PEP_INDEX_SOURCES) {
+      expect(s.covers).not.toMatch(/\d/);
+      expect(s.excludes).not.toMatch(/\d/);
+    }
+  });
+
+  it("a load with no recorded detail reports the office count as unknown, not as zero", () => {
+    // Unknown and none are different facts, and only one of them is alarming.
+    const c = describeCoverage("wikidata_au_public_office", {
+      entry_count: 10, status: "succeeded",
+    });
+    expect(c.officeCount).toBeNull();
+    expect(c.sampleOffices).toEqual([]);
+  });
+
+  it("reads the office count from the load's own detail", () => {
+    const c = describeCoverage("wikidata_au_public_office", {
+      entry_count: 10569, status: "succeeded",
+      detail: { office_count: 724, distinct_offices: 700, sample_offices: ["Senator", ""] },
+    });
+    // The DISTINCT count is what was reached; `office_count` is what was asked for.
+    expect(c.officeCount).toBe(700);
+    expect(c.sampleOffices).toEqual(["Senator"]);
+  });
+
+  it("the index never asserts an AUSTRAC category", () => {
+    // Foreign / domestic / international-organisation is part of the
+    // determination a person reaches. It is also unavailable here: an
+    // Australian-jurisdiction office includes foreign ambassadors posted
+    // to Australia.
+    expect(candidate().pepType).toBeNull();
   });
 });
