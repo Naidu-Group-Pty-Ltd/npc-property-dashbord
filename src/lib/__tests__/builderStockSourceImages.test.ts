@@ -17,7 +17,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { CLEAN_VERDICT, cleanPicture, jpegOf, pngOf } from './fixtures/builderStockPictures';
+import {
+  ANNOTATED_VERDICT, CLEAN_VERDICT, cleanPicture, jpegOf, pngOf,
+} from './fixtures/builderStockPictures';
 
 import {
   attributeDocumentMedia, sniffImageContentType, sourceImageObjectPath,
@@ -41,7 +43,7 @@ import {
 import { repairSourceImagesForUpload } from '../../../supabase/functions/_shared/builderStock/repairSourceImages';
 import { PROVENANCE_VERSION } from '../../../supabase/functions/_shared/builderStock/sourceImages';
 import {
-  roleDetail, roleFromStructuralContainer,
+  roleDetail, roleFromStructuralContainer, secondaryRole,
 } from '../../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
 
 /**
@@ -1630,5 +1632,129 @@ describe('a package that named no image is not read again', () => {
     expect(outcome.incomplete).toBe(false);
     expect(outcome.packageAlreadyAnswered).toBe(1);
     expect(outcome.packageNotIdentified).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WHAT THE CARD ACTUALLY SHOWS
+//
+// The settlement machinery is not the requirement. The requirement is that a
+// clean builder photograph of THIS property appears, an ugly marketing tile
+// does not, and nothing else is ever substituted for either. These assert the
+// outcome the Marketplace renders, through the same predicate the card and the
+// bytes endpoint both use.
+// ---------------------------------------------------------------------------
+
+describe('what the Builder Stock card displays', () => {
+  const sourceImage = (over: FakeRow = {}): FakeRow => ({
+    id: 'img', stock_item_id: 'item-1', organisation_id: 'org-a',
+    source_stage: 'uploaded_document', verification_status: 'source_supplied',
+    processing_status: 'ready', storage_path: 's/img.jpg', position: 0,
+    source_detail: { ...PRIMARY_ROLE_DETAIL },
+    ...over,
+  });
+
+  /** A verdict the classifier actually produced, not a hand-written literal. */
+  const cleanDetail = { ...roleDetail(PRIMARY_ASSET_ROLE), ...CLEAN_VERDICT };
+  // The classifier's OWN verdict on an annotated picture, not a literal: a
+  // hand-written 'ineligible' would pass these tests even if the classifier
+  // stopped producing one.
+  const rejectedDetail = { ...roleDetail(PRIMARY_ASSET_ROLE), ...ANNOTATED_VERDICT };
+
+  // ── 1 ────────────────────────────────────────────────────────────────────
+  it('1 — a clean exact builder primary displays', async () => {
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: null }],
+      images: [sourceImage({ id: 'clean', source_detail: cleanDetail })],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBe('clean');
+  });
+
+  // ── 3 ────────────────────────────────────────────────────────────────────
+  //
+  // Rejecting the tile must not blank a property that HAS a clean primary. The
+  // clean one is chosen because it is a source-designated primary in its own
+  // right, never because it was the only thing left standing.
+  it('3 — a rejected marketing tile does not hide a separate clean primary', async () => {
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: 'tile' }],
+      images: [
+        sourceImage({ id: 'tile', position: 0, source_detail: rejectedDetail }),
+        sourceImage({ id: 'clean', position: 1, source_detail: cleanDetail }),
+      ],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBe('clean');
+  });
+
+  // ── 4 ────────────────────────────────────────────────────────────────────
+  it('4 — a rejected tile beside only an interior leaves the card blank', async () => {
+    // `roleFromStructuralContainer` is the constructor for "the source SAYS
+    // this is the hero", so it always yields primary_property — an interior is
+    // a secondary role, which is exactly why it can never reach a card.
+    const interior = {
+      ...roleDetail(secondaryRole('interior', 'a gallery photograph of a bedroom')),
+      ...CLEAN_VERDICT,
+    };
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: 'tile' }],
+      images: [
+        sourceImage({ id: 'tile', position: 0, source_detail: rejectedDetail }),
+        // Perfectly clean, perfectly useless: it is not this property's hero.
+        sourceImage({ id: 'interior', position: 1, source_detail: interior }),
+      ],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBeNull();
+    expect(db.tables.builder_stock_items[0].primary_image_id).toBeNull();
+  });
+
+  // ── 5 ────────────────────────────────────────────────────────────────────
+  it('5 — a clean facade carrying a small builder mark still displays', async () => {
+    // The real Cloverton cover: a corner "HOUSE & LAND" mark and a footer
+    // disclaimer strip. Normal presentation, not a marketing tile.
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: null }],
+      images: [sourceImage({ id: 'marked', source_detail: cleanDetail })],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBe('marked');
+  });
+
+  // ── 7 ────────────────────────────────────────────────────────────────────
+  it('7 — an image belonging to another property is never shown here', async () => {
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: null }],
+      images: [sourceImage({
+        id: 'other-house', stock_item_id: 'item-2', source_detail: cleanDetail,
+      })],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBeNull();
+  });
+
+  // ── 6 ────────────────────────────────────────────────────────────────────
+  it('6 — an unjudged candidate is not displayed', async () => {
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: null }],
+      images: [sourceImage({
+        id: 'unjudged',
+        // Role proven, verdict never reached. Fail closed.
+        source_detail: { ...roleDetail(PRIMARY_ASSET_ROLE) },
+      })],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBeNull();
+  });
+
+  // ── 8 ────────────────────────────────────────────────────────────────────
+  //
+  // The builder replaces the tile with a clean render. Nobody presses anything:
+  // the new verdict is written by the ordinary sweep and the pointer follows.
+  it('8 — when the source stops being a tile, the card fills automatically', async () => {
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: null }],
+      images: [sourceImage({ id: 'was-a-tile', source_detail: rejectedDetail })],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBeNull();
+
+    // The same row, re-assessed after the builder swapped the artwork.
+    db.tables.builder_stock_item_images[0].source_detail = cleanDetail;
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBe('was-a-tile');
   });
 });
