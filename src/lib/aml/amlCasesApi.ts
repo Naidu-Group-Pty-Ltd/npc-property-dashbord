@@ -3,7 +3,7 @@ import { invokeSecureFunction } from "@/lib/secureInvoke";
 import { invokeAmlFunction } from "./invokeAmlFunction";
 import type { PepDeclarationReading } from "./pepDeclaration";
 import type { PepDeferralReason, PepSourceKind } from "./pepEvidence";
-import type { PepIndexVerdict } from "./pepOfficeholderIndex";
+import type { PepIndexCoverage, PepIndexVerdict } from "./pepOfficeholderIndex";
 
 /** What a reset returns, whether it ran or was refused. */
 export interface AmlClientResetResult {
@@ -502,6 +502,17 @@ export const amlCasesApi = {
    * coverage beside it has turned a partial index into a clearance, which is
    * the one thing this index must never be able to say.
    */
+  /**
+   * What the office-holder index holds, WITHOUT searching it.
+   *
+   * The coverage used to be reachable only as a side-effect of a search, so
+   * an operator could not tell whether the index was loaded until after they
+   * had relied on it. This is the reading that belongs on the step itself.
+   */
+  pepOfficeholderIndexStatus: () =>
+    invoke<{ coverage: PepIndexCoverage[]; usable: boolean }>(
+      { op: "pep_officeholder_index_status" }),
+
   searchPepOfficeholders: (payload: {
     case_id: string;
     party_screening_subject_id?: string | null;

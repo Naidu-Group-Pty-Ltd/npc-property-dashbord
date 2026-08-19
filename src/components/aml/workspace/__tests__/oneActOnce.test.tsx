@@ -142,6 +142,39 @@ describe("the rail names what is next without offering to take you there", () =>
     expect(onOpenSection).not.toHaveBeenCalled();
   });
 
+  /*
+   * Suppressing the header's count was only half the fix. The rail went on
+   * rendering a SECOND meter beside the path's, and the two counted
+   * different things — "2 of 3 items on this stage complete" next to "3 of 5
+   * settled". Both were true, which is precisely what made it worse than
+   * either alone.
+   */
+  it("carries the stage count when nothing below owns it", () => {
+    render(
+      <AmlLivePositionRail
+        position={position} stage={stage()} nextAction={nextAction}
+        attention={[]} riskLabel={null}
+        onOpenSection={() => {}}
+      />,
+    );
+    expect(screen.getByText(/1 of 2 items complete/i)).toBeTruthy();
+  });
+
+  it("drops its own count when the path below keeps one", () => {
+    render(
+      <AmlLivePositionRail
+        position={position} stage={stage()} nextAction={nextAction}
+        attention={[]} riskLabel={null} deferReadinessToSurfaceBelow
+        onOpenSection={() => {}}
+      />,
+    );
+    expect(screen.queryByText(/items complete/i)).toBeNull();
+    expect(screen.queryByRole("img", { name: /items complete/i })).toBeNull();
+    // The stage itself is still named — only the number and the bar go.
+    expect(screen.getAllByText(/screening/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/tracked on the steps below/i)).toBeTruthy();
+  });
+
   it("behaves exactly as before when the caller does not say where they are", () => {
     render(
       <AmlLivePositionRail

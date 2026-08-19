@@ -81,6 +81,19 @@ export interface AmlLivePositionRailProps {
    * of one act on a single screen.
    */
   currentSection?: AmlWorkspaceSection;
+  /**
+   * Whether the surface below already carries this stage's progress.
+   *
+   * Set for Stage 5, whose numbered path keeps its own count. Suppressing
+   * the CTA in the header was only half the fix: the rail went on rendering
+   * a SECOND meter beside the path's, and the two counted different things —
+   * "2 of 3 items on this stage complete" next to "3 of 5 settled". Both
+   * were true, which is what made it worse than either alone, because an
+   * operator cannot tell which one is the state of the case.
+   *
+   * The stage and its label stay. Only the number and the bar go.
+   */
+  deferReadinessToSurfaceBelow?: boolean;
   className?: string;
 }
 
@@ -95,6 +108,7 @@ export function AmlLivePositionRail({
   onOpenSection,
   className,
   currentSection,
+  deferReadinessToSurfaceBelow = false,
 }: AmlLivePositionRailProps) {
   /* The rail names what is next; it does not offer to navigate to here. */
   const alreadyOnSection = currentSection !== undefined
@@ -143,7 +157,14 @@ export function AmlLivePositionRail({
         <CardContent className="p-4">
           <RailHeading>Stage readiness</RailHeading>
           <p className="mt-2 text-sm font-medium leading-snug">{stage.label}</p>
-          {total > 0 ? (
+          {deferReadinessToSurfaceBelow ? (
+            /* The path below counts this stage, in its own units. One count
+               per screen; the reading that governs is the one beside the
+               work. */
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Progress is tracked on the steps below.
+            </p>
+          ) : total > 0 ? (
             <>
               <p className="mt-0.5 text-xs text-muted-foreground" aria-live="polite">
                 {done} of {total} item{total === 1 ? "" : "s"} complete

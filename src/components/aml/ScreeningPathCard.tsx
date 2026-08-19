@@ -29,6 +29,7 @@ import {
   Loader2, ShieldAlert, ShieldQuestion,
 } from "lucide-react";
 
+import { PepIndexReadiness } from "@/components/aml/PepIndexReadiness";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -424,6 +425,24 @@ export function ScreeningPathCard({
                       <p className="text-xs text-muted-foreground">
                         A reviewer or the MLRO records this classification.
                       </p>
+                    )}
+
+                    {/*
+                      ── The tool, named where the work is ────────────────
+                      The office-holder index was reachable only from inside
+                      the determination dialog, so an operator could not tell
+                      it existed — let alone whether it had loaded — until
+                      after they had opened the dialog and searched. A whole
+                      working integration was invisible from the step it
+                      serves.
+
+                      It describes the TOOL and never the subject: how much
+                      is loaded and how current it is. An index in perfect
+                      health is not evidence about anybody, and one that has
+                      not loaded does not hide the step.
+                    */}
+                    {step.key === "pep" && step.state !== "not_required" && !caseClosed && (
+                      <PepIndexReadiness />
                     )}
 
                     {/*

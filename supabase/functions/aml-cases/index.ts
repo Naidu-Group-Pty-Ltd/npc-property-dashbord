@@ -53,10 +53,14 @@ import {
 } from "../_shared/aml/pepEvidence.pure.ts";
 // The public office-holder index: what a search of it may and may not say.
 import {
-  PEP_INDEX_SOURCES, describeCoverage, searchVerdict,
+  PEP_INDEX_SOURCES, describeCoverage, indexIsUsable, searchVerdict,
   type PepIndexCandidate,
 } from "../_shared/aml/pepOfficeholderIndex.pure.ts";
 import { normaliseName, scoreNames } from "../_shared/aml/matching.ts";
+// `aml.cases` has no tenant_id column. This is the only place that knows it.
+import {
+  DEFAULT_AML_TENANT, readCase,
+} from "../_shared/aml/caseTenant.ts";
 import { planCaseReopen, resumeStatusFor } from "../_shared/aml/caseReopen.pure.ts";
 import {
   AML_PURGE_ORDER, AML_UNLINKED_CASE_TABLES, decideClientReset,
@@ -3425,10 +3429,26 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
          * body-supplied case_id decides what is written.
          */
         const caseId = String(subject.case_id);
-        const { data: caseRow } = await admin.schema('aml').from('cases')
-          .select('id, tenant_id').eq('id', caseId).maybeSingle();
-        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
-        if (String(caseRow.tenant_id ?? 'default') !== String(subject.tenant_id ?? 'default')) {
+        /*
+         * Same defect: this selected `cases.tenant_id`, a column the table
+         * does not have, so the read answered 42703 and every manual
+         * screening was refused as "Case not found".
+         *
+         * The comparison it guarded was also circular — `caseId` comes from
+         * `subject.case_id`, so the subject already belongs to this case.
+         * What is worth checking is that the subject carries THIS
+         * deployment's tenant, which is what the write will stamp.
+         */
+        const caseRead = await readCase<{ id: string }>(admin, caseId, 'id');
+        if (caseRead.failed) {
+          console.error('record_manual_screening: case read failed', caseRead.error);
+          return jsonResponse({
+            error: 'The case could not be read. Nothing was recorded.',
+            code: 'case_read_failed',
+          }, 503);
+        }
+        if (!caseRead.row) return jsonResponse({ error: 'Case not found' }, 404);
+        if (String(subject.tenant_id ?? DEFAULT_AML_TENANT) !== caseRead.tenantId) {
           return jsonResponse({ error: 'Subject does not belong to this case', code: 'tenant_mismatch' }, 403);
         }
 
@@ -3907,8 +3927,25 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             errors: evidence.errors,
           }, 400);
         }
-        const { data: caseRow } = await admin.schema('aml').from('cases')
-          .select('id, tenant_id, subject_display_name').eq('id', caseId).maybeSingle();
+        /*
+         * `aml.cases` has NO `tenant_id` column, and this select used to name
+         * it. PostgREST answered 42703, the discarded `error` left `data`
+         * null, and the handler reported "Case not found" about the case the
+         * operator was looking at — which is why `pep_determinations` was
+         * empty from the day it was created and why Stage 5's button appeared
+         * to do nothing. `readCase` refuses the column and keeps a failed
+         * READ distinct from an absent ROW.
+         */
+        const caseRead = await readCase<{ id: string; subject_display_name: string | null }>(
+          admin, caseId, 'id, subject_display_name');
+        if (caseRead.failed) {
+          console.error('record_pep_determination: case read failed', caseRead.error);
+          return jsonResponse({
+            error: 'The case could not be read. Nothing was recorded.',
+            code: 'case_read_failed',
+          }, 503);
+        }
+        const caseRow = caseRead.row;
         if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
 
         // Subject identity is DERIVED, never asserted: the determination is
@@ -3964,7 +4001,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // insert, and the partial unique index guarantees a single current
         // determination per subject scope even under concurrent writes.
         const { data: determination, error: detErr } = await admin.schema('aml').from('pep_determinations').insert({
-          tenant_id: caseRow.tenant_id ?? 'default',
+          tenant_id: caseRead.tenantId,
           case_id: caseId,
           party_screening_subject_id: partySubjectId,
           party_type: derivedPartyType,
@@ -4058,6 +4095,40 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
        * confirmed a candidate against the official register, which is a
        * different act performed by a person.
        */
+      /*
+       * What the office-holder index HOLDS, without searching it.
+       *
+       * The coverage was reachable only as a side-effect of a search, so an
+       * operator could not tell whether the index was loaded until after they
+       * had already searched — and the reading that matters most is the one
+       * they get BEFORE they rely on it. Read-only, no identity, no party.
+       *
+       * It returns the same `describeCoverage` rows the search attaches, so
+       * the two surfaces cannot disagree about what is loaded.
+       */
+      case 'pep_officeholder_index_status': {
+        const coverage = [];
+        let failed = false;
+        for (const source of PEP_INDEX_SOURCES) {
+          const { data: sync, error } = await admin.schema('aml')
+            .from('pep_officeholder_syncs')
+            .select('entry_count, source_as_at, completed_at, started_at, status, detail')
+            .eq('source_code', source.code)
+            .order('started_at', { ascending: false }).limit(1).maybeSingle();
+          if (error) { failed = true; break; }
+          coverage.push(describeCoverage(source.code, sync ?? null));
+        }
+        if (failed) {
+          // Unknown is not empty. An index whose state could not be read must
+          // never render as an index holding nothing.
+          return jsonResponse({
+            error: 'The office-holder index state could not be read.',
+            code: 'pep_index_status_failed',
+          }, 503);
+        }
+        return jsonResponse({ coverage, usable: indexIsUsable(coverage) });
+      }
+
       case 'search_pep_officeholders': {
         if (!(roles.has('reviewer') || roles.has('mlro'))) {
           return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
@@ -4199,7 +4270,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           subjectName = String(partySubject.screened_name ?? '').trim();
         }
 
-        await appendCaseEvent(admin, caseId, 'pep_determination_deferred',
+        await appendEvent(admin, caseId, 'pep_determination_deferred',
           `PEP determination deferred for ${subjectName}: ${String(body.reason)}`,
           {
             party_screening_subject_id: partySubjectId,
