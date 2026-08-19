@@ -838,7 +838,8 @@ function ListingsMarketplace({ sectionTabs }: { sectionTabs?: ReactNode } = {}) 
 
     return (
       <div className={`${LISTINGS_SHELL} space-y-5 md:space-y-7`}>
-        <div className={`${LISTINGS_SECTION_SURFACE} flex items-center justify-between gap-4`}>
+        <div className={LISTINGS_SECTION_SURFACE}>
+          <div className="flex items-center justify-between gap-4">
           <div>
             <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/90">
               <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_14px_rgba(245,158,11,0.55)]" />
@@ -851,6 +852,8 @@ function ListingsMarketplace({ sectionTabs }: { sectionTabs?: ReactNode } = {}) 
             <RefreshCw className="h-4 w-4" />
             Retry
           </Button>
+          </div>
+          {sectionTabs}
         </div>
 
         <ListingsStatePanel
@@ -944,6 +947,7 @@ function ListingsMarketplace({ sectionTabs }: { sectionTabs?: ReactNode } = {}) 
             </Button>
           </div>
         </div>
+        {sectionTabs}
       </section>
 
       {/* Search and Filters */}
