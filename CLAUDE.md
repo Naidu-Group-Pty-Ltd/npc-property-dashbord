@@ -266,6 +266,31 @@ and `closed_at`, while `transition` had always synced all three. It now syncs
 them too — and still never touches `service_gate_status`, because
 `STATUS_TO_SERVICE_GATE[resumeStatus]` would revive a terminated gate.
 
+## Stage 5 — the guided path
+Read [`docs/aml/STAGE_5_GUIDED_PATH.md`](./docs/aml/STAGE_5_GUIDED_PATH.md)
+before touching `screeningSteps.pure.ts`, `ScreeningPathCard`,
+`pepDeclaration.pure.ts` or the political-exposure question in the client
+portal. Stage 5 had every fact it needed and no ORDER: on the reported case the
+whole screen reduced to one act, and "Record PEP determination" appeared four
+times in four sets of words while everything else was already settled. The path
+arranges the same server-decided facts as numbered steps with one of them open.
+
+Four rules carry it. It **derives nothing new** — every obligation, method and
+outcome comes from `buildDeterminationRows`. **`not_required` is not `done`**:
+a step nobody owes settles the path, renders `—` rather than a tick, and says
+nobody was screened and nobody was cleared. **The server owns "what next"** —
+`next_action` decides the open step whatever the local ordering would say. And
+**a candidate is not a finding**: `path.finding` is a confirmed match alone.
+
+The customer's own political-exposure answer now travels to the person who has
+to decide (`pep_declaration` on the stage sync), because it previously existed
+only as `personal_details.pep` in the policy's material inputs. **A declaration
+is evidence and never a determination** — the stored answer is still `yes`/`no`
+so no policy reads anything new, an unanswered question reads as unanswered
+rather than as a "no", and a corrected answer's detail is pruned at the write
+boundary. `record_pep` was also missing from the reviewer-or-MLRO list, so an
+analyst was offered a button `record_pep_determination` answers with 403.
+
 ## AML screening scope
 Read [`docs/aml/SCREENING_SCOPE.md`](./docs/aml/SCREENING_SCOPE.md) before
 touching `deriveScreeningScope`, `reconcileSubjectToScope` or the

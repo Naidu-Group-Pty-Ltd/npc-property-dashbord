@@ -1,6 +1,7 @@
 import { invokeSecureFunction } from "@/lib/secureInvoke";
 
 import { invokeAmlFunction } from "./invokeAmlFunction";
+import type { PepDeclarationReading } from "./pepDeclaration";
 
 /** What a reset returns, whether it ran or was refused. */
 export interface AmlClientResetResult {
@@ -612,6 +613,13 @@ export interface AmlScreeningStageSync {
   case_closed?: boolean;
   case_stage?: string | null;
   service_gate_status?: string | null;
+  /**
+   * What the customer declared about political exposure.
+   *
+   * Optional because a server that predates it sends nothing — and an absent
+   * reading is rendered as "not established", never as an answer of "no".
+   */
+  pep_declaration?: PepDeclarationReading;
 }
 
 export interface AmlPartyScreeningSubject {

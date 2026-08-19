@@ -43,6 +43,9 @@ import {
   processScreeningEvent, recordTechnicalFailure,
 } from "../cross-portal-outbox-worker/screeningConsumer.ts";
 import { readSanctionsDeclaration } from "../_shared/aml/sanctionsDeclaration.pure.ts";
+// What the customer said about political exposure. Evidence towards the
+// determination a reviewer or the MLRO records; never the determination.
+import { readPepDeclaration } from "../_shared/aml/pepDeclaration.pure.ts";
 import { planCaseReopen, resumeStatusFor } from "../_shared/aml/caseReopen.pure.ts";
 import {
   AML_PURGE_ORDER, AML_UNLINKED_CASE_TABLES, decideClientReset,
@@ -2645,6 +2648,21 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           case_stage: caseRow.case_stage ?? null,
           service_gate_status: caseRow.service_gate_status ?? null,
           next_action: nextAction,
+          /*
+           * What the CUSTOMER declared about political exposure, verbatim.
+           *
+           * The reviewer recording the determination had the client's answer
+           * nowhere on the stage — it existed only as `personal_details.pep`
+           * inside the policy's material inputs, one collapse down, as the
+           * string "no". So the person making the determination could not see
+           * what the person it is about had said without leaving the case.
+           *
+           * It is EVIDENCE and never the determination: nothing here records
+           * one, prefills a conclusion or changes an obligation, and the
+           * reading reports an unanswered question as unanswered rather than
+           * as a "no".
+           */
+          pep_declaration: readPepDeclaration(personal),
           decision_recorded: decisionRecorded,
           scope_changed: scopeSync.changed,
           /* False when the scope tables are not present yet. */

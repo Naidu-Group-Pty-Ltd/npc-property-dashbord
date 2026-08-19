@@ -30,8 +30,9 @@ match — a list that silently matches nobody looks exactly like one that works.
 
 ## What was actually wrong (2026-08-19)
 
-The register had been empty since the platform was built. Three independent
-faults, each of which explained it on its own.
+The register had been empty since the platform was built. **Four** independent
+faults, each of which explained it on its own, and each hidden behind the one
+before it.
 
 **1. The refresh had never had write credentials.** Every scheduled run since
 the workflow was added failed at the credentials check — the repository secret
@@ -61,7 +62,27 @@ list whose latest attempt failed — so a complete, current DFAT list would have
 sat in the table while every screening refused to run, with the schedule red
 every night for a reason that had nothing to do with the data.
 
-**3. DFAT does not serve a scripted client reliably.** The landing page
+**3. The refresh could not construct a database client.** `@supabase/supabase-js`
+builds a `RealtimeClient` inside `createClient`, and that constructor demands a
+**native WebSocket** — which arrived in Node 22. The workflow pinned Node 20,
+like every other workflow here, so the loader died before reading a byte of any
+list:
+
+```
+Error: Node.js detected but native WebSocket not found.
+  at createClient (@supabase/supabase-js)
+  at main (scripts/aml/load-sanctions-lists.mjs:201)
+```
+
+Invisible for the same reason as everything else here: the job died one step
+earlier, at the credential check, on every run this workflow had ever had. The
+secret was added on 2026-08-19 and the very next run failed here, in zero
+seconds. The loader uses no realtime feature at all — the requirement comes from
+the client constructor, so it cannot be dodged by not subscribing to anything.
+This workflow now pins Node 22; nothing else in the repository calls
+`createClient` from a workflow.
+
+**4. DFAT does not serve a scripted client reliably.** The landing page
 answers 403, and the published file's own address answered 403 to Node's
 `fetch` and then timed out under `curl` from the same host minutes after a
 plain `curl` had fetched it successfully. The loader already carries

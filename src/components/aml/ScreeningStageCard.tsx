@@ -155,6 +155,7 @@ function DeterminationRowView({ row }: { row: DeterminationRow }) {
 
 export function ScreeningStageCard({
   reading, onAct, actor, onContinue, onReviewPerimeter, onOpenListHealth,
+  variant = "full",
 }: {
   reading: AmlScreeningStageReading;
   /**
@@ -179,8 +180,23 @@ export function ScreeningStageCard({
    * button for work the server refuses.
    */
   actor: ScreeningActor;
+  /**
+   * How much of the stage this card is responsible for.
+   *
+   * `full` is the original card and the default: the action, the
+   * classification prompt and the evidence beneath them.
+   *
+   * `evidence` renders the evidence ONLY. Stage 5 now leads with the
+   * numbered path (`ScreeningPathCard`), which owns the action and the
+   * classification prompt — and an operator being told the same thing twice,
+   * in two different arrangements, is the defect that arrangement removes.
+   * Nothing is dropped: every panel below the action still renders, and the
+   * card keeps its own reading of loading and unavailable.
+   */
+  variant?: "full" | "evidence";
 }) {
   const { sync, readiness, scope, position, source, loading, unavailable } = reading;
+  const evidenceOnly = variant === "evidence";
   const [busy, setBusy] = useState(false);
 
   if (loading && !sync) {
@@ -272,6 +288,7 @@ export function ScreeningStageCard({
   return (
     <div className="space-y-4">
       {/* ── The one action ──────────────────────────────────────────── */}
+      {!evidenceOnly && (
       <Card className={cn("border", tone.surface)}>
         <CardContent className="p-5 sm:p-6">
           <div className="flex items-center gap-2">
@@ -438,6 +455,7 @@ export function ScreeningStageCard({
           )}
         </CardContent>
       </Card>
+      )}
 
       {/*
         ── A reopened enquiry needs its classification re-examined ─────
@@ -448,7 +466,7 @@ export function ScreeningStageCard({
         an operator to find "Reclassify perimeter" at the foot of the page
         and know to look for it.
       */}
-      {perimeterNeedsReview && (
+      {perimeterNeedsReview && !evidenceOnly && (
         <Card className="border-primary/40 bg-primary/5">
           <CardContent className="space-y-2 p-5">
             <p className="flex items-center gap-2 text-sm font-medium">

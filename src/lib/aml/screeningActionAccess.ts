@@ -35,6 +35,17 @@ const REVIEWER_OR_MLRO: ReadonlyArray<AmlScreeningNextAction["key"]> = [
   "adjudicate_match",
   // Bringing a closed compliance record back into an active journey.
   "reopen_case",
+  /*
+   * Recording a politically-exposed-person determination.
+   *
+   * MISSED when this module was written, and the omission had teeth: the
+   * key fell through to `canWrite`, so an analyst was shown the one button
+   * Stage 5 was asking for on the reported case — and
+   * `record_pep_determination` answers a non-reviewer with 403. That is the
+   * exact failure this module exists to prevent, on the exact action that
+   * was blocking the case.
+   */
+  "record_pep",
 ] as const;
 
 /** Performing a screening personally is narrower still: the MLRO alone. */
@@ -64,6 +75,9 @@ export function screeningActionDeniedNote(
   if (!REVIEWER_OR_MLRO.includes(key)) return null;
   if (key === "classify_perimeter") return "A reviewer or the MLRO must classify this case.";
   if (key === "reopen_case") return "A reviewer or the MLRO must reopen this case.";
+  if (key === "record_pep") {
+    return "A reviewer or the MLRO records a PEP determination.";
+  }
   return "A reviewer or the MLRO must adjudicate this match.";
 }
 
