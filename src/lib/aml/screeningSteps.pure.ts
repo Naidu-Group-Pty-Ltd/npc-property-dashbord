@@ -41,6 +41,7 @@ import type {
 } from "./amlCasesApi";
 import type { AmlCaseScreeningPosition } from "./screeningScope";
 import { buildDeterminationRows, type DeterminationRow } from "./screeningResolution.pure";
+import type { PepDeclarationReading } from "./pepDeclaration";
 
 export type ScreeningStepKey =
   | "perimeter"
@@ -97,6 +98,14 @@ export interface ScreeningStep {
   blocking: boolean;
   /** The determination row behind this step, where one exists. */
   row: DeterminationRow | null;
+  /**
+   * The customer's own declaration, on the step it bears on.
+   *
+   * Evidence towards the determination and never the determination itself —
+   * which is why it is a field of its own rather than a sentence mixed into
+   * the step's summary.
+   */
+  declaration?: PepDeclarationReading | null;
 }
 
 export interface ScreeningPath {
@@ -306,8 +315,9 @@ function screenedStep(
 function pepStep(args: {
   row: DeterminationRow;
   position: AmlCaseScreeningPosition;
+  declaration: PepDeclarationReading | null;
 }): Omit<ScreeningStep, "number" | "action"> {
-  const { row, position } = args;
+  const { row, position, declaration } = args;
   const notRequired = row.obligation === "not_required";
   const outstanding = position.subjects.filter((s) => !s.pep.resolved);
   return {
@@ -332,6 +342,15 @@ function pepStep(args: {
         : position.subjects.map((s) => `${s.name} — ${s.pep.detail}`),
     blocking: row.blocking,
     row,
+    /*
+     * What the customer said, carried to the person who has to decide.
+     *
+     * It is attached to the step and kept OUT of `summary` and `detail` on
+     * purpose: the card renders it in its own block, labelled as the
+     * customer's declaration, so it can never be read as the determination
+     * or as a status this stage reached.
+     */
+    declaration,
   };
 }
 
@@ -446,7 +465,12 @@ export function deriveScreeningPath(args: {
       riskRows[0],
     ));
   }
-  if (pepRow) drafts.push(pepStep({ row: pepRow, position }));
+  if (pepRow) {
+    drafts.push(pepStep({
+      row: pepRow, position,
+      declaration: sync.pep_declaration ?? null,
+    }));
+  }
   const resolve = resolveStep({ position, sanctionsRow });
   drafts.push(resolve);
 

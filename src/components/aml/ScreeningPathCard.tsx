@@ -38,6 +38,7 @@ import {
   canPerformScreeningAction, screeningActionDeniedHeadline,
   screeningActionDeniedNote, type ScreeningActor,
 } from "@/lib/aml/screeningActionAccess";
+import { PEP_RELATIONSHIP_LABEL } from "@/lib/aml/pepDeclaration";
 import {
   isOutstanding, STEP_STATE_LABEL,
   type ScreeningPath, type ScreeningStep, type ScreeningStepKey, type ScreeningStepState,
@@ -260,6 +261,60 @@ export function ScreeningPathCard({
                           </li>
                         ))}
                       </ul>
+                    )}
+
+                    {/*
+                      ── What the CUSTOMER said ───────────────────────
+                      In its own block, labelled as a declaration, beside the
+                      determination rather than inside it. The reviewer used
+                      to have this nowhere on the stage: it existed only as
+                      the string "no" in the policy's material inputs, one
+                      collapse down, so the person making the determination
+                      could not see what the person it is about had said.
+
+                      It never renders as a conclusion, and an unanswered
+                      question renders as unanswered — a customer who was
+                      never asked is not a customer who said no.
+                    */}
+                    {step.declaration && (
+                      <div className="rounded-md border border-border/60 bg-muted/30 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                          What the customer declared
+                        </p>
+                        <p className="mt-1 text-xs">{step.declaration.summary}</p>
+                        {step.declaration.answer === "yes" && (
+                          <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+                            <div>
+                              <dt className="text-muted-foreground">Who holds it</dt>
+                              <dd className="font-medium">
+                                {step.declaration.relationship
+                                  ? PEP_RELATIONSHIP_LABEL[step.declaration.relationship]
+                                  : "Not given"}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-muted-foreground">Position</dt>
+                              <dd className="font-medium">{step.declaration.role ?? "Not given"}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-muted-foreground">Jurisdiction</dt>
+                              <dd className="font-medium">{step.declaration.country ?? "Not given"}</dd>
+                            </div>
+                          </dl>
+                        )}
+                        {step.declaration.answered && !step.declaration.complete && (
+                          <p className="mt-2 flex items-start gap-1.5 text-xs text-warning">
+                            <AlertTriangle aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+                            The declaration is incomplete. Ask the customer for what is
+                            missing before determining.
+                          </p>
+                        )}
+                        <p className="mt-2 text-[11px] text-muted-foreground">
+                          This is the customer&rsquo;s own declaration. It is evidence that
+                          supports a determination; it is never the determination, and it is
+                          never an exemption from making one.
+                        </p>
+                      </div>
                     )}
 
                     {/*
