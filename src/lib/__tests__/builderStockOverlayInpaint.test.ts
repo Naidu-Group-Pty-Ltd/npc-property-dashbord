@@ -24,7 +24,7 @@ import {
   growOverlayMask,
 } from '../../../supabase/functions/_shared/builderStock/sanitizeOverlay.pure';
 import {
-  blendWeights, compositePatch, cropRgb, FEATHER, MAX_PATCHES,
+  blendWeights, compositePatch, cropMask, cropRgb, FEATHER, MAX_PATCHES,
   outsidePermittedRegionUnchanged, planInpaintPatches, resampleRgb,
 } from '../../../supabase/functions/_shared/builderStock/inpaintOverlay.pure';
 import {
@@ -120,7 +120,7 @@ function honestModel(clean: Uint8Array, mask: Uint8Array) {
   let call = 0;
   return async () => {
     const patch = patches[call++];
-    return resampleRgb(cropRgb(clean, W, patch), patch.size, patch.size, EDGE, EDGE);
+    return resampleRgb(cropRgb(clean, W, patch, H), patch.size, patch.size, EDGE, EDGE);
   };
 }
 
@@ -155,7 +155,7 @@ describe('the model sees the builder\'s own photograph and nothing else', () => 
         if (args.length !== 2) extraArguments += 1;
         seen.push(args[0] as Uint8Array);
         const patch = patches[seen.length - 1];
-        return resampleRgb(cropRgb(clean, W, patch), patch.size, patch.size, EDGE, EDGE);
+        return resampleRgb(cropRgb(clean, W, patch, H), patch.size, patch.size, EDGE, EDGE);
       },
     });
 
@@ -168,7 +168,7 @@ describe('the model sees the builder\'s own photograph and nothing else', () => 
     seen.forEach((sent, index) => {
       const patch = patches[index];
       const expected = resampleRgb(
-        cropRgb(badged, W, patch), patch.size, patch.size, EDGE, EDGE);
+        cropRgb(badged, W, patch, H), patch.size, patch.size, EDGE, EDGE);
       expect(sent[0]).toBe(expected[0]);
       expect(sent[1]).toBe(expected[1]);
       expect(sent[2]).toBe(expected[2]);
@@ -328,6 +328,68 @@ describe('the validation gate refuses rather than shipping something wrong', () 
     expect(gate.changed).toBe(1);
   });
 
+  it('covers plates spread across a WIDE frame by letting the square overhang', () => {
+    /*
+     * PRODUCTION FOUND THIS ONE, on Lot 13 Hummock Rise. A patch must be
+     * square, and the first version also required it to sit inside the frame —
+     * so its side was capped at the SHORT edge. A builder's status plates run
+     * across the width of a landscape photograph, no square inside it could
+     * hold them, the coverage check refused, and the card stayed blank: the
+     * exact outcome this change exists to end.
+     */
+    const clean = sky(W, H);
+    const wide = new Uint8Array(clean);
+    // One plate wider than the frame is tall: the shape that used to refuse.
+    stamp(wide, W, { x: 30, y: 84, w: 300, h: 28 }, [180, 240, 60]);
+    const overlay = measureFlatColourRegions({ width: W, height: H, pixels: wide });
+    const mask = growOverlayMask(overlay, W, H, W, H) as Uint8Array;
+    const plan = planInpaintPatches(mask, W, H);
+
+    expect(plan.uncovered).toBe(false);
+    expect(plan.tooMany).toBe(false);
+    expect(plan.patches.length).toBeGreaterThan(0);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!mask[y * W + x]) continue;
+        const covered = plan.patches.some((patch) =>
+          x >= patch.x && x < patch.x + patch.size
+          && y >= patch.y && y < patch.y + patch.size);
+        expect(covered).toBe(true);
+      }
+    }
+    // A patch may run past the bottom of a landscape frame, and never past the
+    // long edge — it can never be bigger than the photograph it came from.
+    for (const patch of plan.patches) expect(patch.size).toBeLessThanOrEqual(Math.max(W, H));
+  });
+
+  it('the padding it sees is the picture\'s own edge, and is not editable', () => {
+    const clean = sky(W, H);
+    const wide = new Uint8Array(clean);
+    stamp(wide, W, { x: 30, y: 84, w: 300, h: 28 }, [180, 240, 60]);
+    const overlay = measureFlatColourRegions({ width: W, height: H, pixels: wide });
+    const mask = growOverlayMask(overlay, W, H, W, H) as Uint8Array;
+    const patch = planInpaintPatches(mask, W, H).patches.find((p) => p.size > H);
+    expect(patch).toBeTruthy();
+    if (!patch) return;
+
+    const cropped = cropRgb(wide, W, patch, H);
+    const croppedMask = cropMask(mask, W, patch, H);
+    // A row past the bottom of the picture repeats the last real row...
+    const lastReal = H - 1 - patch.y;
+    const beyond = lastReal + 5;
+    expect(beyond).toBeLessThan(patch.size);
+    for (let x = 0; x < patch.size; x += 37) {
+      expect(cropped[(beyond * patch.size + x) * 3])
+        .toBe(cropped[(lastReal * patch.size + x) * 3]);
+    }
+    // ...and nothing out there may be edited.
+    for (let y = lastReal + 1; y < patch.size; y++) {
+      for (let x = 0; x < patch.size; x += 13) {
+        expect(croppedMask[y * patch.size + x]).toBe(0);
+      }
+    }
+  });
+
   it('REFUSES a plan that would leave part of the graphic behind', () => {
     /*
      * THE DEFECT THIS PINS, WHICH THE LOT 13 FIXTURE FOUND. A patch is square
@@ -341,7 +403,6 @@ describe('the validation gate refuses rather than shipping something wrong', () 
      */
     const clean = sky(W, H);
     const banner = new Uint8Array(clean);
-    // Two plates at opposite ends: no square inside a 400x200 frame holds both.
     stamp(banner, W, { x: 4, y: 80, w: 60, h: 30 }, [180, 240, 60]);
     stamp(banner, W, { x: 336, y: 80, w: 60, h: 30 }, [180, 240, 60]);
     const overlay = measureFlatColourRegions({ width: W, height: H, pixels: banner });

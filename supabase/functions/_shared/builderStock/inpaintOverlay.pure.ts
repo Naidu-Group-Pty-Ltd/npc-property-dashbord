@@ -57,6 +57,29 @@ const CONTEXT = 2.0;
 const MIN_PATCH = 96;
 
 /**
+ * A square may run off the edge of the picture, and the overhang is PADDING.
+ *
+ * THE DEFECT THIS FIXES, FOUND IN PRODUCTION ON LOT 13 HUMMOCK RISE. A patch
+ * has to be square, because the endpoint returns a square; the first version
+ * also required it to fit INSIDE the frame, so its side was capped at the
+ * frame's short edge. A builder's status plates run across the width of a
+ * landscape photograph — wider than it is tall — so no square inside the frame
+ * could hold them, the coverage check refused the plan, and the card stayed
+ * blank. Which is the outcome this whole change exists to end.
+ *
+ * A square that overhangs costs nothing and gives up nothing. The overhanging
+ * pixels are filled by replicating the nearest real edge pixel and are marked
+ * NOT editable in the mask, so the model is told to leave them alone; they are
+ * never composited back, because `compositePatch` writes only inside the frame
+ * and only where the mask allows. The picture the model sees is still made of
+ * the builder's own pixels and nothing else.
+ *
+ * The side is still bounded — by the picture's LONG edge — so a patch can never
+ * be larger than the photograph it came from.
+ */
+const ALLOW_OVERHANG = true;
+
+/**
  * How many separate repairs one photograph may need.
  *
  * Each is a request. A picture carrying more than this many distinct graphics
@@ -108,6 +131,24 @@ function components(
 }
 
 /**
+ * Sit a square of the given side over the picture.
+ *
+ * Slid back inside the frame where it can be, and left overhanging where it
+ * cannot — a square wider than the picture is short has nowhere to go, and
+ * shrinking it is what dropped coverage. The origin never goes negative, so a
+ * patch always starts on a real pixel and the overhang is at the far edge.
+ */
+function place(
+  x: number, y: number, size: number, width: number, height: number,
+): Patch {
+  return {
+    x: Math.max(0, size >= width ? 0 : Math.min(width - size, x)),
+    y: Math.max(0, size >= height ? 0 : Math.min(height - size, y)),
+    size,
+  };
+}
+
+/**
  * Where to cut, given the mask the detector produced.
  *
  * One square per graphic, merged where two squares overlap AND the merge still
@@ -139,7 +180,8 @@ export function planInpaintPatches(
   }
   const boxes = components(mask, width, height);
   if (!boxes.length) return { patches: [], tooMany: false, uncovered: false };
-  const ceiling = Math.min(width, height);
+  // The LONG edge, not the short one. See `ALLOW_OVERHANG`.
+  const ceiling = ALLOW_OVERHANG ? Math.max(width, height) : Math.min(width, height);
 
   let squares = boxes.map((box) => {
     const boxWidth = box.right - box.left + 1;
@@ -150,11 +192,7 @@ export function planInpaintPatches(
     );
     const cx = (box.left + box.right) / 2;
     const cy = (box.top + box.bottom) / 2;
-    return {
-      x: Math.max(0, Math.min(width - size, Math.round(cx - size / 2))),
-      y: Math.max(0, Math.min(height - size, Math.round(cy - size / 2))),
-      size,
-    };
+    return place(Math.round(cx - size / 2), Math.round(cy - size / 2), size, width, height);
   });
 
   // Merge overlaps until nothing overlaps. Bounded: each pass strictly reduces
@@ -176,11 +214,7 @@ export function planInpaintPatches(
         // The clamp that would silently drop coverage. See the header.
         if (size > ceiling) continue;
         squares = squares.filter((_, i) => i !== a && i !== b);
-        squares.push({
-          x: Math.max(0, Math.min(width - size, left)),
-          y: Math.max(0, Math.min(height - size, top)),
-          size,
-        });
+        squares.push(place(left, top, size, width, height));
         merged = true;
         break outer;
       }
@@ -193,7 +227,10 @@ export function planInpaintPatches(
   squares.sort((a, b) => a.y - b.y || a.x - b.x);
 
   // Every masked pixel must be inside a patch, or this plan repairs part of a
-  // graphic and reports success.
+  // graphic and reports success. Kept even now that a square may overhang: the
+  // check is what makes the overhang SAFE to allow rather than a thing to hope
+  // about, and it is the only assertion standing between a wide banner and a
+  // half-cleaned photograph.
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (!mask[y * width + x]) continue;
@@ -207,26 +244,55 @@ export function planInpaintPatches(
   return { patches: squares, tooMany: false, uncovered: false };
 }
 
-/** Cut RGB pixels out of a frame. */
+/**
+ * Cut RGB pixels out of a frame, replicating the edge where the square
+ * overhangs.
+ *
+ * Edge replication rather than black or grey: a hard border inside the picture
+ * handed to the model is a feature it will try to continue, and a black bar
+ * beside a roofline is exactly the kind of thing that comes back drawn into the
+ * repair. Replication carries the photograph's own colour outward and reads as
+ * nothing at all. None of it is ever composited back — see `compositePatch`.
+ */
 export function cropRgb(
-  pixels: Uint8Array, width: number, patch: Patch,
+  pixels: Uint8Array, width: number, patch: Patch, height?: number,
 ): Uint8Array {
+  const rows = height ?? Math.floor(pixels.length / 3 / width);
   const out = new Uint8Array(patch.size * patch.size * 3);
   for (let y = 0; y < patch.size; y++) {
-    const from = ((patch.y + y) * width + patch.x) * 3;
-    out.set(pixels.subarray(from, from + patch.size * 3), y * patch.size * 3);
+    const sy = Math.max(0, Math.min(rows - 1, patch.y + y));
+    for (let x = 0; x < patch.size; x++) {
+      const sx = Math.max(0, Math.min(width - 1, patch.x + x));
+      const from = (sy * width + sx) * 3;
+      const to = (y * patch.size + x) * 3;
+      out[to] = pixels[from];
+      out[to + 1] = pixels[from + 1];
+      out[to + 2] = pixels[from + 2];
+    }
   }
   return out;
 }
 
-/** Cut a mask out of a frame. */
+/**
+ * Cut a mask out of a frame. The overhang is NOT editable.
+ *
+ * Zero outside the picture, so the model is told to leave the padding alone —
+ * and so that even a model that ignored the instruction changes nothing, since
+ * those pixels correspond to no pixel of the photograph.
+ */
 export function cropMask(
-  mask: Uint8Array, width: number, patch: Patch,
+  mask: Uint8Array, width: number, patch: Patch, height?: number,
 ): Uint8Array {
+  const rows = height ?? Math.floor(mask.length / width);
   const out = new Uint8Array(patch.size * patch.size);
   for (let y = 0; y < patch.size; y++) {
-    const from = (patch.y + y) * width + patch.x;
-    out.set(mask.subarray(from, from + patch.size), y * patch.size);
+    const sy = patch.y + y;
+    if (sy < 0 || sy >= rows) continue;
+    for (let x = 0; x < patch.size; x++) {
+      const sx = patch.x + x;
+      if (sx < 0 || sx >= width) continue;
+      out[y * patch.size + x] = mask[sy * width + sx];
+    }
   }
   return out;
 }

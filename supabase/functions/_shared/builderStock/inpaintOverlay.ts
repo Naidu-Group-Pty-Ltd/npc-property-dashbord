@@ -221,8 +221,8 @@ export async function inpaintOverlay(input: InpaintInput): Promise<InpaintResult
 
   let working = pixels;
   for (const patch of patches) {
-    const patchPixels = cropRgb(working, width, patch);
-    const patchMask = cropMask(mask, width, patch);
+    const patchPixels = cropRgb(working, width, patch, height);
+    const patchMask = cropMask(mask, width, patch, height);
 
     const upPixels = resampleRgb(patchPixels, patch.size, patch.size, EDGE, EDGE);
     const upMask = new Uint8Array(EDGE * EDGE);
