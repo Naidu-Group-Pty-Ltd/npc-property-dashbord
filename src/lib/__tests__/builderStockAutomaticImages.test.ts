@@ -629,7 +629,7 @@ describe('Y — one tick of the settlement sweep', () => {
     }));
 
   const settles = async (candidate: SettlementCandidate) => ({
-    uploadId: candidate.id, settled: true,
+    uploadId: candidate.id, settled: true, eligibilitySettled: true,
   });
 
   it('stops once a tick\'s worth of uploads have been settled', async () => {
@@ -661,7 +661,7 @@ describe('Y — one tick of the settlement sweep', () => {
       async (candidate) => {
         seen.push(candidate.id);
         const stuck = ['upload-1', 'upload-2', 'upload-3'].includes(candidate.id);
-        return { uploadId: candidate.id, settled: !stuck };
+        return { uploadId: candidate.id, settled: !stuck, eligibilitySettled: !stuck };
       },
     );
     expect(outcome.settled).toBe(3);
@@ -681,7 +681,7 @@ describe('Y — one tick of the settlement sweep', () => {
       async (candidate) => {
         seen.push(candidate.id);
         clock += 10;
-        return { uploadId: candidate.id, settled: false };
+        return { uploadId: candidate.id, settled: false, eligibilitySettled: false };
       },
     );
     expect(outcome.settled).toBe(0);
