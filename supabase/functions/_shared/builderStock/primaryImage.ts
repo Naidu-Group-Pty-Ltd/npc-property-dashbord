@@ -33,6 +33,7 @@ import {
 import {
   isMarketplaceEligible, needsEligibilityAssessment,
 } from './marketplaceEligibility.pure.ts';
+import { servableDerivativeFor } from './sanitizedDerivative.pure.ts';
 
 /** The stage whose provenance is the builder's own document. */
 export const SOURCE_SUPPLIED_STAGE = 'uploaded_document';
@@ -79,7 +80,16 @@ export function isDisplayableSourceImage(image: DisplayableImage): boolean {
     // And the sixth: the source designating it is not the same as it being a
     // picture to draw. A facade under a "$25,000 Rebate" ribbon passes all
     // five above. See `marketplaceEligibility.pure.ts`.
-    && isMarketplaceEligible(image.source_detail);
+    //
+    // OR THE SAME PHOTOGRAPH WITH THE RIBBON TAKEN OFF. A servable derivative
+    // is that image's own pixels with the laid-over graphic removed and the
+    // result re-measured by the same classifier that refused the original — so
+    // it satisfies the display rule rather than bypassing it. It is NOT another
+    // image: the record names the exact original by id and by SHA-256, and a
+    // row whose object has since changed stops resolving one. See
+    // `sanitizedDerivative.pure.ts`.
+    && (isMarketplaceEligible(image.source_detail)
+      || !!servableDerivativeFor(image.source_detail));
 }
 
 /**

@@ -34,9 +34,6 @@
 
 import { type OverlayMeasurement } from './marketingOverlay.pure.ts';
 
-/** Bumped when the reconstruction changes, so stored results can be re-made. */
-export const SANITIZATION_VERSION = 1;
-
 /**
  * How far the mask is grown before filling.
  *
@@ -243,26 +240,27 @@ function diffuse(
 }
 
 /**
- * Take the graphic off, or say why not.
+ * The detector's mask, on the builder's own pixels.
  *
- * The mask comes from the detector that refused the picture, so this can only
- * ever remove something that pass called a laid-over graphic.
+ * Scaled up from the thumbnail it was measured at — see `SanitizeInput.overlay`
+ * for why it is never re-measured here — and then grown BY THE SCALE: one
+ * thumbnail pixel is several here, so the edge of the badge lands that much
+ * less precisely and the ghost outline would be that much wider.
+ *
+ * Shared with the generative route in `inpaintOverlay.ts`, which is the point
+ * of it being a function. THE TWO ROUTES MUST REPAIR EXACTLY THE SAME PIXELS:
+ * one of them refuses and hands over to the other, and a mask that differed
+ * between them would mean the fallback rebuilding a different area from the one
+ * that was judged too hard to rebuild.
  */
-export function sanitizeOverlay(input: SanitizeInput): SanitizeResult {
-  const { width, height, pixels, overlay, maskWidth, maskHeight } = input;
+export function growOverlayMask(
+  overlay: OverlayMeasurement,
+  maskWidth: number, maskHeight: number, width: number, height: number,
+): Uint8Array | null {
   const count = width * height;
-  if (count <= 0 || pixels.length < count * 3) return { ok: false, reason: 'unusable_input' };
-  if (!overlay.regions.length) return { ok: false, reason: 'nothing_to_remove' };
-  if (maskWidth <= 0 || maskHeight <= 0) return { ok: false, reason: 'unusable_input' };
-  if (overlay.mask.length !== maskWidth * maskHeight) {
-    return { ok: false, reason: 'unusable_input' };
-  }
+  if (count <= 0 || maskWidth <= 0 || maskHeight <= 0) return null;
+  if (overlay.mask.length !== maskWidth * maskHeight) return null;
 
-  /*
-   * Scale the verdict's mask onto the builder's pixels, then grow it BY THE
-   * SCALE: one thumbnail pixel is several here, so the edge of the badge lands
-   * that much less precisely and the ghost outline would be that much wider.
-   */
   const scaleX = maskWidth / width;
   const scaleY = maskHeight / height;
   const scaled = new Uint8Array(count);
@@ -274,7 +272,23 @@ export function sanitizeOverlay(input: SanitizeInput): SanitizeResult {
     }
   }
   const spread = Math.max(1, Math.round(Math.max(width / maskWidth, height / maskHeight)));
-  const mask = grow(scaled, width, height, EDGE_GROW * spread);
+  return grow(scaled, width, height, EDGE_GROW * spread);
+}
+
+/**
+ * Take the graphic off, or say why not.
+ *
+ * The mask comes from the detector that refused the picture, so this can only
+ * ever remove something that pass called a laid-over graphic.
+ */
+export function sanitizeOverlay(input: SanitizeInput): SanitizeResult {
+  const { width, height, pixels, overlay, maskWidth, maskHeight } = input;
+  const count = width * height;
+  if (count <= 0 || pixels.length < count * 3) return { ok: false, reason: 'unusable_input' };
+  if (!overlay.regions.length) return { ok: false, reason: 'nothing_to_remove' };
+
+  const mask = growOverlayMask(overlay, maskWidth, maskHeight, width, height);
+  if (!mask) return { ok: false, reason: 'unusable_input' };
   let masked = 0;
   for (let i = 0; i < count; i++) masked += mask[i];
   if (!masked) return { ok: false, reason: 'nothing_to_remove' };

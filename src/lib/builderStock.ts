@@ -16,6 +16,9 @@ import {
 import {
   isMarketplaceEligible,
 } from '../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
+import {
+  servableDerivativeFor,
+} from '../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
 
 export {
   stockFileAcceptAttribute,
@@ -319,7 +322,13 @@ export function isDisplayableSourceImage(image: BuilderStockImage): boolean {
     && isPrimaryRole(readStoredRole(image.source_detail))
     // The stored verdict, read — never re-measured. Deciding this per card
     // would mean decoding every image on every render.
-    && isMarketplaceEligible(image.source_detail);
+    //
+    // Or the same photograph with the laid-over graphic taken off. That is a
+    // derivative of THESE bytes, named by id and by SHA-256 and re-measured by
+    // the same classifier, not a substitute picture. Mirrors the server's
+    // `primaryImage.ts`, and both read the one rule.
+    && (isMarketplaceEligible(image.source_detail)
+      || !!servableDerivativeFor(image.source_detail));
 }
 
 /**

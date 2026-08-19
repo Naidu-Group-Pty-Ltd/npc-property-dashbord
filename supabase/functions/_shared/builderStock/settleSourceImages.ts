@@ -33,6 +33,10 @@ import {
   eligibilitySweepCompleted, settleMarketplaceEligibility, type EligibilitySettlement,
 } from './settleMarketplaceEligibility.ts';
 import { MARKETPLACE_ELIGIBILITY_VERSION } from './marketplaceEligibility.pure.ts';
+import {
+  sanitizationSweepCompleted, settleImageSanitization, type SanitizationSettlement,
+} from './settleImageSanitization.ts';
+import { SANITIZATION_VERSION } from './sanitizedDerivative.pure.ts';
 
 /** The column that records how far an upload's imagery has been brought. */
 export const SETTLED_VERSION_COLUMN = 'source_images_settled_version';
@@ -48,6 +52,19 @@ export const SETTLED_VERSION_COLUMN = 'source_images_settled_version';
  * two from dragging each other around.
  */
 export const ELIGIBILITY_SETTLED_VERSION_COLUMN = 'marketplace_eligibility_settled_version';
+
+/**
+ * And the column that records how far its OVERLAY REPAIR has been brought.
+ *
+ * A THIRD MARKER, for the reason there is a second. Where a builder laid a
+ * promotional graphic over their own photograph, the display gate refuses it
+ * and the repair takes the graphic off — and how well that can be done is a
+ * third algorithm improving on a third schedule. Sharing a marker with
+ * eligibility would mean every classifier bump re-running a repair that costs a
+ * full-resolution decode and, on the hard ones, a model call; sharing one with
+ * provenance would mean every repair improvement re-fetching every source.
+ */
+export const SANITIZATION_SETTLED_VERSION_COLUMN = 'image_sanitization_settled_version';
 
 export interface SettlementOutcome {
   uploadId: string;
@@ -70,6 +87,8 @@ export interface SettlementOutcome {
   repair?: RepairOutcome;
   /** The eligibility sweep's report, when one ran. */
   eligibility?: EligibilitySettlement;
+  /** The overlay-repair sweep's report, when one ran. */
+  sanitization?: SanitizationSettlement;
   /** Safe to surface: why settlement could not complete. */
   error?: string;
 }
@@ -117,9 +136,11 @@ export async function uploadsNeedingSettlement(
 export function uploadHasWorkOutstanding(
   row: Record<string, unknown>,
   eligibilityTarget: number = MARKETPLACE_ELIGIBILITY_VERSION,
+  sanitizationTarget: number = SANITIZATION_VERSION,
 ): boolean {
   return Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION
-    || Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < eligibilityTarget;
+    || Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < eligibilityTarget
+    || Number(row[SANITIZATION_SETTLED_VERSION_COLUMN] ?? 0) < sanitizationTarget;
 }
 
 /** The single-row table that carries the deployment's eligibility target. */
@@ -166,6 +187,33 @@ export async function readEligibilityTarget(db: any): Promise<number> {
 }
 
 /**
+ * The overlay-repair version production is being brought to, as the database
+ * states it.
+ *
+ * The same two-halves rule as `readEligibilityTarget`, and the same reason: the
+ * cron job decides in SQL whether work is left, and SQL cannot see
+ * `SANITIZATION_VERSION`. The effective target is the LOWER of the two, so a
+ * migration that lands before the functions do makes the sweep wait rather than
+ * re-running every repair under the old code and writing a marker that can
+ * never reach the target.
+ */
+export async function readSanitizationTarget(db: any): Promise<number> {
+  let stated = SANITIZATION_VERSION;
+  try {
+    const { data, error } = await db
+      .from(SETTLEMENT_TARGET_TABLE)
+      .select('image_sanitization_version')
+      .limit(1);
+    const row = (data ?? [])[0] as Record<string, unknown> | undefined;
+    const value = row?.image_sanitization_version;
+    if (!error && typeof value === 'number' && Number.isFinite(value)) stated = value;
+  } catch {
+    // Column absent or unreadable. The constant stands on its own.
+  }
+  return Math.min(stated, SANITIZATION_VERSION);
+}
+
+/**
  * Is the settlement schema actually deployed?
  *
  * WHY THIS IS A FUNCTION RATHER THAN AN ASSUMPTION. Edge functions ship
@@ -204,6 +252,7 @@ export async function readSettlementReadiness(db: any): Promise<SettlementReadin
   };
   await probe(SETTLED_VERSION_COLUMN);
   await probe(ELIGIBILITY_SETTLED_VERSION_COLUMN);
+  await probe(SANITIZATION_SETTLED_VERSION_COLUMN);
 
   /*
    * The terminal-negative-provenance column, probed for the same reason as the
@@ -243,7 +292,8 @@ export async function readSettlementReadiness(db: any): Promise<SettlementReadin
 
 /** The columns the queue reads. One list, so the two callers cannot drift. */
 const QUEUE_COLUMNS = `id, organisation_id, created_at, `
-  + `${SETTLED_VERSION_COLUMN}, ${ELIGIBILITY_SETTLED_VERSION_COLUMN}`;
+  + `${SETTLED_VERSION_COLUMN}, ${ELIGIBILITY_SETTLED_VERSION_COLUMN}, `
+  + `${SANITIZATION_SETTLED_VERSION_COLUMN}`;
 
 /** An upload row as the queue read returns it. */
 export interface OutstandingUploadRow extends Record<string, unknown> {
@@ -255,6 +305,8 @@ export interface OutstandingUploads {
   rows: OutstandingUploadRow[];
   /** The eligibility version these rows were selected against. */
   eligibilityTarget: number;
+  /** And the overlay-repair version. */
+  sanitizationTarget: number;
   /** True when the markers could not be read at all (migration not applied). */
   unavailable: boolean;
 }
@@ -268,26 +320,30 @@ export interface OutstandingUploads {
  * the queue empty — for ever. Raising the limit only moves the number at which
  * it happens.
  *
- * So the DATABASE decides what is outstanding, over four narrow reads whose
- * union is exactly the set:
+ * So the DATABASE decides what is outstanding, over six narrow reads whose
+ * union is exactly the set — two for each of the three concerns:
  *
- *   provenance marker IS NULL          never settled
+ *   provenance marker  IS NULL         never settled
  *   provenance marker  < current       settled under older rules
  *   eligibility marker IS NULL         never judged
  *   eligibility marker < target        judged under an older algorithm
+ *   sanitization marker IS NULL        never offered to the overlay repair
+ *   sanitization marker < target       repaired by an older one
  *
- * Four reads rather than one `.or()` string, deliberately: a filter composed by
- * string interpolation is the shape that cost this codebase a predicate which
- * had never once parsed, and `IS NULL` cannot be folded into a `<` comparison
- * anyway — PostgREST's `lt` excludes nulls, which is precisely the rows that
- * matter most here. Each read is a plain indexed predicate, each is limited,
- * and the union is merged and re-sorted in memory over at most 4 × limit rows.
+ * Separate reads rather than one `.or()` string, deliberately: a filter
+ * composed by string interpolation is the shape that cost this codebase a
+ * predicate which had never once parsed, and `IS NULL` cannot be folded into a
+ * `<` comparison anyway — PostgREST's `lt` excludes nulls, which is precisely
+ * the rows that matter most here. Each read is a plain indexed predicate, each
+ * is limited, and the union is merged and re-sorted in memory over at most
+ * 6 × limit rows.
  */
 export async function readOutstandingUploads(
   db: any,
-  input: { limit: number; eligibilityTarget?: number },
+  input: { limit: number; eligibilityTarget?: number; sanitizationTarget?: number },
 ): Promise<OutstandingUploads> {
   const eligibilityTarget = input.eligibilityTarget ?? MARKETPLACE_ELIGIBILITY_VERSION;
+  const sanitizationTarget = input.sanitizationTarget ?? SANITIZATION_VERSION;
   const limit = Math.max(1, Math.min(input.limit, 500));
 
   const base = () => db
@@ -302,6 +358,8 @@ export async function readOutstandingUploads(
     base().lt(SETTLED_VERSION_COLUMN, PROVENANCE_VERSION),
     base().is(ELIGIBILITY_SETTLED_VERSION_COLUMN, null),
     base().lt(ELIGIBILITY_SETTLED_VERSION_COLUMN, eligibilityTarget),
+    base().is(SANITIZATION_SETTLED_VERSION_COLUMN, null),
+    base().lt(SANITIZATION_SETTLED_VERSION_COLUMN, sanitizationTarget),
   ];
 
   const results = await Promise.all(reads.map(async (read: any) => {
@@ -314,7 +372,7 @@ export async function readOutstandingUploads(
 
   // Every read failing the same way means the columns are not there yet.
   if (results.every((result: any) => result?.error)) {
-    return { rows: [], eligibilityTarget, unavailable: true };
+    return { rows: [], eligibilityTarget, sanitizationTarget, unavailable: true };
   }
 
   const byId = new Map<string, OutstandingUploadRow>();
@@ -334,16 +392,19 @@ export async function readOutstandingUploads(
     String(a.created_at ?? '').localeCompare(String(b.created_at ?? ''))
     || String(a.id).localeCompare(String(b.id)));
 
-  return { rows: rows.slice(0, limit), eligibilityTarget, unavailable: false };
+  return {
+    rows: rows.slice(0, limit), eligibilityTarget, sanitizationTarget, unavailable: false,
+  };
 }
 
 /** An upload the sweep may pick up, as the queue read returns it. */
 export interface SettlementCandidate {
   id: string;
   organisation_id: string;
-  /** What this upload owes, so a settled half is not redone. */
+  /** What this upload owes, so a settled concern is not redone. */
   needsProvenance?: boolean;
   needsEligibility?: boolean;
+  needsSanitization?: boolean;
 }
 
 export interface SettlementTickOutcome {
@@ -443,15 +504,18 @@ export async function settleUploadSourceImages(
      */
     needsProvenance?: boolean;
     needsEligibility?: boolean;
+    needsSanitization?: boolean;
   },
   deps: {
     fetchPackage?: PackageFetcher;
     fetchImage?: SourceImageFetcher;
     readPageTexts?: (bytes: Uint8Array) => Promise<string[]>;
+    sanitize?: NonNullable<Parameters<typeof settleImageSanitization>[2]>['sanitize'];
   } = {},
 ): Promise<SettlementOutcome> {
   const needsProvenance = input.needsProvenance !== false;
   const needsEligibility = input.needsEligibility !== false;
+  const needsSanitization = input.needsSanitization !== false;
 
   /**
    * DISPLAY ELIGIBILITY FIRST, and on its own marker.
@@ -517,8 +581,67 @@ export async function settleUploadSourceImages(
     }
   }
 
+  /**
+   * THE OVERLAY REPAIR, AFTER THE VERDICTS AND BEFORE THE SOURCE RE-READ.
+   *
+   * After, because it only ever picks up an image the display gate CONVICTED,
+   * and a row whose verdict has not been written yet has not been convicted of
+   * anything. Before, because the source re-read is the expensive, remote,
+   * retried-for-hours half and a repair that is ready to run should not wait on
+   * it — the same reasoning that put eligibility first.
+   *
+   * Its marker moves on its own, so an upload whose repair finished keeps that
+   * result even if the provenance half below fails and is retried for days.
+   */
+  let sanitization: SanitizationSettlement | undefined;
+  if (needsSanitization) {
+    sanitization = await settleImageSanitization(db, input.organisationId, {
+      uploadId: input.uploadId,
+      deadlineAt: input.deadlineAt,
+      sanitize: deps.sanitize,
+    });
+    if (sanitizationSweepCompleted(sanitization)) {
+      const { error: markError } = await db
+        .from('builder_stock_uploads')
+        .update({ [SANITIZATION_SETTLED_VERSION_COLUMN]: SANITIZATION_VERSION })
+        .eq('id', input.uploadId)
+        .eq('organisation_id', input.organisationId);
+      if (markError) {
+        console.warn('[builderStock] sanitization marker not written', {
+          upload_id: input.uploadId,
+          phase: 'sanitization_marker',
+          message: String(markError.message ?? markError).slice(0, 200),
+        });
+        return {
+          uploadId: input.uploadId, settled: false, eligibilitySettled, eligibility, sanitization,
+        };
+      }
+    } else {
+      /*
+       * The repair cap, the wall clock or an operational fault. Every one of
+       * them means this upload is not at the current repair version, so the
+       * marker stays where it is and the next tick continues from the same
+       * keyset cursor. A REFUSED repair is not this: that is written down and
+       * counts as finished work, exactly as a `pending` verdict does.
+       */
+      console.warn('[builderStock] overlay repair incomplete', {
+        upload_id: input.uploadId,
+        phase: 'image_sanitization',
+        outstanding: sanitization.outstanding,
+        repaired: sanitization.repaired,
+        refused: sanitization.refused,
+        unresolved: sanitization.unresolved,
+      });
+      return {
+        uploadId: input.uploadId, settled: false, eligibilitySettled, eligibility, sanitization,
+      };
+    }
+  }
+
   if (!needsProvenance) {
-    return { uploadId: input.uploadId, settled: true, eligibilitySettled, eligibility };
+    return {
+      uploadId: input.uploadId, settled: true, eligibilitySettled, eligibility, sanitization,
+    };
   }
 
   let repair: RepairOutcome;
@@ -536,7 +659,10 @@ export async function settleUploadSourceImages(
       phase: 'source_image_settlement',
       message,
     });
-    return { uploadId: input.uploadId, settled: false, eligibilitySettled, eligibility, error: message };
+    return {
+      uploadId: input.uploadId, settled: false, eligibilitySettled, eligibility, sanitization,
+      error: message,
+    };
   }
 
   if (repair.problems.length) {
@@ -583,7 +709,10 @@ export async function settleUploadSourceImages(
       package_not_identified: repair.packageNotIdentified,
       package_already_answered: repair.packageAlreadyAnswered,
     });
-    return { uploadId: input.uploadId, settled: false, eligibilitySettled, repair, eligibility };
+    return {
+      uploadId: input.uploadId, settled: false, eligibilitySettled, repair, eligibility,
+      sanitization,
+    };
   }
   if (repair.error) {
     console.warn('[builderStock] source could not be re-read for settlement', {
@@ -606,8 +735,13 @@ export async function settleUploadSourceImages(
       phase: 'settlement_marker',
       message: String(markError.message ?? markError).slice(0, 200),
     });
-    return { uploadId: input.uploadId, settled: false, eligibilitySettled, repair, eligibility };
+    return {
+      uploadId: input.uploadId, settled: false, eligibilitySettled, repair, eligibility,
+      sanitization,
+    };
   }
 
-  return { uploadId: input.uploadId, settled: true, eligibilitySettled, repair, eligibility };
+  return {
+    uploadId: input.uploadId, settled: true, eligibilitySettled, repair, eligibility, sanitization,
+  };
 }

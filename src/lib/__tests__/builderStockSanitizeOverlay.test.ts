@@ -12,8 +12,11 @@ import {
   measureFlatColourRegions,
 } from '../../../supabase/functions/_shared/builderStock/marketingOverlay.pure';
 import {
-  SANITIZATION_VERSION, sanitizeOverlay,
+  sanitizeOverlay,
 } from '../../../supabase/functions/_shared/builderStock/sanitizeOverlay.pure';
+import {
+  SANITIZATION_VERSION,
+} from '../../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
 
 /**
  * A sky-like gradient with grain: the ground a badge is normally stuck onto.
