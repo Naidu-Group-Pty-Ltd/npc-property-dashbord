@@ -210,7 +210,22 @@ export interface AmlScreeningFacts {
     /** When the row last changed — how a stalled queue is recognised. */
     updated_at?: string | null;
     matches?: Array<{ status: string; match_type?: string | null; matched_name?: string }>;
+    /**
+     * The party's current PEP determination, when one exists.
+     *
+     * `list_party_screening` has always returned it; the journey reading did
+     * not ask for it and so could not see the one thing genuinely outstanding
+     * on a case whose sanctions obligation had been stood down. Absent means
+     * "no determination", which is outstanding — never satisfied.
+     */
+    pep_determination?: { result?: string | null; review_due_at?: string | null } | null;
   }>;
+  /**
+   * Whether a PEP determination is owed at all, from the server's recorded
+   * scope decision. Absent means unread, which reads as owed: an unread
+   * obligation is not an absent one.
+   */
+  pepRequired?: boolean | null;
 }
 
 /** `aml-monitoring case_monitoring_summary`. */
@@ -689,7 +704,17 @@ function screeningRow(facts: AmlWorkspaceFacts): AmlComplianceRow {
   if (!loaded(facts.screening)) {
     return { ...base, state: "unknown", detail: EVIDENCE_STATE_LABELS.unknown };
   }
-  const subjects = facts.screening.subjects.filter((s) => s.state !== "not_required");
+  const enrolled = facts.screening.subjects;
+  const subjects = enrolled.filter((s) => s.state !== "not_required");
+  if (subjects.length === 0 && enrolled.length > 0) {
+    /*
+     * Enrolled, and every party's screening obligation stood down by the
+     * recorded scope. Not owed is not the same as not done, and reporting it
+     * as `not_started` put "No screening subjects recorded" on a compliance
+     * summary for a case that had a subject and needed no screening.
+     */
+    return { ...base, state: "not_applicable", detail: "Not required under the recorded scope" };
+  }
   if (subjects.length === 0) {
     return { ...base, state: "not_started", detail: "No screening subjects recorded" };
   }

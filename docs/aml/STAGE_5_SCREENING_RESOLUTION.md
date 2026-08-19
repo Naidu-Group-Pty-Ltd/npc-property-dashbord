@@ -59,6 +59,55 @@ of a manual route, and neither role is left holding a status with no step.
 An alternative is a different **method** of discharging an obligation. Nothing
 in it can make an obligation unnecessary.
 
+## Working the case to completion found four more
+
+The stage said the right things and then could not act on any of them.
+
+**1 — the reopen that could not run.** *"Reopen case to resume AML/CTF"*
+returned **"AML-2026-00005 is not closed, so there is nothing to reopen."**
+The UI read the canonical dimension and `planCaseReopen` checked the legacy
+one, so the single action offered was the single action that could not
+execute — and a case already stuck in the divergence could never leave it,
+because reopening is the thing that reconciles the two. `planCaseReopen` now
+takes `caseStage` and treats the case as closed if **either** dimension says
+so. Every other refusal — role, reason, nothing-restored — is unchanged.
+
+**2 — a determination nobody made.** The PEP row read **"Not a PEP · Recorded
+for every party in scope"** on a case with zero `pep_determinations` rows.
+`buildDeterminationRows` computed it over `subjects.filter(s => s.required)`
+— the **sanctions** obligation — which on a perimeter-excluded case is empty,
+and `.some()` over an empty array is `false`. A vacuous truth is the worst
+failure mode this product has: it is a determination nobody made, rendered as
+one that was. PEP now counts **enrolled** parties, and nobody enrolled is
+outstanding rather than satisfied. The screened scopes get the same treatment
+— `settled` requires a party to be settled about.
+
+**3 — not owed reported as not done.** The journey said *"Screening has not
+been run"* on a case whose every party's screening obligation had been stood
+down, directly above a card correctly saying sanctions was not required. Both
+statements were true and they read as a contradiction. `screeningStage` and
+the compliance summary now separate *enrolled with nothing to screen*
+(settled) from *nobody enrolled* (outstanding); the second branch is
+unchanged.
+
+**4 — the real work was nameless.** The one thing outstanding on that case was
+a **PEP determination**, and the journey stage never read PEP at all. It does
+now — per party, absent means outstanding — and the primary action says
+*Record PEP determination* instead of *Open screening & ownership*. An unread
+scope decision reads as `unknown`: fail-closed for completion, without
+inventing outstanding work or claiming an owner, and never outranking a match
+awaiting adjudication.
+
+## The way on
+
+When every required determination is genuinely recorded, Stage 5 offers
+**Continue to Funding** — a navigation that completes nothing, advances no
+case stage and confers no authorisation, which the control says on itself.
+Completing Stage 5 is **evidence completion**; the designated service still
+proceeds only through the separate service-gate decision. The words *AML
+clear*, *AML approved* and *client compliant* do not appear at this stage, and
+a test asserts they cannot.
+
 ## Obligation ≠ method ≠ outcome
 
 The rule the whole screen turns on. Three different questions were being

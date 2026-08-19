@@ -147,9 +147,16 @@ function DeterminationRowView({ row }: { row: DeterminationRow }) {
 }
 
 export function ScreeningStageCard({
-  reading, onAct, actor,
+  reading, onAct, actor, onContinue,
 }: {
   reading: AmlScreeningStageReading;
+  /**
+   * Open the next stage. Optional, and a NAVIGATION only: it completes
+   * nothing, advances no case stage and confers no authorisation — which the
+   * control says on itself, because "Continue to Funding" beside a green
+   * stage is exactly where somebody would otherwise read a sign-off.
+   */
+  onContinue?: () => void;
   /** Performs the one action. The card never mutates anything itself. */
   onAct: (action: AmlScreeningNextAction) => void | Promise<void>;
   /**
@@ -301,6 +308,28 @@ export function ScreeningStageCard({
               {action.owner === "client" && " — no staff action is required"}
             </span>
           </div>
+
+          {/*
+            ── The way on ─────────────────────────────────────────────
+            Only when every required determination is genuinely recorded. It
+            is deliberately not called "approve", "clear" or "compliant":
+            finishing Stage 5 completes the EVIDENCE, and the designated
+            service still proceeds only through the separate service-gate
+            decision. Saying so here is cheaper than un-saying it later.
+          */}
+          {action.key === "none" && !caseClosed && onContinue && (
+            <div className="mt-3 space-y-2 border-t border-border/50 pt-3">
+              <Button size="sm" onClick={onContinue}>
+                Continue to Funding
+                <ArrowRight aria-hidden className="ml-1.5 h-4 w-4" />
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Completing this stage is evidence completion only. The designated service
+                proceeds through the separate service-gate decision, which this does not
+                make, imply or bring forward.
+              </p>
+            </div>
+          )}
 
           {/*
             ── The retained record ────────────────────────────────────

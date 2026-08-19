@@ -134,7 +134,22 @@ export function buildDeterminationRows(args: {
   providerRelevant: boolean;
 }): DeterminationRow[] {
   const { sync, position, providerReady, providerRelevant } = args;
+  /*
+   * Two different populations, and conflating them fabricated a
+   * determination in production.
+   *
+   * `subject.required` is about the SCREENING obligation — sanctions. A case
+   * whose perimeter stood sanctions down has every subject `required: false`,
+   * so `required` is empty. PEP is owed per PARTY under its own scope
+   * decision, so a PEP row computed over `required` asked `.some()` of an
+   * empty array, got `false`, and reported "Not a PEP · Recorded for every
+   * party in scope" on a case with zero `pep_determinations` rows.
+   *
+   * A vacuous truth is the worst possible failure mode here: it is a
+   * determination nobody made, rendered as one that was.
+   */
   const required = position.subjects.filter((s) => s.required);
+  const enrolled = position.subjects;
 
   const rows: DeterminationRow[] = (sync.scopes ?? []).map((sc) => {
     const obligation: ObligationReading = sc.required ? "required" : "not_required";
@@ -143,7 +158,13 @@ export function buildDeterminationRows(args: {
     if (sc.scope === "pep") {
       // PEP is established by a recorded determination, never by a screening
       // run and never by the client's own declaration.
-      const outstanding = required.some((s) => !s.pep.resolved);
+      //
+      // Over the ENROLLED parties, not the screening-required ones — and
+      // "nobody is enrolled" is outstanding, never satisfied. An obligation
+      // with no parties to discharge it against is an unread position, and
+      // an unread position fails closed.
+      const outstanding = enrolled.length === 0 || enrolled.some((s) => !s.pep.resolved);
+      const noParties = enrolled.length === 0;
       return {
         scope: sc.scope, title, obligation,
         obligationDetail: sc.required
@@ -160,9 +181,12 @@ export function buildDeterminationRows(args: {
           : outstanding ? "not_started" : "not_a_pep",
         outcomeDetail: !sc.required
           ? "No obligation arose, so nobody was assessed."
-          : outstanding
-            ? "Outstanding for at least one party in scope."
-            : "Recorded for every party in scope.",
+          : noParties
+            ? "Nobody is enrolled for this case yet, so no determination can have been "
+              + "made. This is outstanding, not satisfied."
+            : outstanding
+              ? "Outstanding for at least one party in scope."
+              : "Recorded for every party in scope.",
         blocking: sc.required && outstanding,
       };
     }
@@ -172,7 +196,13 @@ export function buildDeterminationRows(args: {
       .map((s) => sanctionsOutcome(s.sanctions.state))
       .sort((a, b) => OUTCOME_RANK.indexOf(a) - OUTCOME_RANK.indexOf(b))[0]
       ?? "not_started";
-    const settled = worst === "no_match";
+    /*
+     * `settled` needs a party to be settled ABOUT. A required scope with
+     * nobody enrolled is outstanding: the `?? "not_started"` above already
+     * says so, and this makes the emptiness explicit rather than resting on
+     * a fallback that a future edit could quietly change.
+     */
+    const settled = required.length > 0 && worst === "no_match";
     const automatedBlocked = providerRelevant && !providerReady;
 
     return {
