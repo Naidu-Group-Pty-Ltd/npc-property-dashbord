@@ -326,6 +326,35 @@ rendered beside them every time. `holds_position_currently` is an attribute of
 the determination and never a softer outcome: leaving office is a risk
 assessment, not an expiry date.
 
+## The public office-holder index
+Read [`docs/aml/PEP_OFFICEHOLDER_INDEX.md`](./docs/aml/PEP_OFFICEHOLDER_INDEX.md)
+before touching `_shared/aml/pepOfficeholderIndex.pure.ts`,
+`scripts/aml/load-pep-officeholders.mjs`, the `search_pep_officeholders`
+operation or `PepOfficeholderIndexPanel`. It is the second register this
+platform loads and **not the same kind of thing as the first**: a sanctions
+match is an outcome, an index hit is a lead.
+
+**A hit is a candidate; a miss is nothing.** No public source lists every
+prominent public function and none lists family members or close associates,
+so the danger is the EMPTY reading — zero rows for somebody the index never
+covered looks exactly like zero rows for somebody who holds no office, which
+is the shape `sanctions_entries` already shipped once. So `searchVerdict` has
+four readings and a test asserts none can be paraphrased into a clearance;
+**coverage travels with every result including the empty one**; an index that
+never loaded or whose latest load FAILED reads as `unavailable` rather than as
+no candidates; and a database fault answers 503 rather than "nothing found".
+
+Two more rules. **The index is never the source** — every row carries a
+`confirm_url`, the panel says the source is collaboratively edited, and
+`candidateToMethodDraft` leaves `result` EMPTY so the operator writes what they
+saw when they confirmed it against the official register. And **normalisation
+is server-side, always**: `normalised_names` uses the same `normaliseName` the
+query does, imported rather than re-implemented, and a row with no searchable
+tokens is refused by the loader and by a column constraint. The loader repeats
+every rule the sanctions loader learned the hard way — refuse a zero-entry
+parse, treat a shrink as a truncated download, name `sync_id` in the prune's
+RETURNING projection, and pin Node 22.
+
 ## AML screening scope
 Read [`docs/aml/SCREENING_SCOPE.md`](./docs/aml/SCREENING_SCOPE.md) before
 touching `deriveScreeningScope`, `reconcileSubjectToScope` or the

@@ -51,6 +51,12 @@ import { readPepDeclaration } from "../_shared/aml/pepDeclaration.pure.ts";
 import {
   assessPepDeferral, assessPepEvidence, normalisePepMethods,
 } from "../_shared/aml/pepEvidence.pure.ts";
+// The public office-holder index: what a search of it may and may not say.
+import {
+  PEP_INDEX_SOURCES, describeCoverage, searchVerdict,
+  type PepIndexCandidate,
+} from "../_shared/aml/pepOfficeholderIndex.pure.ts";
+import { normaliseName, scoreNames } from "../_shared/aml/matching.ts";
 import { planCaseReopen, resumeStatusFor } from "../_shared/aml/caseReopen.pure.ts";
 import {
   AML_PURGE_ORDER, AML_UNLINKED_CASE_TABLES, decideClientReset,
@@ -4027,6 +4033,127 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
        * trail. The PEP scope stays outstanding, the step stays blocking, and
        * the stage stays open — which is the honest state.
        */
+      /*
+       * Search the public office-holder index for a party.
+       *
+       * ── The one rule this operation exists to keep ────────────────────
+       * A HIT is a candidate. A MISS is NOTHING.
+       *
+       * The index is partial by construction — no public source lists every
+       * prominent public function, and none lists family members or close
+       * associates at all. So this never returns a bare candidate list: the
+       * verdict, the coverage of every source and the currency of each load
+       * travel with it, and `searchVerdict` will not produce the word
+       * "clear" in any branch. A caller cannot render "0 candidates" without
+       * also having what was and was not looked at.
+       *
+       * An index that has never loaded, or whose last load FAILED, reads as
+       * `unavailable` rather than as no candidates. That distinction is the
+       * whole lesson of `sanctions_entries`, which was empty from the day
+       * the platform was built while every screening against it would have
+       * returned exactly this shape of nothing.
+       *
+       * Read-only. It writes no determination, no source row and no case
+       * event: what the operator records is what they saw when they
+       * confirmed a candidate against the official register, which is a
+       * different act performed by a person.
+       */
+      case 'search_pep_officeholders': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+
+        // Identity is DERIVED, exactly as it is for a determination. A
+        // caller-supplied name would let one party's screen be searched
+        // under another party's name.
+        const partySubjectId = body.party_screening_subject_id
+          ? String(body.party_screening_subject_id) : null;
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, subject_display_name').eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+        let searchName = String(caseRow.subject_display_name ?? '').trim();
+        if (partySubjectId) {
+          const { data: partySubject } = await admin.schema('aml')
+            .from('party_screening_subjects')
+            .select('id, case_id, screened_name').eq('id', partySubjectId).maybeSingle();
+          if (!partySubject || String(partySubject.case_id) !== caseId) {
+            return jsonResponse({
+              error: 'party_screening_subject_id does not belong to this case',
+            }, 400);
+          }
+          searchName = String(partySubject.screened_name ?? '').trim();
+        }
+
+        // Coverage FIRST, and unconditionally. It is attached to every
+        // reading including the empty one, which is the reading that needs
+        // it most.
+        const coverage = [];
+        for (const source of PEP_INDEX_SOURCES) {
+          const { data: sync } = await admin.schema('aml').from('pep_officeholder_syncs')
+            .select('entry_count, source_as_at, completed_at, started_at, status')
+            .eq('source_code', source.code)
+            .order('started_at', { ascending: false }).limit(1).maybeSingle();
+          coverage.push(describeCoverage(source.code, sync ?? null));
+        }
+
+        const tokens = normaliseName(searchName);
+        if (tokens.length === 0) {
+          return jsonResponse(searchVerdict({
+            hasSearchableName: false, candidates: [], coverage,
+          }));
+        }
+
+        // Overlap on ANY token, then score in code — recall first, exactly
+        // as the sanctions provider does. Requiring every token would miss
+        // the partial-name cases the search exists to catch.
+        const { data: rows, error: searchErr } = await admin.schema('aml')
+          .from('pep_officeholders')
+          .select('external_id, source_code, full_name, aliases, position_title, pep_type, '
+            + 'jurisdiction, position_start, position_end, currently_held, confirm_url')
+          .overlaps('normalised_names', tokens)
+          .limit(500);
+        if (searchErr) {
+          // A database fault is a technical condition and must never be
+          // returned as "nothing found" — that is how an error becomes an
+          // outcome. The sanctions consumers made exactly this mistake by
+          // discarding a claim's error.
+          console.error('search_pep_officeholders failed', searchErr);
+          return jsonResponse({
+            error: 'The office-holder index could not be searched.',
+            code: 'pep_index_search_failed',
+          }, 503);
+        }
+
+        const MIN_SCORE = 0.7;
+        const candidates: PepIndexCandidate[] = (rows ?? []).map((r: any) => {
+          const names = [String(r.full_name), ...((r.aliases ?? []) as string[])];
+          const score = Math.max(...names.map((n) => scoreNames(searchName, n).score), 0);
+          return {
+            externalId: String(r.external_id),
+            sourceCode: String(r.source_code),
+            fullName: String(r.full_name),
+            aliases: (r.aliases ?? []) as string[],
+            positionTitle: String(r.position_title),
+            pepType: r.pep_type ?? 'domestic',
+            jurisdiction: r.jurisdiction ?? null,
+            positionStart: r.position_start ?? null,
+            positionEnd: r.position_end ?? null,
+            currentlyHeld: r.currently_held ?? null,
+            confirmUrl: r.confirm_url ?? null,
+            score,
+          };
+        })
+          .filter((c) => c.score >= MIN_SCORE)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 25);
+
+        return jsonResponse(searchVerdict({
+          hasSearchableName: true, candidates, coverage,
+        }));
+      }
+
       case 'defer_pep_determination': {
         if (!(roles.has('reviewer') || roles.has('mlro'))) {
           return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);

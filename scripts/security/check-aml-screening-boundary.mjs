@@ -90,6 +90,19 @@ assert.match(deferOp, /determination_recorded: false/,
 assert.doesNotMatch(deferOp, /from\('pep_determinations'\)\.insert/,
   "a deferral must write no determination row — it is not a third outcome");
 
+/* ── The office-holder index can surface a candidate, never a clearance ──── */
+const indexOp = slice(cases, "case 'search_pep_officeholders'", "case 'defer_pep_determination'");
+assert.match(indexOp, /roles\.has\('reviewer'\) \|\| roles\.has\('mlro'\)/,
+  "search_pep_officeholders must require reviewer or MLRO");
+assert.match(indexOp, /party_screening_subject_id does not belong to this case/,
+  "the searched identity must be derived from the case, never asserted");
+assert.match(indexOp, /searchVerdict/,
+  "the search must return the shared verdict, so coverage travels with it");
+assert.match(indexOp, /pep_index_search_failed/,
+  "a search fault must be a technical condition, never an empty result");
+assert.doesNotMatch(indexOp, /\.insert\(/,
+  "searching the index must write nothing");
+
 /* ── Senior manager: explicit designation, MLRO-managed, linked approvals ── */
 const designate = slice(risk, 'op === "designate_senior_manager"', 'op === "revoke_senior_manager"');
 assert.match(designate, /if \(!isMlro\)/, "designating a senior manager must be MLRO-only");

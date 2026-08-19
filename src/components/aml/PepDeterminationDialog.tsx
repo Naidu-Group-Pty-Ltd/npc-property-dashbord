@@ -63,6 +63,7 @@ import {
 import {
   PEP_SEARCH_COVERAGE_GAPS, buildPepSearches,
 } from "@/lib/aml/pepSearchLinks.pure";
+import { PepOfficeholderIndexPanel } from "@/components/aml/PepOfficeholderIndexPanel";
 import type { PepDeclarationReading } from "@/lib/aml/pepDeclaration";
 import { PEP_RELATIONSHIP_LABEL } from "@/lib/aml/pepDeclaration";
 
@@ -359,6 +360,22 @@ export function PepDeterminationDialog({
             />
 
             <div className="ml-[2.125rem] space-y-3">
+              {/*
+                The index first, because it is the only step that can tell an
+                operator WHICH register to open. It surfaces candidates and
+                never a clearance — the empty reading carries the index's own
+                coverage, so "nothing found" cannot be read as "nobody is
+                exposed".
+              */}
+              <PepOfficeholderIndexPanel
+                caseId={caseId} subjectId={subject.id}
+                onAddSource={(draft) => setRows((prev) => [...prev, newRow({
+                  kind: (PEP_SOURCE_KINDS as readonly string[]).includes(draft.kind)
+                    ? draft.kind as PepSourceKind : "official_register",
+                  source: draft.source, reference: draft.reference, result: draft.result,
+                })])}
+              />
+
               <div className="flex flex-wrap gap-2">
                 {searches.map((s) => (
                   <Button
