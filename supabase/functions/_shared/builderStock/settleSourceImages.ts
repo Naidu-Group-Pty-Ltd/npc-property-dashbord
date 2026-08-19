@@ -53,6 +53,19 @@ export interface SettlementOutcome {
   uploadId: string;
   /** True when this upload is now at BOTH current versions. */
   settled: boolean;
+  /**
+   * True when the DISPLAY-ELIGIBILITY half finished, whether or not the
+   * provenance half did.
+   *
+   * Primary-image enforcement reads eligibility verdicts and nothing else, so
+   * this — not `settled` — is what licenses it. Requiring both halves made the
+   * pointer bookkeeping hostage to a source repair that re-fetches remote
+   * documents and can be retried for hours: in production upload
+   * f7e0d4d1 reached a complete set of verdicts while its provenance marker was
+   * still null, and enforcement would not have run until that unrelated work
+   * finished.
+   */
+  eligibilitySettled: boolean;
   /** The repair's own report, when one ran. */
   repair?: RepairOutcome;
   /** The eligibility sweep's report, when one ran. */
@@ -150,6 +163,82 @@ export async function readEligibilityTarget(db: any): Promise<number> {
     // Table absent or unreadable. The constant stands on its own.
   }
   return Math.min(stated, MARKETPLACE_ELIGIBILITY_VERSION);
+}
+
+/**
+ * Is the settlement schema actually deployed?
+ *
+ * WHY THIS IS A FUNCTION RATHER THAN AN ASSUMPTION. Edge functions ship
+ * automatically when `main` moves; migrations in this project do NOT — they are
+ * applied one file at a time by a human dispatching a workflow. So the display
+ * gate, which lives in the functions and the bundle, can go live hours or days
+ * before the schema that lets the backfill clear it. That is not hypothetical:
+ * it is exactly what happened here. Every marketplace card went blank, and the
+ * settler that should have fixed it reported `success: true` with
+ * `skipped: 'marker_unavailable'`, because a missing column looked the same to
+ * it as an empty queue.
+ *
+ * A missing schema is now an operational failure with a name, not a quiet
+ * success. It is checked by READING, not by catching: a probe that cannot
+ * distinguish "column absent" from "table empty" is the bug being fixed.
+ */
+export interface SettlementReadiness {
+  ready: boolean;
+  /** What is missing, in the words an operator needs to act on. */
+  missing: string[];
+  /** The database's target, when it could be read. */
+  target: number | null;
+}
+
+export async function readSettlementReadiness(db: any): Promise<SettlementReadiness> {
+  const missing: string[] = [];
+
+  const probe = async (column: string) => {
+    try {
+      const { error } = await db
+        .from('builder_stock_uploads').select(column).limit(1);
+      if (error) missing.push(`builder_stock_uploads.${column}`);
+    } catch {
+      missing.push(`builder_stock_uploads.${column}`);
+    }
+  };
+  await probe(SETTLED_VERSION_COLUMN);
+  await probe(ELIGIBILITY_SETTLED_VERSION_COLUMN);
+
+  /*
+   * The terminal-negative-provenance column, probed for the same reason as the
+   * markers and with a sharper edge.
+   *
+   * The repair reads it alongside every property row. Without the column that
+   * whole read errors, the rows come back empty, the loop matches nothing —
+   * and it would reach the end and report itself COMPLETE, so the caller would
+   * write the settled marker for an upload it had not looked at. A missing
+   * column has to be a refusal here, not a quiet no-op, which is the same
+   * lesson the settled-version columns taught when an unreadable queue read as
+   * an empty one.
+   */
+  try {
+    const { error } = await db
+      .from('builder_stock_items').select('source_provenance_result').limit(1);
+    if (error) missing.push('builder_stock_items.source_provenance_result');
+  } catch {
+    missing.push('builder_stock_items.source_provenance_result');
+  }
+
+  let target: number | null = null;
+  try {
+    const { data, error } = await db
+      .from(SETTLEMENT_TARGET_TABLE)
+      .select('marketplace_eligibility_version')
+      .limit(1);
+    const row = (data ?? [])[0] as Record<string, unknown> | undefined;
+    if (error || !row) missing.push(SETTLEMENT_TARGET_TABLE);
+    else target = Number(row.marketplace_eligibility_version);
+  } catch {
+    missing.push(SETTLEMENT_TARGET_TABLE);
+  }
+
+  return { ready: missing.length === 0, missing, target };
 }
 
 /** The columns the queue reads. One list, so the two callers cannot drift. */
@@ -262,7 +351,16 @@ export interface SettlementTickOutcome {
   attempted: number;
   /** Uploads this tick brought to the current version. */
   settled: number;
-  /** The organisations actually touched, for the primary-image enforcement. */
+  /**
+   * The organisations in which an upload's DISPLAY-ELIGIBILITY work completed.
+   *
+   * Not the ones attempted, which is what this used to collect. Primary-image
+   * enforcement rewrites pointers across a whole organisation, and it decides
+   * by reading eligibility verdicts — so running it after a sweep that FAILED
+   * means deciding on evidence that was never gathered, and clearing the
+   * pointer of every property whose verdict has not been written yet. An
+   * attempt is not evidence; a finished sweep is.
+   */
   organisations: string[];
 }
 
@@ -296,12 +394,26 @@ export async function runSettlementTick(
     if (now() > options.deadlineAt) break;
     if (settled >= options.maxSettled) break;
     attempted += 1;
-    // Collected as the loop goes, so it names what was ATTEMPTED rather than
-    // what was planned: a tick that stops on its wall clock used to enforce
-    // primaries for organisations it never reached.
-    organisations.add(String(candidate.organisation_id));
     const outcome = await settle(candidate);
     if (outcome.settled) settled += 1;
+    /*
+     * Collected on the ELIGIBILITY half completing, never on an attempt.
+     *
+     * A tick that stops on its wall clock used to enforce primaries for
+     * organisations it never reached, and a tick whose settlement failed used
+     * to enforce them on evidence it had not gathered — both clear the pointer
+     * of every property whose verdict has not been written yet.
+     *
+     * The gate is `eligibilitySettled` rather than `settled` because
+     * enforcement reads eligibility verdicts and nothing else. Gating on the
+     * whole settlement would be safe but wrong in the other direction: it makes
+     * the pointers wait on a provenance repair that re-fetches remote sources,
+     * which in production had not finished for the very upload whose verdicts
+     * were already complete.
+     */
+    if (outcome.eligibilitySettled) {
+      organisations.add(String(candidate.organisation_id));
+    }
   }
 
   return { attempted, settled, organisations: [...organisations] };
@@ -350,6 +462,14 @@ export async function settleUploadSourceImages(
    * gets its verdicts on this pass.
    */
   let eligibility: EligibilitySettlement | undefined;
+  /*
+   * Starts TRUE for an upload that owes no eligibility work: its verdicts
+   * were written and its marker set on an earlier pass, so enforcement is
+   * licensed by that pass rather than by this one. It is set to false the
+   * moment we take on the work, and back to true only when the sweep
+   * reports it finished.
+   */
+  let eligibilitySettled = !needsEligibility;
   if (needsEligibility) {
     eligibility = await settleMarketplaceEligibility(db, input.organisationId, {
       uploadId: input.uploadId,
@@ -382,8 +502,9 @@ export async function settleUploadSourceImages(
           phase: 'eligibility_marker',
           message: String(markError.message ?? markError).slice(0, 200),
         });
-        return { uploadId: input.uploadId, settled: false, eligibility };
+        return { uploadId: input.uploadId, settled: false, eligibilitySettled, eligibility };
       }
+      eligibilitySettled = true;
     } else {
       if (eligibility.unresolved) {
         console.warn('[builderStock] eligibility work unresolved', {
@@ -392,12 +513,12 @@ export async function settleUploadSourceImages(
           unresolved: eligibility.unresolved,
         });
       }
-      return { uploadId: input.uploadId, settled: false, eligibility };
+      return { uploadId: input.uploadId, settled: false, eligibilitySettled, eligibility };
     }
   }
 
   if (!needsProvenance) {
-    return { uploadId: input.uploadId, settled: true, eligibility };
+    return { uploadId: input.uploadId, settled: true, eligibilitySettled, eligibility };
   }
 
   let repair: RepairOutcome;
@@ -415,7 +536,7 @@ export async function settleUploadSourceImages(
       phase: 'source_image_settlement',
       message,
     });
-    return { uploadId: input.uploadId, settled: false, eligibility, error: message };
+    return { uploadId: input.uploadId, settled: false, eligibilitySettled, eligibility, error: message };
   }
 
   if (repair.problems.length) {
@@ -437,7 +558,32 @@ export async function settleUploadSourceImages(
    * comes back.
    */
   if (repair.incomplete) {
-    return { uploadId: input.uploadId, settled: false, repair, eligibility };
+    /*
+     * SAY SO. An unfinished run used to return silently, which made it
+     * indistinguishable from a run that was killed — and the edge worker DOES
+     * kill this one on its resource limit, returning no response at all. A
+     * marker that never advances was the only evidence either way, and it
+     * cannot tell an operator whether the repair is progressing, stuck, or
+     * never running. It is progressing if `rowsRead` climbs and
+     * `imagesStored` is non-zero; it is stuck if this line repeats with the
+     * same numbers.
+     */
+    console.warn('[builderStock] source image settlement incomplete', {
+      upload_id: input.uploadId,
+      phase: 'source_image_settlement',
+      reason: 'budget_or_work_cap_reached',
+      rows_read: repair.rowsRead,
+      matched: repair.matched,
+      images_stored: repair.imagesStored,
+      package_unreachable: repair.packageUnreachable,
+      // The two that tell an operator whether this is converging: answers
+      // banked this run, and answers banked by earlier ones. When the second
+      // stops growing and the run still says incomplete, something else is
+      // wrong.
+      package_not_identified: repair.packageNotIdentified,
+      package_already_answered: repair.packageAlreadyAnswered,
+    });
+    return { uploadId: input.uploadId, settled: false, eligibilitySettled, repair, eligibility };
   }
   if (repair.error) {
     console.warn('[builderStock] source could not be re-read for settlement', {
@@ -460,8 +606,8 @@ export async function settleUploadSourceImages(
       phase: 'settlement_marker',
       message: String(markError.message ?? markError).slice(0, 200),
     });
-    return { uploadId: input.uploadId, settled: false, repair, eligibility };
+    return { uploadId: input.uploadId, settled: false, eligibilitySettled, repair, eligibility };
   }
 
-  return { uploadId: input.uploadId, settled: true, repair, eligibility };
+  return { uploadId: input.uploadId, settled: true, eligibilitySettled, repair, eligibility };
 }

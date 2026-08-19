@@ -47,8 +47,8 @@ import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
 import { internalErrorResponse } from '../_shared/errorResponse.ts';
 import {
-  readEligibilityTarget, readOutstandingUploads, runSettlementTick,
-  settleUploadSourceImages,
+  readEligibilityTarget, readOutstandingUploads, readSettlementReadiness,
+  runSettlementTick, settleUploadSourceImages,
   ELIGIBILITY_SETTLED_VERSION_COLUMN, SETTLED_VERSION_COLUMN,
   type SettlementCandidate,
 } from '../_shared/builderStock/settleSourceImages.ts';
@@ -126,18 +126,51 @@ Deno.serve(async (req: Request) => {
      * this build's constant — see `readEligibilityTarget`, which is what makes
      * a later classifier bump wake production rather than change nothing.
      */
+    /*
+     * THE SCHEMA THIS NEEDS, CHECKED BEFORE ANYTHING ELSE.
+     *
+     * Edge functions ship automatically when `main` moves; migrations here are
+     * dispatched by hand, one file at a time. So the display gate can be live
+     * for days before the columns that let this clear it exist — and when that
+     * happened, every marketplace card went blank while this function reported
+     * `success: true` with `skipped: 'marker_unavailable'`, because a missing
+     * column and an empty queue looked identical to it.
+     *
+     * A missing schema is an operational failure with a name now. It answers
+     * 503 and says which piece is absent, so the deployment is visibly
+     * incomplete rather than quietly finished.
+     */
+    const readiness = await readSettlementReadiness(supabase);
+    if (!readiness.ready) {
+      console.error('[builder-stock-image-settler] settlement schema not deployed', {
+        phase: 'deployment_readiness',
+        missing: readiness.missing,
+        remedy: 'apply supabase/migrations/*_builder_stock_*settlement*.sql, '
+          + '*_builder_stock_eligibility_target_version.sql and '
+          + '*_builder_stock_terminal_negative_provenance.sql',
+      });
+      return json({
+        success: false,
+        error: 'settlement_schema_unavailable',
+        deploymentReady: false,
+        missing: readiness.missing,
+      }, 503);
+    }
+
     const eligibilityTarget = await readEligibilityTarget(supabase);
     const queue = await readOutstandingUploads(supabase, {
       limit: MAX_QUEUE_ROWS, eligibilityTarget,
     });
 
     if (queue.unavailable) {
-      // The columns are missing: the migration has not applied yet. Nothing to
-      // do, and saying so is better than sweeping every source every tick.
-      console.warn('[builder-stock-image-settler] uploads not readable', {
+      // Readiness passed a moment ago, so this is a live read fault rather than
+      // a missing column. Either way it is not an empty queue.
+      console.error('[builder-stock-image-settler] upload queue unreadable', {
         phase: 'settlement_scan',
       });
-      return json({ success: true, settled: 0, remaining: 0, skipped: 'marker_unavailable' });
+      return json({
+        success: false, error: 'upload_queue_unreadable', deploymentReady: true,
+      }, 503);
     }
 
     const outstanding = queue.rows;
@@ -145,7 +178,8 @@ Deno.serve(async (req: Request) => {
     if (!outstanding.length) {
       // Quiet path. The migration's job unschedules itself on this.
       return json({
-        success: true, settled: 0, remaining: 0, complete: true, eligibilityTarget,
+        success: true, settled: 0, remaining: 0, complete: true,
+        deploymentReady: true, eligibilityTarget,
       });
     }
 
@@ -157,15 +191,56 @@ Deno.serve(async (req: Request) => {
      * the queue behind it — and a rule inside a `Deno.serve` handler is a rule
      * nothing can test.
      */
+    const candidates = outstanding.map((row): SettlementCandidate => ({
+      id: String(row.id),
+      organisation_id: String(row.organisation_id),
+      needsProvenance:
+        Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION,
+      needsEligibility:
+        Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < eligibilityTarget,
+    }));
+
+    const enforced = new Set<string>();
+    const enforce = async (organisationId: string) => {
+      if (enforced.has(organisationId)) return;
+      enforced.add(organisationId);
+      try {
+        await enforceStrictPrimaryImages(supabase, organisationId);
+      } catch (enforceError) {
+        console.warn('[builder-stock-image-settler] primaries not enforced', {
+          organisation_id: organisationId,
+          phase: 'primary_enforcement',
+          message: String((enforceError as { message?: string })?.message ?? enforceError)
+            .slice(0, 200),
+        });
+      }
+    };
+
+    /**
+     * ENFORCE BEFORE SETTLING, for organisations whose verdicts are already in.
+     *
+     * Enforcement is a handful of queries and it is the step that decides what
+     * a card may draw; settlement decodes images and re-fetches source
+     * documents, and the edge worker kills the invocation on its RESOURCE
+     * limit long before the wall-clock budget below is reached. Every
+     * production tick returned 546, which meant the loop after the settlement
+     * tick was never arrived at: upload f7e0d4d1 held a complete set of
+     * verdicts and its organisation's stale pointers went on not being
+     * rewritten, one per tick at best.
+     *
+     * An upload still in the queue for its PROVENANCE half has nothing
+     * outstanding that enforcement reads, so running it first is not running it
+     * early. The `needsEligibility === false` test is the same licence
+     * `eligibilitySettled` gives below — a finished sweep, banked on an earlier
+     * pass — and `enforceStrictPrimaryImages` still skips any item holding an
+     * unjudged candidate.
+     */
+    for (const candidate of candidates) {
+      if (!candidate.needsEligibility) await enforce(candidate.organisation_id);
+    }
+
     const { attempted, settled, organisations } = await runSettlementTick(
-      outstanding.map((row): SettlementCandidate => ({
-        id: String(row.id),
-        organisation_id: String(row.organisation_id),
-        needsProvenance:
-          Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION,
-        needsEligibility:
-          Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < eligibilityTarget,
-      })),
+      candidates,
       { maxSettled: MAX_UPLOADS_PER_TICK, deadlineAt },
       (candidate) => settleUploadSourceImages(supabase, {
         organisationId: candidate.organisation_id,
@@ -177,26 +252,20 @@ Deno.serve(async (req: Request) => {
     );
 
     /**
-     * Every organisation this tick TOUCHED gets its primaries settled.
+     * And every organisation whose eligibility sweep finished DURING this tick,
+     * which the pass above could not have known about.
      *
-     * A property whose source no longer designates an image must END this run
-     * with no primary rather than the one it had under the old rules — and that
-     * is true of properties the sweep never re-read, which is why it is applied
-     * per organisation rather than per upload. The tick reports the ones it
-     * actually reached rather than the ones it planned to.
+     * A property whose source no longer designates a displayable image must END
+     * this run with no primary rather than the one it had under the old rules,
+     * and that is true of properties the sweep never re-read, which is why it
+     * is applied per organisation rather than per upload. What it must NOT do
+     * is decide on evidence that was never gathered: `runSettlementTick`
+     * collects an organisation only where the eligibility sweep actually
+     * completed, and `enforceStrictPrimaryImages` skips any item still holding
+     * an unjudged candidate. Between them, an unfinished backfill cannot clear
+     * the pointer of a property whose picture is about to be approved.
      */
-    for (const organisationId of organisations) {
-      try {
-        await enforceStrictPrimaryImages(supabase, organisationId);
-      } catch (enforceError) {
-        console.warn('[builder-stock-image-settler] primaries not enforced', {
-          organisation_id: organisationId,
-          phase: 'primary_enforcement',
-          message: String((enforceError as { message?: string })?.message ?? enforceError)
-            .slice(0, 200),
-        });
-      }
-    }
+    for (const organisationId of organisations) await enforce(organisationId);
 
     const remaining = Math.max(0, outstanding.length - settled);
     console.log('[builder-stock-image-settler] tick', {
