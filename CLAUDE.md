@@ -54,11 +54,30 @@ second copy of a photograph the same listing already held, one listing carrying
 perceptual signature), absent evidence never merges, and the guarantee is
 enforced on the **read** path as well as the write path, because the table will
 always accumulate copies and a repair migration has to be dispatched by hand.
-Two rules bite. An asset key is **only ever compared within one listing**, which
-is what makes its filename rule safe. And ordering **demotes and never
+
+**The server looks at the photographs now, and that is the point.** Visual
+classification used to run only in a browser, only after the card had drawn — so
+the most consequential decision here, *which image leads a listing*, was taken
+with no visual information at all: 6 of 16 sampled heroes were floor plans, 5 of
+those served from opaque Google Drive ids no URL rule can read.
+`listingImageVision.pure.ts` is the one implementation of that judgement, its
+thresholds are measured (21 labelled production images, 21 correct), and the
+verdict is stored so every surface gets it before the first paint. Decoding is
+**budgeted, not counted** — ~116 ms of CPU each against an Edge Function's
+allowance — and the decoder import is lazy so `resolve` pays nothing.
+
+The other half is a question no single image can answer: **is this photograph
+even of this property?** 3,035 of 4,841 rows are a picture some other listing
+also holds and 279 of 471 listings LED with one. `listing_image_reuse` answers
+it and `bandOf` demotes it.
+
+Three rules bite. An asset key is **only ever compared within one listing**,
+which is what makes its filename rule safe. Ordering **demotes and never
 promotes** — a filename-hint version of "pick the best photo" promoted an agency
 logo over the photograph on two real listings, because a logo lockup is called a
-*main* lockup.
+*main* lockup. And **demotion is a sort, never a filter**: a listing whose whole
+gallery is shared, or is entirely furniture, keeps every image in its own order,
+which is why nothing here can blank a card.
 
 Column names for that table live in `_shared/airtableIntakeFields.pure.ts` and nowhere else.
 Airtable returns `undefined` for a column that does not exist exactly as it does for one

@@ -161,7 +161,72 @@ describe('bandOf — demotion only', () => {
   });
 });
 
+describe('bandOf — the corpus signal', () => {
+  it('demotes a photograph that other listings also hold', () => {
+    // A stock interior render was the hero on 17 listings. It is a genuine
+    // photograph by every measure a single image can offer; only the corpus
+    // knows it is not a photograph of THIS property.
+    expect(bandOf(at('https://images.zenu.com.au/1200-min/7be16.jpg', { sharedListings: 17 }))).toBe('weak');
+    expect(bandOf(at('https://images.zenu.com.au/1200-min/7be16.jpg', { sharedListings: 2 }))).toBe('weak');
+  });
+
+  it('leaves a photograph unique to its listing alone', () => {
+    expect(bandOf(at('https://cdn.test/a.jpg', { sharedListings: 1 }))).toBe('standard');
+    expect(bandOf(at('https://cdn.test/a.jpg', { sharedListings: null }))).toBe('standard');
+    expect(bandOf(at('https://cdn.test/a.jpg'))).toBe('standard');
+  });
+
+  it('demotes what the server saw as a marketing graphic', () => {
+    expect(bandOf(at('https://lh3.googleusercontent.com/d/1bCP=w1200', { kind: 'graphic' }))).toBe('weak');
+  });
+
+  it('puts a floor plan the server recognised behind everything', () => {
+    expect(bandOf(at('https://lh3.googleusercontent.com/d/1yl7=w1200', { kind: 'floorplan' }))).toBe('plan');
+  });
+});
+
 describe('selectListingGallery', () => {
+  it('lifts the first unique photograph over a shared hero', () => {
+    // The shape of 279 of 471 listings on 2026-08-19: position 0 is a picture
+    // another listing also shows, and the property's own photographs sit behind
+    // it.
+    const selection = selectListingGallery([
+      at('https://cdn.test/agency-stock.jpg', { checksum: 'a', position: 0, sharedListings: 17 }),
+      at('https://cdn.test/front.jpg', { checksum: 'b', position: 1, sharedListings: 1 }),
+      at('https://cdn.test/kitchen.jpg', { checksum: 'c', position: 2, sharedListings: 1 }),
+    ]);
+    expect(selection.images.map((image) => image.url)).toEqual([
+      'https://cdn.test/front.jpg',
+      'https://cdn.test/kitchen.jpg',
+      'https://cdn.test/agency-stock.jpg',
+    ]);
+  });
+
+  it('leaves a listing whose whole gallery is shared exactly as it was', () => {
+    // Two records for one property legitimately hold the same photographs.
+    // Demotion is a sort, not a filter, so when everything lands in the same
+    // band nothing moves — which is the answer that cannot be wrong.
+    const rows = [
+      at('https://cdn.test/1.jpg', { checksum: 'a', position: 0, sharedListings: 2 }),
+      at('https://cdn.test/2.jpg', { checksum: 'b', position: 1, sharedListings: 2 }),
+      at('https://cdn.test/3.jpg', { checksum: 'c', position: 2, sharedListings: 2 }),
+    ];
+    expect(selectListingGallery(rows).images.map((i) => i.url)).toEqual(rows.map((i) => i.url));
+  });
+
+  it('orders plans behind furniture behind photographs', () => {
+    const selection = selectListingGallery([
+      at('https://cdn.test/plan.jpg', { checksum: 'a', position: 0, kind: 'floorplan' }),
+      at('https://cdn.test/banner.jpg', { checksum: 'b', position: 1, kind: 'graphic' }),
+      at('https://cdn.test/house.jpg', { checksum: 'c', position: 2, kind: 'photo' }),
+    ]);
+    expect(selection.images.map((image) => image.url)).toEqual([
+      'https://cdn.test/house.jpg',
+      'https://cdn.test/banner.jpg',
+      'https://cdn.test/plan.jpg',
+    ]);
+  });
+
   it('caps after de-duplication, so the cap counts photographs', () => {
     const base = 'https://images.zenu.com.au';
     const images = Array.from({ length: 8 }, (_, i) => [

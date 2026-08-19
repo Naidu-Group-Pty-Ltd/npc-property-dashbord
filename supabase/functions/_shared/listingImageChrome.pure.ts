@@ -106,6 +106,21 @@ const CHROME_PATH_HINTS = [
   'suburbreport',
   'homepage_bg',
   'homepage-bg',
+  // A path segment that *starts* `team-` is a staff portrait — `team-scott-colour.jpg`
+  // was promoted into a hero slot by the visual classifier, which is right that
+  // it is a photograph and has no way to know it is a photograph of the agent.
+  // Anchored to a segment boundary so a street name containing the letters
+  // cannot match.
+  '/team-',
+  '/team_',
+  // Stock libraries. A listing whose "photograph" carries one of these is
+  // showing somebody else's picture of somewhere else.
+  'unsplash',
+  'shutterstock',
+  'istockphoto',
+  'gettyimages',
+  'stock-photo',
+  'stockphoto',
 ];
 
 /**

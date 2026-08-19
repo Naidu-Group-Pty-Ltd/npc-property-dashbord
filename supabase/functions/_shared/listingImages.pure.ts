@@ -24,6 +24,7 @@
 import { orderImagesPhotosFirst } from './listingImageOrder.pure.ts';
 import { looksLikeChromeUrl } from './listingImageChrome.pure.ts';
 import { dedupeListingImages, selectListingGallery } from './listingImageSelection.pure.ts';
+import type { VisualKind } from './listingImageVision.pure.ts';
 
 /** Where a candidate came from, best-quality origin first. */
 export type ImageOrigin = 'airtable' | 'listing_url' | 'scraped' | 'street_view';
@@ -430,6 +431,14 @@ export interface StoredListingImage {
    * a thumbnail without downloading it — see `listingImageSelection.pure.ts`.
    */
   bytes?: number | null;
+  /**
+   * What the server saw when it decoded this image, if it has.
+   *
+   * Sent so a card is right on its first paint. The browser can reach the same
+   * verdict itself, but only after decoding the image — and on a page of 148
+   * cards it never finishes.
+   */
+  kind?: VisualKind | null;
   /** Epoch ms the signed URL stops working. */
   expiresAt: number;
 }
