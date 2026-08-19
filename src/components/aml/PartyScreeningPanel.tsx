@@ -12,6 +12,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { ClipboardCheck, Loader2, PlayCircle, Gavel, ShieldQuestion } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -122,6 +125,12 @@ export function PartyScreeningPanel({
   const [subjects, setSubjects] = useState<AmlPartyScreeningSubject[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [manualSubject, setManualSubject] = useState<AmlPartyScreeningSubject | null>(null);
+  /*
+   * The party a CTA has asked for a determination on, before the CONCLUSION
+   * is known. A determination is a judgement about a person; the button that
+   * opens it must not have already answered it. See the effect below.
+   */
+  const [pepChoiceSubject, setPepChoiceSubject] = useState<AmlPartyScreeningSubject | null>(null);
   const { prompt, dialog } = usePromptDialog();
 
   const load = useCallback(async () => {
@@ -289,9 +298,18 @@ export function PartyScreeningPanel({
   }, [manualScreeningRequest, isMlro, subjects]);
 
   /*
-   * Open the PEP determination dialog when the stage header asks for it, on
-   * the first party that still needs one. `recordPep` is the existing
+   * Open the PEP determination flow when the stage header asks for it, on the
+   * first party that still needs one. `recordPep` is the existing
    * prompt-driven flow: nothing about what it collects changes.
+   *
+   * What it must NOT do is pick the answer. This opened
+   * `recordPep(target, "not_pep")` directly — a dialog headed "Record
+   * not-PEP determination", reached by pressing a CTA that says "Record PEP
+   * determination". The conclusion is exactly what the determination is, an
+   * operator who had found a PEP had to cancel and hunt for the other
+   * button, and a pre-selected "not a PEP" is the one default in this
+   * product that must never exist. The CTA now asks which determination is
+   * being recorded, and the evidence prompt follows the answer.
    */
   const lastPepRequest = useRef(pepRequest ?? 0);
   useEffect(() => {
@@ -300,7 +318,7 @@ export function PartyScreeningPanel({
     lastPepRequest.current = n;
     if (!canAdjudicate || !subjects) return;
     const target = subjects.find((s) => !s.pep_determination);
-    if (target) void recordPep(target, "not_pep");
+    if (target) setPepChoiceSubject(target);
   }, [pepRequest, canAdjudicate, subjects]);
 
   const now = new Date().toISOString();
@@ -601,6 +619,53 @@ export function PartyScreeningPanel({
         )}
       </CardContent>
       {dialog}
+      {pepChoiceSubject && (
+        <Dialog
+          open
+          onOpenChange={(next) => { if (!next) setPepChoiceSubject(null); }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Record a PEP determination</DialogTitle>
+              <DialogDescription>
+                {pepChoiceSubject.screened_name} — what was concluded? The sources and
+                rationale are recorded next, and the determination carries a review date
+                either way.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="outline"
+                className="justify-start"
+                onClick={() => {
+                  const subject = pepChoiceSubject;
+                  setPepChoiceSubject(null);
+                  void recordPep(subject, "not_pep");
+                }}
+              >
+                <ShieldQuestion className="mr-2 h-4 w-4" />
+                Not a politically exposed person
+              </Button>
+              <Button
+                variant="outline"
+                className="justify-start"
+                onClick={() => {
+                  const subject = pepChoiceSubject;
+                  setPepChoiceSubject(null);
+                  void recordPep(subject, "pep");
+                }}
+              >
+                <Gavel className="mr-2 h-4 w-4" />
+                Politically exposed person
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              A client's own declaration is evidence towards the determination. It is
+              never the determination itself.
+            </p>
+          </DialogContent>
+        </Dialog>
+      )}
       {manualSubject && (
         <ManualScreeningDialog
           subject={manualSubject}

@@ -523,7 +523,21 @@ export default function AmlCaseWorkspace() {
       case "await_provider_result":
         screeningStage.reload();
         return;
+      /*
+       * The same treatment as `complete_manually`, for the same reason. On a
+       * case whose sanctions obligation is not required, the outstanding PEP
+       * determination is Stage 5's ONLY blocker — so this card's primary CTA
+       * is the one that has to reach the dialog. It scrolled and stopped,
+       * and the party panel is usually already on screen underneath, so the
+       * click changed nothing visible: the same dead-button shape the
+       * journey rail's copy of this action was fixed for.
+       */
       case "record_pep":
+        setPepRequest((n) => n + 1);
+        document.getElementById("aml-party-screening")?.scrollIntoView({
+          block: "start", behavior: "smooth",
+        });
+        return;
       case "adjudicate_match":
       case "escalate":
       default:
