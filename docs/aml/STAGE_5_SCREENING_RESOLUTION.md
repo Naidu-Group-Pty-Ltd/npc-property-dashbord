@@ -98,6 +98,44 @@ scope decision reads as `unknown`: fail-closed for completion, without
 inventing outstanding work or claiming an owner, and never outranking a match
 awaiting adjudication.
 
+## Reopening only means something if the journey resumes
+
+The reopen worked — the lifecycle dimensions came back into agreement — and
+every surface carried on as though the case were finished. Three causes.
+
+**A terminated service gate was being read as a closed case.** `isFinished`
+and `deriveAmlNextAction` both keyed off
+`case_stage === "closed" || service_gate_status === "terminated"`. Reopening
+*deliberately* leaves the gate terminated, so the reopened case still rested
+on "10 of 10 · Partners & ongoing CDD", still announced "Case closed", and
+still silenced Stage 5's outstanding determination. That made reopening a
+no-op everywhere an operator looks.
+
+They are different facts. A terminated gate says the customer may not be
+**served**; it says nothing about whether the case is being **worked**. The
+lifecycle alone decides finished, and the gate keeps its own row — where it
+was always the honest place for it.
+
+**The stage counted the wrong parties.** `subjectCount` came from the
+subjects whose SCREENING is owed, which on a perimeter-excluded case is none,
+so Stage 5 answered *"Nobody is enrolled for screening yet · Prepare
+screening"* about a case with an enrolled party — directly above its own
+determination row saying the PEP determination was outstanding. Three
+surfaces, three answers. Enrolment is about the PARTIES; screening is about
+the obligation, and `anyMissingPep` now reads the enrolled parties and only
+when the scope owes a determination.
+
+**The CTAs named an act and performed a navigation.** A stage's primary
+action points at the section the stage OPENS ON, so from the place it is most
+often pressed — "Ask the client for something" on Stage 2, "Record PEP
+determination" on Stage 5 — it navigated to where the operator already was
+and nothing happened. The header now takes an `onPerform` handler and the
+workspace routes it: `record_pep` opens the determination dialog on the first
+party that needs one, `client_request` focuses the request form. Both fall
+back to the old navigation for anything unrouted, and neither mutates
+anything — each opens an existing surface whose own server operation carries
+the authorisation and the audit record.
+
 ## The way on
 
 When every required determination is genuinely recorded, Stage 5 offers

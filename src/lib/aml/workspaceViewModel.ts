@@ -1452,9 +1452,17 @@ export function deriveAmlNextAction(facts: AmlWorkspaceFacts): AmlNextAction {
   const gate = serviceGateStatus(facts.caseRow);
   const unavailableFacts = missingFactLabels(facts);
 
-  // A finished case is finished. Say so plainly rather than ranking work
-  // against a relationship that has ended.
-  if (stage === "closed" || gate === "terminated") {
+  /*
+   * A finished case is finished. Say so plainly rather than ranking work
+   * against a relationship that has ended.
+   *
+   * The LIFECYCLE decides it. A terminated gate is a statement about SERVING
+   * the customer, not about whether the case is being worked — and reopening
+   * deliberately leaves the gate terminated, so keying off it announced
+   * "Case closed" on a case that had just been reopened and had real work
+   * outstanding. `isFinished` in the journey model holds the same line.
+   */
+  if (stage === "closed") {
     return {
       ...NO_ACTION,
       label: "Case closed",

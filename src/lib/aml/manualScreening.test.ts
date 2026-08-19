@@ -537,7 +537,10 @@ describe("manual screening — the browser and the server share one rule", () =>
   it("shows the server's own refusal message rather than inventing one", () => {
     // Rendered in the footer beside the disabled button, so the reason a
     // submission is refused is where somebody looks for it.
-    expect(dialogSource).toMatch(/:\s*plan\.message\}/);
+    // Either spelling of "render the plan's own refusal" — `plan.message`, or
+    // the narrowed `rejection?.message` the non-strict typecheck needs. What
+    // must never appear is a message this component wrote itself.
+    expect(dialogSource).toMatch(/:\s*(plan|rejection\??)\.message\}/);
     expect(stripComments(dialogSource)).not.toMatch(/"(Please|You must|Missing)\b/);
   });
 
