@@ -181,7 +181,11 @@ export function ManualScreeningDialog({
     rationale, unableReason, candidates: parsedCandidates,
   }), [outcome, parsedSources, parsedNames, rationale, unableReason, parsedCandidates]);
 
-  const rejection = plan.ok ? null : plan;
+  // Cast rather than narrow: the app typecheck runs with `strict` off, where
+  // the `ok: true` / `ok: false` discriminant does not narrow this union, so
+  // reading `message` off the false branch has to be stated explicitly.
+  const rejection = plan.ok ? null : (plan as ManualScreeningRejection);
+
 
   const isUnable = outcome === "unable_to_complete";
   const isMatch = outcome === "possible_match" || outcome === "confirmed_match";
