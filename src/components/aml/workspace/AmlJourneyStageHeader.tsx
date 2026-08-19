@@ -58,8 +58,14 @@ export function AmlJourneyStageHeader({
     <header className={cn("space-y-3", className)}>
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
+          {/*
+            "Viewing", because this is the stage the OPERATOR has open — not
+            the case's own position, which the rail reports separately. Both
+            were called "stage", which is how an open Stage 5 beside a
+            10-of-10 position read as a contradiction.
+          */}
           <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Stage {stage.number} of {totalStages}
+            Viewing · Stage {stage.number} of {totalStages}
           </p>
           <h2 className="mt-0.5 text-lg font-semibold tracking-tight sm:text-xl">{stage.label}</h2>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{stage.purpose}</p>

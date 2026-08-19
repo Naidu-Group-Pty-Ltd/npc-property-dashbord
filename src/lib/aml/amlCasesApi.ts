@@ -526,15 +526,39 @@ export interface AmlScreeningPolicyDecision {
   summary: string;
 }
 
+export type AmlScreeningActionOwner =
+  "system" | "analyst" | "reviewer" | "administrator" | "client" | "none";
+
+export type AmlScreeningNextActionKey =
+  "none" | "await_submission" | "classify_perimeter" | "fix_provider"
+  | "enrol_subjects" | "run_screening"
+  | "adjudicate_match" | "record_pep" | "await_provider_result" | "screening_stalled"
+  | "escalate"
+  /** A closed case resumes by an explicit reopen, never a status advance. */
+  | "reopen_case"
+  /** A required screening the provider cannot do and the MLRO can. */
+  | "complete_manually";
+
 export interface AmlScreeningNextAction {
-  key: "none" | "await_submission" | "classify_perimeter" | "fix_provider"
-    | "enrol_subjects" | "run_screening"
-    | "adjudicate_match" | "record_pep" | "await_provider_result" | "screening_stalled"
-    | "escalate";
+  key: AmlScreeningNextActionKey;
   label: string | null;
   headline: string;
   detail: string;
-  owner: "system" | "analyst" | "reviewer" | "administrator" | "client" | "none";
+  owner: AmlScreeningActionOwner;
+  /**
+   * The other lawful route to the same blockage, owned by another role.
+   *
+   * Decided by the server alongside the primary, so the browser only chooses
+   * which to show first. An alternative is a different METHOD of discharging
+   * an obligation and never a way round one.
+   */
+  alternative?: {
+    key: AmlScreeningNextActionKey;
+    label: string;
+    headline: string;
+    detail: string;
+    owner: AmlScreeningActionOwner;
+  } | null;
 }
 
 /** One scope's obligation, exactly as `aml.case_screening_scopes` holds it. */
@@ -580,6 +604,14 @@ export interface AmlScreeningStageSync {
   next_action: AmlScreeningNextAction;
   decision_recorded: boolean;
   scope_changed: AmlScreeningScopeKey[];
+  /**
+   * The case's canonical lifecycle, reported so Stage 5 can present a
+   * retained record as one. Absent on a server that predates it, which reads
+   * as "not closed" — the behaviour this product had before.
+   */
+  case_closed?: boolean;
+  case_stage?: string | null;
+  service_gate_status?: string | null;
 }
 
 export interface AmlPartyScreeningSubject {

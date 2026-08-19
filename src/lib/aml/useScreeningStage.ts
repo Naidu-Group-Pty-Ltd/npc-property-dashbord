@@ -145,7 +145,10 @@ export function useScreeningStage(
       ? {
         ...raw.sync,
         next_action: resolveScreeningNextAction(
-          raw.sync.next_action, raw.sync.perimeter) ?? raw.sync.next_action,
+          raw.sync.next_action, raw.sync.perimeter,
+          // Lifecycle first. A retained record has no next step in the
+          // journey, only a decision about whether to resume one.
+          raw.sync.case_closed === true) ?? raw.sync.next_action,
       }
       : null;
 

@@ -168,6 +168,31 @@ the server disagreed, and a contract test now fails any interpolated filter.
 And **production never runs the simulator and never screens against an empty
 or stale list** — refusal is visible, a confident clear against nothing is not.
 
+## Stage 5 — the screening resolution centre
+Read [`docs/aml/STAGE_5_SCREENING_RESOLUTION.md`](./docs/aml/STAGE_5_SCREENING_RESOLUTION.md)
+before touching `ScreeningStageCard`, `screeningResolution.pure.ts`,
+`screeningNextAction.ts`, `AmlContextActionPanel` or `deriveScreeningNextAction`.
+Stage 5 had every fact it needed and no arrangement of them, so this is
+orchestration — no new screening system, determination store or journey status.
+
+Three rules carry it. **Obligation, method and outcome are different
+questions**: `not_required` is an obligation, `no match` is an outcome, and an
+unavailable provider is a method — collapsing them into one badge is how "not
+required" came to read as "clear", and a test asserts the two vocabularies
+share no value. **A closed case is a retained record, not a stage in
+progress** — it leads with that and offers only the authorised reopen, held on
+both sides because they deploy separately, and a FINDING still outranks the
+lifecycle. And **one blockage can have two lawful routes**: a blocked required
+screening offers the MLRO a manual route and keeps the administrator's repair
+named as the alternative, so neither role holds a status with no step and the
+broken automation is never papered over.
+
+The contradictory screen behind it was **data disagreeing with itself**:
+`reopen_case` moved the legacy `status` and left the canonical `case_stage`
+and `closed_at`, while `transition` had always synced all three. It now syncs
+them too — and still never touches `service_gate_status`, because
+`STATUS_TO_SERVICE_GATE[resumeStatus]` would revive a terminated gate.
+
 ## AML screening scope
 Read [`docs/aml/SCREENING_SCOPE.md`](./docs/aml/SCREENING_SCOPE.md) before
 touching `deriveScreeningScope`, `reconcileSubjectToScope` or the

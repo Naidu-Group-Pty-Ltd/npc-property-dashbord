@@ -2194,9 +2194,27 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const caseId = String(body.case_id ?? '');
         if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
 
-        const { data: caseRow } = await admin.schema('aml').from('cases')
-          .select('id, status, risk_rating, subject_display_name').eq('id', caseId).maybeSingle();
+        let { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, status, case_stage, closed_at, service_gate_status, risk_rating, subject_display_name')
+          .eq('id', caseId).maybeSingle();
+        if (!caseRow) {
+          // A deployment without the dimension columns still answers, on the
+          // legacy shape it has always had.
+          ({ data: caseRow } = await admin.schema('aml').from('cases')
+            .select('id, status, risk_rating, subject_display_name')
+            .eq('id', caseId).maybeSingle());
+        }
         if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        /*
+         * Closed, read from the CANONICAL dimension with the legacy one as
+         * the fallback. Either saying closed is enough: they are two views of
+         * one lifecycle and disagreement between them is a defect, not a
+         * third state, so the safe reading is the one that does not present a
+         * retained record as a live journey.
+         */
+        const caseClosed = String(caseRow.case_stage ?? '') === 'closed'
+          || String(caseRow.status ?? '') === 'closed';
 
         const enrol = await ensureScreeningSubjects(admin, caseId, userId, userEmail);
 
@@ -2513,6 +2531,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           // An undecided perimeter is a question to ask before a provider is
           // a problem to fix. The default it falls back to is unchanged.
           perimeterClassified: scope.perimeter.classified,
+          // A retained record is not a stage in progress.
+          caseClosed,
+          /*
+           * Whether the MANUAL route could discharge what the automated one
+           * cannot. It is a fact about this case — a required sanctions scope
+           * exists — and never about who is asking: the operation itself
+           * enforces MLRO, and offering the route to a reader who may not take
+           * it is how they learn who can.
+           */
+          manualAvailable: scope.sanctions.required === true,
           oldestQueuedSeconds,
           errorCategory: required.find((s: any) => s.state === 'error')?.error_category ?? null,
         });
@@ -2585,6 +2613,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           provider_ready: providerReady,
           /* Whether that readiness bears on this case at all. */
           provider_relevant: providerRelevant,
+          /*
+           * The canonical lifecycle, so Stage 5 can say "retained record"
+           * rather than rendering a closed case as live onboarding. Reported,
+           * never decided, here.
+           */
+          case_closed: caseClosed,
+          case_stage: caseRow.case_stage ?? null,
+          service_gate_status: caseRow.service_gate_status ?? null,
           next_action: nextAction,
           decision_recorded: decisionRecorded,
           scope_changed: scopeSync.changed,
@@ -2659,14 +2695,43 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           hasRiskAssessment: Boolean(assessment),
         });
 
-        // The gate is deliberately NOT touched. Reopening restores the work,
-        // not the permission.
-        const { error: updateError } = await admin.schema('aml').from('cases').update({
+        /*
+         * The gate is deliberately NOT touched. Reopening restores the work,
+         * not the permission — `STATUS_TO_SERVICE_GATE[resumeStatus]` would
+         * revive a terminated gate, which is the one thing this must never do.
+         *
+         * `case_stage` and `closed_at` ARE written, and their absence here was
+         * a real defect. `status` is the legacy dimension; `case_stage` is the
+         * canonical one every other surface reads. Reopening moved the first
+         * and left the second, so a reopened case rendered as "Case stage:
+         * Closed" in the Live Position rail and simultaneously offered the
+         * ordinary status transitions of its resumed legacy status — the
+         * contradiction that was reported. `transition` has always kept the
+         * two coherent through the same map; this is the other write that
+         * changes `status` and it did not.
+         */
+        const reopenPatch: Record<string, unknown> = {
           status: resumeStatus,
           client_portal_status: plan.reissue.includes('consents')
             ? 'awaiting_client' : 'in_progress',
+          case_stage: STATUS_TO_STAGE[resumeStatus] ?? null,
+          // A case being worked again is not closed, and a stale `closed_at`
+          // is read as one by anything that asks the date rather than the
+          // status.
+          closed_at: null,
           updated_at: new Date().toISOString(),
-        }).eq('id', caseId);
+        };
+        let { error: updateError } = await admin.schema('aml').from('cases')
+          .update(reopenPatch).eq('id', caseId);
+        if (updateError && isMissingColumnError(updateError)) {
+          // A deployment without the dimension columns keeps the old
+          // behaviour rather than failing the reopen outright.
+          ({ error: updateError } = await admin.schema('aml').from('cases').update({
+            status: resumeStatus,
+            client_portal_status: reopenPatch.client_portal_status,
+            updated_at: reopenPatch.updated_at,
+          }).eq('id', caseId));
+        }
         if (updateError) throw updateError;
 
         /*
@@ -2703,6 +2768,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             consents_to_reaccept: plan.staleConsents,
             not_restored: plan.notRestored,
             service_gate_status: caseRow.service_gate_status ?? null,
+            // Stated on the trail: the gate did NOT move, the stage did.
+            case_stage: STATUS_TO_STAGE[resumeStatus] ?? null,
           },
           userId, userEmail);
 

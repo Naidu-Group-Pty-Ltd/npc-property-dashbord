@@ -98,15 +98,18 @@ export function AmlLivePositionRail({
         <CardContent className="p-4">
           <RailHeading>Live position</RailHeading>
           <dl className="mt-2">
-            {/* The case's own position, which is not always the stage the
-                operator has open — the stage readiness card below is the
-                open one, and the two rows are labelled so they cannot be
-                read as disagreeing. */}
+            {/*
+              Two rows, two different questions, and neither is called simply
+              "stage". The first is where the RECORD has got to; the second is
+              its lifecycle. Reported together they read as a contradiction —
+              "10 of 10" beside "Closed" beside an open Stage 5 — unless each
+              says which question it answers, so each does.
+            */}
             <PositionRow
-              label="Case is at"
+              label="Journey position"
               value={`${position.stageNumber} of ${position.stageTotal} · ${position.stageLabel}`}
             />
-            <PositionRow label="Case stage" value={position.caseStageLabel} />
+            <PositionRow label="Case lifecycle" value={position.caseStageLabel} />
             <PositionRow label="Client" value={position.clientStatusLabel} />
             <PositionRow label="Finance portal" value={position.financeStatusLabel} />
             <PositionRow label="Service gate" value={position.serviceGateLabel} />
