@@ -9,6 +9,7 @@ import {
   type ImageOrigin,
   type StoredListingImage,
 } from '@/lib/listingImages';
+import type { VisualKind } from '@/lib/imageKind';
 import { forgetCachedImages, readCachedImages, writeCachedImages } from '@/lib/listingImageCache';
 
 /**
@@ -71,6 +72,7 @@ interface ResolveResponse {
       width?: unknown;
       height?: unknown;
       bytes?: unknown;
+      kind?: unknown;
       expiresAt?: unknown;
     }>
   >;
@@ -86,6 +88,7 @@ function classifyFailure(error: unknown, data: ResolveResponse | null): ImageFai
 }
 
 const ORIGINS = new Set<ImageOrigin>(['airtable', 'listing_url', 'scraped', 'street_view']);
+const VISUAL_KINDS = new Set<VisualKind>(['photo', 'floorplan', 'graphic']);
 
 /** The response crosses a trust boundary like any other; validate before rendering. */
 function toStoredImages(listingId: string, raw: unknown): StoredListingImage[] {
@@ -111,6 +114,9 @@ function toStoredImages(listingId: string, raw: unknown): StoredListingImage[] {
       // Carried so the browser can tell a photograph from a thumbnail-strip
       // asset without downloading it. See `listingImageSelection.pure.ts`.
       bytes: number(entry?.bytes),
+      // The server's own look at the pixels, when it has one. Validated like
+      // every other field crossing this boundary.
+      kind: VISUAL_KINDS.has(entry?.kind as VisualKind) ? (entry.kind as VisualKind) : null,
       expiresAt: number(entry?.expiresAt) ?? Date.now() + 30 * 60_000,
     });
   }

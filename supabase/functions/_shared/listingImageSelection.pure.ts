@@ -34,10 +34,15 @@
  * 2. **Asset key** — the same picture at another size or through another CDN
  *    transform. Free, and runs before anything is downloaded, so the harvester
  *    uses it to avoid fetching a rendition it already holds.
- * 3. **Visual signature** — a perceptual hash of the decoded pixels, supplied
- *    by the browser (`imageKind.ts`) from a decode it was already doing. This is
- *    the only layer that catches a re-encode which shares neither bytes nor URL
- *    structure — an Airtable copy of a scraped original, say.
+ * 3. **Visual signature** — a perceptual hash of the decoded pixels, from
+ *    `listingImageVision.pure.ts`. Computed once on the server and stored; the
+ *    browser fills in anything not analysed yet. The only layer that catches a
+ *    re-encode which shares neither bytes nor URL structure — an Airtable copy
+ *    of a scraped original, say.
+ *
+ * And a fourth question, which is not de-duplication but the same evidence:
+ * **is this photograph unique to this listing at all?** A picture that leads 17
+ * listings is not a picture of any of them. See `SHARED_LISTING_LIMIT`.
  *
  * Each layer is optional. Absent evidence never merges anything, so a caller
  * that knows only URLs still gets layers 1 and 2, and the browser adds the third
@@ -70,6 +75,7 @@
 
 import { canonicalAssetKey, declaredRenditionWidth } from './listingImageAsset.pure.ts';
 import { looksLikeChromeUrl } from './listingImageChrome.pure.ts';
+import type { VisualKind } from './listingImageVision.pure.ts';
 
 /** What the selector needs to know about one image. Everything is optional. */
 export interface SelectableImage {
@@ -81,10 +87,23 @@ export interface SelectableImage {
   bytes?: number | null;
   width?: number | null;
   height?: number | null;
-  /** A verdict from the pixels, when the browser has one. */
-  kind?: 'photo' | 'floorplan' | 'unknown' | null;
-  /** A perceptual hash of the pixels, as hex. See `imageKind.ts`. */
+  /**
+   * What the pixels say this is. `listingImageVision.pure.ts` decides it; the
+   * server stores the verdict and the browser fills the gap for anything not
+   * analysed yet. `'unknown'` and `null` both mean "no evidence", which is
+   * treated exactly like an ordinary photograph.
+   */
+  kind?: VisualKind | 'unknown' | null;
+  /** A perceptual hash of the pixels, as hex. See `listingImageVision.pure.ts`. */
   signature?: string | null;
+  /**
+   * How many DIFFERENT listings hold this same photograph.
+   *
+   * 1 (or absent) means it is unique to this listing. Anything higher means it
+   * is a stock render, an agency banner, an agent's portrait, or a gallery
+   * lifted off a "similar listings" rail — see `bandOf`.
+   */
+  sharedListings?: number | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -283,6 +302,19 @@ function looksLikePortraitThumbnail(image: SelectableImage): boolean {
 export type ImageBand = 'standard' | 'weak' | 'plan';
 
 /**
+ * A photograph on more than this many listings is not a photograph of any of
+ * them.
+ *
+ * Two is the honest threshold and the measurements say so: on 2026-08-19 one
+ * stock interior render was the hero on **17** listings, an agency banner strip
+ * sat on 20, and 279 of 471 listings led with an image at least one other
+ * listing also held. Nothing legitimate is lost by demoting at two, because the
+ * bands only re-order — a listing whose every photograph is shared keeps all of
+ * them, in its own order, since they all land in the same band together.
+ */
+export const SHARED_LISTING_LIMIT = 1;
+
+/**
  * How confidently this is a photograph of this property.
  *
  * **There is deliberately no "good photograph" band.** The first draft of this
@@ -302,6 +334,24 @@ export type ImageBand = 'standard' | 'weak' | 'plan';
  */
 export function bandOf(image: SelectableImage): ImageBand {
   if (image.kind === 'floorplan') return 'plan';
+
+  // A banner, a logo lockup, a marketing card. The pixels said so; no URL rule
+  // could, because these arrive as opaque Google Drive ids.
+  if (image.kind === 'graphic') return 'weak';
+
+  /*
+   * A photograph this listing does not have to itself.
+   *
+   * The one signal no single image can carry, and the only thing that catches a
+   * *genuine* photograph in the wrong place — a stock interior render, an
+   * agency's standing hero shot, or a gallery the scraper lifted off the
+   * "similar listings" rail beside the one it was reading. All three look
+   * exactly like property photography, because they are; they are just not
+   * photographs of THIS property.
+   */
+  if (typeof image.sharedListings === 'number' && image.sharedListings > SHARED_LISTING_LIMIT) {
+    return 'weak';
+  }
 
   if (looksLikeChromeUrl(image.url)) return 'weak';
   if (looksLikePortraitThumbnail(image)) return 'weak';
