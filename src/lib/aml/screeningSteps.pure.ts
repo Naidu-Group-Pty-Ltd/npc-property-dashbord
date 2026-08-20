@@ -196,19 +196,21 @@ function perimeterStep(args: {
   if (classification) {
     detail.push(classification === "outside_perimeter"
       ? `Recorded as OUTSIDE the perimeter${p?.reason_code ? ` — ${p.reason_code.replace(/_/g, " ")}` : ""}.`
-      : "Recorded as a designated service.");
+      : "Recorded as a real deal — a designated service is being provided.");
     if (recordedBy || recordedAt) {
       detail.push(`Recorded${recordedBy ? ` by ${recordedBy}` : ""}${
         recordedAt ? ` on ${new Date(recordedAt).toLocaleDateString()}` : ""}.`);
     }
     if ((p?.scopes_excluded ?? []).length > 0) {
-      detail.push(`Excludes: ${(p!.scopes_excluded as string[]).join(", ")}.`);
+      detail.push(`Checks this removes: ${(p!.scopes_excluded as string[])
+        .map((s) => s.replace(/_/g, " ")).join(", ")}.`);
     }
   } else {
     // The default is INSIDE. An unclassified case is not an exempt one.
-    detail.push("Nothing recorded. An unclassified case is treated as inside the "
-      + "perimeter, so sanctions screening is required.");
+    detail.push("Nothing recorded yet. A case nobody has classified counts as inside "
+      + "the perimeter, so sanctions screening is required.");
   }
+
 
   /*
    * The one case where a recorded classification is not the end of it: an
