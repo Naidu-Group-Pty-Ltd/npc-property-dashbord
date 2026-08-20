@@ -447,6 +447,21 @@ export function PepDeterminationDialog({
     () => registerSearches.filter((s) => checkedRows.some(
       (r) => r.searchId === s.id && r.result.trim().length > 0)).length,
     [registerSearches, checkedRows]);
+  /*
+   * What is left for a person, named.
+   *
+   * Once the run's own results cascade in, "0 of 4 recorded" is no longer the
+   * honest reading — some of those four have been read and recorded, and the
+   * remainder are the ones no server can reach. Those are what this lists, so
+   * the operator sees the actual outstanding work rather than the whole list
+   * again.
+   */
+  const outstandingRegisters = useMemo(
+    () => registerSearches.filter((s) => !checkedRows.some(
+      (r) => r.searchId === s.id && r.result.trim().length > 0)),
+    [registerSearches, checkedRows]);
+
+
 
 
   return (
