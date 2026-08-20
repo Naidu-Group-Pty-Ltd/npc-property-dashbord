@@ -913,7 +913,10 @@ export function PepDeterminationDialog({
                                 ? runRecorded
                                   ? "border-info/50 bg-info/10 text-info"
                                   : "border-success/50 bg-success/10 text-success"
-                                : "border-warning/50 bg-warning/10 text-warning",
+                                : unheld
+                                  ? "border-border/60 bg-muted/40 text-muted-foreground"
+                                  : "border-warning/50 bg-warning/10 text-warning",
+
                             )}
                           >
                             {recorded
