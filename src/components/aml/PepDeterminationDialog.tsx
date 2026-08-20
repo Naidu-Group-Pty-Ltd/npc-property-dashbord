@@ -871,10 +871,18 @@ export function PepDeterminationDialog({
                               label: "Read by the run — confirm",
                               tone: "border-info/50 bg-info/10 text-info",
                             }
-                            : {
-                              label: "Needs you",
-                              tone: "border-warning/50 bg-warning/10 text-warning",
-                            };
+                            : unheld
+                              ? {
+                                /* Not "Needs you": nothing here was ever owed
+                                   to the automated search, and calling it
+                                   outstanding reports a gap that never was. */
+                                label: "By hand if you need it",
+                                tone: "border-border/60 bg-muted/40 text-muted-foreground",
+                              }
+                              : {
+                                label: "Needs you",
+                                tone: "border-warning/50 bg-warning/10 text-warning",
+                              };
 
                     return (
                       <li
@@ -887,12 +895,15 @@ export function PepDeterminationDialog({
                               : "border-success/40 bg-success/5"
                             : bound.length > 0
                               ? "border-warning/40 bg-warning/5"
+                              : unheld
+                                ? "border-border/60 bg-muted/10"
                               /* Outstanding work is the only thing on this list
                                  that a person still has to do, so it is the only
                                  thing given a ring. */
-                              : "border-warning/50 bg-warning/[0.04] ring-1 ring-warning/25",
+                                : "border-warning/50 bg-warning/[0.04] ring-1 ring-warning/25",
                         )}
                       >
+
                         <div className="flex items-start gap-3">
                           <span
                             aria-hidden
