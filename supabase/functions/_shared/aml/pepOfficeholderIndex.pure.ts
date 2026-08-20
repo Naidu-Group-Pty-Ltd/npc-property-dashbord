@@ -21,10 +21,19 @@
  * ── Why these sources ─────────────────────────────────────────────────
  * All public, all machine-readable, none licensed:
  *
+ *   `aph_commonwealth_parliament` — the register Parliament publishes of its
+ *   own senators and members. Authoritative, and narrow: it is a snapshot of
+ *   who sits TODAY, with no dates and not one former member in it.
+ *
  *   `wikidata_au_public_office` — office holders with a position, a start
- *   and an end. It is the only reachable source that carries FORMER holders,
- *   which is the gap the current government directory leaves and the one
- *   AUSTRAC is most explicit about: leaving office does not end the risk.
+ *   and an end. Collaboratively edited, far broader, and the only reachable
+ *   source that carries FORMER holders, which is the gap the current
+ *   government directory leaves and the one AUSTRAC is most explicit about:
+ *   leaving office does not end the risk.
+ *
+ * The narrower source being the more authoritative one is not a defect to
+ * reconcile, it is the shape of what is public. Neither replaces the other,
+ * and an absence from both is still not an answer about anybody.
  *
  * Wikidata is collaboratively edited, which is precisely why a hit from it
  * is a lead rather than a source. Every row carries `confirm_url` — the
@@ -47,6 +56,28 @@
  */
 
 export const PEP_INDEX_SOURCES = [
+  {
+    code: "aph_commonwealth_parliament",
+    label: "Senators and members of the Australian Parliament",
+    confirmAgainst: "the Parliament of Australia's own parliamentarian search",
+    /*
+     * Every clause here is a fact about the two files, not a claim about
+     * what a federal register ought to hold. They carry no dates at all,
+     * which is why "currently sitting" is the whole of the coverage and why
+     * the exclusion below is the one that matters most.
+     */
+    covers:
+      "the senators and members currently sitting in the Commonwealth "
+      + "Parliament, together with the ministerial and parliamentary offices "
+      + "each of them holds",
+    excludes:
+      "former members and senators — the register is a snapshot of who sits "
+      + "today and holds nobody who has left — along with state and territory "
+      + "parliaments, non-parliamentary office holders, and family members "
+      + "and close associates",
+    /* Published by the Parliament itself. */
+    collaborative: false,
+  },
   {
     code: "wikidata_au_public_office",
     label: "Australian public office holders (Wikidata)",

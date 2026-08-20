@@ -125,7 +125,15 @@ export const CANDIDATE_SOURCES = [
     authority: 'Parliament of Australia',
     url: 'https://static.aph.gov.au/-/media/03_Senators_and_Members/Address_Labels_and_CSV_files/All_members_by_name/All_members_by_name.csv',
     expect: 'csv',
-    note: 'Canonical, from the APH index page. 150 rows when measured.',
+    /*
+     * No longer a hypothesis. This URL is what the loader reads, and a test
+     * asserts the two strings are identical — the catalogue's own rule is
+     * that a source must not be validated under one URL and ingested from
+     * another, and two copies of a URL is how that happens.
+     */
+    ingestedAs: 'aph_commonwealth_parliament',
+    note: 'Canonical, from the APH index page. 150 rows when measured, and '
+      + 'the register the office-holder index now loads weekly.',
   },
   {
     key: 'aph_senators_csv',
@@ -135,7 +143,8 @@ export const CANDIDATE_SOURCES = [
     authority: 'Parliament of Australia',
     url: 'https://static.aph.gov.au/-/media/03_Senators_and_Members/Address_Labels_and_CSV_files/Senators/allsenel.csv',
     expect: 'csv',
-    note: 'Canonical. 75 rows when measured.',
+    ingestedAs: 'aph_commonwealth_parliament',
+    note: 'Canonical. 75 rows when measured, and loaded weekly.',
   },
   {
     key: 'aph_members_pdf_trap',

@@ -105,7 +105,16 @@ export function buildPepSearches(args: {
     {
       id: "aph_members",
       label: "Parliament of Australia — senators and members",
-      purpose: "Current and recent federal parliamentarians.",
+      /*
+       * This is also where a candidate from the office-holder index is
+       * confirmed: the index is loaded from Parliament's own published
+       * register, and every APH row's `confirm_url` points back here. It
+       * stays on the manual list because the index holds only who sits
+       * TODAY — a former member is not in it, and this search reaches
+       * further than the file does.
+       */
+      purpose: "Senators and members currently sitting, and the place to confirm a "
+        + "candidate the index returned.",
       kind: "parliamentary_register",
       url: "https://www.aph.gov.au/Senators_and_Members/Parliamentarian_Search_Results"
         + `?q=${enc(primary)}`,

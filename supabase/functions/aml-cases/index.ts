@@ -4232,10 +4232,26 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             });
             continue;
           }
+          /*
+           * `.eq('source_code', …)` is load-bearing and was not here.
+           *
+           * This query sits INSIDE a loop over the index sources, and each
+           * iteration reports its rows under that source's label, coverage
+           * statement and as-at date. With one source loaded that was
+           * invisible. With two it means every candidate is returned twice,
+           * and half of them are described by the wrong register's coverage
+           * — a Wikidata row presented as a Parliament record, with
+           * Parliament's "authoritative, current" prose attached to it.
+           *
+           * A coverage statement bound to the wrong rows is worse than no
+           * coverage statement, because it is the sentence the operator is
+           * being asked to rely on.
+           */
           const { data: rows, error: idxErr } = await admin.schema('aml')
             .from('pep_officeholders')
             .select('external_id, source_code, full_name, aliases, position_title, '
               + 'jurisdiction, position_start, position_end, currently_held, confirm_url')
+            .eq('source_code', source.code)
             .overlaps('normalised_names', tokens).limit(500);
           if (idxErr) {
             // A read that FAILED is not a register that is EMPTY.
