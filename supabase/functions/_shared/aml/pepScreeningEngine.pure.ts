@@ -64,6 +64,14 @@ export interface PepScreeningSourceResult {
   foundCount: number;
   /** How current the source is, when it says. */
   asAt?: string | null;
+  /**
+   * How old the LOAD is, which is a different question from `asAt`.
+   *
+   * Only the office-holder registers carry one, and only they need it: they
+   * are the sources that assert `currently_held`, and that assertion was true
+   * on the day of the load and decays from there.
+   */
+  currency?: "fresh" | "ageing" | "stale" | "never" | null;
   detail?: string | null;
 }
 
@@ -318,6 +326,39 @@ export function buildScreeningRun(input: {
         ?? (s.status === "failed"
           ? "The register could not be read. That is a technical condition, not a result."
           : "The register is not loaded, so nothing was searched against it."),
+    });
+  }
+
+  /*
+   * A register that WAS searched but is out of date.
+   *
+   * Not a finding about the person, and not an unreached source either — it
+   * was read, and what it returned is real. What it cannot support is the
+   * claim `currently_held` makes: those rows were current on the day of the
+   * load, and an office-holder register that has missed six weekly refreshes
+   * is asserting a seat is held on evidence nobody has re-read.
+   *
+   * `coverage_gap` is deliberately the kind. It is excluded from the real
+   * findings, so a stale register never turns an empty search into
+   * `indicators_found` — that would report a fact about our loader as a fact
+   * about the customer. It does force a person to look, which is the whole
+   * of what an old register warrants.
+   *
+   * `ageing` gets its sentence on the source row and no gap: one missed
+   * weekly run is not a hole in the search.
+   */
+  for (const s of sources) {
+    if (s.status !== "searched" || s.currency !== "stale") continue;
+    indicators.push({
+      key: `stale:${s.key}`,
+      sourceKey: s.key,
+      kind: "coverage_gap",
+      severity: "attention",
+      headline: `${s.label} is out of date`,
+      detail: (s.detail ?? "This register has not been reloaded recently.")
+        + " It was searched and what it returned is real, but an entry it "
+        + "marks as currently held was current at the load and has not been "
+        + "re-read since.",
     });
   }
 

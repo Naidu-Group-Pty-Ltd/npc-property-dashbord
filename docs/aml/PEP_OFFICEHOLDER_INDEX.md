@@ -357,6 +357,119 @@ with a WAF block page, exactly as DFAT does. OpenSanctions' PEP dataset is
 deliberately not used for the same reason its sanctions data is not — the
 aggregation is CC-BY-NC and we are a commercial user.
 
+## The index is a living thing
+
+Two properties nothing was measuring: it goes **stale**, and it **changes**.
+
+### How current it is, which is not whether it loaded
+
+This index makes a claim no sanctions list makes: **`currently_held`**.
+
+Every row from the Parliament register carries `currently_held: true` by
+construction — the files are a snapshot of who sits on the day they are
+downloaded, with no dates in them at all. That is accurate at the load and
+decays from then on. A member who loses their seat at an election reads as
+**Current** for as long as nothing reloads, and that word travels into the
+evidence a determination rests on: `candidateToMethodDraft` writes "current"
+or "former" into the source row.
+
+Nothing measured it. `indexIsUsable` asks whether a load succeeded and holds
+rows, so a load from eight months ago passes exactly as this morning's does —
+the same shape as the sanctions failure where freshness of the **load** was
+read as currency of the **data**.
+
+`assessIndexRecency` reads the age of the last successful load. The refresh is
+weekly, so the thresholds are counted in missed runs: **`fresh` ≤ 14 days,
+`ageing` ≤ 45, `stale` beyond**, and a register with no successful load is
+`never` — neither current nor out of date, simply unread, which points at a
+different remedy.
+
+**Usability and currency stay separate.** `indexIsUsable` is unchanged and
+does not consult this. A stale register is still searched: its rows are still
+leads, and refusing to read it would remove the only assistance the operator
+has. What it cannot do is support an assertion about today — so the assertion
+is what gets qualified.
+
+`describeTenure` has no branch that produces the bare word "Current". A held
+seat is `Held as at 2026-08-19`, and past `fresh` it carries how long ago that
+was. A former holder is still named a former holder: leaving office is a risk
+assessment, not an expiry date.
+
+On the run itself, a stale-but-searched register raises a **`coverage_gap`**
+indicator. Deliberately that kind: coverage gaps are excluded from the real
+findings, so a stale register can never turn an empty search into
+`indicators_found` — that would report a fact about our loader as a fact about
+the customer. It does force a person to look, which is the whole of what an old
+register warrants. An `ageing` register gets its sentence on the source row and
+no gap: one missed weekly run is not a hole in the search.
+
+### A refresh is a monitoring event
+
+Political exposure is not established once at onboarding. A customer determined
+not to be a PEP in March and elected in September is a PEP from September, and
+knowing that is ongoing CDD.
+
+What existed was a review **date**: every determination, `not_pep` included,
+carries `review_due_at` twelve months out, and `aml-monitoring` raises an alert
+when it lapses. That is a periodic reconsideration by a person and it is
+necessary. On its own it is also a window of up to a year in which a customer
+can take public office and nothing notices — while the index reloads every week
+and nobody asks it the obvious question: **does any name in here now match a
+party we have already screened?** It is the same overlap query the screening
+runs, pointed the other way.
+
+`pepIndexChange.pure.ts` compares what the index returns now against what the
+last recorded run returned, and `runScheduledScans` raises an alert.
+
+**A new candidate is a change in the SEARCH, not a change in the person.**
+There are three ways a name that returned nothing last month returns something
+today and only one of them is "they took office":
+
+| origin | what it means |
+| --- | --- |
+| `source_added_since` | the whole register was first loaded after that screening. The **coverage** grew; nothing is said about the person |
+| `entered_since` | the register was already being searched and this row entered it since — consistent with an appointment or election |
+| `already_present` | the row was there and did not match before. A corrected name or a new alias — the **search** changed |
+| `unknown` | no creation time recorded, so these cannot be told apart — reported as unknown rather than guessed |
+
+That distinction is what makes the alert actionable. An operator told "this
+person has just taken office" about a spelling correction is sent into the
+wrong enquiry entirely.
+
+**`source_added_since` is checked first, and it nearly did not exist.** The
+obvious rule is "a row created since the last run means the person entered the
+register". Checked against production it is wrong in the case that matters
+most: **226 rows entered the index in the hour after the only screening runs on
+file**, because the Parliament register was loaded for the first time. Every one
+of them is newer than the run and not one is a person who took office. A bulk
+register addition is when the most cases change at once, so a reading that
+mislabels it is wrong at its own peak.
+
+The distinguishing fact is the register's **first** successful load, never its
+most recent — the weekly refresh moves "last loaded" every week, and keying on
+that would make every register look permanently new and every candidate a
+coverage artefact. That is the same error pointed the other way, and equally
+silent.
+
+Three rules bind it:
+
+- **It writes an alert and nothing else.** No determination, no supersession,
+  no change to a standing conclusion — only a reviewer or MLRO moves that, and
+  a test asserts the scan cannot write to `pep_determinations`.
+- **A case nobody has screened has not changed.** It is *unscreened*, a
+  different state with a different remedy, and sweeping it in here would bury
+  the cases that did change.
+- **A failed index read is skipped, never counted as "no change".** Reporting a
+  database fault as no change is how a broken sweep looks exactly like a
+  working one.
+
+Severity orders a queue and reverses nothing. A new match against a case where
+somebody has recorded **not a PEP** is `urgent` — it cuts against a conclusion
+the file says is settled. A case nobody has determined is `high`, an ordinary
+lead. A further office on a known PEP is `normal`: relevant to the risk
+assessment and to enhanced due diligence, and not news about whether they are
+one.
+
 ## Loading it
 
 `npm run test:aml-pep-index` runs the parser and loader contracts, and the

@@ -220,6 +220,46 @@ describe("a run becomes a source row, and only when it searched something", () =
   });
 });
 
+describe("a register that was searched but is out of date", () => {
+  it("is a gap in the SEARCH, and never turns an empty result into a finding", () => {
+    /*
+     * A stale office-holder register is not a finding about the customer. It
+     * is a fact about our loader, and reporting it as `indicators_found`
+     * would put our infrastructure into a sentence about a person.
+     *
+     * It IS a reason for somebody to look: those rows were current on the day
+     * of the load, and every one of them still says the seat is held.
+     */
+    const r = run({ sources: [source({ currency: "stale", detail: "Last loaded 2026-02-01, 200 days ago." })] });
+    expect(r.verdict).toBe("no_indicators");
+    const gap = r.indicators.find((i) => i.key === "stale:wikidata_au_public_office");
+    expect(gap?.kind).toBe("coverage_gap");
+    expect(gap?.headline).toMatch(/is out of date/i);
+    expect(gap?.detail).toMatch(/what it returned is real/i);
+    expect(r.requiresManualReview).toBe(true);
+  });
+
+  it("one missed weekly run is not a hole in the search", () => {
+    // `ageing` gets its sentence on the source row and no gap. A gap for
+    // every slightly-late refresh is a gap nobody reads.
+    const r = run({ sources: [source({ currency: "ageing" })] });
+    expect(r.indicators.some((i) => i.key?.startsWith("stale:"))).toBe(false);
+    expect(r.requiresManualReview).toBe(false);
+  });
+
+  it("a fresh register says nothing about its freshness", () => {
+    const r = run({ sources: [source({ currency: "fresh" })] });
+    expect(r.indicators.some((i) => i.key?.startsWith("stale:"))).toBe(false);
+  });
+
+  it("an unsearched register is not reported as a stale one", () => {
+    // Different facts, different remedies: one is reloaded, one is repaired.
+    const r = run({ sources: [source({ status: "unavailable", currency: "stale" })] });
+    expect(r.indicators.some((i) => i.key?.startsWith("stale:"))).toBe(false);
+    expect(r.verdict).toBe("incomplete");
+  });
+});
+
 describe("the sources a server cannot reach", () => {
   it("are declared, with what they hold and why they were not searched", () => {
     expect(SERVER_UNREACHABLE_SOURCES.length).toBeGreaterThan(0);
