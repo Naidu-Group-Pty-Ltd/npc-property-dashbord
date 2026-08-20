@@ -99,11 +99,21 @@ interface Row {
    * label-matching did.
    */
   searchId?: string;
+  /**
+   * Recorded from the run rather than typed by a person.
+   *
+   * Presentational and provenance only: the row is submitted, validated and
+   * counted exactly as any other. It exists so the card can say where the
+   * result came from, and so a run that is re-run or fails can withdraw its
+   * own rows without touching anything an operator wrote.
+   */
+  fromRun?: boolean;
   kind: PepSourceKind;
   source: string;
   reference: string;
   result: string;
 }
+
 
 let rowSeq = 0;
 const newRow = (over: Partial<Row> = {}): Row => ({
