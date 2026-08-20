@@ -271,7 +271,25 @@ export function PepDeterminationDialog({
     }
   };
 
-  const sourcesDone = methods.length > 0 && !errorFor("methods");
+  /*
+   * Step 2 is settled when the SOURCES are, and that is a question about the
+   * sources alone.
+   *
+   * This used to read `!errorFor("methods")` off the live verdict, which
+   * carries only an "outcome" error until an outcome is picked — so the step
+   * showed a green tick with nothing in it but the customer's own
+   * declaration, which can never satisfy the independent-source rule. A tick
+   * on a step that is not settled is worse than no tick: it is the product
+   * telling an operator they are done.
+   *
+   * Asking `assessPepEvidence` directly keeps one rule. The rationale is
+   * irrelevant here and only the `methods.*` failures are read.
+   */
+  const sourcesDone = useMemo(() => {
+    if (methods.length === 0) return false;
+    const probe = assessPepEvidence({ result: "not_pep", methods, rationale: "" });
+    return !probe.errors.some((e) => e.field.startsWith("methods"));
+  }, [methods]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -279,11 +297,38 @@ export function PepDeterminationDialog({
           The same treatment the manual screening dialog needed — a form this
           long inside the shared `max-w-lg` grid puts the submit button two
           screens below the fold at 1366x768. */}
+      {/*
+        ── `bareLayout` means THIS dialog owns its position ─────────────
+        The primitive drops every positioning class when `bareLayout` is
+        set — the base is `fixed z-50` and nothing else — so a caller that
+        supplies only size classes gets a `position: fixed` box with `auto`
+        insets. The browser then lays it out at its static position inside
+        the portal, which is off-screen, and the operator sees the scrim
+        with nothing on it: a grey screen.
+
+        That is exactly what this dialog shipped. Every test passed, because
+        jsdom does no layout at all — testing-library finds an element that
+        a real browser never paints. `pepDeterminationDialogLayout.test.tsx`
+        now asserts the classes rather than trusting the query.
+
+        The treatment mirrors `ManualScreeningDialog`, which needed the same
+        box: a near-full-height sheet on a narrow screen, centred and wide
+        on a desktop.
+      */}
       <DialogContent
         bareLayout
         className={cn(
-          "flex max-h-[100dvh] w-full max-w-none flex-col gap-0 overflow-hidden p-0",
+          "flex flex-col overflow-hidden gap-0 p-0",
+          // Narrow: a bottom sheet, single column.
+          "inset-x-0 bottom-0 top-auto w-full max-w-none max-h-[95dvh]",
+          "rounded-t-2xl border-x-0 border-b-0",
+          "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+          // Desktop: centred, and wide enough for the source rows to be a
+          // grid rather than a stack.
+          "sm:inset-auto sm:left-1/2 sm:top-1/2 sm:bottom-auto",
+          "sm:-translate-x-1/2 sm:-translate-y-1/2",
           "sm:w-[min(1100px,94vw)] sm:max-w-none sm:max-h-[90dvh] sm:rounded-lg sm:border",
+          "sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95",
         )}
       >
         <DialogHeader className="shrink-0 space-y-0 border-b border-border/60 px-5 py-3.5 pr-14 text-left sm:px-6">
