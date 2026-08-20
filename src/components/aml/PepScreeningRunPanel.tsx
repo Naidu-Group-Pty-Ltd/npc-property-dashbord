@@ -317,8 +317,63 @@ export function PepScreeningRunPanel({
 }) {
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState<Run | null>(null);
+  const [restored, setRestored] = useState(false);
   const [decisions, setDecisions] = useState<
     Record<string, { decision: "accepted" | "rejected"; reason: string }>>({});
+
+  /*
+   * ── The last run for THIS party, read back ────────────────────────────
+   * A screening is a recorded fact, not a fact about whether a dialog has
+   * stayed open. Restoring it is what stops the checklist resetting itself
+   * every time the determination screen is reopened.
+   *
+   * Scoped to this subject, never to the case: a run against another party is
+   * a search under another name, and crediting it here would be the same lie
+   * the reset-on-open guard exists to prevent. A failed read leaves the panel
+   * as it was — nothing is invented, and the operator can still press Run.
+   */
+  useEffect(() => {
+    let live = true;
+    setRun(null);
+    setRestored(false);
+    setDecisions({});
+    void (async () => {
+      try {
+        const res = await amlCasesApi.listPepScreeningRuns(caseId);
+        if (!live) return;
+        const row = (res.runs ?? []).find(
+          (r) => String((r as Record<string, unknown>).party_screening_subject_id ?? "")
+            === subjectId);
+        if (!row) return;
+        const next = runFromRow(row as Record<string, unknown>);
+        if (!next) return;
+        setRun(next);
+        setRestored(true);
+        onSources?.(next.sources.map((x) => ({
+          key: x.key, status: x.status, label: x.label,
+          foundCount: x.foundCount, asAt: x.asAt ?? null,
+        })));
+        /* Decisions already taken on this run's candidates stay taken. */
+        const taken: Record<string, { decision: "accepted" | "rejected"; reason: string }> = {};
+        for (const r of res.reviews ?? []) {
+          const review = r as Record<string, unknown>;
+          if (String(review.run_id ?? "") !== next.id) continue;
+          const candidateId = String(review.candidate_id ?? "");
+          const decision = String(review.decision ?? "");
+          if (!candidateId || (decision !== "accepted" && decision !== "rejected")) continue;
+          taken[candidateId] = { decision, reason: String(review.reason ?? "") };
+        }
+        setDecisions(taken);
+      } catch {
+        /* Silent: history that could not be read is not a screening failure,
+           and a toast here would fire on every open of the dialog. */
+      }
+    })();
+    return () => { live = false; };
+    // `onSources` is a setter from the parent and stable for the open dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caseId, subjectId]);
+
 
   const start = async () => {
     setBusy(true);
