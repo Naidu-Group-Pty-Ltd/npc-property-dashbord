@@ -1067,6 +1067,93 @@ describe('the repair allowance is spent once per invocation, not once per upload
   });
 });
 
+describe('one external failure must not take the queue down with it', () => {
+  /*
+   * MEASURED IN PRODUCTION. The image editor answered
+   *   429 "You have no credits remaining"
+   * for two Cloverton rows. They hold the two lowest ids in the sweep, the
+   * allowance is two, and the scan restarts at the lowest id every tick — so
+   * those two spent the entire allowance on every tick for hours, the log read
+   * `outstanding: 3, repaired: 0, unresolved: 2` every minute, and the twelve
+   * rows behind them were never reached. Most of those needed no vendor at all.
+   *
+   * The allowance bounds REPAIR WORK, because repair work is what kills the
+   * worker. A row that failed operationally did none — nothing was decoded into
+   * a derivative, nothing was encoded — so charging it charges for nothing.
+   */
+  const vendorOutage = async () => {
+    throw new Error('the image editor refused the request (429) '
+      + '"You have no credits remaining."');
+  };
+
+  it('reaches the rows behind a vendor outage in the same tick', async () => {
+    const { clean, badged } = badgedPicture();
+    const mask = maskFor(badged);
+    const bytes = (await encodePng(badged, { width: W, height: H, components: 3 }))!;
+
+    // Two blocked rows FIRST by id, then two the vendor is not needed for.
+    const rows = await Promise.all([0, 1, 2, 3].map(async (n) => ({
+      ...await refusedRow(bytes), id: `image-${n}`, storage_path: `${PATH}.${n}`,
+    })));
+    const objects: Record<string, Uint8Array> = {};
+    for (const row of rows) objects[row.storage_path] = bytes;
+
+    // The first two rows the scan reaches are the blocked ones, exactly as in
+    // production, where they hold the two lowest ids.
+    let reached = 0;
+    const db = fakeDb(rows, objects);
+    const outcome = await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: (input) => sanitizeSourceImage(input, {
+        edit: (reached += 1) <= 2 ? vendorOutage : honestModel(clean, mask),
+      }),
+    });
+
+    // The outage is reported and nothing is written for it...
+    expect(outcome.unresolved).toBeGreaterThan(0);
+    // ...and the tick still got past it and did real work.
+    expect(outcome.repaired + outcome.refused).toBeGreaterThan(0);
+  });
+
+  it('does not spend the allowance on a repair that never happened', async () => {
+    const bytes = (await encodePng(badgedPicture().badged,
+      { width: W, height: H, components: 3 }))!;
+    const row = await refusedRow(bytes);
+    const budget = newRepairBudget();
+    const before = budget.remaining;
+
+    await settleImageSanitization(fakeDb([row], { [PATH]: bytes }) as never, ORG, {
+      budget,
+      sanitize: (input) => sanitizeSourceImage(input, { edit: vendorOutage }),
+    });
+
+    expect(budget.remaining).toBe(before);
+  });
+
+  it('still stops rather than walking the whole queue against a dead vendor', async () => {
+    // The refund cannot become "unbounded work": a tick absorbs a fixed number
+    // of operational failures and then reports itself incomplete, so the marker
+    // never advances on an outage.
+    const bytes = (await encodePng(badgedPicture().badged,
+      { width: W, height: H, components: 3 }))!;
+    const rows = await Promise.all(Array.from({ length: 12 }, async (_, n) => ({
+      ...await refusedRow(bytes), id: `image-${String(n).padStart(2, '0')}`,
+      storage_path: `${PATH}.${n}`,
+    })));
+    const objects: Record<string, Uint8Array> = {};
+    for (const row of rows) objects[row.storage_path] = bytes;
+
+    const outcome = await settleImageSanitization(fakeDb(rows, objects) as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: (input) => sanitizeSourceImage(input, { edit: vendorOutage }),
+    });
+
+    expect(outcome.repaired).toBe(0);
+    expect(sanitizationSweepCompleted(outcome)).toBe(false);
+    expect(outcome.scanned).toBeLessThan(rows.length);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The reader: a derivative is a claim about SPECIFIC bytes
 // ---------------------------------------------------------------------------

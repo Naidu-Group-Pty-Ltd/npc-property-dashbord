@@ -112,14 +112,30 @@ const MAX_PAGES = 200;
  */
 const MAX_REPAIRS_PER_RUN = 2;
 
+/**
+ * How many OPERATIONAL failures one invocation will absorb before it stops.
+ *
+ * An operational failure costs the budget nothing (see the refund below), so
+ * without a second bound a tick facing a vendor outage would walk the entire
+ * queue attempting every row. This caps the walk while still letting the tick
+ * reach rows the outage does not affect: two failures buy the scan past the two
+ * blocked rows, which is exactly the production shape it was fitted to.
+ */
+const MAX_OPERATIONAL_FAILURES_PER_RUN = 4;
+
 /** A repair allowance shared by every upload in one invocation. */
 export interface RepairBudget {
   remaining: number;
+  /** Operational failures this invocation may still absorb. */
+  operationalFailures: number;
 }
 
 /** One tick's allowance. Made by the caller, spent by every upload it settles. */
 export function newRepairBudget(): RepairBudget {
-  return { remaining: MAX_REPAIRS_PER_RUN };
+  return {
+    remaining: MAX_REPAIRS_PER_RUN,
+    operationalFailures: MAX_OPERATIONAL_FAILURES_PER_RUN,
+  };
 }
 
 interface ImageRow {
@@ -263,7 +279,7 @@ export async function settleImageSanitization(
 
       const result = await sanitize(bytes, {});
 
-      if (!result.ok) {
+      if (result.ok === false) {
         /*
          * AN OPERATIONAL FAILURE IS NOT AN ANSWER ABOUT THE PICTURE, and I had
          * this wrong until production proved it. A model that could not be
@@ -343,6 +359,35 @@ export async function settleImageSanitization(
          */
         if (result.operational) {
           outcome.unresolved += 1;
+          /*
+           * AND IT DOES NOT SPEND THE ALLOWANCE, WHICH IS THE WHOLE POINT.
+           *
+           * The allowance exists to bound how much REPAIR work a tick does,
+           * because repair work is what kills the worker. A row that failed
+           * operationally did no repair work — no reconstruction was relaxed,
+           * no derivative encoded — so charging it is charging for nothing, and
+           * charging for nothing is how one external failure took the whole
+           * queue down with it.
+           *
+           * Measured in production: the image editor answered 429 "You have no
+           * credits remaining" for two Cloverton rows. They are the two lowest
+           * ids in the sweep, the allowance is two, and the scan restarts at
+           * the lowest id every tick — so those two consumed the entire
+           * allowance on every tick for hours, `repaired: 0`, and the twelve
+           * rows behind them were never reached even though most needed no
+           * vendor at all.
+           *
+           * Refunding leaves the failing rows exactly as they were: nothing is
+           * written, nothing becomes terminal, and they are attempted again on
+           * the next tick. What changes is that they no longer spend an
+           * allowance they did not use.
+           */
+          budget.remaining += 1;
+          budget.operationalFailures -= 1;
+          if (budget.operationalFailures <= 0) {
+            outcome.incomplete = true;
+            return outcome;
+          }
           continue;
         }
 
