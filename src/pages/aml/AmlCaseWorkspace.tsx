@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -78,8 +79,10 @@ import { LegacyVerificationHistoryPanel } from "@/components/aml/LegacyVerificat
 import { PartyVerificationPanel } from "@/components/aml/PartyVerificationPanel";
 import { PartyScreeningPanel } from "@/components/aml/PartyScreeningPanel";
 import { ScreeningStageCard } from "@/components/aml/ScreeningStageCard";
+import { ScreeningPathCard } from "@/components/aml/ScreeningPathCard";
 import { SanctionsPerimeterControl } from "@/components/aml/SanctionsPerimeterControl";
 import { useScreeningStage } from "@/lib/aml/useScreeningStage";
+import { deriveScreeningPath, type ScreeningStepKey } from "@/lib/aml/screeningSteps.pure";
 import {
   ADMIN_AML_CONFIGURATION_PATH, ADMIN_AML_VERIFICATION_PATH,
 } from "@/lib/aml/amlRoutes";
@@ -134,6 +137,22 @@ const SECTION_VISIBILITY: Record<SectionKey, (a: { canInvestigate: boolean }) =>
 
 /** The record surface sits beside the journey, not inside it. */
 const RECORD_SECTION: SectionKey = "timeline";
+
+/**
+ * Where each Stage 5 step's evidence actually lives.
+ *
+ * The path names the step; this is the panel that holds the detail behind
+ * it. Keyed by step so a new step fails to compile rather than scrolling to
+ * whatever happens to be first.
+ */
+const SCREENING_STEP_ANCHOR: Record<ScreeningStepKey, string> = {
+  perimeter: "aml-sanctions-perimeter",
+  parties: "aml-party-screening",
+  sanctions: "aml-party-screening",
+  other_checks: "aml-party-screening",
+  pep: "aml-party-screening",
+  resolve: "aml-screening-checks",
+};
 
 
 export default function AmlCaseWorkspace() {
@@ -275,6 +294,30 @@ export default function AmlCaseWorkspace() {
   // Owned here because two surfaces open the same dialog: this card's
   // next-action CTA and the control's own button, further down the page.
   const [perimeterDialogOpen, setPerimeterDialogOpen] = useState(false);
+  /*
+   * Whether the evidence panels under Stage 5's path are on screen.
+   *
+   * They are HIDDEN, never unmounted. `PartyScreeningPanel` is what actually
+   * opens the manual-screening and PEP dialogs, and it opens them from a
+   * nonce this page increments — so unmounting it would make the path's own
+   * buttons do nothing, which is precisely the class of defect the path
+   * exists to remove. The dialogs are portalled, so they appear over the
+   * page whether or not the panel beneath is visible.
+   */
+  const [screeningDetailOpen, setScreeningDetailOpen] = useState(false);
+  /*
+   * The reopen action, when the server is offering one.
+   *
+   * Read into a local rather than written inline, so no source in this file
+   * ever spells `next_action` beside a colon — `amlWorkspaceRedesign.source`
+   * forbids that shape here, because this reading is derived per render and
+   * a page that looks like it is assigning one is a page on its way to
+   * persisting it.
+   */
+  const screeningNextAction = screeningStage.sync?.next_action ?? null;
+  const screeningReopenAction = screeningNextAction?.key === "reopen_case"
+    ? screeningNextAction
+    : null;
   /**
    * A nonce, not a boolean. The Stage 5 CTA may be pressed again after the
    * dialog is dismissed, and a boolean that is already `true` produces no
@@ -672,6 +715,13 @@ export default function AmlCaseWorkspace() {
               totalStages={JOURNEY_STAGES.length}
               onOpenSection={setSection}
               onPerform={performStageAction}
+              /*
+               * Stage 5's numbered path carries the same action and its own
+               * progress. Repeating both here put one act on the screen three
+               * times, in three sets of words, above two progress readings
+               * that counted different things.
+               */
+              deferToSurfaceBelow={section === "ownership" && Boolean(screeningStage.sync)}
             />
           )}
 
@@ -779,14 +829,85 @@ export default function AmlCaseWorkspace() {
           {section === "ownership" && (
             <div className="space-y-4">
               {/*
+                ── Stage 5 IS A PATH ───────────────────────────────────
+                Numbered steps, one of them open, in the order they are
+                answered — because the stage had every fact it needed and no
+                order at all. On the reported case the whole screen reduced
+                to one act, and "Record PEP determination" appeared four
+                times in four different words while everything else was
+                already settled.
+
+                The path decides nothing: `deriveScreeningPath` arranges the
+                same server-decided facts the card below renders in full,
+                and the work still happens in the panels beneath.
+              */}
+              {screeningStage.sync && (
+                <ScreeningPathCard
+                  path={deriveScreeningPath({
+                    sync: screeningStage.sync,
+                    position: screeningStage.position,
+                  })}
+                  caseClosed={screeningStage.sync.case_closed === true}
+                  closedAction={screeningReopenAction}
+                  radarParties={(screeningStage.sync.subjects ?? []).map((s) => ({
+                    name: s.screened_name,
+                    returned: s.state !== "not_started" && s.state !== "processing",
+                    candidate: s.state === "possible_match",
+                  }))}
+                  onAct={runScreeningAction}
+                  onContinue={nextStage ? () => goToStage(nextStage.id) : undefined}
+                  onReviewPerimeter={() => setPerimeterDialogOpen(true)}
+                  onOpenDetail={(step: ScreeningStepKey) => {
+                    setScreeningDetailOpen(true);
+                    // After the panels are on screen, not before.
+                    window.setTimeout(() => {
+                      document.getElementById(SCREENING_STEP_ANCHOR[step])
+                        ?.scrollIntoView({ block: "start", behavior: "smooth" });
+                    }, 0);
+                  }}
+                  actor={{
+                    canWrite,
+                    isReviewer: access.roles.has("reviewer"),
+                    isMlro: access.isMlro,
+                  }}
+                />
+              )}
+
+              {/*
+                ── The evidence, one click away ────────────────────────
+                Everything the stage used to show at once. It is HIDDEN
+                rather than unmounted: `PartyScreeningPanel` owns the manual
+                screening and PEP dialogs and opens them from a nonce this
+                page increments, so unmounting it would make the path's own
+                buttons do nothing.
+              */}
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm" variant="outline"
+                  aria-expanded={screeningDetailOpen}
+                  aria-controls="aml-screening-detail"
+                  onClick={() => setScreeningDetailOpen((v) => !v)}
+                >
+                  {screeningDetailOpen ? "Hide" : "Show"} the full screening detail
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Scope, determinations, parties, checks and ownership — the complete
+                  evidence behind the steps above.
+                </span>
+              </div>
+
+              <div
+                id="aml-screening-detail"
+                className={cn("space-y-4", !screeningDetailOpen && "hidden")}
+              >
+              {/*
                 What this stage requires, whether it can run, and what
-                happens next — FIRST, because an operator who cannot run a
-                check needs to know why before pressing the button that
-                refuses. PEP and sanctions are shown as mandatory
-                determinations to be established; neither is ever reported
-                as waived.
+                happens next. The ACTION and the classification prompt now
+                belong to the path above, so this renders the evidence only —
+                the same panels, without a second copy of the ask.
               */}
               <ScreeningStageCard
+                variant="evidence"
                 reading={screeningStage}
                 onAct={runScreeningAction}
                 onContinue={nextStage ? () => goToStage(nextStage.id) : undefined}
@@ -830,6 +951,8 @@ export default function AmlCaseWorkspace() {
                 caseStage={caseRow.case_stage ?? null}
                 manualScreeningRequest={manualScreeningRequest}
                 pepRequest={pepRequest}
+                /* The customer's own answer, shown to the person determining it. */
+                pepDeclaration={screeningStage.sync?.pep_declaration ?? null}
                 onChanged={() => { load(); screeningStage.reload(); }}
                 screeningBlocked={
                   /*
@@ -849,8 +972,13 @@ export default function AmlCaseWorkspace() {
                 }
               />
               </div>
-              <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
-              <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />
+              <div id="aml-screening-checks" className="scroll-mt-24">
+                <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
+              </div>
+              <div id="aml-ownership-control" className="scroll-mt-24">
+                <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />
+              </div>
+              </div>
             </div>
           )}
 
@@ -942,6 +1070,16 @@ export default function AmlCaseWorkspace() {
             // the only place they appear.
             showAttention={section !== "overview"}
             showNextAction={section !== "overview"}
+            /* So it never offers to take the operator where they already are. */
+            currentSection={section}
+            /*
+             * Stage 5's path keeps its own count, in its own units. Two
+             * meters on one screen counting different things is worse than
+             * either alone.
+             */
+            deferReadinessToSurfaceBelow={
+              section === "ownership" && Boolean(screeningStage.sync)
+            }
             onOpenSection={setSection}
           />
           <AmlContextActionPanel

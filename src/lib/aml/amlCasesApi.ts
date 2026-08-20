@@ -1,6 +1,10 @@
 import { invokeSecureFunction } from "@/lib/secureInvoke";
 
 import { invokeAmlFunction } from "./invokeAmlFunction";
+import type { PepDeclarationReading } from "./pepDeclaration";
+import type { PepDeferralReason, PepSourceKind } from "./pepEvidence";
+import type { PepIndexCoverage, PepIndexVerdict } from "./pepOfficeholderIndex";
+import type { PepScreeningRun } from "./pepScreeningEngine";
 
 /** What a reset returns, whether it ran or was refused. */
 export interface AmlClientResetResult {
@@ -29,7 +33,12 @@ export type AmlRiskRating = "low" | "medium" | "high" | "prohibited";
 export type AmlEventCategory =
   | "case_created" | "status_changed" | "risk_rescored" | "document_added"
   | "idv_result" | "pep_sanctions_hit" | "edd_note" | "mlro_decision"
-  | "austrac_report" | "system";
+  | "austrac_report" | "system"
+  // A screening is not a determination: these three categories record that a
+  // search was RUN, that a candidate was adjudicated, and that a
+  // determination was deferred. None of them is an outcome.
+  | "pep_screening_run" | "pep_screening_candidate_review"
+  | "pep_determination_deferred";
 
 export interface AmlCase {
   id: string;
@@ -468,10 +477,101 @@ export const amlCasesApi = {
     pep_type?: "foreign" | "domestic" | "international_organisation";
     pep_relationship?: "self" | "family_member" | "close_associate";
     position_held?: string; jurisdiction?: string; holds_position_currently?: boolean;
-    methods: Array<{ source: string; reference?: string; note?: string }>;
+    /*
+     * Structured rows, not free text. The server already stored `methods` as
+     * jsonb with a reference and a note per source; the old dialog collapsed
+     * every source into one textarea and sent `{ source }` alone, throwing
+     * away the two fields that make a check reconstructable later. `kind` and
+     * `result` complete it: what sort of source, and what came back.
+     */
+    methods: Array<{
+      kind?: PepSourceKind; source: string;
+      reference?: string | null; result?: string | null; note?: string | null;
+    }>;
     rationale: string; review_months?: number;
   }) =>
     invoke<{ determination: AmlPepDetermination }>({ op: "record_pep_determination", ...payload }),
+
+  /**
+   * Record that a determination cannot be reached yet.
+   *
+   * Deliberately NOT a third `result`: nothing is written to
+   * `pep_determinations`, the scope stays outstanding and Stage 5 stays
+   * blocked. What is recorded is what was checked, why it did not settle the
+   * question, and what is needed.
+   */
+  /**
+   * Search the public office-holder index for one party.
+   *
+   * Returns the verdict, the candidates and the index's own COVERAGE — the
+   * three together, always. A caller that renders "0 candidates" without the
+   * coverage beside it has turned a partial index into a clearance, which is
+   * the one thing this index must never be able to say.
+   */
+  /**
+   * Run the PEP screening for one party against the registers the platform
+   * holds, and record what it searched.
+   *
+   * It screens; it never determines. The result is a `pep_screening_runs`
+   * row, whose verdict vocabulary shares no value with a determination's.
+   */
+  runPepScreening: (payload: {
+    case_id: string;
+    party_screening_subject_id?: string | null;
+  }) =>
+    invoke<{
+      run: PepScreeningRun & { id: string; created_at: string };
+      evidence: { kind: string; source: string; reference: string; result: string } | null;
+    }>({ op: "run_pep_screening", ...payload }),
+
+  /**
+   * Accept or reject one candidate a run surfaced.
+   *
+   * A rejection must say how it was told this is somebody else — "dismissed"
+   * with no reason reads, later, exactly like nobody having looked.
+   */
+  reviewPepScreeningCandidate: (payload: {
+    run_id: string;
+    candidate_id: string;
+    decision: "accepted" | "rejected";
+    reason: string;
+  }) =>
+    invoke<{ review: Record<string, unknown> }>(
+      { op: "review_pep_screening_candidate", ...payload }),
+
+  listPepScreeningRuns: (case_id: string) =>
+    invoke<{ runs: Array<Record<string, unknown>>; reviews: Array<Record<string, unknown>> }>(
+      { op: "list_pep_screening_runs", case_id }),
+
+  /**
+   * What the office-holder index holds, WITHOUT searching it.
+   *
+   * The coverage used to be reachable only as a side-effect of a search, so
+   * an operator could not tell whether the index was loaded until after they
+   * had relied on it. This is the reading that belongs on the step itself.
+   */
+  pepOfficeholderIndexStatus: () =>
+    invoke<{ coverage: PepIndexCoverage[]; usable: boolean }>(
+      { op: "pep_officeholder_index_status" }),
+
+  searchPepOfficeholders: (payload: {
+    case_id: string;
+    party_screening_subject_id?: string | null;
+  }) =>
+    invoke<PepIndexVerdict>({ op: "search_pep_officeholders", ...payload }),
+
+  deferPepDetermination: (payload: {
+    case_id: string;
+    party_screening_subject_id?: string | null;
+    reason: PepDeferralReason;
+    needed: string;
+    methods: Array<{
+      kind?: PepSourceKind; source: string;
+      reference?: string | null; result?: string | null; note?: string | null;
+    }>;
+  }) =>
+    invoke<{ deferred: boolean; subject_name: string }>(
+      { op: "defer_pep_determination", ...payload }),
 };
 
 export interface AmlReconciliationItem {
@@ -612,6 +712,13 @@ export interface AmlScreeningStageSync {
   case_closed?: boolean;
   case_stage?: string | null;
   service_gate_status?: string | null;
+  /**
+   * What the customer declared about political exposure.
+   *
+   * Optional because a server that predates it sends nothing — and an absent
+   * reading is rendered as "not established", never as an answer of "no".
+   */
+  pep_declaration?: PepDeclarationReading;
 }
 
 export interface AmlPartyScreeningSubject {

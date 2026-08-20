@@ -410,7 +410,7 @@ describe('the validation gate refuses rather than shipping something wrong', () 
       edit: async () => new Uint8Array(64 * 64 * 3),
     });
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.reason).toBe('inpaint_failed');
   });
 
@@ -421,7 +421,7 @@ describe('the validation gate refuses rather than shipping something wrong', () 
       width: W, height: H, pixels: badged, mask, edit: async () => null,
     });
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.reason).toBe('inpaint_failed');
   });
 
@@ -630,7 +630,7 @@ describe('the order the two repairs are tried in', () => {
   it('a clean picture is never touched by either route', async () => {
     const result = await sanitizeSourceImage(await bytesOf(sky(W, H)));
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.reason).toBe('not_annotated');
     expect(result.transformation).toBeNull();
   });
@@ -711,7 +711,7 @@ describe('the order the two repairs are tried in', () => {
         edit: hostileModel,
       });
       expect(result.ok).toBe(false);
-      if (result.ok) return;
+      if (result.ok === true) return;
       // Flat magenta over the badge is another laid-over graphic, so the
       // classifier refuses it a second time.
       expect(result.reason).toBe('still_annotated');
@@ -736,7 +736,7 @@ describe('the order the two repairs are tried in', () => {
         edit: async () => { throw new Error('the model must not be reached'); },
       });
       expect(big.ok).toBe(false);
-      if (big.ok) return;
+      if (big.ok === true) return;
       expect(big.reason).toBe('too_much_to_rebuild');
     });
 });
@@ -835,6 +835,8 @@ async function refusedRow(bytes: Uint8Array) {
     processing_status: 'ready',
     storage_bucket: 'builder-stock-images',
     storage_path: PATH,
+    // The sweep writes `sanitized_derivative` / `sanitization_failure` onto
+    // this bag at runtime, so it is typed open rather than by its seed keys.
     source_detail: {
       role: 'primary_property',
       role_evidence_level: 3,
@@ -845,7 +847,8 @@ async function refusedRow(bytes: Uint8Array) {
       marketplace_rejection_reason: 'annotated_marketing_tile',
       marketplace_measured: true,
       marketplace_eligibility_version: 1,
-    },
+    } as Record<string, unknown>,
+
   };
 }
 

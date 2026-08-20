@@ -16,6 +16,16 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
+// `aml.cases` has no tenant_id column; the tenant is a property of the
+// deployment. See `_shared/aml/caseTenant.ts` for what that cost.
+import { tenantForCase } from "../_shared/aml/caseTenant.ts";
+import {
+  PEP_INDEX_CHANGE_ALERT_TITLE, changeSeverity, detectIndexChange,
+  type IndexMatch,
+} from "../_shared/aml/pepIndexChange.pure.ts";
+import { normaliseName, scoreNames } from "../_shared/aml/matching.ts";
+import { PEP_CANDIDATE_MIN_NAME_SCORE, admitCandidate }
+  from "../_shared/aml/pepCandidateMatch.pure.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
@@ -360,10 +370,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       let next_review_at: string | null = null;
       if (data?.case_id && data.classification === "periodic" && data.status === "complete") {
         const { data: caseRow } = await aml.from("cases")
-          .select("id, tenant_id, risk_rating, monitoring_status").eq("id", data.case_id).maybeSingle();
+          .select("id, risk_rating, monitoring_status").eq("id", data.case_id).maybeSingle();
         if (caseRow && caseRow.monitoring_status !== "ended") {
           const { data: tenant } = await aml.from("tenant_settings")
-            .select("review_interval_config").eq("tenant_id", (caseRow.tenant_id as string) || "default").maybeSingle();
+            .select("review_interval_config").eq("tenant_id", tenantForCase(String(caseRow.id))).maybeSingle();
           const defaults: Record<string, number> = { prohibited: 3, high: 12, medium: 24, low: 36, unrated: 12 };
           const cfg = { ...defaults, ...((tenant?.review_interval_config as Record<string, number>) ?? {}) };
           const months = Number(cfg[String(caseRow.risk_rating ?? "") || "unrated"] ?? 12) || 12;
@@ -421,7 +431,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     async function reviewIntervalMonths(caseRow: any): Promise<number> {
       const { data: tenant } = await aml.from("tenant_settings")
-        .select("review_interval_config").eq("tenant_id", (caseRow?.tenant_id as string) || "default").maybeSingle();
+        .select("review_interval_config")
+        .eq("tenant_id", tenantForCase(String(caseRow?.id ?? ""))).maybeSingle();
       const cfg = { ...DEFAULT_REVIEW_INTERVALS, ...((tenant?.review_interval_config as Record<string, number>) ?? {}) };
       const rating = String(caseRow?.risk_rating ?? "") || "unrated";
       const months = Number(cfg[rating] ?? cfg.unrated ?? 12);
@@ -438,9 +449,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       const caseId = String(body.case_id ?? "");
       if (!caseId) return jr({ error: "case_id required" }, 400);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, client_id, tenant_id, risk_rating, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, client_id, risk_rating, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       if (caseRow.monitoring_status === "ended") {
         return jr({ error: "The business relationship has ended — ongoing CDD is closed for this case", code: "relationship_ended" }, 409);
       }
@@ -477,9 +488,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (!TRIGGER_KINDS[triggerKind]) return jr({ error: "trigger_kind invalid" }, 400);
       if (detail.length < 10) return jr({ error: "detail must be at least 10 characters" }, 400);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, client_id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, client_id, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       if (caseRow.monitoring_status === "ended") {
         return jr({ error: "The business relationship has ended — ongoing CDD is closed for this case", code: "relationship_ended" }, 409);
       }
@@ -510,9 +521,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         .select("id, case_id").eq("id", id).maybeSingle();
       if (!existing) return jr({ error: "Review not found" }, 404);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, tenant_id").eq("id", existing.case_id).maybeSingle();
+        .select("id").eq("id", existing.case_id).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       const { data, error } = await aml.from("existing_customer_reviews")
         .update({ assigned_to: assignee, status: body.status ? String(body.status) : "in_progress" })
         .eq("id", id).select("*").single();
@@ -539,9 +550,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         .select("id, case_id, due_at, original_due_at, extension_count, classification, status").eq("id", id).maybeSingle();
       if (!existing) return jr({ error: "Review not found" }, 404);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, tenant_id").eq("id", existing.case_id).maybeSingle();
+        .select("id").eq("id", existing.case_id).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       if (!OPEN_REVIEW_STATUSES.includes(String(existing.status))) {
         return jr({ error: "Only an open review can have its deadline extended" }, 400);
       }
@@ -582,10 +593,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (Number.isNaN(endedAt.getTime())) return jr({ error: "ended_at must be a valid date" }, 400);
 
       const { data: caseRow } = await aml.from("cases")
-        .select("id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id, REVIEW_ROLES)) return jr({ error: "Reviewer/MLRO required" }, 403);
-      const tenantIsMlro = await hasTenantAccess(caseRow.tenant_id, ["mlro"]);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), REVIEW_ROLES)) return jr({ error: "Reviewer/MLRO required" }, 403);
+      const tenantIsMlro = await hasTenantAccess(tenantForCase(String(caseRow.id)), ["mlro"]);
       if (caseRow.monitoring_status === "ended") return jr({ error: "The relationship is already recorded as ended" }, 400);
 
       // Outstanding regulatory work must be resolved before the relationship
@@ -638,15 +649,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       }
       if (reason.length < 10) return jr({ error: "reason must be at least 10 characters" }, 400);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      const tenantIsMlro = await hasTenantAccess(caseRow.tenant_id, ["mlro"]);
+      const tenantIsMlro = await hasTenantAccess(tenantForCase(String(caseRow.id)), ["mlro"]);
       // Reinstating monitoring on an ended relationship reverses a regulatory
       // record — MLRO only.
       if (caseRow.monitoring_status === "ended" && !tenantIsMlro) {
         return jr({ error: "Only the MLRO can reinstate monitoring on an ended relationship" }, 403);
       }
-      if (caseRow.monitoring_status !== "ended" && !await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) {
+      if (caseRow.monitoring_status !== "ended" && !await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) {
         return jr({ error: "Insufficient permissions" }, 403);
       }
 
@@ -671,11 +682,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (!caseId) return jr({ error: "case_id required" }, 400);
       const nowIso = new Date().toISOString();
       const caseRes = await aml.from("cases").select(
-          "id, risk_rating, tenant_id, monitoring_status, monitoring_status_reason, relationship_ended_at, relationship_end_reason, next_periodic_review_at, last_periodic_review_at",
+          "id, risk_rating, monitoring_status, monitoring_status_reason, relationship_ended_at, relationship_end_reason, next_periodic_review_at, last_periodic_review_at",
         ).eq("id", caseId).maybeSingle();
       const caseRow = caseRes.data;
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id)) return jr({ error: "AML role required for case tenant" }, 403);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)))) return jr({ error: "AML role required for case tenant" }, 403);
       const [reviewsRes, alertsRes, eddRes, screenRes, partyScrRes, pepRes] = await Promise.all([
         aml.from("existing_customer_reviews").select("*").eq("case_id", caseId)
           .order("due_at", { ascending: true, nullsFirst: false }).limit(50),
@@ -944,6 +955,135 @@ async function runScheduledScans(admin: any) {
     if (alert) { created.push(alert); pepReviewAlerts++; }
   }
 
+  /* ── Has the office-holder index started matching somebody? ──────────
+   *
+   * The review date above is a periodic reconsideration by a person, and it is
+   * necessary. On its own it is also a window of up to a year in which a
+   * customer can take public office and nothing notices.
+   *
+   * The index reloads every week. This asks it the question nobody was asking:
+   * does any name in there now match a party already screened? Same overlap
+   * query the screening runs, pointed the other way.
+   *
+   * It raises an ALERT and nothing else. It writes no determination, moves no
+   * standing conclusion, and supersedes nothing — a new candidate is a change
+   * in the SEARCH, and the three things that can cause one are named in
+   * `pepIndexChange.pure.ts`.
+   */
+  let pepIndexChangeAlerts = 0;
+
+  /*
+   * When each register was FIRST loaded, not last.
+   *
+   * The weekly refresh moves "last loaded" every week, which would make every
+   * register look new forever. What decides whether a row's novelty says
+   * anything about a PERSON is whether the register was being searched at all
+   * when the prior screening ran — and on the first bulk load of a register
+   * every row in it is new while not one of them has changed office.
+   */
+  const sourceFirstLoaded: Record<string, string | null> = {};
+  const { data: firstSyncs } = await aml.from("pep_officeholder_syncs")
+    .select("source_code, completed_at")
+    .eq("status", "succeeded").order("completed_at", { ascending: true }).limit(500);
+  for (const sync of firstSyncs ?? []) {
+    if (!(sync.source_code in sourceFirstLoaded)) {
+      sourceFirstLoaded[sync.source_code] = sync.completed_at ?? null;
+    }
+  }
+
+  const { data: recentRuns } = await aml.from("pep_screening_runs")
+    .select("id, case_id, party_screening_subject_id, subject_name, candidates, created_at")
+    .order("created_at", { ascending: false }).limit(300);
+
+  // One comparison per party, against its LATEST run. An older run for the
+  // same party is history, not a second baseline.
+  const latestByParty = new Map<string, any>();
+  for (const r of recentRuns ?? []) {
+    const key = `${r.case_id}::${r.party_screening_subject_id ?? "case"}`;
+    if (!latestByParty.has(key)) latestByParty.set(key, r);
+  }
+
+  for (const run of latestByParty.values()) {
+    if (isEnded(run.case_id)) continue;
+    const tokens = normaliseName(String(run.subject_name ?? ""));
+    if (tokens.length === 0) continue;
+
+    const { data: rows, error: idxErr } = await aml.from("pep_officeholders")
+      .select("external_id, source_code, full_name, aliases, position_title, created_at")
+      .overlaps("normalised_names", tokens).limit(200);
+    /*
+     * A read that FAILED is not an index that returned nothing. Reporting a
+     * database fault as "no change" is how a broken sweep looks exactly like
+     * a working one, which is the failure this codebase has had in three
+     * separate places.
+     */
+    if (idxErr) { console.error("pep index change scan: read failed", idxErr); continue; }
+
+    const currentMatches: IndexMatch[] = (rows ?? []).map((r: any) => {
+      const names = [String(r.full_name), ...((r.aliases ?? []) as string[])];
+      const score = Math.max(
+        ...names.map((n) => scoreNames(String(run.subject_name ?? ""), n).score), 0);
+      return {
+        id: `${r.source_code}:${r.external_id}`,
+        sourceCode: String(r.source_code),
+        name: String(r.full_name),
+        positionTitle: r.position_title ?? null,
+        rowCreatedAt: r.created_at ?? null,
+        score,
+      };
+    }).filter((m) => admitCandidate(m.score));
+
+    const change = detectIndexChange({
+      prior: {
+        candidateIds: ((run.candidates ?? []) as any[])
+          .map((c) => String(c?.id ?? "")).filter(Boolean),
+        runAt: run.created_at ?? null,
+      },
+      currentMatches,
+      sourceFirstLoaded,
+    });
+    if (change.reading !== "new_candidates") continue;
+
+    const { data: standing } = await aml.from("pep_determinations")
+      .select("id, result")
+      .eq("case_id", run.case_id).is("superseded_at", null)
+      .order("determined_at", { ascending: false }).limit(1).maybeSingle();
+    const severity = changeSeverity({
+      change, standingResult: (standing?.result as any) ?? null,
+    });
+    if (!severity) continue;
+
+    // The title is stable so a weekly sweep does not raise a duplicate every
+    // run for a change nobody has closed yet.
+    const { count } = await aml.from("alerts").select("id", { count: "exact", head: true })
+      .eq("case_id", run.case_id).eq("status", "open")
+      .eq("title", PEP_INDEX_CHANGE_ALERT_TITLE);
+    if ((count ?? 0) > 0) continue;
+
+    const { data: alert } = await aml.from("alerts").insert({
+      case_id: run.case_id, severity, status: "open",
+      title: PEP_INDEX_CHANGE_ALERT_TITLE,
+      summary: `${run.subject_name}: ${change.summary}`,
+      metadata: {
+        party_screening_subject_id: run.party_screening_subject_id,
+        compared_against_run: run.id,
+        compared_against_run_at: run.created_at,
+        standing_determination_id: standing?.id ?? null,
+        standing_determination_result: standing?.result ?? null,
+        // The candidates themselves, so the alert is actionable without a
+        // re-run and so the record shows what was seen at the time.
+        new_candidates: change.newCandidates.map((c) => ({
+          id: c.id, source_code: c.sourceCode, name: c.name,
+          position_title: c.positionTitle, origin: c.origin,
+          score: Math.round(c.score * 1000) / 1000,
+        })),
+        name_score_floor: PEP_CANDIDATE_MIN_NAME_SCORE,
+        source_first_loaded: sourceFirstLoaded,
+      },
+    }).select("*").single();
+    if (alert) { created.push(alert); pepIndexChangeAlerts++; }
+  }
+
   // Escalate overdue existing-customer reviews to remediation_required.
   const { data: overdue } = await aml.from("existing_customer_reviews")
     .select("id, case_id, due_at, status, priority")
@@ -987,6 +1127,7 @@ async function runScheduledScans(admin: any) {
     party_screenings_requeued: partiesRequeued,
     party_screenings_started: partiesNeverScreened,
     pep_review_alerts: pepReviewAlerts,
+    pep_index_change_alerts: pepIndexChangeAlerts,
   };
 }
 

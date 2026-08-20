@@ -25,6 +25,8 @@ import {
 import { displayDate } from "@/lib/aml/displayDate";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import { ManualScreeningDialog } from "@/components/aml/ManualScreeningDialog";
+import { PepDeterminationDialog } from "@/components/aml/PepDeterminationDialog";
+import type { PepDeclarationReading } from "@/lib/aml/pepDeclaration";
 import {
   manualScreeningAdmissible,
 } from "../../../supabase/functions/_shared/aml/manualScreening.pure";
@@ -53,7 +55,16 @@ const manualAdmissible = (s: AmlPartyScreeningSubject) =>
 export function PartyScreeningPanel({
   caseId, canWrite, canAdjudicate, isMlro, caseStatus, caseStage,
   manualScreeningRequest, pepRequest, onChanged, screeningBlocked, optionalUnavailable,
+  pepDeclaration,
 }: {
+  /**
+   * What the customer declared about political exposure, from the stage sync.
+   *
+   * Passed in rather than re-read so the dialog shows the same reading the
+   * Stage 5 path shows — evidence towards the determination, never the
+   * determination.
+   */
+  pepDeclaration?: PepDeclarationReading | null;
   caseId: string; canWrite: boolean; canAdjudicate: boolean; onChanged: () => void;
   /**
    * Whether the signed-in user is the MLRO.
@@ -126,11 +137,10 @@ export function PartyScreeningPanel({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [manualSubject, setManualSubject] = useState<AmlPartyScreeningSubject | null>(null);
   /*
-   * The party a CTA has asked for a determination on, before the CONCLUSION
-   * is known. A determination is a judgement about a person; the button that
-   * opens it must not have already answered it. See the effect below.
+   * The party whose determination is open. The dialog owns the outcome —
+   * nothing that opens it may have already chosen one.
    */
-  const [pepChoiceSubject, setPepChoiceSubject] = useState<AmlPartyScreeningSubject | null>(null);
+  const [pepSubject, setPepSubject] = useState<AmlPartyScreeningSubject | null>(null);
   const { prompt, dialog } = usePromptDialog();
 
   const load = useCallback(async () => {
@@ -215,69 +225,17 @@ export function PartyScreeningPanel({
     } finally { setBusyId(null); }
   };
 
-  const recordPep = async (subject: AmlPartyScreeningSubject, result: "not_pep" | "pep") => {
-    const values = await prompt({
-      title: result === "pep" ? "Record PEP determination" : "Record not-PEP determination",
-      description: `${subject.screened_name} — record how the determination was established. ` +
-        "Sources and rationale become part of the case evidence and the determination has a review date.",
-      confirmLabel: "Record determination",
-      fields: [
-        ...(result === "pep"
-          ? [
-            { name: "pep_type", label: "PEP category", required: true,
-              helpText: "One of: foreign, domestic, international_organisation" },
-            { name: "pep_relationship", label: "Relationship to the position", required: true,
-              helpText: "One of: self, family_member, close_associate" },
-            { name: "position_held", label: "Position / office held", required: false },
-          ]
-          : []),
-        { name: "methods", label: "Sources and methods checked", type: "textarea" as const,
-          required: true, minLength: 5,
-          helpText: "One per line, e.g. \"DFAT consolidated list — screened via case screening\", \"Public register search — reference/URL\"." },
-        { name: "rationale", label: "Why the conclusion is reasonable", type: "textarea" as const,
-          required: true, minLength: 10 },
-      ],
-    });
-    if (!values) return;
-    if (result === "pep") {
-      const t = String(values.pep_type ?? "").trim();
-      const r = String(values.pep_relationship ?? "").trim();
-      if (!PEP_TYPES.includes(t as (typeof PEP_TYPES)[number]) ||
-          !PEP_RELATIONSHIPS.includes(r as (typeof PEP_RELATIONSHIPS)[number])) {
-        toast({
-          title: "Invalid PEP classification",
-          description: "Category must be foreign, domestic or international_organisation; relationship must be self, family_member or close_associate.",
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-    setBusyId(subject.id);
-    try {
-      await amlCasesApi.recordPepDetermination({
-        case_id: caseId,
-        party_screening_subject_id: subject.id,
-        party_type: subject.party_type,
-        party_id: subject.party_id ?? undefined,
-        subject_name: subject.screened_name,
-        result,
-        ...(result === "pep"
-          ? {
-            pep_type: values.pep_type as "foreign" | "domestic" | "international_organisation",
-            pep_relationship: values.pep_relationship as "self" | "family_member" | "close_associate",
-            position_held: values.position_held || undefined,
-          }
-          : {}),
-        methods: values.methods.split("\n").map((l) => l.trim()).filter(Boolean)
-          .map((line) => ({ source: line })),
-        rationale: values.rationale.trim(),
-      });
-      toast({ title: "PEP determination recorded" });
-      await load(); onChanged();
-    } catch (e: any) {
-      toast({ title: "Could not record determination", description: e?.message, variant: "destructive" });
-    } finally { setBusyId(null); }
-  };
+  /*
+   * The determination is made in `PepDeterminationDialog`, not here.
+   *
+   * This used to be a generic prompt with two free-text boxes, opened with
+   * the ANSWER already chosen by whichever button was pressed, and offering
+   * the DFAT sanctions list as its example of a source. All three faults
+   * belonged to the flow rather than to any one line of it, so the flow was
+   * replaced: three numbered steps, structured sources, and an outcome the
+   * operator picks after looking rather than before.
+   */
+  const openPepDialog = (subject: AmlPartyScreeningSubject) => setPepSubject(subject);
 
   /*
    * Open the manual dialog when Stage 5 asks for it, on the first party the
@@ -299,8 +257,7 @@ export function PartyScreeningPanel({
 
   /*
    * Open the PEP determination flow when the stage header asks for it, on the
-   * first party that still needs one. `recordPep` is the existing
-   * prompt-driven flow: nothing about what it collects changes.
+   * first party that still needs one.
    *
    * What it must NOT do is pick the answer. This opened
    * `recordPep(target, "not_pep")` directly — a dialog headed "Record
@@ -308,8 +265,9 @@ export function PartyScreeningPanel({
    * determination". The conclusion is exactly what the determination is, an
    * operator who had found a PEP had to cancel and hunt for the other
    * button, and a pre-selected "not a PEP" is the one default in this
-   * product that must never exist. The CTA now asks which determination is
-   * being recorded, and the evidence prompt follows the answer.
+   * product that must never exist. The dialog now opens on the EVIDENCE and
+   * the outcome is chosen at the end of it, after the sources have been
+   * looked at rather than before.
    */
   const lastPepRequest = useRef(pepRequest ?? 0);
   useEffect(() => {
@@ -318,7 +276,7 @@ export function PartyScreeningPanel({
     lastPepRequest.current = n;
     if (!canAdjudicate || !subjects) return;
     const target = subjects.find((s) => !s.pep_determination);
-    if (target) setPepChoiceSubject(target);
+    if (target) setPepSubject(target);
   }, [pepRequest, canAdjudicate, subjects]);
 
   const now = new Date().toISOString();
@@ -599,15 +557,18 @@ export function PartyScreeningPanel({
                         <Badge variant="outline">determination outstanding</Badge>
                       )}
                     </div>
+                    {/*
+                      ONE control, because there is one act. Two buttons
+                      labelled with the two answers made the choice before the
+                      evidence was looked at, which is the wrong way round for
+                      a determination.
+                    */}
                     {canAdjudicate && (!pep || pepReviewDue) && (
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <Button size="sm" variant="outline" disabled={busyId === s.id}
-                          onClick={() => void recordPep(s, "not_pep")}>
-                          <ShieldQuestion className="mr-1.5 h-3.5 w-3.5" /> Not a PEP
-                        </Button>
-                        <Button size="sm" variant="outline" disabled={busyId === s.id}
-                          onClick={() => void recordPep(s, "pep")}>
-                          Record PEP…
+                          onClick={() => openPepDialog(s)}>
+                          <ShieldQuestion className="mr-1.5 h-3.5 w-3.5" />
+                          Record PEP determination
                         </Button>
                       </div>
                     )}
@@ -619,52 +580,19 @@ export function PartyScreeningPanel({
         )}
       </CardContent>
       {dialog}
-      {pepChoiceSubject && (
-        <Dialog
+      {pepSubject && (
+        <PepDeterminationDialog
+          subject={pepSubject}
+          caseId={caseId}
+          declaration={pepDeclaration ?? null}
+          sanctionsSignal={
+            pepSubject.state === "confirmed_match" ? "confirmed"
+              : pepSubject.state === "possible_match" ? "candidate" : "none"
+          }
           open
-          onOpenChange={(next) => { if (!next) setPepChoiceSubject(null); }}
-        >
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Record a PEP determination</DialogTitle>
-              <DialogDescription>
-                {pepChoiceSubject.screened_name} — what was concluded? The sources and
-                rationale are recorded next, and the determination carries a review date
-                either way.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex flex-col gap-2">
-              <Button
-                variant="outline"
-                className="justify-start"
-                onClick={() => {
-                  const subject = pepChoiceSubject;
-                  setPepChoiceSubject(null);
-                  void recordPep(subject, "not_pep");
-                }}
-              >
-                <ShieldQuestion className="mr-2 h-4 w-4" />
-                Not a politically exposed person
-              </Button>
-              <Button
-                variant="outline"
-                className="justify-start"
-                onClick={() => {
-                  const subject = pepChoiceSubject;
-                  setPepChoiceSubject(null);
-                  void recordPep(subject, "pep");
-                }}
-              >
-                <Gavel className="mr-2 h-4 w-4" />
-                Politically exposed person
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              A client's own declaration is evidence towards the determination. It is
-              never the determination itself.
-            </p>
-          </DialogContent>
-        </Dialog>
+          onOpenChange={(next) => { if (!next) setPepSubject(null); }}
+          onRecorded={() => { void load(); onChanged(); }}
+        />
       )}
       {manualSubject && (
         <ManualScreeningDialog
