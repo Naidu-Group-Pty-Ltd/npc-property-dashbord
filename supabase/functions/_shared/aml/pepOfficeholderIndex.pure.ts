@@ -55,6 +55,9 @@
  * itself and rendered beside it.
  */
 
+import type { PepDobComparison } from "./pepCandidateMatch.pure.ts";
+import type { PepRuleCoverage } from "./pepRuleCoverage.pure.ts";
+
 export const PEP_INDEX_SOURCES = [
   {
     code: "aph_commonwealth_parliament",
@@ -117,6 +120,18 @@ export interface PepIndexCoverage {
    */
   officeCount: number | null;
   sampleOffices: string[];
+  /**
+   * Which AML/CTF Rule categories this load reached, measured by the loader.
+   *
+   * Empty when a load predates the measurement — which is not the same as a
+   * load that reached nothing, and `ruleCoverageMeasured` is the flag that
+   * keeps the two apart. Rendering "no category evidenced" for an older load
+   * would report a gap that was never tested for.
+   */
+  ruleCategories: PepRuleCoverage[];
+  ruleCoverageMeasured: boolean;
+  /** Office titles no category recognised. What makes every count a floor. */
+  unclassifiedOffices: number;
   /** When the source itself says it is current to — not when we synced. */
   sourceAsAt: string | null;
   lastSyncedAt: string | null;
@@ -139,7 +154,24 @@ export interface PepIndexCandidate {
   positionEnd: string | null;
   currentlyHeld: boolean | null;
   confirmUrl: string | null;
-  /** 0–1, from the same matcher the sanctions screening uses. */
+  /**
+   * The source's own date of birth, at the source's own precision — `1961`,
+   * `1961-03` or `1961-03-02`. Null where the register publishes none, and
+   * an absent date is never a disagreement.
+   */
+  dateOfBirth: string | null;
+  /**
+   * How that compares with the party's recorded date of birth.
+   *
+   * Present on every candidate, including the ones where there is nothing to
+   * compare — the two absences are distinguishable readings, and the one
+   * where the PARTY has no date on file is something the operator can fix.
+   *
+   * It never decided whether this candidate is here. See
+   * `pepCandidateMatch.pure.ts`.
+   */
+  dob: PepDobComparison | null;
+  /** 0–1 on the NAME alone — the number that admitted this candidate. */
   score: number;
 }
 
@@ -178,6 +210,8 @@ export function describeCoverage(
       office_count?: number | null;
       distinct_offices?: number | null;
       sample_offices?: unknown;
+      rule_categories?: unknown;
+      unclassified_offices?: number | null;
     } | null;
   } | null,
 ): PepIndexCoverage {
@@ -188,9 +222,16 @@ export function describeCoverage(
     ? (detail!.sample_offices as unknown[])
       .map((o) => String(o ?? "").trim()).filter(Boolean).slice(0, 12)
     : [];
+  const rawCategories = Array.isArray(detail?.rule_categories)
+    ? (detail!.rule_categories as PepRuleCoverage[]) : null;
+
   return {
     sourceCode,
     label: source?.label ?? sourceCode,
+    ruleCategories: rawCategories ?? [],
+    // A load from before this was measured is UNMEASURED, not empty.
+    ruleCoverageMeasured: rawCategories !== null,
+    unclassifiedOffices: Number(detail?.unclassified_offices ?? 0),
     covers: source?.covers ?? "",
     excludes: source?.excludes ?? "",
     collaborative: source?.collaborative ?? true,

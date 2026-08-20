@@ -98,6 +98,15 @@ export interface PepScreeningCandidate {
   positionEnd: string | null;
   currentlyHeld: boolean | null;
   confirmUrl: string | null;
+  /** The register's own date of birth, at the register's own precision. */
+  dateOfBirth?: string | null;
+  /**
+   * How that compared with the party's. Recorded on the run so the evidence
+   * shows what the operator was shown — and it ORDERED this list, it never
+   * shortened it.
+   */
+  dob?: PepDobComparison | null;
+  /** 0–1 on the NAME alone. The only thing that admitted this candidate. */
   score: number;
 }
 
@@ -180,6 +189,8 @@ export const SERVER_UNREACHABLE_SOURCES: ReadonlyArray<{
  * not overlap.
  */
 
+import type { PepDobComparison } from "./pepCandidateMatch.pure.ts";
+
 const clean = (v: unknown) => String(v ?? "").trim();
 
 /**
@@ -220,12 +231,23 @@ export function buildScreeningRun(input: {
       key: `candidate:${c.id}`,
       sourceKey: c.sourceKey,
       kind: "possible_match",
+      /*
+       * `review`, whatever the dates say.
+       *
+       * A birth date that disagrees is written into the detail for the
+       * reviewer to weigh, and it does not soften the indicator: the
+       * registers disagree with each other and with official records often
+       * enough that a date is a reason to look harder, never a reason to look
+       * less. Downgrading the severity would be the engine forming the
+       * conclusion the reviewer is there to form.
+       */
       severity: "review",
       headline: `Possible match — ${c.name}`,
       detail: `${c.positionTitle ?? "Office not recorded"}`
         + `${c.jurisdiction ? `, ${c.jurisdiction}` : ""} · ${held}`
-        + ` · ${Math.round(c.score * 100)}% name match. Confirm against the official `
-        + "register before relying on it.",
+        + ` · ${Math.round(c.score * 100)}% name match.`
+        + (c.dob?.sentence ? ` ${c.dob.sentence}` : "")
+        + " Confirm against the official register before relying on it.",
       candidateId: c.id,
     });
   }

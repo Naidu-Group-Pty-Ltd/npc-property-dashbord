@@ -23,7 +23,7 @@
  * writing that sentence for them is what would make the record indefensible.
  */
 import { useState } from "react";
-import { AlertTriangle, ArrowUpRight, Info, Loader2, Search } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, CalendarClock, Info, Loader2, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,6 +57,45 @@ function CoverageNote({ verdict }: { verdict: PepIndexVerdict }) {
             {c.sampleOffices.length > 0 && (
               <span className="block">
                 For example: {c.sampleOffices.slice(0, 6).join("; ")}.
+              </span>
+            )}
+            {/*
+              * Coverage against the AML/CTF Rules, MEASURED by the load.
+              *
+              * "676 offices" is a number about a database. The question an
+              * operator has when this returns nothing is whether it had ever
+              * looked at judges, or ambassadors, or the Chief of Navy — so the
+              * gaps are named first and in the same words the Rules use.
+              *
+              * A load from before this was measured says so rather than
+              * reporting every category as a gap it never tested for.
+              */}
+            {c.ruleCoverageMeasured && c.ruleCategories.length > 0 && (
+              <span className="mt-1 block">
+                {(() => {
+                  const missing = c.ruleCategories.filter((r) => r.notEvidenced);
+                  const held = c.ruleCategories.filter((r) => !r.notEvidenced);
+                  return (
+                    <>
+                      {held.length > 0 && (
+                        <span className="block">
+                          Holds at least:{" "}
+                          {held.map((r) => `${r.label.toLowerCase()} (${r.officeCount})`)
+                            .join(", ")}.
+                          {c.unclassifiedOffices > 0 && ` A further ${c.unclassifiedOffices} `
+                            + "office titles matched no category, so every number here "
+                            + "is a floor."}
+                        </span>
+                      )}
+                      {missing.length > 0 && (
+                        <span className="block font-medium text-warning">
+                          Not evidenced, so check by hand:{" "}
+                          {missing.map((r) => r.label.toLowerCase()).join(", ")}.
+                        </span>
+                      )}
+                    </>
+                  );
+                })()}
               </span>
             )}
             <span className="block font-medium text-foreground">
@@ -93,6 +132,29 @@ function CandidateRow({ c, onRecord }: {
           {c.aliases.length > 0 && (
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               Also recorded as {c.aliases.slice(0, 4).join(", ")}
+            </p>
+          )}
+          {/*
+            * The date of birth, in words.
+            *
+            * This is the only thing on the card that can tell this person
+            * apart from somebody who merely shares their name — and it is
+            * shown rather than acted on. It did not decide that this
+            * candidate is here: the threshold reads the name score alone,
+            * and a date that disagrees never removes a lead.
+            *
+            * `corroborates` styles it and nothing more. A disagreement is
+            * muted, not struck through or coloured as a rejection, because
+            * the registers disagree with each other and with official
+            * records often enough that a date is a reason to look harder.
+            */}
+          {c.dob?.sentence && (
+            <p className={cn(
+              "mt-1 flex items-start gap-1 text-[11px]",
+              c.dob.corroborates ? "text-foreground" : "text-muted-foreground",
+            )}>
+              <CalendarClock aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+              <span>{c.dob.sentence}</span>
             </p>
           )}
         </div>
