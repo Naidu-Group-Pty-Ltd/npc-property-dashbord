@@ -373,9 +373,9 @@ export function PepDeterminationDialog({
 
   /*
    * ── The checklist ────────────────────────────────────────────────────
-   * A register is bound to its rows by the label the button wrote, so what
+   * A register is bound to its rows by the search it was opened from, so what
    * came back is captured on the register that produced it rather than in a
-   * detached grid. Anything not bound to a listed source — an accepted run
+   * detached grid. Anything not opened from a listed source — an accepted run
    * candidate, a web search, a source typed by hand — falls to the general
    * list, so nothing can be filtered out of view.
    */
