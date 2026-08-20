@@ -1042,7 +1042,10 @@ export function PepDeterminationDialog({
                       </li>
                     );
                   })}
-                </ol>
+                  </ol>
+                </div>
+                ))}
+
 
                 {/*
                   A general web search is not a register, and the list used to
