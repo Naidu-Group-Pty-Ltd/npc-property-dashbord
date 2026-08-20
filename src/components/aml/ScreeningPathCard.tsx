@@ -361,6 +361,18 @@ export function ScreeningPathCard({
                       </details>
                     )}
 
+                    {/*
+                      ── The wait, made legible ───────────────────────
+                      A running check reads as a hang when the only thing on
+                      screen is "a check is in progress". The radar carries
+                      the same server-read facts as motion plus a measured
+                      reading; it screens nothing and decides nothing.
+                    */}
+                    {!caseClosed && step.key === "sanctions" && step.state === "waiting"
+                      && step.row?.outcome === "running" && (
+                      <ScreeningRadar parties={radarParties} startedAt={radarStartedAt} />
+                    )}
+
                     {/* ── The act ─────────────────────────────────────── */}
                     {action && (
                       <div className="rounded-md border border-primary/40 bg-primary/5 p-3">
