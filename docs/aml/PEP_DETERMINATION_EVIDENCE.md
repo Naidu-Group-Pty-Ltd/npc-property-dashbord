@@ -154,6 +154,102 @@ header and the rail, **never at the path**, because the path is the surface
 the work happens in and the header is the surface an operator orients by.
 Every other stage, which has no such surface, behaves exactly as it did.
 
+## The screen must not contradict the search it describes
+
+Two defects that were not in the rules at all. Both were arrangements of
+correct information.
+
+### Prose that counts things goes stale
+
+The manual-register section said, in fixed words:
+
+> The two Commonwealth registers block automated requests, so the run above
+> cannot read them.
+
+By the time anybody read that, **one** did. Parliament of Australia had become
+a register the server searches on every run — 225 entries — and the panel
+directly above the sentence said so: *"1 source was not searched."* The same
+scroll, two answers, and the operator sent to open by hand a register the
+platform had just read for them.
+
+Correcting "two" to "one" would have been true until the next source moved,
+and moving sources from *somebody opens a tab* to *the server reads it* is the
+whole direction of this programme. So `pepManualChecks.pure.ts` derives the
+wording and the count from the run's own `sources`, and a register the run read
+is offered as a place to **confirm a candidate** rather than as a hole to fill.
+
+Three states, because not every manual link is a coverage failure:
+
+| state | meaning |
+| --- | --- |
+| `searched_by_platform` | the run read it. Open it to confirm, not to check |
+| `must_check_by_hand` | the run could not read it. Opening it is the only check |
+| `not_held_by_platform` | never a register the index could hold — ParlInfo is an archive, ABN Lookup a company register |
+
+Listing the third as "the run could not read them" would report a coverage
+failure that does not exist, which is the same overstatement pointed the other
+way. Two rules follow: with **no run**, every register the platform holds needs
+a person — a search nobody has run has read nothing — and a run that **failed**
+puts them all back rather than crediting this attempt with the last one's reach.
+
+The link ids and the index source keys are mapped **explicitly**, including
+where they happen to be identical. "The ids match" is not a rule, and relying
+on it would classify a future non-matching pair as a register nobody holds.
+
+### One closed door at a time is not a next step
+
+The footer rendered `verdict.errors[0]?.message`. Before an outcome is chosen
+the only error is *"Choose what was determined"*, so every other requirement
+was invisible: pick an outcome, discover you need an independent source; supply
+one, discover you need a rationale; write one, discover a source has no
+recorded result. Every message correct, and the sequence a corridor of closed
+doors.
+
+`pepDeterminationSteps.pure.ts` lists everything outstanding at once, each item
+naming the step it belongs to. It is **derived from the errors the assessment
+actually produces**, never a second list of rules — what the operator is shown
+outstanding and what the server refuses cannot become two standards.
+
+**The invariant that makes an up-front list honest:** `assessPepEvidence` takes
+a `result` and never reads it. The sources, the results and the rationale are
+required identically for *a PEP* and *not a PEP* — the standard of evidence
+cannot be lower for the conclusion that closes the file. That is what lets the
+evidence requirements be shown before an outcome exists, and a test asserts the
+two outcomes produce identical errors, so if the bar is ever made to depend on
+the answer the test fails rather than the screen quietly misleading somebody.
+
+Two smaller rules. A requirement that cannot be judged yet — the PEP-specific
+questions before an outcome exists — renders as **pending**, not as failing: an
+unmet requirement is work to do and a question nobody has asked is not, and a
+red cross against the second misstates the operator's progress. And a sanctions
+register named as PEP evidence appears only **once it has been recorded**,
+because it is a mistake rather than an outstanding task, and listing it up front
+would read as an instruction to go and check one.
+
+### What the registers do not cover, said where the work is
+
+The loader has measured coverage against the AML/CTF Rule categories since the
+index gained a second register, and it rendered two clicks away inside the
+search panel. Its whole value is the answer to one question asked at exactly
+this moment: **the run came back with nothing — what had it never looked at?**
+
+`PepCoverageGaps` renders it beside the manual checks, because the answer *is*
+the manual checks. Gaps are computed **across** registers rather than per
+register: per-register would list "judiciary" as a gap against a register of
+parliamentary seats, which is true, useless, and buries the real one. An index
+whose coverage was never measured says so rather than reading as a clean bill,
+and a status that could not be read is unknown rather than empty.
+
+### No PEP surface claims an office is held today
+
+Every Parliament row carries `currently_held: true` by construction. A test
+scans every `Pep*.tsx` for a badge reading the bare word **"Current"** — two
+components rendered one and were fixed separately, which is exactly why the
+guard scans the directory rather than the two that were known. Both now render
+`describeTenure`, the single function that turns "held" plus an as-at into
+words; the run panel feeds it through an adapter because a run stores less than
+an index coverage row.
+
 ## Where the tests are
 
 | | |

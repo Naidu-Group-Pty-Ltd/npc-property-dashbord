@@ -38,6 +38,8 @@ import { amlCasesApi } from "@/lib/aml/amlCasesApi";
 import type {
   PepIndicator, PepScreeningCandidate, PepScreeningRun, PepScreeningSourceResult,
 } from "@/lib/aml/pepScreeningEngine";
+import { recencyFromRunSource, type RunSourceState } from "@/lib/aml/pepManualChecks";
+import { describeTenure } from "@/lib/aml/pepOfficeholderIndex";
 
 type Run = PepScreeningRun & { id: string; created_at?: string };
 
@@ -83,11 +85,16 @@ function SourceLine({ s }: { s: PepScreeningSourceResult }) {
   );
 }
 
-function CandidateCard({ candidate, decided, onDecide, busy }: {
+function CandidateCard({
+  candidate, decided, onDecide, busy, sourceAsAt, sourceCurrency,
+}: {
   candidate: PepScreeningCandidate;
   decided: { decision: "accepted" | "rejected"; reason: string } | undefined;
   onDecide: (decision: "accepted" | "rejected", reason: string) => void;
   busy: boolean;
+  /** When the register this candidate came from was read, and how old that is. */
+  sourceAsAt: string | null;
+  sourceCurrency: "fresh" | "ageing" | "stale" | "never" | null;
 }) {
   const [open, setOpen] = useState<"accepted" | "rejected" | null>(null);
   const [reason, setReason] = useState("");
@@ -110,9 +117,18 @@ function CandidateCard({ candidate, decided, onDecide, busy }: {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {/*
+            * Held AS AT the date the register was read, never the bare word
+            * "Current". Every Parliament row carries `currently_held: true`
+            * by construction — the files are a snapshot of who sits on the
+            * day they are downloaded — so an unqualified present tense is a
+            * claim about today made from a photograph of last week.
+            */}
           <Badge variant="outline" className="text-[10px]">
-            {candidate.currentlyHeld === true ? "Current"
-              : candidate.currentlyHeld === false ? "Former" : "Dates unknown"}
+            {describeTenure(
+              candidate.currentlyHeld,
+              recencyFromRunSource(sourceAsAt, sourceCurrency, Date.now()),
+            )}
           </Badge>
           <Badge variant="secondary" className="text-[10px]">
             {Math.round(candidate.score * 100)}% name match
@@ -194,12 +210,22 @@ function CandidateCard({ candidate, decided, onDecide, busy }: {
 }
 
 export function PepScreeningRunPanel({
-  caseId, subjectId, onEvidence,
+  caseId, subjectId, onEvidence, onSources,
 }: {
   caseId: string;
   subjectId: string;
   /** A completed run becomes a source row. The operator still writes why. */
   onEvidence: (draft: { kind: string; source: string; reference: string; result: string }) => void;
+  /**
+   * What the run read, reported upwards.
+   *
+   * The manual-register list below this panel used to describe the run in
+   * fixed prose and went stale the first time a register moved from "somebody
+   * opens a tab" to "the server reads it" — telling the operator to open by
+   * hand a register the panel directly above said it had just searched. It is
+   * derived from this now, so the two cannot disagree.
+   */
+  onSources?: (sources: RunSourceState[] | null) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState<Run | null>(null);
@@ -212,13 +238,19 @@ export function PepScreeningRunPanel({
       const res = await amlCasesApi.runPepScreening({
         case_id: caseId, party_screening_subject_id: subjectId,
       });
-      setRun(res.run as Run);
+      const next = res.run as Run;
+      setRun(next);
+      onSources?.(next.sources.map((x) => ({ key: x.key, status: x.status })));
       setDecisions({});
       if (res.evidence) onEvidence(res.evidence);
     } catch (e: unknown) {
       // A failure is a technical condition and is shown as one. Reporting it
       // as "nothing found" is how an error becomes an outcome.
       setRun(null);
+      // A run that failed has read nothing, so every register goes back to
+      // needing a person. Leaving the previous run's coverage standing would
+      // credit this attempt with the last one's reach.
+      onSources?.(null);
       toast({
         title: "The screening could not be run",
         description: e instanceof Error ? e.message : "The server refused it.",
@@ -316,6 +348,10 @@ export function PepScreeningRunPanel({
                     key={c.id} candidate={c} busy={busy}
                     decided={decisions[c.id]}
                     onDecide={(decision, reason) => void decide(c, decision, reason)}
+                    sourceAsAt={
+                      run.sources.find((s) => s.key === c.sourceKey)?.asAt ?? null}
+                    sourceCurrency={
+                      run.sources.find((s) => s.key === c.sourceKey)?.currency ?? null}
                   />
                 ))}
               </ul>

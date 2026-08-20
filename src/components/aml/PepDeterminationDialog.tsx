@@ -34,7 +34,8 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, ArrowUpRight, Check, ClipboardCheck, Info, Loader2, Plus, X,
+  AlertTriangle, ArrowUpRight, Check, Circle, ClipboardCheck, Info, Loader2,
+  Plus, ShieldCheck, X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -64,6 +65,13 @@ import {
   PEP_SEARCH_COVERAGE_GAPS, buildPepSearches,
 } from "@/lib/aml/pepSearchLinks.pure";
 import { PepScreeningRunPanel } from "@/components/aml/PepScreeningRunPanel";
+import { PepCoverageGaps } from "@/components/aml/PepCoverageGaps";
+import {
+  classifyManualChecks, describeManualChecks, type RunSourceState,
+} from "@/lib/aml/pepManualChecks";
+import {
+  describeOutstanding, pepDeterminationRequirements,
+} from "@/lib/aml/pepDeterminationSteps";
 import type { PepDeclarationReading } from "@/lib/aml/pepDeclaration";
 import { PEP_RELATIONSHIP_LABEL } from "@/lib/aml/pepDeclaration";
 
@@ -162,6 +170,10 @@ export function PepDeterminationDialog({
     setPepType(""); setRelationship(""); setPosition("");
     setJurisdiction(declaration?.country ?? "");
     setCurrentlyHeld(""); setDeferReason(""); setNeeded("");
+    // A reopened dialog has run nothing yet. Carrying the previous subject's
+    // coverage across would tell an operator a register was searched for a
+    // party it was never searched for.
+    setRunSources(null);
     setRows(declaration?.answered
       ? [newRow({
         kind: "client_declaration",
@@ -171,6 +183,13 @@ export function PepDeterminationDialog({
       })]
       : []);
   }, [open, declaration]);
+
+  /*
+   * What the last run read. `null` means no run has been made in this dialog,
+   * which is not the same as a run that reached nothing — see
+   * `describeManualChecks`.
+   */
+  const [runSources, setRunSources] = useState<RunSourceState[] | null>(null);
 
   const methods: PepMethod[] = useMemo(
     () => normalisePepMethods(rows.map((r) => ({
@@ -209,6 +228,35 @@ export function PepDeterminationDialog({
       errors: [{ field: "outcome", message: "Choose what was determined." }],
     };
   }, [outcome, methods, rationale, deferReason, needed, pepType, relationship, currentlyHeld]);
+
+  const manualChecks = useMemo(
+    () => classifyManualChecks({
+      linkIds: searches.filter((x) => x.tier === "register").map((x) => x.id),
+      runSources,
+    }),
+    [searches, runSources],
+  );
+
+  /*
+   * Everything outstanding, at once.
+   *
+   * The footer showed `verdict.errors[0]` — and before an outcome is chosen
+   * the only error is "Choose what was determined", so every other
+   * requirement was invisible until an outcome existed. An operator picked
+   * one, discovered they needed an independent source, supplied it,
+   * discovered they needed a rationale. Each message correct; the sequence a
+   * corridor of closed doors.
+   *
+   * The list is built from the errors the assessment ACTUALLY produces, so
+   * what is shown outstanding and what the server refuses cannot become two
+   * standards.
+   */
+  const requirements = useMemo(
+    () => pepDeterminationRequirements({
+      outcome, methodCount: methods.length, errors: verdict.errors,
+    }),
+    [outcome, methods.length, verdict.errors],
+  );
 
   const errorFor = (field: string) =>
     verdict.errors.find((e) => e.field === field || e.field.startsWith(`${field}.`));
@@ -419,6 +467,7 @@ export function PepDeterminationDialog({
               */}
               <PepScreeningRunPanel
                 caseId={caseId} subjectId={subject.id}
+                onSources={setRunSources}
                 onEvidence={(draft) => setRows((prev) => [...prev, newRow({
                   kind: (PEP_SOURCE_KINDS as readonly string[]).includes(draft.kind)
                     ? draft.kind as PepSourceKind : "official_register",
@@ -427,42 +476,68 @@ export function PepDeterminationDialog({
               />
 
               {/*
-                ── The manual checks, kept and demoted ─────────────────
-                Two of these registers block automated requests, so a person
-                opening them is the only way they get checked at all. They are
-                secondary to the run above, never removed.
+                ── The manual checks, kept and DERIVED ─────────────────
+                This section used to say, in fixed prose, that "the two
+                Commonwealth registers block automated requests, so the run
+                above cannot read them". By the time anybody read it, one of
+                them had become a register the server searches on every run —
+                and the panel directly above said so, in the same scroll.
+
+                Correcting the number would have been true until the next
+                source moved, which is the whole direction of this programme.
+                So the wording and the count come off the run's own sources
+                now, and a register the platform read is offered as a place to
+                CONFIRM rather than as a hole to fill.
               */}
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                   Check by hand — official registers
                 </p>
                 <p className="mb-2 text-[11px] text-muted-foreground">
-                  The two Commonwealth registers block automated requests, so the
-                  run above cannot read them. Open, look, and record what came back.
+                  {describeManualChecks(manualChecks, runSources !== null)}
                 </p>
+                {/*
+                  What the loaded registers do not evidence at all. Measured by
+                  the loader, and the direct answer to "the run found nothing —
+                  what had it never looked at?".
+                */}
+                <PepCoverageGaps className="mb-2" />
               </div>
 
               <div className="flex flex-wrap gap-2">
-                {searches.filter((s) => s.tier === "register").map((s) => (
-                  <Button
-                    key={s.id} type="button" variant="outline" size="sm"
-                    className="h-auto justify-start py-1.5 text-left"
-                    onClick={() => {
-                      window.open(s.url, "_blank", "noopener,noreferrer");
-                      setRows((prev) => [...prev, newRow({
-                        kind: s.kind, source: s.label, reference: s.searchTerms,
-                      })]);
-                    }}
-                  >
-                    <ArrowUpRight aria-hidden className="mr-1.5 h-3.5 w-3.5 shrink-0" />
-                    <span className="min-w-0">
-                      <span className="block text-xs font-medium">{s.label}</span>
-                      <span className="block text-[11px] font-normal text-muted-foreground">
-                        {s.purpose}
+                {searches.filter((s) => s.tier === "register").map((s) => {
+                  const check = manualChecks.find((m) => m.id === s.id);
+                  const covered = check?.state === "searched_by_platform";
+                  return (
+                    <Button
+                      key={s.id} type="button" variant="outline" size="sm"
+                      className="h-auto justify-start py-1.5 text-left"
+                      onClick={() => {
+                        window.open(s.url, "_blank", "noopener,noreferrer");
+                        setRows((prev) => [...prev, newRow({
+                          kind: s.kind, source: s.label, reference: s.searchTerms,
+                        })]);
+                      }}
+                    >
+                      {covered
+                        ? <ShieldCheck aria-hidden className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                        : <ArrowUpRight aria-hidden className="mr-1.5 h-3.5 w-3.5 shrink-0" />}
+                      <span className="min-w-0">
+                        <span className="block text-xs font-medium">
+                          {s.label}
+                          {covered && (
+                            <span className="ml-1.5 font-normal text-muted-foreground">
+                              · searched on this run
+                            </span>
+                          )}
+                        </span>
+                        <span className="block text-[11px] font-normal text-muted-foreground">
+                          {check?.action ?? s.purpose}
+                        </span>
                       </span>
-                    </span>
-                  </Button>
-                ))}
+                    </Button>
+                  );
+                })}
               </div>
 
               <ul className="space-y-2">
@@ -828,17 +903,50 @@ export function PepDeterminationDialog({
           className="flex shrink-0 flex-col gap-2 border-t border-border/60 px-5 py-3
             sm:flex-row sm:items-center sm:justify-between sm:px-6"
         >
-          <p
-            role="status"
-            className={cn("min-w-0 text-xs",
-              verdict.ok ? "text-muted-foreground" : "text-destructive")}
-          >
-            {verdict.ok
-              ? (outcome === "defer"
-                ? "No determination will be recorded. Stage 5 stays open on this party."
-                : "Will be recorded against this party, with the sources above.")
-              : verdict.errors[0]?.message}
-          </p>
+          <div className="min-w-0">
+            <p
+              role="status"
+              className={cn("min-w-0 text-xs",
+                verdict.ok ? "text-muted-foreground" : "text-destructive")}
+            >
+              {verdict.ok
+                ? (outcome === "defer"
+                  ? "No determination will be recorded. Stage 5 stays open on this party."
+                  : "Will be recorded against this party, with the sources above.")
+                : describeOutstanding(requirements)}
+            </p>
+            {/*
+              ── Everything still needed, not the first thing ──────────
+              One error at a time turned a four-item checklist into four
+              separate refusals discovered in sequence. This is the same
+              information with an order, which is the whole of what was
+              missing.
+
+              A `pending` requirement is drawn as pending rather than as
+              failing: an unmet requirement is work to do, and a question
+              nobody has asked yet is not, and a red cross against the second
+              misstates the operator's progress.
+            */}
+            {!verdict.ok && (
+              <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                {requirements.filter((r) => !r.met).map((r) => (
+                  <li
+                    key={r.id}
+                    className={cn(
+                      "flex items-start gap-1 text-[11px]",
+                      r.pending ? "text-muted-foreground" : "text-destructive",
+                    )}
+                  >
+                    <Circle aria-hidden className="mt-[3px] h-2 w-2 shrink-0" />
+                    <span>
+                      {r.label}
+                      <span className="text-muted-foreground"> · step {r.step}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <div className="flex shrink-0 items-center gap-2">
             {outcome !== "defer" && methods.length > 0 && (
               <Badge variant="outline" className="text-[10px]">
