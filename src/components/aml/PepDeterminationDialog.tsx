@@ -805,11 +805,35 @@ export function PepDeterminationDialog({
                 */}
                 <PepCoverageGaps />
 
-                <ol className="space-y-2">
-                  {registerSearches.map((s) => {
+                {/*
+                  Two groups, in the order the work happens: the registers the
+                  platform reads (so most of them arrive recorded), then the
+                  sources it never could. One renderer, so a card cannot say
+                  one thing in one group and another in the other.
+                */}
+                {[
+                  { key: "held", list: heldRegisters, heading: null as string | null },
+                  {
+                    key: "other",
+                    list: unheldRegisters,
+                    heading: "Not registers the platform holds — an archive and a "
+                      + "company register, always opened by hand",
+                  },
+                ].filter((group) => group.list.length > 0).map((group) => (
+                <div key={group.key} className="space-y-2">
+                  {group.heading && (
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      {group.heading}
+                    </p>
+                  )}
+                  <ol className="space-y-2">
+                  {group.list.map((s) => {
                     const check = manualChecks.find((m) => m.id === s.id);
                     const covered = check?.state === "searched_by_platform";
+                    /* Never a coverage gap — so never ringed, never counted. */
+                    const unheld = check?.state === "not_held_by_platform";
                     const bound = checkedRows.filter((r) => r.searchId === s.id);
+
                     const recorded = bound.some((r) => r.result.trim().length > 0);
                     /*
                      * Recorded FROM THE RUN is a different fact from recorded
