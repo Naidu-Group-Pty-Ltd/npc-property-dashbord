@@ -1069,94 +1069,106 @@ describe('the repair allowance is spent once per invocation, not once per upload
 
 describe('one external failure must not take the queue down with it', () => {
   /*
-   * MEASURED IN PRODUCTION. The image editor answered
-   *   429 "You have no credits remaining"
-   * for two Cloverton rows. They hold the two lowest ids in the sweep, the
-   * allowance is two, and the scan restarts at the lowest id every tick — so
-   * those two spent the entire allowance on every tick for hours, the log read
-   * `outstanding: 3, repaired: 0, unresolved: 2` every minute, and the twelve
-   * rows behind them were never reached. Most of those needed no vendor at all.
+   * MEASURED IN PRODUCTION, TWICE.
    *
-   * The allowance bounds REPAIR WORK, because repair work is what kills the
-   * worker. A row that failed operationally did none — nothing was decoded into
-   * a derivative, nothing was encoded — so charging it charges for nothing.
-   */
-  /*
-   * The vendor shape this was measured against: the image editor answers 429
-   * and `sanitizeSourceImage` reports `inpaint_unavailable`. That branch is a
-   * DIFFERENT one from the generic `operational` branch, and it was the one
-   * production actually took — so it is the one pinned here.
+   * The image editor answered 429 "You have no credits remaining" for two
+   * Cloverton rows. They hold the two lowest ids in the sweep, the allowance is
+   * two, and the scan restarts at the lowest id every tick — so those two spent
+   * the entire allowance on every tick for hours, the log read
+   * `outstanding: 3, repaired: 0, unresolved: 2` every minute, and the twelve
+   * rows behind them were never reached. Most needed no vendor at all.
+   *
+   * The first fix refunded the allowance, and that was wrong: it let a tick
+   * attempt a third full-resolution repair and every tick came back 546, a
+   * worker kill with nothing written. TWO ATTEMPTS IS WHAT A TICK CAN AFFORD.
+   * So the allowance does not grow — the tick spends it on DIFFERENT ROWS.
    */
   const vendorOutage = async () => {
     throw new Error('the image editor refused the request (429) '
       + '"You have no credits remaining."');
   };
 
-  it('reaches the rows behind a vendor outage in the same tick', async () => {
-    const { clean, badged } = badgedPicture();
-    const mask = maskFor(badged);
-    const bytes = (await encodePng(badged, { width: W, height: H, components: 3 }))!;
-
-    // Two blocked rows FIRST by id, then two the vendor is not needed for.
-    const rows = await Promise.all([0, 1, 2, 3].map(async (n) => ({
-      ...await refusedRow(bytes), id: `image-${n}`, storage_path: `${PATH}.${n}`,
+  const outageRows = async (n: number) => {
+    const bytes = (await encodePng(badgedPicture().badged,
+      { width: W, height: H, components: 3 }))!;
+    const rows = await Promise.all(Array.from({ length: n }, async (_, i) => ({
+      ...await refusedRow(bytes), id: `image-${String(i).padStart(2, '0')}`,
+      storage_path: `${PATH}.${i}`,
     })));
     const objects: Record<string, Uint8Array> = {};
     for (const row of rows) objects[row.storage_path] = bytes;
+    return { rows, objects };
+  };
 
-    // The first two rows the scan reaches are the blocked ones, exactly as in
-    // production, where they hold the two lowest ids.
-    let reached = 0;
-    const db = fakeDb(rows, objects);
-    const outcome = await settleImageSanitization(db as never, ORG, {
-      budget: newRepairBudget(),
-      sanitize: (input) => sanitizeSourceImage(input, {
-        edit: (reached += 1) <= 2 ? vendorOutage : honestModel(clean, mask),
-      }),
+  it('never attempts more than the allowance, however cheaply the attempts fail', async () => {
+    // The 546 this replaces: a tick must not do a third repair because the
+    // first two failed fast.
+    const { rows, objects } = await outageRows(6);
+    let attempts = 0;
+    const budget = newRepairBudget();
+    const started = budget.remaining;
+
+    await settleImageSanitization(fakeDb(rows, objects) as never, ORG, {
+      budget,
+      sanitize: (input) => {
+        attempts += 1;
+        return sanitizeSourceImage(input, { edit: vendorOutage });
+      },
     });
 
-    // The outage is reported and nothing is written for it...
-    expect(outcome.unresolved).toBeGreaterThan(0);
-    // ...and the tick still got past it and did real work.
-    expect(outcome.repaired + outcome.refused).toBeGreaterThan(0);
+    expect(attempts).toBeLessThanOrEqual(started);
   });
 
-  it('does not spend the allowance on a repair that never happened', async () => {
-    const bytes = (await encodePng(badgedPicture().badged,
-      { width: W, height: H, components: 3 }))!;
-    const row = await refusedRow(bytes);
-    const budget = newRepairBudget();
-    const before = budget.remaining;
+  it('records the attempt so the NEXT tick spends its allowance elsewhere', async () => {
+    const { rows, objects } = await outageRows(6);
+    const db = fakeDb(rows, objects);
 
-    await settleImageSanitization(fakeDb([row], { [PATH]: bytes }) as never, ORG, {
-      budget,
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
       sanitize: (input) => sanitizeSourceImage(input, { edit: vendorOutage }),
     });
 
-    expect(budget.remaining).toBe(before);
+    const tried = db.rows.filter((row: any) =>
+      (row.source_detail ?? {}).sanitization_attempt);
+    expect(tried.length).toBeGreaterThan(0);
+    // And it is NOT one of the keys that settles a row: the sweep must come
+    // back to it, and no card may be blanked by it.
+    for (const row of tried) {
+      expect(row.source_detail.sanitized_derivative ?? null).toBeNull();
+      expect(row.source_detail.sanitization_failure ?? null).toBeNull();
+      expect(row.source_detail.sanitization_clearance ?? null).toBeNull();
+    }
   });
 
-  it('still stops rather than walking the whole queue against a dead vendor', async () => {
-    // The refund cannot become "unbounded work": a tick absorbs a fixed number
-    // of operational failures and then reports itself incomplete, so the marker
-    // never advances on an outage.
-    const bytes = (await encodePng(badgedPicture().badged,
-      { width: W, height: H, components: 3 }))!;
-    const rows = await Promise.all(Array.from({ length: 12 }, async (_, n) => ({
-      ...await refusedRow(bytes), id: `image-${String(n).padStart(2, '0')}`,
-      storage_path: `${PATH}.${n}`,
-    })));
-    const objects: Record<string, Uint8Array> = {};
-    for (const row of rows) objects[row.storage_path] = bytes;
+  it('so the second tick reaches rows the first never got to', async () => {
+    const { rows, objects } = await outageRows(6);
+    const db = fakeDb(rows, objects);
+    const seen: string[] = [];
+    const run = () => settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: (input) => sanitizeSourceImage(input, { edit: vendorOutage }),
+    });
 
+    for (const row of db.rows) seen.push(row.id);
+    await run();
+    const afterFirst = db.rows.filter((r: any) => (r.source_detail ?? {}).sanitization_attempt)
+      .map((r: any) => r.id);
+    await run();
+    const afterSecond = db.rows.filter((r: any) => (r.source_detail ?? {}).sanitization_attempt)
+      .map((r: any) => r.id);
+
+    // THE WHOLE POINT: the second tick did not re-attempt the same rows.
+    expect(afterSecond.length).toBeGreaterThan(afterFirst.length);
+  });
+
+  it('and an outage never settles the upload', async () => {
+    const { rows, objects } = await outageRows(4);
     const outcome = await settleImageSanitization(fakeDb(rows, objects) as never, ORG, {
       budget: newRepairBudget(),
       sanitize: (input) => sanitizeSourceImage(input, { edit: vendorOutage }),
     });
-
     expect(outcome.repaired).toBe(0);
     expect(sanitizationSweepCompleted(outcome)).toBe(false);
-    expect(outcome.scanned).toBeLessThan(rows.length);
   });
 });
 

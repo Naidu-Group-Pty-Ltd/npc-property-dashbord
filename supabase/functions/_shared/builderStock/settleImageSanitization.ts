@@ -113,29 +113,27 @@ const MAX_PAGES = 200;
 const MAX_REPAIRS_PER_RUN = 2;
 
 /**
- * How many OPERATIONAL failures one invocation will absorb before it stops.
+ * How long a row that could not be looked at is passed over for.
  *
- * An operational failure costs the budget nothing (see the refund below), so
- * without a second bound a tick facing a vendor outage would walk the entire
- * queue attempting every row. This caps the walk while still letting the tick
- * reach rows the outage does not affect: two failures buy the scan past the two
- * blocked rows, which is exactly the production shape it was fitted to.
+ * Long enough that a vendor outage stops consuming the allowance every minute,
+ * short enough that the row is genuinely retried rather than parked: at the
+ * five-minute sweep this is six attempts an hour, and at the one-minute sweep
+ * used to drain a backlog it is still six. It is a COOLDOWN and never a
+ * verdict — nothing reads it to decide whether a card may draw.
  */
-const MAX_OPERATIONAL_FAILURES_PER_RUN = 4;
+const OPERATIONAL_RETRY_AFTER_MS = 10 * 60 * 1000;
+
+/** Where the cooldown is recorded. Deliberately not one of the settling keys. */
+const ATTEMPT_KEY = 'sanitization_attempt';
 
 /** A repair allowance shared by every upload in one invocation. */
 export interface RepairBudget {
   remaining: number;
-  /** Operational failures this invocation may still absorb. */
-  operationalFailures: number;
 }
 
 /** One tick's allowance. Made by the caller, spent by every upload it settles. */
 export function newRepairBudget(): RepairBudget {
-  return {
-    remaining: MAX_REPAIRS_PER_RUN,
-    operationalFailures: MAX_OPERATIONAL_FAILURES_PER_RUN,
-  };
+  return { remaining: MAX_REPAIRS_PER_RUN };
 }
 
 interface ImageRow {
@@ -187,35 +185,55 @@ export async function settleImageSanitization(
   const budget = options.budget ?? newRepairBudget();
 
   /**
-   * An attempt that did no repair work, absorbed.
+   * An attempt that did no repair work, recorded so the NEXT tick spends its
+   * allowance somewhere else.
    *
-   * THE ALLOWANCE BOUNDS REPAIR WORK, because repair work is what kills the
-   * worker: a full-resolution decode, a relaxation over the mask or up to four
-   * model calls, an encode and a re-decode to check. A row whose attempt ended
-   * before any of that — the image editor unreachable, a decoder that fell
-   * over, a mask that could not be placed — did none of it, so charging it
-   * charges for nothing, and charging for nothing is how ONE EXTERNAL FAILURE
-   * took the whole queue down with it.
+   * THE ALLOWANCE MAY NOT GROW. Two attempts is what a tick can afford — a
+   * full-resolution decode, a relaxation over the mask or up to four model
+   * calls, an encode and a re-decode to check — and letting a tick attempt a
+   * third because the first two failed cheaply is how this function starts
+   * returning 546 with nothing written. That was measured too: refunding the
+   * allowance made every tick a worker kill.
+   *
+   * So the fix is not more attempts, it is attempting DIFFERENT ROWS. The scan
+   * restarts at the lowest id every tick, so without this the same two rows are
+   * attempted for ever.
    *
    * Measured in production. The image editor answered 429 "You have no credits
-   * remaining" for two Cloverton rows. They hold the two lowest ids in the
-   * sweep, the allowance is two, and the scan restarts at the lowest id every
-   * tick — so those two spent the entire allowance on every tick for hours, the
-   * log read `outstanding: 3, repaired: 0, unresolved: 2` every minute, and the
-   * twelve rows behind them were never reached. Most needed no vendor at all.
+   * remaining" for two Cloverton rows. They hold the two lowest ids, the
+   * allowance is two, and the log read `outstanding: 3, repaired: 0,
+   * unresolved: 2` every minute for hours while twelve rows behind them were
+   * never reached — most of which needed no vendor at all.
    *
-   * Nothing else about the failure changes: still counted unresolved, still
-   * nothing written, still not terminal, still attempted again next tick.
-   *
-   * Returns true when the invocation has absorbed as many as it will and should
-   * stop — so the refund can never become an unbounded walk of the queue
-   * against a dead vendor, and an outage can never advance the marker.
+   * WHAT IS WRITTEN IS NOT AN ANSWER ABOUT THE PICTURE. `sanitizationSettled`
+   * reads the derivative, failure and clearance keys and nothing else, so this
+   * key cannot settle a row, cannot blank a card and cannot survive a version
+   * bump into meaning anything. It records only that we tried and could not
+   * look, and it expires.
    */
-  const absorbOperationalFailure = (): boolean => {
+  const noteOperationalFailure = async (row: ImageRow): Promise<void> => {
     outcome.unresolved += 1;
-    budget.remaining += 1;
-    budget.operationalFailures -= 1;
-    return budget.operationalFailures <= 0;
+    try {
+      await db.from('builder_stock_item_images')
+        .update({
+          source_detail: {
+            ...(row.source_detail ?? {}),
+            [ATTEMPT_KEY]: { at: new Date().toISOString(), operational: true },
+          },
+        })
+        .eq('id', row.id);
+    } catch {
+      /* Recording the attempt is an optimisation; failing to is not a fault. */
+    }
+  };
+
+  /** True while a recent operational attempt says to spend the tick elsewhere. */
+  const attemptedRecently = (detail: Record<string, unknown>): boolean => {
+    const raw = detail[ATTEMPT_KEY];
+    if (!raw || typeof raw !== 'object') return false;
+    const at = Date.parse(String((raw as { at?: unknown }).at ?? ''));
+    if (!Number.isFinite(at)) return false;
+    return Date.now() - at < OPERATIONAL_RETRY_AFTER_MS;
   };
 
   let after = '';
@@ -269,6 +287,15 @@ export async function settleImageSanitization(
         // A designated primary with nowhere to read its bytes from. Not an
         // answer about the picture: left unresolved so a later tick tries.
         outcome.unresolved += 1;
+        continue;
+      }
+      /*
+       * A row we could not look at a moment ago is passed over so this tick's
+       * allowance reaches one we have not tried. It stays outstanding and the
+       * sweep stays incomplete, so nothing is settled by being skipped.
+       */
+      if (attemptedRecently(detail)) {
+        outcome.incomplete = true;
         continue;
       }
       if (budget.remaining <= 0) {
@@ -333,10 +360,7 @@ export async function settleImageSanitization(
             phase: 'image_sanitization',
             detail: String(result.detail ?? '').slice(0, 200),
           });
-          if (absorbOperationalFailure()) {
-            outcome.incomplete = true;
-            return outcome;
-          }
+          await noteOperationalFailure(row);
           continue;
         }
 
@@ -393,10 +417,7 @@ export async function settleImageSanitization(
          * a refusal would park it until the next version bump.
          */
         if (result.operational) {
-          if (absorbOperationalFailure()) {
-            outcome.incomplete = true;
-            return outcome;
-          }
+          await noteOperationalFailure(row);
           continue;
         }
 
