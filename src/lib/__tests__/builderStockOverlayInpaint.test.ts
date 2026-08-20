@@ -1498,6 +1498,165 @@ describe('a persisted repair region is repair work the sweep finds by itself', (
   });
 });
 
+describe('the allowance goes to the rows that have waited longest', () => {
+  /*
+   * MEASURED IN PRODUCTION, AND IT IS THE COOLDOWN'S OWN FAILURE ONE STEP OUT.
+   *
+   * Nine rows outstanding, an allowance of two, a ten-minute cooldown: four
+   * attempts fit in each cooldown window, so the five lowest ids cycled among
+   * themselves and the four behind them were never reached. One had last been
+   * looked at half an hour earlier, one an hour and a half, and one — the row
+   * whose repair region had just been recorded — had never been attempted once.
+   *
+   * The scan also returned the moment the allowance ran out, so `outstanding`
+   * read 6 where nine rows needed work: it did not even count what it starved.
+   */
+  const vendorOutage = (seen: string[]) =>
+    (async (_bytes: Uint8Array, _options?: unknown) => ({
+      ok: false as const,
+      reason: 'inpaint_unavailable' as const,
+      transformation: 'generative_overlay_inpaint' as const,
+      model: null,
+      operational: true,
+      detail: 'the image editor refused the request (429)',
+    })) as never;
+
+  const queue = async (waits: Array<{ id: string; minutesAgo: number | null }>) => {
+    const bytes = (await encodePng(badgedPicture().badged,
+      { width: W, height: H, components: 3 }))!;
+    const rows = await Promise.all(waits.map(async (wait) => {
+      const row = await refusedRow(bytes);
+      row.id = wait.id;
+      row.storage_path = `${PATH}.${wait.id}`;
+      if (wait.minutesAgo !== null) {
+        (row.source_detail as Record<string, unknown>).sanitization_attempt = {
+          at: new Date(Date.now() - wait.minutesAgo * 60_000).toISOString(),
+          operational: true,
+        };
+      }
+      return row;
+    }));
+    const objects: Record<string, Uint8Array> = {};
+    for (const row of rows) objects[row.storage_path] = bytes;
+    return { rows, objects };
+  };
+
+  it('reaches a never-attempted row sitting behind a prefix that never clears', async () => {
+    // Five lower ids, every one of them outside the cooldown and so eligible,
+    // and the row that has never been looked at LAST in id order.
+    const { rows, objects } = await queue([
+      { id: 'image-01', minutesAgo: 11 },
+      { id: 'image-02', minutesAgo: 12 },
+      { id: 'image-03', minutesAgo: 13 },
+      { id: 'image-04', minutesAgo: 14 },
+      { id: 'image-05', minutesAgo: 15 },
+      { id: 'image-99', minutesAgo: null },
+    ]);
+    const attempted: string[] = [];
+    const db = fakeDb(rows, objects);
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: vendorOutage(attempted),
+    });
+
+    const tried = db.rows
+      .filter((row: any) => (row.source_detail ?? {}).sanitization_attempt?.at
+        && Date.parse(row.source_detail.sanitization_attempt.at) > Date.now() - 60_000)
+      .map((row: any) => row.id);
+
+    // THE WHOLE POINT: id order would have spent both slots on image-01 and
+    // image-02 for ever.
+    expect(tried).toContain('image-99');
+  });
+
+  it('and then the one that has waited longest', async () => {
+    const { rows, objects } = await queue([
+      { id: 'image-01', minutesAgo: 11 },
+      { id: 'image-02', minutesAgo: 12 },
+      { id: 'image-03', minutesAgo: 90 },
+      { id: 'image-04', minutesAgo: 14 },
+    ]);
+    const db = fakeDb(rows, objects);
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: vendorOutage([]),
+    });
+
+    const fresh = db.rows
+      .filter((row: any) => Date.parse(row.source_detail.sanitization_attempt.at)
+        > Date.now() - 60_000)
+      .map((row: any) => row.id)
+      .sort();
+    expect(fresh).toEqual(['image-03', 'image-04']);
+  });
+
+  it('counts every outstanding row, including the ones it could not afford', async () => {
+    const { rows, objects } = await queue([
+      { id: 'image-01', minutesAgo: 11 },
+      { id: 'image-02', minutesAgo: 12 },
+      { id: 'image-03', minutesAgo: 13 },
+      { id: 'image-04', minutesAgo: 14 },
+      { id: 'image-05', minutesAgo: 15 },
+      { id: 'image-99', minutesAgo: null },
+    ]);
+
+    const outcome = await settleImageSanitization(fakeDb(rows, objects) as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: vendorOutage([]),
+    });
+
+    // It used to return at the allowance and report 3.
+    expect(outcome.outstanding).toBe(6);
+    expect(outcome.scanned).toBe(6);
+    expect(sanitizationSweepCompleted(outcome)).toBe(false);
+  });
+
+  it('still never attempts more than the allowance', async () => {
+    const { rows, objects } = await queue(Array.from({ length: 8 }, (_, i) => ({
+      id: `image-${String(i).padStart(2, '0')}`, minutesAgo: null,
+    })));
+    let attempts = 0;
+    const budget = newRepairBudget();
+    const started = budget.remaining;
+
+    await settleImageSanitization(fakeDb(rows, objects) as never, ORG, {
+      budget,
+      sanitize: (async () => {
+        attempts += 1;
+        return {
+          ok: false as const, reason: 'inpaint_unavailable' as const,
+          transformation: 'generative_overlay_inpaint' as const,
+          model: null, operational: true, detail: '429',
+        };
+      }) as never,
+    });
+
+    expect(attempts).toBe(started);
+  });
+
+  it('a row inside its cooldown is never spent on, however long the queue', async () => {
+    const { rows, objects } = await queue([
+      { id: 'image-01', minutesAgo: 1 },
+      { id: 'image-02', minutesAgo: 2 },
+      { id: 'image-03', minutesAgo: 40 },
+    ]);
+    const db = fakeDb(rows, objects);
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: vendorOutage([]),
+    });
+
+    const fresh = db.rows
+      .filter((row: any) => Date.parse(row.source_detail.sanitization_attempt.at)
+        > Date.now() - 60_000)
+      .map((row: any) => row.id);
+    expect(fresh).toEqual(['image-03']);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The reader: a derivative is a claim about SPECIFIC bytes
 // ---------------------------------------------------------------------------
