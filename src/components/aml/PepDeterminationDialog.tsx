@@ -56,6 +56,7 @@ import {
   amlCasesApi, type AmlPartyScreeningSubject,
 } from "@/lib/aml/amlCasesApi";
 import {
+  PEP_DECLARATION_KIND,
   PEP_DEFERRAL_REASONS, PEP_DEFERRAL_REASON_LABEL, PEP_SOURCE_KINDS,
   PEP_SOURCE_KIND_LABEL, assessPepDeferral, assessPepEvidence, normalisePepMethods,
   sanctionsSignalForPep,
@@ -339,6 +340,30 @@ export function PepDeterminationDialog({
     return !probe.errors.some((e) => e.field.startsWith("methods"));
   }, [methods]);
 
+  /*
+   * ── The customer's own answer belongs to step 1, not step 2 ──────────
+   * It was seeded into the step-2 list because that is where the record
+   * keeps it — and it then sat in a grid of editable "Kind of source /
+   * Source / Searched / What came back" boxes identical to the registers an
+   * operator checks by hand. Two things followed. The first row of "check
+   * the sources" was a source nobody checked, and step 2's own rule (at
+   * least one source INDEPENDENT of the customer) was contradicted by its
+   * first entry.
+   *
+   * So the declaration renders under step 1, where the same answer is
+   * already stated, as a read-only evidence line. It is still the same `Row`
+   * in the same `rows` state and still travels in `methods`, so nothing
+   * about what is submitted or what the server enforces changes — this is
+   * where it is SHOWN.
+   */
+  const declarationRows = useMemo(
+    () => rows.filter((r) => r.kind === PEP_DECLARATION_KIND), [rows]);
+  const checkedRows = useMemo(
+    () => rows.filter((r) => r.kind !== PEP_DECLARATION_KIND), [rows]);
+  /* Step 2's own count: what the operator actually went and checked. */
+  const independentCount = checkedRows.length;
+
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Three areas: a header and footer that never scroll, a body that does.
@@ -434,6 +459,48 @@ export function PepDeterminationDialog({
                 </p>
               )}
             </div>
+
+            {/*
+              ── The same answer, as it will be recorded ─────────────────
+              This is the row that used to open step 2's source grid. It is
+              the customer's own answer, so it is shown here — read-only,
+              beside the answer it repeats — and labelled with the one thing
+              an operator needs to know about it: it counts as evidence and
+              it can never stand alone.
+            */}
+            {declarationRows.length > 0 && (
+              <div className="ml-[2.125rem] rounded-md border border-border/60 bg-background p-3">
+                <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  <ClipboardCheck aria-hidden className="h-3 w-3" />
+                  Carried into the record as evidence
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {declarationRows.map((row) => (
+                    <li key={row.id} className="text-xs">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="font-medium text-foreground">{row.source}</span>
+                        {row.reference && (
+                          <Badge variant="outline" className="text-[10px] font-normal">
+                            {row.reference}
+                          </Badge>
+                        )}
+                        <Badge variant="secondary" className="text-[10px] font-normal">
+                          {PEP_SOURCE_KIND_LABEL[row.kind]}
+                        </Badge>
+                      </div>
+                      {row.result && (
+                        <p className="mt-1 text-muted-foreground">{row.result}</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 border-t border-border/50 pt-2 text-[11px] text-muted-foreground">
+                  A declaration is not a check. Step 2 still needs at least one source
+                  independent of the customer.
+                </p>
+              </div>
+            )}
+
 
             {/* A sanctions match is a signal, and only in one direction. */}
             {signal && (
@@ -540,10 +607,35 @@ export function PepDeterminationDialog({
                 })}
               </div>
 
+              {/* What was actually checked. Empty is stated rather than left
+                  as a gap, because an empty list here and a satisfied step
+                  look identical when nothing is drawn. */}
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  What you checked
+                  {independentCount > 0 && (
+                    <span className="ml-1.5 font-normal normal-case tracking-normal">
+                      · {independentCount} source{independentCount === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </p>
+                {independentCount === 0 && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Nothing checked yet. Open a register above, or add a source by hand —
+                    the customer's own declaration is held under step 1 and does not count
+                    here.
+                  </p>
+                )}
+              </div>
+
               <ul className="space-y-2">
-                {rows.map((row, i) => {
+                {checkedRows.map((row) => {
+                  /* The error field is indexed against the SUBMITTED methods,
+                     which is `rows` — never this filtered view. */
+                  const i = rows.indexOf(row);
                   const rowError = verdict.errors.find(
                     (e) => e.field === `methods.${i}` || e.field === `methods.${i}.result`);
+
                   return (
                     <li
                       key={row.id}
@@ -570,10 +662,19 @@ export function PepDeterminationDialog({
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {PEP_SOURCE_KINDS.map((k) => (
-                                <SelectItem key={k} value={k}>{PEP_SOURCE_KIND_LABEL[k]}</SelectItem>
-                              ))}
+                              {/* The customer's own declaration is not on
+                                  offer here: it is step 1's record, and
+                                  choosing it would move a row out of this
+                                  list mid-edit. */}
+                              {PEP_SOURCE_KINDS
+                                .filter((k) => k !== PEP_DECLARATION_KIND)
+                                .map((k) => (
+                                  <SelectItem key={k} value={k}>
+                                    {PEP_SOURCE_KIND_LABEL[k]}
+                                  </SelectItem>
+                                ))}
                             </SelectContent>
+
                           </Select>
                         </div>
                         <div>
@@ -948,11 +1049,15 @@ export function PepDeterminationDialog({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {outcome !== "defer" && methods.length > 0 && (
+            {/* "1 source" used to be the customer's own declaration, on a
+                dialog where nothing had been checked. The badge counts what
+                was checked; the declaration is named in step 1. */}
+            {outcome !== "defer" && independentCount > 0 && (
               <Badge variant="outline" className="text-[10px]">
-                {methods.length} source{methods.length === 1 ? "" : "s"}
+                {independentCount} checked
               </Badge>
             )}
+
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
               Cancel
             </Button>
