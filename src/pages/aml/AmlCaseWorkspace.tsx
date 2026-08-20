@@ -1067,6 +1067,14 @@ export default function AmlCaseWorkspace() {
             showNextAction={section !== "overview"}
             /* So it never offers to take the operator where they already are. */
             currentSection={section}
+            /*
+             * Stage 5's path keeps its own count, in its own units. Two
+             * meters on one screen counting different things is worse than
+             * either alone.
+             */
+            deferReadinessToSurfaceBelow={
+              section === "ownership" && Boolean(screeningStage.sync)
+            }
             onOpenSection={setSection}
           />
           <AmlContextActionPanel

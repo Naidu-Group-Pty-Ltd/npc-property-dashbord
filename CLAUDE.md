@@ -326,6 +326,34 @@ rendered beside them every time. `holds_position_currently` is an attribute of
 the determination and never a softer outcome: leaving office is a risk
 assessment, not an expiry date.
 
+## `aml.cases` has no `tenant_id` column
+Read [`docs/aml/CASE_TENANT_COLUMN.md`](./docs/aml/CASE_TENANT_COLUMN.md)
+before adding any `.select()` against `aml.cases` or touching
+`_shared/aml/caseTenant.ts`. Eighteen call sites across five edge functions
+selected a column the table has never had; PostgREST answers **42703**, the
+discarded `error` leaves `data` null, and twelve handlers then reported
+**"Case not found"** about a case the operator had open. That is why
+`pep_determinations` was EMPTY from the day it was created, why Stage 5's
+"Record PEP determination" appeared to do nothing, and why the rail said
+"monitoring summary could not be read".
+
+Three rules. **Never name a column the table does not have** — `readCase()`
+throws on `tenant_id` where a developer sees it, and a contract test scans
+every function. **A read that FAILED is not a row that is ABSENT**: a missing
+case is 404 and final, a failed read is 503 and worth retrying, so `CaseRead`
+carries `failed` separately from `row`. And **the tenant is a property of the
+deployment** — every `tenant_id` in the schema is `default`, which is exactly
+why `cases` has no such column; `tenantForCase()` is the one place that knows
+it.
+
+**An identifier that does not exist is never type debt.**
+`defer_pep_determination` called `appendCaseEvent` when the helper is
+`appendEvent` — the module LOADS, serves every other operation, and throws a
+ReferenceError on one branch. A count baseline can absorb that (one goes, one
+arrives, the number holds), so `TS2304`/`TS2552` are now fatal in
+`check-edge-functions.mjs` and the pre-existing occurrences are frozen in
+`edge-missing-names.txt`, keyed by file and identifier rather than by line.
+
 ## The public office-holder index
 Read [`docs/aml/PEP_OFFICEHOLDER_INDEX.md`](./docs/aml/PEP_OFFICEHOLDER_INDEX.md)
 before touching `_shared/aml/pepOfficeholderIndex.pure.ts`,
