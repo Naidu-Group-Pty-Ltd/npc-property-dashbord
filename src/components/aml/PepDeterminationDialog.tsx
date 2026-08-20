@@ -607,10 +607,35 @@ export function PepDeterminationDialog({
                 })}
               </div>
 
+              {/* What was actually checked. Empty is stated rather than left
+                  as a gap, because an empty list here and a satisfied step
+                  look identical when nothing is drawn. */}
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  What you checked
+                  {independentCount > 0 && (
+                    <span className="ml-1.5 font-normal normal-case tracking-normal">
+                      · {independentCount} source{independentCount === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </p>
+                {independentCount === 0 && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Nothing checked yet. Open a register above, or add a source by hand —
+                    the customer's own declaration is held under step 1 and does not count
+                    here.
+                  </p>
+                )}
+              </div>
+
               <ul className="space-y-2">
-                {rows.map((row, i) => {
+                {checkedRows.map((row) => {
+                  /* The error field is indexed against the SUBMITTED methods,
+                     which is `rows` — never this filtered view. */
+                  const i = rows.indexOf(row);
                   const rowError = verdict.errors.find(
                     (e) => e.field === `methods.${i}` || e.field === `methods.${i}.result`);
+
                   return (
                     <li
                       key={row.id}
