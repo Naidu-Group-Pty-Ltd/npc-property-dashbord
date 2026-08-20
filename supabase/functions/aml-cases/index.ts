@@ -57,6 +57,12 @@ import {
   type PepIndexCandidate,
 } from "../_shared/aml/pepOfficeholderIndex.pure.ts";
 import { normaliseName, scoreNames } from "../_shared/aml/matching.ts";
+// The screening engine: what the platform can establish by itself, and the
+// line it may never cross. It screens; it never determines.
+import {
+  SERVER_UNREACHABLE_SOURCES, buildScreeningRun, runIsEvidence, runToMethodDraft,
+  type PepScreeningCandidate, type PepScreeningSourceResult,
+} from "../_shared/aml/pepScreeningEngine.pure.ts";
 // `aml.cases` has no tenant_id column. This is the only place that knows it.
 import {
   DEFAULT_AML_TENANT, readCase,
@@ -4127,6 +4133,321 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           }, 503);
         }
         return jsonResponse({ coverage, usable: indexIsUsable(coverage) });
+      }
+
+      /*
+       * Run the PEP screening for one party, against the registers the
+       * platform holds, and record what it searched.
+       *
+       * ── The line ─────────────────────────────────────────────────────
+       * This SCREENS. It never determines. It writes a row to
+       * `pep_screening_runs`, not to `pep_determinations`, and the two
+       * vocabularies deliberately share no value — there is no `clear`, no
+       * `not_pep`. A run that returns nothing has established that some
+       * registers hold nothing under that name, which is a fact about the
+       * search and not about the person.
+       *
+       * ── Why every source here is local ───────────────────────────────
+       * Measured, not assumed. Wikidata's action API answered 429 on the
+       * first call from this deployment's egress; its SPARQL endpoint
+       * answered 504 to a query it could not finish in sixty seconds; and
+       * directory.gov.au and aph.gov.au both answer 403 to a scripted client
+       * on every path while serving a browser normally. A compliance
+       * decision cannot depend on somebody else's rate limiter, so the
+       * registers are loaded on a schedule and read locally at decision
+       * time — instant, reproducible, and independent of anyone's uptime.
+       *
+       * The two that cannot be reached are NAMED as unsearched rather than
+       * omitted, because a source nobody mentions reads as a source nobody
+       * needed.
+       */
+      case 'run_pep_screening': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const partySubjectId = body.party_screening_subject_id
+          ? String(body.party_screening_subject_id) : null;
+
+        const caseRead = await readCase<{ id: string; subject_display_name: string | null }>(
+          admin, caseId, 'id, subject_display_name');
+        if (caseRead.failed) {
+          console.error('run_pep_screening: case read failed', caseRead.error);
+          return jsonResponse({
+            error: 'The case could not be read. Nothing was screened.',
+            code: 'case_read_failed',
+          }, 503);
+        }
+        if (!caseRead.row) return jsonResponse({ error: 'Case not found' }, 404);
+
+        // Identity is DERIVED, exactly as it is for a determination.
+        let subjectName = String(caseRead.row.subject_display_name ?? '').trim();
+        let sanctionsSignal: 'none' | 'candidate' | 'confirmed' = 'none';
+        if (partySubjectId) {
+          const { data: partySubject } = await admin.schema('aml')
+            .from('party_screening_subjects')
+            .select('id, case_id, screened_name, state').eq('id', partySubjectId).maybeSingle();
+          if (!partySubject || String(partySubject.case_id) !== caseId) {
+            return jsonResponse({
+              error: 'party_screening_subject_id does not belong to this case',
+            }, 400);
+          }
+          subjectName = String(partySubject.screened_name ?? '').trim();
+          sanctionsSignal = partySubject.state === 'confirmed_match' ? 'confirmed'
+            : partySubject.state === 'possible_match' ? 'candidate' : 'none';
+        }
+
+        const tokens = normaliseName(subjectName);
+        const sources: PepScreeningSourceResult[] = [];
+        const candidates: PepScreeningCandidate[] = [];
+        const registerVersions: Record<string, unknown> = {};
+
+        /* ── 1 · the office-holder index ──────────────────────────────── */
+        for (const source of PEP_INDEX_SOURCES) {
+          const { data: sync } = await admin.schema('aml').from('pep_officeholder_syncs')
+            .select('entry_count, source_as_at, completed_at, started_at, status, detail')
+            .eq('source_code', source.code)
+            .order('started_at', { ascending: false }).limit(1).maybeSingle();
+          const cov = describeCoverage(source.code, sync ?? null);
+          registerVersions[source.code] = {
+            entry_count: cov.entryCount, source_as_at: cov.sourceAsAt,
+            last_sync_status: cov.lastSyncStatus,
+          };
+          const usable = cov.entryCount > 0 && cov.lastSyncStatus === 'succeeded';
+          if (!usable) {
+            sources.push({
+              key: source.code, label: cov.label, status: 'unavailable',
+              coverage: cov.covers, excludes: cov.excludes, foundCount: 0,
+              asAt: cov.sourceAsAt,
+              detail: 'The index has not loaded, so nothing was searched against it.',
+            });
+            continue;
+          }
+          if (tokens.length === 0) {
+            sources.push({
+              key: source.code, label: cov.label, status: 'searched',
+              coverage: cov.covers, excludes: cov.excludes, foundCount: 0,
+              asAt: cov.sourceAsAt,
+            });
+            continue;
+          }
+          const { data: rows, error: idxErr } = await admin.schema('aml')
+            .from('pep_officeholders')
+            .select('external_id, source_code, full_name, aliases, position_title, '
+              + 'jurisdiction, position_start, position_end, currently_held, confirm_url')
+            .overlaps('normalised_names', tokens).limit(500);
+          if (idxErr) {
+            // A read that FAILED is not a register that is EMPTY.
+            console.error('run_pep_screening: index read failed', idxErr);
+            sources.push({
+              key: source.code, label: cov.label, status: 'failed',
+              coverage: cov.covers, excludes: cov.excludes, foundCount: 0,
+              asAt: cov.sourceAsAt,
+              detail: 'The register could not be read. That is a technical condition, '
+                + 'not a result.',
+            });
+            continue;
+          }
+          const found = (rows ?? []).map((r: any) => {
+            const names = [String(r.full_name), ...((r.aliases ?? []) as string[])];
+            const score = Math.max(...names.map((n) => scoreNames(subjectName, n).score), 0);
+            return {
+              id: `${r.source_code}:${r.external_id}`,
+              sourceKey: String(r.source_code),
+              name: String(r.full_name),
+              aliases: (r.aliases ?? []) as string[],
+              positionTitle: r.position_title ?? null,
+              jurisdiction: r.jurisdiction ?? null,
+              positionStart: r.position_start ?? null,
+              positionEnd: r.position_end ?? null,
+              currentlyHeld: r.currently_held ?? null,
+              confirmUrl: r.confirm_url ?? null,
+              score,
+            } as PepScreeningCandidate;
+          }).filter((c) => c.score >= 0.7).sort((a, b) => b.score - a.score).slice(0, 25);
+          candidates.push(...found);
+          sources.push({
+            key: source.code, label: cov.label, status: 'searched',
+            coverage: cov.covers, excludes: cov.excludes,
+            foundCount: found.length, asAt: cov.sourceAsAt,
+          });
+        }
+
+        /* ── 2 · the sources a server cannot reach, named as unsearched ── */
+        for (const s of SERVER_UNREACHABLE_SOURCES) {
+          sources.push({
+            key: s.key, label: s.label, status: 'not_reachable',
+            coverage: s.coverage, excludes: s.excludes, foundCount: 0,
+            detail: s.detail,
+          });
+        }
+
+        /* ── 3 · what the customer declared ───────────────────────────── */
+        /*
+         * The same read `sync_screening_stage` makes: the live submission
+         * snapshot's `personal_details` section. Read here rather than passed
+         * in, because a screening run is a record of what was true when it
+         * ran and must not depend on what a caller chose to send.
+         */
+        const { data: submissionRow } = await admin.schema('aml')
+          .from('submission_versions')
+          .select('snapshot').eq('case_id', caseId).is('superseded_at', null)
+          .order('version_number', { ascending: false }).limit(1).maybeSingle();
+        const snapshotSections = (((submissionRow?.snapshot ?? {}) as any).sections ?? []) as any[];
+        const personalSection = (snapshotSections
+          .find((x: any) => x?.section === 'personal_details')?.payload ?? null) as
+          Record<string, unknown> | null;
+        const declaration = readPepDeclaration(personalSection);
+
+        const run = buildScreeningRun({
+          searchedNames: subjectName ? [subjectName] : [],
+          sources, candidates, sanctionsSignal,
+          declaration: declaration
+            ? { answered: declaration.answered, answer: declaration.answer,
+                summary: declaration.summary }
+            : null,
+        });
+
+        const { data: saved, error: saveErr } = await admin.schema('aml')
+          .from('pep_screening_runs').insert({
+            tenant_id: caseRead.tenantId,
+            case_id: caseId,
+            party_screening_subject_id: partySubjectId,
+            subject_name: subjectName.slice(0, 300) || 'unknown',
+            searched_names: run.searchedNames,
+            verdict: run.verdict,
+            requires_manual_review: run.requiresManualReview,
+            sources: run.sources,
+            candidates: run.candidates,
+            indicators: run.indicators,
+            not_reached: run.notReached,
+            register_versions: registerVersions,
+            run_by: userId,
+            run_by_label: userEmail ?? null,
+          }).select('id, created_at').single();
+        if (saveErr) {
+          console.error('run_pep_screening: could not record the run', saveErr);
+          return jsonResponse({
+            error: 'The screening ran but could not be recorded. Nothing was saved.',
+            code: 'screening_run_not_recorded',
+          }, 503);
+        }
+
+        await appendEvent(admin, caseId, 'pep_screening_run',
+          `PEP screening run for ${subjectName}: ${run.verdict}`,
+          {
+            run_id: saved.id,
+            party_screening_subject_id: partySubjectId,
+            verdict: run.verdict,
+            candidate_count: run.candidates.length,
+            not_reached: run.notReached,
+            /* Said in the record itself, so no future reader can mistake a
+               search for a conclusion. */
+            determination_recorded: false,
+          }, userId, userEmail);
+
+        return jsonResponse({
+          run: { ...run, id: saved.id, created_at: saved.created_at },
+          evidence: runIsEvidence(run) ? runToMethodDraft(run) : null,
+        });
+      }
+
+      /*
+       * A candidate is a lead, and somebody has to say whether it is this
+       * person. A rejection must say HOW that was told — "dismissed" with no
+       * reason is indistinguishable from nobody having looked, and it is the
+       * line an auditor will ask about first.
+       */
+      case 'review_pep_screening_candidate': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const runId = String(body.run_id ?? '');
+        const candidateId = String(body.candidate_id ?? '');
+        const decision = String(body.decision ?? '');
+        const reason = String(body.reason ?? '').trim();
+        if (!runId || !candidateId) {
+          return jsonResponse({ error: 'run_id and candidate_id are required' }, 400);
+        }
+        if (!['accepted', 'rejected'].includes(decision)) {
+          return jsonResponse({ error: 'decision must be accepted or rejected' }, 400);
+        }
+        if (reason.length < 10) {
+          return jsonResponse({
+            error: 'Say how you told this is or is not the customer. A decision with no '
+              + 'reason reads, later, exactly like nobody having looked.',
+            code: 'candidate_reason_required',
+          }, 400);
+        }
+
+        const { data: runRow, error: runErr } = await admin.schema('aml')
+          .from('pep_screening_runs')
+          .select('id, case_id, candidates').eq('id', runId).maybeSingle();
+        if (runErr) {
+          console.error('review_pep_screening_candidate: run read failed', runErr);
+          return jsonResponse({
+            error: 'The screening run could not be read.', code: 'run_read_failed',
+          }, 503);
+        }
+        if (!runRow) return jsonResponse({ error: 'Screening run not found' }, 404);
+
+        // The candidate must belong to the run. A caller-supplied id could
+        // otherwise attach a decision to something never searched for.
+        const candidate = ((runRow.candidates ?? []) as PepScreeningCandidate[])
+          .find((c) => c.id === candidateId);
+        if (!candidate) {
+          return jsonResponse({
+            error: 'That candidate is not part of this screening run',
+            code: 'candidate_not_in_run',
+          }, 400);
+        }
+
+        const { data: review, error: reviewErr } = await admin.schema('aml')
+          .from('pep_screening_candidate_reviews').upsert({
+            tenant_id: tenantForCase(String(runRow.case_id)),
+            run_id: runId,
+            candidate_id: candidateId,
+            candidate_name: String(candidate.name).slice(0, 300),
+            decision, reason: reason.slice(0, 2000),
+            reviewed_by: userId, reviewed_by_label: userEmail ?? null,
+          }, { onConflict: 'run_id,candidate_id' }).select('*').single();
+        if (reviewErr) {
+          console.error('review_pep_screening_candidate: write failed', reviewErr);
+          return jsonResponse({
+            error: 'The decision could not be recorded.', code: 'candidate_review_failed',
+          }, 503);
+        }
+
+        await appendEvent(admin, String(runRow.case_id), 'pep_screening_candidate_review',
+          `Screening candidate ${decision}: ${candidate.name}`,
+          {
+            run_id: runId, candidate_id: candidateId, decision,
+            determination_recorded: false,
+          }, userId, userEmail);
+
+        return jsonResponse({ review });
+      }
+
+      /* The runs recorded for a case, newest first, with their reviews. */
+      case 'list_pep_screening_runs': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const { data: runs, error: listErr } = await admin.schema('aml')
+          .from('pep_screening_runs').select('*')
+          .eq('case_id', caseId).order('created_at', { ascending: false }).limit(25);
+        if (listErr) {
+          console.error('list_pep_screening_runs failed', listErr);
+          return jsonResponse({
+            error: 'The screening history could not be read.', code: 'runs_read_failed',
+          }, 503);
+        }
+        const ids = (runs ?? []).map((r: any) => r.id);
+        const { data: reviews } = ids.length
+          ? await admin.schema('aml').from('pep_screening_candidate_reviews')
+            .select('*').in('run_id', ids)
+          : { data: [] as any[] };
+        return jsonResponse({ runs: runs ?? [], reviews: reviews ?? [] });
       }
 
       case 'search_pep_officeholders': {

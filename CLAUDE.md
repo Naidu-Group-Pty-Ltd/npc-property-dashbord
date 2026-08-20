@@ -354,6 +354,33 @@ arrives, the number holds), so `TS2304`/`TS2552` are now fatal in
 `check-edge-functions.mjs` and the pre-existing occurrences are frozen in
 `edge-missing-names.txt`, keyed by file and identifier rather than by line.
 
+## The PEP screening engine
+Read [`docs/aml/PEP_SCREENING_ENGINE.md`](./docs/aml/PEP_SCREENING_ENGINE.md)
+before touching `_shared/aml/pepScreeningEngine.pure.ts`, `run_pep_screening`,
+`PepScreeningRunPanel` or `pepSearchLinks.pure.ts`. It replaces five browser
+tabs — two of which were wrong: the Government Directory link was a Drupal 7
+path the site no longer serves, so the most authoritative source answered
+"Page not found" every time, and two of the five rows were a search engine
+sitting beside DFAT as though it were a peer.
+
+**It screens; it does not determine.** The verdict vocabulary
+(`indicators_found`, `no_indicators`, `incomplete`, `not_searchable`) shares no
+value with `pep_determinations.result` — no `clear`, no `not_pep` — and both a
+test and the security gate assert it. `no_indicators` is drawn neutrally and
+says it is a result about the SEARCH; a register that FAILED is never reported
+as one that was empty; and anything unreached forces manual review, including
+an unanswered declaration, because no register here publishes family members or
+close associates.
+
+**Every source is local, and that was measured.** Wikidata's action API answers
+429 from this egress, its SPARQL endpoint 504 on a worldwide walk, and
+directory.gov.au and aph.gov.au both 403 a scripted client. A compliance
+decision cannot depend on somebody else's rate limiter, so registers load on a
+schedule and are read locally at decision time. The two that a server cannot
+reach are NAMED as unsearched rather than omitted. A candidate rejection must
+say how it was told — enforced at the column, the endpoint and the button.
+Foreign office holders are deliberately still a gap the engine discloses.
+
 ## The public office-holder index
 Read [`docs/aml/PEP_OFFICEHOLDER_INDEX.md`](./docs/aml/PEP_OFFICEHOLDER_INDEX.md)
 before touching `_shared/aml/pepOfficeholderIndex.pure.ts`,

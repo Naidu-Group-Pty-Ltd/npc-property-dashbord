@@ -4,6 +4,7 @@ import { invokeAmlFunction } from "./invokeAmlFunction";
 import type { PepDeclarationReading } from "./pepDeclaration";
 import type { PepDeferralReason, PepSourceKind } from "./pepEvidence";
 import type { PepIndexCoverage, PepIndexVerdict } from "./pepOfficeholderIndex";
+import type { PepScreeningRun } from "./pepScreeningEngine";
 
 /** What a reset returns, whether it ran or was refused. */
 export interface AmlClientResetResult {
@@ -502,6 +503,41 @@ export const amlCasesApi = {
    * coverage beside it has turned a partial index into a clearance, which is
    * the one thing this index must never be able to say.
    */
+  /**
+   * Run the PEP screening for one party against the registers the platform
+   * holds, and record what it searched.
+   *
+   * It screens; it never determines. The result is a `pep_screening_runs`
+   * row, whose verdict vocabulary shares no value with a determination's.
+   */
+  runPepScreening: (payload: {
+    case_id: string;
+    party_screening_subject_id?: string | null;
+  }) =>
+    invoke<{
+      run: PepScreeningRun & { id: string; created_at: string };
+      evidence: { kind: string; source: string; reference: string; result: string } | null;
+    }>({ op: "run_pep_screening", ...payload }),
+
+  /**
+   * Accept or reject one candidate a run surfaced.
+   *
+   * A rejection must say how it was told this is somebody else — "dismissed"
+   * with no reason reads, later, exactly like nobody having looked.
+   */
+  reviewPepScreeningCandidate: (payload: {
+    run_id: string;
+    candidate_id: string;
+    decision: "accepted" | "rejected";
+    reason: string;
+  }) =>
+    invoke<{ review: Record<string, unknown> }>(
+      { op: "review_pep_screening_candidate", ...payload }),
+
+  listPepScreeningRuns: (case_id: string) =>
+    invoke<{ runs: Array<Record<string, unknown>>; reviews: Array<Record<string, unknown>> }>(
+      { op: "list_pep_screening_runs", case_id }),
+
   /**
    * What the office-holder index holds, WITHOUT searching it.
    *
