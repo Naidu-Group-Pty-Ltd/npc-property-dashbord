@@ -101,15 +101,14 @@ CI says otherwise, it should not be planned around.
 
 ## Results — GitHub Actions runner, 2026-08-20
 
-Run `32348036414`, from `github-actions/Linux`. **`7 / 22 candidates usable`**
-against 6 from the dev container.
+Run `32349350941`, from `github-actions/Linux`. **Both controls PASS.**
+**`8 / 23 candidates usable`**, against 6 from the dev container.
 
-### The control, and a defect in the instrument
+### The control that failed while downloading 1.3 MB
 
-The DFAT control **downloaded**: `200 · zip/xlsx/docx · 1,299,680 bytes`. A real
-1.3 MB spreadsheet, exactly as predicted, and the run is fully interpretable.
-
-The run reported it as `FAIL`.
+The first CI run (`32348036414`) reported the DFAT control as `FAIL`. It had
+returned `200 · zip/xlsx/docx · 1,299,680 bytes` — a real spreadsheet, exactly
+as predicted.
 
 An OOXML file is a zip container, so it sniffs as `zip/xlsx/docx` while the
 catalogue says `xlsx`, and the verdict compared `expect !== format` against two
@@ -119,51 +118,87 @@ the run had measured the network and that every candidate line in it was
 uninterpretable — about a run whose control had worked perfectly.
 
 **A defect in a measuring instrument reads exactly like a finding about the
-thing measured.** That is the whole reason this file exists, and the spike had
-it. `FORMAT_SATISFIED_BY` now reconciles sniffs and expectations in one declared
-table, a failing control prints what actually came back, and
-`src/lib/aml/pepSourceSpikeVerdict.test.ts` pins both.
+thing measured.** That is what this whole file exists to guard against, and the
+instrument had it. `FORMAT_SATISFIED_BY` now reconciles sniffs and expectations
+in one declared table, a failing control prints what actually came back, and
+`src/lib/aml/pepSourceSpikeVerdict.test.ts` pins both — including the assertion
+that a PDF wearing a `.csv` extension still fails, since loosening the
+comparison is exactly how that one comes back.
 
-### What the runner changed
+### Usable from the runner (8)
 
-| source | dev container | GitHub runner |
+| source | tier | what came back |
 | --- | --- | --- |
-| DFAT consolidated list *(control)* | blocked | **200 · 1.3 MB xlsx** |
-| **APH Senators** (`allsenel.csv`) | 200 · 75 rows | 200 · 75 rows |
-| **APH Members** (`All_members_by_name.csv`) | 200 · 150 rows | 200 · 150 rows |
-| **Victorian Parliament — members** | 403 | **200 · 163 KB HTML** |
-| Queensland Parliament — members | 200 · 1.7 MB | 200 · 1.7 MB |
-| AGOR organisations register | 200 · ~1,386 rows | 200 · ~1,386 rows |
-| SA local-government portal | 200 · JSON | 200 · JSON |
-| Parliamentary Handbook | 200 · HTML | 200 · 1 KB HTML |
-| Wikidata SPARQL | 200 · JSON | 200 · JSON |
-| `Members_List.csv` *(the PDF trap)* | 200 · **PDF** | 200 · **PDF** |
-| PM&C ministry list | 403 | 403 · Incapsula |
-| NSW parliament members CSV | 403 | 403 · Cloudflare |
-| TAS / ACT / NT parliaments | 403 / 503 | 403 · Cloudflare |
-| WA / SA parliaments | 404 | 404 |
-| directory.gov.au bulk export *(both hosts)* | timeout | **timeout** |
-| High Court / Defence / DFAT missions | 403 | **timeout** |
+| **APH — all Members** (`All_members_by_name.csv`) | A | `200 · 37,566 B · ~150 rows` |
+| **APH — all Senators** (`allsenel.csv`) | A | `200 · 15,365 B · ~75 rows` |
+| Parliament of Victoria — members | B | `200 · 163,508 B` HTML — **403 from the dev container** |
+| Queensland Parliament — members | B | `200 · 1,787,609 B` HTML |
+| AGOR organisations register | A | `200 · ~1,386 rows` — bodies, not people |
+| SA local-government elected members | A | `200 · JSON` |
+| Parliamentary Handbook | B | `200 · HTML` |
+| Wikidata SPARQL | C | `200 · JSON` |
+
+### Not usable from the runner (15)
+
+| source | result |
+| --- | --- |
+| `Members_List.csv` *(the PDF trap, kept deliberately)* | `200 · pdf · 184,359 B` |
+| **APH address-labels index page** | `200` · block page (`captcha`) |
+| PM&C ministry list | `403` · Incapsula |
+| NSW, TAS, ACT, NT parliaments | `403` · Cloudflare |
+| Federal Court — judges | `403` · Cloudflare |
+| WA, SA parliaments | `404` |
+| directory.gov.au bulk export *(current **and** legacy host)* | timeout |
+| High Court, Defence senior leadership, DFAT missions | timeout |
 
 ### What the comparison decides
 
-**One source moved, and it is a real gain.** Victoria's member list answers a
-runner and refuses the dev container. Nothing else crossed over.
+**The federal Parliament is reachable, and the product said it was not.** Both
+register files download from both environments on every attempt. That is the
+finding step 2 acts on — see `PEP_OFFICEHOLDER_INDEX.md`.
+
+**One source crossed over, and it is a real gain.** Victoria's member list
+answers a runner and refuses the dev container. Nothing else did.
+
+**The page that publishes the canonical URLs is itself WAF'd from CI.** The
+address-labels index answers `200` with a captcha page to a runner while the
+two files it links download fine. So a silent rename of either CSV will surface
+as a `404` on the file rather than as a diff on the index — the loader's own
+`expectAtLeast` floor and the sniff are the guards that matter, not the index
+probe.
 
 **Directory.gov.au did not complete from CI either.** It is the source the
 original proposal rated "best replacement", it is listed active on data.gov.au,
-and it has now failed to complete from two independent networks. It is not
-something to plan around, and no adapter should be written for it until a run
+and it has now failed to complete from two independent networks, on both its
+current and its legacy host. No adapter should be written for it until a run
 somewhere retrieves it.
 
-**Three `.gov.au` hosts turned 403 into a timeout on the runner.** The High
-Court, Defence and DFAT missions refuse the dev container quickly and hang for
-the runner. Both are refusals; the runner's is simply less polite about it.
-Neither is a lead.
+**Three `.gov.au` hosts turned a fast 403 into a timeout on the runner.** The
+High Court, Defence and DFAT missions refuse the dev container quickly and hang
+for the runner. Both are refusals; the runner's is less polite. Neither is a
+lead, and the judiciary and Defence categories therefore still have **0
+usable** sources.
 
-**The federal Parliament is reachable, and the product said it was not.** Both
-APH register files download from both environments, on every attempt. That is
-the finding step 2 acts on — see `PEP_OFFICEHOLDER_INDEX.md`.
+### Coverage against the Rules, from the runner
+
+| category | usable |
+| --- | --- |
+| Commonwealth legislature | **2 / 4** |
+| Commonwealth legislature (history) | 1 / 1 |
+| Commonwealth entities | 1 / 1 |
+| State legislature | 2 / 6 |
+| Local government | 1 / 1 |
+| Reconciliation (Wikidata) | 1 / 1 |
+| Commonwealth ministry | 0 / 1 |
+| Commonwealth appointments | 0 / 2 |
+| Territory legislature | 0 / 2 |
+| Judiciary | 0 / 2 |
+| Defence | 0 / 1 |
+| Diplomatic | 0 / 1 |
+
+Six of twelve categories have nothing. Those gaps are **disclosed by the
+screening engine**, not quietly absent — which is the rule at the bottom of
+this file.
 
 ## How to run it
 

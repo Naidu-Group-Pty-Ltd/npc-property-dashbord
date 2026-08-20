@@ -166,8 +166,11 @@ export const CANDIDATE_SOURCES = [
     authority: 'Parliament of Australia',
     url: 'https://www.aph.gov.au/Senators_and_Members/Contacting_Senators_and_Members/Address_labels_and_CSV_files',
     expect: 'html',
-    note: 'Where the canonical URLs are published. Probed so a silent rename '
-      + 'of the CSVs is discoverable rather than mysterious.',
+    note: 'Where the canonical URLs are published. Measured from a runner it '
+      + 'answers 200 with a CAPTCHA page while the two files it links download '
+      + 'fine — so a rename will surface as a 404 on the file, not as a diff '
+      + 'here. Kept as the record of that asymmetry; the loader\'s row floor '
+      + 'and its PDF sniff are the guards that actually hold.',
   },
   {
     key: 'aph_handbook',
