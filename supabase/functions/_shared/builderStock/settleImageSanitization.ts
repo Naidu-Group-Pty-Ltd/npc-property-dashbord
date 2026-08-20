@@ -186,6 +186,38 @@ export async function settleImageSanitization(
   const sanitize = options.sanitize ?? sanitizeSourceImage;
   const budget = options.budget ?? newRepairBudget();
 
+  /**
+   * An attempt that did no repair work, absorbed.
+   *
+   * THE ALLOWANCE BOUNDS REPAIR WORK, because repair work is what kills the
+   * worker: a full-resolution decode, a relaxation over the mask or up to four
+   * model calls, an encode and a re-decode to check. A row whose attempt ended
+   * before any of that — the image editor unreachable, a decoder that fell
+   * over, a mask that could not be placed — did none of it, so charging it
+   * charges for nothing, and charging for nothing is how ONE EXTERNAL FAILURE
+   * took the whole queue down with it.
+   *
+   * Measured in production. The image editor answered 429 "You have no credits
+   * remaining" for two Cloverton rows. They hold the two lowest ids in the
+   * sweep, the allowance is two, and the scan restarts at the lowest id every
+   * tick — so those two spent the entire allowance on every tick for hours, the
+   * log read `outstanding: 3, repaired: 0, unresolved: 2` every minute, and the
+   * twelve rows behind them were never reached. Most needed no vendor at all.
+   *
+   * Nothing else about the failure changes: still counted unresolved, still
+   * nothing written, still not terminal, still attempted again next tick.
+   *
+   * Returns true when the invocation has absorbed as many as it will and should
+   * stop — so the refund can never become an unbounded walk of the queue
+   * against a dead vendor, and an outage can never advance the marker.
+   */
+  const absorbOperationalFailure = (): boolean => {
+    outcome.unresolved += 1;
+    budget.remaining += 1;
+    budget.operationalFailures -= 1;
+    return budget.operationalFailures <= 0;
+  };
+
   let after = '';
   for (let page = 0; page < MAX_PAGES; page++) {
     if (options.deadlineAt && Date.now() > options.deadlineAt) {
@@ -301,7 +333,10 @@ export async function settleImageSanitization(
             phase: 'image_sanitization',
             detail: String(result.detail ?? '').slice(0, 200),
           });
-          outcome.unresolved += 1;
+          if (absorbOperationalFailure()) {
+            outcome.incomplete = true;
+            return outcome;
+          }
           continue;
         }
 
@@ -358,33 +393,7 @@ export async function settleImageSanitization(
          * a refusal would park it until the next version bump.
          */
         if (result.operational) {
-          outcome.unresolved += 1;
-          /*
-           * AND IT DOES NOT SPEND THE ALLOWANCE, WHICH IS THE WHOLE POINT.
-           *
-           * The allowance exists to bound how much REPAIR work a tick does,
-           * because repair work is what kills the worker. A row that failed
-           * operationally did no repair work — no reconstruction was relaxed,
-           * no derivative encoded — so charging it is charging for nothing, and
-           * charging for nothing is how one external failure took the whole
-           * queue down with it.
-           *
-           * Measured in production: the image editor answered 429 "You have no
-           * credits remaining" for two Cloverton rows. They are the two lowest
-           * ids in the sweep, the allowance is two, and the scan restarts at
-           * the lowest id every tick — so those two consumed the entire
-           * allowance on every tick for hours, `repaired: 0`, and the twelve
-           * rows behind them were never reached even though most needed no
-           * vendor at all.
-           *
-           * Refunding leaves the failing rows exactly as they were: nothing is
-           * written, nothing becomes terminal, and they are attempted again on
-           * the next tick. What changes is that they no longer spend an
-           * allowance they did not use.
-           */
-          budget.remaining += 1;
-          budget.operationalFailures -= 1;
-          if (budget.operationalFailures <= 0) {
+          if (absorbOperationalFailure()) {
             outcome.incomplete = true;
             return outcome;
           }

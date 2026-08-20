@@ -1081,6 +1081,12 @@ describe('one external failure must not take the queue down with it', () => {
    * worker. A row that failed operationally did none — nothing was decoded into
    * a derivative, nothing was encoded — so charging it charges for nothing.
    */
+  /*
+   * The vendor shape this was measured against: the image editor answers 429
+   * and `sanitizeSourceImage` reports `inpaint_unavailable`. That branch is a
+   * DIFFERENT one from the generic `operational` branch, and it was the one
+   * production actually took — so it is the one pinned here.
+   */
   const vendorOutage = async () => {
     throw new Error('the image editor refused the request (429) '
       + '"You have no credits remaining."');
