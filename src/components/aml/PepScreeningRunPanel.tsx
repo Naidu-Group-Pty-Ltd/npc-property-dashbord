@@ -44,6 +44,56 @@ import { describeTenure } from "@/lib/aml/pepOfficeholderIndex";
 
 type Run = PepScreeningRun & { id: string; created_at?: string };
 
+/**
+ * A stored run, read back into the shape the panel renders.
+ *
+ * ── Why this exists ───────────────────────────────────────────────────
+ * The run lived in component state alone, so closing the determination
+ * dialog — or any remount — discarded it. The screening was still recorded
+ * server-side, but the panel came back empty, the cascade withdrew every row
+ * it had written, and the checklist fell from "1 of 4 recorded" back to
+ * "0 of 4". The work had been done and the screen said it had not.
+ *
+ * The columns are snake_case on the table and camelCase in the engine's own
+ * type, so the mapping is written out rather than spread: a silently missing
+ * `requiresManualReview` would read as "no further work", which is the one
+ * value this engine must never invent.
+ */
+function runFromRow(row: Record<string, unknown>): Run | null {
+  const id = typeof row.id === "string" ? row.id : null;
+  const verdict = row.verdict as PepScreeningRun["verdict"] | undefined;
+  if (!id || !verdict) return null;
+  const list = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+  return {
+    id,
+    created_at: typeof row.created_at === "string" ? row.created_at : undefined,
+    verdict,
+    message: typeof row.message === "string" && row.message
+      ? row.message
+      /*
+       * The sentence is not stored. It is rebuilt as a statement about the
+       * SEARCH — never about the person — so a restored run reads in the same
+       * vocabulary as a fresh one.
+       */
+      : verdict === "indicators_found"
+        ? "This run found something a person has to look at."
+        : verdict === "no_indicators"
+          ? "The registers searched on this run held nothing under this name. "
+            + "That is a result about the search, not a clearance."
+          : verdict === "not_searchable"
+            ? "There was nothing on this party that could be searched."
+            : "This run could not search everything it needed to.",
+    sources: list<PepScreeningSourceResult>(row.sources),
+    candidates: list<PepScreeningCandidate>(row.candidates),
+    indicators: list<PepIndicator>(row.indicators),
+    /* Absent is treated as "yes, a person still has to look". */
+    requiresManualReview: row.requires_manual_review !== false,
+    notReached: list<string>(row.not_reached),
+    searchedNames: list<string>(row.searched_names),
+  };
+}
+
+
 /** Every status renders. A source nobody mentions reads as one nobody needed. */
 
 
