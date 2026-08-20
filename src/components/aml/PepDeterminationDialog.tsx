@@ -460,6 +460,48 @@ export function PepDeterminationDialog({
               )}
             </div>
 
+            {/*
+              ── The same answer, as it will be recorded ─────────────────
+              This is the row that used to open step 2's source grid. It is
+              the customer's own answer, so it is shown here — read-only,
+              beside the answer it repeats — and labelled with the one thing
+              an operator needs to know about it: it counts as evidence and
+              it can never stand alone.
+            */}
+            {declarationRows.length > 0 && (
+              <div className="ml-[2.125rem] rounded-md border border-border/60 bg-background p-3">
+                <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  <ClipboardCheck aria-hidden className="h-3 w-3" />
+                  Carried into the record as evidence
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {declarationRows.map((row) => (
+                    <li key={row.id} className="text-xs">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="font-medium text-foreground">{row.source}</span>
+                        {row.reference && (
+                          <Badge variant="outline" className="text-[10px] font-normal">
+                            {row.reference}
+                          </Badge>
+                        )}
+                        <Badge variant="secondary" className="text-[10px] font-normal">
+                          {PEP_SOURCE_KIND_LABEL[row.kind]}
+                        </Badge>
+                      </div>
+                      {row.result && (
+                        <p className="mt-1 text-muted-foreground">{row.result}</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 border-t border-border/50 pt-2 text-[11px] text-muted-foreground">
+                  A declaration is not a check. Step 2 still needs at least one source
+                  independent of the customer.
+                </p>
+              </div>
+            )}
+
+
             {/* A sanctions match is a signal, and only in one direction. */}
             {signal && (
               <p className="ml-[2.125rem] flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
