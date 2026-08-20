@@ -63,7 +63,7 @@ import {
 import {
   PEP_SEARCH_COVERAGE_GAPS, buildPepSearches,
 } from "@/lib/aml/pepSearchLinks.pure";
-import { PepOfficeholderIndexPanel } from "@/components/aml/PepOfficeholderIndexPanel";
+import { PepScreeningRunPanel } from "@/components/aml/PepScreeningRunPanel";
 import type { PepDeclarationReading } from "@/lib/aml/pepDeclaration";
 import { PEP_RELATIONSHIP_LABEL } from "@/lib/aml/pepDeclaration";
 
@@ -406,23 +406,44 @@ export function PepDeterminationDialog({
 
             <div className="ml-[2.125rem] space-y-3">
               {/*
-                The index first, because it is the only step that can tell an
-                operator WHICH register to open. It surfaces candidates and
-                never a clearance — the empty reading carries the index's own
-                coverage, so "nothing found" cannot be read as "nobody is
-                exposed".
+                ── The screening first ─────────────────────────────────
+                The platform searches the registers it holds and shows what
+                came back. It informs the determination and never makes one:
+                the verdict vocabulary has no "clear" in it, an empty result
+                is drawn neutrally, and everything the run could not reach is
+                named so the manual checks below have a purpose.
+
+                A completed run, and every candidate the operator accepts,
+                becomes a source row here — so the evidence is captured as it
+                is gathered rather than retyped from memory afterwards.
               */}
-              <PepOfficeholderIndexPanel
+              <PepScreeningRunPanel
                 caseId={caseId} subjectId={subject.id}
-                onAddSource={(draft) => setRows((prev) => [...prev, newRow({
+                onEvidence={(draft) => setRows((prev) => [...prev, newRow({
                   kind: (PEP_SOURCE_KINDS as readonly string[]).includes(draft.kind)
                     ? draft.kind as PepSourceKind : "official_register",
                   source: draft.source, reference: draft.reference, result: draft.result,
                 })])}
               />
 
+              {/*
+                ── The manual checks, kept and demoted ─────────────────
+                Two of these registers block automated requests, so a person
+                opening them is the only way they get checked at all. They are
+                secondary to the run above, never removed.
+              */}
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  Check by hand — official registers
+                </p>
+                <p className="mb-2 text-[11px] text-muted-foreground">
+                  The two Commonwealth registers block automated requests, so the
+                  run above cannot read them. Open, look, and record what came back.
+                </p>
+              </div>
+
               <div className="flex flex-wrap gap-2">
-                {searches.map((s) => (
+                {searches.filter((s) => s.tier === "register").map((s) => (
                   <Button
                     key={s.id} type="button" variant="outline" size="sm"
                     className="h-auto justify-start py-1.5 text-left"
@@ -548,6 +569,43 @@ export function PepDeterminationDialog({
                   );
                 })}
               </ul>
+
+              {/*
+                A general web search is not a register, and the list used to
+                end with two search-engine rows sitting beside DFAT as though
+                they were peers. It stays — AUSTRAC accepts internet research,
+                and it is the only route to a foreign office or a family
+                connection nothing publishes — but it is labelled and last.
+              */}
+              {searches.some((s) => s.tier === "open_web") && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    A starting point, not a source of record
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {searches.filter((s) => s.tier === "open_web").map((s) => (
+                      <Button
+                        key={s.id} type="button" variant="ghost" size="sm"
+                        className="h-auto justify-start py-1.5 text-left"
+                        onClick={() => {
+                          window.open(s.url, "_blank", "noopener,noreferrer");
+                          setRows((prev) => [...prev, newRow({
+                            kind: s.kind, source: s.label, reference: s.searchTerms,
+                          })]);
+                        }}
+                      >
+                        <ArrowUpRight aria-hidden className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-medium">{s.label}</span>
+                          <span className="block text-[11px] font-normal text-muted-foreground">
+                            {s.purpose}
+                          </span>
+                        </span>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <Button
                 type="button" variant="outline" size="sm"
