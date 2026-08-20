@@ -644,7 +644,7 @@ export function PepDeterminationDialog({
                 <PepCoverageGaps />
 
                 <ol className="space-y-2">
-                  {registerSearches.map((s, idx) => {
+                  {registerSearches.map((s) => {
                     const check = manualChecks.find((m) => m.id === s.id);
                     const covered = check?.state === "searched_by_platform";
                     const bound = checkedRows.filter((r) => r.searchId === s.id);
