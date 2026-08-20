@@ -163,13 +163,26 @@ describe("a source that was not searched", () => {
 });
 
 describe("a candidate needs a person", () => {
-  it("shows the office, the dates and whether it is currently held", async () => {
+  it("shows the office, the dates, and a held seat AS AT the day the register was read", async () => {
+    /*
+     * It used to say the bare word "Current".
+     *
+     * Every Parliament row carries `currently_held: true` by construction —
+     * the files are a snapshot of who sits on the day they are downloaded,
+     * with no dates in them at all. An unqualified present tense is a claim
+     * about today made from a photograph of last week, and it travels into
+     * the evidence the determination rests on.
+     *
+     * The as-at comes off the run's own record of the source it searched, so
+     * the badge cannot disagree with what was searched.
+     */
     mockRun({ candidates: [candidate()] });
     renderPanel();
     fireEvent.click(screen.getByRole("button", { name: /run screening/i }));
     expect(await screen.findByText("Pat Example")).toBeTruthy();
     expect(screen.getByText(/australian senate/i)).toBeTruthy();
-    expect(screen.getByText("Current")).toBeTruthy();
+    expect(screen.getByText("Held as at 2026-08-19")).toBeTruthy();
+    expect(screen.queryByText("Current")).toBeNull();
     expect(screen.getByText(/94% name match/)).toBeTruthy();
   });
 
