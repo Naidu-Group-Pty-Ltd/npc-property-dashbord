@@ -173,7 +173,28 @@ export async function recoverPackageImage(
 
   const lotFolderId = await findLotFolder(cache, root, lot);
   const entries = lotFolderId ? await cache.list(lotFolderId) : root;
-  const document = selectPackageDocument(entries, { lot, design });
+  /*
+   * A LIBRARY THAT FILES BY SUBJECT RATHER THAN BY LOT.
+   *
+   * Sandpiper's library keeps one folder per lot, which is what `findLotFolder`
+   * looks for. Four live rows link a library that does the opposite: the folder
+   * IS the property, and inside it are "Package", "Rental Appraisal" and "Area
+   * Profile - Investment Report" — one folder per KIND of document. There is no
+   * lot folder to find, the root holds only an estate-wide inclusions list, and
+   * the property's own package sits one level down.
+   *
+   * So when no lot folder was found, the whole bounded subtree the search has
+   * already read is offered to the same selector. It is not a wider search:
+   * `findLotFolder` walked exactly these entries to conclude there was no lot
+   * folder, so this costs no further listing, reaches nothing outside the folder
+   * the row itself linked, and asks the identical question — one document, this
+   * lot, this design, and of a kind that can be a package. Two candidates is
+   * still the source declining to say, and the answer is still no image.
+   */
+  const document = selectPackageDocument(entries, { lot, design })
+    ?? (lotFolderId
+      ? null
+      : selectPackageDocument(await subtreeEntries(cache, root), { lot, design }));
   if (!document) {
     return {
       status: 'not_identified',
@@ -186,6 +207,41 @@ export async function recoverPackageImage(
   return await extractFromDocument(
     fetchPackage, readPageTexts, document.id, document.name, input.label,
     'folder_structure');
+}
+
+/**
+ * Every entry inside THIS linked folder, to the same bounded depth the lot
+ * search uses.
+ *
+ * DESCENT FROM THIS ROOT, NEVER A READ OF THE CACHE. The cache is shared by
+ * every row in a run — that is what keeps forty-four rows pointing at one
+ * library to a handful of requests — so taking "everything read so far" from it
+ * would pull in folders belonging to OTHER properties. Two Cloverton rows are
+ * exactly that: each links its own folder, each folder holds one document
+ * naming its own lot, and reading the cache flat made the two look like two
+ * candidates for one property and produced no image for either.
+ *
+ * So it walks down from this root and no further, exactly as `findLotFolder`
+ * does. Every listing it asks for was asked for by that search first, so the
+ * cache answers all of them and this costs no request.
+ */
+async function subtreeEntries(
+  cache: DriveListingCache,
+  root: DriveEntry[],
+): Promise<DriveEntry[]> {
+  const all = [...root];
+  let level = root;
+  for (let depth = 0; depth < MAX_DEPTH; depth++) {
+    const children = level
+      .filter((entry) => entry.mimeType === DRIVE_FOLDER_MIME)
+      .map((entry) => entry.id);
+    if (!children.length) break;
+    const next: DriveEntry[] = [];
+    for (const id of children) next.push(...await cache.list(id));
+    all.push(...next);
+    level = next;
+  }
+  return all;
 }
 
 /**

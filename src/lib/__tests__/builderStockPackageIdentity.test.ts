@@ -35,11 +35,12 @@ import {
   assignPdfMediaRoles, findPropertyCoverPages, packageFactsOn,
 } from '../../../supabase/functions/_shared/builderStock/pdfPrimaryImage.pure';
 import {
-  selectPackageDocument,
+  lotAndDesignFrom, selectPackageDocument, withoutTenureWording,
 } from '../../../supabase/functions/_shared/builderStock/drivePackage.pure';
 import {
-  COVELLA_ADDRESS, COVELLA_LOT_914_PAGE_1, LOT_51_MIAMI_190_PAGE_1,
-  LOT_51_MIAMI_196_PAGE_1, LOT_52_MIAMI_190_PAGE_1, SANDPIPER_ADDRESS,
+  COVELLA_ADDRESS, COVELLA_LOT_914_PAGE_1, LOT_51_BISHOP_258_PAGE_1,
+  LOT_51_MIAMI_190_PAGE_1, LOT_51_MIAMI_196_PAGE_1, LOT_52_MIAMI_190_PAGE_1,
+  SANDPIPER_ADDRESS,
 } from './fixtures/builderStockPackagePages';
 
 /** The label the repair builds for a Sandpiper row, exactly as production does. */
@@ -121,6 +122,57 @@ describe('and cannot be confused with the property next to it', () => {
     // subject. The contradiction test is what makes the relaxation safe.
     const twoLots = `${LOT_51_MIAMI_190_PAGE_1}\nLot 52, Sandpiper Estate — $1,401,306`;
     expect(findPropertyCoverPages([twoLots], sandpiper(51, 'Miami 190'))).toHaveLength(0);
+  });
+});
+
+describe('and the tenure the stock list writes is not part of the design', () => {
+  /*
+   * NINETEEN LIVE CARDS. Every Sandpiper row whose design carries "Dual Occ"
+   * selected exactly the right package out of the lot folder — the document
+   * choice already drops that wording, because the builder's FILE never carries
+   * it either — opened it, reached page 1, and was refused, because the cover
+   * says "Dual key" and the identity rule demanded the letters "occ".
+   *
+   * The two readings of one label are now one reading. Nothing else moved: the
+   * design name and its number are still required, and the lot rules below are
+   * untouched.
+   */
+  const dualOcc = (lot: number, design: string) => sandpiper(lot, `${design} Dual Occ`);
+
+  it('accepts the cover of the dual-key house the row is FOR', () => {
+    expect(LOT_51_BISHOP_258_PAGE_1.toLowerCase()).not.toContain('occ');
+    const covers = findPropertyCoverPages([LOT_51_BISHOP_258_PAGE_1], dualOcc(51, 'Bishop 258'));
+    expect(covers).toHaveLength(1);
+    expect(covers[0].page).toBe(1);
+  });
+
+  it('and reads the same label the document choice reads', () => {
+    expect(lotAndDesignFrom(dualOcc(51, 'Bishop 258')))
+      .toEqual({ lot: '51', design: 'bishop 258' });
+  });
+
+  it('still refuses the OTHER designs on that same lot', () => {
+    for (const design of ['Bravo 217', 'Echo 236', 'Miami 190']) {
+      expect(findPropertyCoverPages([LOT_51_BISHOP_258_PAGE_1], dualOcc(51, design)))
+        .toHaveLength(0);
+      expect(findPropertyCoverPages([LOT_51_BISHOP_258_PAGE_1], sandpiper(51, design)))
+        .toHaveLength(0);
+    }
+  });
+
+  it('and still refuses another lot\'s copy of the same design', () => {
+    expect(findPropertyCoverPages([LOT_51_BISHOP_258_PAGE_1], dualOcc(52, 'Bishop 258')))
+      .toHaveLength(0);
+  });
+
+  it('removes wording and never adds any', () => {
+    // The whole safety argument in one line: what it returns is a substring
+    // pattern of what it was given, so nothing can start matching a design it
+    // did not already match.
+    for (const design of ['Miami 190', 'Stradbroke 197', 'Bishop 258 Dual Occ', '']) {
+      expect(withoutTenureWording(design).replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+        .every((token) => design.toLowerCase().includes(token.toLowerCase()))).toBe(true);
+    }
   });
 });
 

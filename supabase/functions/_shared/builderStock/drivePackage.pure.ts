@@ -136,6 +136,32 @@ export function normaliseDriveName(value: string): string {
 }
 
 /**
+ * A design name with the TENURE wording taken out of it.
+ *
+ * The stock list writes how a house is HELD — "[Bishop 258 Dual Occ]" — inside
+ * the same bracket it writes the design in. The builder never does: the file is
+ * "Lot 51 - Bishop 258 - Property Package.pdf" and its own cover reads "Bishop
+ * 258, Mira facade" over "Dual key home, 4 + 2". The design and its number are
+ * the part BOTH sides state; the tenure is one side's vocabulary for the
+ * other's, and the two spellings share not a single token.
+ *
+ * WHY IT IS SHARED RATHER THAN COPIED. This was applied when choosing WHICH
+ * document in the lot folder is a property's, and not when asking whether that
+ * document's cover names the property — so nineteen Sandpiper rows selected
+ * exactly the right package, opened it, reached the right page, and refused it
+ * because the page does not contain the letters "occ". Choosing a document and
+ * recognising its cover are the same question about the same label, and
+ * answering them with two different readings of it is what left a blank card in
+ * front of the builder's own photograph.
+ *
+ * It removes wording and never adds any, so nothing it touches can begin to
+ * match a design it did not already match.
+ */
+export function withoutTenureWording(design: string): string {
+  return String(design ?? '').replace(/\b(dual\s*occ(?:upancy)?|dual\s*key)\b/gi, ' ');
+}
+
+/**
  * The lot and the house design a stock row names.
  *
  * Both come from the row's own label — "Lot 43 - Tringa Street, Sandpiper
@@ -144,17 +170,16 @@ export function normaliseDriveName(value: string): string {
  * identified by its lot alone and will only match a folder holding a single
  * document.
  *
- * "Dual Occ" / "Dual Key" are dropped: the source writes them on the row and
- * not on the file ("Lot 43 - Echo 236 - Property Package.pdf"), and the model
- * name plus its number is the part both sides state.
+ * "Dual Occ" / "Dual Key" are dropped by `withoutTenureWording`, for the reason
+ * recorded there.
  */
 export function lotAndDesignFrom(label: string): { lot: string | null; design: string | null } {
   const text = String(label ?? '');
   const lot = /(?:^|[^a-z0-9])lot\s*([0-9]{1,6}[a-z]?)\b/i.exec(text)?.[1] ?? null;
 
   const bracketed = /\[([^\]]{1,60})\]/.exec(text)?.[1] ?? '';
-  const cleaned = bracketed.replace(/\b(dual\s*occ(?:upancy)?|dual\s*key)\b/gi, ' ');
-  const design = /([a-z][a-z' -]{2,24}\s+\d{2,4})/i.exec(cleaned)?.[1] ?? null;
+  const design = /([a-z][a-z' -]{2,24}\s+\d{2,4})/i.exec(withoutTenureWording(bracketed))?.[1]
+    ?? null;
 
   return {
     lot: lot ? lot.toLowerCase() : null,

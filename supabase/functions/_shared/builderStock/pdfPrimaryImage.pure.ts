@@ -36,8 +36,10 @@
  * the cover of a package is wherever the package puts it, and a document whose
  * page order we could not establish is refused outright rather than counted.
  *
- * Pure: no imports beyond the role vocabulary, no IO, no clock.
+ * Pure: no imports beyond the role vocabulary and the label reading it shares
+ * with `drivePackage.pure.ts`, no IO, no clock.
  */
+import { withoutTenureWording } from './drivePackage.pure.ts';
 import {
   noPrimaryEvidence, roleFromAssetName, roleFromPropertyCover, secondaryRole,
   type SourceImageRoleAssignment,
@@ -120,7 +122,14 @@ function lotDesignations(value: string): string[] {
  */
 function designTokens(label: string): string[] {
   const bracketed = String(label ?? '').match(/\[([^\]]{1,60})\]/g) ?? [];
-  return bracketed.flatMap((part) => tokenise(part));
+  /*
+   * READ THE SAME WAY THE DOCUMENT WAS CHOSEN. `lotAndDesignFrom` drops the
+   * tenure wording the stock list puts in this bracket, because the builder's
+   * own file and its own cover never carry it — so requiring it here refused
+   * the very document that reading had just selected. See
+   * `withoutTenureWording`.
+   */
+  return bracketed.flatMap((part) => tokenise(withoutTenureWording(part)));
 }
 
 /**
