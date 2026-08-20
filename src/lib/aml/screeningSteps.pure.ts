@@ -196,19 +196,21 @@ function perimeterStep(args: {
   if (classification) {
     detail.push(classification === "outside_perimeter"
       ? `Recorded as OUTSIDE the perimeter${p?.reason_code ? ` — ${p.reason_code.replace(/_/g, " ")}` : ""}.`
-      : "Recorded as a designated service.");
+      : "Recorded as a real deal — a designated service is being provided.");
     if (recordedBy || recordedAt) {
       detail.push(`Recorded${recordedBy ? ` by ${recordedBy}` : ""}${
         recordedAt ? ` on ${new Date(recordedAt).toLocaleDateString()}` : ""}.`);
     }
     if ((p?.scopes_excluded ?? []).length > 0) {
-      detail.push(`Excludes: ${(p!.scopes_excluded as string[]).join(", ")}.`);
+      detail.push(`Checks this removes: ${(p!.scopes_excluded as string[])
+        .map((s) => s.replace(/_/g, " ")).join(", ")}.`);
     }
   } else {
     // The default is INSIDE. An unclassified case is not an exempt one.
-    detail.push("Nothing recorded. An unclassified case is treated as inside the "
-      + "perimeter, so sanctions screening is required.");
+    detail.push("Nothing recorded yet. A case nobody has classified counts as inside "
+      + "the perimeter, so sanctions screening is required.");
   }
+
 
   /*
    * The one case where a recorded classification is not the end of it: an
@@ -224,21 +226,30 @@ function perimeterStep(args: {
 
   return {
     key: "perimeter",
-    title: "Confirm what this case is",
-    purpose: "Whether a designated service is being provided decides what screening is "
-      + "owed. It is recorded by a reviewer or the MLRO and never inferred.",
+    title: "Confirm what kind of case this is",
+    /*
+     * Plain language, on purpose. This step used to open with "whether a
+     * designated service is being provided decides what screening is owed",
+     * which is the statute's sentence rather than the operator's: the
+     * question they can actually answer is whether this is a real deal or
+     * only an enquiry.
+     */
+    purpose: "A real deal has to be screened; an enquiry that never became one does "
+      + "not. Only a reviewer or the MLRO records this, and it is never assumed.",
     state: !classification ? "current" : staleEnquiry ? "review" : "done",
     summary: !classification
-      ? "This case has not been classified. Until it is, it is treated as inside the "
-        + "perimeter and sanctions screening is required."
+      ? "Nobody has recorded whether we are providing a service here. Until someone "
+        + "does, this case counts as inside the perimeter and sanctions screening is "
+        + "required."
       : staleEnquiry
-        ? "This case was classified as an enquiry only, which is why no sanctions "
-          + "screening is required. It has since been reopened and is being worked "
-          + "again — confirm whether the relationship is now progressing."
+        ? "This was recorded as an enquiry only, which is why no sanctions screening "
+          + "is required. It has since been reopened and is being worked again — "
+          + "confirm whether it is now a real deal."
         : classification === "outside_perimeter"
-          ? "Recorded as outside the sanctions perimeter. This is a statement about "
-            + "obligation: nobody has been screened and nobody has been cleared."
-          : "Recorded as a designated service, so the full screening obligation applies.",
+          ? "Recorded as outside the sanctions perimeter: no service is being provided, "
+            + "so no screening is owed. Nobody was screened and nobody was cleared."
+          : "Recorded as a real deal, so the full screening obligation applies.",
+
     detail,
     /*
      * Outstanding, and deliberately NOT blocking.
