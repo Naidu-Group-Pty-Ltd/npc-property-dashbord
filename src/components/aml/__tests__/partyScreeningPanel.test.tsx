@@ -281,6 +281,33 @@ describe("PartyScreeningPanel — PEP determination", () => {
   });
 
   /*
+   * A tick on a step that is not settled is worse than no tick: it is the
+   * product telling an operator they are done. Step 2 read its state off the
+   * live verdict, which carries only an "outcome" error until an outcome is
+   * picked — so it showed a green tick with nothing in it but the customer's
+   * own declaration, which can never satisfy the independent-source rule.
+   */
+  it("does not tick the sources step for a declaration that cannot stand alone", async () => {
+    renderPanel({
+      pepDeclaration: {
+        answered: true, answer: "no", complete: true,
+        summary: "The customer answered no to the political-exposure question.",
+        relationship: null, role: null, country: null,
+      },
+    });
+    fireEvent.click(await screen.findByRole(
+      "button", { name: /record pep determination/i }));
+    await screen.findByText(/check the sources/i);
+
+    // The seeded declaration is one method, and it is not enough.
+    const step = screen.getByText(/check the sources/i).closest("div")?.parentElement;
+    expect(step?.textContent).toContain("Check the sources");
+    // The step number renders instead of the tick until an independent
+    // source with a recorded result is present.
+    expect(screen.getByText("2")).toBeTruthy();
+  });
+
+  /*
    * The customer's own answer is the thing being tested. It is evidence
    * towards the determination and can never be the whole of one — so the
    * dialog seeds it as a source, and refuses to let it stand alone.
