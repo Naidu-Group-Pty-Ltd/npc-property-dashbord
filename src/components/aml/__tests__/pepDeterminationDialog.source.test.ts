@@ -19,6 +19,17 @@ import { describe, expect, it } from "vitest";
 const dir = join(__dirname, "..");
 const dialog = readFileSync(join(dir, "PepDeterminationDialog.tsx"), "utf8");
 
+/**
+ * Source with comment lines removed.
+ *
+ * Every rule below is documented in the file it guards, and the
+ * documentation necessarily quotes the code being removed. A scan that
+ * counted those would fail on the explanation of its own fix — which has now
+ * happened three times in this suite, so it is a helper rather than a habit.
+ */
+const codeOnly = (src: string) => src
+  .split("\n").filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l)).join("\n");
+
 describe("the manual-check prose is derived, never counted by hand", () => {
   it("the sentence that went stale is gone", () => {
     /*
@@ -30,8 +41,8 @@ describe("the manual-check prose is derived, never counted by hand", () => {
      * "1 source was not searched" — the same scroll, two answers, and the
      * operator sent to open by hand a register the platform had just read.
      */
-    expect(dialog).not.toMatch(/two Commonwealth registers/i);
-    expect(dialog).not.toMatch(/the run above cannot read them/i);
+    expect(codeOnly(dialog)).not.toMatch(/two Commonwealth registers/i);
+    expect(codeOnly(dialog)).not.toMatch(/the run above cannot read them/i);
   });
 
   it("the sentence and the count come off the run", () => {
@@ -62,7 +73,7 @@ describe("the footer shows everything outstanding, not the first refusal", () =>
      * error is "Choose what was determined", so every other requirement was
      * invisible — and each one was discovered only by satisfying the last.
      */
-    expect(dialog).not.toContain("verdict.errors[0]?.message");
+    expect(codeOnly(dialog)).not.toContain("verdict.errors[0]?.message");
     expect(dialog).toContain("describeOutstanding(requirements)");
     expect(dialog).toContain("requirements.filter((r) => !r.met)");
   });
@@ -124,8 +135,7 @@ describe("no PEP surface claims an office is held today", () => {
        * changed necessarily quote the word, and a scan that counted those
        * would fail on the documentation of its own fix.
        */
-      const src = readFileSync(join(dir, file), "utf8")
-        .split("\n").filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l)).join("\n");
+      const src = codeOnly(readFileSync(join(dir, file), "utf8"));
       if (/[?:]\s*"Current"/.test(src) || />\s*Current\s*</.test(src)) {
         offenders.push(file);
       }
@@ -149,5 +159,58 @@ describe("no PEP surface claims an office is held today", () => {
     for (const file of ["PepScreeningRunPanel.tsx", "PepOfficeholderIndexPanel.tsx"]) {
       expect(readFileSync(join(dir, file), "utf8")).toContain("describeTenure(");
     }
+  });
+});
+
+describe("nothing resets the editing session except the session changing", () => {
+  it("the reset is keyed on a session, never on a fetched object", () => {
+    /*
+     * `}, [open, declaration]);`
+     *
+     * The workspace refetches on `focus` and `visibilitychange`, and this
+     * screen's own design sends the operator to open registers in a new tab.
+     * So returning from a register produced a new `pep_declaration` object
+     * with identical content, this effect fired, and the run's cascade, every
+     * row it had written and anything typed into the determination went with
+     * it. The poll runs on a timer too, so it could land mid-sentence.
+     *
+     * Object identity of refetched data is not a signal that anything
+     * changed.
+     */
+    expect(codeOnly(dialog)).not.toMatch(/\}, \[open, declaration\]\)/);
+    expect(dialog).toContain("const sessionKey = open ? subject.id : null");
+    expect(dialog).toContain("initialisedFor");
+    expect(dialog).toMatch(/\}, \[sessionKey\]\)/);
+  });
+
+  it("the declaration is seeded once, on primitives, and never rewritten", () => {
+    // It can arrive after the dialog opens, so it cannot live in the
+    // initialiser — and its dependencies are the answer's primitives, so a
+    // refetch carrying the same answer does nothing.
+    expect(dialog).toContain("seededDeclarationFor");
+    expect(dialog).toMatch(
+      /\[sessionKey, declaration\?\.answered, declaration\?\.answer, declaration\?\.summary\]/);
+  });
+
+  it("a different party still starts clean", () => {
+    // Immunity to refetches must not become immunity to the thing the reset
+    // is for. Telling an operator a register was searched for a party it was
+    // never searched for is the same lie from the other direction.
+    expect(dialog).toContain("setRunSources(null)");
+    expect(dialog).toContain("setRows([])");
+  });
+
+  it("the run reports upwards from ONE derivation", () => {
+    /*
+     * It was reported in three places — on restore, on a new run, and on
+     * failure — which is three chances for the checklist to describe a search
+     * the panel did not perform.
+     */
+    const panel = readFileSync(join(dir, "PepScreeningRunPanel.tsx"), "utf8");
+    expect(panel).toContain("onSourcesRef");
+    expect(panel).toMatch(/onSourcesRef\.current\?\.\(run/);
+    expect(panel).toMatch(/\}, \[run\]\)/);
+    // …and nowhere else.
+    expect((codeOnly(panel).match(/onSources\?\.\(/g) ?? []).length).toBe(0);
   });
 });
