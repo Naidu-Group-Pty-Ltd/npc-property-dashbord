@@ -767,13 +767,35 @@ export function PepDeterminationDialog({
                     <p className="flex items-start gap-1.5 rounded-md border border-success/40 bg-success/5 px-2 py-1.5 text-[11px] text-success">
                       <Check aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
                       <span>
-                        Every listed register has a result recorded against it. What
-                        was recorded is a result about the search, not a clearance —
-                        the determination in step 3 is still yours.
+                        Every register the platform holds has a result recorded
+                        against it. What was recorded is a result about the search,
+                        not a clearance — the determination in step 3 is still yours.
+                      </span>
+                    </p>
+                  )}
+
+                  {/*
+                    And the sources that were never the run's to read. Stated
+                    separately, because listing them as outstanding coverage
+                    reports a failure that does not exist.
+                  */}
+                  {outstandingOther.length > 0 && (
+                    <p className="flex items-start gap-1.5 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground">
+                      <Info aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span>
+                        {outstandingOther.length}{" "}
+                        {outstandingOther.length === 1 ? "source is" : "sources are"}{" "}
+                        not a register the platform could hold —{" "}
+                        <span className="font-medium">
+                          {outstandingOther.map((s) => s.label).join(" · ")}
+                        </span>
+                        . Open them where the determination needs them; they are
+                        not counted above.
                       </span>
                     </p>
                   )}
                 </div>
+
 
 
                 {/*
