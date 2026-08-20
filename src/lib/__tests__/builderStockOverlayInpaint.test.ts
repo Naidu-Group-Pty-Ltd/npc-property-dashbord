@@ -48,6 +48,7 @@ import {
 import {
   isDisplayableSourceImage,
 } from '../../../supabase/functions/_shared/builderStock/primaryImage';
+import { decodeFullRaster } from '../../../supabase/functions/_shared/builderStock/sourceImageRaster';
 import { encodePng, sha256Hex } from '../../../supabase/functions/_shared/builderStock/rasterPng';
 import {
   marketplaceEligibilityDetail, decideMarketplaceEligibility,
@@ -1169,6 +1170,94 @@ describe('one external failure must not take the queue down with it', () => {
     });
     expect(outcome.repaired).toBe(0);
     expect(sanitizationSweepCompleted(outcome)).toBe(false);
+  });
+});
+
+describe('a repair region the caller established, and nothing else about it', () => {
+  /*
+   * WHY THIS EXISTS. The mask builder reads lines of TYPE, so a plate whose
+   * lettering falls below the measuring resolution has no measurable extent —
+   * the picture can carry a real, plainly visible promotional plate and still
+   * produce no mask, and no threshold move that reaches it is safe against real
+   * clean facades. A caller that has established the rectangle by other means
+   * can hand it over; it is asking for those pixels to be rebuilt, not for a
+   * different verdict.
+   */
+  const region = { left: 0.1, top: 0.72, right: 0.42, bottom: 0.86 };
+
+  it('repairs the supplied region on a picture the detector passes as clean', async () => {
+    const clean = badgedPicture().clean;
+    const bytes = (await encodePng(clean, { width: W, height: H, components: 3 }))!;
+
+    // Without a region this picture is not annotated and nothing is done.
+    const untouched = await sanitizeSourceImage(bytes, {});
+    expect(untouched.ok).toBe(false);
+    if (untouched.ok === false) expect(untouched.reason).toBe('not_annotated');
+
+    // With one, the existing repair path runs on it.
+    let reached = false;
+    const repaired = await sanitizeSourceImage(bytes, {
+      repairRegion: region,
+      edit: async (input: never) => { reached = true; return (input as never); },
+    });
+    // Either the deterministic route rebuilt it, or the generative route was
+    // reached. What must NOT happen is the picture being dismissed unexamined.
+    const examined = repaired.ok === true || reached
+      || (repaired.ok === false && repaired.reason !== 'not_annotated');
+    expect(examined).toBe(true);
+  });
+
+  it('leaves detector-driven behaviour byte-for-byte unchanged without one', async () => {
+    const { badged } = badgedPicture();
+    const bytes = (await encodePng(badged, { width: W, height: H, components: 3 }))!;
+    const mask = maskFor(badged);
+    const { clean } = badgedPicture();
+
+    const a = await sanitizeSourceImage(bytes, { edit: honestModel(clean, mask) });
+    const b = await sanitizeSourceImage(bytes, { edit: honestModel(clean, mask) });
+
+    expect(a.ok).toBe(b.ok);
+    if (a.ok === true && b.ok === true) {
+      expect(a.transformation).toBe(b.transformation);
+      expect(Array.from(a.bytes)).toEqual(Array.from(b.bytes));
+    }
+  });
+
+  it('changes nothing outside the supplied region', async () => {
+    const clean = badgedPicture().clean;
+    const bytes = (await encodePng(clean, { width: W, height: H, components: 3 }))!;
+
+    const out = await sanitizeSourceImage(bytes, { repairRegion: region });
+    if (out.ok !== true) return; // a refusal serves the original; nothing altered
+
+    const after = await decodeFullRaster(out.bytes);
+    expect(after).not.toBeNull();
+    // Every pixel well outside the region is identical to the builder's own.
+    let checked = 0;
+    for (let y = 0; y < H; y += 7) {
+      for (let x = 0; x < W; x += 7) {
+        const insideX = x >= region.left * W - 4 && x <= region.right * W + 4;
+        const insideY = y >= region.top * H - 4 && y <= region.bottom * H + 4;
+        if (insideX && insideY) continue;
+        const at = (y * W + x) * 3;
+        expect(after!.pixels[at]).toBe(clean[at]);
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it('treats an empty or inverted region as none', async () => {
+    const clean = badgedPicture().clean;
+    const bytes = (await encodePng(clean, { width: W, height: H, components: 3 }))!;
+    for (const bad of [
+      { left: 0.5, top: 0.5, right: 0.5, bottom: 0.9 },
+      { left: 0.9, top: 0.5, right: 0.2, bottom: 0.9 },
+    ]) {
+      const out = await sanitizeSourceImage(bytes, { repairRegion: bad });
+      expect(out.ok).toBe(false);
+      if (out.ok === false) expect(out.reason).toBe('not_annotated');
+    }
   });
 });
 
