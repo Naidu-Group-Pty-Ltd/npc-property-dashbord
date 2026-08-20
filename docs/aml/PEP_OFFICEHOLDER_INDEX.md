@@ -139,8 +139,9 @@ different person, with nothing on the card connecting them to the customer
 except an office title.
 
 A date of birth is the strongest discriminator any of these sources publishes.
-Measured against the live endpoint, **1,247 of 1,254** people in one office
-batch carry `P569` — 99%.
+Measured across the loaded index: **9,527 of 10,784 rows carry one — 90.2%**.
+None of them come from the Parliament register, which publishes no dates at
+all; they are all Wikidata's `P569`.
 
 ### The rule: a date of birth ORDERS candidates. It never removes one.
 
@@ -168,10 +169,25 @@ column has to be padded to something.
 
 Wikidata records precision explicitly — `wikibase:timePrecision` 11 day, 10
 month, 9 year — and renders a full timestamp either way. A year-precision birth
-in 1961 comes back as `1961-01-01T00:00:00Z`. **46 of those 1,247 people are
-year-precision.** Storing the timestamp would assert that all 46 were born on
-1 January, and the comparison would then report a confident MISMATCH against a
-customer genuinely born in August.
+in 1961 comes back as `1961-01-01T00:00:00Z`.
+
+Measured over the loaded index, the precision split is:
+
+| precision | rows |
+| --- | --- |
+| day | 8,282 |
+| month | 56 |
+| **year only** | **1,189** |
+
+So **1,189 people — one in eight of every dated row** — would have been stored
+as born on 1 January. The comparison would then report a confident MISMATCH for
+every one of them against a customer genuinely born in any other month.
+
+(A single office batch sampled during development showed 46 of 1,247. The
+whole index is three times that rate, because the further you get from
+well-documented federal members the coarser the published dates become — which
+is the wrong direction for a discriminator to degrade in, and the reason this
+is handled rather than estimated.)
 
 A fabricated discriminator is worse than none: it demotes a real lead with a
 reason that sounds decisive. So the column carries precision in the shape of
@@ -262,10 +278,26 @@ council members who are not heads.
 
 Measured, not asserted:
 
-| register | categories evidenced |
-| --- | --- |
-| `aph_commonwealth_parliament` | legislature (179 offices), ministry (77) — and nothing else. It is a register of seats and portfolios. |
-| `wikidata_au_public_office` | the broader set, including judiciary, vice-regal, public administration, Defence and local government |
+Measured by the load of 2026-08-20, in offices:
+
+| category | APH | Wikidata |
+| --- | --- | --- |
+| Ministers and the ministry | 77 | 336 |
+| Legislators | 179 | 39 |
+| Heads of local government | — | 85 |
+| Judicial officers | — | 26 |
+| Foreign missions accredited to Australia | — | 15 |
+| Heads of departments and agencies | — | 14 |
+| Vice-regal offices | — | 13 |
+| Senior Defence positions | — | 5 |
+| **Australian diplomatic positions** | **—** | **—** |
+| *(office titles matching no category)* | *19* | *143* |
+
+APH evidences two categories and nothing else: it is a register of seats and
+portfolios. Wikidata evidences eight of the nine.
+
+**Australian diplomatic positions is zero on both**, across 10,784 rows and 951
+office titles — which is the whole point of measuring rather than asserting.
 
 The spike found no reachable Tier A source for the judiciary, Defence or
 diplomatic positions. That is a gap in **adapters**, not necessarily a gap in

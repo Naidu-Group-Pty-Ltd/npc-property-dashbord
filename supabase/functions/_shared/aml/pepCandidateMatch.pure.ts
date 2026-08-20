@@ -9,7 +9,9 @@
  * the card to connect them to the customer except an office title.
  *
  * A date of birth is the strongest discriminator any of these sources
- * publishes — Wikidata carries one for 99% of the people it holds.
+ * publishes: 9,527 of the 10,784 rows loaded carry one. All of them come from
+ * Wikidata's `P569` — the Parliament register publishes no dates at all, which
+ * is itself a coverage fact rather than a missing field.
  *
  * ── THE RULE, AND IT IS THE WHOLE POINT ───────────────────────────────
  * **A date of birth orders candidates and annotates them. It never removes

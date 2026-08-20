@@ -461,8 +461,10 @@ test('a year-precision birth is stored as a year, not as 1 January', () => {
    * Storing that verbatim asserts a birthday nobody published, and the
    * comparison then reports a confident MISMATCH against a customer genuinely
    * born on 4 August 1961 — demoting a real lead with a reason that sounds
-   * decisive. Measured against the live endpoint: 46 of 1,247 people in one
-   * office batch are year-precision, so this is ~4% of the register.
+   * decisive. Measured over the loaded index: 1,189 of 9,527 dated rows are
+   * year-precision — ONE IN EIGHT. Every one of them would have been stored
+   * as born on 1 January and reported as a confident mismatch against a
+   * customer born in any other month.
    */
   assert.equal(truncateWikidataDate('1961-01-01T00:00:00Z', 11), '1961-01-01');
   assert.equal(truncateWikidataDate('1961-03-01T00:00:00Z', 10), '1961-03');
