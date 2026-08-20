@@ -662,10 +662,19 @@ export function PepDeterminationDialog({
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {PEP_SOURCE_KINDS.map((k) => (
-                                <SelectItem key={k} value={k}>{PEP_SOURCE_KIND_LABEL[k]}</SelectItem>
-                              ))}
+                              {/* The customer's own declaration is not on
+                                  offer here: it is step 1's record, and
+                                  choosing it would move a row out of this
+                                  list mid-edit. */}
+                              {PEP_SOURCE_KINDS
+                                .filter((k) => k !== PEP_DECLARATION_KIND)
+                                .map((k) => (
+                                  <SelectItem key={k} value={k}>
+                                    {PEP_SOURCE_KIND_LABEL[k]}
+                                  </SelectItem>
+                                ))}
                             </SelectContent>
+
                           </Select>
                         </div>
                         <div>
