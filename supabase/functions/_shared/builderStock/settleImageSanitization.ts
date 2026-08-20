@@ -20,6 +20,18 @@
  * reason. And not a non-primary: an interior or a floorplan cannot reach a card
  * whatever is drawn on it.
  *
+ * AND ONE OTHER THING: A PRIMARY CARRYING A PERSISTED REPAIR REGION. That is a
+ * rectangle established by other means and recorded against these exact bytes
+ * (`repairRegion.pure.ts`), and it is outstanding repair work whatever the
+ * detector currently says — INCLUDING `not_annotated`, which is precisely the
+ * case it exists for. A plate whose lettering falls below the measuring
+ * resolution leaves no mask and no conviction, so without this such a picture is
+ * served with the plate on it for ever, and the only other remedy is moving a
+ * global threshold that was measured against real clean production facades and
+ * is not safe to move. Every other rule still applies: primary only, the
+ * deterministic route first, and the result still checked by the same
+ * classifier before it may be served.
+ *
  * IT SEPARATES A DECISION FROM A FAILURE TO REACH ONE, exactly as the
  * eligibility sweep does and for the same reason:
  *
@@ -52,9 +64,10 @@ import { sanitizeSourceImage } from './sanitizeImage.ts';
 import { sha256Hex } from './rasterPng.ts';
 import {
   clearanceDetail, derivativeDetail, failureDetail, sanitizationSettled, storedOriginalSha,
-  SANITIZATION_VERSION, type SanitizationClearance, type SanitizationFailure,
+  CLEARANCE_KEY, SANITIZATION_VERSION, type SanitizationClearance, type SanitizationFailure,
   type SanitizedDerivative,
 } from './sanitizedDerivative.pure.ts';
+import { readRepairRegion } from './repairRegion.pure.ts';
 import { readMarketplaceState } from './marketplaceEligibility.pure.ts';
 import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
 import { SOURCE_SUPPLIED_STAGE, SOURCE_SUPPLIED_VERIFICATION } from './primaryImage.ts';
@@ -273,13 +286,54 @@ export async function settleImageSanitization(
       if (!isPrimaryRole(readStoredRole(detail))) continue;
 
       /*
-       * ONLY A PICTURE THE GATE CONVICTED. `pending` is not a badge and
-       * `eligible` is not a defect; see the header.
+       * A RECTANGLE SOMEBODY WROTE DOWN AGAINST THESE EXACT BYTES.
+       *
+       * This is the second way a picture reaches the repair, and it exists
+       * because the first cannot see everything. The detector's mask builder
+       * reads lines of TYPE; a plate whose lettering is below the measuring
+       * resolution has no measurable extent, so a promotional plate can be
+       * real, plainly visible to a person, and still leave the picture
+       * measuring clean and being served with the plate on it.
+       *
+       * The region is read here rather than being a special case anywhere
+       * further down: it is ordinary image metadata, any row may carry one, and
+       * this code knows nothing about the picture beyond "this image has a
+       * persisted explicit repair region". See `repairRegion.pure.ts` for the
+       * origin test, which is the same one a derivative gets.
        */
-      if (readMarketplaceState(detail) !== 'ineligible') continue;
-      if (detail.marketplace_rejection_reason !== 'annotated_marketing_tile') continue;
+      const region = readRepairRegion(detail, storedOriginalSha(detail));
 
-      if (sanitizationSettled(detail, storedOriginalSha(detail))) continue;
+      /*
+       * ONLY A PICTURE THE GATE CONVICTED — OR ONE CARRYING A REGION.
+       *
+       * `pending` is not a badge and `eligible` is not a defect; see the
+       * header. That rule is untouched for every row without a region, which is
+       * all but a handful of them. Where a region IS recorded the conviction has
+       * already been reached by other means and recorded against these bytes,
+       * so requiring the detector to agree would be requiring the instrument
+       * that missed the plate to certify that it is there.
+       */
+      if (!region) {
+        if (readMarketplaceState(detail) !== 'ineligible') continue;
+        if (detail.marketplace_rejection_reason !== 'annotated_marketing_tile') continue;
+      }
+
+      /*
+       * A CLEARANCE DOES NOT SETTLE A ROW THAT CARRIES A REGION.
+       *
+       * A clearance says "we looked and there is nothing on this picture"; a
+       * region says "there is, and here it is". They cannot both be current,
+       * and of the two the region is the one established by other means against
+       * these exact bytes — so a standing clearance from before the region was
+       * recorded is stale, and leaving it to settle the row would mean writing a
+       * region down had no effect. A derivative and a failure still settle it:
+       * the first is the work done, the second is a completed answer for this
+       * version, and neither can be produced on the region path by accident.
+       */
+      const settled = region
+        ? sanitizationSettled({ ...detail, [CLEARANCE_KEY]: null }, storedOriginalSha(detail))
+        : sanitizationSettled(detail, storedOriginalSha(detail));
+      if (settled) continue;
 
       outcome.outstanding += 1;
 
@@ -336,7 +390,13 @@ export async function settleImageSanitization(
        */
       const actualSha = await sha256Hex(bytes);
 
-      const result = await sanitize(bytes, {});
+      /*
+       * The region is handed straight to the existing generic path and nothing
+       * else about the call changes: the deterministic route is still tried
+       * first, the result still goes back through the same classifier, and a
+       * row without a region is called exactly as it was before.
+       */
+      const result = await sanitize(bytes, region ? { repairRegion: region } : {});
 
       if (result.ok === false) {
         /*

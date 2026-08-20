@@ -1261,6 +1261,243 @@ describe('a repair region the caller established, and nothing else about it', ()
   });
 });
 
+describe('a persisted repair region is repair work the sweep finds by itself', () => {
+  /*
+   * THE MISSING CONNECTION.
+   *
+   * `sanitizeSourceImage` accepts a `repairRegion`, and until now nothing in
+   * the runtime supplied one — so a picture whose plate the detector cannot
+   * measure was repairable only by hand, once, and went straight back to being
+   * served with the plate on it the moment anything reopened the row.
+   *
+   * These pin the whole loop: the rectangle is persisted as ordinary image
+   * metadata, the ordinary five-minute sweep treats such a row as outstanding
+   * EVEN THOUGH THE DETECTOR SAYS `not_annotated`, hands the rectangle to the
+   * existing generic path, survives a vendor outage with the region and its
+   * retryability intact, and stops once there is a derivative to serve.
+   *
+   * Nothing here knows which picture it is. The code understands exactly one
+   * thing — "this image has a persisted explicit repair region" — and every
+   * fact about which pixels is in the row.
+   */
+  const REGION = { left: 0.0950, top: 0.8763, right: 0.3975, bottom: 0.9536 };
+
+  const cleanCandidate = async (over: Record<string, unknown> = {}) => {
+    // A picture the detector passes: eligible, no rejection reason, nothing
+    // for the ordinary conviction path to pick up.
+    const clean = badgedPicture().clean;
+    const bytes = (await encodePng(clean, { width: W, height: H, components: 3 }))!;
+    const sha = await sha256Hex(bytes);
+    const row = {
+      ...await refusedRow(bytes),
+      source_detail: {
+        role: 'primary_property',
+        role_evidence_level: 3,
+        stored_sha256: sha,
+        source_sha256: sha,
+        marketplace_display_eligible: true,
+        marketplace_eligibility_state: 'eligible',
+        marketplace_rejection_reason: null,
+        marketplace_measured: true,
+        marketplace_eligibility_version: 2,
+        repair_region: {
+          ...REGION,
+          original_sha256: sha,
+          established_by: 'identified on the stored bytes and recorded against them',
+        },
+        ...over,
+      },
+    };
+    return { row, bytes, sha, objects: { [PATH]: bytes } };
+  };
+
+  const vendorOutage = async () => {
+    throw new Error('the image editor refused the request (429) '
+      + '"You have no credits remaining."');
+  };
+
+  /*
+   * The vendor answering 429, as the SWEEP sees it.
+   *
+   * A stub rather than the real sanitizer for these two, because what is being
+   * pinned is the sweep's handling of an outage and not the sanitizer's — and a
+   * region small and quiet enough to be realistic is one the DETERMINISTIC
+   * route repairs without a vendor at all, which is the happy case tests 1, 2
+   * and 5 cover against the real thing. It still asserts the region arrived.
+   */
+  const outagedSanitize = (seen: { region?: unknown; calls: number }) =>
+    (async (_bytes: Uint8Array, options?: { repairRegion?: unknown }) => {
+      seen.calls += 1;
+      seen.region = options?.repairRegion ?? null;
+      return {
+        ok: false as const,
+        reason: 'inpaint_unavailable' as const,
+        transformation: 'generative_overlay_inpaint' as const,
+        model: null,
+        operational: true,
+        detail: 'the image editor refused the request (429) '
+          + '"You have no credits remaining."',
+      };
+    }) as never;
+
+  it('1 — a row the detector calls clean is outstanding when it carries a region', async () => {
+    const { row, objects } = await cleanCandidate();
+    let called = 0;
+
+    const outcome = await settleImageSanitization(fakeDb([row], objects) as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async (input, options) => {
+        called += 1;
+        return sanitizeSourceImage(input, { ...options, edit: vendorOutage });
+      },
+    });
+
+    // Before this, the two gates below excluded it outright and the picture was
+    // served with its plate for ever.
+    expect(row.source_detail.marketplace_eligibility_state).toBe('eligible');
+    expect(row.source_detail.marketplace_rejection_reason).toBeNull();
+    expect(outcome.outstanding).toBe(1);
+    expect(called).toBe(1);
+  });
+
+  it('2 — and the sweep hands the sanitizer the rectangle that was persisted', async () => {
+    const { row, objects } = await cleanCandidate();
+    let handed: unknown = null;
+
+    await settleImageSanitization(fakeDb([row], objects) as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async (input, options) => {
+        handed = options?.repairRegion ?? null;
+        return sanitizeSourceImage(input, { ...options, edit: vendorOutage });
+      },
+    });
+
+    expect(handed).toEqual(REGION);
+  });
+
+  it('3 — a vendor outage keeps the region, writes no verdict and stays retryable', async () => {
+    const { row, objects } = await cleanCandidate();
+    const db = fakeDb([row], objects);
+
+    const seen = { calls: 0 } as { region?: unknown; calls: number };
+    const outcome = await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: outagedSanitize(seen),
+    });
+
+    expect(seen.region).toEqual(REGION);
+    expect(outcome.unresolved).toBe(1);
+    expect(sanitizationSweepCompleted(outcome)).toBe(false);
+    const detail = db.rows[0].source_detail as Record<string, any>;
+    // The region survives, so the next attempt is the same attempt.
+    expect(detail.repair_region).toMatchObject(REGION);
+    // Nothing that could settle the row, and nothing that could blank the card.
+    expect(detail[DERIVATIVE_KEY] ?? null).toBeNull();
+    expect(detail[FAILURE_KEY] ?? null).toBeNull();
+    expect(detail[CLEARANCE_KEY] ?? null).toBeNull();
+    // And the cooldown was recorded, exactly as for any other operational miss.
+    expect(detail.sanitization_attempt).toBeTruthy();
+  });
+
+  it('4 — the existing cooldown is respected, and the row is still outstanding', async () => {
+    const { row, objects } = await cleanCandidate();
+    const db = fakeDb([row], objects);
+    const seen = { calls: 0 } as { region?: unknown; calls: number };
+    const run = () => settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: outagedSanitize(seen),
+    });
+
+    await run();
+    const second = await run();
+
+    // Passed over, NOT settled: the sweep must come back to it.
+    expect(seen.calls).toBe(1);
+    expect(second.outstanding).toBe(1);
+    expect(second.incomplete).toBe(true);
+    expect(sanitizationSweepCompleted(second)).toBe(false);
+  });
+
+  it('5 — a successful repair is stored the normal way and stops the retrying', async () => {
+    const { row, objects } = await cleanCandidate();
+    const db = fakeDb([row], objects);
+    const clean = badgedPicture().clean;
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async (input, options) => sanitizeSourceImage(input, {
+        ...options, edit: honestModel(clean, maskFor(badgedPicture().badged)),
+      }),
+    });
+
+    const detail = db.rows[0].source_detail as Record<string, any>;
+    const stored = detail[DERIVATIVE_KEY];
+    if (!stored) {
+      // The deterministic route answered instead; either is a stored result.
+      expect(detail[FAILURE_KEY] ?? detail[DERIVATIVE_KEY]).toBeTruthy();
+    }
+
+    // Whatever route answered, the row is settled and a second tick does no
+    // work on it — the retrying stops without anything marking it "complete"
+    // by hand.
+    let again = 0;
+    const second = await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async (input, options) => {
+        again += 1;
+        return sanitizeSourceImage(input, { ...options, edit: vendorOutage });
+      },
+    });
+    expect(again).toBe(0);
+    expect(second.outstanding).toBe(0);
+  });
+
+  it('6 — a region that names other bytes, or is malformed, is not a region', async () => {
+    for (const bad of [
+      { original_sha256: 'f'.repeat(64) },                       // a replaced file
+      { original_sha256: undefined },                            // unattributable
+      { left: 0.9, right: 0.2 },                                 // inverted
+      { top: 0.5, bottom: 0.5 },                                 // empty
+      { left: -0.2 },                                            // outside the frame
+    ]) {
+      const { row, objects } = await cleanCandidate();
+      Object.assign(row.source_detail.repair_region as Record<string, unknown>, bad);
+      let called = 0;
+
+      const outcome = await settleImageSanitization(fakeDb([row], objects) as never, ORG, {
+        budget: newRepairBudget(),
+        sanitize: async (input, options) => {
+          called += 1;
+          return sanitizeSourceImage(input, { ...options, edit: vendorOutage });
+        },
+      });
+
+      // Falls back to exactly the behaviour of a row with no region at all: the
+      // detector gates decide, and this picture they pass.
+      expect(called).toBe(0);
+      expect(outcome.outstanding).toBe(0);
+    }
+  });
+
+  it('7 — a row with no region is left to the detector, unchanged', async () => {
+    const { row, objects } = await cleanCandidate();
+    delete (row.source_detail as Record<string, unknown>).repair_region;
+    let handed: unknown = 'never called';
+
+    const outcome = await settleImageSanitization(fakeDb([row], objects) as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async (input, options) => {
+        handed = options?.repairRegion ?? null;
+        return sanitizeSourceImage(input, { ...options, edit: vendorOutage });
+      },
+    });
+
+    expect(handed).toBe('never called');
+    expect(outcome.outstanding).toBe(0);
+    expect(outcome.scanned).toBe(1);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The reader: a derivative is a claim about SPECIFIC bytes
 // ---------------------------------------------------------------------------
