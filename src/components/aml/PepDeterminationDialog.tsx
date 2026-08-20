@@ -753,6 +753,15 @@ export function PepDeterminationDialog({
                     const covered = check?.state === "searched_by_platform";
                     const bound = checkedRows.filter((r) => r.searchId === s.id);
                     const recorded = bound.some((r) => r.result.trim().length > 0);
+                    /*
+                     * Recorded FROM THE RUN is a different fact from recorded
+                     * by a person: the row is identical and carries the same
+                     * weight, but the card has to say where it came from, or
+                     * an operator cannot tell what they have and have not
+                     * personally seen.
+                     */
+                    const runRecorded = recorded && bound.every(
+                      (r) => r.fromRun === true || r.result.trim().length === 0);
                     const open = () => {
                       window.open(s.url, "_blank", "noopener,noreferrer");
                       setRows((prev) => [...prev, newRow({
@@ -761,24 +770,29 @@ export function PepDeterminationDialog({
                       })]);
                     };
 
-                    /* Recorded · looked but nothing written · read by the run
-                       · untouched. Four readings, never collapsed into one. */
-                    const status = recorded
-                      ? { label: "Recorded", tone: "border-success/50 bg-success/10 text-success" }
-                      : bound.length > 0
-                        ? {
-                          label: "Waiting on what came back",
-                          tone: "border-warning/50 bg-warning/10 text-warning",
-                        }
-                        : covered
+                    /* Recorded by the run · recorded by you · looked but
+                       nothing written · outstanding. Never collapsed. */
+                    const status = runRecorded
+                      ? {
+                        label: "Recorded from the run",
+                        tone: "border-info/50 bg-info/10 text-info",
+                      }
+                      : recorded
+                        ? { label: "Recorded", tone: "border-success/50 bg-success/10 text-success" }
+                        : bound.length > 0
                           ? {
-                            label: "Read by the run — confirm",
-                            tone: "border-info/50 bg-info/10 text-info",
+                            label: "Waiting on what came back",
+                            tone: "border-warning/50 bg-warning/10 text-warning",
                           }
-                          : {
-                            label: "Not checked yet",
-                            tone: "border-border/60 bg-muted/40 text-muted-foreground",
-                          };
+                          : covered
+                            ? {
+                              label: "Read by the run — confirm",
+                              tone: "border-info/50 bg-info/10 text-info",
+                            }
+                            : {
+                              label: "Needs you",
+                              tone: "border-warning/50 bg-warning/10 text-warning",
+                            };
 
                     return (
                       <li
@@ -786,10 +800,15 @@ export function PepDeterminationDialog({
                         className={cn(
                           "rounded-lg border p-3 transition-colors duration-300",
                           recorded
-                            ? "border-success/40 bg-success/5"
+                            ? runRecorded
+                              ? "border-info/40 bg-info/5"
+                              : "border-success/40 bg-success/5"
                             : bound.length > 0
                               ? "border-warning/40 bg-warning/5"
-                              : "border-border/60 bg-background",
+                              /* Outstanding work is the only thing on this list
+                                 that a person still has to do, so it is the only
+                                 thing given a ring. */
+                              : "border-warning/50 bg-warning/[0.04] ring-1 ring-warning/25",
                         )}
                       >
                         <div className="flex items-start gap-3">
@@ -798,14 +817,17 @@ export function PepDeterminationDialog({
                             className={cn(
                               "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold transition-colors",
                               recorded
-                                ? "border-success/50 bg-success/10 text-success"
-                                : "border-border/60 bg-muted/40 text-muted-foreground",
+                                ? runRecorded
+                                  ? "border-info/50 bg-info/10 text-info"
+                                  : "border-success/50 bg-success/10 text-success"
+                                : "border-warning/50 bg-warning/10 text-warning",
                             )}
                           >
                             {recorded
                               ? <Check className="h-3.5 w-3.5" />
                               : <Circle className="h-2.5 w-2.5" />}
                           </span>
+
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-sm font-medium">{s.label}</span>
