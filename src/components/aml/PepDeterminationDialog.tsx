@@ -442,24 +442,60 @@ export function PepDeterminationDialog({
     () => searches.filter((s) => s.tier === "register"), [searches]);
   const otherRows = useMemo(
     () => checkedRows.filter((r) => !r.searchId), [checkedRows]);
-  const registerTotal = registerSearches.length;
+
+  /*
+   * ── Two different obligations, counted separately ─────────────────────
+   * "1 of 4 recorded" read as a three-quarters-empty checklist, and three of
+   * those four could never have been filled by the run: ParlInfo is a
+   * full-text archive of the parliamentary record and ABN Lookup is a company
+   * register that happens to name office holders. Neither is a register the
+   * index could hold, so counting them alongside the ones it does reports a
+   * coverage failure that does not exist — and buries the one register that
+   * genuinely still needs a person.
+   *
+   * `classifyManualChecks` already draws that line (`not_held_by_platform`).
+   * This reads it rather than re-deciding it, so nothing here can disagree
+   * with the run above.
+   */
+  const stateOf = useMemo(() => {
+    const byId = new Map(manualChecks.map((m) => [m.id, m.state]));
+    return (id: string) => byId.get(id);
+  }, [manualChecks]);
+  const heldRegisters = useMemo(
+    () => registerSearches.filter((s) => stateOf(s.id) !== "not_held_by_platform"),
+    [registerSearches, stateOf]);
+  const unheldRegisters = useMemo(
+    () => registerSearches.filter((s) => stateOf(s.id) === "not_held_by_platform"),
+    [registerSearches, stateOf]);
+
+  const hasResult = useMemo(
+    () => (id: string) => checkedRows.some(
+      (r) => r.searchId === id && r.result.trim().length > 0),
+    [checkedRows]);
+
+  /* The progress bar measures the registers the platform can read. */
+  const registerTotal = heldRegisters.length;
   const registerDone = useMemo(
-    () => registerSearches.filter((s) => checkedRows.some(
-      (r) => r.searchId === s.id && r.result.trim().length > 0)).length,
-    [registerSearches, checkedRows]);
+    () => heldRegisters.filter((s) => hasResult(s.id)).length,
+    [heldRegisters, hasResult]);
   /*
    * What is left for a person, named.
    *
    * Once the run's own results cascade in, "0 of 4 recorded" is no longer the
-   * honest reading — some of those four have been read and recorded, and the
+   * honest reading — some of those have been read and recorded, and the
    * remainder are the ones no server can reach. Those are what this lists, so
    * the operator sees the actual outstanding work rather than the whole list
    * again.
    */
   const outstandingRegisters = useMemo(
-    () => registerSearches.filter((s) => !checkedRows.some(
-      (r) => r.searchId === s.id && r.result.trim().length > 0)),
-    [registerSearches, checkedRows]);
+    () => heldRegisters.filter((s) => !hasResult(s.id)),
+    [heldRegisters, hasResult]);
+  /* Sources nobody's server could have covered: offered, never counted as a
+     coverage gap, and still recordable by hand. */
+  const outstandingOther = useMemo(
+    () => unheldRegisters.filter((s) => !hasResult(s.id)),
+    [unheldRegisters, hasResult]);
+
 
 
 
