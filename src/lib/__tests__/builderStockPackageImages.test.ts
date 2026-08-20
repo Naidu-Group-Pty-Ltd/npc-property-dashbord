@@ -221,10 +221,35 @@ describe('which document belongs to which property', () => {
     expect(selectPackageDocument(entries, { lot: '43', design: 'miami 190' })).toBeNull();
   });
 
-  it('refuses a folder whose documents all name the same lot', () => {
-    // Lot 914's folder: a package, a land contract and a rental appraisal.
+  it('picks the package out of a folder whose documents all name the same lot', () => {
+    /*
+     * Lot 914's real folder: a package, a land contract and a rental appraisal,
+     * every one of them naming lot 914. Counting names finds three and refuses
+     * — which left a real builder facade off a live card. The contract and the
+     * appraisal say in their own filenames what they are, so what remains is
+     * exactly one package candidate.
+     */
     const entries = [
       pdf('a', 'LOT 914 • COVELLA • GREENBANK QLD.pdf'),
+      pdf('b', 'OTP_Land_Contract_P1_-_Rana_-_Lot_914_Covella.pdf'),
+      pdf('c', 'Rental Appraisal_ Lot 914, Covella Estate, Greenbank QLD.pdf'),
+    ];
+    expect(selectPackageDocument(entries, { lot: '914', design: null })?.id).toBe('a');
+  });
+
+  it('still refuses when TWO documents could both be the package', () => {
+    // Neither declares itself something else, so the folder has not said which.
+    const entries = [
+      pdf('a', 'LOT 914 • COVELLA • GREENBANK QLD.pdf'),
+      pdf('b', 'Lot 914 Covella - Property Package.pdf'),
+    ];
+    expect(selectPackageDocument(entries, { lot: '914', design: null })).toBeNull();
+  });
+
+  it('refuses when every candidate declares itself something else', () => {
+    // A contract and an appraisal and nothing else. Inventing a package out of
+    // a contract is precisely what this must not do.
+    const entries = [
       pdf('b', 'OTP_Land_Contract_P1_-_Rana_-_Lot_914_Covella.pdf'),
       pdf('c', 'Rental Appraisal_ Lot 914, Covella Estate, Greenbank QLD.pdf'),
     ];

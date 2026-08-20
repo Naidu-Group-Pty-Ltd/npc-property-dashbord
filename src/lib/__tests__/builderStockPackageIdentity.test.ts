@@ -184,7 +184,7 @@ describe('which document in the folder is this property\'s package', () => {
     expect(selectPackageDocument(LOT_51_FOLDER, { lot: '51', design: null })).toBeNull();
   });
 
-  it('refuses the Covella folder, where THREE documents name the lot', () => {
+  it('picks the package out of the Covella folder, where THREE name the lot', () => {
     /*
      * THE REASON LOT 914 COVELLA STILL SHOWS NO PHOTOGRAPH, and it is not the
      * one it looks like. Its package PDF is real and its first page is a hero
@@ -195,7 +195,8 @@ describe('which document in the folder is this property\'s package', () => {
      * is upstream of every image rule: no cover path, structural or textual,
      * is ever reached.
      */
-    expect(selectPackageDocument(COVELLA_FOLDER, { lot: '914', design: null })).toBeNull();
+    expect(selectPackageDocument(COVELLA_FOLDER, { lot: '914', design: null })?.name)
+      .toBe('LOT 914 • COVELLA • GREENBANK QLD.pdf');
   });
 });
 

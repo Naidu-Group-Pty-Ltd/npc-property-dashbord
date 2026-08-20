@@ -544,5 +544,49 @@ export async function discoverPdfSourceAssets(
       role: noPrimaryEvidence('the role of this image has not been settled yet'),
     });
   }
+
+  /*
+   * AND THE PAGES THAT ARE ONE PICTURE EACH.
+   *
+   * `discoverCandidates` reads a page's drawing instructions and takes the
+   * rasters placed on it, which is right for a laid-out document and finds
+   * NOTHING in a brochure exported as page images: there is no facade object to
+   * take, because the facade, the type and the price panel are one 2480x3506
+   * bitmap. "LOT 914 • COVELLA • GREENBANK QLD.pdf" is three such pages, and it
+   * is the reason `pdfFlattenedPhoto.pure.ts` exists — a module written for this
+   * exact document that nothing on this path could reach, because only the
+   * legacy single-photo function called it.
+   *
+   * So a page that yielded no embedded candidate is offered to the flattened
+   * path, which cuts the photograph out of the builder's own pixels and refuses
+   * unless EXACTLY ONE band qualifies. Pages that yielded a candidate are left
+   * alone: where the document placed its pictures properly, those pictures are
+   * the answer and a crop of the whole page would be a worse one.
+   */
+  const pagesWithAssets = new Set(assets.map((asset) => asset.page));
+  for (let index = 0; index < limit; index++) {
+    const page = index + 1;
+    if (pagesWithAssets.has(page)) continue;
+    const cut = await extractPdfPagePhoto(bytes, index, recovered);
+    if (!cut || cut.provenance.method !== 'page_crop') continue;
+    assets.push({
+      page,
+      key: `page${page}:crop`,
+      bytes: cut.bytes,
+      contentType: cut.contentType,
+      provenance: cut.provenance,
+      placement: {
+        page,
+        name: cut.provenance.resourceName,
+        // A crop is by construction the only thing taken from its page, and it
+        // exists on no other, so it can never be the repeated artwork
+        // `selectCoverHero` eliminates.
+        placementsOnPage: 1,
+        pagesDrawnOn: 1,
+      },
+      role: noPrimaryEvidence('the role of this image has not been settled yet'),
+    });
+  }
+
   return { assets, pageOrderAuthoritative: authoritative };
 }
