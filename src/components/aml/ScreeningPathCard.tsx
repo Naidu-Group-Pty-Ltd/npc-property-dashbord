@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 
 import { PepIndexReadiness } from "@/components/aml/PepIndexReadiness";
+import { ScreeningRadar, type ScreeningRadarParty } from "@/components/aml/ScreeningRadar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
