@@ -849,6 +849,11 @@ export default function AmlCaseWorkspace() {
                   })}
                   caseClosed={screeningStage.sync.case_closed === true}
                   closedAction={screeningReopenAction}
+                  radarParties={(screeningStage.sync.subjects ?? []).map((s) => ({
+                    name: s.screened_name,
+                    returned: s.state !== "not_started" && s.state !== "processing",
+                    candidate: s.state === "possible_match",
+                  }))}
                   onAct={runScreeningAction}
                   onContinue={nextStage ? () => goToStage(nextStage.id) : undefined}
                   onReviewPerimeter={() => setPerimeterDialogOpen(true)}

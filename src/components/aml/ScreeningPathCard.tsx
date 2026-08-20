@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 
 import { PepIndexReadiness } from "@/components/aml/PepIndexReadiness";
+import { ScreeningRadar, type ScreeningRadarParty } from "@/components/aml/ScreeningRadar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -97,7 +98,7 @@ function StepMarker({ step, isCurrent }: { step: ScreeningStep; isCurrent: boole
 
 export function ScreeningPathCard({
   path, actor, onAct, onReviewPerimeter, onOpenDetail, onContinue, caseClosed,
-  closedAction,
+  closedAction, radarParties = [], radarStartedAt = null,
 }: {
   path: ScreeningPath;
   actor: ScreeningActor;
@@ -112,6 +113,14 @@ export function ScreeningPathCard({
   caseClosed: boolean;
   /** The reopen action, when the case is closed. */
   closedAction?: AmlScreeningNextAction | null;
+  /**
+   * The enrolled population, for the live radar shown while a check runs.
+   * Presentation only: an empty list renders an indeterminate sweep rather
+   * than a percentage nobody measured.
+   */
+  radarParties?: ScreeningRadarParty[];
+  /** When the running check was dispatched, if the case records it. */
+  radarStartedAt?: string | null;
 }) {
   const [open, setOpen] = useState<ScreeningStepKey | null>(path.currentKey);
   const [busy, setBusy] = useState(false);
@@ -350,6 +359,18 @@ export function ScreeningPathCard({
                         </div>
                       </dl>
                       </details>
+                    )}
+
+                    {/*
+                      ── The wait, made legible ───────────────────────
+                      A running check reads as a hang when the only thing on
+                      screen is "a check is in progress". The radar carries
+                      the same server-read facts as motion plus a measured
+                      reading; it screens nothing and decides nothing.
+                    */}
+                    {!caseClosed && step.key === "sanctions" && step.state === "waiting"
+                      && step.row?.outcome === "running" && (
+                      <ScreeningRadar parties={radarParties} startedAt={radarStartedAt} />
                     )}
 
                     {/* ── The act ─────────────────────────────────────── */}
