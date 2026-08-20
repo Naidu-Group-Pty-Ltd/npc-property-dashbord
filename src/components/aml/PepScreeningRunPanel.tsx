@@ -458,7 +458,22 @@ export function PepScreeningRunPanel({
             Searches the registers Aurixa holds and records what it found. It
             informs the determination; it never makes one.
           </p>
+          {/*
+            A restored run says so, and says when. Presenting last week's
+            search as though it had just been performed is the same
+            overstatement as presenting a stale register as current.
+          */}
+          {restored && run && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Showing the last run for this party
+              {run.created_at
+                ? ` — ${new Date(run.created_at).toLocaleString("en-AU")}`
+                : ""}
+              . Run it again to search the registers as they stand today.
+            </p>
+          )}
         </div>
+
         <Button type="button" size="sm" onClick={() => void start()} disabled={busy}>
           {busy
             ? <Loader2 aria-hidden className="mr-1.5 h-3.5 w-3.5 animate-spin" />
