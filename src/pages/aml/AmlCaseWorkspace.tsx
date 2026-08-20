@@ -849,9 +849,8 @@ export default function AmlCaseWorkspace() {
                   })}
                   caseClosed={screeningStage.sync.case_closed === true}
                   closedAction={screeningReopenAction}
-                  {/* Presentation only: the enrolled population, so the live
-                      radar can show how much of it the engine has answered
-                      about. Nothing here decides or screens anything. */}
+                  /* Presentation only: the enrolled population, so the live radar
+                     can show how much of it the engine has answered about. */
                   radarParties={(screeningStage.sync.subjects ?? []).map((s) => ({
                     name: s.screened_name,
                     returned: s.state !== "not_started" && s.state !== "processing",
