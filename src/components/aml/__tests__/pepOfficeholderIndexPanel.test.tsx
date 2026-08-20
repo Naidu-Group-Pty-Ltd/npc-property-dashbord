@@ -38,6 +38,8 @@ const coverage = (over = {}) => ({
 });
 
 const candidate = (over = {}) => ({
+  dateOfBirth: undefined,
+  dob: undefined,
   externalId: "Q42", sourceCode: "wikidata_au_public_office",
   fullName: "Pat Example", aliases: ["Patricia Example"],
   positionTitle: "Member of the Australian House of Representatives",
