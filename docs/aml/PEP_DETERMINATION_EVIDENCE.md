@@ -250,6 +250,79 @@ guard scans the directory rather than the two that were known. Both now render
 words; the run panel feeds it through an adapter because a run stores less than
 an index coverage row.
 
+## A refetch behind the dialog must not throw away the work
+
+### What the operator saw
+
+The screening ran, its results cascaded into the register checklist, and then
+the section came and went. Opening a register and coming back lost it. So did
+waiting.
+
+### Why
+
+The workspace keeps an open case current with `useLiveCaseRefresh`, which
+refetches on **`focus` and `visibilitychange`** — and on a timer. This screen's
+own design asks the operator to open official registers in a new tab and come
+back, so **returning from a register is a refetch, every time.**
+
+The refetch parses fresh JSON. `pep_declaration` is a new object with identical
+content. And the dialog's reset effect was keyed on that object:
+
+```js
+}, [open, declaration]);
+```
+
+so it fired. `runSources` was cleared, the cascade effect stripped every row the
+run had written, and anything typed into the determination went with it. The
+screening card above stayed — the run lives in the child component — so the
+checklist below it simply emptied, and the only way back was to run the
+screening again.
+
+The timer made it worse than the click: a poll could land mid-sentence with
+nothing the operator did to provoke it.
+
+**Object identity of refetched data is not a signal that anything changed.**
+
+### The rule
+
+A session is one (open dialog, party). `sessionKey` is that, as a string, and
+it is the only thing that may reset this state. A ref records what the state
+was initialised for, so re-running the effect on any other render is a no-op.
+
+Two halves, and the second is what stops the fix becoming a new defect:
+
+- **Refetches change nothing.** The declaration is read through a ref at
+  initialisation, so it is not a dependency of it.
+- **A different party still starts clean.** Telling an operator a register was
+  searched for a party it was never searched for is the same lie from the
+  opposite direction, so the reset is narrowed rather than removed.
+
+The customer's declaration is seeded **once per session and never rewritten**.
+It can arrive after the dialog opens, so it cannot live in the initialiser; its
+dependencies are the answer's **primitives**, so a refetch carrying the same
+answer does nothing. If the customer later changes their answer that is a real
+event, and it is not handled by silently editing a row the operator may already
+have relied on — the screening run reads the declaration server-side at the
+moment it runs, which is where a changed answer is picked up.
+
+### One report upwards, derived from the run
+
+The run panel told the checklist what it had read in **three** places — on
+restoring the party's last screening, on a new run, and on failure. Three
+chances for the checklist to describe a search the panel did not perform.
+
+It is one effect on `run` now. Whatever sets it, the parent is told the same
+thing by the same code, and the two cannot diverge because there is nothing to
+keep in step. The callback is held in a ref so an unstable prop identity cannot
+make it fire on renders where the run has not changed.
+
+### A note on the guard tests
+
+Three of the source rules in this area have now failed on their own
+documentation — the comment explaining a removed line necessarily quotes it.
+`pepDeterminationDialog.source.test.ts` strips comment lines through one
+`codeOnly` helper rather than each rule remembering to.
+
 ## Where the tests are
 
 | | |

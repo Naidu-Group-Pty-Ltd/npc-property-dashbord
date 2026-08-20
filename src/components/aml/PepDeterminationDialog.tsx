@@ -32,7 +32,7 @@
  * `record_pep_determination` enforces — so the button's disabled state, the
  * message under it, and what the server accepts are one rule.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowUpRight, Check, Circle, ClipboardCheck, Info, Loader2,
   Plus, ShieldCheck, X,
@@ -180,31 +180,88 @@ export function PepDeterminationDialog({
   }), [subject.screened_name, declaration?.country]);
 
   /*
+   * ── ONE EDITING SESSION, AND WHAT MAY END IT ──────────────────────────
+   *
+   * This state is initialised once per (open dialog, party) and by nothing
+   * else. That is what `sessionKey` is: the identity of the thing being
+   * worked on, as a string.
+   *
+   * It used to be keyed on the `declaration` OBJECT:
+   *
+   *     }, [open, declaration]);
+   *
+   * The workspace behind this dialog keeps an open case current with
+   * `useLiveCaseRefresh`, which refetches on `focus` and `visibilitychange`.
+   * This screen's own design asks the operator to open official registers in
+   * a new tab and come back — so **returning from a register is a refetch,
+   * every time**. The refetch parses fresh JSON, `pep_declaration` is a new
+   * object with identical content, and this effect fired: the run's cascade
+   * was cleared, every row it had written was stripped, and anything typed
+   * into the determination went with it. The screening card above stayed —
+   * the run lives in the child — so the checklist below simply emptied, and
+   * the only way back was to run the screening again.
+   *
+   * The poll runs on a timer too, so it could also land mid-sentence with
+   * nothing the operator did to provoke it.
+   *
+   * **Object identity of refetched data is not a signal that anything
+   * changed.** A session ends when the operator closes the dialog or moves to
+   * a different party, and those are the only two things that may reset this.
+   */
+  const sessionKey = open ? subject.id : null;
+  const initialisedFor = useRef<string | null>(null);
+  const seededDeclarationFor = useRef<string | null>(null);
+  /* Read at initialisation without being a dependency of it. */
+  const declarationRef = useRef(declaration);
+  declarationRef.current = declaration;
+
+  useEffect(() => {
+    if (!sessionKey || initialisedFor.current === sessionKey) return;
+    initialisedFor.current = sessionKey;
+    seededDeclarationFor.current = null;
+    const decl = declarationRef.current;
+    setOutcome(null);
+    setRationale("");
+    setPepType(""); setRelationship(""); setPosition("");
+    setJurisdiction(decl?.country ?? "");
+    setCurrentlyHeld(""); setDeferReason(""); setNeeded("");
+    // A new party has run nothing yet. Carrying the previous one's coverage
+    // across would tell an operator a register was searched for somebody it
+    // was never searched for — the same lie as losing it, from the other
+    // direction, which is why the reset is narrowed rather than removed.
+    setRunSources(null);
+    setRows([]);
+  }, [sessionKey]);
+
+  /*
    * The customer's own answer is seeded as a row — as a DECLARATION, which
    * `assessPepEvidence` counts separately and which can never satisfy the
    * independent-source rule on its own. Seeding it saves retyping; it does
    * not lower the bar.
+   *
+   * Seeded ONCE per session, and never rewritten. The declaration can arrive
+   * after the dialog opens, so this cannot live in the initialiser above —
+   * and its dependencies are the answer's PRIMITIVES rather than the object,
+   * so a refetch carrying the same answer does nothing.
+   *
+   * If the customer later changes their answer, that is a real event and it
+   * is not handled by silently editing a row the operator may already have
+   * relied on. The screening run reads the declaration server-side at the
+   * moment it runs, which is where a changed answer is picked up.
    */
   useEffect(() => {
-    if (!open) return;
-    setOutcome(null);
-    setRationale("");
-    setPepType(""); setRelationship(""); setPosition("");
-    setJurisdiction(declaration?.country ?? "");
-    setCurrentlyHeld(""); setDeferReason(""); setNeeded("");
-    // A reopened dialog has run nothing yet. Carrying the previous subject's
-    // coverage across would tell an operator a register was searched for a
-    // party it was never searched for.
-    setRunSources(null);
-    setRows(declaration?.answered
-      ? [newRow({
+    if (!sessionKey || seededDeclarationFor.current === sessionKey) return;
+    if (!declaration?.answered) return;
+    seededDeclarationFor.current = sessionKey;
+    setRows((prev) => (prev.some((r) => r.kind === "client_declaration")
+      ? prev
+      : [newRow({
         kind: "client_declaration",
         source: "The customer's declaration in the client portal",
         reference: `Answered: ${declaration.answer === "yes" ? "yes" : "no"}`,
         result: declaration.summary,
-      })]
-      : []);
-  }, [open, declaration]);
+      }), ...prev]));
+  }, [sessionKey, declaration?.answered, declaration?.answer, declaration?.summary]);
 
   /*
    * What the last run read. `null` means no run has been made in this dialog,
@@ -255,8 +312,8 @@ export function PepDeterminationDialog({
       return added.length === 0 && kept.length === prev.length
         ? prev : [...kept, ...added];
     });
-    // `searches` is derived from the party and stable for the open dialog.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    /* `searches` is derived from the party's name and jurisdiction, both
+       primitives, so it is stable for the life of a session. */
   }, [open, runSources]);
 
   const methods: PepMethod[] = useMemo(

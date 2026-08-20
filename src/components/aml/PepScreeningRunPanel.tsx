@@ -23,7 +23,7 @@
  * demoted, but never removed, because the registers a server cannot reach are
  * exactly the ones a person still has to open.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowUpRight, Check, Info, Loader2, Search, ShieldQuestion, X,
 } from "lucide-react";
@@ -349,10 +349,6 @@ export function PepScreeningRunPanel({
         if (!next) return;
         setRun(next);
         setRestored(true);
-        onSources?.(next.sources.map((x) => ({
-          key: x.key, status: x.status, label: x.label,
-          foundCount: x.foundCount, asAt: x.asAt ?? null,
-        })));
         /* Decisions already taken on this run's candidates stay taken. */
         const taken: Record<string, { decision: "accepted" | "rejected"; reason: string }> = {};
         for (const r of res.reviews ?? []) {
@@ -370,10 +366,37 @@ export function PepScreeningRunPanel({
       }
     })();
     return () => { live = false; };
-    // `onSources` is a setter from the parent and stable for the open dialog.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    /* The parent is told what was restored by the one effect on `run`, so
+       this no longer reaches outside its own dependencies. */
   }, [caseId, subjectId]);
 
+
+  /*
+   * ── ONE REPORT UPWARDS, DERIVED FROM THE RUN ──────────────────────────
+   *
+   * The checklist beside this panel classifies each register from what the
+   * run read. That report was made in three places — on restore, on a new
+   * run, and on failure — which is three chances for the checklist to
+   * describe a search this panel did not perform.
+   *
+   * It is one effect on `run` now. Whatever sets `run` — restoring the
+   * party's last screening, pressing the button, a failure clearing it — the
+   * parent is told the same thing by the same code, and the two cannot
+   * diverge because there is nothing to keep in step.
+   *
+   * The callback is held in a ref so an unstable prop identity from the
+   * parent cannot make this fire on renders where the run has not changed.
+   */
+  const onSourcesRef = useRef(onSources);
+  onSourcesRef.current = onSources;
+  useEffect(() => {
+    onSourcesRef.current?.(run
+      ? run.sources.map((x) => ({
+        key: x.key, status: x.status, label: x.label,
+        foundCount: x.foundCount, asAt: x.asAt ?? null,
+      }))
+      : null);
+  }, [run]);
 
   const start = async () => {
     setBusy(true);
@@ -381,30 +404,18 @@ export function PepScreeningRunPanel({
       const res = await amlCasesApi.runPepScreening({
         case_id: caseId, party_screening_subject_id: subjectId,
       });
-      const next = res.run as Run;
-      setRun(next);
+      setRun(res.run as Run);
       setRestored(false);
-      /*
-       * The status is what the manual-check classification reads; the label,
-       * the count and the currency date are what a cascaded row is worded
-       * from. One report upwards, so the checklist cannot describe a search
-       * the panel did not perform.
-       */
-      onSources?.(next.sources.map((x) => ({
-        key: x.key, status: x.status, label: x.label,
-        foundCount: x.foundCount, asAt: x.asAt ?? null,
-      })));
       setDecisions({});
       if (res.evidence) onEvidence(res.evidence);
     } catch (e: unknown) {
       // A failure is a technical condition and is shown as one. Reporting it
       // as "nothing found" is how an error becomes an outcome.
+      // A run that failed has read nothing, so every register goes back to
+      // needing a person — the effect below withdraws the previous run's
+      // coverage rather than leaving this attempt credited with its reach.
       setRun(null);
       setRestored(false);
-      // A run that failed has read nothing, so every register goes back to
-      // needing a person. Leaving the previous run's coverage standing would
-      // credit this attempt with the last one's reach.
-      onSources?.(null);
       toast({
         title: "The screening could not be run",
         description: e instanceof Error ? e.message : "The server refused it.",
