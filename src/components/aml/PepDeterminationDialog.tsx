@@ -91,6 +91,14 @@ const RELATIONSHIPS = ["self", "family_member", "close_associate"] as const;
 
 interface Row {
   id: string;
+  /**
+   * The listed search this row was opened from, when it was. Rows are bound
+   * to their register by THIS and never by the source label — an operator who
+   * types a register's name into a hand-added row must not have their row
+   * teleported into that register's card mid-edit, which is exactly what
+   * label-matching did.
+   */
+  searchId?: string;
   kind: PepSourceKind;
   source: string;
   reference: string;
@@ -363,6 +371,24 @@ export function PepDeterminationDialog({
   /* Step 2's own count: what the operator actually went and checked. */
   const independentCount = checkedRows.length;
 
+  /*
+   * ── The checklist ────────────────────────────────────────────────────
+   * A register is bound to its rows by the search it was opened from, so what
+   * came back is captured on the register that produced it rather than in a
+   * detached grid. Anything not opened from a listed source — an accepted run
+   * candidate, a web search, a source typed by hand — falls to the general
+   * list, so nothing can be filtered out of view.
+   */
+  const registerSearches = useMemo(
+    () => searches.filter((s) => s.tier === "register"), [searches]);
+  const otherRows = useMemo(
+    () => checkedRows.filter((r) => !r.searchId), [checkedRows]);
+  const registerTotal = registerSearches.length;
+  const registerDone = useMemo(
+    () => registerSearches.filter((s) => checkedRows.some(
+      (r) => r.searchId === s.id && r.result.trim().length > 0)).length,
+    [registerSearches, checkedRows]);
+
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -556,250 +582,443 @@ export function PepDeterminationDialog({
                 now, and a register the platform read is offered as a place to
                 CONFIRM rather than as a hole to fill.
               */}
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  Check by hand — official registers
-                </p>
-                <p className="mb-2 text-[11px] text-muted-foreground">
-                  {describeManualChecks(manualChecks, runSources !== null)}
-                </p>
+              {/*
+                ── The checklist ────────────────────────────────────────
+                The registers used to be a wrap of buttons, and what came
+                back went into a separate grid of rows further down — so the
+                thing an operator has to finish (open a register, look,
+                write down what they saw) was split across two lists that
+                never referred to each other, and "have I done this one?"
+                had no answer on screen. It is one numbered checklist now:
+                each register carries its own state, its own capture field
+                and its own tick, and the header counts them.
+
+                Nothing here is derived differently. The state comes off
+                `classifyManualChecks` and the rows are the same `rows`
+                state `methods` is built from.
+              */}
+              <div
+                className={cn(
+                  "space-y-3 transition-opacity duration-500",
+                  runSources !== null && "animate-fade-in",
+                )}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Check by hand — official registers
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {describeManualChecks(manualChecks, runSources !== null)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-xs font-medium tabular-nums text-muted-foreground">
+                      {registerDone} of {registerTotal} recorded
+                    </span>
+                    <div
+                      className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
+                      role="progressbar"
+                      aria-valuenow={registerDone}
+                      aria-valuemin={0}
+                      aria-valuemax={registerTotal}
+                      aria-label="Registers recorded"
+                    >
+                      <div
+                        className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
+                        style={{
+                          width: registerTotal > 0
+                            ? `${Math.round((registerDone / registerTotal) * 100)}%`
+                            : "0%",
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 {/*
                   What the loaded registers do not evidence at all. Measured by
                   the loader, and the direct answer to "the run found nothing —
                   what had it never looked at?".
                 */}
-                <PepCoverageGaps className="mb-2" />
-              </div>
+                <PepCoverageGaps />
 
-              <div className="flex flex-wrap gap-2">
-                {searches.filter((s) => s.tier === "register").map((s) => {
-                  const check = manualChecks.find((m) => m.id === s.id);
-                  const covered = check?.state === "searched_by_platform";
-                  return (
-                    <Button
-                      key={s.id} type="button" variant="outline" size="sm"
-                      className="h-auto justify-start py-1.5 text-left"
-                      onClick={() => {
-                        window.open(s.url, "_blank", "noopener,noreferrer");
-                        setRows((prev) => [...prev, newRow({
-                          kind: s.kind, source: s.label, reference: s.searchTerms,
-                        })]);
-                      }}
-                    >
-                      {covered
-                        ? <ShieldCheck aria-hidden className="mr-1.5 h-3.5 w-3.5 shrink-0" />
-                        : <ArrowUpRight aria-hidden className="mr-1.5 h-3.5 w-3.5 shrink-0" />}
-                      <span className="min-w-0">
-                        <span className="block text-xs font-medium">
-                          {s.label}
-                          {covered && (
-                            <span className="ml-1.5 font-normal text-muted-foreground">
-                              · searched on this run
-                            </span>
-                          )}
-                        </span>
-                        <span className="block text-[11px] font-normal text-muted-foreground">
-                          {check?.action ?? s.purpose}
-                        </span>
-                      </span>
-                    </Button>
-                  );
-                })}
-              </div>
+                <ol className="space-y-2">
+                  {registerSearches.map((s) => {
+                    const check = manualChecks.find((m) => m.id === s.id);
+                    const covered = check?.state === "searched_by_platform";
+                    const bound = checkedRows.filter((r) => r.searchId === s.id);
+                    const recorded = bound.some((r) => r.result.trim().length > 0);
+                    const open = () => {
+                      window.open(s.url, "_blank", "noopener,noreferrer");
+                      setRows((prev) => [...prev, newRow({
+                        searchId: s.id,
+                        kind: s.kind, source: s.label, reference: s.searchTerms,
+                      })]);
+                    };
 
-              {/* What was actually checked. Empty is stated rather than left
-                  as a gap, because an empty list here and a satisfied step
-                  look identical when nothing is drawn. */}
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  What you checked
-                  {independentCount > 0 && (
-                    <span className="ml-1.5 font-normal normal-case tracking-normal">
-                      · {independentCount} source{independentCount === 1 ? "" : "s"}
-                    </span>
-                  )}
-                </p>
-                {independentCount === 0 && (
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    Nothing checked yet. Open a register above, or add a source by hand —
-                    the customer's own declaration is held under step 1 and does not count
-                    here.
-                  </p>
-                )}
-              </div>
+                    /* Recorded · looked but nothing written · read by the run
+                       · untouched. Four readings, never collapsed into one. */
+                    const status = recorded
+                      ? { label: "Recorded", tone: "border-success/50 bg-success/10 text-success" }
+                      : bound.length > 0
+                        ? {
+                          label: "Waiting on what came back",
+                          tone: "border-warning/50 bg-warning/10 text-warning",
+                        }
+                        : covered
+                          ? {
+                            label: "Read by the run — confirm",
+                            tone: "border-info/50 bg-info/10 text-info",
+                          }
+                          : {
+                            label: "Not checked yet",
+                            tone: "border-border/60 bg-muted/40 text-muted-foreground",
+                          };
 
-              <ul className="space-y-2">
-                {checkedRows.map((row) => {
-                  /* The error field is indexed against the SUBMITTED methods,
-                     which is `rows` — never this filtered view. */
-                  const i = rows.indexOf(row);
-                  const rowError = verdict.errors.find(
-                    (e) => e.field === `methods.${i}` || e.field === `methods.${i}.result`);
-
-                  return (
-                    <li
-                      key={row.id}
-                      className={cn("rounded-md border p-3",
-                        rowError ? "border-destructive/50 bg-destructive/5" : "border-border/60")}
-                    >
-                      <div className="grid gap-2 lg:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_minmax(0,1fr)_auto]">
-                        <div>
-                          <Label
-                            className="text-[11px] text-muted-foreground"
-                            htmlFor={`pep-kind-${row.id}`}
-                          >
-                            Kind of source
-                          </Label>
-                          <Select
-                            value={row.kind}
-                            onValueChange={(v) => setRows((prev) => prev.map((r) =>
-                              r.id === row.id ? { ...r, kind: v as PepSourceKind } : r))}
-                          >
-                            <SelectTrigger
-                              id={`pep-kind-${row.id}`} className="mt-1 h-9"
-                              aria-label={`Kind of source ${i + 1}`}
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {/* The customer's own declaration is not on
-                                  offer here: it is step 1's record, and
-                                  choosing it would move a row out of this
-                                  list mid-edit. */}
-                              {PEP_SOURCE_KINDS
-                                .filter((k) => k !== PEP_DECLARATION_KIND)
-                                .map((k) => (
-                                  <SelectItem key={k} value={k}>
-                                    {PEP_SOURCE_KIND_LABEL[k]}
-                                  </SelectItem>
-                                ))}
-                            </SelectContent>
-
-                          </Select>
-                        </div>
-                        <div>
-                          <Label
-                            className="text-[11px] text-muted-foreground"
-                            htmlFor={`pep-source-${row.id}`}
-                          >
-                            Source
-                          </Label>
-                          <Input
-                            id={`pep-source-${row.id}`}
-                            className="mt-1 h-9" value={row.source}
-                            aria-label={`Source ${i + 1}`}
-                            placeholder="e.g. Australian Government Directory"
-                            onChange={(e) => setRows((prev) => prev.map((r) =>
-                              r.id === row.id ? { ...r, source: e.target.value } : r))}
-                          />
-                        </div>
-                        <div>
-                          <Label
-                            className="text-[11px] text-muted-foreground"
-                            htmlFor={`pep-ref-${row.id}`}
-                          >
-                            Searched / reference
-                          </Label>
-                          <Input
-                            id={`pep-ref-${row.id}`}
-                            className="mt-1 h-9" value={row.reference}
-                            aria-label={`Searched or reference ${i + 1}`}
-                            placeholder="names or terms searched, or a record reference"
-                            onChange={(e) => setRows((prev) => prev.map((r) =>
-                              r.id === row.id ? { ...r, reference: e.target.value } : r))}
-                          />
-                        </div>
-                        <div className="flex items-end">
-                          <Button
-                            type="button" size="icon" variant="ghost" className="h-9 w-9"
-                            aria-label={`Remove ${row.source || "source"}`}
-                            onClick={() => setRows((prev) => prev.filter((r) => r.id !== row.id))}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="mt-2">
-                        <Label
-                          className="text-[11px] text-muted-foreground"
-                          htmlFor={`pep-result-${row.id}`}
-                        >
-                          What came back
-                        </Label>
-                        <Input
-                          id={`pep-result-${row.id}`}
-                          className="mt-1 h-9" value={row.result}
-                          aria-label={`What came back ${i + 1}`}
-                          placeholder="e.g. no entry found for this name"
-                          onChange={(e) => setRows((prev) => prev.map((r) =>
-                            r.id === row.id ? { ...r, result: e.target.value } : r))}
-                        />
-                      </div>
-                      {rowError && (
-                        <p className="mt-2 flex items-start gap-1.5 text-xs text-destructive">
-                          <AlertTriangle aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
-                          {rowError.message}
-                        </p>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-
-              {/*
-                A general web search is not a register, and the list used to
-                end with two search-engine rows sitting beside DFAT as though
-                they were peers. It stays — AUSTRAC accepts internet research,
-                and it is the only route to a foreign office or a family
-                connection nothing publishes — but it is labelled and last.
-              */}
-              {searches.some((s) => s.tier === "open_web") && (
-                <div className="space-y-1.5">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                    A starting point, not a source of record
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {searches.filter((s) => s.tier === "open_web").map((s) => (
-                      <Button
-                        key={s.id} type="button" variant="ghost" size="sm"
-                        className="h-auto justify-start py-1.5 text-left"
-                        onClick={() => {
-                          window.open(s.url, "_blank", "noopener,noreferrer");
-                          setRows((prev) => [...prev, newRow({
-                            kind: s.kind, source: s.label, reference: s.searchTerms,
-                          })]);
-                        }}
+                    return (
+                      <li
+                        key={s.id}
+                        className={cn(
+                          "rounded-lg border p-3 transition-colors duration-300",
+                          recorded
+                            ? "border-success/40 bg-success/5"
+                            : bound.length > 0
+                              ? "border-warning/40 bg-warning/5"
+                              : "border-border/60 bg-background",
+                        )}
                       >
-                        <ArrowUpRight aria-hidden className="mr-1.5 h-3.5 w-3.5 shrink-0" />
-                        <span className="min-w-0">
-                          <span className="block text-xs font-medium">{s.label}</span>
-                          <span className="block text-[11px] font-normal text-muted-foreground">
-                            {s.purpose}
+                        <div className="flex items-start gap-3">
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold transition-colors",
+                              recorded
+                                ? "border-success/50 bg-success/10 text-success"
+                                : "border-border/60 bg-muted/40 text-muted-foreground",
+                            )}
+                          >
+                            {recorded
+                              ? <Check className="h-3.5 w-3.5" />
+                              : <Circle className="h-2.5 w-2.5" />}
                           </span>
-                        </span>
-                      </Button>
-                    ))}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium">{s.label}</span>
+                              <span
+                                className={cn(
+                                  "rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                                  status.tone,
+                                )}
+                              >
+                                {status.label}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-[11px] text-muted-foreground">
+                              {check?.action ?? s.purpose}
+                              {covered && " · searched on this run"}
+                            </p>
+
+                            {bound.length === 0 ? (
+                              <Button
+                                type="button" variant="outline" size="sm"
+                                className="mt-2 h-8"
+                                onClick={open}
+                              >
+                                {covered
+                                  ? <ShieldCheck aria-hidden className="mr-1.5 h-3.5 w-3.5" />
+                                  : <ArrowUpRight aria-hidden className="mr-1.5 h-3.5 w-3.5" />}
+                                Open register and record
+                              </Button>
+                            ) : (
+                              <div className="mt-2 space-y-2">
+                                {bound.map((row) => {
+                                  /* Indexed against the SUBMITTED methods,
+                                     which is `rows` — never a filtered view. */
+                                  const i = rows.indexOf(row);
+                                  const rowError = verdict.errors.find(
+                                    (e) => e.field === `methods.${i}`
+                                      || e.field === `methods.${i}.result`);
+                                  return (
+                                    <div
+                                      key={row.id}
+                                      className="rounded-md border border-border/50 bg-background/70 p-2.5"
+                                    >
+                                      <div className="flex items-start justify-between gap-2">
+                                        <p className="min-w-0 text-[11px] text-muted-foreground">
+                                          Searched:{" "}
+                                          <span className="text-foreground">
+                                            {row.reference || "not stated"}
+                                          </span>
+                                        </p>
+                                        <Button
+                                          type="button" size="icon" variant="ghost"
+                                          className="h-6 w-6 shrink-0"
+                                          aria-label={`Remove ${row.source || "source"}`}
+                                          onClick={() => setRows((prev) =>
+                                            prev.filter((r) => r.id !== row.id))}
+                                        >
+                                          <X className="h-3.5 w-3.5" />
+                                        </Button>
+                                      </div>
+                                      <Label
+                                        className="mt-1.5 block text-[11px] text-muted-foreground"
+                                        htmlFor={`pep-result-${row.id}`}
+                                      >
+                                        What came back
+                                      </Label>
+                                      <Input
+                                        id={`pep-result-${row.id}`}
+                                        className="mt-1 h-9" value={row.result}
+                                        aria-label={`What came back ${i + 1}`}
+                                        placeholder="e.g. no entry found for this name"
+                                        onChange={(e) => setRows((prev) => prev.map((r) =>
+                                          r.id === row.id
+                                            ? { ...r, result: e.target.value } : r))}
+                                      />
+                                      {/* Two common answers, typed once. Both
+                                          are what the operator SAW; neither is
+                                          a clearance, and the wording says so. */}
+                                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                        {[
+                                          "No entry found for this name",
+                                          "Entry found — see the note below",
+                                          "Register could not be searched",
+                                        ].map((q) => (
+                                          <button
+                                            key={q} type="button"
+                                            onClick={() => setRows((prev) => prev.map((r) =>
+                                              r.id === row.id ? { ...r, result: q } : r))}
+                                            className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                                          >
+                                            {q}
+                                          </button>
+                                        ))}
+                                      </div>
+                                      {rowError && (
+                                        <p className="mt-1.5 flex items-start gap-1.5 text-xs text-destructive">
+                                          <AlertTriangle
+                                            aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+                                          {rowError.message}
+                                        </p>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                <Button
+                                  type="button" variant="ghost" size="sm"
+                                  className="h-7 px-2 text-[11px]"
+                                  onClick={open}
+                                >
+                                  <ArrowUpRight aria-hidden className="mr-1 h-3 w-3" />
+                                  Open again / search another name
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+
+                {/*
+                  A general web search is not a register, and the list used to
+                  end with two search-engine rows sitting beside DFAT as though
+                  they were peers. It stays — AUSTRAC accepts internet research,
+                  and it is the only route to a foreign office or a family
+                  connection nothing publishes — but it is labelled and last.
+                */}
+                {searches.some((s) => s.tier === "open_web") && (
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      A starting point, not a source of record
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {searches.filter((s) => s.tier === "open_web").map((s) => (
+                        <Button
+                          key={s.id} type="button" variant="ghost" size="sm"
+                          className="h-auto justify-start py-1.5 text-left"
+                          onClick={() => {
+                            window.open(s.url, "_blank", "noopener,noreferrer");
+                            setRows((prev) => [...prev, newRow({
+                              searchId: s.id,
+                              kind: s.kind, source: s.label, reference: s.searchTerms,
+                            })]);
+                          }}
+                        >
+                          <ArrowUpRight aria-hidden className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                          <span className="min-w-0">
+                            <span className="block text-xs font-medium">{s.label}</span>
+                            <span className="block text-[11px] font-normal text-muted-foreground">
+                              {s.purpose}
+                            </span>
+                          </span>
+                        </Button>
+                      ))}
+                    </div>
                   </div>
+                )}
+
+                {/* Everything not bound to a register above: the run's own
+                    accepted candidates, a web search, a source typed by hand.
+                    Empty is stated rather than left as a gap, because an empty
+                    list and a satisfied step look identical when nothing is
+                    drawn. */}
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    Other sources you recorded
+                    {otherRows.length > 0 && (
+                      <span className="ml-1.5 font-normal normal-case tracking-normal">
+                        · {otherRows.length}
+                      </span>
+                    )}
+                  </p>
+                  {independentCount === 0 && (
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Nothing checked yet. Open a register above, or add a source by hand —
+                      the customer's own declaration is held under step 1 and does not count
+                      here.
+                    </p>
+                  )}
                 </div>
-              )}
 
-              <Button
-                type="button" variant="outline" size="sm"
-                onClick={() => setRows((prev) => [...prev, newRow()])}
-              >
-                <Plus aria-hidden className="mr-1.5 h-3.5 w-3.5" /> Add a source
-              </Button>
+                <ul className="space-y-2">
+                  {otherRows.map((row) => {
+                    /* The error field is indexed against the SUBMITTED methods,
+                       which is `rows` — never this filtered view. */
+                    const i = rows.indexOf(row);
+                    const rowError = verdict.errors.find(
+                      (e) => e.field === `methods.${i}` || e.field === `methods.${i}.result`);
 
-              {/* Said every time, beside the searches themselves. */}
-              <div className="rounded-md border border-border/60 bg-muted/30 p-3">
-                <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  <Info aria-hidden className="h-3 w-3" /> What these searches do not reach
-                </p>
-                <ul className="mt-1.5 space-y-1">
-                  {PEP_SEARCH_COVERAGE_GAPS.map((g) => (
-                    <li key={g} className="text-xs text-muted-foreground">— {g}</li>
-                  ))}
+                    return (
+                      <li
+                        key={row.id}
+                        className={cn("rounded-md border p-3",
+                          rowError ? "border-destructive/50 bg-destructive/5" : "border-border/60")}
+                      >
+                        <div className="grid gap-2 lg:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+                          <div>
+                            <Label
+                              className="text-[11px] text-muted-foreground"
+                              htmlFor={`pep-kind-${row.id}`}
+                            >
+                              Kind of source
+                            </Label>
+                            <Select
+                              value={row.kind}
+                              onValueChange={(v) => setRows((prev) => prev.map((r) =>
+                                r.id === row.id ? { ...r, kind: v as PepSourceKind } : r))}
+                            >
+                              <SelectTrigger
+                                id={`pep-kind-${row.id}`} className="mt-1 h-9"
+                                aria-label={`Kind of source ${i + 1}`}
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {/* The customer's own declaration is not on
+                                    offer here: it is step 1's record, and
+                                    choosing it would move a row out of this
+                                    list mid-edit. */}
+                                {PEP_SOURCE_KINDS
+                                  .filter((k) => k !== PEP_DECLARATION_KIND)
+                                  .map((k) => (
+                                    <SelectItem key={k} value={k}>
+                                      {PEP_SOURCE_KIND_LABEL[k]}
+                                    </SelectItem>
+                                  ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label
+                              className="text-[11px] text-muted-foreground"
+                              htmlFor={`pep-source-${row.id}`}
+                            >
+                              Source
+                            </Label>
+                            <Input
+                              id={`pep-source-${row.id}`}
+                              className="mt-1 h-9" value={row.source}
+                              aria-label={`Source ${i + 1}`}
+                              placeholder="e.g. Australian Government Directory"
+                              onChange={(e) => setRows((prev) => prev.map((r) =>
+                                r.id === row.id ? { ...r, source: e.target.value } : r))}
+                            />
+                          </div>
+                          <div>
+                            <Label
+                              className="text-[11px] text-muted-foreground"
+                              htmlFor={`pep-ref-${row.id}`}
+                            >
+                              Searched / reference
+                            </Label>
+                            <Input
+                              id={`pep-ref-${row.id}`}
+                              className="mt-1 h-9" value={row.reference}
+                              aria-label={`Searched or reference ${i + 1}`}
+                              placeholder="names or terms searched, or a record reference"
+                              onChange={(e) => setRows((prev) => prev.map((r) =>
+                                r.id === row.id ? { ...r, reference: e.target.value } : r))}
+                            />
+                          </div>
+                          <div className="flex items-end">
+                            <Button
+                              type="button" size="icon" variant="ghost" className="h-9 w-9"
+                              aria-label={`Remove ${row.source || "source"}`}
+                              onClick={() => setRows((prev) =>
+                                prev.filter((r) => r.id !== row.id))}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="mt-2">
+                          <Label
+                            className="text-[11px] text-muted-foreground"
+                            htmlFor={`pep-result-${row.id}`}
+                          >
+                            What came back
+                          </Label>
+                          <Input
+                            id={`pep-result-${row.id}`}
+                            className="mt-1 h-9" value={row.result}
+                            aria-label={`What came back ${i + 1}`}
+                            placeholder="e.g. no entry found for this name"
+                            onChange={(e) => setRows((prev) => prev.map((r) =>
+                              r.id === row.id ? { ...r, result: e.target.value } : r))}
+                          />
+                        </div>
+                        {rowError && (
+                          <p className="mt-2 flex items-start gap-1.5 text-xs text-destructive">
+                            <AlertTriangle aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+                            {rowError.message}
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
+
+                <Button
+                  type="button" variant="outline" size="sm"
+                  onClick={() => setRows((prev) => [...prev, newRow()])}
+                >
+                  <Plus aria-hidden className="mr-1.5 h-3.5 w-3.5" /> Add a source
+                </Button>
+
+                {/* Said every time, beside the searches themselves. */}
+                <div className="rounded-md border border-border/60 bg-muted/30 p-3">
+                  <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    <Info aria-hidden className="h-3 w-3" /> What these searches do not reach
+                  </p>
+                  <ul className="mt-1.5 space-y-1">
+                    {PEP_SEARCH_COVERAGE_GAPS.map((g) => (
+                      <li key={g} className="text-xs text-muted-foreground">— {g}</li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             </div>
           </section>
