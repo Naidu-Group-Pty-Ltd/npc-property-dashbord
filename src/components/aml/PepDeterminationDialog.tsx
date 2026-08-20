@@ -339,6 +339,30 @@ export function PepDeterminationDialog({
     return !probe.errors.some((e) => e.field.startsWith("methods"));
   }, [methods]);
 
+  /*
+   * ── The customer's own answer belongs to step 1, not step 2 ──────────
+   * It was seeded into the step-2 list because that is where the record
+   * keeps it — and it then sat in a grid of editable "Kind of source /
+   * Source / Searched / What came back" boxes identical to the registers an
+   * operator checks by hand. Two things followed. The first row of "check
+   * the sources" was a source nobody checked, and step 2's own rule (at
+   * least one source INDEPENDENT of the customer) was contradicted by its
+   * first entry.
+   *
+   * So the declaration renders under step 1, where the same answer is
+   * already stated, as a read-only evidence line. It is still the same `Row`
+   * in the same `rows` state and still travels in `methods`, so nothing
+   * about what is submitted or what the server enforces changes — this is
+   * where it is SHOWN.
+   */
+  const declarationRows = useMemo(
+    () => rows.filter((r) => r.kind === PEP_DECLARATION_KIND), [rows]);
+  const checkedRows = useMemo(
+    () => rows.filter((r) => r.kind !== PEP_DECLARATION_KIND), [rows]);
+  /* Step 2's own count: what the operator actually went and checked. */
+  const independentCount = checkedRows.length;
+
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Three areas: a header and footer that never scroll, a body that does.
