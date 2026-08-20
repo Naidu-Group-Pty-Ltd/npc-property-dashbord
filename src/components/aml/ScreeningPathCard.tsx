@@ -70,6 +70,14 @@ const STATE_TONE: Record<ScreeningStepState, {
   },
   current: { chip: "outline", marker: "border-primary bg-primary text-primary-foreground", Icon: ArrowRight },
   review: { chip: "outline", marker: "border-primary/50 bg-primary/10 text-primary", Icon: ShieldQuestion },
+  /*
+   * Work, not an obstruction. Deliberately not the destructive chip: an
+   * operator reading red goes looking for a fault, and on a step that is
+   * simply their turn there is none to find.
+   */
+  outstanding: {
+    chip: "outline", marker: "border-warning/50 bg-warning/10 text-warning", Icon: CircleDashed,
+  },
   blocked: { chip: "destructive", marker: "border-warning/50 bg-warning/10 text-warning", Icon: AlertTriangle },
   waiting: { chip: "outline", marker: "border-border bg-muted text-muted-foreground", Icon: Clock },
   upcoming: { chip: "outline", marker: "border-border bg-background text-muted-foreground", Icon: CircleDashed },
@@ -261,6 +269,21 @@ export function ScreeningPathCard({
                 {isOpen && (
                   <div className="space-y-3 px-5 pb-5 pl-[4.25rem]">
                     <p className="text-xs text-muted-foreground">{step.purpose}</p>
+
+                    {/*
+                      ── What is in the way, when something is ──────────
+                      A step may only be `blocked` if it can name its
+                      blocker, so this renders whenever one exists. A red
+                      badge with no obstacle named is an instruction to go
+                      and look for one, which is what this step used to be.
+                    */}
+                    {step.blockedBy && (
+                      <p className="flex items-start gap-1.5 rounded-md border border-warning/40
+                        bg-warning/5 p-2.5 text-xs text-warning">
+                        <AlertTriangle aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>{step.blockedBy}</span>
+                      </p>
+                    )}
 
                     {step.detail.length > 0 && (
                       <ul className="space-y-1">

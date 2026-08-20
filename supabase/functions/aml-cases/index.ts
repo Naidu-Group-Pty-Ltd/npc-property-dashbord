@@ -422,14 +422,69 @@ async function syncScreeningScopeDecision(
   if (readError) {
     return { changed: [], subjectsChanged: 0, recorded: false };
   }
-  const byScope = new Map<string, any>(
-    (current ?? []).map((r: any) => [String(r.scope), r]));
+  /*
+   * ── ONE LIVE DECISION PER SCOPE, MADE STRUCTURAL ──────────────────────
+   *
+   * This was `new Map(current.map((r) => [r.scope, r]))`, which keeps only
+   * the LAST row for a scope and discards the rest. The loop below then
+   * supersedes the one row the map kept — so if a scope ever holds two live
+   * rows, one of them survives for ever.
+   *
+   * No case in production holds duplicates today, and this path cannot
+   * create them on its own: it always supersedes before it inserts. What it
+   * does not survive is a RACE. `sync_screening_stage` runs on every page
+   * load, so two tabs opening one case can both read the single live row,
+   * both supersede it, and both insert — leaving two live rows that disagree
+   * about whether screening is required.
+   *
+   * That is worth closing rather than watching for, because of what reads
+   * these rows. `deriveAmlScreeningScope` resolved them last-wins over a
+   * `SELECT` with no `ORDER BY`, so a contradiction would have been settled
+   * by row order — and the scope most likely to flip is `sanctions`, the one
+   * obligation in this product that binds every dealing and cannot be stood
+   * down by risk.
+   *
+   * So: every live row for a scope is collected, the newest is the decision,
+   * and any older ones are superseded whether or not the decision changed.
+   * A case that ever acquires duplicates repairs itself the next time
+   * anything syncs it — the same self-healing-on-read pattern
+   * `ensureScreeningSubjects` uses. The reader was also made to resolve a
+   * contradiction toward the obligation rather than toward row order.
+   */
+  const liveByScope = new Map<string, any[]>();
+  for (const r of current ?? []) {
+    const list = liveByScope.get(String(r.scope)) ?? [];
+    list.push(r);
+    liveByScope.set(String(r.scope), list);
+  }
+  const newestFirst = (a: any, b: any) =>
+    String(b.decided_at ?? b.created_at ?? '').localeCompare(
+      String(a.decided_at ?? a.created_at ?? ''));
+  for (const list of liveByScope.values()) list.sort(newestFirst);
 
   const changed: ScreeningScopeKey[] = [];
   const nowIso = new Date().toISOString();
+
+  /*
+   * Retire the duplicates first, and for EVERY scope — including the ones
+   * whose decision has not changed and would `continue` below before
+   * reaching any write.
+   */
+  for (const [scopeKey, list] of liveByScope) {
+    if (list.length < 2) continue;
+    const stale = list.slice(1).map((r: any) => r.id);
+    const { error: dedupeError } = await admin.schema('aml')
+      .from('case_screening_scopes')
+      .update({ superseded_at: nowIso }).in('id', stale);
+    if (dedupeError) {
+      console.error('case_screening_scopes dedupe failed', scopeKey, dedupeError);
+      return { changed: [], subjectsChanged: 0, recorded: false };
+    }
+  }
+
   for (const key of ALL_SCREENING_SCOPES) {
     const decided = scope[key];
-    const existing = byScope.get(key);
+    const existing = (liveByScope.get(key) ?? [])[0];
     // Re-recording an unchanged decision on every page load would bury the
     // trail it exists to provide. A CHANGE is what deserves a new row.
     const same = existing &&
