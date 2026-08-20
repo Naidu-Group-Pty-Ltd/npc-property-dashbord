@@ -23,7 +23,7 @@
  * demoted, but never removed, because the registers a server cannot reach are
  * exactly the ones a person still has to open.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle, ArrowUpRight, Check, Info, Loader2, Search, ShieldQuestion, X,
 } from "lucide-react";
