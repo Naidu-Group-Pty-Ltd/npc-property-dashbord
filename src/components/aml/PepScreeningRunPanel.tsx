@@ -38,7 +38,8 @@ import { amlCasesApi } from "@/lib/aml/amlCasesApi";
 import type {
   PepIndicator, PepScreeningCandidate, PepScreeningRun, PepScreeningSourceResult,
 } from "@/lib/aml/pepScreeningEngine";
-import { recencyFromRunSource, type RunSourceState } from "@/lib/aml/pepManualChecks";
+import { recencyFromRunSource } from "@/lib/aml/pepManualChecks";
+import type { RunSourceReading } from "@/lib/aml/pepRunCascade";
 import { describeTenure } from "@/lib/aml/pepOfficeholderIndex";
 
 type Run = PepScreeningRun & { id: string; created_at?: string };
@@ -262,7 +263,7 @@ export function PepScreeningRunPanel({
    * hand a register the panel directly above said it had just searched. It is
    * derived from this now, so the two cannot disagree.
    */
-  onSources?: (sources: RunSourceState[] | null) => void;
+  onSources?: (sources: RunSourceReading[] | null) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState<Run | null>(null);
@@ -277,7 +278,16 @@ export function PepScreeningRunPanel({
       });
       const next = res.run as Run;
       setRun(next);
-      onSources?.(next.sources.map((x) => ({ key: x.key, status: x.status })));
+      /*
+       * The status is what the manual-check classification reads; the label,
+       * the count and the currency date are what a cascaded row is worded
+       * from. One report upwards, so the checklist cannot describe a search
+       * the panel did not perform.
+       */
+      onSources?.(next.sources.map((x) => ({
+        key: x.key, status: x.status, label: x.label,
+        foundCount: x.foundCount, asAt: x.asAt ?? null,
+      })));
       setDecisions({});
       if (res.evidence) onEvidence(res.evidence);
     } catch (e: unknown) {

@@ -68,8 +68,11 @@ import {
 import { PepScreeningRunPanel } from "@/components/aml/PepScreeningRunPanel";
 import { PepCoverageGaps } from "@/components/aml/PepCoverageGaps";
 import {
-  classifyManualChecks, describeManualChecks, type RunSourceState,
+  classifyManualChecks, describeManualChecks,
 } from "@/lib/aml/pepManualChecks";
+import {
+  cascadeRunResults, type RunSourceReading,
+} from "@/lib/aml/pepRunCascade";
 import {
   describeOutstanding, pepDeterminationRequirements,
 } from "@/lib/aml/pepDeterminationSteps";
@@ -99,11 +102,21 @@ interface Row {
    * label-matching did.
    */
   searchId?: string;
+  /**
+   * Recorded from the run rather than typed by a person.
+   *
+   * Presentational and provenance only: the row is submitted, validated and
+   * counted exactly as any other. It exists so the card can say where the
+   * result came from, and so a run that is re-run or fails can withdraw its
+   * own rows without touching anything an operator wrote.
+   */
+  fromRun?: boolean;
   kind: PepSourceKind;
   source: string;
   reference: string;
   result: string;
 }
+
 
 let rowSeq = 0;
 const newRow = (over: Partial<Row> = {}): Row => ({
@@ -198,7 +211,53 @@ export function PepDeterminationDialog({
    * which is not the same as a run that reached nothing — see
    * `describeManualChecks`.
    */
-  const [runSources, setRunSources] = useState<RunSourceState[] | null>(null);
+  const [runSources, setRunSources] = useState<RunSourceReading[] | null>(null);
+
+  /*
+   * ── The run's own results, cascaded into the checklist ────────────────
+   * A register the run reports as `searched` is recorded from the run: the
+   * operator is not asked to go and repeat a search the platform has already
+   * performed and displayed one card above.
+   *
+   * Only `searched` cascades — an unavailable, failed or unreachable register
+   * stays outstanding, because a read that failed is not a register that was
+   * empty. A row an operator already put against that register is never
+   * touched, and a run that is re-run or fails withdraws only the rows it
+   * wrote itself.
+   */
+  useEffect(() => {
+    if (!open) return;
+    if (runSources === null) {
+      setRows((prev) => prev.filter((r) => !r.fromRun));
+      return;
+    }
+    const drafts = cascadeRunResults({
+      targets: searches
+        .filter((s) => s.tier === "register")
+        .map((s) => ({
+          id: s.id, kind: s.kind, label: s.label, searchTerms: s.searchTerms,
+        })),
+      sources: runSources,
+    });
+    setRows((prev) => {
+      /* Withdraw this run's own rows, keep everything a person wrote. */
+      const kept = prev.filter((r) => !r.fromRun);
+      const held = new Set(kept.map((r) => r.searchId).filter(Boolean));
+      const added = drafts
+        .filter((d) => !held.has(d.searchId))
+        .map((d) => newRow({
+          searchId: d.searchId,
+          kind: (PEP_SOURCE_KINDS as readonly string[]).includes(d.kind)
+            ? d.kind as PepSourceKind : "official_register",
+          source: d.source, reference: d.reference, result: d.result,
+          fromRun: true,
+        }));
+      return added.length === 0 && kept.length === prev.length
+        ? prev : [...kept, ...added];
+    });
+    // `searches` is derived from the party and stable for the open dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, runSources]);
 
   const methods: PepMethod[] = useMemo(
     () => normalisePepMethods(rows.map((r) => ({
@@ -388,6 +447,21 @@ export function PepDeterminationDialog({
     () => registerSearches.filter((s) => checkedRows.some(
       (r) => r.searchId === s.id && r.result.trim().length > 0)).length,
     [registerSearches, checkedRows]);
+  /*
+   * What is left for a person, named.
+   *
+   * Once the run's own results cascade in, "0 of 4 recorded" is no longer the
+   * honest reading — some of those four have been read and recorded, and the
+   * remainder are the ones no server can reach. Those are what this lists, so
+   * the operator sees the actual outstanding work rather than the whole list
+   * again.
+   */
+  const outstandingRegisters = useMemo(
+    () => registerSearches.filter((s) => !checkedRows.some(
+      (r) => r.searchId === s.id && r.result.trim().length > 0)),
+    [registerSearches, checkedRows]);
+
+
 
 
   return (
@@ -603,38 +677,68 @@ export function PepDeterminationDialog({
                   runSources !== null && "animate-fade-in",
                 )}
               >
-                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                      Check by hand — official registers
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      {describeManualChecks(manualChecks, runSources !== null)}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="text-xs font-medium tabular-nums text-muted-foreground">
-                      {registerDone} of {registerTotal} recorded
-                    </span>
-                    <div
-                      className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
-                      role="progressbar"
-                      aria-valuenow={registerDone}
-                      aria-valuemin={0}
-                      aria-valuemax={registerTotal}
-                      aria-label="Registers recorded"
-                    >
+                <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                        Official registers — what is recorded, and what still needs you
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">
+                        {describeManualChecks(manualChecks, runSources !== null)}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-xs font-medium tabular-nums text-muted-foreground">
+                        {registerDone} of {registerTotal} recorded
+                      </span>
                       <div
-                        className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
-                        style={{
-                          width: registerTotal > 0
-                            ? `${Math.round((registerDone / registerTotal) * 100)}%`
-                            : "0%",
-                        }}
-                      />
+                        className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
+                        role="progressbar"
+                        aria-valuenow={registerDone}
+                        aria-valuemin={0}
+                        aria-valuemax={registerTotal}
+                        aria-label="Registers recorded"
+                      >
+                        <div
+                          className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
+                          style={{
+                            width: registerTotal > 0
+                              ? `${Math.round((registerDone / registerTotal) * 100)}%`
+                              : "0%",
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
+
+                  {/*
+                    The outstanding work, named.
+                    A list of every register with "0 of 4 recorded" beside it
+                    told an operator to repeat, by hand, searches the panel
+                    above had just performed. What is left is what this says.
+                  */}
+                  {outstandingRegisters.length > 0 ? (
+                    <p className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/5 px-2 py-1.5 text-[11px] text-warning">
+                      <AlertTriangle aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span>
+                        Still needs a person ({outstandingRegisters.length}):{" "}
+                        <span className="font-medium">
+                          {outstandingRegisters.map((s) => s.label).join(" · ")}
+                        </span>
+                      </span>
+                    </p>
+                  ) : registerTotal > 0 && (
+                    <p className="flex items-start gap-1.5 rounded-md border border-success/40 bg-success/5 px-2 py-1.5 text-[11px] text-success">
+                      <Check aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span>
+                        Every listed register has a result recorded against it. What
+                        was recorded is a result about the search, not a clearance —
+                        the determination in step 3 is still yours.
+                      </span>
+                    </p>
+                  )}
                 </div>
+
 
                 {/*
                   What the loaded registers do not evidence at all. Measured by
@@ -649,6 +753,15 @@ export function PepDeterminationDialog({
                     const covered = check?.state === "searched_by_platform";
                     const bound = checkedRows.filter((r) => r.searchId === s.id);
                     const recorded = bound.some((r) => r.result.trim().length > 0);
+                    /*
+                     * Recorded FROM THE RUN is a different fact from recorded
+                     * by a person: the row is identical and carries the same
+                     * weight, but the card has to say where it came from, or
+                     * an operator cannot tell what they have and have not
+                     * personally seen.
+                     */
+                    const runRecorded = recorded && bound.every(
+                      (r) => r.fromRun === true || r.result.trim().length === 0);
                     const open = () => {
                       window.open(s.url, "_blank", "noopener,noreferrer");
                       setRows((prev) => [...prev, newRow({
@@ -657,24 +770,29 @@ export function PepDeterminationDialog({
                       })]);
                     };
 
-                    /* Recorded · looked but nothing written · read by the run
-                       · untouched. Four readings, never collapsed into one. */
-                    const status = recorded
-                      ? { label: "Recorded", tone: "border-success/50 bg-success/10 text-success" }
-                      : bound.length > 0
-                        ? {
-                          label: "Waiting on what came back",
-                          tone: "border-warning/50 bg-warning/10 text-warning",
-                        }
-                        : covered
+                    /* Recorded by the run · recorded by you · looked but
+                       nothing written · outstanding. Never collapsed. */
+                    const status = runRecorded
+                      ? {
+                        label: "Recorded from the run",
+                        tone: "border-info/50 bg-info/10 text-info",
+                      }
+                      : recorded
+                        ? { label: "Recorded", tone: "border-success/50 bg-success/10 text-success" }
+                        : bound.length > 0
                           ? {
-                            label: "Read by the run — confirm",
-                            tone: "border-info/50 bg-info/10 text-info",
+                            label: "Waiting on what came back",
+                            tone: "border-warning/50 bg-warning/10 text-warning",
                           }
-                          : {
-                            label: "Not checked yet",
-                            tone: "border-border/60 bg-muted/40 text-muted-foreground",
-                          };
+                          : covered
+                            ? {
+                              label: "Read by the run — confirm",
+                              tone: "border-info/50 bg-info/10 text-info",
+                            }
+                            : {
+                              label: "Needs you",
+                              tone: "border-warning/50 bg-warning/10 text-warning",
+                            };
 
                     return (
                       <li
@@ -682,10 +800,15 @@ export function PepDeterminationDialog({
                         className={cn(
                           "rounded-lg border p-3 transition-colors duration-300",
                           recorded
-                            ? "border-success/40 bg-success/5"
+                            ? runRecorded
+                              ? "border-info/40 bg-info/5"
+                              : "border-success/40 bg-success/5"
                             : bound.length > 0
                               ? "border-warning/40 bg-warning/5"
-                              : "border-border/60 bg-background",
+                              /* Outstanding work is the only thing on this list
+                                 that a person still has to do, so it is the only
+                                 thing given a ring. */
+                              : "border-warning/50 bg-warning/[0.04] ring-1 ring-warning/25",
                         )}
                       >
                         <div className="flex items-start gap-3">
@@ -694,14 +817,17 @@ export function PepDeterminationDialog({
                             className={cn(
                               "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold transition-colors",
                               recorded
-                                ? "border-success/50 bg-success/10 text-success"
-                                : "border-border/60 bg-muted/40 text-muted-foreground",
+                                ? runRecorded
+                                  ? "border-info/50 bg-info/10 text-info"
+                                  : "border-success/50 bg-success/10 text-success"
+                                : "border-warning/50 bg-warning/10 text-warning",
                             )}
                           >
                             {recorded
                               ? <Check className="h-3.5 w-3.5" />
                               : <Circle className="h-2.5 w-2.5" />}
                           </span>
+
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-sm font-medium">{s.label}</span>
