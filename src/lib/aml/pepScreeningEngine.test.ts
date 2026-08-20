@@ -8,6 +8,7 @@ import {
   type PepScreeningSourceResult,
 } from "@/lib/aml/pepScreeningEngine";
 import { PEP_SOURCE_KINDS } from "@/lib/aml/pepEvidence";
+import { PEP_INDEX_SOURCES } from "@/lib/aml/pepOfficeholderIndex";
 
 /**
  * The engine screens. It never determines.
@@ -226,6 +227,54 @@ describe("the sources a server cannot reach", () => {
       expect(s.coverage.length).toBeGreaterThan(10);
       expect(s.excludes.length).toBeGreaterThan(10);
       expect(s.detail).toMatch(/blocks automated requests/i);
+    }
+  });
+
+  it("a register the index loads is never also declared out of reach", () => {
+    /*
+     * `aph_members` sat in that list saying "Blocks automated requests"
+     * while Parliament published its register as a CSV that downloads on
+     * every attempt. The sentence was true about the WEBSITE and was being
+     * used as a statement about the DATASET, and the cost was not cosmetic:
+     * the product named an authoritative federal register as unreachable
+     * and sent operators to open it by hand, one URL away from a source it
+     * could have been searching all along.
+     *
+     * The two lists answer opposite questions — "what we read for you" and
+     * "what you must read yourself" — so nothing may appear in both, under
+     * any spelling.
+     */
+    const loaded = PEP_INDEX_SOURCES.map((s) => s.code);
+    expect(loaded).toContain("aph_commonwealth_parliament");
+    const key = (s: string) => s.replace(/[^a-z]/g, "");
+    for (const unreachable of SERVER_UNREACHABLE_SOURCES) {
+      for (const code of loaded) {
+        expect(key(code).includes(key(unreachable.key))
+          || key(unreachable.key).includes(key(code))).toBe(false);
+      }
+    }
+  });
+});
+
+describe("the two index sources are not the same kind of thing", () => {
+  it("the authoritative one says plainly that it holds no former office holder", () => {
+    // It is a snapshot of who sits today. AUSTRAC is explicit that leaving
+    // office does not end the risk, so the narrower coverage of the more
+    // authoritative source has to be stated, not implied by its absence.
+    const aph = PEP_INDEX_SOURCES.find((s) => s.code === "aph_commonwealth_parliament");
+    expect(aph?.collaborative).toBe(false);
+    expect(aph?.excludes).toMatch(/former members and senators/i);
+    expect(aph?.excludes).toMatch(/family members and close associates/i);
+  });
+
+  it("neither source's coverage prose counts anything", () => {
+    // Everything countable is measured by the loader and rendered from the
+    // sync row. A number in a sentence is a claim nobody can check, and
+    // this index shipped one once: 1,254 people across two offices, under
+    // prose promising ministers, judges and every state.
+    for (const s of PEP_INDEX_SOURCES) {
+      expect(s.covers).not.toMatch(/\d/);
+      expect(s.excludes).not.toMatch(/\d/);
     }
   });
 });

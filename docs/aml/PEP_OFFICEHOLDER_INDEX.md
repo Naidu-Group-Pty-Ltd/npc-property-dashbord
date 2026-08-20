@@ -44,9 +44,91 @@ a policy document:
 
 ## What is in it, and why
 
-| | |
-| --- | --- |
-| `wikidata_au_public_office` | Offices whose **jurisdiction** is Australia or one of its states and territories, and the people recorded as having held them — current and former. Measured 2026-08-19: **724 offices, 10,569 people**. |
+| source | tier | what it holds |
+| --- | --- | --- |
+| `aph_commonwealth_parliament` | **A** — the Parliament's own register | The senators and members **currently sitting**, and the ministerial and parliamentary offices each holds. Measured 2026-08-20: **225 people, 275 distinct offices**. |
+| `wikidata_au_public_office` | **C** — collaboratively edited | Offices whose **jurisdiction** is Australia or one of its states and territories, and the people recorded as having held them — current **and former**. Measured 2026-08-19: **724 offices, 10,569 people**. |
+
+### Two sources, and the authoritative one is the narrower
+
+This is the shape of what is public, not a gap waiting to be closed.
+
+`aph_commonwealth_parliament` is Parliament publishing its own membership.
+Every row is authoritative and current — and the files carry **no dates at
+all**. They are a snapshot of who sits today, so `position_start` and
+`position_end` are null, `currently_held` is true, and **not one former member
+or senator is in it**. AUSTRAC is explicit that leaving office does not end the
+risk, so that exclusion is written into the source's `excludes` prose and
+travels with every result, including the empty one.
+
+`wikidata_au_public_office` is the opposite trade: far broader, carries former
+holders and their dates, and is edited by anyone. A hit is a lead to confirm.
+
+Neither replaces the other. **An absence from both is still not an answer about
+anybody**, which is the rule at the top of this file and the reason adding a
+second source changes nothing about what a miss means.
+
+### The website blocks automated clients; the register it publishes does not
+
+Those are different facts, and the product asserted the first as though it were
+the second. `SERVER_UNREACHABLE_SOURCES` in `pepScreeningEngine.pure.ts` carried
+an entry reading *"Parliament of Australia — senators and members · Blocks
+automated requests. Open it from the manual checks below."*
+
+`www.aph.gov.au/Senators_and_Members/Members` **does** answer 403 to a scripted
+client, from every environment measured. But Parliament publishes the same
+membership as CSV on `static.aph.gov.au`, and both files download cleanly from
+a GitHub runner and from this repository's own container — 150 members, 75
+senators, every attempt. The link APH labels `Members_List.csv` is a **PDF**,
+which is how the whole source came to be written off.
+
+So an authoritative federal register sat one URL away while the product named
+it unreachable and sent operators to open it by hand. A test now asserts the
+two lists — "what we read for you" and "what you must read yourself" — share no
+source.
+
+### A carriage return is not a missing delimiter
+
+The members' file separates multiple ministerial titles with a **bare `\r`
+inside a quoted cell**, and its rows with LF. A terminal prints `\r` by
+returning the cursor to the start of the line and overwriting what is there, so
+the titles appear to run together with no separator at all:
+
+```
+Minister for Small BusinessMinister for International DevelopmentMinister for …
+```
+
+That reading produced a confident diagnosis of a broken government export, and
+what nearly shipped on the back of it was a list of English phrases —
+*"Minister for"*, *"Cabinet Secretary"*, *"Assistant Minister"* — with a rule
+guessing where one office title ends and the next begins. It gave the right
+answer on all four strings it was tested against.
+
+`od -c` settles it: the delimiter was there the whole time. `splitTitleCell`
+splits on `\r`, `\n` and `;` — the characters the two files actually use — and
+knows nothing about what an Australian ministry is called. A cell with no
+delimiter survives whole, so the failure mode of an unrecognised title is an
+intact string rather than a mangled one. The fixtures under
+`tests/aml/fixtures/` are verbatim bytes for exactly this reason.
+
+### What is deliberately left behind
+
+These are **address-label** files. Two thirds of every row is an electorate
+office street address, a postal address and three phone numbers.
+
+None of it is ingested. A PEP index answers whether a name holds public office;
+it has no business accumulating the contact details of 225 people because they
+arrived in the same download. A test greps the parsed output for
+address-shaped and phone-shaped values and fails on any of them.
+
+### A derived key that collides is refused
+
+The files carry no identifier of any kind — no MPID, no PHID, nothing — so
+`external_id` is derived from chamber, surname, given name and seat. That is
+fine only while it cannot silently merge two people, so a collision **throws**
+and fails the load. An index quietly holding 149 of 150 members is the
+empty-register failure at one-row scale, and it reads as a clean load for as
+long as nobody counts.
 
 ### The query, and the one that was wrong
 
@@ -141,6 +223,10 @@ workflow runs them **before** anything is written.
 SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… \
   node scripts/aml/load-pep-officeholders.mjs [--dry-run] [--file q.json]
 ```
+
+Both sources load by default; `--source` narrows it. A source that exists and
+is never scheduled is a source that is empty, which is the reading this index
+exists to avoid producing, so a test asserts the workflow names both.
 
 `.github/workflows/aml-pep-officeholders-refresh.yml` runs it weekly. Weekly
 rather than nightly, and this asymmetry is deliberate: a stale sanctions list

@@ -38,6 +38,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 
 import { CANDIDATE_SOURCES, CONTROLS, RULE_CATEGORIES } from './pepSourceCatalogue.mjs';
 
@@ -54,7 +55,7 @@ const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
   + '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
 /** Magic bytes. The only honest answer to "what did we actually get". */
-function sniff(buf) {
+export function sniff(buf) {
   if (!buf || buf.length === 0) return 'empty';
   const head = buf.subarray(0, 512);
   const text = head.toString('latin1');
@@ -86,7 +87,7 @@ const BLOCK_MARKERS = [
 ];
 const NOT_FOUND_MARKERS = ['page not found', '404 - not found', 'requested page could not be found'];
 
-function classifyBody(buf, format) {
+export function classifyBody(buf, format) {
   if (format !== 'html') return null;
   const text = buf.subarray(0, 20000).toString('utf8').toLowerCase();
   for (const m of BLOCK_MARKERS) if (text.includes(m)) return `block page ("${m}")`;
@@ -121,6 +122,47 @@ function estimateRecords(buf, format) {
     }
   } catch { /* a count is a nicety; never fail the probe for it */ }
   return null;
+}
+
+/**
+ * Does what came back satisfy what was expected?
+ *
+ * `expect` is what a human wrote in the catalogue; `format` is what the bytes
+ * are. They are different vocabularies and they have to be reconciled in ONE
+ * place, because the alternative is what this function replaces: two inline
+ * special cases, which silently answered "no" to every expectation nobody had
+ * thought to add.
+ *
+ * That cost a real reading. The DFAT control downloaded 1,299,680 bytes of a
+ * genuine spreadsheet and was reported as a FAILED CONTROL, because an OOXML
+ * file is a zip container and sniffs as `zip/xlsx/docx` while the catalogue
+ * says `xlsx`. The run's own header then told a reader the network was
+ * suspect and every candidate line was uninterpretable — about a run in which
+ * the control had worked perfectly.
+ *
+ * So the rule here is: a sniff is a FAMILY, an expectation is a MEMBER, and
+ * membership is declared rather than inferred. An expectation this table does
+ * not know is only satisfied by an exact match, which fails loudly on the
+ * source rather than quietly on every source.
+ */
+export const FORMAT_SATISFIED_BY = {
+  csv: ['csv-like', 'text'],
+  // OOXML is a zip. Nothing can tell an .xlsx from a .docx by its first two
+  // bytes, and this probe deliberately does not open the container.
+  xlsx: ['zip/xlsx/docx'],
+  docx: ['zip/xlsx/docx'],
+  zip: ['zip/xlsx/docx'],
+  html: ['xml-or-html'],
+  xml: ['xml-or-html'],
+  json: [],
+  pdf: [],
+  text: ['csv-like'],
+};
+
+export function formatSatisfies(expect, format) {
+  if (!expect) return true;               // nothing was claimed; nothing to contradict
+  if (expect === format) return true;
+  return (FORMAT_SATISFIED_BY[expect] ?? []).includes(format);
 }
 
 async function probe(source, timeoutMs) {
@@ -166,11 +208,8 @@ async function probe(source, timeoutMs) {
     if (!res.ok) row.verdict = 'refused';
     else if (bodyIssue) row.verdict = 'blocked';
     else if (format === 'empty') row.verdict = 'empty';
-    else if (source.expect && source.expect !== format
-      && !(source.expect === 'csv' && format === 'csv-like')
-      && !(source.expect === 'html' && format === 'xml-or-html')) {
-      row.verdict = 'wrong-format';
-    } else row.verdict = 'usable';
+    else if (!formatSatisfies(source.expect, format)) row.verdict = 'wrong-format';
+    else row.verdict = 'usable';
   } catch (e) {
     row.status = 0;
     row.bytes = 0;
@@ -228,11 +267,27 @@ async function main() {
 
   console.log('\n── Controls ──────────────────────────────────────────────');
   for (const c of controls) {
-    console.log(`  ${c.verdict === 'usable' ? 'PASS' : 'FAIL'}  ${c.label}`);
+    /*
+     * A failing control must say WHAT came back. A bare `FAIL` is how a
+     * successful 1.3 MB download came to be read as a network fault: the
+     * verdict was wrong, and the line carried nothing a reader could use to
+     * notice that.
+     */
+    const why = c.verdict === 'usable' ? '' : `  (${c.verdict}: `
+      + (c.verdict === 'unreachable'
+        ? c.error
+        : `${c.status} ${c.format ?? '-'} ${c.bytes}B`
+          + (c.expect ? `, expected ${c.expect}` : '')
+          + (c.bodyIssue ? `, ${c.bodyIssue}` : ''))
+      + ')';
+    console.log(`  ${c.verdict === 'usable' ? 'PASS' : 'FAIL'}  ${c.label}${why}`);
   }
   if (controlsOk === 0) {
-    console.log('\n  !! BOTH CONTROLS FAILED. This run measured the network, not the');
+    console.log('\n  !! EVERY CONTROL FAILED. This run measured the network, not the');
     console.log('     sources. Do not draw conclusions about any candidate from it.\n');
+  } else if (controlsOk < controls.length) {
+    console.log(`\n  ~~ ${controls.length - controlsOk} of ${controls.length} controls failed. The run is interpretable,`);
+    console.log('     but read the failing control above before trusting a NET or WAF line.\n');
   }
 
   console.log('\n── Candidates by verdict ─────────────────────────────────');
@@ -276,4 +331,10 @@ async function main() {
    */
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+/*
+ * Run only when invoked. The verdict rules are exported so a test can hold
+ * them — importing this module must never fetch twenty government websites.
+ */
+const invokedDirectly = process.argv[1]
+  && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) main().catch((e) => { console.error(e); process.exit(1); });

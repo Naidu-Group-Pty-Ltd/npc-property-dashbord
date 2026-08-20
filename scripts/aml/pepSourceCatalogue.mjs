@@ -100,35 +100,77 @@ export const CANDIDATE_SOURCES = [
   },
 
   /* ── Commonwealth Parliament ─────────────────────────────────────── */
+  /*
+   * ── The APH registers, and how they were found ────────────────────
+   * The proposal was right that Parliament publishes machine-readable
+   * member data; the path it named for Members is a PDF wearing a `.csv`
+   * extension (HTTP 200, 184 KB, body begins `%PDF-1.7`). Six symmetrical
+   * guesses at the real name all returned the same 404 page.
+   *
+   * The canonical URLs come from the site's own index page, and they live
+   * on `static.aph.gov.au` — a dedicated static host. That is the whole
+   * explanation for the asymmetry measured earlier: APH's HTML pages sit
+   * behind a WAF that refuses scripted clients, and the static host does
+   * not. Any adapter must read the static host.
+   *
+   * Verified: 150 Members, 75 Senators, with honorific, salutation,
+   * post-nominals, surname, given names, preferred name, initials,
+   * electorate, state, party and gender.
+   */
   {
-    key: 'aph_members_list_csv',
-    label: 'APH — Members list (the path the proposal names as CSV)',
+    key: 'aph_members_csv',
+    label: 'APH — all Members of the House of Representatives',
+    tier: 'A',
+    category: 'commonwealth_legislature',
+    authority: 'Parliament of Australia',
+    url: 'https://static.aph.gov.au/-/media/03_Senators_and_Members/Address_Labels_and_CSV_files/All_members_by_name/All_members_by_name.csv',
+    expect: 'csv',
+    /*
+     * No longer a hypothesis. This URL is what the loader reads, and a test
+     * asserts the two strings are identical — the catalogue's own rule is
+     * that a source must not be validated under one URL and ingested from
+     * another, and two copies of a URL is how that happens.
+     */
+    ingestedAs: 'aph_commonwealth_parliament',
+    note: 'Canonical, from the APH index page. 150 rows when measured, and '
+      + 'the register the office-holder index now loads weekly.',
+  },
+  {
+    key: 'aph_senators_csv',
+    label: 'APH — all Senators',
+    tier: 'A',
+    category: 'commonwealth_legislature',
+    authority: 'Parliament of Australia',
+    url: 'https://static.aph.gov.au/-/media/03_Senators_and_Members/Address_Labels_and_CSV_files/Senators/allsenel.csv',
+    expect: 'csv',
+    ingestedAs: 'aph_commonwealth_parliament',
+    note: 'Canonical. 75 rows when measured, and loaded weekly.',
+  },
+  {
+    key: 'aph_members_pdf_trap',
+    label: 'APH — the Members path the proposal named (PDF trap)',
     tier: 'A',
     category: 'commonwealth_legislature',
     authority: 'Parliament of Australia',
     url: 'https://www.aph.gov.au/-/media/03_Senators_and_Members/32_Members/Lists/Members_List.csv',
     expect: 'csv',
-    note: 'Measured from the Supabase egress: HTTP 200, 184 KB, body begins '
-      + '"%PDF-1.7". The extension says CSV and the bytes say PDF. This probe '
-      + 'exists to find out whether that is true from CI as well.',
+    note: 'Kept deliberately. It answers 200 and it is a PDF — the case that '
+      + 'justifies sniffing bytes rather than trusting an extension. If this '
+      + 'ever reports usable, the prober has regressed.',
   },
   {
-    key: 'aph_senators_list_csv',
-    label: 'APH — Senators list (CSV candidate)',
-    tier: 'A',
+    key: 'aph_csv_index',
+    label: 'APH — the address-labels and CSV index page',
+    tier: 'B',
     category: 'commonwealth_legislature',
     authority: 'Parliament of Australia',
-    url: 'https://www.aph.gov.au/-/media/03_Senators_and_Members/Address_Labels_and_CSV_files/Senators/allsenel.csv',
-    expect: 'csv',
-  },
-  {
-    key: 'aph_members_allmembers_csv',
-    label: 'APH — all members (alternative CSV path)',
-    tier: 'A',
-    category: 'commonwealth_legislature',
-    authority: 'Parliament of Australia',
-    url: 'https://www.aph.gov.au/-/media/03_Senators_and_Members/Address_Labels_and_CSV_files/Members/allmembers.csv',
-    expect: 'csv',
+    url: 'https://www.aph.gov.au/Senators_and_Members/Contacting_Senators_and_Members/Address_labels_and_CSV_files',
+    expect: 'html',
+    note: 'Where the canonical URLs are published. Measured from a runner it '
+      + 'answers 200 with a CAPTCHA page while the two files it links download '
+      + 'fine — so a rename will surface as a 404 on the file, not as a diff '
+      + 'here. Kept as the record of that asymmetry; the loader\'s row floor '
+      + 'and its PDF sniff are the guards that actually hold.',
   },
   {
     key: 'aph_handbook',

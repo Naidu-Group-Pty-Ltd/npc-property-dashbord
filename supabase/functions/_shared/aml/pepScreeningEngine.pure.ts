@@ -154,14 +154,31 @@ export const SERVER_UNREACHABLE_SOURCES: ReadonlyArray<{
     excludes: "state and territory offices, and anybody not currently appointed",
     detail: "Blocks automated requests. Open it from the manual checks below.",
   },
-  {
-    key: "aph_members",
-    label: "Parliament of Australia — senators and members",
-    coverage: "current and recent federal parliamentarians",
-    excludes: "state and territory parliaments, and officials who are not members",
-    detail: "Blocks automated requests. Open it from the manual checks below.",
-  },
 ];
+
+/*
+ * ── What used to be in that list, and why it is not ───────────────────
+ * `aph_members` — "Parliament of Australia — senators and members",
+ * "Blocks automated requests" — sat here from the day the engine was
+ * written, and it was a true sentence about the wrong thing.
+ *
+ * `www.aph.gov.au/Senators_and_Members/Members` does answer 403 to a
+ * scripted client, from every environment measured. But Parliament also
+ * publishes its register as CSV on `static.aph.gov.au`, and that downloads
+ * cleanly from a GitHub runner and from this repository's own container:
+ * 150 members, 75 senators, on every attempt.
+ *
+ * So the site blocks automated clients and the register it publishes does
+ * not. Those are different facts, and collapsing them meant the product
+ * told operators the federal Parliament was out of reach while an
+ * authoritative federal register sat one URL away — and then sent them to
+ * open it by hand.
+ *
+ * It is now `aph_commonwealth_parliament` in `PEP_INDEX_SOURCES`, loaded
+ * weekly and searched server-side. A source cannot be in both lists: this
+ * one is for registers nothing here reads, and a test asserts the two do
+ * not overlap.
+ */
 
 const clean = (v: unknown) => String(v ?? "").trim();
 

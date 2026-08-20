@@ -41,14 +41,39 @@ import { createClient } from '@supabase/supabase-js';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import {
-  WIKIDATA_AU_OFFICES_QUERY, accumulateWikidataOfficeholders,
-  buildWikidataOfficeholderQuery, officeholderEntries, withNormalisedNames,
+  APH_REGISTERS, WIKIDATA_AU_OFFICES_QUERY, accumulateWikidataOfficeholders,
+  buildWikidataOfficeholderQuery, officeholderEntries, parseAphRegister,
+  withNormalisedNames,
 } from './pepOfficeholderParsers.mjs';
+import { parseCsv } from './sanctionsParsers.mjs';
 
+/*
+ * Two sources, and they are not the same KIND of source.
+ *
+ * `aph_commonwealth_parliament` is Tier A: the register Parliament itself
+ * publishes. Every row in it is authoritative and current, and it holds
+ * nobody who left office — not one former member.
+ *
+ * `wikidata_au_public_office` is Tier C: collaboratively edited, far broader,
+ * and the only reachable source that carries FORMER holders, which is the
+ * gap AUSTRAC is most explicit about.
+ *
+ * Neither replaces the other, and the narrower one being the more
+ * authoritative is the point: a Tier A hit is a strong lead, a Tier C hit is
+ * a lead to check, and an absence from both is still not an answer.
+ */
 const SOURCES = {
+  aph_commonwealth_parliament: {
+    label: 'Senators and members of the Australian Parliament (aph.gov.au)',
+    load: loadAphRegisters,
+  },
   wikidata_au_public_office: {
     label: 'Australian public office holders (Wikidata)',
     endpoint: 'https://query.wikidata.org/sparql',
+    load: loadWikidata,
+    /** `--file` reads this source's own payload shape and no other's. */
+    fromFile: (payload) => officeholderEntries(
+      accumulateWikidataOfficeholders(JSON.parse(payload.toString('utf8')))),
   },
 };
 
@@ -177,6 +202,67 @@ async function loadWikidata(source, log) {
   };
 }
 
+/**
+ * The two Parliament register files.
+ *
+ * Plain HTTP GETs of two published CSVs — no API, no key, no pagination.
+ * The only thing worth guarding is the failure this repository has had
+ * twice: a download that comes back SHORT reads exactly like a chamber that
+ * shrank. `expectAtLeast` is a floor, not a target, and falling through it
+ * fails the load rather than publishing a thinner register.
+ */
+async function loadAphRegisters(_source, log) {
+  const entries = [];
+  const hashes = [];
+  for (const register of APH_REGISTERS) {
+    const res = await fetch(register.url, {
+      redirect: 'follow',
+      headers: { 'User-Agent': UA, Accept: 'text/csv,*/*' },
+      signal: AbortSignal.timeout(2 * 60 * 1000),
+    });
+    if (!res.ok) throw new Error(`${register.label}: ${register.url} answered ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+
+    /*
+     * Sniff before parsing. The link Parliament labels `Members_List.csv`
+     * answers 200 with 184 KB beginning `%PDF-1.7`, and a CSV parser fed a
+     * PDF does not throw — it returns rows of gibberish, and the loader
+     * would write them.
+     */
+    const head = buf.subarray(0, 5).toString('latin1');
+    if (head.startsWith('%PDF-')) {
+      throw new Error(`${register.label}: ${register.url} served a PDF, not a CSV`);
+    }
+
+    const parsed = parseAphRegister(buf.toString('utf8'), register, parseCsv);
+    if (parsed.length < register.expectAtLeast) {
+      throw new Error(
+        `${register.label}: ${parsed.length} rows, fewer than the ${register.expectAtLeast} `
+        + 'a complete file holds — that is a truncated download, not a smaller chamber',
+      );
+    }
+    log(`  ${register.label}: ${parsed.length} from ${buf.length} bytes`);
+    entries.push(...parsed);
+    hashes.push(createHash('sha256').update(buf).digest('hex'));
+    await sleep(500);
+  }
+
+  const offices = new Set();
+  for (const e of entries) for (const p of e.source_detail.positions) offices.add(p.title);
+
+  return {
+    entries,
+    officeCount: offices.size,
+    payloadSha: createHash('sha256').update(hashes.join('')).digest('hex'),
+    /*
+     * The file publishes no control date of its own — no "current as at"
+     * anywhere in it — so the download date is the only currency statement
+     * that can honestly be made about it.
+     */
+    sourceAsAt: new Date().toISOString().slice(0, 10),
+  };
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const dryRun = argv.includes('--dry-run');
@@ -209,16 +295,21 @@ async function main() {
     }
 
     try {
-      let parsed, officeCount = null, sha;
+      let parsed, officeCount = null, sha, sourceAsAt = null;
       if (file) {
+        // A payload on disk belongs to ONE source. Reading it as another
+        // source's shape is how a file gets loaded under the wrong code.
+        if (!source.fromFile) {
+          throw new Error(`--file is not supported for ${code}; it reads live registers`);
+        }
         const payload = readFileSync(file);
         console.log(`  read ${file} (${payload.length} bytes)`);
-        const acc = accumulateWikidataOfficeholders(JSON.parse(payload.toString('utf8')));
-        parsed = officeholderEntries(acc);
+        parsed = source.fromFile(payload);
         sha = createHash('sha256').update(payload).digest('hex');
       } else {
-        const r = await loadWikidata(source, (m) => console.log(m));
+        const r = await source.load(source, (m) => console.log(m));
         parsed = r.entries; officeCount = r.officeCount; sha = r.payloadSha;
+        sourceAsAt = r.sourceAsAt ?? null;
       }
 
       if (parsed.length === 0) {
@@ -304,7 +395,7 @@ async function main() {
         // The source's own currency. Wikidata is edited continuously, so the
         // query date IS its as-at — unlike a published file, whose control
         // date can be years older than the day it was downloaded.
-        source_as_at: new Date().toISOString().slice(0, 10),
+        source_as_at: sourceAsAt ?? new Date().toISOString().slice(0, 10),
         completed_at: new Date().toISOString(),
         /*
          * What the load actually reached, recorded beside it. The coverage
