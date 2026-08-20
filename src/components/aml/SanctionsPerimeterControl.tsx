@@ -424,7 +424,7 @@ export function SanctionsPerimeterControl({
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex-none border-t border-border/60 p-4">
             <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
