@@ -1049,11 +1049,15 @@ export function PepDeterminationDialog({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {outcome !== "defer" && methods.length > 0 && (
+            {/* "1 source" used to be the customer's own declaration, on a
+                dialog where nothing had been checked. The badge counts what
+                was checked; the declaration is named in step 1. */}
+            {outcome !== "defer" && independentCount > 0 && (
               <Badge variant="outline" className="text-[10px]">
-                {methods.length} source{methods.length === 1 ? "" : "s"}
+                {independentCount} checked
               </Badge>
             )}
+
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
               Cancel
             </Button>
