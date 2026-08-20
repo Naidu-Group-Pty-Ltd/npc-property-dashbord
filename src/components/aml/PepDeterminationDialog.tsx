@@ -363,6 +363,27 @@ export function PepDeterminationDialog({
   /* Step 2's own count: what the operator actually went and checked. */
   const independentCount = checkedRows.length;
 
+  /*
+   * ── The checklist ────────────────────────────────────────────────────
+   * A register is bound to its rows by the label the button wrote, so what
+   * came back is captured on the register that produced it rather than in a
+   * detached grid. Anything not bound to a listed source — an accepted run
+   * candidate, a web search, a source typed by hand — falls to the general
+   * list, so nothing can be filtered out of view.
+   */
+  const registerSearches = useMemo(
+    () => searches.filter((s) => s.tier === "register"), [searches]);
+  const listedLabels = useMemo(
+    () => new Set(searches.map((s) => s.label)), [searches]);
+  const otherRows = useMemo(
+    () => checkedRows.filter((r) => !listedLabels.has(r.source)),
+    [checkedRows, listedLabels]);
+  const registerTotal = registerSearches.length;
+  const registerDone = useMemo(
+    () => registerSearches.filter((s) => checkedRows.some(
+      (r) => r.source === s.label && r.result.trim().length > 0)).length,
+    [registerSearches, checkedRows]);
+
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
