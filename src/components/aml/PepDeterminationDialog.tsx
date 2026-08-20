@@ -91,6 +91,14 @@ const RELATIONSHIPS = ["self", "family_member", "close_associate"] as const;
 
 interface Row {
   id: string;
+  /**
+   * The listed search this row was opened from, when it was. Rows are bound
+   * to their register by THIS and never by the source label — an operator who
+   * types a register's name into a hand-added row must not have their row
+   * teleported into that register's card mid-edit, which is exactly what
+   * label-matching did.
+   */
+  searchId?: string;
   kind: PepSourceKind;
   source: string;
   reference: string;
@@ -373,15 +381,12 @@ export function PepDeterminationDialog({
    */
   const registerSearches = useMemo(
     () => searches.filter((s) => s.tier === "register"), [searches]);
-  const listedLabels = useMemo(
-    () => new Set(searches.map((s) => s.label)), [searches]);
   const otherRows = useMemo(
-    () => checkedRows.filter((r) => !listedLabels.has(r.source)),
-    [checkedRows, listedLabels]);
+    () => checkedRows.filter((r) => !r.searchId), [checkedRows]);
   const registerTotal = registerSearches.length;
   const registerDone = useMemo(
     () => registerSearches.filter((s) => checkedRows.some(
-      (r) => r.source === s.label && r.result.trim().length > 0)).length,
+      (r) => r.searchId === s.id && r.result.trim().length > 0)).length,
     [registerSearches, checkedRows]);
 
 
@@ -642,11 +647,12 @@ export function PepDeterminationDialog({
                   {registerSearches.map((s, idx) => {
                     const check = manualChecks.find((m) => m.id === s.id);
                     const covered = check?.state === "searched_by_platform";
-                    const bound = checkedRows.filter((r) => r.source === s.label);
+                    const bound = checkedRows.filter((r) => r.searchId === s.id);
                     const recorded = bound.some((r) => r.result.trim().length > 0);
                     const open = () => {
                       window.open(s.url, "_blank", "noopener,noreferrer");
                       setRows((prev) => [...prev, newRow({
+                        searchId: s.id,
                         kind: s.kind, source: s.label, reference: s.searchTerms,
                       })]);
                     };
@@ -692,7 +698,9 @@ export function PepDeterminationDialog({
                                 : "border-border/60 bg-muted/40 text-muted-foreground",
                             )}
                           >
-                            {recorded ? <Check className="h-3.5 w-3.5" /> : idx + 1}
+                            {recorded
+                              ? <Check className="h-3.5 w-3.5" />
+                              : <Circle className="h-2.5 w-2.5" />}
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
@@ -708,6 +716,7 @@ export function PepDeterminationDialog({
                             </div>
                             <p className="mt-0.5 text-[11px] text-muted-foreground">
                               {check?.action ?? s.purpose}
+                              {covered && " · searched on this run"}
                             </p>
 
                             {bound.length === 0 ? (
@@ -833,6 +842,7 @@ export function PepDeterminationDialog({
                           onClick={() => {
                             window.open(s.url, "_blank", "noopener,noreferrer");
                             setRows((prev) => [...prev, newRow({
+                              searchId: s.id,
                               kind: s.kind, source: s.label, reference: s.searchTerms,
                             })]);
                           }}
