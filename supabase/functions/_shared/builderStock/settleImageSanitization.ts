@@ -263,7 +263,7 @@ export async function settleImageSanitization(
 
       const result = await sanitize(bytes, {});
 
-      if (!result.ok) {
+      if (result.ok === false) {
         /*
          * AN OPERATIONAL FAILURE IS NOT AN ANSWER ABOUT THE PICTURE, and I had
          * this wrong until production proved it. A model that could not be

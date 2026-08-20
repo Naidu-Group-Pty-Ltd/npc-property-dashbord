@@ -44,12 +44,7 @@ import { describeTenure } from "@/lib/aml/pepOfficeholderIndex";
 type Run = PepScreeningRun & { id: string; created_at?: string };
 
 /** Every status renders. A source nobody mentions reads as one nobody needed. */
-const SOURCE_TONE: Record<PepScreeningSourceResult["status"], string> = {
-  searched: "text-muted-foreground",
-  unavailable: "text-warning",
-  failed: "text-destructive",
-  not_reachable: "text-muted-foreground",
-};
+
 
 const SOURCE_WORD: Record<PepScreeningSourceResult["status"], string> = {
   searched: "searched",
@@ -58,32 +53,74 @@ const SOURCE_WORD: Record<PepScreeningSourceResult["status"], string> = {
   not_reachable: "not searchable from here — check by hand",
 };
 
+/**
+ * A status badge, so the reading of a source is legible before the prose is.
+ *
+ * The words are the same words. Nothing here decides anything the engine did
+ * not already decide — a badge is a second rendering of `s.status`, never a
+ * second opinion about it.
+ */
+const SOURCE_BADGE: Record<PepScreeningSourceResult["status"], string> = {
+  searched: "border-border/60 bg-muted/40 text-muted-foreground",
+  unavailable: "border-warning/40 bg-warning/10 text-warning",
+  failed: "border-destructive/40 bg-destructive/10 text-destructive",
+  not_reachable: "border-warning/40 bg-warning/10 text-warning",
+};
+
+/** Whether this source leaves work for a person. Drives the grouping only. */
+function needsAPerson(s: PepScreeningSourceResult): boolean {
+  return s.status !== "searched";
+}
+
 const INDICATOR_TONE: Record<PepIndicator["severity"], string> = {
   review: "border-warning/40 bg-warning/10 text-warning",
   attention: "border-warning/30 bg-warning/5 text-warning",
   context: "border-border/60 bg-muted/30 text-muted-foreground",
 };
 
-function SourceLine({ s }: { s: PepScreeningSourceResult }) {
+function SourceCard({ s }: { s: PepScreeningSourceResult }) {
   return (
-    <li className="text-xs">
-      <span className="font-medium text-foreground">{s.label}</span>
-      <span className={cn(" — ", SOURCE_TONE[s.status])}>{SOURCE_WORD[s.status]}</span>
-      {s.status === "searched" && (
-        <span className="text-muted-foreground">
-          {", "}{s.foundCount} match{s.foundCount === 1 ? "" : "es"}
-          {s.asAt ? `, current to ${s.asAt}` : ""}
+    <li className="rounded-md border border-border/60 bg-background/40 p-2.5">
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+        <p className="min-w-0 text-xs font-medium text-foreground">{s.label}</p>
+        <span
+          className={cn(
+            "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.06em]",
+            SOURCE_BADGE[s.status],
+          )}
+        >
+          {SOURCE_WORD[s.status]}
         </span>
+      </div>
+
+      {s.status === "searched" && (
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          {s.foundCount} match{s.foundCount === 1 ? "" : "es"} under this name
+          {s.asAt ? `, current to ${s.asAt}` : ""}
+        </p>
       )}
-      <span className="block text-muted-foreground">Holds {s.coverage}.</span>
-      {/* Rendered under every source, including the ones that found nothing. */}
-      <span className="block text-muted-foreground">
-        Does not hold {s.excludes}.
-      </span>
-      {s.detail && <span className="block text-muted-foreground">{s.detail}</span>}
+
+      <dl className="mt-1.5 space-y-0.5 text-[11px] leading-relaxed">
+        <div className="flex gap-1.5">
+          <dt className="shrink-0 text-muted-foreground/70">Holds</dt>
+          <dd className="text-muted-foreground">{s.coverage}.</dd>
+        </div>
+        {/* Rendered under every source, including the ones that found nothing. */}
+        <div className="flex gap-1.5">
+          <dt className="shrink-0 text-muted-foreground/70">Gaps</dt>
+          <dd className="text-muted-foreground">Does not hold {s.excludes}.</dd>
+        </div>
+      </dl>
+
+      {s.detail && (
+        <p className="mt-1.5 rounded border border-border/50 bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
+          {s.detail}
+        </p>
+      )}
     </li>
   );
 }
+
 
 function CandidateCard({
   candidate, decided, onDecide, busy, sourceAsAt, sourceCurrency,
@@ -372,24 +409,73 @@ export function PepScreeningRunPanel({
             </ul>
           )}
 
-          {/* What was searched, always — including under an empty result. */}
+          {/*
+            What was searched, always — including under an empty result.
+
+            Grouped by whether the source leaves work for a person, because
+            that is the only question an operator has here: the run came back
+            with nothing, so WHAT DID IT NEVER LOOK AT? The grouping is read
+            off `s.status` and decides nothing the engine did not.
+          */}
           <div className="rounded-md border border-border/60 bg-muted/30 p-3">
             <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               <ShieldQuestion aria-hidden className="h-3 w-3" /> What was searched
             </p>
-            <ul className="mt-1.5 space-y-1.5">
-              {run.sources.map((s) => <SourceLine key={s.key} s={s} />)}
-            </ul>
+
+            {(() => {
+              const automatic = run.sources.filter((s) => !needsAPerson(s));
+              const manual = run.sources.filter(needsAPerson);
+              return (
+                <div className="mt-2 space-y-3">
+                  {automatic.length > 0 && (
+                    <section>
+                      <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                        <Check aria-hidden className="h-3 w-3 shrink-0" />
+                        Aurixa searched {automatic.length}{" "}
+                        {automatic.length === 1 ? "register" : "registers"}
+                      </p>
+                      <ul className="mt-1.5 space-y-1.5">
+                        {automatic.map((s) => <SourceCard key={s.key} s={s} />)}
+                      </ul>
+                    </section>
+                  )}
+
+                  {manual.length > 0 && (
+                    <section>
+                      <p className="flex items-start gap-1.5 text-[11px] font-medium text-warning">
+                        <AlertTriangle aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+                        <span>
+                          {manual.length}{" "}
+                          {manual.length === 1 ? "register" : "registers"} the
+                          platform could not search — you have to open{" "}
+                          {manual.length === 1 ? "it" : "them"} yourself, in the
+                          manual checks below.
+                        </span>
+                      </p>
+                      <ul className="mt-1.5 space-y-1.5">
+                        {manual.map((s) => <SourceCard key={s.key} s={s} />)}
+                      </ul>
+                    </section>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {run.requiresManualReview && (
-            <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-              <AlertTriangle aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
-              A person still has to look. This run informs the determination and
-              does not settle it — work through the manual checks below before
-              recording an outcome.
-            </p>
+            <div className="rounded-md border border-warning/40 bg-warning/10 p-3">
+              <p className="flex items-start gap-1.5 text-xs font-semibold text-warning">
+                <AlertTriangle aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                Next step: a person still has to look
+              </p>
+              <p className="mt-1 pl-5 text-[11px] leading-relaxed text-muted-foreground">
+                This run informs the determination and does not settle it. Work
+                through the manual checks below — open each source, record what
+                came back — before recording an outcome.
+              </p>
+            </div>
           )}
+
         </div>
       )}
     </div>
