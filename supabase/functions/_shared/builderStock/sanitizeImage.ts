@@ -337,7 +337,7 @@ export async function sanitizeSourceImage(
       maskHeight: thumbnail.thumbnail.height,
     });
 
-    if (deterministic.ok === true) {
+    if (deterministic.ok) {
       return await finish(
         deterministic.pixels, raster.width, raster.height,
         'deterministic_overlay_reconstruction', deterministic.repairedShare,
@@ -387,7 +387,7 @@ export async function sanitizeSourceImage(
       width: raster.width, height: raster.height, pixels: raster.pixels, mask,
       edit: options.edit,
     });
-    if (generated.ok === false) {
+    if (!generated.ok) {
       return {
         ok: false,
         reason: generated.reason === 'too_many_regions'
