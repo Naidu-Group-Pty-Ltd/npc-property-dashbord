@@ -56,6 +56,7 @@ import {
   amlCasesApi, type AmlPartyScreeningSubject,
 } from "@/lib/aml/amlCasesApi";
 import {
+  PEP_DECLARATION_KIND,
   PEP_DEFERRAL_REASONS, PEP_DEFERRAL_REASON_LABEL, PEP_SOURCE_KINDS,
   PEP_SOURCE_KIND_LABEL, assessPepDeferral, assessPepEvidence, normalisePepMethods,
   sanctionsSignalForPep,
