@@ -130,6 +130,149 @@ and fails the load. An index quietly holding 149 of 150 members is the
 empty-register failure at one-row scale, and it reads as a clean load for as
 long as nobody counts.
 
+## Telling a candidate apart from a namesake
+
+The index searches on name tokens alone, and that is correct: a common surname
+must still surface the office holder, so the search is built for recall. The
+consequence is that an operator is handed candidates who are frequently a
+different person, with nothing on the card connecting them to the customer
+except an office title.
+
+A date of birth is the strongest discriminator any of these sources publishes.
+Measured against the live endpoint, **1,247 of 1,254** people in one office
+batch carry `P569` — 99%.
+
+### The rule: a date of birth ORDERS candidates. It never removes one.
+
+The threshold deciding whether a candidate reaches a person is applied to the
+**name score alone**. `admitCandidate` in
+`_shared/aml/pepCandidateMatch.pure.ts` takes one argument and it is the name
+score — expressed in the signature so it cannot be quietly relaxed, and pinned
+by a test that scans both endpoints for a filter on an adjusted score.
+
+The sanctions path does the opposite, and correctly: there the adjustment
+decides whether something is REFERRED at all, and the cost of over-referring is
+a reviewer's minute. Here the candidate is already in front of the reviewer
+whose job is to reach the determination, so removing an office holder because a
+birth date disagrees would be the automation reaching it — and the operator
+would never learn the namesake existed.
+
+The concrete number: a 0.9 name score times the sanctions mismatch factor of
+0.75 is **0.675**, under the 0.7 floor. Applying the adjustment before the
+threshold would silently drop a strong name match.
+
+### Why the column is `text` and not `date`
+
+Because the source publishes partial dates, and a partial date in a `date`
+column has to be padded to something.
+
+Wikidata records precision explicitly — `wikibase:timePrecision` 11 day, 10
+month, 9 year — and renders a full timestamp either way. A year-precision birth
+in 1961 comes back as `1961-01-01T00:00:00Z`. **46 of those 1,247 people are
+year-precision.** Storing the timestamp would assert that all 46 were born on
+1 January, and the comparison would then report a confident MISMATCH against a
+customer genuinely born in August.
+
+A fabricated discriminator is worse than none: it demotes a real lead with a
+reason that sounds decisive. So the column carries precision in the shape of
+the string — `1961`, `1961-03`, `1961-03-02` — which is the convention
+`aml.sanctions_entries.date_of_birth` already uses and the one `compareDob` in
+`_shared/aml/matching.ts` is written against. One convention, one comparator,
+no second precision column to drift. An unstated precision truncates to the
+**year**, because over-truncating only understates agreement while
+under-truncating invents a birthday.
+
+### Two things a shared year can mean
+
+`DobAgreement` returns `year_match` both when the register publishes *only* a
+year and when two full dates share a year but fall on different days. The first
+is weak corroboration; the second is close to a disagreement. The agreement is
+left alone — it feeds the ranking and has to rank the way the sanctions
+screening does — and `comparePepDob` computes a separate **reading** for the
+sentence that goes on the page.
+
+Nothing it can produce reads as an identification or an exclusion. A
+disagreement says *"worth confirming against the official register before
+relying on either"*, and an **absent** date says *"that is not a difference —
+there is nothing to compare"*. Reading a register that publishes no date as a
+date that disagrees is the empty-register failure pointed the other way.
+
+The party's own date is resolved by one function used by both the assisted
+search and the recorded run. Two derivations would let the list an operator
+browses rank differently from the record kept of what was searched, and both
+would look right on their own.
+
+## Coverage against the AML/CTF Rules, measured
+
+"10,558 people across 676 offices" is a number about a database. The question
+an operator has when a search returns nothing is whether it had ever looked at
+judges, or ambassadors, or the Chief of Navy.
+
+`_shared/aml/pepRuleCoverage.pure.ts` classifies the office titles a load
+actually holds against the Rules' own vocabulary. The **loader** measures it and
+writes it to `pep_officeholder_syncs.detail.rule_categories`; the endpoint
+renders it from there. Same module both sides.
+
+### Why a classifier is safe here when one was deleted next door
+
+A heuristic was removed from the APH parser because it guessed where one office
+title ended and the next began, and a wrong guess **altered the data**. This one
+alters nothing — every row is stored exactly as the source published it — and
+its two failure directions are not symmetrical:
+
+- a title it does not recognise is counted as **unclassified and disclosed**, so
+  every count is a floor and the prose says *"at least"*;
+- a category with nothing recognised reads as **not evidenced**, which sends the
+  operator to check by hand. The cost is a check somebody may not have needed.
+
+The unsafe direction — claiming a category is covered when it is not — is the
+one it exists to prevent, and it was not hypothetical.
+
+### The category that would have been wrong
+
+The Rules mean **Australian** diplomatic positions: our ambassadors and high
+commissioners posted overseas.
+
+Production holds 16 offices containing "ambassador", "high commissioner" or
+"consul". **Fifteen** are of the form `ambassador of Botswana to Australia` —
+foreign envoys posted *here*, which is the opposite of the category. The
+sixteenth is a bare `high commissioner` with no direction stated. Australian
+diplomats abroad: **zero**.
+
+A keyword classifier would have reported *"diplomatic: 16 offices"*, and an
+operator would reasonably have concluded Australian ambassadors were searched.
+So the direction is part of the match, and the foreign envoys get their own
+category — a foreign ambassador in Canberra is a foreign PEP, which the Rules
+treat more strictly, and folding them into the Australian count or dropping
+them silently are both wrong.
+
+Three more that a plausible rule gets wrong, all real rows:
+
+| title | naive | correct |
+| --- | --- | --- |
+| `Governor of the Reserve Bank of Australia` | vice-regal | an accountable authority |
+| `Justice of the Peace for South Australia` | judiciary | not a judicial officer |
+| `Minister for Defence` | defence | ministry |
+
+Councillors and aldermen are deliberately **not** counted as local government:
+the Rules name *heads* of local government, and the index holds hundreds of
+council members who are not heads.
+
+### What each register evidences
+
+Measured, not asserted:
+
+| register | categories evidenced |
+| --- | --- |
+| `aph_commonwealth_parliament` | legislature (179 offices), ministry (77) — and nothing else. It is a register of seats and portfolios. |
+| `wikidata_au_public_office` | the broader set, including judiciary, vice-regal, public administration, Defence and local government |
+
+The spike found no reachable Tier A source for the judiciary, Defence or
+diplomatic positions. That is a gap in **adapters**, not necessarily a gap in
+the index: judges, the Chief of Navy and state Governors are already loaded,
+from the collaboratively edited source. The operator needs both facts, and the
+panel now says which categories are evidenced and which are not.
+
 ### The query, and the one that was wrong
 
 Offices are found by `P1001` — *applies to jurisdiction* — where the

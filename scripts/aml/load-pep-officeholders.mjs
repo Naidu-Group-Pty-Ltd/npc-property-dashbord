@@ -46,6 +46,13 @@ import {
   withNormalisedNames,
 } from './pepOfficeholderParsers.mjs';
 import { parseCsv } from './sanctionsParsers.mjs';
+/*
+ * The SAME module the endpoint renders coverage from. Measured by the load
+ * and read back from the load — a coverage sentence nobody measures is a
+ * claim nobody can check, which is the defect this whole file was rewritten
+ * for once already.
+ */
+import { summariseRuleCoverage } from '../../supabase/functions/_shared/aml/pepRuleCoverage.pure.ts';
 
 /*
  * Two sources, and they are not the same KIND of source.
@@ -342,8 +349,28 @@ async function main() {
         }
         if (r.position_title) offices.add(r.position_title);
       }
+      /*
+       * Which AML/CTF Rule categories this load actually reaches.
+       *
+       * "10,558 people across 676 offices" is a number about a database. The
+       * question an operator has is whether the thing that just returned
+       * nothing had ever looked at judges, or ambassadors, or the Chief of
+       * Navy — so coverage is measured against the obligation and stored
+       * beside the load.
+       */
+      const ruleCoverage = summariseRuleCoverage(offices);
+      const evidenced = ruleCoverage.categories.filter((c) => !c.notEvidenced);
+
       console.log(`  parsed ${parsed.length}, searchable ${rows.length}, `
         + `${offices.size} distinct offices, sha256 ${sha.slice(0, 16)}…`);
+      console.log(`  rule categories evidenced: ${evidenced.length}/`
+        + `${ruleCoverage.categories.length}`
+        + ` (${evidenced.map((c) => `${c.code} ${c.officeCount}`).join(', ') || 'none'})`);
+      if (ruleCoverage.unclassifiedCount) {
+        // Disclosed, never hidden: this is what makes every count a FLOOR.
+        console.log(`  ${ruleCoverage.unclassifiedCount} office titles matched no `
+          + `category, e.g. ${ruleCoverage.unclassifiedSamples.slice(0, 3).join('; ')}`);
+      }
       if (dryRun) {
         console.log('  dry run — not written');
         console.log('  sample:', JSON.stringify(rows[0], null, 2).slice(0, 800));
@@ -408,6 +435,14 @@ async function main() {
           office_count: officeCount,
           distinct_offices: offices.size,
           sample_offices: [...offices].slice(0, 12),
+          /*
+           * Stored so the screen renders a MEASUREMENT rather than a
+           * sentence. The categories with nothing are stored too — a gap
+           * that is not recorded is a gap nobody can be told about.
+           */
+          rule_categories: ruleCoverage.categories,
+          unclassified_offices: ruleCoverage.unclassifiedCount,
+          unclassified_samples: ruleCoverage.unclassifiedSamples,
         },
       }).eq('id', sync.id);
       console.log(`  ✓ ${code} loaded (${rows.length} entries, ${pruned} pruned)`);

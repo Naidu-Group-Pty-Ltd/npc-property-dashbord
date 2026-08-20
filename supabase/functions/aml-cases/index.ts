@@ -56,6 +56,9 @@ import {
   PEP_INDEX_SOURCES, describeCoverage, indexIsUsable, searchVerdict,
   type PepIndexCandidate,
 } from "../_shared/aml/pepOfficeholderIndex.pure.ts";
+import {
+  admitCandidate, comparePepDob, rankCandidate, resolveSubjectDob,
+} from "../_shared/aml/pepCandidateMatch.pure.ts";
 import { normaliseName, scoreNames } from "../_shared/aml/matching.ts";
 // The screening engine: what the platform can establish by itself, and the
 // line it may never cross. It screens; it never determines.
@@ -4183,20 +4186,46 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
         // Identity is DERIVED, exactly as it is for a determination.
         let subjectName = String(caseRead.row.subject_display_name ?? '').trim();
+        let partySubjectRow: { date_of_birth?: unknown } | null = null;
         let sanctionsSignal: 'none' | 'candidate' | 'confirmed' = 'none';
         if (partySubjectId) {
           const { data: partySubject } = await admin.schema('aml')
             .from('party_screening_subjects')
-            .select('id, case_id, screened_name, state').eq('id', partySubjectId).maybeSingle();
+            .select('id, case_id, screened_name, state, date_of_birth')
+            .eq('id', partySubjectId).maybeSingle();
           if (!partySubject || String(partySubject.case_id) !== caseId) {
             return jsonResponse({
               error: 'party_screening_subject_id does not belong to this case',
             }, 400);
           }
           subjectName = String(partySubject.screened_name ?? '').trim();
+          partySubjectRow = partySubject;
           sanctionsSignal = partySubject.state === 'confirmed_match' ? 'confirmed'
             : partySubject.state === 'possible_match' ? 'candidate' : 'none';
         }
+
+        /*
+         * The submission snapshot, read ONCE and used twice — for the party's
+         * date of birth here, and for the political-exposure declaration in
+         * section 3 below.
+         *
+         * It is hoisted rather than read twice because a screening run is a
+         * record of what was true when it ran: two reads could straddle a
+         * customer resubmitting, and the run would then hold a date of birth
+         * from one version and a declaration from another, with nothing on
+         * the record to show it.
+         */
+        const { data: submissionRow } = await admin.schema('aml')
+          .from('submission_versions')
+          .select('snapshot').eq('case_id', caseId).is('superseded_at', null)
+          .order('version_number', { ascending: false }).limit(1).maybeSingle();
+        const snapshotSections = (((submissionRow?.snapshot ?? {}) as any).sections ?? []) as any[];
+        const personalSection = (snapshotSections
+          .find((x: any) => x?.section === 'personal_details')?.payload ?? null) as
+          Record<string, unknown> | null;
+        const subjectDob = resolveSubjectDob({
+          partySubject: partySubjectRow, personalDetails: personalSection,
+        });
 
         const tokens = normaliseName(subjectName);
         const sources: PepScreeningSourceResult[] = [];
@@ -4250,7 +4279,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           const { data: rows, error: idxErr } = await admin.schema('aml')
             .from('pep_officeholders')
             .select('external_id, source_code, full_name, aliases, position_title, '
-              + 'jurisdiction, position_start, position_end, currently_held, confirm_url')
+              + 'jurisdiction, position_start, position_end, currently_held, confirm_url, '
+              + 'date_of_birth')
             .eq('source_code', source.code)
             .overlaps('normalised_names', tokens).limit(500);
           if (idxErr) {
@@ -4279,9 +4309,19 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
               positionEnd: r.position_end ?? null,
               currentlyHeld: r.currently_held ?? null,
               confirmUrl: r.confirm_url ?? null,
+              dateOfBirth: r.date_of_birth ?? null,
+              /*
+               * Stored on the RUN, so the record of what was searched shows
+               * what the operator was shown. It ordered the list and it never
+               * shortened it — `admitCandidate` reads the name score alone.
+               */
+              dob: comparePepDob(subjectDob, r.date_of_birth ?? null),
               score,
             } as PepScreeningCandidate;
-          }).filter((c) => c.score >= 0.7).sort((a, b) => b.score - a.score).slice(0, 25);
+          }).filter((c) => admitCandidate(c.score))
+            .sort((a, b) => rankCandidate(b.score, b.dob!.agreement)
+              - rankCandidate(a.score, a.dob!.agreement))
+            .slice(0, 25);
           candidates.push(...found);
           sources.push({
             key: source.code, label: cov.label, status: 'searched',
@@ -4301,19 +4341,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
         /* ── 3 · what the customer declared ───────────────────────────── */
         /*
-         * The same read `sync_screening_stage` makes: the live submission
-         * snapshot's `personal_details` section. Read here rather than passed
-         * in, because a screening run is a record of what was true when it
-         * ran and must not depend on what a caller chose to send.
+         * From the snapshot read above — the same `personal_details` section
+         * `sync_screening_stage` reads, and the same one the date of birth
+         * came from. Read from the server rather than passed in, because a
+         * screening run is a record of what was true when it ran and must not
+         * depend on what a caller chose to send.
          */
-        const { data: submissionRow } = await admin.schema('aml')
-          .from('submission_versions')
-          .select('snapshot').eq('case_id', caseId).is('superseded_at', null)
-          .order('version_number', { ascending: false }).limit(1).maybeSingle();
-        const snapshotSections = (((submissionRow?.snapshot ?? {}) as any).sections ?? []) as any[];
-        const personalSection = (snapshotSections
-          .find((x: any) => x?.section === 'personal_details')?.payload ?? null) as
-          Record<string, unknown> | null;
         const declaration = readPepDeclaration(personalSection);
 
         const run = buildScreeningRun({
@@ -4482,17 +4515,36 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .select('id, subject_display_name').eq('id', caseId).maybeSingle();
         if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
         let searchName = String(caseRow.subject_display_name ?? '').trim();
+        let partySubjectRow: { date_of_birth?: unknown } | null = null;
         if (partySubjectId) {
           const { data: partySubject } = await admin.schema('aml')
             .from('party_screening_subjects')
-            .select('id, case_id, screened_name').eq('id', partySubjectId).maybeSingle();
+            .select('id, case_id, screened_name, date_of_birth')
+            .eq('id', partySubjectId).maybeSingle();
           if (!partySubject || String(partySubject.case_id) !== caseId) {
             return jsonResponse({
               error: 'party_screening_subject_id does not belong to this case',
             }, 400);
           }
           searchName = String(partySubject.screened_name ?? '').trim();
+          partySubjectRow = partySubject;
         }
+
+        /*
+         * The party's date of birth, resolved by the SAME module the recorded
+         * run uses. Deriving it twice would let the list an operator browses
+         * rank a person differently from the record kept of what was
+         * searched, and both would look right on their own.
+         */
+        const { data: searchSubmission } = await admin.schema('aml')
+          .from('submission_versions')
+          .select('snapshot').eq('case_id', caseId).is('superseded_at', null)
+          .order('version_number', { ascending: false }).limit(1).maybeSingle();
+        const searchDob = resolveSubjectDob({
+          partySubject: partySubjectRow,
+          personalDetails: (((searchSubmission?.snapshot ?? {}) as any).sections ?? [])
+            .find((x: any) => x?.section === 'personal_details')?.payload ?? null,
+        });
 
         // Coverage FIRST, and unconditionally. It is attached to every
         // reading including the empty one, which is the reading that needs
@@ -4522,7 +4574,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const { data: rows, error: searchErr } = await admin.schema('aml')
           .from('pep_officeholders')
           .select('external_id, source_code, full_name, aliases, position_title, pep_type, '
-            + 'jurisdiction, position_start, position_end, currently_held, confirm_url')
+            + 'jurisdiction, position_start, position_end, currently_held, confirm_url, '
+            + 'date_of_birth')
           .overlaps('normalised_names', tokens)
           .limit(500);
         if (searchErr) {
@@ -4537,27 +4590,45 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           }, 503);
         }
 
-        const MIN_SCORE = 0.7;
+        /*
+         * A date of birth ORDERS candidates and annotates them. It never
+         * removes one — `admitCandidate` takes the name score and nothing
+         * else, and the sort is the only place the comparison acts. See
+         * `_shared/aml/pepCandidateMatch.pure.ts`.
+         */
         const candidates: PepIndexCandidate[] = (rows ?? []).map((r: any) => {
           const names = [String(r.full_name), ...((r.aliases ?? []) as string[])];
           const score = Math.max(...names.map((n) => scoreNames(searchName, n).score), 0);
+          const dob = comparePepDob(searchDob, r.date_of_birth ?? null);
           return {
             externalId: String(r.external_id),
             sourceCode: String(r.source_code),
             fullName: String(r.full_name),
             aliases: (r.aliases ?? []) as string[],
             positionTitle: String(r.position_title),
-            pepType: r.pep_type ?? 'domestic',
+            /*
+             * NULL when the index holds no category, and it never holds one.
+             * This used to read `r.pep_type ?? 'domestic'`, which asserted an
+             * AUSTRAC category the loader deliberately refuses to write, the
+             * column deliberately leaves null and the migration's own comment
+             * says belongs to the determination rather than to the index.
+             * Nothing rendered it yet, so it was a fabricated field waiting
+             * for its first consumer.
+             */
+            pepType: r.pep_type ?? null,
             jurisdiction: r.jurisdiction ?? null,
             positionStart: r.position_start ?? null,
             positionEnd: r.position_end ?? null,
             currentlyHeld: r.currently_held ?? null,
             confirmUrl: r.confirm_url ?? null,
+            dateOfBirth: r.date_of_birth ?? null,
+            dob,
             score,
           };
         })
-          .filter((c) => c.score >= MIN_SCORE)
-          .sort((a, b) => b.score - a.score)
+          .filter((c) => admitCandidate(c.score))
+          .sort((a, b) => rankCandidate(b.score, b.dob!.agreement)
+            - rankCandidate(a.score, a.dob!.agreement))
           .slice(0, 25);
 
         return jsonResponse(searchVerdict({

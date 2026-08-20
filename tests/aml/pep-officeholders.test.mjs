@@ -15,8 +15,10 @@ import { dirname, join } from 'node:path';
 import {
   APH_REGISTERS, WIKIDATA_AU_OFFICES_QUERY, accumulateWikidataOfficeholders,
   buildWikidataOfficeholderQuery, officeholderEntries, parseAphRegister,
-  parseWikidataOfficeholders, splitTitleCell, withNormalisedNames,
+  parseWikidataOfficeholders, splitTitleCell, truncateWikidataDate,
+  withNormalisedNames,
 } from '../../scripts/aml/pepOfficeholderParsers.mjs';
+import { summariseRuleCoverage } from '../../supabase/functions/_shared/aml/pepRuleCoverage.pure.ts';
 import { normaliseName, parseCsv } from '../../scripts/aml/sanctionsParsers.mjs';
 import { CANDIDATE_SOURCES } from '../../scripts/aml/pepSourceCatalogue.mjs';
 
@@ -444,4 +446,105 @@ test('a source is ingested from the URL the spike proved, not a second copy', ()
       `${s.key} is catalogued at a URL the loader does not read: ${s.url}`);
   }
   assert.equal(loaderUrls.size, ingested.length);
+});
+
+/* ══════════════════════════════════════════════════════════════════════
+ * DATE OF BIRTH — the field that tells a candidate apart from a namesake
+ * ══════════════════════════════════════════════════════════════════════ */
+
+test('a year-precision birth is stored as a year, not as 1 January', () => {
+  /*
+   * Wikidata records precision explicitly — 11 day, 10 month, 9 year — and
+   * renders a full timestamp regardless. A year-precision birth in 1961 comes
+   * back as `1961-01-01T00:00:00Z`.
+   *
+   * Storing that verbatim asserts a birthday nobody published, and the
+   * comparison then reports a confident MISMATCH against a customer genuinely
+   * born on 4 August 1961 — demoting a real lead with a reason that sounds
+   * decisive. Measured against the live endpoint: 46 of 1,247 people in one
+   * office batch are year-precision, so this is ~4% of the register.
+   */
+  assert.equal(truncateWikidataDate('1961-01-01T00:00:00Z', 11), '1961-01-01');
+  assert.equal(truncateWikidataDate('1961-03-01T00:00:00Z', 10), '1961-03');
+  assert.equal(truncateWikidataDate('1961-01-01T00:00:00Z', 9), '1961');
+});
+
+test('an unstated precision truncates to the year, and that direction is chosen', () => {
+  /*
+   * Over-truncating can only turn a `match` into a `year_match` — it keeps a
+   * candidate in front of a reviewer and understates the agreement.
+   * Under-truncating invents a birthday. The default leans away from the
+   * mistake that demotes.
+   */
+  assert.equal(truncateWikidataDate('1961-08-04T00:00:00Z', undefined), '1961');
+  assert.equal(truncateWikidataDate('1961-08-04T00:00:00Z', 'nonsense'), '1961');
+});
+
+test('anything coarser than a year is not a date of birth', () => {
+  assert.equal(truncateWikidataDate('1960-01-01T00:00:00Z', 8), null);   // decade
+  assert.equal(truncateWikidataDate('1900-01-01T00:00:00Z', 7), null);   // century
+  // A BC date would parse into a plausible-looking year.
+  assert.equal(truncateWikidataDate('-0500-01-01T00:00:00Z', 11), null);
+  assert.equal(truncateWikidataDate('', 11), null);
+  assert.equal(truncateWikidataDate(null, 11), null);
+});
+
+test('the query reads the statement node, not the truncated predicate', () => {
+  // `wdt:P569` hands back a full timestamp with no way to tell how much of it
+  // is known, which is the whole reason the two tests above exist.
+  const q = buildWikidataOfficeholderQuery(['Q1']);
+  assert.match(q, /psv:P569/);
+  assert.match(q, /wikibase:timePrecision/);
+  assert.match(q, /wikibase:timeValue/);
+});
+
+test('the Parliament register publishes none, and says null rather than guessing', () => {
+  const entries = parseAphRegister(
+    aphFixture('aph-members.sample.csv'), houseRegister, parseCsv);
+  for (const e of entries) assert.equal(e.date_of_birth ?? null, null);
+  const row = withNormalisedNames(entries[0], 'aph_commonwealth_parliament', null);
+  assert.equal(row.date_of_birth, null);
+});
+
+test('the column accepts only the partial-date shapes the comparator reads', () => {
+  const dob = readFileSync(
+    join(root, 'supabase/migrations/20260929000000_aml_pep_officeholder_dob.sql'), 'utf8');
+  // A timestamp, a `circa 1961` or an empty string would parse to a year by
+  // accident or to nothing at all, and both readings are silent.
+  assert.match(dob, /\^\[0-9\]\{4\}\(-\[0-9\]\{2\}\(-\[0-9\]\{2\}\)\?\)\?\$/);
+  assert.match(dob, /date_of_birth text/);
+});
+
+/* ══════════════════════════════════════════════════════════════════════
+ * RULE COVERAGE — measured by the load, rendered from the load
+ * ══════════════════════════════════════════════════════════════════════ */
+
+test('the load measures coverage against the Rules and stores it', () => {
+  assert.match(loader, /summariseRuleCoverage/);
+  assert.match(loader, /rule_categories: ruleCoverage\.categories/);
+  // The categories with NOTHING are stored too. A gap that is not recorded is
+  // a gap nobody can be told about.
+  assert.match(loader, /unclassified_offices/);
+  // One implementation, imported — not a second copy of the classifier in mjs.
+  assert.match(loader, /pepRuleCoverage\.pure\.ts/);
+});
+
+test('the Parliament register evidences legislators and ministers, and nothing else', () => {
+  // Measured from the real files: the two APH registers hold seats and
+  // portfolios. Reporting judiciary or Defence coverage off them would be
+  // false, and this is the assertion that keeps it false-negative rather than
+  // false-positive.
+  const entries = [
+    ...parseAphRegister(aphFixture('aph-members.sample.csv'), houseRegister, parseCsv),
+    ...parseAphRegister(aphFixture('aph-senators.sample.csv'), senateRegister, parseCsv),
+  ];
+  const offices = new Set();
+  for (const e of entries) for (const p of e.source_detail.positions) offices.add(p.title);
+  const summary = summariseRuleCoverage(offices);
+  const evidenced = summary.categories.filter((c) => !c.notEvidenced).map((c) => c.code).sort();
+  assert.deepEqual(evidenced, ['legislature', 'ministry']);
+  for (const code of ['judiciary', 'defence', 'diplomatic', 'vice_regal']) {
+    const cat = summary.categories.find((c) => c.code === code);
+    assert.equal(cat.notEvidenced, true, `${code} must not be claimed from APH alone`);
+  }
 });

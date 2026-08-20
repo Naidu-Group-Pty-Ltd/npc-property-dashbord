@@ -65,6 +65,7 @@ export function buildWikidataOfficeholderQuery(officeQids) {
   const values = officeQids.map((q) => `wd:${q}`).join(' ');
   return `
 SELECT ?person ?personLabel ?article
+       (SAMPLE(?dobValue) AS ?dob) (SAMPLE(?dobPrecision) AS ?dobPrec)
        (GROUP_CONCAT(DISTINCT ?alias; separator="||") AS ?aliases)
        (GROUP_CONCAT(DISTINCT ?posline; separator="||") AS ?positions)
 WHERE {
@@ -78,6 +79,17 @@ WHERE {
   BIND(CONCAT(?posLabel, "~", COALESCE(STR(?s), ""), "~", COALESCE(STR(?e), "")) AS ?posline)
   OPTIONAL { ?article schema:about ?person ; schema:isPartOf <https://en.wikipedia.org/> . }
   OPTIONAL { ?person skos:altLabel ?alias . FILTER(LANG(?alias) = "en") }
+  # Read through the STATEMENT NODE rather than the truncated wdt:P569,
+  # which hands back a full timestamp with no way to tell how much of it is
+  # known. wikibase:timePrecision is the only thing that distinguishes
+  # "born in 1961" from "born on 1 January 1961", and storing the second
+  # when the source said the first produces a confident mismatch against a
+  # real birthday.
+  OPTIONAL {
+    ?person p:P569 ?dobSt .
+    ?dobSt psv:P569 ?dobNode .
+    ?dobNode wikibase:timeValue ?dobValue ; wikibase:timePrecision ?dobPrecision .
+  }
 }
 GROUP BY ?person ?personLabel ?article
 `.trim();
@@ -94,6 +106,37 @@ const asDate = (v) => {
   const m = /^(-?\d{4})-(\d{2})-(\d{2})/.exec(v);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
 };
+
+/**
+ * A Wikidata time value, truncated to the precision the source claims.
+ *
+ * Wikidata's precision codes: 11 = day, 10 = month, 9 = year. Anything
+ * coarser (decade, century) is not a date of birth in any useful sense and
+ * is dropped rather than rounded into one.
+ *
+ * ── Why an unknown precision truncates to the YEAR ────────────────────
+ * Because of which way the mistake runs. Over-truncating can only turn a
+ * `match` into a `year_match`, or a `mismatch` into a `year_match` — it
+ * keeps a candidate in front of a reviewer and understates the agreement.
+ * Under-truncating asserts a birthday nobody published, and produces a
+ * confident MISMATCH that demotes a real lead with a reason that sounds
+ * decisive.
+ *
+ * A discriminator that is wrong in the demoting direction is worse than no
+ * discriminator, so the default leans the other way.
+ */
+export function truncateWikidataDate(value, precision) {
+  const m = /^(-?)(\d{4})-(\d{2})-(\d{2})/.exec(String(value ?? ''));
+  // A BC date has no place in a register of current and recent office
+  // holders, and `-0500-01-01` would parse into a plausible-looking year.
+  if (!m || m[1] === '-') return null;
+  const [, , year, month, day] = m;
+  const p = Number(precision);
+  if (Number.isFinite(p) && p <= 8) return null;      // decade or coarser
+  if (p === 11) return `${year}-${month}-${day}`;
+  if (p === 10) return `${year}-${month}`;
+  return `${year}`;                                    // 9, or unstated
+}
 
 /**
  * A label that is really a Q-id ("Q23939864") means Wikidata has no English
@@ -135,10 +178,22 @@ export function accumulateWikidataOfficeholders(json, into = new Map()) {
     const qid = uri.split('/').pop();
     let row = into.get(qid);
     if (!row) {
-      row = { external_id: qid, full_name: name, aliases: new Set(), positions: [], article: null };
+      row = {
+        external_id: qid, full_name: name, aliases: new Set(),
+        positions: [], article: null, date_of_birth: null,
+      };
       into.set(qid, row);
     }
     if (!row.article) row.article = text(b, 'article');
+    /*
+     * First one wins. A person appears in several office batches and every
+     * one of them carries the same `P569`, so overwriting would churn the
+     * value for no gain — and a later batch that happened to return nothing
+     * for it would erase a date the index already had.
+     */
+    if (!row.date_of_birth) {
+      row.date_of_birth = truncateWikidataDate(text(b, 'dob'), text(b, 'dobPrec'));
+    }
     for (const alias of String(b?.aliases?.value ?? '').split('||')) {
       const a = alias.trim();
       if (a && a !== name && !isQid(a)) row.aliases.add(a);
@@ -185,6 +240,12 @@ export function officeholderEntries(acc) {
        * would be wrong on the face of the data as well as in principle.
        */
       pep_type: null,
+      /*
+       * The one field on this row that can tell an office holder apart from
+       * somebody who merely shares their name. Null wherever the source did
+       * not publish one — and an absent date is never a disagreement.
+       */
+      date_of_birth: row.date_of_birth ?? null,
       jurisdiction: 'Australia',
       position_start: lead.start,
       position_end: lead.end,
@@ -221,6 +282,7 @@ export function withNormalisedNames(entry, sourceCode, syncId) {
     normalised_names: normalised,
     position_title: entry.position_title,
     pep_type: entry.pep_type ?? null,
+    date_of_birth: entry.date_of_birth ?? null,
     jurisdiction: entry.jurisdiction ?? null,
     position_start: entry.position_start ?? null,
     position_end: entry.position_end ?? null,
