@@ -11,11 +11,17 @@ export {
   indexIsUsable,
   searchVerdict,
   candidateToMethodDraft,
+  assessIndexRecency,
+  describeTenure,
+  PEP_INDEX_AGEING_AFTER_DAYS,
+  PEP_INDEX_STALE_AFTER_DAYS,
   type PepIndexSourceCode,
   type PepIndexCoverage,
   type PepIndexCandidate,
   type PepIndexReading,
   type PepIndexVerdict,
+  type PepIndexRecency,
+  type PepIndexRecencyReading,
 } from '../../../supabase/functions/_shared/aml/pepOfficeholderIndex.pure.ts';
 
 /**

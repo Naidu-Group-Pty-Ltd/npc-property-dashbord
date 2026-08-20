@@ -56,6 +56,7 @@ import {
   PEP_INDEX_SOURCES, describeCoverage, indexIsUsable, searchVerdict,
   type PepIndexCandidate,
 } from "../_shared/aml/pepOfficeholderIndex.pure.ts";
+import { assessIndexRecency } from "../_shared/aml/pepOfficeholderIndex.pure.ts";
 import {
   admitCandidate, comparePepDob, rankCandidate, resolveSubjectDob,
 } from "../_shared/aml/pepCandidateMatch.pure.ts";
@@ -4253,6 +4254,21 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             });
             continue;
           }
+          /*
+           * How current it is, recorded ON THE RUN.
+           *
+           * Usability and currency stay separate: a stale register is still
+           * searched, because its rows are still leads and refusing to read
+           * it would remove the only assistance there is. What it cannot do
+           * is support the claim `currently_held` makes, and the run is the
+           * record of what was searched — so the age belongs in it rather
+           * than only on the screen at the moment somebody looked.
+           */
+          const recency = assessIndexRecency(cov, Date.now());
+          registerVersions[source.code] = {
+            ...(registerVersions[source.code] as Record<string, unknown>),
+            age_days: recency.ageDays, recency: recency.reading,
+          };
           if (tokens.length === 0) {
             sources.push({
               key: source.code, label: cov.label, status: 'searched',
@@ -4327,6 +4343,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             key: source.code, label: cov.label, status: 'searched',
             coverage: cov.covers, excludes: cov.excludes,
             foundCount: found.length, asAt: cov.sourceAsAt,
+            currency: recency.reading,
+            // Only when there is something to say. A fresh register does not
+            // need a sentence about its freshness on every result.
+            detail: recency.reading === 'fresh' ? null : recency.reason,
           });
         }
 

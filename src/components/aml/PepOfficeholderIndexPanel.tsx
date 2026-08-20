@@ -31,8 +31,10 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { amlCasesApi } from "@/lib/aml/amlCasesApi";
 import {
+  assessIndexRecency,
   candidateToMethodDraft,
-  type PepIndexCandidate, type PepIndexVerdict,
+  describeTenure,
+  type PepIndexCandidate, type PepIndexRecency, type PepIndexVerdict,
 } from "@/lib/aml/pepOfficeholderIndex";
 
 function CoverageNote({ verdict }: { verdict: PepIndexVerdict }) {
@@ -101,6 +103,27 @@ function CoverageNote({ verdict }: { verdict: PepIndexVerdict }) {
             <span className="block font-medium text-foreground">
               Does not cover {c.excludes}
             </span>
+            {/*
+              * How current it is — a different question from whether it
+              * loaded, and the one nothing was asking. A load that succeeded
+              * eight months ago passes `indexIsUsable` exactly as this
+              * morning's does, and every Parliament row it holds still says
+              * the seat is held.
+              */}
+            {(() => {
+              const r = assessIndexRecency(c, Date.now());
+              if (r.reading === "fresh" || r.reading === "never") {
+                return <span className="block">{r.reason}</span>;
+              }
+              return (
+                <span className={cn(
+                  "block font-medium",
+                  r.reading === "stale" ? "text-warning" : "text-foreground",
+                )}>
+                  {r.reason}
+                </span>
+              );
+            })()}
             {c.collaborative && (
               <span className="block">
                 Collaboratively edited — a hit here is a lead, and the official
@@ -114,9 +137,11 @@ function CoverageNote({ verdict }: { verdict: PepIndexVerdict }) {
   );
 }
 
-function CandidateRow({ c, onRecord }: {
+function CandidateRow({ c, onRecord, recencyFor }: {
   c: PepIndexCandidate;
   onRecord: (c: PepIndexCandidate) => void;
+  /** How current the register this candidate came from is. */
+  recencyFor: (sourceCode: string) => PepIndexRecency;
 }) {
   const span = [c.positionStart, c.positionEnd].filter(Boolean).join(" – ");
   return (
@@ -159,11 +184,19 @@ function CandidateRow({ c, onRecord }: {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {/* Current or former, stated. A former holder is assessed on risk,
-              never written off by the passage of time. */}
+          {/*
+            * Held AS AT a date, never the bare word "Current".
+            *
+            * Every row from the Parliament register carries
+            * `currently_held: true` by construction — the files are a
+            * snapshot of who sits on the day they are downloaded. That is
+            * accurate at the load and decays from then on, so a member who
+            * lost their seat reads as "Current" for as long as nothing
+            * reloads. The date is what makes the claim checkable, and it
+            * travels into the evidence record the same way.
+            */}
           <Badge variant="outline" className="text-[10px]">
-            {c.currentlyHeld === true ? "Current"
-              : c.currentlyHeld === false ? "Former" : "Dates unknown"}
+            {describeTenure(c.currentlyHeld, recencyFor(c.sourceCode))}
           </Badge>
           <Badge variant="secondary" className="text-[10px]">
             {Math.round(c.score * 100)}% name match
@@ -257,6 +290,22 @@ export function PepOfficeholderIndexPanel({ caseId, subjectId, onAddSource }: {
                 <CandidateRow
                   key={`${c.sourceCode}:${c.externalId}`} c={c}
                   onRecord={(cand) => onAddSource(candidateToMethodDraft(cand))}
+                  recencyFor={(code) => assessIndexRecency(
+                    verdict.coverage.find((v) => v.sourceCode === code)
+                      /*
+                       * A candidate whose register is not in the coverage
+                       * list is a state that should not arise, and if it
+                       * does the answer is "never loaded" rather than a
+                       * confident date. An invented as-at is worse than
+                       * none: it is the claim, not the gap, that misleads.
+                       */
+                      ?? { sourceCode: code, label: code, covers: "", excludes: "",
+                           collaborative: true, entryCount: 0, officeCount: null,
+                           sampleOffices: [], ruleCategories: [],
+                           ruleCoverageMeasured: false, unclassifiedOffices: 0,
+                           sourceAsAt: null, lastSyncedAt: null, lastSyncStatus: "never" },
+                    Date.now(),
+                  )}
                 />
               ))}
             </ul>
