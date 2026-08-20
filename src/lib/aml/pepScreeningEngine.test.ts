@@ -44,7 +44,11 @@ const candidate = (over: Partial<PepScreeningCandidate> = {}): PepScreeningCandi
   ...over,
 });
 
-const answered = { answered: true, answer: "no" as const, summary: "The customer said no." };
+/* A declaration is `yes | no | null`, so the fixture is typed as the engine's
+   own shape. `as const` alone narrows `answer` to "no" and makes the "declared
+   yes" case below unassignable. */
+type DeclarationInput = { answered: boolean; answer: "yes" | "no" | null; summary?: string | null };
+const answered: DeclarationInput = { answered: true, answer: "no", summary: "The customer said no." };
 
 const run = (over: Parameters<typeof buildScreeningRun>[0] extends never ? never : Partial<{
   searchedNames: string[];

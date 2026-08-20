@@ -65,7 +65,7 @@ import {
 } from "../_shared/aml/pepScreeningEngine.pure.ts";
 // `aml.cases` has no tenant_id column. This is the only place that knows it.
 import {
-  DEFAULT_AML_TENANT, readCase,
+  DEFAULT_AML_TENANT, readCase, tenantForCase,
 } from "../_shared/aml/caseTenant.ts";
 import { planCaseReopen, resumeStatusFor } from "../_shared/aml/caseReopen.pure.ts";
 import {

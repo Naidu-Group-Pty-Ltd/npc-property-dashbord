@@ -33,7 +33,12 @@ export type AmlRiskRating = "low" | "medium" | "high" | "prohibited";
 export type AmlEventCategory =
   | "case_created" | "status_changed" | "risk_rescored" | "document_added"
   | "idv_result" | "pep_sanctions_hit" | "edd_note" | "mlro_decision"
-  | "austrac_report" | "system";
+  | "austrac_report" | "system"
+  // A screening is not a determination: these three categories record that a
+  // search was RUN, that a candidate was adjudicated, and that a
+  // determination was deferred. None of them is an outcome.
+  | "pep_screening_run" | "pep_screening_candidate_review"
+  | "pep_determination_deferred";
 
 export interface AmlCase {
   id: string;
