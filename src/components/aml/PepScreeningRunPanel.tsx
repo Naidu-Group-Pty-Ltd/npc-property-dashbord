@@ -23,7 +23,7 @@
  * demoted, but never removed, because the registers a server cannot reach are
  * exactly the ones a person still has to open.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle, ArrowUpRight, Check, Info, Loader2, Search, ShieldQuestion, X,
 } from "lucide-react";
@@ -43,6 +43,56 @@ import type { RunSourceReading } from "@/lib/aml/pepRunCascade";
 import { describeTenure } from "@/lib/aml/pepOfficeholderIndex";
 
 type Run = PepScreeningRun & { id: string; created_at?: string };
+
+/**
+ * A stored run, read back into the shape the panel renders.
+ *
+ * ── Why this exists ───────────────────────────────────────────────────
+ * The run lived in component state alone, so closing the determination
+ * dialog — or any remount — discarded it. The screening was still recorded
+ * server-side, but the panel came back empty, the cascade withdrew every row
+ * it had written, and the checklist fell from "1 of 4 recorded" back to
+ * "0 of 4". The work had been done and the screen said it had not.
+ *
+ * The columns are snake_case on the table and camelCase in the engine's own
+ * type, so the mapping is written out rather than spread: a silently missing
+ * `requiresManualReview` would read as "no further work", which is the one
+ * value this engine must never invent.
+ */
+function runFromRow(row: Record<string, unknown>): Run | null {
+  const id = typeof row.id === "string" ? row.id : null;
+  const verdict = row.verdict as PepScreeningRun["verdict"] | undefined;
+  if (!id || !verdict) return null;
+  const list = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+  return {
+    id,
+    created_at: typeof row.created_at === "string" ? row.created_at : undefined,
+    verdict,
+    message: typeof row.message === "string" && row.message
+      ? row.message
+      /*
+       * The sentence is not stored. It is rebuilt as a statement about the
+       * SEARCH — never about the person — so a restored run reads in the same
+       * vocabulary as a fresh one.
+       */
+      : verdict === "indicators_found"
+        ? "This run found something a person has to look at."
+        : verdict === "no_indicators"
+          ? "The registers searched on this run held nothing under this name. "
+            + "That is a result about the search, not a clearance."
+          : verdict === "not_searchable"
+            ? "There was nothing on this party that could be searched."
+            : "This run could not search everything it needed to.",
+    sources: list<PepScreeningSourceResult>(row.sources),
+    candidates: list<PepScreeningCandidate>(row.candidates),
+    indicators: list<PepIndicator>(row.indicators),
+    /* Absent is treated as "yes, a person still has to look". */
+    requiresManualReview: row.requires_manual_review !== false,
+    notReached: list<string>(row.not_reached),
+    searchedNames: list<string>(row.searched_names),
+  };
+}
+
 
 /** Every status renders. A source nobody mentions reads as one nobody needed. */
 
@@ -267,8 +317,63 @@ export function PepScreeningRunPanel({
 }) {
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState<Run | null>(null);
+  const [restored, setRestored] = useState(false);
   const [decisions, setDecisions] = useState<
     Record<string, { decision: "accepted" | "rejected"; reason: string }>>({});
+
+  /*
+   * ── The last run for THIS party, read back ────────────────────────────
+   * A screening is a recorded fact, not a fact about whether a dialog has
+   * stayed open. Restoring it is what stops the checklist resetting itself
+   * every time the determination screen is reopened.
+   *
+   * Scoped to this subject, never to the case: a run against another party is
+   * a search under another name, and crediting it here would be the same lie
+   * the reset-on-open guard exists to prevent. A failed read leaves the panel
+   * as it was — nothing is invented, and the operator can still press Run.
+   */
+  useEffect(() => {
+    let live = true;
+    setRun(null);
+    setRestored(false);
+    setDecisions({});
+    void (async () => {
+      try {
+        const res = await amlCasesApi.listPepScreeningRuns(caseId);
+        if (!live) return;
+        const row = (res.runs ?? []).find(
+          (r) => String((r as Record<string, unknown>).party_screening_subject_id ?? "")
+            === subjectId);
+        if (!row) return;
+        const next = runFromRow(row as Record<string, unknown>);
+        if (!next) return;
+        setRun(next);
+        setRestored(true);
+        onSources?.(next.sources.map((x) => ({
+          key: x.key, status: x.status, label: x.label,
+          foundCount: x.foundCount, asAt: x.asAt ?? null,
+        })));
+        /* Decisions already taken on this run's candidates stay taken. */
+        const taken: Record<string, { decision: "accepted" | "rejected"; reason: string }> = {};
+        for (const r of res.reviews ?? []) {
+          const review = r as Record<string, unknown>;
+          if (String(review.run_id ?? "") !== next.id) continue;
+          const candidateId = String(review.candidate_id ?? "");
+          const decision = String(review.decision ?? "");
+          if (!candidateId || (decision !== "accepted" && decision !== "rejected")) continue;
+          taken[candidateId] = { decision, reason: String(review.reason ?? "") };
+        }
+        setDecisions(taken);
+      } catch {
+        /* Silent: history that could not be read is not a screening failure,
+           and a toast here would fire on every open of the dialog. */
+      }
+    })();
+    return () => { live = false; };
+    // `onSources` is a setter from the parent and stable for the open dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caseId, subjectId]);
+
 
   const start = async () => {
     setBusy(true);
@@ -278,6 +383,7 @@ export function PepScreeningRunPanel({
       });
       const next = res.run as Run;
       setRun(next);
+      setRestored(false);
       /*
        * The status is what the manual-check classification reads; the label,
        * the count and the currency date are what a cascaded row is worded
@@ -294,6 +400,7 @@ export function PepScreeningRunPanel({
       // A failure is a technical condition and is shown as one. Reporting it
       // as "nothing found" is how an error becomes an outcome.
       setRun(null);
+      setRestored(false);
       // A run that failed has read nothing, so every register goes back to
       // needing a person. Leaving the previous run's coverage standing would
       // credit this attempt with the last one's reach.
@@ -351,7 +458,22 @@ export function PepScreeningRunPanel({
             Searches the registers Aurixa holds and records what it found. It
             informs the determination; it never makes one.
           </p>
+          {/*
+            A restored run says so, and says when. Presenting last week's
+            search as though it had just been performed is the same
+            overstatement as presenting a stale register as current.
+          */}
+          {restored && run && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Showing the last run for this party
+              {run.created_at
+                ? ` — ${new Date(run.created_at).toLocaleString("en-AU")}`
+                : ""}
+              . Run it again to search the registers as they stand today.
+            </p>
+          )}
         </div>
+
         <Button type="button" size="sm" onClick={() => void start()} disabled={busy}>
           {busy
             ? <Loader2 aria-hidden className="mr-1.5 h-3.5 w-3.5 animate-spin" />

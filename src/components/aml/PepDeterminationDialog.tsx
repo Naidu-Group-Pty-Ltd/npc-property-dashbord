@@ -442,24 +442,60 @@ export function PepDeterminationDialog({
     () => searches.filter((s) => s.tier === "register"), [searches]);
   const otherRows = useMemo(
     () => checkedRows.filter((r) => !r.searchId), [checkedRows]);
-  const registerTotal = registerSearches.length;
+
+  /*
+   * ── Two different obligations, counted separately ─────────────────────
+   * "1 of 4 recorded" read as a three-quarters-empty checklist, and three of
+   * those four could never have been filled by the run: ParlInfo is a
+   * full-text archive of the parliamentary record and ABN Lookup is a company
+   * register that happens to name office holders. Neither is a register the
+   * index could hold, so counting them alongside the ones it does reports a
+   * coverage failure that does not exist — and buries the one register that
+   * genuinely still needs a person.
+   *
+   * `classifyManualChecks` already draws that line (`not_held_by_platform`).
+   * This reads it rather than re-deciding it, so nothing here can disagree
+   * with the run above.
+   */
+  const stateOf = useMemo(() => {
+    const byId = new Map(manualChecks.map((m) => [m.id, m.state]));
+    return (id: string) => byId.get(id);
+  }, [manualChecks]);
+  const heldRegisters = useMemo(
+    () => registerSearches.filter((s) => stateOf(s.id) !== "not_held_by_platform"),
+    [registerSearches, stateOf]);
+  const unheldRegisters = useMemo(
+    () => registerSearches.filter((s) => stateOf(s.id) === "not_held_by_platform"),
+    [registerSearches, stateOf]);
+
+  const hasResult = useMemo(
+    () => (id: string) => checkedRows.some(
+      (r) => r.searchId === id && r.result.trim().length > 0),
+    [checkedRows]);
+
+  /* The progress bar measures the registers the platform can read. */
+  const registerTotal = heldRegisters.length;
   const registerDone = useMemo(
-    () => registerSearches.filter((s) => checkedRows.some(
-      (r) => r.searchId === s.id && r.result.trim().length > 0)).length,
-    [registerSearches, checkedRows]);
+    () => heldRegisters.filter((s) => hasResult(s.id)).length,
+    [heldRegisters, hasResult]);
   /*
    * What is left for a person, named.
    *
    * Once the run's own results cascade in, "0 of 4 recorded" is no longer the
-   * honest reading — some of those four have been read and recorded, and the
+   * honest reading — some of those have been read and recorded, and the
    * remainder are the ones no server can reach. Those are what this lists, so
    * the operator sees the actual outstanding work rather than the whole list
    * again.
    */
   const outstandingRegisters = useMemo(
-    () => registerSearches.filter((s) => !checkedRows.some(
-      (r) => r.searchId === s.id && r.result.trim().length > 0)),
-    [registerSearches, checkedRows]);
+    () => heldRegisters.filter((s) => !hasResult(s.id)),
+    [heldRegisters, hasResult]);
+  /* Sources nobody's server could have covered: offered, never counted as a
+     coverage gap, and still recordable by hand. */
+  const outstandingOther = useMemo(
+    () => unheldRegisters.filter((s) => !hasResult(s.id)),
+    [unheldRegisters, hasResult]);
+
 
 
 
@@ -731,13 +767,35 @@ export function PepDeterminationDialog({
                     <p className="flex items-start gap-1.5 rounded-md border border-success/40 bg-success/5 px-2 py-1.5 text-[11px] text-success">
                       <Check aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
                       <span>
-                        Every listed register has a result recorded against it. What
-                        was recorded is a result about the search, not a clearance —
-                        the determination in step 3 is still yours.
+                        Every register the platform holds has a result recorded
+                        against it. What was recorded is a result about the search,
+                        not a clearance — the determination in step 3 is still yours.
+                      </span>
+                    </p>
+                  )}
+
+                  {/*
+                    And the sources that were never the run's to read. Stated
+                    separately, because listing them as outstanding coverage
+                    reports a failure that does not exist.
+                  */}
+                  {outstandingOther.length > 0 && (
+                    <p className="flex items-start gap-1.5 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground">
+                      <Info aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span>
+                        {outstandingOther.length}{" "}
+                        {outstandingOther.length === 1 ? "source is" : "sources are"}{" "}
+                        not a register the platform could hold —{" "}
+                        <span className="font-medium">
+                          {outstandingOther.map((s) => s.label).join(" · ")}
+                        </span>
+                        . Open them where the determination needs them; they are
+                        not counted above.
                       </span>
                     </p>
                   )}
                 </div>
+
 
 
                 {/*
@@ -747,11 +805,35 @@ export function PepDeterminationDialog({
                 */}
                 <PepCoverageGaps />
 
-                <ol className="space-y-2">
-                  {registerSearches.map((s) => {
+                {/*
+                  Two groups, in the order the work happens: the registers the
+                  platform reads (so most of them arrive recorded), then the
+                  sources it never could. One renderer, so a card cannot say
+                  one thing in one group and another in the other.
+                */}
+                {[
+                  { key: "held", list: heldRegisters, heading: null as string | null },
+                  {
+                    key: "other",
+                    list: unheldRegisters,
+                    heading: "Not registers the platform holds — an archive and a "
+                      + "company register, always opened by hand",
+                  },
+                ].filter((group) => group.list.length > 0).map((group) => (
+                <div key={group.key} className="space-y-2">
+                  {group.heading && (
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      {group.heading}
+                    </p>
+                  )}
+                  <ol className="space-y-2">
+                  {group.list.map((s) => {
                     const check = manualChecks.find((m) => m.id === s.id);
                     const covered = check?.state === "searched_by_platform";
+                    /* Never a coverage gap — so never ringed, never counted. */
+                    const unheld = check?.state === "not_held_by_platform";
                     const bound = checkedRows.filter((r) => r.searchId === s.id);
+
                     const recorded = bound.some((r) => r.result.trim().length > 0);
                     /*
                      * Recorded FROM THE RUN is a different fact from recorded
@@ -789,10 +871,18 @@ export function PepDeterminationDialog({
                               label: "Read by the run — confirm",
                               tone: "border-info/50 bg-info/10 text-info",
                             }
-                            : {
-                              label: "Needs you",
-                              tone: "border-warning/50 bg-warning/10 text-warning",
-                            };
+                            : unheld
+                              ? {
+                                /* Not "Needs you": nothing here was ever owed
+                                   to the automated search, and calling it
+                                   outstanding reports a gap that never was. */
+                                label: "By hand if you need it",
+                                tone: "border-border/60 bg-muted/40 text-muted-foreground",
+                              }
+                              : {
+                                label: "Needs you",
+                                tone: "border-warning/50 bg-warning/10 text-warning",
+                              };
 
                     return (
                       <li
@@ -805,12 +895,15 @@ export function PepDeterminationDialog({
                               : "border-success/40 bg-success/5"
                             : bound.length > 0
                               ? "border-warning/40 bg-warning/5"
+                              : unheld
+                                ? "border-border/60 bg-muted/10"
                               /* Outstanding work is the only thing on this list
                                  that a person still has to do, so it is the only
                                  thing given a ring. */
-                              : "border-warning/50 bg-warning/[0.04] ring-1 ring-warning/25",
+                                : "border-warning/50 bg-warning/[0.04] ring-1 ring-warning/25",
                         )}
                       >
+
                         <div className="flex items-start gap-3">
                           <span
                             aria-hidden
@@ -820,7 +913,10 @@ export function PepDeterminationDialog({
                                 ? runRecorded
                                   ? "border-info/50 bg-info/10 text-info"
                                   : "border-success/50 bg-success/10 text-success"
-                                : "border-warning/50 bg-warning/10 text-warning",
+                                : unheld
+                                  ? "border-border/60 bg-muted/40 text-muted-foreground"
+                                  : "border-warning/50 bg-warning/10 text-warning",
+
                             )}
                           >
                             {recorded
@@ -946,7 +1042,10 @@ export function PepDeterminationDialog({
                       </li>
                     );
                   })}
-                </ol>
+                  </ol>
+                </div>
+                ))}
+
 
                 {/*
                   A general web search is not a register, and the list used to
