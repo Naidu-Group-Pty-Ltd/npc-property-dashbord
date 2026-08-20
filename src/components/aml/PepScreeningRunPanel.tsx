@@ -38,7 +38,8 @@ import { amlCasesApi } from "@/lib/aml/amlCasesApi";
 import type {
   PepIndicator, PepScreeningCandidate, PepScreeningRun, PepScreeningSourceResult,
 } from "@/lib/aml/pepScreeningEngine";
-import { recencyFromRunSource, type RunSourceState } from "@/lib/aml/pepManualChecks";
+import { recencyFromRunSource } from "@/lib/aml/pepManualChecks";
+import type { RunSourceReading } from "@/lib/aml/pepRunCascade";
 import { describeTenure } from "@/lib/aml/pepOfficeholderIndex";
 
 type Run = PepScreeningRun & { id: string; created_at?: string };
