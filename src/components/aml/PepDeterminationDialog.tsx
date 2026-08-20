@@ -677,38 +677,68 @@ export function PepDeterminationDialog({
                   runSources !== null && "animate-fade-in",
                 )}
               >
-                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                      Check by hand — official registers
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      {describeManualChecks(manualChecks, runSources !== null)}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="text-xs font-medium tabular-nums text-muted-foreground">
-                      {registerDone} of {registerTotal} recorded
-                    </span>
-                    <div
-                      className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
-                      role="progressbar"
-                      aria-valuenow={registerDone}
-                      aria-valuemin={0}
-                      aria-valuemax={registerTotal}
-                      aria-label="Registers recorded"
-                    >
+                <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                        Official registers — what is recorded, and what still needs you
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">
+                        {describeManualChecks(manualChecks, runSources !== null)}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-xs font-medium tabular-nums text-muted-foreground">
+                        {registerDone} of {registerTotal} recorded
+                      </span>
                       <div
-                        className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
-                        style={{
-                          width: registerTotal > 0
-                            ? `${Math.round((registerDone / registerTotal) * 100)}%`
-                            : "0%",
-                        }}
-                      />
+                        className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
+                        role="progressbar"
+                        aria-valuenow={registerDone}
+                        aria-valuemin={0}
+                        aria-valuemax={registerTotal}
+                        aria-label="Registers recorded"
+                      >
+                        <div
+                          className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
+                          style={{
+                            width: registerTotal > 0
+                              ? `${Math.round((registerDone / registerTotal) * 100)}%`
+                              : "0%",
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
+
+                  {/*
+                    The outstanding work, named.
+                    A list of every register with "0 of 4 recorded" beside it
+                    told an operator to repeat, by hand, searches the panel
+                    above had just performed. What is left is what this says.
+                  */}
+                  {outstandingRegisters.length > 0 ? (
+                    <p className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/5 px-2 py-1.5 text-[11px] text-warning">
+                      <AlertTriangle aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span>
+                        Still needs a person ({outstandingRegisters.length}):{" "}
+                        <span className="font-medium">
+                          {outstandingRegisters.map((s) => s.label).join(" · ")}
+                        </span>
+                      </span>
+                    </p>
+                  ) : registerTotal > 0 && (
+                    <p className="flex items-start gap-1.5 rounded-md border border-success/40 bg-success/5 px-2 py-1.5 text-[11px] text-success">
+                      <Check aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span>
+                        Every listed register has a result recorded against it. What
+                        was recorded is a result about the search, not a clearance —
+                        the determination in step 3 is still yours.
+                      </span>
+                    </p>
+                  )}
                 </div>
+
 
                 {/*
                   What the loaded registers do not evidence at all. Measured by
