@@ -234,8 +234,16 @@ export function SanctionsPerimeterControl({
       </CardContent>
 
       <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-          <DialogHeader>
+        {/*
+          The height cap and the overflow MUST carry the `sm:` prefix. The
+          dialog primitive sets `sm:max-h-[85dvh]` and `sm:overflow-visible`,
+          and tailwind-merge treats an unprefixed `max-h-*`/`overflow-*` as a
+          different utility group — so a plain `max-h-[90vh] overflow-y-auto`
+          silently loses on every screen ≥640px, which is how the note field
+          and the footer came to render outside the dialog card.
+        */}
+        <DialogContent className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden p-0 sm:max-h-[92dvh] sm:max-w-lg sm:overflow-hidden">
+          <DialogHeader className="flex-none border-b border-border/60 p-6 pb-4 text-left">
             <DialogTitle>Is this case within the sanctions screening perimeter?</DialogTitle>
             <DialogDescription>
               In plain terms: are we actually providing a service on this case, or was it
@@ -244,7 +252,8 @@ export function SanctionsPerimeterControl({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-5">
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
+
             {/*
               ── One question at a time ──────────────────────────────────
               The dialog previously presented the classification, four
@@ -415,7 +424,7 @@ export function SanctionsPerimeterControl({
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex-none border-t border-border/60 p-4">
             <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
