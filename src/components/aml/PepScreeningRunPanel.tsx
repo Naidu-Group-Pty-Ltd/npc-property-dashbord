@@ -400,6 +400,7 @@ export function PepScreeningRunPanel({
       // A failure is a technical condition and is shown as one. Reporting it
       // as "nothing found" is how an error becomes an outcome.
       setRun(null);
+      setRestored(false);
       // A run that failed has read nothing, so every register goes back to
       // needing a person. Leaving the previous run's coverage standing would
       // credit this attempt with the last one's reach.
