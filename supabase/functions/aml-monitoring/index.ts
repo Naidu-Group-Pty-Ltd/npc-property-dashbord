@@ -1019,7 +1019,11 @@ async function runScheduledScans(admin: any) {
      */
     if (idxErr) { console.error("pep index change scan: read failed", idxErr); continue; }
 
-    const currentMatches: IndexMatch[] = (rows ?? []).map((r: any) => {
+    // `rows` is untyped, so `.map` on it returned `any` and the `.filter`
+    // callback below had no contextual type — an implicit `any` parameter under
+    // noImplicitAny. Annotating the map's RESULT types the whole chain, so `m`
+    // is an IndexMatch without annotating it or suppressing anything.
+    const currentMatches: IndexMatch[] = ((rows ?? []) as any[]).map((r: any): IndexMatch => {
       const names = [String(r.full_name), ...((r.aliases ?? []) as string[])];
       const score = Math.max(
         ...names.map((n) => scoreNames(String(run.subject_name ?? ""), n).score), 0);

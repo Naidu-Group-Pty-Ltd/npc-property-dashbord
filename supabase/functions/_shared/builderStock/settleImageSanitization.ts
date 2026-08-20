@@ -529,6 +529,9 @@ export async function settleImageSanitization(
     region: RepairRegionBox | null;
     waitingSince: number;
   }> = [];
+  /** Same truthiness test the loop always used, expressed so it narrows `row`. */
+  const hasStoragePath = (r: ImageRow): r is ImageRow & { storage_path: string } =>
+    Boolean(r.storage_path);
   const consider = (
     row: ImageRow & { storage_path: string },
     detail: Record<string, unknown>,
@@ -630,7 +633,12 @@ export async function settleImageSanitization(
 
       outcome.outstanding += 1;
 
-      if (!row.storage_path) {
+      // A type predicate rather than `if (!row.storage_path)`: the falsy check
+      // narrows the PROPERTY and leaves `row` itself as ImageRow, so passing it
+      // to `consider` — which needs `storage_path` to be a string — did not
+      // compile. Same runtime test, same rows rejected; the difference is that
+      // TypeScript can now carry the fact forward.
+      if (!hasStoragePath(row)) {
         // A designated primary with nowhere to read its bytes from. Not an
         // answer about the picture: left unresolved so a later tick tries.
         outcome.unresolved += 1;
