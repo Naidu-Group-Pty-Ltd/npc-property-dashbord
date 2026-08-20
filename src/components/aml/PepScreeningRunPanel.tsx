@@ -383,6 +383,7 @@ export function PepScreeningRunPanel({
       });
       const next = res.run as Run;
       setRun(next);
+      setRestored(false);
       /*
        * The status is what the manual-check classification reads; the label,
        * the count and the currency date are what a cascaded row is worded
