@@ -262,7 +262,7 @@ export function PepScreeningRunPanel({
    * hand a register the panel directly above said it had just searched. It is
    * derived from this now, so the two cannot disagree.
    */
-  onSources?: (sources: RunSourceState[] | null) => void;
+  onSources?: (sources: RunSourceReading[] | null) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState<Run | null>(null);
