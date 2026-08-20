@@ -211,7 +211,53 @@ export function PepDeterminationDialog({
    * which is not the same as a run that reached nothing — see
    * `describeManualChecks`.
    */
-  const [runSources, setRunSources] = useState<RunSourceState[] | null>(null);
+  const [runSources, setRunSources] = useState<RunSourceReading[] | null>(null);
+
+  /*
+   * ── The run's own results, cascaded into the checklist ────────────────
+   * A register the run reports as `searched` is recorded from the run: the
+   * operator is not asked to go and repeat a search the platform has already
+   * performed and displayed one card above.
+   *
+   * Only `searched` cascades — an unavailable, failed or unreachable register
+   * stays outstanding, because a read that failed is not a register that was
+   * empty. A row an operator already put against that register is never
+   * touched, and a run that is re-run or fails withdraws only the rows it
+   * wrote itself.
+   */
+  useEffect(() => {
+    if (!open) return;
+    if (runSources === null) {
+      setRows((prev) => prev.filter((r) => !r.fromRun));
+      return;
+    }
+    const drafts = cascadeRunResults({
+      targets: searches
+        .filter((s) => s.tier === "register")
+        .map((s) => ({
+          id: s.id, kind: s.kind, label: s.label, searchTerms: s.searchTerms,
+        })),
+      sources: runSources,
+    });
+    setRows((prev) => {
+      /* Withdraw this run's own rows, keep everything a person wrote. */
+      const kept = prev.filter((r) => !r.fromRun);
+      const held = new Set(kept.map((r) => r.searchId).filter(Boolean));
+      const added = drafts
+        .filter((d) => !held.has(d.searchId))
+        .map((d) => newRow({
+          searchId: d.searchId,
+          kind: (PEP_SOURCE_KINDS as readonly string[]).includes(d.kind)
+            ? d.kind as PepSourceKind : "official_register",
+          source: d.source, reference: d.reference, result: d.result,
+          fromRun: true,
+        }));
+      return added.length === 0 && kept.length === prev.length
+        ? prev : [...kept, ...added];
+    });
+    // `searches` is derived from the party and stable for the open dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, runSources]);
 
   const methods: PepMethod[] = useMemo(
     () => normalisePepMethods(rows.map((r) => ({
