@@ -31,8 +31,23 @@ reads a mailbox and writes Airtable's **Property Intake Master** (205 columns, b
 before touching intake, the projection in `_shared/airtableListing.pure.ts`, or anything to
 do with listing photographs — it records 22 defects found in that scenario, including the
 two that meant the page had never received a single photo, and it names the columns the
-dashboard now depends on. Retention (the 30-day purge) is in
-[`AIRTABLE_RETENTION.md`](./docs/integrations/AIRTABLE_RETENTION.md); it has one manual step.
+dashboard now depends on. Retention is its own concern and the one that emptied the page. Read
+[`AIRTABLE_RETENTION.md`](./docs/integrations/AIRTABLE_RETENTION.md) before
+touching `planRetention`, `planReconciliation` or the reconciliation step in
+`listings-cache`. Airtable prunes `Property Intake Master` at 30 days and that
+is correct — **`listings_cache` used to MIRROR the prune**, which put the whole
+marketplace on a thirty-day fuse: 148 listings on 2026-08-19 were 51 by
+2026-08-26 and would have been 0 on 2026-09-04, unrecoverably, because nothing
+else in the database can rebuild a listing. The cache is now an **archive**: a
+row that aged out is kept and stamped `archived_at`, a row that vanished while
+still inside the window is really deleted, and an undated one is kept. Two rules
+bite. **`planReconciliation`'s two allowances are ANDed**, so on a small table a
+walk that returned 26 of 148 records would be acted on in full — the destructive
+half has its own 10% cap, and past it the batch is archived rather than
+part-deleted, because archiving is reversible and deleting is not. And **the
+purge is asserted by its effect, never by its configuration**: the live base is
+not reachable by the Airtable token this repo's tooling holds, so every sync
+records `oldest_live_created_time` / `retention_effective` instead.
 
 The scenario that is actually **switched on** is `NPC Email 1 New` (Make id `9618493`); the
 audited `NPC Email 1` (`6720116`) is off. Listings reach it *forwarded* by NPC staff rather

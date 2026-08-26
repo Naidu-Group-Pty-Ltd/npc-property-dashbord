@@ -23219,6 +23219,7 @@ export type Database = {
       }
       listings_cache: {
         Row: {
+          archived_at: string | null
           created_time: string | null
           fields: Json
           fingerprint: string | null
@@ -23229,6 +23230,7 @@ export type Database = {
           table_key: string
         }
         Insert: {
+          archived_at?: string | null
           created_time?: string | null
           fields: Json
           fingerprint?: string | null
@@ -23239,6 +23241,7 @@ export type Database = {
           table_key: string
         }
         Update: {
+          archived_at?: string | null
           created_time?: string | null
           fields?: Json
           fingerprint?: string | null
@@ -23252,32 +23255,44 @@ export type Database = {
       }
       listings_cache_sync: {
         Row: {
+          archived_count: number | null
           error_count: number
           last_error: string | null
           last_full_sync_at: string | null
           last_sync_at: string | null
+          oldest_live_created_time: string | null
           reconciled: boolean
           record_count: number
+          retention_effective: boolean | null
+          retention_note: string | null
           status: string
           table_key: string
         }
         Insert: {
+          archived_count?: number | null
           error_count?: number
           last_error?: string | null
           last_full_sync_at?: string | null
           last_sync_at?: string | null
+          oldest_live_created_time?: string | null
           reconciled?: boolean
           record_count?: number
+          retention_effective?: boolean | null
+          retention_note?: string | null
           status?: string
           table_key: string
         }
         Update: {
+          archived_count?: number | null
           error_count?: number
           last_error?: string | null
           last_full_sync_at?: string | null
           last_sync_at?: string | null
+          oldest_live_created_time?: string | null
           reconciled?: boolean
           record_count?: number
+          retention_effective?: boolean | null
+          retention_note?: string | null
           status?: string
           table_key?: string
         }
