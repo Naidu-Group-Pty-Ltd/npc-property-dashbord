@@ -38,11 +38,21 @@ describe("who issues the document", () => {
     }
   });
 
-  it("the fallback keeps a full accent ramp and the obsidian ground", () => {
+  it("the fallback keeps a full accent ramp and a dark ground", () => {
     const brand = resolveRecordBrand({ companyName: null as unknown as string, brandColor: null });
-    for (const hex of [brand.accent, brand.accentDeep, brand.accentLight, brand.accentPale, brand.obsidian]) {
+    for (const hex of [brand.accent, brand.accentDeep, brand.accentLight, brand.accentPale, brand.ground]) {
       expect(hex).toMatch(/^#[0-9a-f]{6}$/i);
     }
+  });
+
+  it("the fallback wears the Passport navy and names itself beside the emblem", () => {
+    const fallback = resolveRecordBrand({ companyName: "", brandColor: null });
+    const tenant = resolveRecordBrand({ companyName: "NPC Services", brandColor: null });
+    // The navy is Aurixa's — a tenant brand keeps the neutral obsidian.
+    expect(fallback.ground).not.toBe(tenant.ground);
+    // The delta emblem carries no name; a tenant's report logo is a lockup.
+    expect(fallback.wordmarkBesideLogo).toBe(true);
+    expect(tenant.wordmarkBesideLogo).toBe(false);
   });
 });
 

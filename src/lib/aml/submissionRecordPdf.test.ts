@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { buildSubmissionRecord, type SubmissionRecordInput } from "./submissionRecord";
 import { generateSubmissionRecordPdf, submissionRecordPdfFilename } from "./submissionRecordPdf";
@@ -121,11 +122,15 @@ describe("the branded document", () => {
 
   it("renders both audiences under a brand as parseable documents", async () => {
     const { PDFDocument } = await import("pdf-lib");
+    // The real Aurixa delta emblem, embedded from its real bytes — the
+    // addImage path runs against the actual asset, not a stub.
+    const emblem = "data:image/png;base64,"
+      + readFileSync(join(__dirname, "../../../public/brand/aurixa-emblem-240.png")).toString("base64");
     for (const audience of ["internal", "client"] as const) {
       const rec = buildSubmissionRecord(input(), {
         generatedAt: "2026-08-26T03:48:00Z", generatedBy: "a.reviewer@npcservices.com.au", audience,
       });
-      const bytes = await blobBytes(await generateSubmissionRecordPdf(rec, testBrand()));
+      const bytes = await blobBytes(await generateSubmissionRecordPdf(rec, testBrand({ logoDataUrl: emblem })));
       const parsed = await PDFDocument.load(bytes);
       expect(parsed.getPageCount()).toBeGreaterThanOrEqual(1);
       if (process.env.RECORD_PDF_OUT) {

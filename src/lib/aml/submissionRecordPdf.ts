@@ -337,28 +337,33 @@ export async function generateSubmissionRecordPdf(record: SubmissionRecord, bran
      * logo when a raster mark loaded, the wordmark otherwise; the
      * document type sits opposite in the accent light, which holds ≥7:1
      * on obsidian. */
-    doc.setFillColor(...hexRgb255(brand.obsidian));
+    doc.setFillColor(...hexRgb255(brand.ground));
     doc.rect(0, 0, PAGE_W, BAND_H, "F");
     doc.setFillColor(...hexRgb255(brand.accent));
     doc.rect(0, BAND_H, PAGE_W, 1.1, "F");
 
-    let identityDrawn = false;
+    let identityX = MARGIN;
+    let logoDrawn = false;
     if (brand.logoDataUrl) {
       try {
         const props = doc.getImageProperties(brand.logoDataUrl);
-        const h = 8;
+        const h = 10;
         const w = Math.min((props.width / props.height) * h, 46);
         doc.addImage(brand.logoDataUrl, MARGIN, (BAND_H - h) / 2, w, h);
-        identityDrawn = true;
+        identityX = MARGIN + w + 3.5;
+        logoDrawn = true;
       } catch {
         // A mark that cannot be drawn degrades to the wordmark below.
       }
     }
-    if (!identityDrawn) {
+    // A bare emblem (the Aurixa delta) does not carry the name, so the
+    // wordmark stands beside it; a tenant's report logo is a complete
+    // lockup and stands alone.
+    if (!logoDrawn || brand.wordmarkBesideLogo) {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(11);
       doc.setTextColor(...CREAM);
-      doc.text(brand.name.toUpperCase(), MARGIN, BAND_H / 2 + 1.4, { charSpace: 0.5 });
+      doc.text(brand.name.toUpperCase(), identityX, BAND_H / 2 + 1.4, { charSpace: 0.5 });
     }
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7.5);
@@ -475,7 +480,7 @@ export async function generateSubmissionRecordPdf(record: SubmissionRecord, bran
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
     if (brand && i > 1) {
-      doc.setFillColor(...hexRgb255(brand.obsidian));
+      doc.setFillColor(...hexRgb255(brand.ground));
       doc.rect(0, 0, PAGE_W, 2.2, "F");
       doc.setFillColor(...hexRgb255(brand.accent));
       doc.rect(0, 2.2, PAGE_W, 0.6, "F");

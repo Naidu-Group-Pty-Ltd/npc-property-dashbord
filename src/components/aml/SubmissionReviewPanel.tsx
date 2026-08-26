@@ -313,7 +313,7 @@ export function SubmissionReviewPanel({
     try {
       const record = buildRecord(audience);
       const brand = resolveRecordBrand(brandSettings);
-      brand.logoDataUrl = await loadRecordBrandLogo(brandSettings);
+      brand.logoDataUrl = await loadRecordBrandLogo(brandSettings, brand.tenantBranded);
       const blob = await generateSubmissionRecordPdf(record, brand);
       const filename = submissionRecordPdfFilename(record);
       const url = URL.createObjectURL(blob);

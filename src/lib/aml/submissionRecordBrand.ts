@@ -25,6 +25,18 @@ import type { BrandConfig } from '@/branding/brand-types';
 
 export const AURIXA_FALLBACK_NAME = 'Aurixa Systems';
 
+/** The Aurixa delta emblem, downscaled from `aurixa-emblem.png` (700px,
+ *  482KB) to 240px/78KB — at the masthead's 8mm that is still ~760dpi, and
+ *  it is embedded into every fallback download. */
+export const AURIXA_EMBLEM_PATH = '/brand/aurixa-emblem-240.png';
+
+/** The Aurixa Compliance Passport cover ground — the deep navy the emblem
+ *  and gold wordmark sit on (≈#131f38, sampled from the Passport cover).
+ *  Fallback documents wear it; a tenant brand keeps the neutral obsidian,
+ *  because the navy IS Aurixa's. Derived like the obsidian, not a hex
+ *  literal — the print palette has no CSS cascade to read tokens from. */
+const AURIXA_NAVY_HEX = hslToHex('220 49% 15%');
+
 /** The default company name the brand store ships with — a workspace still
  *  carrying it has not integrated a brand. */
 const UNBRANDED_COMPANY_NAMES = new Set(['', 'dashboard']);
@@ -40,9 +52,13 @@ export interface RecordBrand {
   accentLight: string;
   accentPale: string;
   /** The dark masthead ground — one flat hex, per the print rules. */
-  obsidian: string;
+  ground: string;
   /** Raster logo as a data URL, or null for the text wordmark. */
   logoDataUrl: string | null;
+  /** True when the logo is a bare emblem that does not carry the name —
+   *  the wordmark is then drawn beside it. Tenant report logos are assumed
+   *  to be complete lockups and stand alone. */
+  wordmarkBesideLogo: boolean;
 }
 
 /** The masthead ground: the Aurixa obsidian token (`--aurixa-obsidian`),
@@ -62,8 +78,9 @@ export function resolveRecordBrand(
     accentDeep: palette.goldDeep,
     accentLight: palette.goldLight,
     accentPale: palette.goldPale,
-    obsidian: OBSIDIAN_HEX,
+    ground: tenantBranded ? OBSIDIAN_HEX : AURIXA_NAVY_HEX,
     logoDataUrl: null,
+    wordmarkBesideLogo: !tenantBranded,
   };
 }
 
@@ -72,17 +89,22 @@ export function resolveRecordBrand(
 const RASTER_TYPES = new Set(['image/png', 'image/jpeg']);
 
 /**
- * Fetch the workspace's report logo and inline it. Best-effort by design:
- * every failure path returns null and the caller prints the wordmark.
+ * Fetch the identity's mark and inline it: the workspace's own report logo,
+ * or — on the Aurixa fallback — the Aurixa delta emblem the Compliance
+ * Passport cover carries. Best-effort by design: every failure path returns
+ * null and the caller prints the wordmark. A tenant-branded workspace with
+ * no logo gets its wordmark, never Aurixa's mark — the fallback is an
+ * identity, not a decoration.
  */
 export async function loadRecordBrandLogo(
   settings: Pick<
     BrandConfig,
     'authLogo' | 'sidebarLogo' | 'sidebarIcon' | 'favicon' | 'reportLogo' | 'reportMonoLogo'
   >,
+  tenantBranded = true,
 ): Promise<string | null> {
   try {
-    const src = getBrandAssetSrc(settings, 'report');
+    const src = tenantBranded ? getBrandAssetSrc(settings, 'report') : AURIXA_EMBLEM_PATH;
     if (!src) return null;
     if (src.startsWith('data:')) {
       const mime = src.slice(5, src.indexOf(';'));
