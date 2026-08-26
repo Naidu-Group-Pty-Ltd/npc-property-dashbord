@@ -36,10 +36,12 @@ vi.mock("@/hooks/use-toast", () => ({ toast: (...a: unknown[]) => toast(...a) })
  * pins is the wiring: the download button hands the browser a .pdf built
  * from the record on screen. The filename rule stays real.
  */
-const generatePdf = vi.fn(async () => new Blob(["%PDF-test"], { type: "application/pdf" }));
+const generatePdf = vi.fn(
+  async (..._args: unknown[]) => new Blob(["%PDF-test"], { type: "application/pdf" }),
+);
 vi.mock("@/lib/aml/submissionRecordPdf", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/aml/submissionRecordPdf")>();
-  return { ...real, generateSubmissionRecordPdf: (...a: never[]) => generatePdf(...a) };
+  return { ...real, generateSubmissionRecordPdf: (...a: unknown[]) => generatePdf(...a) };
 });
 
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
