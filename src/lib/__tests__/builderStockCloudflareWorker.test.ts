@@ -43,8 +43,11 @@ import {
   blendWeights, cropRgb, outsidePermittedRegionUnchanged, planInpaintPatches, resampleRgb,
 } from '../../../supabase/functions/_shared/builderStock/inpaintOverlay.pure';
 import {
-  overlayPlateMask, overlayTextBoxes,
+  overlayTextBoxes,
 } from '../../../supabase/functions/_shared/builderStock/marketingOverlay.pure';
+import {
+  overlayPlateMask,
+} from '../../../supabase/functions/_shared/builderStock/overlayPlate.pure';
 import { encodePng } from '../../../supabase/functions/_shared/builderStock/rasterPng';
 
 const WORKER_DIR = resolve(process.cwd(), 'cloudflare/builder-stock-image-worker');
@@ -182,10 +185,12 @@ describe('the worker is private: authentication fails closed', () => {
 
   it('a worker deployed with NO secret refuses everything — fail closed', async () => {
     const ai = stubAi(async () => squarePng(1));
+    // The env is built literally: no BUILDER_STOCK_IMAGE_WORKER_TOKEN key at
+    // all, exactly as a deploy that never ran `wrangler secret put` looks.
     const response = await worker.fetch(
       inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
         { name: 'mask', bytes: await squarePng(2) }]),
-      envWith(ai.binding, undefined));
+      { AI: ai.binding });
     expect(response.status).toBe(401);
     expect(ai.calls).toHaveLength(0);
   });
