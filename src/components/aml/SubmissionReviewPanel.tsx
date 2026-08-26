@@ -6,7 +6,7 @@
  * the service gate shown as read-only context because acceptance never moves
  * it.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,10 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { AlertTriangle, CheckCircle2, FileText, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { amlCasesApi, type AmlSubmissionReview } from "@/lib/aml/amlCasesApi";
+import { cn } from "@/lib/utils";
+import {
+  acceptDisclosure, differencesBadge, reviewCoverage, reviewSections,
+} from "@/lib/aml/submissionReviewCoverage.pure";
 import { displayDateTime } from "@/lib/aml/displayDate";
 
 type ActionKind = "accept" | "changes" | "document" | "clarification" | "escalate" | "supersede";
@@ -81,6 +85,24 @@ export function SubmissionReviewPanel({
   const [clientMessage, setClientMessage] = useState("");
   const [requirementId, setRequirementId] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  /*
+   * ── What this reviewer has had open, this session ─────────────────────
+   * The accordion is controlled so every open is observed. The two
+   * default-open sections count as seen — they are on screen from mount.
+   * Deliberately not persisted: a section opened last week by somebody else
+   * is not this reviewer having looked.
+   */
+  const [openSections, setOpenSections] = useState<string[]>(["differences", "verification"]);
+  const seenRef = useRef<Set<string>>(new Set(["differences", "verification"]));
+  const [seenTick, setSeenTick] = useState(0);
+  const markOpen = (values: string[]) => {
+    setOpenSections(values);
+    let changed = false;
+    for (const v of values) {
+      if (!seenRef.current.has(v)) { seenRef.current.add(v); changed = true; }
+    }
+    if (changed) setSeenTick((n) => n + 1);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,6 +176,35 @@ export function SubmissionReviewPanel({
 
   const s = data.submission;
   const decided = ["accepted", "superseded"].includes(s.review_status);
+
+  const sections = reviewSections({
+    previous_version: data.previous_version,
+    differences: data.differences,
+    parties: data.related_parties.length,
+    documents: data.documents.length,
+    openRequests: data.open_requests.length,
+    verificationRows: data.verification.length,
+    screeningRows: data.screening.length,
+  });
+  /*
+   * A plain derivation, deliberately not a hook: this code sits below the
+   * loading/error early returns, where a hook would change the call order
+   * between renders. `seenTick` exists solely so a new open re-renders;
+   * the derivation then reads the ref fresh.
+   */
+  void seenTick;
+  const coverage = reviewCoverage(sections, seenRef.current);
+  const diffBadge = differencesBadge(data);
+
+  const openNext = () => {
+    if (!coverage.nextKey) return;
+    markOpen([...new Set([...openSections, coverage.nextKey])]);
+    window.setTimeout(() => {
+      // Optional call: jsdom implements getElementById but not scrollIntoView.
+      document.getElementById(`submission-section-${coverage.nextKey}`)
+        ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+    }, 0);
+  };
 
   return (
     <div className="space-y-4">
@@ -230,6 +281,34 @@ export function SubmissionReviewPanel({
             </Alert>
           )}
 
+          {/*
+            ── What has been looked at, said where the decision is ──────
+            The decision buttons render above the evidence, so coverage
+            stands beside them: a reviewer about to accept can see, in one
+            line, what they have not opened — and one button opens the next
+            unopened section rather than leaving them to hunt. Disclosed,
+            never a gate: this screen records a review, and what an
+            unreviewed acceptance needs is to be visible, not impossible.
+          */}
+          {!decided && (
+            <div className={cn(
+              "flex flex-wrap items-center justify-between gap-2 rounded-md border p-2.5",
+              coverage.complete
+                ? "border-success/40 bg-success/5"
+                : "border-border/60 bg-muted/20",
+            )}>
+              <p className={cn("text-xs",
+                coverage.complete ? "text-success" : "text-muted-foreground")}>
+                {coverage.sentence}
+              </p>
+              {!coverage.complete && (
+                <Button size="sm" variant="outline" className="h-7" onClick={openNext}>
+                  Open next: {sections.find((x) => x.key === coverage.nextKey)?.label}
+                </Button>
+              )}
+            </div>
+          )}
+
           {canWrite && (
             <div className="flex flex-wrap gap-2 pt-1">
               <Button size="sm" disabled={!canDecide || decided} onClick={() => setAction("accept")}>
@@ -245,12 +324,16 @@ export function SubmissionReviewPanel({
         </CardContent>
       </Card>
 
-      <Accordion type="multiple" defaultValue={["differences", "verification"]} className="space-y-2">
-        <AccordionItem value="differences" className="rounded-lg border border-border/60 px-3">
+      <Accordion type="multiple" value={openSections} onValueChange={markOpen} className="space-y-2">
+        <AccordionItem id="submission-section-differences" value="differences" className="rounded-lg border border-border/60 px-3">
           <AccordionTrigger className="text-sm">
             Changes since previous submission{" "}
-            <Badge variant={data.differences_material ? "destructive" : "outline"} className="ml-2">
-              {data.differences.length} {data.differences_material ? "· material" : ""}
+            {/* Re-derived: an old server diffs a FIRST submission against an
+                empty snapshot and sends "20 · material" — this panel and the
+                function deploy separately, and the row must read correctly
+                against whichever is live. */}
+            <Badge variant={diffBadge.material ? "destructive" : "outline"} className="ml-2">
+              {diffBadge.label}{diffBadge.material ? " · material" : ""}
             </Badge>
           </AccordionTrigger>
           <AccordionContent>
@@ -286,7 +369,7 @@ export function SubmissionReviewPanel({
           </AccordionContent>
         </AccordionItem>
 
-        <AccordionItem value="consent" className="rounded-lg border border-border/60 px-3">
+        <AccordionItem id="submission-section-consent" value="consent" className="rounded-lg border border-border/60 px-3">
           <AccordionTrigger className="text-sm">Consent evidence</AccordionTrigger>
           <AccordionContent>
             {data.consent_evidence.length === 0 ? (
@@ -307,7 +390,7 @@ export function SubmissionReviewPanel({
           </AccordionContent>
         </AccordionItem>
 
-        <AccordionItem value="answers" className="rounded-lg border border-border/60 px-3">
+        <AccordionItem id="submission-section-answers" value="answers" className="rounded-lg border border-border/60 px-3">
           <AccordionTrigger className="text-sm">Questionnaire answers</AccordionTrigger>
           <AccordionContent className="space-y-4">
             {(s.sections ?? []).map((sec) => (
@@ -319,7 +402,7 @@ export function SubmissionReviewPanel({
           </AccordionContent>
         </AccordionItem>
 
-        <AccordionItem value="parties" className="rounded-lg border border-border/60 px-3">
+        <AccordionItem id="submission-section-parties" value="parties" className="rounded-lg border border-border/60 px-3">
           <AccordionTrigger className="text-sm">
             Related parties <Badge variant="outline" className="ml-2">{data.related_parties.length}</Badge>
           </AccordionTrigger>
@@ -344,7 +427,7 @@ export function SubmissionReviewPanel({
           </AccordionContent>
         </AccordionItem>
 
-        <AccordionItem value="documents" className="rounded-lg border border-border/60 px-3">
+        <AccordionItem id="submission-section-documents" value="documents" className="rounded-lg border border-border/60 px-3">
           <AccordionTrigger className="text-sm">
             Documents <Badge variant="outline" className="ml-2">{data.documents.length}</Badge>
           </AccordionTrigger>
@@ -373,7 +456,7 @@ export function SubmissionReviewPanel({
           </AccordionContent>
         </AccordionItem>
 
-        <AccordionItem value="verification" className="rounded-lg border border-border/60 px-3">
+        <AccordionItem id="submission-section-verification" value="verification" className="rounded-lg border border-border/60 px-3">
           <AccordionTrigger className="text-sm">Identity verification by party</AccordionTrigger>
           <AccordionContent>
             {data.verification.length === 0 ? (
@@ -399,7 +482,7 @@ export function SubmissionReviewPanel({
           </AccordionContent>
         </AccordionItem>
 
-        <AccordionItem value="screening" className="rounded-lg border border-border/60 px-3">
+        <AccordionItem id="submission-section-screening" value="screening" className="rounded-lg border border-border/60 px-3">
           <AccordionTrigger className="text-sm">Screening by party</AccordionTrigger>
           <AccordionContent>
             {data.screening.length === 0 ? (
@@ -419,7 +502,7 @@ export function SubmissionReviewPanel({
           </AccordionContent>
         </AccordionItem>
 
-        <AccordionItem value="requests" className="rounded-lg border border-border/60 px-3">
+        <AccordionItem id="submission-section-requests" value="requests" className="rounded-lg border border-border/60 px-3">
           <AccordionTrigger className="text-sm">
             Open client requests <Badge variant="outline" className="ml-2">{data.open_requests.length}</Badge>
           </AccordionTrigger>
@@ -482,6 +565,19 @@ export function SubmissionReviewPanel({
                   </SelectContent>
                 </Select>
               </div>
+            )}
+            {/*
+              What was NOT looked at, said at the moment it is about to be
+              recorded. Not a gate — the button stays enabled — and not
+              quiet either: an unreviewed acceptance must be a choice made
+              in view of what it skips, never a default.
+            */}
+            {action === "accept" && acceptDisclosure(coverage) && (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Not everything was opened</AlertTitle>
+                <AlertDescription>{acceptDisclosure(coverage)}</AlertDescription>
+              </Alert>
             )}
             {action === "accept" && (
               <Alert>
