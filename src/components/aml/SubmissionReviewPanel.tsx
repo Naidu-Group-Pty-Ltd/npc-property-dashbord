@@ -709,7 +709,16 @@ export function SubmissionReviewPanel({
         and the stored copy render, drawn with app components.
       */}
       <Dialog open={readerOpen} onOpenChange={setReaderOpen}>
-        <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col">
+        {/*
+          Sized at the `sm:` breakpoint on purpose: `DialogContent` itself sets
+          `sm:max-w-lg`, `sm:max-h-[85dvh]` and `sm:overflow-visible`, and
+          tailwind-merge treats an unprefixed `max-w-*` as a different utility
+          group — so a plain `max-w-3xl` silently lost on every screen ≥640px,
+          which is why this record rendered inside a 512px column with its
+          consent hashes clipped.
+        */}
+        <DialogContent className="flex max-h-[92dvh] w-[96vw] max-w-[1400px] flex-col overflow-hidden sm:max-h-[92dvh] sm:max-w-[1400px] sm:overflow-hidden">
+
           <DialogHeader>
             <DialogTitle>Client submission record</DialogTitle>
             <DialogDescription>
