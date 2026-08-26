@@ -1,0 +1,15 @@
+# The inference runtime, pinned exactly.
+#
+# The model file is pinned by SHA-256 in `model_manifest.py`; pinning the
+# runtime beside it is what makes "the same bytes in, the same repair out" a
+# property of the image rather than of whichever wheel resolved on build day.
+onnxruntime==1.29.0
+
+numpy==2.4.6
+pillow==12.3.0
+
+# Same web stack, same pins, as the repo's other Python sidecar
+# (`weasyprint-service/requirements.txt`), for the same reasons — including
+# gunicorn >= 23 for CVE-2024-6827.
+flask==3.1.3
+gunicorn==23.0.0
