@@ -719,7 +719,7 @@ export function SubmissionReviewPanel({
         */}
         <DialogContent className="flex max-h-[92dvh] w-[96vw] max-w-[1400px] flex-col overflow-hidden sm:max-h-[92dvh] sm:max-w-[1400px] sm:overflow-hidden">
 
-          <DialogHeader>
+          <DialogHeader className="shrink-0">
             <DialogTitle>Client submission record</DialogTitle>
             <DialogDescription>
               {data.case.reference} · {data.case.subject} · Submission v{s.version_number}.
@@ -727,7 +727,7 @@ export function SubmissionReviewPanel({
             </DialogDescription>
           </DialogHeader>
           {readerOpen && (
-            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden pr-1">
               {buildRecord().sections.map((sec) => <RecordSectionView key={sec.key} section={sec} />)}
               <p className="border-t border-border/40 pt-2 text-xs text-muted-foreground">
                 This record is internal to the reporting entity: it includes screening states and risk
@@ -735,7 +735,8 @@ export function SubmissionReviewPanel({
               </p>
             </div>
           )}
-          <DialogFooter className="flex-wrap gap-2">
+          <DialogFooter className="shrink-0 flex-wrap gap-2 border-t border-border/40 pt-3">
+
             <Button size="sm" variant="outline" onClick={() => void downloadRecord()}>
               <Download className="mr-1.5 h-3.5 w-3.5" /> Download PDF
             </Button>
