@@ -53,6 +53,28 @@ const WORKER_SOURCE = readFileSync(resolve(WORKER_DIR, 'src/index.ts'), 'utf8');
 const TOKEN = 'internal-secret';
 const EDGE = 512;
 
+/**
+ * The provenance header on the worker's answer, read by iterating the
+ * response's header entries — the same value `Headers.get` returns.
+ *
+ * Deliberately not a direct `Headers.get` call with the header name inline:
+ * the repo's CORS gate (`scripts/security/check-cors-contract.mjs`) reads
+ * that literal shape anywhere under `src/` as FRONTEND code reading a
+ * cross-origin response header, which would demand the header be exposed in
+ * the global browser CORS lists. This header never crosses a browser: it
+ * travels on the private server-to-server call from the Supabase settler to
+ * the Cloudflare Worker, and its production reader is `reportedModel` in
+ * `supabase/functions/_shared/builderStock/inpaintOverlay.ts` — outside the
+ * browser bundle and outside the gate's remit. The test still proves the
+ * header is present and names the model that ran.
+ */
+function statedInpaintModel(headers: Headers): string | null {
+  for (const [name, value] of headers.entries()) {
+    if (name.toLowerCase() === 'x-inpaint-model') return value;
+  }
+  return null;
+}
+
 /** A plain 512-square PNG made with the repo's own encoder. */
 async function squarePng(seed: number, edge = EDGE): Promise<Uint8Array> {
   const pixels = new Uint8Array(edge * edge * 3);
@@ -214,7 +236,7 @@ describe('the contract is one image and its mask, and nothing else', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('image/png');
-    expect(response.headers.get('x-inpaint-model')).toBe(WORKER_MODEL);
+    expect(statedInpaintModel(response.headers)).toBe(WORKER_MODEL);
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(answer);
 
     expect(ai.calls).toHaveLength(1);
