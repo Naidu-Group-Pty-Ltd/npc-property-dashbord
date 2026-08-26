@@ -1312,6 +1312,114 @@ describe('one external failure must not take the queue down with it', () => {
   });
 });
 
+describe('a repair the runtime kills mid-flight cannot monopolise the queue', () => {
+  /*
+   * PRODUCTION FOUND THIS THE DAY THE GENERATIVE ROUTE WENT LIVE. The worst
+   * way a repair ends is one the settler never sees: a tick that exceeds its
+   * CPU allowance mid-repair is killed by the runtime — no result, no catch,
+   * no write. Until the attempt was stamped BEFORE the work, the row a tick
+   * died on kept its old stamp, stayed the longest waiter, and was re-picked
+   * by every subsequent tick. Lot 914 Covella's persisted-region repair — a
+   * five-megabyte PDF-page crop whose full-frame composite and re-encode
+   * alone outrun the allowance — held the head of the queue through three
+   * consecutive 546s, spent a worker call each time, and starved every row
+   * behind it, Lot 1663's among them.
+   *
+   * The closest in-process stand-in for the runtime kill is a sanitize that
+   * THROWS: nothing downstream of the call runs, exactly as nothing does
+   * after a kill. What must survive it is the cooldown.
+   */
+  const runtimeKill = async () => {
+    throw new Error('CPU time exceeded (the runtime killed the isolate)');
+  };
+
+  it('the cooldown is on the row BEFORE the repair begins', async () => {
+    const bytes = (await encodePng(badgedPicture().badged,
+      { width: W, height: H, components: 3 }))!;
+    const row = await refusedRow(bytes);
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    let stampSeenAtCallTime: unknown = 'sanitize never ran';
+    await expect(settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async () => {
+        // The stamp must already be in the ROW by the time the repair starts:
+        // this is the only write a killed tick leaves behind.
+        stampSeenAtCallTime = (db.rows[0].source_detail as Record<string, unknown>)
+          .sanitization_attempt ?? null;
+        return runtimeKill();
+      },
+    })).rejects.toThrow('CPU time exceeded');
+
+    expect(stampSeenAtCallTime).toBeTruthy();
+    expect(stampSeenAtCallTime).not.toBe('sanitize never ran');
+    const detail = db.rows[0].source_detail as Record<string, any>;
+    // The stamp survives the death, fresh enough to hold the cooldown...
+    expect(Date.parse(detail.sanitization_attempt.at)).toBeGreaterThan(Date.now() - 60_000);
+    // ...and nothing that settles a row or blanks a card was written.
+    expect(detail[DERIVATIVE_KEY] ?? null).toBeNull();
+    expect(detail[FAILURE_KEY] ?? null).toBeNull();
+    expect(detail[CLEARANCE_KEY] ?? null).toBeNull();
+  });
+
+  it('so the NEXT tick spends the allowance on a DIFFERENT row', async () => {
+    const bytes = (await encodePng(badgedPicture().badged,
+      { width: W, height: H, components: 3 }))!;
+    const heavyweight = { ...await refusedRow(bytes), id: 'image-99' };
+    const starved = { ...await refusedRow(bytes), id: 'image-00', storage_path: `${PATH}.0` };
+    // The starved row was last looked at outside the cooldown, the
+    // heavyweight never — so the heavyweight is picked first, as production's
+    // was.
+    (starved.source_detail as Record<string, unknown>).sanitization_attempt = {
+      at: new Date(Date.now() - 11 * 60_000).toISOString(),
+      operational: true,
+    };
+    const objects = { [PATH]: bytes, [`${PATH}.0`]: bytes };
+    const db = fakeDb([heavyweight, starved], objects);
+
+    // Tick one dies on the heavyweight, exactly as the runtime kill does.
+    let firstVictim: string | null = null;
+    await expect(settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async () => {
+        firstVictim = db.rows.find((r: any) =>
+          Date.parse(r.source_detail?.sanitization_attempt?.at ?? 0)
+            > Date.now() - 30_000)?.id ?? null;
+        return runtimeKill();
+      },
+    })).rejects.toThrow();
+    expect(firstVictim).toBe('image-99');
+
+    // Tick two: the heavyweight is inside its cooldown, so the row that was
+    // starving behind it is the one attempted. THE WHOLE POINT. An attempt is
+    // a stamp that CHANGED — two ticks can share a millisecond, so the clock
+    // cannot tell them apart.
+    const stampsAfterTickOne = new Map((db.rows as any[]).map((r) =>
+      [r.id, r.source_detail?.sanitization_attempt?.at ?? null]));
+    const attempted: string[] = [];
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async () => {
+        for (const r of db.rows as any[]) {
+          const at = r.source_detail?.sanitization_attempt?.at ?? null;
+          if (at !== stampsAfterTickOne.get(r.id)
+            && !attempted.includes(r.id)) attempted.push(r.id);
+        }
+        return {
+          ok: false as const, reason: 'inpaint_unavailable' as const,
+          transformation: 'generative_overlay_inpaint' as const,
+          model: null, operational: true, detail: 'still waiting on the worker',
+        };
+      },
+    });
+    expect(attempted).toEqual(['image-00']);
+    // The heavyweight's cooldown held: its stamp is exactly tick one's.
+    expect((db.rows as any[]).find((r) => r.id === 'image-99')
+      ?.source_detail?.sanitization_attempt?.at)
+      .toBe(stampsAfterTickOne.get('image-99'));
+  });
+});
+
 describe('a repair region the caller established, and nothing else about it', () => {
   /*
    * WHY THIS EXISTS. The mask builder reads lines of TYPE, so a plate whose

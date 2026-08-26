@@ -241,8 +241,7 @@ export async function settleImageSanitization(
    * bump into meaning anything. It records only that we tried and could not
    * look, and it expires.
    */
-  const noteOperationalFailure = async (row: ImageRow): Promise<void> => {
-    outcome.unresolved += 1;
+  const stampAttempt = async (row: ImageRow): Promise<void> => {
     try {
       await db.from('builder_stock_item_images')
         .update({
@@ -255,6 +254,11 @@ export async function settleImageSanitization(
     } catch {
       /* Recording the attempt is an optimisation; failing to is not a fault. */
     }
+  };
+
+  const noteOperationalFailure = async (row: ImageRow): Promise<void> => {
+    outcome.unresolved += 1;
+    await stampAttempt(row);
   };
 
   /** True while a recent operational attempt says to spend the tick elsewhere. */
@@ -276,6 +280,29 @@ export async function settleImageSanitization(
     detail: Record<string, unknown>,
     region: RepairRegionBox | null,
   ): Promise<void> => {
+    /*
+     * THE ATTEMPT IS STAMPED BEFORE THE WORK BEGINS, because the worst way a
+     * repair ends is one this function never sees. A tick that exceeds its CPU
+     * allowance mid-repair is killed by the runtime — no result, no catch, no
+     * write — and until this line the row it died on kept its old attempt
+     * stamp, stayed the longest waiter, and was picked again by every
+     * subsequent tick: the same 546 forever, one worker call spent each time,
+     * and every row queued behind it starved. Production found the case the
+     * day the generative route went live: Lot 914 Covella's persisted-region
+     * repair is a five-megabyte PDF-page crop whose full-frame composite and
+     * re-encode alone outrun the allowance, and three consecutive ticks died
+     * on it before anything else was reached.
+     *
+     * Stamped first, a death mid-repair leaves the cooldown behind it, so the
+     * next tick spends the allowance on a DIFFERENT row and the oversized one
+     * is retried at the cooldown's pace instead of every tick. On any path
+     * this function does complete, the stamp is invisible: success writes a
+     * settling key beside it, and a completed operational failure refreshes
+     * it. The stamp still cannot settle a row, blank a card, or outlive its
+     * meaning — see `noteOperationalFailure` above.
+     */
+    await stampAttempt(row);
+
     const bucket = row.storage_bucket || STOCK_IMAGE_BUCKET;
     const { data: blob, error: downloadError } = await db.storage
       .from(bucket).download(row.storage_path);
