@@ -176,6 +176,34 @@ describe("questionnaire flattening is the shared rule", () => {
   });
 });
 
+describe("a document is named for the reader", () => {
+  it("falls back display name → requirement label → filename", () => {
+    const record = build({
+      requirements: [{ id: "req1", code: "identity_document", label: "Identity document" }],
+      documents: [
+        { filename: "17868164409098814737826021437062.jpg", display_name: null, requirement_id: "req1", version_number: 1, status: "accepted", client_safe_rejection_reason: null },
+        { filename: "b.jpg", display_name: "Chosen name", requirement_id: "req1", version_number: 1, status: "accepted", client_safe_rejection_reason: null },
+        { filename: "c.jpg", display_name: null, requirement_id: null, version_number: 1, status: "uploaded", client_safe_rejection_reason: null },
+      ],
+    });
+    const rows = record.sections.find((s) => s.key === "documents")!.blocks[0].table!.rows;
+    // The requirement's label is what the client was shown when asked for
+    // the file; a 32-digit camera filename identifies nothing on a page.
+    expect(rows[0][0]).toBe("Identity document");
+    expect(rows[1][0]).toBe("Chosen name");
+    expect(rows[2][0]).toBe("c.jpg");
+  });
+
+  it("the consent hash is carried in full, never a prefix", () => {
+    const hash = "a".repeat(64);
+    const record = build({
+      consent_evidence: [{ kind: "privacy_notice", version: "1", accepted_at: "2026-08-16T02:10:00Z", document_hash: hash }],
+    });
+    const rows = record.sections.find((s) => s.key === "consent")!.blocks[0].table!.rows;
+    expect(rows[0][3]).toBe(hash);
+  });
+});
+
 describe("the filename is derived and safe", () => {
   it("keeps the reference and version, drops anything unsafe", () => {
     expect(submissionRecordFilename("AML-2026-00005", 2)).toBe("AML-2026-00005-submission-v2-record.html");
