@@ -14,11 +14,13 @@ a per-image bill on somebody else's credit, and a production outage the day
 that account ran dry (the settler's own comments still record the 429s:
 *"You have no credits remaining"*, every tick, for hours).
 
-The route now calls **`builder-stock-image-worker/`**, a container this
-repository ships: the model weights load inside infrastructure we run, and no
-third-party generative API, key or per-image bill exists anywhere in the
-Builder Stock path. There is deliberately **no fallback to the old endpoint**
-— `inpaintOverlay.ts` contains no OpenAI URL, key name or model name, and a
+The route now calls **`builder-stock-image-worker/`**, a plain-Python service
+this repository ships — **no Docker, no containers, no Kubernetes, no
+registry anywhere**: a virtualenv, pip wheels, and one gunicorn process. The
+model weights load inside infrastructure we run, and no third-party
+generative API, key or per-image bill exists anywhere in the Builder Stock
+path. There is deliberately **no fallback to the old endpoint** —
+`inpaintOverlay.ts` contains no OpenAI URL, key name or model name, and a
 test reads the module source and fails if one returns.
 
 ## Order of the whole stage (and where each step is decided)
@@ -85,29 +87,81 @@ the ONNX export `Carve/LaMa-ONNX / lama_fp32.onnx`, SHA-256
 
 License, verified against the sources: `advimman/lama` is **Apache-2.0**
 (© 2021 Samsung Research), the ONNX export is **Apache-2.0**. Commercial SaaS
-use is permitted; attribution ships in the image (`NOTICE.md`). Do not swap
-the model without re-verifying the replacement's license and updating
+use is permitted; attribution ships beside the service (`NOTICE.md`). Do not
+swap the model without re-verifying the replacement's license and updating
 `model_manifest.py` — the manifest is the only place the file, hash and
 license are named.
 
-## Deployment (needs explicit approval — nothing has been deployed)
+## Deployment — ZERO Docker (needs explicit approval; nothing has been deployed)
 
-The worker is a portable Docker container in the same mould as the repo's two
-existing Python sidecars (`weasyprint-service/`, `pdf-parse-service/`): Flask
-+ gunicorn, bearer-token auth that fails closed, build-time selfcheck, works
-on any container host. Cloud Run matches the project's existing deployments;
-Fly/Railway/Render/a VM all work identically.
+The worker is deliberately **not** a container. It is a directory of plain
+Python: every dependency is a pip wheel (no compiler, no system packages),
+the model is one file fetched and SHA-verified by `download_model.py`, and
+the whole service is one gunicorn process. Anything that can run Python 3.12
+runs it directly — no Dockerfile, no image, no registry, no Kubernetes, and
+never a personal or office PC.
 
-Sizing: CPU-only. 2 vCPU / 4 GB RAM is comfortable (the ONNX session is the
-footprint; ~2–8 s per 512² patch, at most 4 patches per photograph, and the
-settler repairs at most 2 photographs per tick). No GPU. Scale-to-zero is
-fine: a cold start is seconds of model load, inside the client's 60 s ceiling,
-and the settler retries anyway.
+**The contract every host satisfies the same way:**
+
+- build (once per deploy):
+  `pip install -r requirements.txt && python download_model.py models && python selfcheck.py models/lama_fp32.onnx`
+- start: the `Procfile` command —
+  `gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 90 --preload --access-logfile - app:app`
+- health: `GET /healthz`
+- env: `BUILDER_STOCK_IMAGE_WORKER_TOKEN` (and the platform's `PORT`;
+  `MODEL_PATH` only if the host keeps large files elsewhere)
+
+**Option A — managed native-Python application runtime (recommended).** Any
+platform that deploys a Python service straight from the repository with a
+build command and a start command (Render-style native runtimes,
+Railway/Heroku-class Python services, and equivalents): point it at
+`builder-stock-image-worker/`, give it the build and start commands above,
+set the token, pick a plan with **4 GB RAM / 2 vCPU**. The platform provides
+HTTPS, the env vars, health-checked restarts and process supervision — there
+is no server to administer and no Docker anywhere in the workflow.
+
+**Option B — a plain VM / server instance.** A small cloud compute instance
+(2 vCPU, 4 GB RAM, ~2 GB free disk) running the worker directly under
+systemd, with the host or a reverse proxy (Caddy gives automatic HTTPS in two
+lines) terminating TLS:
+
+```ini
+# /etc/systemd/system/builder-stock-image-worker.service
+[Unit]
+Description=Builder Stock image worker (masked overlay inpainting)
+After=network-online.target
+
+[Service]
+User=inpaint
+WorkingDirectory=/opt/builder-stock-image-worker
+Environment=PORT=8080
+Environment=BUILDER_STOCK_IMAGE_WORKER_TOKEN=<long random string>
+ExecStart=/opt/builder-stock-image-worker/.venv/bin/gunicorn \
+  --bind 127.0.0.1:8080 --workers 1 --threads 4 --timeout 90 \
+  --preload --access-logfile - app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Setup is the README's five commands (venv → pip → `download_model.py` →
+`selfcheck.py` → gunicorn), then `systemctl enable --now`. `Restart=always`
+is the supervision; the selfcheck in the build step is what makes a broken
+deploy fail before it serves.
+
+**Sizing, either way:** CPU-only — **no GPU**. The ONNX session is the
+footprint (~1.5–2 GB resident; 4 GB RAM is comfortable), ~2–8 s per 512²
+patch, at most 4 patches per photograph, and the settler repairs at most 2
+photographs per tick, so a single small instance is far more than the
+workload. Disk: ~2 GB (208 MB model + wheels). A restart is seconds of model
+load, inside the client's 60 s ceiling, and the settler retries anyway.
 
 To go live (in this order):
 
-1. Build and deploy the container somewhere reachable by Supabase egress,
-   with `BUILDER_STOCK_IMAGE_WORKER_TOKEN=<long random string>`.
+1. Deploy the worker by Option A or B, reachable by Supabase egress, with
+   `BUILDER_STOCK_IMAGE_WORKER_TOKEN=<long random string>`.
 2. Set the **same** two values as Supabase Edge Function secrets:
    `BUILDER_STOCK_IMAGE_WORKER_URL` (no trailing slash, no path) and
    `BUILDER_STOCK_IMAGE_WORKER_TOKEN`.

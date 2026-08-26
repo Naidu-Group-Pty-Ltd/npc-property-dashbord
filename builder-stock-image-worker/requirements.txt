@@ -2,7 +2,9 @@
 #
 # The model file is pinned by SHA-256 in `model_manifest.py`; pinning the
 # runtime beside it is what makes "the same bytes in, the same repair out" a
-# property of the image rather than of whichever wheel resolved on build day.
+# property of the deployment rather than of whichever wheel resolved that day.
+# Every package here is a plain pip wheel — no compiler, no system libraries,
+# no container: a bare Python 3.12 on any Linux host installs this directly.
 onnxruntime==1.29.0
 
 numpy==2.4.6

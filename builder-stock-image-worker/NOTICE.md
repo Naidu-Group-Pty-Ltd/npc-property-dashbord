@@ -9,6 +9,6 @@ Inpainting with Fourier Convolutions", Suvorov et al., WACV 2022).
   (`lama_fp32.onnx`) — **Apache License 2.0**.
 
 The Apache License 2.0 permits commercial use, modification and
-redistribution. This NOTICE file ships inside the container image, as the
+redistribution. This NOTICE file is deployed beside the service, as the
 license's attribution condition asks. The exact file consumed is pinned by
 SHA-256 in `model_manifest.py`.

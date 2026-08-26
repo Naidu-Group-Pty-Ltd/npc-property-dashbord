@@ -2,8 +2,8 @@
 
 WHY A MANIFEST. The whole point of this service is that Builder Stock's
 overlay repair stops depending on a third-party image API — which only holds
-if the model this container runs is a fact somebody can check, not whatever a
-build happened to download. So the file, its exact bytes (SHA-256) and its
+if the model this service runs is a fact somebody can check, not whatever a
+deploy happened to download. So the file, its exact bytes (SHA-256) and its
 license are pinned here; `download_model.py` refuses anything else, and the
 `x-inpaint-model` header every repair response carries is written from
 MODEL_ID, so the derivative record in Supabase names what actually ran.

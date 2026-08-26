@@ -51,7 +51,13 @@ app = Flask(__name__)
 EXPECTED_TOKEN = (
     os.environ.get("BUILDER_STOCK_IMAGE_WORKER_TOKEN") or ""
 ).strip().strip('"')
-MODEL_PATH = os.environ.get("MODEL_PATH", "/app/models/lama_fp32.onnx")
+# Beside the code by default — `python download_model.py models` puts it there —
+# so the service runs from a git checkout on any host with no baked-in path.
+# `MODEL_PATH` overrides for a host that keeps large files elsewhere.
+MODEL_PATH = os.environ.get(
+    "MODEL_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "lama_fp32.onnx"),
+)
 # Each part is a 512-square PNG in normal operation (< 1 MB). The ceiling is
 # generous headroom, not an invitation.
 MAX_PART_BYTES = int(os.environ.get("MAX_PART_BYTES", str(12 * 1024 * 1024)))

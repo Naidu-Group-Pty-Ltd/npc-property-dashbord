@@ -1,12 +1,14 @@
-"""Prove the image can actually repair a picture, at build time.
+"""Prove this deployment can actually repair a picture, before it serves one.
 
-The same pattern as the WeasyPrint sidecar's selfcheck: the Dockerfile runs
-this once as root and once as the runtime user, so "the model loads, runs,
-and the outside-mask guarantee holds" is a property of the IMAGE rather than
-something production discovers. A worker that cannot keep unmasked pixels
-byte-identical must never ship.
+The same pattern as the WeasyPrint sidecar's selfcheck: run it as the deploy's
+last build step (`python selfcheck.py models/lama_fp32.onnx`), so "the model
+loads, runs, and the outside-mask guarantee holds" is proved on the exact
+host, interpreter and weights that will serve — rather than something
+production discovers. A worker that cannot keep unmasked pixels
+byte-identical must never come up.
 """
 
+import os
 import sys
 
 import numpy as np
@@ -15,7 +17,8 @@ import onnxruntime as ort
 from inpaint_core import inpaint
 from model_manifest import MODEL_EDGE
 
-MODEL_PATH = sys.argv[1] if len(sys.argv) > 1 else "/app/models/lama_fp32.onnx"
+MODEL_PATH = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "models", "lama_fp32.onnx")
 
 
 def main() -> int:

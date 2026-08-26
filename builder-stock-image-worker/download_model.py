@@ -1,10 +1,12 @@
-"""Fetch the pinned model at BUILD time, and refuse anything else.
+"""Fetch the pinned model at DEPLOY time, and refuse anything else.
 
-Run by the Dockerfile, never at request time: a service that downloads its
-model on first use is a service whose behaviour depends on somebody else's
-CDN being up at 3am, and whose bytes nobody pinned. The manifest is the
-authority — URL, size and SHA-256 — and a mismatch fails the BUILD, which is
-the cheapest place this can possibly fail.
+Run once as the deploy's build step (`python download_model.py models`), never
+at request time: a service that downloads its model on first use is a service
+whose behaviour depends on somebody else's CDN being up at 3am, and whose
+bytes nobody pinned. The manifest is the authority — URL, size and SHA-256 —
+and a mismatch fails the DEPLOY, which is the cheapest place this can
+possibly fail. Re-running against a model already on disk verifies and keeps
+it, so restarts cost nothing.
 """
 
 import hashlib
