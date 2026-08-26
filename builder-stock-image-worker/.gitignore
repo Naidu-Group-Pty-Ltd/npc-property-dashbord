@@ -1,6 +1,0 @@
-# The model is fetched and SHA-verified at deploy time by download_model.py —
-# 208 MB of weights never belongs in git.
-models/
-# Local run artifacts.
-.venv/
-__pycache__/

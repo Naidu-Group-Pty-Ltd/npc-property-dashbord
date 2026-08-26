@@ -16,19 +16,21 @@
  * came back re-lit, re-framed or with a different house on it changes nothing
  * outside the badge, because nothing outside the badge is ever read from it.
  *
- * THE WORKER IS INTERNAL, AND THAT IS THE POINT OF THIS FILE'S SECOND LIFE.
- * The first version of this transport posted each patch to OpenAI's image-edit
- * endpoint on a forwarded vendor key — a per-image bill on somebody
- * else's credit, and a whole production outage the day that account ran dry
- * (the settler's log still documents the 429s). The endpoint is now
- * `builder-stock-image-worker/`, a container THIS repository ships: the model
- * weights load inside infrastructure we run, no third-party generative API is
- * involved, and there is no OpenAI URL, key or model name anywhere in the
- * Builder Stock path — a test reads this file's source and fails if one comes
- * back. The worker takes an image and a mask and nothing else; it is masked
- * reconstruction, not prompted generation, so there is no instruction string
- * for anyone to soften and no way to ask it for a nicer house than the one
- * that was photographed.
+ * THE WORKER IS PRIVATE AND OURS, AND THAT IS THE POINT OF THIS FILE'S
+ * SECOND LIFE. The first version of this transport posted each patch to
+ * OpenAI's image-edit endpoint on a forwarded vendor key — a per-image bill
+ * on somebody else's credit, and a whole production outage the day that
+ * account ran dry (the settler's log still documents the 429s). The endpoint
+ * is now `cloudflare/builder-stock-image-worker/`, a Cloudflare Worker THIS
+ * repository ships, which runs the repair on Cloudflare Workers AI through
+ * the account's own AI binding: no third-party generative API, no Docker and
+ * no server of any kind, and there is no OpenAI URL, key or model name
+ * anywhere in the Builder Stock path — a test reads this file's source and
+ * fails if one comes back. This transport sends an image and a mask and
+ * nothing else; the instruction the model needs is a pinned constant in the
+ * worker's own reviewed source (a request carrying one is refused), so there
+ * is no instruction string here for anyone to soften and no way to ask for a
+ * nicer house than the one that was photographed.
  *
  * WHAT THIS FILE MAY REFUSE, and every one of them is recorded rather than
  * swallowed: no worker configured, a worker that errors or times out, a
@@ -56,16 +58,17 @@ import {
  *
  * The worker states what it actually ran in an `x-inpaint-model` header and
  * that value wins when present; this constant is the fallback, and the value
- * recorded when a test injects `edit`. `big-lama` is the LaMa
- * (Fourier-convolution masked inpainting) checkpoint the container pins —
- * Apache-2.0, weights loaded by our own service, no per-image vendor bill.
+ * recorded when a test injects `edit`. It is the Cloudflare Workers AI
+ * catalog's dedicated masked-inpainting model, pinned in the worker's own
+ * source — run on Cloudflare's infrastructure through the AI binding, no
+ * per-image vendor bill.
  */
-export const INPAINT_MODEL = 'builder-stock-image-worker/big-lama';
+export const INPAINT_MODEL = '@cf/runwayml/stable-diffusion-v1-5-inpainting';
 /**
  * What the worker works at, whatever it is sent.
  *
- * 512 is the pinned ONNX export's own input size, so a patch resampled to this
- * edge goes through the model with no second resize inside the worker. The
+ * 512 is the inpainting model's own native edge, so a patch resampled to this
+ * size goes through the model with no second resize on the other side. The
  * patch geometry is unchanged from the 1024 the previous endpoint imposed:
  * squares are still planned, merged and gated exactly as before, and only the
  * wire size moved.
@@ -128,7 +131,7 @@ function env(name: string): string {
  * Build the mask the worker wants: WHITE where the graphic is, BLACK where the
  * photograph must be left alone.
  *
- * This is the LaMa family's own convention, and it is deliberately not an
+ * This is the inpainting model's own convention, and it is deliberately not an
  * alpha channel: a mask a human opens during a debug reads exactly as what it
  * describes, and there is no colour channel for a decoder to misread.
  */

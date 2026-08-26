@@ -58,7 +58,7 @@ import {
 
 const W = 400;
 const H = 200;
-// The internal worker's wire size: the pinned ONNX export's own input edge.
+// The private worker's wire size: the inpainting model's own native edge.
 // It was 1024 only while the transport was OpenAI's endpoint.
 const EDGE = 512;
 
@@ -294,10 +294,11 @@ describe('the model sees the builder\'s own photograph and nothing else', () => 
     /*
      * The previous transport carried a carefully-worded prompt, because a
      * text-to-image endpoint can be ASKED for a nicer house than the one that
-     * was photographed. The internal worker runs a dedicated masked-inpainting
-     * model that takes an image and a mask and nothing else, so the guarantee
-     * moved from wording to structure: no prompt export exists, and the
-     * request the transport builds carries exactly two parts.
+     * was photographed. The instruction the inpainting model needs now lives
+     * as a pinned constant inside the Cloudflare Worker's own reviewed source
+     * — a request carrying one is refused — so the guarantee moved from
+     * wording to structure on THIS side of the wire: no prompt export exists
+     * here, and the request the transport builds carries exactly two parts.
      */
     expect(TRANSPORT_SOURCE).not.toContain('INPAINT_PROMPT');
     for (const word of ['beautiful', 'attractive', 'photorealistic', 'generate a house']) {
@@ -336,7 +337,12 @@ describe('the required production path calls our own worker and cannot call Open
     expect(TRANSPORT_SOURCE).not.toContain('api.openai.com');
     expect(TRANSPORT_SOURCE).not.toContain('OPENAI_API_KEY');
     expect(TRANSPORT_SOURCE).not.toContain('gpt-image-1');
-    // The only endpoint named is the internal worker's own.
+    // Nor any other external image-edit vendor: no silent fallback exists.
+    expect(TRANSPORT_SOURCE).not.toContain('replicate.com');
+    expect(TRANSPORT_SOURCE).not.toContain('stability.ai');
+    expect(TRANSPORT_SOURCE).not.toContain('huggingface.co');
+    expect(TRANSPORT_SOURCE).not.toContain('generativelanguage.googleapis.com');
+    // The only endpoint named is our own private worker's.
     expect(TRANSPORT_SOURCE).toContain('BUILDER_STOCK_IMAGE_WORKER_URL');
     expect(TRANSPORT_SOURCE).toContain('/v1/inpaint');
   });
@@ -389,7 +395,7 @@ describe('the required production path calls our own worker and cannot call Open
         status: 200,
         headers: {
           'content-type': 'image/png',
-          'x-inpaint-model': 'builder-stock-image-worker/big-lama@pinned',
+          'x-inpaint-model': '@cf/runwayml/stable-diffusion-v1-5-inpainting@pinned',
         },
       });
     }) as typeof fetch;
@@ -408,7 +414,7 @@ describe('the required production path calls our own worker and cannot call Open
     }
 
     // The worker's own statement of what ran becomes the recorded model.
-    expect(result.model).toBe('builder-stock-image-worker/big-lama@pinned');
+    expect(result.model).toBe('@cf/runwayml/stable-diffusion-v1-5-inpainting@pinned');
 
     // And the whole-frame guarantee held across the real composite.
     const weights = blendWeights(mask, W, H);

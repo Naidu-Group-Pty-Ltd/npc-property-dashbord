@@ -523,7 +523,7 @@ describe('a clean original outranks a sanitized derivative, and never evicts it'
         storage_bucket: 'builder-stock-images', storage_path: 'sanitized/cover.png',
         derivative_sha256: 'b'.repeat(64), width: 400, height: 200,
         repaired_share: 0.1, regions_removed: 2,
-        model: 'builder-stock-image-worker/big-lama',
+        model: '@cf/runwayml/stable-diffusion-v1-5-inpainting',
         generated_at: '2026-08-01T00:00:00Z', verdict: 'eligible',
       },
     },
