@@ -29,6 +29,7 @@ import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { ComparisonPDFGenerator } from './ComparisonPDFGenerator';
 import { ComparisonDownloadButton } from './ComparisonDownloadButton';
 import { ComparisonWeights, DEFAULT_COMPARISON_SETTINGS, DEFAULT_COMPARISON_WEIGHTS, cloneComparisonWeights, comparisonWeightsEqual, parseComparisonTemplateSettings, validateComparisonWeights } from './comparisonConfiguration';
+import { analysisFromComparisonRow, isDisplayableComparisonRow, matchesSelectedReportIds } from './comparisonRecovery.pure';
 
 interface PropertyComparisonModalProps {
   isOpen: boolean;
@@ -103,6 +104,7 @@ export function PropertyComparisonModal({
   propertyAddresses
 }: PropertyComparisonModalProps) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isRecovering, setIsRecovering] = useState(false);
   const [progress, setProgress] = useState(0);
   const [analysis, setAnalysis] = useState<ComparisonAnalysis | null>(null);
   const [comparisonId, setComparisonId] = useState<string>('');
@@ -198,6 +200,39 @@ export function PropertyComparisonModal({
     }
   }, [analysis]);
 
+  /**
+   * The most recent stored comparison of exactly these reports, written since
+   * `sinceIso`, or null. The same sorted-ids match the History panel uses.
+   */
+  const findStoredComparison = async (sinceIso: string): Promise<any | null> => {
+    const { data, error } = await supabase
+      .from('property_comparisons')
+      .select('*')
+      .gte('created_at', sinceIso)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error || !data) return null;
+    return data.find((comp) => matchesSelectedReportIds(comp.report_ids, reportIds)) ?? null;
+  };
+
+  /**
+   * After the request times out, the server run usually FINISHES anyway — the
+   * browser abort does not reach the edge function, which keeps generating,
+   * stores the row and charges for it. (Observed in production: the row landed
+   * 19 seconds after the client gave up.) So a timeout is not yet a failure:
+   * poll for the stored row for a while before reporting one.
+   */
+  const recoverStoredComparison = async (sinceIso: string): Promise<any | null> => {
+    const RECOVERY_POLL_MS = 8_000;
+    const RECOVERY_ATTEMPTS = 10;
+    for (let i = 0; i < RECOVERY_ATTEMPTS; i++) {
+      const row = await findStoredComparison(sinceIso);
+      if (row) return row;
+      await new Promise((r) => setTimeout(r, RECOVERY_POLL_MS));
+    }
+    return null;
+  };
+
   const startAnalysis = async (background = false) => {
     if (!appliedValidation.isValid || hasUnappliedWeightChanges) {
       setSettingsOpen(true);
@@ -206,8 +241,13 @@ export function PropertyComparisonModal({
     }
     setRunInBackground(background);
     setIsAnalyzing(true);
+    setIsRecovering(false);
     setHasStarted(true);
     setProgress(10);
+
+    // A minute of slack absorbs client/server clock skew; an identical-report
+    // comparison stored in that window is this comparison for every purpose.
+    const attemptStartedIso = new Date(Date.now() - 60_000).toISOString();
 
     // Add notification for analysis start
     addNotification({
@@ -216,34 +256,74 @@ export function PropertyComparisonModal({
       message: `Comparing ${reportIds.length} properties with ${analysisDepth} analysis depth...`
     });
 
+    // The analysis runs 50–90s server-side; a bar frozen at 30% for a minute
+    // reads as a hang. Creep towards 85% and let the real milestones finish it.
+    const progressTimer = setInterval(() => {
+      setProgress((p) => (p >= 30 && p < 85 ? p + 1 : p));
+    }, 1500);
+
     try {
       setProgress(30);
-      
-      const requestBody: any = { 
+
+      const requestBody: any = {
         reportIds,
         analysisDepth,
         investorProfile,
         timeHorizon,
         riskTolerance
       };
-      
+
       requestBody.customWeights = cloneComparisonWeights(appliedWeights);
       requestBody.scoring_weights = cloneComparisonWeights(appliedWeights);
       requestBody.templateId = activeTemplateId;
-      
-      const { data, error } = await invokeSecureFunction('compare-investment-reports', requestBody, { timeoutMs: 150000 });
+
+      let { data, error } = await invokeSecureFunction('compare-investment-reports', requestBody, { timeoutMs: 150000 });
+
+      // ── The request timed out; the analysis may well have completed ──
+      // Only the transport's own abort counts: `network` is set solely on the
+      // fetch-failed path, so a server-side failure whose message happens to
+      // mention a timeout (a 502 naming a provider timeout) is not mistaken
+      // for a request the server might still be finishing.
+      const timedOut = !!error && error.network === true
+        && (error.code === 'provider_timeout' || /timed out/i.test(error.message || ''));
+      if (timedOut) {
+        setIsRecovering(true);
+        try {
+          const row = await recoverStoredComparison(attemptStartedIso);
+          if (row && isDisplayableComparisonRow(row)) {
+            data = { analysis: analysisFromComparisonRow(row), comparisonId: row.id };
+            error = null;
+          } else if (row) {
+            // Stored, but as the raw-response shape only the viewer can read.
+            error = {
+              ...error!,
+              message: 'The analysis finished in the background but was only partially saved. '
+                + 'Open it from the comparison library to see what was recovered.',
+            };
+          } else {
+            error = {
+              ...error!,
+              message: 'The analysis service did not respond in time, and no completed analysis '
+                + 'was found. It may still finish in the background — check History in a minute, '
+                + 'or try again.',
+            };
+          }
+        } finally {
+          setIsRecovering(false);
+        }
+      }
 
       if (error) {
         // Extract more detailed error information
         let errorMessage = error.message || 'Failed to compare properties';
-        
+
         // Check for specific error types in the error message
         if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {
           errorMessage = 'Rate limit exceeded. Too many comparison requests. Please wait a moment and try again.';
         } else if (errorMessage.includes('payment') || errorMessage.includes('credits') || errorMessage.includes('402')) {
           errorMessage = 'AI credits exhausted. Please add credits to your Lovable workspace.';
         }
-        
+
         throw new Error(errorMessage);
       }
 
@@ -313,7 +393,9 @@ export function PropertyComparisonModal({
       setComparisonId('');
       setHasStarted(false);
     } finally {
+      clearInterval(progressTimer);
       setIsAnalyzing(false);
+      setIsRecovering(false);
       setProgress(0);
     }
   };
@@ -321,9 +403,6 @@ export function PropertyComparisonModal({
   const loadComparisonHistory = async () => {
     setLoadingHistory(true);
     try {
-      // Sort report IDs to ensure consistent matching
-      const sortedReportIds = [...reportIds].sort();
-      
       const { data, error } = await supabase
         .from('property_comparisons')
         .select('*')
@@ -333,11 +412,7 @@ export function PropertyComparisonModal({
       if (error) throw error;
 
       // Filter for comparisons with the exact same report IDs
-      const matchingComparisons = data?.filter(comp => {
-        const compReportIds = [...(comp.report_ids || [])].sort();
-        return compReportIds.length === sortedReportIds.length &&
-               compReportIds.every((id, index) => id === sortedReportIds[index]);
-      }) || [];
+      const matchingComparisons = data?.filter(comp => matchesSelectedReportIds(comp.report_ids, reportIds)) || [];
 
       setComparisonHistory(matchingComparisons);
     } catch (error) {
@@ -364,17 +439,7 @@ export function PropertyComparisonModal({
       if (!data) throw new Error('Comparison not found');
 
       // Reconstruct the analysis object from database fields
-      const historicalAnalysis: ComparisonAnalysis = {
-        executiveSummary: data.executive_summary || '',
-        rankings: (data.rankings || []) as ComparisonAnalysis['rankings'],
-        financialComparison: (data.financial_comparison || {}) as ComparisonAnalysis['financialComparison'],
-        locationComparison: (data.location_comparison || {}) as ComparisonAnalysis['locationComparison'],
-        riskComparison: (data.risk_comparison || {}) as ComparisonAnalysis['riskComparison'],
-        investorMatches: (data.investor_matches || []) as ComparisonAnalysis['investorMatches'],
-        competitiveAdvantages: [], // Not stored separately
-        redFlags: (data.red_flags || []) as ComparisonAnalysis['redFlags'],
-        finalRecommendation: (data.recommendations || {}) as ComparisonAnalysis['finalRecommendation']
-      };
+      const historicalAnalysis = analysisFromComparisonRow(data) as unknown as ComparisonAnalysis;
 
       setAnalysis(historicalAnalysis);
       setComparisonId(comparisonId);
@@ -823,10 +888,13 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
             <div className="flex-1 flex items-center justify-center p-8">
               <div className="text-center space-y-4 w-full max-w-md">
                 <Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" />
-                <h3 className="text-lg font-medium">Analyzing Properties...</h3>
+                <h3 className="text-lg font-medium">
+                  {isRecovering ? 'Still working…' : 'Analyzing Properties...'}
+                </h3>
                 <p className="text-sm text-muted-foreground">
-                  AI is performing comprehensive comparison across financial metrics, location quality,
-                  risk factors, and investment potential.
+                  {isRecovering
+                    ? 'The request is taking longer than usual. Checking whether the analysis completed in the background…'
+                    : 'AI is performing comprehensive comparison across financial metrics, location quality, risk factors, and investment potential.'}
                 </p>
                 <div className="space-y-2">
                   <Progress value={progress} className="w-full" />
