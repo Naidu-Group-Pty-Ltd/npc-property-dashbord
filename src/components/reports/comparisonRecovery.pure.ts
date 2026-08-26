@@ -27,23 +27,95 @@ export interface RecoveredComparisonAnalysis {
   finalRecommendation: Record<string, unknown>;
 }
 
+const asObject = (v: unknown): Record<string, unknown> =>
+  v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+/**
+ * Shape whatever the producer returned into the one form the results view may
+ * assume.
+ *
+ * Two facts of production make this necessary. The response schema names the
+ * verdict section `recommendations` while this UI reads `finalRecommendation`
+ * — the model can answer under either name, so both are accepted here and the
+ * UI reads exactly one. And a section the model had nothing to say about is
+ * simply ABSENT: on 2026-08-26 three of five stored analyses carried no
+ * `recommendations`, no `redFlags` and no `investorMatches`, and one held a
+ * `financialComparison` with a single axis in it. Dereferencing those as
+ * though complete is what unmounted the whole Generated Reports page behind a
+ * "Comparison Complete" toast. Every section therefore defaults to its empty
+ * shape; what a section holds INSIDE is still the renderer's to guard.
+ */
+export function normaliseComparisonAnalysis(raw: unknown): RecoveredComparisonAnalysis {
+  const a = asObject(raw);
+  const direct = asObject(a.finalRecommendation);
+  const finalRecommendation = Object.keys(direct).length > 0 ? direct : asObject(a.recommendations);
+  return {
+    executiveSummary: typeof a.executiveSummary === 'string' ? a.executiveSummary : '',
+    rankings: asArray(a.rankings),
+    financialComparison: asObject(a.financialComparison),
+    locationComparison: asObject(a.locationComparison),
+    riskComparison: asObject(a.riskComparison),
+    investorMatches: asArray(a.investorMatches),
+    competitiveAdvantages: asArray(a.competitiveAdvantages),
+    redFlags: asArray(a.redFlags),
+    finalRecommendation,
+  };
+}
+
 /**
  * Rebuild the analysis object the modal renders from a stored row. One
  * mapping, shared by the History loader and the post-timeout recovery, so the
  * two cannot disagree about what a stored row means.
  */
 export function analysisFromComparisonRow(row: Record<string, any>): RecoveredComparisonAnalysis {
-  return {
-    executiveSummary: row.executive_summary || '',
-    rankings: Array.isArray(row.rankings) ? row.rankings : [],
-    financialComparison: row.financial_comparison || {},
-    locationComparison: row.location_comparison || {},
-    riskComparison: row.risk_comparison || {},
-    investorMatches: Array.isArray(row.investor_matches) ? row.investor_matches : [],
-    competitiveAdvantages: [], // Not stored separately
-    redFlags: Array.isArray(row.red_flags) ? row.red_flags : [],
-    finalRecommendation: row.recommendations || {},
-  };
+  return normaliseComparisonAnalysis({
+    executiveSummary: row.executive_summary,
+    rankings: row.rankings,
+    financialComparison: row.financial_comparison,
+    locationComparison: row.location_comparison,
+    riskComparison: row.risk_comparison,
+    investorMatches: row.investor_matches,
+    // Not stored separately; a stored row has no competitiveAdvantages column.
+    redFlags: row.red_flags,
+    finalRecommendation: row.recommendations,
+  });
+}
+
+/**
+ * The sections the results view presents, with the names a person reads.
+ * Ordered as the tabs present them.
+ */
+export const COMPARISON_SECTION_LABELS: ReadonlyArray<
+  readonly [keyof RecoveredComparisonAnalysis, string]
+> = [
+  ['executiveSummary', 'Executive summary'],
+  ['rankings', 'Rankings'],
+  ['financialComparison', 'Financial comparison'],
+  ['locationComparison', 'Location comparison'],
+  ['riskComparison', 'Risk assessment'],
+  ['investorMatches', 'Investor matching'],
+  ['redFlags', 'Red flags'],
+  ['finalRecommendation', 'Final recommendation'],
+] as const;
+
+/**
+ * Which sections this analysis simply does not carry, by their display names.
+ *
+ * Rendered as a notice rather than silently dropping the tab content: a ranked
+ * comparison that omits *which one should I buy* without saying so reads as a
+ * finished document that forgot to answer its own question — the same rule the
+ * PDF path applies (docs/reports/COMPARISON.md §3).
+ */
+export function absentComparisonSections(analysis: RecoveredComparisonAnalysis): string[] {
+  return COMPARISON_SECTION_LABELS
+    .filter(([key]) => {
+      const v = analysis[key];
+      if (typeof v === 'string') return v.trim() === '';
+      if (Array.isArray(v)) return v.length === 0;
+      return Object.keys(v as Record<string, unknown>).length === 0;
+    })
+    .map(([, label]) => label);
 }
 
 /**
