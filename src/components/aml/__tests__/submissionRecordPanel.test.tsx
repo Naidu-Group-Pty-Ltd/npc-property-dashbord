@@ -30,6 +30,18 @@ vi.mock("@/lib/aml/amlCasesApi", () => ({
 const toast = vi.fn();
 vi.mock("@/hooks/use-toast", () => ({ toast: (...a: unknown[]) => toast(...a) }));
 
+/*
+ * The PDF generator is mocked at the module edge — its real output is pinned
+ * by submissionRecordPdf.test.ts (parsed back with pdf-lib). What THIS file
+ * pins is the wiring: the download button hands the browser a .pdf built
+ * from the record on screen. The filename rule stays real.
+ */
+const generatePdf = vi.fn(async () => new Blob(["%PDF-test"], { type: "application/pdf" }));
+vi.mock("@/lib/aml/submissionRecordPdf", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/aml/submissionRecordPdf")>();
+  return { ...real, generateSubmissionRecordPdf: (...a: unknown[]) => generatePdf(...a) };
+});
+
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 
 const reviewData = (over = {}) => ({
@@ -95,18 +107,22 @@ describe("the reading view is the entirety of the submission", () => {
 });
 
 describe("download and store", () => {
-  it("downloads the record as a self-contained file named for the case", async () => {
+  it("downloads the record as a PDF saved directly, named for the case", async () => {
     const createObjectURL = vi.fn(() => "blob:record");
     const revokeObjectURL = vi.fn();
     vi.stubGlobal("URL", Object.assign(Object.create(URL), { createObjectURL, revokeObjectURL }));
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     try {
       renderPanel();
-      fireEvent.click(await screen.findByRole("button", { name: /download/i }));
+      fireEvent.click(await screen.findByRole("button", { name: /download pdf/i }));
+      // A .pdf handed to the browser as a download — never an .html that
+      // opens as a tab: the reviewer keeps the finished document.
+      await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
       expect(createObjectURL).toHaveBeenCalledTimes(1);
-      expect(click).toHaveBeenCalledTimes(1);
       expect(toast).toHaveBeenCalledWith(expect.objectContaining({
-        description: "AML-2026-00005-submission-v1-record.html",
+        title: "PDF downloaded",
+        description: "AML-2026-00005-submission-v1-record.pdf",
       }));
     } finally {
       click.mockRestore();

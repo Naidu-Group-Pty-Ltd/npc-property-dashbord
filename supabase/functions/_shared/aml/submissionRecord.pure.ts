@@ -57,7 +57,9 @@ export interface SubmissionRecordInput {
   differences: Array<{ section: string; field: string; previous: unknown; current: unknown }>;
   consent_evidence: Array<{ kind: string; version: string; accepted_at: string; document_hash: string | null }>;
   related_parties: Array<{ declared_name: string; declared_role: string; change_kind: string; resolution_status: string }>;
-  documents: Array<{ filename: string; display_name?: string | null; version_number?: number; status: string; client_safe_rejection_reason?: string | null }>;
+  documents: Array<{ filename: string; display_name?: string | null; requirement_id?: string | null; version_number?: number; status: string; client_safe_rejection_reason?: string | null }>;
+  /** Used only to name documents by the requirement they answered. */
+  requirements?: Array<{ id: string; code?: string | null; label?: string | null }>;
   verification: Array<{
     party_label: string | null; check_type: string; status: string;
     execution_mode: string | null; provider_error_category: string | null;
@@ -111,6 +113,9 @@ export function formatUtc(iso: string | null | undefined): string {
 }
 
 const words = (s: string) => s.replace(/_/g, ' ');
+/** Headings read as prose; VALUES never pass through this — a screening
+ *  state or review status prints verbatim, casing and all. */
+const sentence = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 /** One scalar-to-text rule for questionnaire values and diff cells. */
 export function valueText(value: unknown): string {
@@ -238,7 +243,10 @@ export function buildSubmissionRecord(
               columns: ['Consent', 'Version', 'Accepted', 'Document hash'],
               rows: input.consent_evidence.map((c) => [
                 words(c.kind), c.version, formatUtc(c.accepted_at),
-                c.document_hash ? `${c.document_hash.slice(0, 16)}…` : '—',
+                // The full hash, never a prefix: in a consent-evidence table
+                // the hash IS the evidence, and a 16-hex cut can be verified
+                // against nothing. Renderers wrap it; they do not trim it.
+                c.document_hash ?? '—',
               ]),
             },
           },
@@ -253,8 +261,8 @@ export function buildSubmissionRecord(
         : s.sections.map((sec) => {
             const fields = payloadEntries(sec.payload);
             return fields.length === 0
-              ? { heading: words(sec.section), paragraph: 'No answers recorded.' }
-              : { heading: words(sec.section), fields };
+              ? { heading: sentence(words(sec.section)), paragraph: 'No answers recorded.' }
+              : { heading: sentence(words(sec.section)), fields };
           }),
   });
 
@@ -274,7 +282,15 @@ export function buildSubmissionRecord(
     ],
   });
 
-  /* 7 · Documents. */
+  /* 7 · Documents. A document is named for the reader: the chosen display
+   * name, else the requirement it answered — the words the client was shown
+   * when asked for the file — else the filename. A phone camera's 32-digit
+   * name identifies nothing on a page; the platform filename remains the
+   * register's record in Documents & Evidence, named beside, never erased
+   * (same rule as rename_document). */
+  const requirementName = new Map(
+    (input.requirements ?? []).map((r) => [r.id, r.label || r.code || null]),
+  );
   sections.push({
     key: 'documents', title: 'Documents', blocks: [
       input.documents.length === 0
@@ -283,7 +299,9 @@ export function buildSubmissionRecord(
             table: {
               columns: ['Document', 'Version', 'Status', 'Client-safe note'],
               rows: input.documents.map((d) => [
-                d.display_name || d.filename,
+                d.display_name
+                  || (d.requirement_id ? requirementName.get(d.requirement_id) ?? null : null)
+                  || d.filename,
                 `v${d.version_number ?? 1}`,
                 d.status,
                 d.client_safe_rejection_reason ?? '—',

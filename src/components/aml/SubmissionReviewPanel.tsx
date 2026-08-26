@@ -33,6 +33,7 @@ import {
   buildSubmissionRecord, payloadEntries, renderSubmissionRecordHtml,
   type RecordSection, type SubmissionRecordInput,
 } from "@/lib/aml/submissionRecord";
+import { generateSubmissionRecordPdf, submissionRecordPdfFilename } from "@/lib/aml/submissionRecordPdf";
 import { displayDateTime } from "@/lib/aml/displayDate";
 
 type ActionKind = "accept" | "changes" | "document" | "clarification" | "escalate" | "supersede";
@@ -286,17 +287,25 @@ export function SubmissionReviewPanel({
     markAllSeen();
   };
 
-  const downloadRecord = () => {
+  /*
+   * The download is a PDF, saved directly — an .html file opens as a browser
+   * tab, and what the reviewer needs on file is the finished document, not a
+   * page. Rendered from the same record structure as everything else
+   * (`submissionRecordPdf.ts`), drawn as selectable text, produced entirely
+   * in the browser from the data on this screen.
+   */
+  const downloadRecord = async () => {
     try {
       const record = buildRecord();
-      const blob = new Blob([renderSubmissionRecordHtml(record)], { type: "text/html;charset=utf-8" });
+      const blob = await generateSubmissionRecordPdf(record);
+      const filename = submissionRecordPdfFilename(record);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = record.filename;
+      a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
-      toast({ title: "Record downloaded", description: record.filename });
+      toast({ title: "PDF downloaded", description: filename });
     } catch (e: any) {
       toast({ title: "Download failed", description: e?.message ?? "Unknown error", variant: "destructive" });
     }
@@ -476,8 +485,8 @@ export function SubmissionReviewPanel({
             <Button size="sm" variant="outline" className="h-7" onClick={openReader}>
               <BookOpen className="mr-1.5 h-3.5 w-3.5" /> Read in full
             </Button>
-            <Button size="sm" variant="outline" className="h-7" onClick={downloadRecord}>
-              <Download className="mr-1.5 h-3.5 w-3.5" /> Download
+            <Button size="sm" variant="outline" className="h-7" onClick={() => void downloadRecord()}>
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Download PDF
             </Button>
             {canWrite && (
               <Button size="sm" variant="outline" className="h-7" disabled={storing} onClick={() => void storeRecord()}>
@@ -718,8 +727,8 @@ export function SubmissionReviewPanel({
             </div>
           )}
           <DialogFooter className="flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={downloadRecord}>
-              <Download className="mr-1.5 h-3.5 w-3.5" /> Download
+            <Button size="sm" variant="outline" onClick={() => void downloadRecord()}>
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Download PDF
             </Button>
             <Button size="sm" variant="outline" onClick={printRecord}>
               <Printer className="mr-1.5 h-3.5 w-3.5" /> Print / save as PDF

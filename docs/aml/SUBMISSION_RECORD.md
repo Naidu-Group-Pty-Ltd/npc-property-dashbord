@@ -13,13 +13,25 @@ read, a file to download, a copy retained on the case. The submission record
 is that thing, and it exists in exactly three presentations:
 
 1. **Read in full** — a dialog rendering the record with app components.
-2. **Download / print** — a self-contained HTML file built in the browser
-   from the data on screen (the browser's print dialog produces the PDF; the
-   print stylesheet ships inside the document).
-3. **Store on case** — the `store_submission_record` operation renders the
+2. **Download** — a PDF, saved directly, built in the browser from the data
+   on screen by `submissionRecordPdf.ts` (jsPDF, drawn as selectable text —
+   never `html2canvas`, which rasterises a compliance record into pixels).
+   An `.html` download opened as a browser tab; what the reviewer keeps on
+   file is the finished document. This is the repo's established
+   client-download lane (`OverviewSnapshotPDF.ts` and kin) and touches none
+   of the WeasyPrint report programme — the record is an internal
+   compliance artefact, not a branded client report, so no template
+   machinery, tenant branding, ledger row or container dependency applies.
+3. **Print** — the reader's print button drives a hidden iframe carrying the
+   self-contained HTML rendering (`renderSubmissionRecordHtml`), whose print
+   stylesheet ships inside it.
+4. **Store on case** — the `store_submission_record` operation renders the
    same record server-side, uploads it to `aml-documents`, and files an
    `aml.documents` row so it lives in Documents & Evidence under the
-   platform's own retention.
+   platform's own retention. The stored artefact stays the inert HTML: the
+   server holds no PDF engine, and the HTML is the hash-addressed archival
+   form; the PDF is the human-reference form generated at the point of
+   download.
 
 All three are projections of the ONE structure built by
 `buildSubmissionRecord` in `_shared/aml/submissionRecord.pure.ts`
@@ -98,9 +110,13 @@ named on its face.
 - `supabase/functions/_shared/aml/submissionRecord.pure.ts` — the structure,
   the HTML renderer, the filename rule, `SUBMISSION_RECORD_DOCUMENT_KIND`.
 - `src/lib/aml/submissionRecord.ts` — browser shim.
+- `src/lib/aml/submissionRecordPdf.ts` — the PDF presentation (browser only;
+  jsPDF is lazily imported so the workspace pays nothing until a download).
 - `supabase/functions/aml-cases/index.ts` — `composeSubmissionReview`,
   `get_submission_review`, `store_submission_record`.
 - `supabase/functions/aml-client-portal/index.ts` — the two refusals.
 - Tests: `src/lib/aml/submissionRecord.test.ts` (rules),
+  `src/lib/aml/submissionRecordPdf.test.ts` (the PDF parsed back with
+  pdf-lib: real A4 pages, pagination instead of clipping),
   `src/components/aml/__tests__/submissionRecordPanel.test.tsx` (screen +
   source pins).
