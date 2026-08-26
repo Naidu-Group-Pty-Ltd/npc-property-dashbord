@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Trophy, TrendingUp, MapPin, AlertTriangle, Target, FileWarning } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { readStoredAnalysis, section } from '@/lib/reports/propertyComparison/storedAnalysis.pure';
+import { describeComparisonType } from './library/comparisonTypeDescriptor.pure';
 import { ComparisonPDFGenerator } from './ComparisonPDFGenerator';
 import { ComparisonDownloadButton } from './ComparisonDownloadButton';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
@@ -30,6 +31,8 @@ interface ComparisonViewerProps {
     red_flags: any;
     report_ids: string[];
     created_at: string;
+    /** Which report family was compared; null on untyped legacy rows. */
+    comparison_type?: string | null;
   } | null;
 }
 
@@ -119,9 +122,17 @@ export function ComparisonViewer({ isOpen, onClose, comparison }: ComparisonView
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center justify-between">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Target className="h-5 w-5" />
                 {comparison.report_title || `Property Comparison Analysis - ${comparison.property_count} Properties`}
+                {(() => {
+                  // Which report family this row compares, named beside the
+                  // title the way the library card names it.
+                  const type = describeComparisonType(comparison.comparison_type);
+                  return type.key
+                    ? <Badge variant="secondary" title={type.blurb} className={`text-xs font-normal ${type.badgeClassName}`}>{type.label}</Badge>
+                    : null;
+                })()}
               </div>
               {comparison.property_states && comparison.property_states.length > 0 && (
                 <p className="text-sm font-normal text-muted-foreground mt-1">
