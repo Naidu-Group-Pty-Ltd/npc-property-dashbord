@@ -1,0 +1,8 @@
+# The one process this service is. Read by managed Python runtimes that
+# understand a Procfile; the systemd unit in docs/builder-stock/IMAGE_WORKER.md
+# runs the identical command, so the two deployment paths cannot drift.
+#
+# One worker: the ONNX session is the memory footprint, and `--preload` loads
+# it before serving so a restart never races a cold model against a request.
+# `--timeout 90` sits above the Supabase client's own 60s request ceiling.
+web: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 90 --preload --graceful-timeout 30 --access-logfile - app:app
