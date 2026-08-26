@@ -11,9 +11,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  absentComparisonSections,
   analysisFromComparisonRow,
   isDisplayableComparisonRow,
   matchesSelectedReportIds,
+  normaliseComparisonAnalysis,
 } from './comparisonRecovery.pure';
 
 const shapeARow = () => ({
@@ -100,5 +102,84 @@ describe('matching a stored row to the selected reports', () => {
     expect(matchesSelectedReportIds(null, ['a'])).toBe(false);
     expect(matchesSelectedReportIds(undefined, ['a'])).toBe(false);
     expect(matchesSelectedReportIds('a', ['a'])).toBe(false);
+  });
+});
+
+describe('normalising a fresh response', () => {
+  it('folds the schema name `recommendations` onto `finalRecommendation`', () => {
+    // The response schema asks for `recommendations`; this UI reads
+    // `finalRecommendation`. A model that follows the schema exactly used to
+    // leave the Final tab dereferencing undefined.
+    const a = normaliseComparisonAnalysis({
+      executiveSummary: 'x',
+      rankings: [{ propertyNumber: 1, rank: 1 }, { propertyNumber: 2, rank: 2 }],
+      recommendations: { bestOverall: { propertyNumber: 1, reason: 'wins' } },
+    });
+    expect(a.finalRecommendation).toEqual({ bestOverall: { propertyNumber: 1, reason: 'wins' } });
+  });
+
+  it('prefers an explicit finalRecommendation over the alias', () => {
+    const a = normaliseComparisonAnalysis({
+      finalRecommendation: { bestOverall: { propertyNumber: 2 } },
+      recommendations: { bestOverall: { propertyNumber: 9 } },
+    });
+    expect((a.finalRecommendation as any).bestOverall.propertyNumber).toBe(2);
+  });
+
+  it('defaults every absent section to its empty shape', () => {
+    // 2026-08-26: three of five stored analyses carried no recommendations,
+    // no redFlags and no investorMatches. The view renders one shape only.
+    const a = normaliseComparisonAnalysis({ executiveSummary: 'only prose' });
+    expect(a.rankings).toEqual([]);
+    expect(a.financialComparison).toEqual({});
+    expect(a.locationComparison).toEqual({});
+    expect(a.riskComparison).toEqual({});
+    expect(a.investorMatches).toEqual([]);
+    expect(a.redFlags).toEqual([]);
+    expect(a.finalRecommendation).toEqual({});
+  });
+
+  it('accepts nonsense without producing a shape the view cannot hold', () => {
+    for (const raw of [null, undefined, 'prose', 42, [], { rankings: 'not-a-list', financialComparison: [1] }]) {
+      const a = normaliseComparisonAnalysis(raw);
+      expect(Array.isArray(a.rankings)).toBe(true);
+      expect(a.financialComparison).toEqual({});
+    }
+  });
+});
+
+describe('naming the sections an analysis does not carry', () => {
+  it('names nothing on a complete analysis', () => {
+    const complete = normaliseComparisonAnalysis({
+      executiveSummary: 'x',
+      rankings: [{}, {}],
+      financialComparison: { bestYield: {} },
+      locationComparison: { bestSchools: {} },
+      riskComparison: { lowestRisk: {} },
+      investorMatches: [{}],
+      redFlags: [{}],
+      recommendations: { bestOverall: {} },
+    });
+    expect(absentComparisonSections(complete)).toEqual([]);
+  });
+
+  it('names the absent tail of the partial shape production actually stored', () => {
+    // The 03:32 row from the incident: financialComparison holding only
+    // bestYield still counts as present; the three NULL columns are named.
+    const partial = analysisFromComparisonRow({
+      executive_summary: 'x',
+      rankings: [{ propertyNumber: 1 }, { propertyNumber: 2 }],
+      financial_comparison: { bestYield: { propertyNumber: 2, value: '5.41%', reason: 'highest' } },
+      location_comparison: { bestSchools: {}, bestLifestyle: {}, bestGrowthCorridor: {}, bestInfrastructure: {} },
+      risk_comparison: { lowestRisk: {}, riskLevels: [], highestRisk: {}, bestRiskReward: {} },
+      investor_matches: null,
+      red_flags: null,
+      recommendations: null,
+    });
+    expect(absentComparisonSections(partial)).toEqual([
+      'Investor matching',
+      'Red flags',
+      'Final recommendation',
+    ]);
   });
 });
