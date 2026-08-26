@@ -188,7 +188,11 @@ const __compareInvestmentReportsHandler = async (req: Request): Promise<Response
         ? propertyStates[0]
         : propertyStates.join(' & ');
     
-    const reportTitle = `COMPARISON ANALYSIS - ${reports.length} PROPERTIES, ${statesText}`;
+    // The family leads the title — "COMPASS COMPARISON ANALYSIS", "BRIEFING
+    // COMPARISON ANALYSIS", "SNAPSHOT COMPARISON ANALYSIS" — so a stored row is
+    // identifiable everywhere the title surfaces (library card, viewer, PDFs).
+    // Nothing parses this string; existing rows keep their old titles.
+    const reportTitle = `${comparisonType.toUpperCase()} COMPARISON ANALYSIS - ${reports.length} PROPERTIES, ${statesText}`;
     
     console.log(`Generated title: ${reportTitle}`);
     console.log(`Property states extracted: ${propertyStates.length > 0 ? propertyStates.join(', ') : 'none found'}`);
