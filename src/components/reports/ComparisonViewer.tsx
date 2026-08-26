@@ -109,7 +109,13 @@ export function ComparisonViewer({ isOpen, onClose, comparison }: ComparisonView
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-5xl h-[90vh] flex flex-col">
+      {/*
+        The shared dialog shell declares `sm:max-w-lg`, and a responsive variant
+        beats an unprefixed `max-w-*` in the emitted CSS — which is why this
+        report rendered in a ~512px column with its tables and tab strip
+        squeezed. Width and height are therefore both declared at `sm:` too.
+      */}
+      <DialogContent className="flex w-[96vw] max-w-none flex-col overflow-hidden sm:w-[94vw] sm:max-w-[1500px] sm:max-h-[92dvh] h-[92dvh] sm:h-[92dvh]">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center justify-between">
             <div>
