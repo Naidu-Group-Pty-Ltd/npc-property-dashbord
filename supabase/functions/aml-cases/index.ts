@@ -1811,8 +1811,21 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const previous = all.find((v: any) => v.version_number < current.version_number) ?? null;
 
         const snap = (current.snapshot ?? {}) as any;
+        /*
+         * Only diff when there is a previous version to differ FROM.
+         *
+         * This compared against `previous?.snapshot ?? {}`, so a FIRST
+         * submission was diffed against nothing: every answered field became
+         * a "change", the diff came back material, and
+         * `material_information_changed` joined the risk-stale reasons — the
+         * screen then showed a red "20 · material" badge directly above the
+         * sentence "This is the first submission." A first submission is not
+         * changed information; it is the information.
+         */
         const prevSnap = (previous?.snapshot ?? {}) as any;
-        const diff = diffSubmissions(snap.sections ?? [], prevSnap.sections ?? []);
+        const diff = previous
+          ? diffSubmissions(snap.sections ?? [], prevSnap.sections ?? [])
+          : [];
 
         const [{ data: reqs }, { data: docs }, { data: consents }, { data: recon },
                { data: checks }, { data: screening }, { data: openReqs }, { data: assessment },
