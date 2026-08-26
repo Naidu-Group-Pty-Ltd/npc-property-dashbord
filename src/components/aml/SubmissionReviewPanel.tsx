@@ -19,13 +19,20 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { AlertTriangle, CheckCircle2, FileText, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
+import {
+  AlertTriangle, Archive, BookOpen, CheckCircle2, Download, FileText, Loader2,
+  Printer, RefreshCw, ShieldAlert,
+} from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { amlCasesApi, type AmlSubmissionReview } from "@/lib/aml/amlCasesApi";
 import { cn } from "@/lib/utils";
 import {
   acceptDisclosure, differencesBadge, reviewCoverage, reviewSections,
 } from "@/lib/aml/submissionReviewCoverage.pure";
+import {
+  buildSubmissionRecord, payloadEntries, renderSubmissionRecordHtml,
+  type RecordSection, type SubmissionRecordInput,
+} from "@/lib/aml/submissionRecord";
 import { displayDateTime } from "@/lib/aml/displayDate";
 
 type ActionKind = "accept" | "changes" | "document" | "clarification" | "escalate" | "supersede";
@@ -48,28 +55,65 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge variant={REVIEW_STATUS_TONE[status] ?? "outline"}>{status.replace(/_/g, " ")}</Badge>;
 }
 
-/** Render a questionnaire payload as labelled rows — never raw JSON. */
+/** Render a questionnaire payload as labelled rows — never raw JSON. The
+ *  flattening is the record's own (`payloadEntries`), so the accordion, the
+ *  reading view and the stored record show one answer one way. */
 function PayloadRows({ payload }: { payload: unknown }) {
-  if (!payload || typeof payload !== "object") {
-    return <p className="text-sm text-muted-foreground">No answers recorded.</p>;
-  }
-  const entries = Object.entries(payload as Record<string, unknown>);
+  const entries = payloadEntries(payload);
   if (entries.length === 0) return <p className="text-sm text-muted-foreground">No answers recorded.</p>;
   return (
     <dl className="grid gap-2 sm:grid-cols-2">
-      {entries.map(([key, value]) => (
-        <div key={key} className="min-w-0 rounded-md border border-border/60 bg-muted/20 px-3 py-2">
-          <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{key.replace(/_/g, " ")}</dt>
-          <dd className="mt-0.5 break-words text-sm">
-            {Array.isArray(value)
-              ? value.map((v) => String(v)).join(", ") || "—"
-              : value && typeof value === "object"
-                ? Object.entries(value as Record<string, unknown>).map(([k, v]) => `${k}: ${String(v)}`).join("; ")
-                : String(value ?? "—")}
-          </dd>
+      {entries.map((f) => (
+        <div key={f.label} className="min-w-0 rounded-md border border-border/60 bg-muted/20 px-3 py-2">
+          <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{f.label}</dt>
+          <dd className="mt-0.5 break-words text-sm">{f.value}</dd>
         </div>
       ))}
     </dl>
+  );
+}
+
+/** One section of the reading view — the same `RecordSection` structure the
+ *  downloaded and stored HTML render, drawn with app components. */
+function RecordSectionView({ section }: { section: RecordSection }) {
+  return (
+    <section className="space-y-2">
+      <h3 className="border-b border-border/60 pb-1 text-sm font-semibold">{section.title}</h3>
+      {section.blocks.map((block, i) => (
+        <div key={i} className="space-y-2">
+          {block.heading && <h4 className="text-sm font-medium">{block.heading}</h4>}
+          {block.paragraph && <p className="text-sm text-muted-foreground">{block.paragraph}</p>}
+          {block.fields && block.fields.length > 0 && (
+            <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-[240px_1fr]">
+              {block.fields.map((f) => (
+                <div key={f.label} className="contents">
+                  <dt className="text-[11px] uppercase tracking-wide text-muted-foreground sm:pt-0.5">{f.label}</dt>
+                  <dd className="break-words text-sm">{f.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          {block.table && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    {block.table.columns.map((c) => <th key={c} scope="col" className="py-1 pr-3">{c}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.table.rows.map((row, ri) => (
+                    <tr key={ri} className="border-t border-border/50">
+                      {row.map((cell, ci) => <td key={ci} className="py-1 pr-3 align-top">{cell}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -85,6 +129,8 @@ export function SubmissionReviewPanel({
   const [clientMessage, setClientMessage] = useState("");
   const [requirementId, setRequirementId] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [readerOpen, setReaderOpen] = useState(false);
+  const [storing, setStoring] = useState(false);
   /*
    * ── What this reviewer has had open, this session ─────────────────────
    * The accordion is controlled so every open is observed. The two
@@ -206,6 +252,98 @@ export function SubmissionReviewPanel({
     }, 0);
   };
 
+  /*
+   * ── The record: the entirety of the submission as one document ────────
+   * Built from the data on this screen by the same shared module the edge
+   * function stores from, so read, downloaded and stored copies cannot
+   * disagree. Built fresh per use — the generation timestamp is the moment
+   * of the export, not of the page load.
+   */
+  const buildRecord = () => buildSubmissionRecord(
+    { ...data, submission: s } as unknown as SubmissionRecordInput,
+    { generatedAt: new Date().toISOString(), generatedBy: null },
+  );
+
+  /*
+   * Opening the reading view counts every content section as seen: it puts
+   * the whole submission in front of the reviewer, which is exactly the
+   * standard the accordion applies one section at a time. Coverage remains
+   * "had it in front of them", never "certified having read it".
+   */
+  const markAllSeen = () => {
+    let changed = false;
+    for (const sec of sections) {
+      if (sec.hasContent && !seenRef.current.has(sec.key)) {
+        seenRef.current.add(sec.key);
+        changed = true;
+      }
+    }
+    if (changed) setSeenTick((n) => n + 1);
+  };
+
+  const openReader = () => {
+    setReaderOpen(true);
+    markAllSeen();
+  };
+
+  const downloadRecord = () => {
+    try {
+      const record = buildRecord();
+      const blob = new Blob([renderSubmissionRecordHtml(record)], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = record.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Record downloaded", description: record.filename });
+    } catch (e: any) {
+      toast({ title: "Download failed", description: e?.message ?? "Unknown error", variant: "destructive" });
+    }
+  };
+
+  /*
+   * Print goes through a hidden iframe carrying the SAME self-contained HTML
+   * as the download — its print stylesheet is inside the document — so
+   * "save as PDF" from the print dialog produces the file the download would.
+   * Optional calls throughout: jsdom builds the iframe but implements
+   * neither focus nor print.
+   */
+  const printRecord = () => {
+    const html = renderSubmissionRecordHtml(buildRecord());
+    const frame = document.createElement("iframe");
+    frame.setAttribute("aria-hidden", "true");
+    frame.style.position = "fixed";
+    frame.style.right = "100%";
+    frame.style.bottom = "100%";
+    frame.srcdoc = html;
+    frame.onload = () => {
+      frame.contentWindow?.focus?.();
+      frame.contentWindow?.print?.();
+      // Long enough for the print dialog to have taken its own copy.
+      window.setTimeout(() => frame.remove(), 60_000);
+    };
+    document.body.appendChild(frame);
+  };
+
+  const storeRecord = async () => {
+    setStoring(true);
+    try {
+      // The version on screen, explicitly — never "latest".
+      const res = await amlCasesApi.storeSubmissionRecord(caseId, s.version_number);
+      toast({
+        title: "Record stored on the case",
+        description: `Filed under Documents & Evidence · SHA-256 ${res.content_hash.slice(0, 12)}…`,
+      });
+      await load();
+      onChanged();
+    } catch (e: any) {
+      toast({ title: "Could not store the record", description: e?.message ?? "Unknown error", variant: "destructive" });
+    } finally {
+      setStoring(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -302,9 +440,14 @@ export function SubmissionReviewPanel({
                 {coverage.sentence}
               </p>
               {!coverage.complete && (
-                <Button size="sm" variant="outline" className="h-7" onClick={openNext}>
-                  Open next: {sections.find((x) => x.key === coverage.nextKey)?.label}
-                </Button>
+                <span className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" className="h-7" onClick={openNext}>
+                    Open next: {sections.find((x) => x.key === coverage.nextKey)?.label}
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7" onClick={openReader}>
+                    <BookOpen className="mr-1.5 h-3.5 w-3.5" /> Read in full
+                  </Button>
+                </span>
               )}
             </div>
           )}
@@ -321,6 +464,30 @@ export function SubmissionReviewPanel({
               <Button size="sm" variant="ghost" disabled={decided} onClick={() => setAction("supersede")}>Mark superseded</Button>
             </div>
           )}
+
+          {/*
+            ── The record row — deliberately available AFTER a decision too ──
+            Reading, downloading and storing the record are how the review is
+            kept, not how it is made: a decided submission is exactly the one
+            somebody needs to export for an auditor or file on the case.
+          */}
+          <div className="flex flex-wrap items-center gap-2 border-t border-border/40 pt-3">
+            <span className="text-xs text-muted-foreground">Submission record:</span>
+            <Button size="sm" variant="outline" className="h-7" onClick={openReader}>
+              <BookOpen className="mr-1.5 h-3.5 w-3.5" /> Read in full
+            </Button>
+            <Button size="sm" variant="outline" className="h-7" onClick={downloadRecord}>
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Download
+            </Button>
+            {canWrite && (
+              <Button size="sm" variant="outline" className="h-7" disabled={storing} onClick={() => void storeRecord()}>
+                {storing
+                  ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  : <Archive className="mr-1.5 h-3.5 w-3.5" />}
+                Store on case
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -525,6 +692,50 @@ export function SubmissionReviewPanel({
           </AccordionContent>
         </AccordionItem>
       </Accordion>
+
+      {/*
+        ── The reading view: the entirety of the submission, in order ──────
+        One continuous document instead of eight hunts — the accordion stays
+        for targeted checks. Same `SubmissionRecord` structure the download
+        and the stored copy render, drawn with app components.
+      */}
+      <Dialog open={readerOpen} onOpenChange={setReaderOpen}>
+        <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col">
+          <DialogHeader>
+            <DialogTitle>Client submission record</DialogTitle>
+            <DialogDescription>
+              {data.case.reference} · {data.case.subject} · Submission v{s.version_number}.
+              Everything the review contains, in page order — reading here counts every section as opened.
+            </DialogDescription>
+          </DialogHeader>
+          {readerOpen && (
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
+              {buildRecord().sections.map((sec) => <RecordSectionView key={sec.key} section={sec} />)}
+              <p className="border-t border-border/40 pt-2 text-xs text-muted-foreground">
+                This record is internal to the reporting entity: it includes screening states and risk
+                readings and must not be provided to the client.
+              </p>
+            </div>
+          )}
+          <DialogFooter className="flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={downloadRecord}>
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Download
+            </Button>
+            <Button size="sm" variant="outline" onClick={printRecord}>
+              <Printer className="mr-1.5 h-3.5 w-3.5" /> Print / save as PDF
+            </Button>
+            {canWrite && (
+              <Button size="sm" variant="outline" disabled={storing} onClick={() => void storeRecord()}>
+                {storing
+                  ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  : <Archive className="mr-1.5 h-3.5 w-3.5" />}
+                Store on case
+              </Button>
+            )}
+            <Button size="sm" onClick={() => setReaderOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={action !== null} onOpenChange={(open) => { if (!open) setAction(null); }}>
         <DialogContent>
