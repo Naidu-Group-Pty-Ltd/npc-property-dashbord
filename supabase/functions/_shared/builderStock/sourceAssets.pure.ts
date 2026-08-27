@@ -116,14 +116,51 @@ export function settleRowAssetRoles(
   if (!all.length) return all;
 
   const named = all.map((asset) => roleFromAssetName(asset.reference));
+  /**
+   * WHAT THE SOURCE'S OWN FIELD SAYS THIS IS, when it says it is not a hero.
+   *
+   * An asset that arrived under a "Floorplan" or "Masterplan" field is the
+   * source stating a role, exactly as a filename does — and the module header
+   * has always promised that everything the source NAMES as non-hero is set
+   * aside before anyone is designated. Only the filename half was enforced: a
+   * lone floor plan under an explicit "Floor Plan" field was the row's only
+   * candidate, so the container "designated" it and a plan drawing became a
+   * card's primary image. Set aside here, it keeps the role the source gave
+   * it and can never lead a card by being the last one standing.
+   */
+  const labelled = all.map((asset, index) => !named[index]
+    && asset.role && asset.role.role !== 'unknown' && !isPrimaryRole(asset.role.role)
+    ? asset.role : null);
   const candidates = all
     .map((asset, index) => ({ asset, index }))
-    .filter(({ index }) => !named[index]);
+    .filter(({ index }) => !named[index] && !labelled[index]);
+
+  /**
+   * LEVEL 1 OUTRANKS THE CONTAINER'S OWN PREFERENCE, and only here is the
+   * difference visible. "The row's `Property Image` field names this file"
+   * and "the row's cover slot holds this file" are both the source speaking,
+   * but the first is the builder answering the exact question this function
+   * exists to settle, and the second is where a picture happens to sit. The
+   * Notion caller used to pass the page cover as `preferredIndex` whenever
+   * the row had one, which inverted the documented hierarchy: a promotional
+   * cover took the card and the clean facade the builder explicitly filed
+   * was demoted to `property_secondary` — undisplayable, and never repaired
+   * because nothing promotional was ever chosen.
+   *
+   * ONE explicit claim outranks; TWO contradict each other and outrank
+   * nothing — the preferred structural designation (or ambiguity) stands,
+   * because picking between equal explicit claims by position would be this
+   * function guessing, which is the one thing it exists never to do.
+   */
+  const explicitPrimaries = candidates.filter(({ asset }) =>
+    asset.role?.evidenceLevel === 1 && isPrimaryRole(asset.role?.role));
 
   const preferred = container.preferredIndex ?? -1;
-  const chosen = candidates.some(({ index }) => index === preferred)
-    ? preferred
-    : candidates.length === 1 ? candidates[0].index : -1;
+  const chosen = explicitPrimaries.length === 1
+    ? explicitPrimaries[0].index
+    : candidates.some(({ index }) => index === preferred)
+      ? preferred
+      : candidates.length === 1 ? candidates[0].index : -1;
 
   return all.map((asset, index) => {
     if (named[index]) {
@@ -131,6 +168,10 @@ export function settleRowAssetRoles(
         ...asset,
         role: secondaryRole(named[index]!, `the source names this image "${asset.reference}"`),
       };
+    }
+    if (labelled[index]) {
+      // The source named this one's job. That statement stands as recorded.
+      return asset;
     }
     if (index === chosen) {
       /**
@@ -146,11 +187,16 @@ export function settleRowAssetRoles(
     }
     // A named-hero asset that lost is still property imagery, just not the one.
     if (isPrimaryRole(asset.role?.role)) {
+      const explicitWinner = explicitPrimaries.length === 1
+        && chosen === explicitPrimaries[0].index;
       return {
         ...asset,
         role: secondaryRole('property_secondary',
-          'the source carries several photographs on this row and does not say which is '
-          + 'the property\'s listing image'),
+          explicitWinner
+            ? 'the row\'s own property-image field designates the listing image, so this '
+              + 'one is kept as additional property imagery'
+            : 'the source carries several photographs on this row and does not say which is '
+              + 'the property\'s listing image'),
       };
     }
     return {
