@@ -147,8 +147,18 @@ export interface SanitizeImageOptions {
    * rebuilt; every other rule is untouched — the deterministic route is still
    * tried first, the result still goes back through the same classifier before
    * it may be offered, and compositing still restricts the change to the mask.
+   *
+   * A LIST IS SEVERAL SEPARATED MARKS, NOT A BIGGER ONE. One picture can
+   * carry a pill in one corner, a plate in another and a strip along the
+   * bottom; a single rectangle spanning them is mostly house. The mask is the
+   * union of the boxes, the ceiling applies to that union (`readRepairRegion`
+   * enforced it before the record was ever handed here, and Barrier B
+   * re-measures the final grown set regardless), and a single box behaves
+   * exactly as it always did.
    */
-  repairRegion?: { left: number; top: number; right: number; bottom: number };
+  repairRegion?:
+    | { left: number; top: number; right: number; bottom: number }
+    | Array<{ left: number; top: number; right: number; bottom: number }>;
 }
 
 /**
@@ -156,7 +166,9 @@ export interface SanitizeImageOptions {
  *
  * Clamped to the picture and refused when it is empty or inverted, so a
  * malformed region is the same as none rather than a mask over the whole
- * photograph.
+ * photograph — and ONE malformed box voids the set, because a caller whose
+ * record is partly nonsense is not a caller whose remaining rectangles can
+ * be trusted to mean what they say.
  */
 function suppliedRepairMask(
   region: SanitizeImageOptions['repairRegion'],
@@ -164,19 +176,23 @@ function suppliedRepairMask(
   height: number,
 ): { mask: Uint8Array; regions: number } | null {
   if (!region) return null;
+  const boxes = Array.isArray(region) ? region : [region];
+  if (!boxes.length) return null;
   const clamp = (value: number, max: number) =>
     Math.max(0, Math.min(max, Math.round(value * max)));
-  const left = clamp(region.left, width);
-  const right = clamp(region.right, width);
-  const top = clamp(region.top, height);
-  const bottom = clamp(region.bottom, height);
-  if (!(right > left) || !(bottom > top)) return null;
 
   const mask = new Uint8Array(width * height);
-  for (let y = top; y < bottom; y++) {
-    for (let x = left; x < right; x++) mask[y * width + x] = 1;
+  for (const box of boxes) {
+    const left = clamp(box.left, width);
+    const right = clamp(box.right, width);
+    const top = clamp(box.top, height);
+    const bottom = clamp(box.bottom, height);
+    if (!(right > left) || !(bottom > top)) return null;
+    for (let y = top; y < bottom; y++) {
+      for (let x = left; x < right; x++) mask[y * width + x] = 1;
+    }
   }
-  return { mask, regions: 1 };
+  return { mask, regions: boxes.length };
 }
 
 /**

@@ -31,6 +31,7 @@ import { encodePng, sha256Hex } from '../../../supabase/functions/_shared/builde
 import { sanitizeSourceImage } from '../../../supabase/functions/_shared/builderStock/sanitizeImage';
 import {
   readRepairRegion, regionAreaShare, oversizedRepairRegionShare, MAX_REPAIRED_SHARE,
+  combinedAreaShare, MAX_REGION_BOXES,
 } from '../../../supabase/functions/_shared/builderStock/repairRegion.pure';
 import {
   blendWeights, permittedShare,
@@ -113,6 +114,105 @@ describe('BARRIER A — the rectangle a caller may record', () => {
     expect(oversizedRepairRegionShare({}, SHA)).toBeNull();
     expect(oversizedRepairRegionShare(detail, 'b'.repeat(64))).toBeNull();
     expect(oversizedRepairRegionShare(stored(boxOfShare(0.1)), SHA)).toBeNull();
+  });
+});
+
+describe('BARRIER A over a SET of rectangles — several separated marks, one record', () => {
+  /*
+   * THE PRODUCTION SHAPE THIS EXISTS FOR. A facade can carry a pill in one
+   * corner, a plate in the other and a caption strip along the bottom edge.
+   * Each mark is a few percent of the frame; their common bounding box is
+   * most of the photograph. A record has to be able to say "these three
+   * rectangles" without either lying (one box that is mostly house) or being
+   * refused for the house BETWEEN the marks.
+   */
+  const PILL = { left: 0.074, top: 0.137, right: 0.329, bottom: 0.246 };
+  const PLATE = { left: 0.797, top: 0.030, right: 0.990, bottom: 0.120 };
+  const STRIP = { left: 0.495, top: 0.890, right: 1, bottom: 1 };
+
+  const storedBoxes = (boxes: Array<Record<string, number>>) => ({
+    repair_region: { boxes, original_sha256: SHA, recorded_at: '2026-08-27T00:00:00Z' },
+  });
+
+  it('the union is measured, never the bounding box of the set', () => {
+    const union = combinedAreaShare([PILL, PLATE, STRIP]);
+    const sum = [PILL, PLATE, STRIP].map(regionAreaShare).reduce((a, b) => a + b, 0);
+    // Disjoint marks: the union IS the sum, exactly.
+    expect(union).toBeCloseTo(sum, 10);
+    // And it is a badge-sized ask, while the bounding box would be a house.
+    const boundingBox = regionAreaShare({
+      left: PILL.left, top: PLATE.top, right: 1, bottom: 1 });
+    expect(union).toBeLessThan(MAX_REPAIRED_SHARE);
+    expect(boundingBox).toBeGreaterThan(0.8);
+    // So the record is accepted where a single collapsed rectangle would
+    // rightly be refused.
+    expect(readRepairRegion(storedBoxes([PILL, PLATE, STRIP]), SHA)).toHaveLength(3);
+    expect(readRepairRegion(stored({
+      left: PILL.left, top: PLATE.top, right: 1, bottom: 1 }), SHA)).toBeNull();
+  });
+
+  it('overlap is counted once — a pair whose SUM exceeds the ceiling can still be honest', () => {
+    // Two boxes of 24% each, overlapping in a 18%-wide band: sum 0.48,
+    // union 0.30. The ceiling judges the pixels that would actually be
+    // writable, and a pixel is not more writable for being asked for twice.
+    const a = { left: 0, top: 0, right: 0.8, bottom: 0.3 };
+    const b = { left: 0.2, top: 0, right: 1, bottom: 0.3 };
+    expect(regionAreaShare(a) + regionAreaShare(b)).toBeGreaterThan(MAX_REPAIRED_SHARE);
+    expect(combinedAreaShare([a, b])).toBeCloseTo(0.3, 10);
+    expect(readRepairRegion(storedBoxes([a, b]), SHA)).toHaveLength(2);
+  });
+
+  it('a set whose UNION exceeds the ceiling is refused, and reported as oversized', () => {
+    // Four disjoint bands of 10% each: none alarming alone, 40% together.
+    const bands = [0, 1, 2, 3].map((n) => ({
+      left: 0, right: 1, top: n * 0.25, bottom: n * 0.25 + 0.1 }));
+    expect(readRepairRegion(storedBoxes(bands), SHA)).toBeNull();
+    expect(oversizedRepairRegionShare(storedBoxes(bands), SHA)).toBeCloseTo(0.4, 10);
+  });
+
+  it('a legacy one-rectangle record reads exactly as it always did', () => {
+    const legacy = readRepairRegion(stored(PILL), SHA);
+    expect(legacy).toHaveLength(1);
+    expect(legacy![0]).toEqual(PILL);
+    // A record carrying boxes is read from them ALONE — a stray top-level
+    // rectangle beside them does not smuggle in a fifth region.
+    const both = {
+      repair_region: {
+        ...{ left: 0, top: 0, right: 1, bottom: 1 },
+        boxes: [PILL], original_sha256: SHA,
+      },
+    };
+    const read = readRepairRegion(both, SHA);
+    expect(read).toHaveLength(1);
+    expect(read![0]).toEqual(PILL);
+  });
+
+  it(`more than ${MAX_REGION_BOXES} rectangles voids the record`, () => {
+    const many = [0, 1, 2, 3, 4].map((n) => ({
+      left: n * 0.2, top: 0, right: n * 0.2 + 0.05, bottom: 0.05 }));
+    expect(many).toHaveLength(MAX_REGION_BOXES + 1);
+    expect(readRepairRegion(storedBoxes(many), SHA)).toBeNull();
+    // At the cap exactly, it reads.
+    expect(readRepairRegion(storedBoxes(many.slice(0, MAX_REGION_BOXES)), SHA))
+      .toHaveLength(MAX_REGION_BOXES);
+  });
+
+  it('ONE malformed rectangle voids the whole set, honest neighbours and all', () => {
+    for (const bad of [
+      { left: 0.9, top: 0, right: 0.2, bottom: 0.1 },          // inverted
+      { left: 0.5, top: 0.5, right: 0.5, bottom: 0.9 },        // empty
+      { left: -0.1, top: 0, right: 0.2, bottom: 0.1 },         // out of frame
+      { left: Number.NaN, top: 0, right: 0.2, bottom: 0.1 },   // not a number
+    ]) {
+      expect(readRepairRegion(storedBoxes([PILL, bad as never]), SHA)).toBeNull();
+      // And a voided set is NOT "oversized" — it is nothing.
+      expect(oversizedRepairRegionShare(storedBoxes([PILL, bad as never]), SHA)).toBeNull();
+    }
+  });
+
+  it('the origin test binds the SET exactly as it binds one rectangle', () => {
+    expect(readRepairRegion(storedBoxes([PILL, PLATE]), 'b'.repeat(64))).toBeNull();
+    expect(readRepairRegion(storedBoxes([PILL, PLATE]), null)).toBeNull();
   });
 });
 
