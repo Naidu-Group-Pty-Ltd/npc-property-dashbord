@@ -228,6 +228,7 @@ jobs:
             src/lib/__tests__/builderStockImportBoundary.test.ts \
             src/lib/__tests__/builderStockImagePriority.test.ts \
             src/lib/__tests__/builderPortalTransport.test.ts \
+            src/lib/__tests__/builderStockSettlementLiveness.test.ts \
             src/lib/__tests__/builderStockCloudflareWorker.test.ts
 
       # The Cloudflare worker ships OUTSIDE supabase/functions and src, so no
