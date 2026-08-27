@@ -636,14 +636,60 @@ describe('embedded document imagery', () => {
     expect(attributions[1].reason).toContain('did not anchor this one');
   });
 
-  it('still counts when the format stated nothing at all', () => {
+  it('NEVER counts across properties, whatever the lengths happen to be', () => {
+    /*
+     * This test used to pin the opposite: two properties, two unanchored
+     * images, paired by position. The counts lining up is a coincidence — the
+     * media list is capped, skips oversize and non-raster parts silently, and
+     * was not even in document order — so the pairing asserted a relationship
+     * the source never stated, at the evidence level that reaches a card.
+     * Both images are kept against the upload now, where a person can decide.
+     */
     const attributions = attributeDocumentMedia({
       anchors: [null, null],
       itemIdByAnchor: {},
       itemIdsInOrder: ['item-a', 'item-b'],
     });
-    expect(attributions.map((entry) => entry.stockItemId)).toEqual(['item-a', 'item-b']);
-    expect(attributions[0].structural).toBe(false);
+    expect(attributions.map((entry) => entry.stockItemId)).toEqual([null, null]);
+    expect(attributions[0].reason).toContain('stated no relationships');
+  });
+
+  it('anchors that resolved to nothing still switch ordering off', () => {
+    // A deck whose properties came from prose (no row anchors) while every
+    // image carries a real slide anchor: the document DOES state
+    // relationships, and none of them matched. Counting here would pair
+    // images with properties the structure never tied together.
+    const attributions = attributeDocumentMedia({
+      anchors: ['slide:0', 'slide:1'],
+      itemIdByAnchor: {},
+      itemIdsInOrder: ['item-a', 'item-b'],
+    });
+    expect(attributions.map((entry) => entry.stockItemId)).toEqual([null, null]);
+  });
+
+  it('a one-property document contains its images, and says so structurally', () => {
+    const attributions = attributeDocumentMedia({
+      anchors: [null, null],
+      itemIdByAnchor: {},
+      itemIdsInOrder: ['item-only'],
+      rowCount: 1,
+    });
+    expect(attributions.map((entry) => entry.stockItemId))
+      .toEqual(['item-only', 'item-only']);
+    expect(attributions[0].structural).toBe(true);
+    expect(attributions[0].reason).toContain('one property');
+  });
+
+  it('a one-item MATCH out of a many-row document is not a one-property document', () => {
+    // The repair lists only rows that re-matched: one match out of a
+    // twelve-row file must not attribute the whole file's imagery to it.
+    const attributions = attributeDocumentMedia({
+      anchors: [null, null],
+      itemIdByAnchor: {},
+      itemIdsInOrder: ['item-only'],
+      rowCount: 12,
+    });
+    expect(attributions.map((entry) => entry.stockItemId)).toEqual([null, null]);
   });
 });
 

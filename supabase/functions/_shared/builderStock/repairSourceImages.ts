@@ -435,6 +435,8 @@ export async function repairSourceImagesForUpload(
 
   const itemIdByAnchor = new Map<string, string | null>();
   const itemIdsInOrder: string[] = [];
+  /** Rows the DOCUMENT stated, matched or not — see `documentRowCount`. */
+  let documentRows = 0;
   const touched = new Set<string>();
   /**
    * What this run could PROVE about each property: the source references it
@@ -455,6 +457,7 @@ export async function repairSourceImagesForUpload(
   for (const raw of rows) {
     const record: NormalisedStockRecord | null = normaliseStockRow(raw);
     if (!record) continue;
+    documentRows += 1;
 
     const keys = stockMatchKeys(record);
     const itemId = (keys.reference ? byReference.get(keys.reference) : undefined)
@@ -777,7 +780,13 @@ export async function repairSourceImagesForUpload(
   if (media.length) {
     await attachDocumentMedia(
       db,
-      { organisationId: input.organisationId, uploadId: upload.id, media },
+      {
+        organisationId: input.organisationId, uploadId: upload.id, media,
+        // The repair lists only rows that re-matched, which can be one row of
+        // a many-row file. The document's own row count travels with it so
+        // the one-property containment fallback cannot fire on a subset.
+        documentRowCount: documentRows,
+      },
       itemIdsInOrder,
       itemIdByAnchor,
     );
