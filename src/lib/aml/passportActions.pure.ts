@@ -28,6 +28,13 @@ export interface PassportActionFacts {
   activeAgreements: number;
   activeGrants: number;
   isMlro: boolean;
+  /**
+   * Whether material-change invalidation can run on this deployment (the
+   * partner event outbox flag, read from the server's own health op).
+   * null = the reading was unavailable, which changes nothing — the
+   * server still answers for itself.
+   */
+  materialChangeAvailable?: boolean | null;
 }
 
 export type PassportActionState = "done" | "ready" | "blocked" | "anytime";
@@ -100,38 +107,53 @@ export function passportActions(f: PassportActionFacts): PassportActionRow[] {
     blockedBy: f.isMlro ? null : MLRO_NEEDED,
   });
 
-  /* 4 · Hand a partner the issued version — the only act that shares. */
+  /* 4 · Hand a partner the issued version — the only act that shares.
+   *     A missing arrangement no longer blocks it: onboarding a new
+   *     partner records the organisation, the written arrangement and
+   *     the case link on the way to the grant. */
   rows.push({
     key: "grant",
     label: "Grant partner access",
     meaning:
-      "Gives a partner the current attestation under an active arrangement, via a one-time access token. They see what was performed — never this case's risk assessment.",
-    state: !f.isMlro || !hasAttestation || f.activeAgreements === 0 ? "blocked" : "ready",
+      "Gives a partner the current attestation under an active arrangement, via a one-time access token their portal redeems — the partner needs no sign-up before the passport reaches them. They see what was performed — never this case's risk assessment.",
+    state: !f.isMlro || !hasAttestation ? "blocked" : "ready",
     detail: f.activeGrants > 0
       ? `${f.activeGrants} active grant${f.activeGrants === 1 ? "" : "s"}.`
-      : "No partner has access yet.",
+      : f.activeAgreements === 0
+        ? "No partner has access yet — onboarding records the organisation, the written arrangement and the case link on the way to the grant."
+        : "No partner has access yet.",
     blockedBy: !f.isMlro
       ? MLRO_NEEDED
       : !hasAttestation
         ? "Issue the attestation first"
-        : f.activeAgreements === 0
-          ? "Record a written arrangement first"
-          : null,
+        : null,
   });
 
-  /* 5 · Ongoing honesty: re-check the attested facts against the case. */
+  /* 5 · Ongoing honesty: re-check the attested facts against the case.
+   *     On a deployment without the partner event outbox the server
+   *     refuses every run — so the row says so BEFORE the click, instead
+   *     of offering a button that always errors. */
+  const outboxOff = f.materialChangeAvailable === false;
   rows.push({
     key: "material",
     label: "Check for material change",
     meaning:
       "Re-checks the attested facts against the case as it stands now. A genuine change flags the attestation and every grant for refresh — partners see safe refresh wording only, never the detail. No change means exactly that, and nothing moves.",
-    state: !f.isMlro || !hasAttestation ? "blocked" : "anytime",
-    detail: hasAttestation
-      ? refreshFlagged
-        ? "A refresh is already flagged — reissue to resolve it."
-        : "Run after anything material changes on the case."
-      : "Nothing has been attested yet.",
-    blockedBy: !f.isMlro ? MLRO_NEEDED : !hasAttestation ? "Issue the attestation first" : null,
+    state: !f.isMlro || !hasAttestation || outboxOff ? "blocked" : "anytime",
+    detail: !hasAttestation
+      ? "Nothing has been attested yet."
+      : outboxOff
+        ? "Reissuing the attestation is how a change reaches partners on this deployment."
+        : refreshFlagged
+          ? "A refresh is already flagged — reissue to resolve it."
+          : "Run after anything material changes on the case.",
+    blockedBy: !f.isMlro
+      ? MLRO_NEEDED
+      : !hasAttestation
+        ? "Issue the attestation first"
+        : outboxOff
+          ? "Unavailable on this deployment — it needs the partner event outbox, which is not enabled"
+          : null,
   });
 
   return rows;

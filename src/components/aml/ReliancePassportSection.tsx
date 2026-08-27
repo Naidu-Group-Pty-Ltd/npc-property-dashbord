@@ -11,6 +11,7 @@ import {
 import { Loader2, Share2, FileSignature, ShieldCheck, Link2, Eye, CheckCircle2, CircleDot, Lock } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
+import { PartnerOnboardingWizard } from "@/components/aml/PartnerOnboardingWizard";
 import { passportActions, type PassportActionRow } from "@/lib/aml/passportActions.pure";
 import {
   amlRelianceApi, type ComplianceAttestation, type IndependentAssessment,
@@ -46,9 +47,12 @@ export function ReliancePassportSection({
   const [recordsRequests, setRecordsRequests] = useState<PartnerRecordsRequest[]>([]);
   /** SERVER-derived passport state code; null when the reading failed. */
   const [passportStateCode, setPassportStateCode] = useState<string | null>(null);
+  /** Whether the deployment can run material-change invalidation; null = unknown. */
+  const [outboxEnabled, setOutboxEnabled] = useState<boolean | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmIssue, setConfirmIssue] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const { prompt, dialog } = usePromptDialog();
 
   const refresh = useCallback(async () => {
@@ -91,6 +95,14 @@ export function ReliancePassportSection({
       setPassportStateCode(status.passport?.state?.code ?? null);
     } catch {
       setPassportStateCode(null);
+    }
+    try {
+      // Whether material-change invalidation can run here at all — the
+      // health op reports the outbox flag as recorded configuration.
+      const { health } = await amlRelianceApi.getPartnerEventsHealth();
+      setOutboxEnabled(health?.outbox_enabled ?? null);
+    } catch {
+      setOutboxEnabled(null);
     } finally {
       setLoaded(true);
     }
@@ -223,11 +235,13 @@ export function ReliancePassportSection({
 
   const addLink = async () => {
     if (organisations.length === 0) {
+      // Not an error — a missing prerequisite with a paved road: the
+      // wizard records the organisation on the way.
       toast({
-        title: "No partner organisations recorded",
-        description: "Record the canonical partner organisation first — a free-text name is not an identity.",
-        variant: "destructive",
+        title: "No partner organisations recorded yet",
+        description: "Use \"Onboard partner & grant\" above — it records the organisation, the arrangement and this link in one pass.",
       });
+      setWizardOpen(true);
       return;
     }
     const values = await prompt({
@@ -412,13 +426,15 @@ export function ReliancePassportSection({
   const current = attestations.find((a) => !a.superseded_at) ?? null;
   const nextVersion = (current?.version ?? 0) + 1;
 
+  const activeAgreementCount = agreements.filter((a) => a.status === "active").length;
   const actionRows = passportActions({
     attestationVersion: current?.version ?? null,
     issuedAt: current?.issued_at ?? null,
     passportStateCode,
-    activeAgreements: agreements.filter((a) => a.status === "active").length,
+    activeAgreements: activeAgreementCount,
     activeGrants: grants.filter((g) => !g.revoked_at).length,
     isMlro,
+    materialChangeAvailable: outboxEnabled,
   });
 
   /* Each explained row carries its own act — the same handlers the old
@@ -448,10 +464,24 @@ export function ReliancePassportSection({
           </Button>
         );
       case "grant":
+        /* The paved road is the onboarding wizard — it records the
+         * organisation, the arrangement and the case link on the way to
+         * the grant, so a brand-new partner is one pass, not four
+         * dialogs. The direct grant stays for partners whose arrangement
+         * already exists. */
         return (
-          <Button size="sm" onClick={grant} disabled={busy !== null || row.state === "blocked"}>
-            {spinning("grant")} Grant access
-          </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            {activeAgreementCount > 0 && (
+              <Button size="sm" variant="outline" onClick={grant}
+                disabled={busy !== null || row.state === "blocked"}>
+                {spinning("grant")} Grant to existing partner
+              </Button>
+            )}
+            <Button size="sm" onClick={() => setWizardOpen(true)}
+              disabled={busy !== null || row.state === "blocked"}>
+              Onboard partner &amp; grant
+            </Button>
+          </div>
         );
       case "material":
         return (
@@ -638,7 +668,8 @@ export function ReliancePassportSection({
             <div className="text-xs text-muted-foreground mt-1.5">
               No partners linked. A partner sees this matter only through an active link with a
               recorded legal route and purpose — and a link alone still grants no passport or
-              reliance access.
+              reliance access. The fastest path for a new partner is &ldquo;Onboard partner &amp;
+              grant&rdquo; in the actions above, which records the link on the way.
             </div>
           ) : (
             <ul className="mt-1.5 space-y-1.5 text-xs">
@@ -716,6 +747,17 @@ export function ReliancePassportSection({
           </div>
         )}
       </CardContent>
+      {/* One guided pass from "partner does not exist" to "partner holds
+          a grant" — the four acts in the server's own order. */}
+      <PartnerOnboardingWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        caseId={caseId}
+        attestationVersion={current?.version ?? null}
+        organisations={organisations}
+        agreements={agreements}
+        onDone={refresh}
+      />
       {/*
         Issuing is an outward act — a numbered version partners will read —
         so it confirms, says exactly what will happen, and keeps the visual

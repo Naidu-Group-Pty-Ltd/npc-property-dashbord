@@ -31,10 +31,14 @@ describe("a blocked act names its enabler before the click", () => {
     expect(r.blockedBy).toBe("Issue the attestation first");
   });
 
-  it("grant with an attestation but no arrangement: record the arrangement first", () => {
+  it("grant with an attestation but no arrangement: READY, because onboarding records it en route", () => {
+    // A missing arrangement used to block the act outright; the wizard
+    // records the organisation, the arrangement and the case link on the
+    // way to the grant, so the act is available — and the detail says how.
     const r = byKey(passportActions(facts({ attestationVersion: 1 })), "grant");
-    expect(r.state).toBe("blocked");
-    expect(r.blockedBy).toBe("Record a written arrangement first");
+    expect(r.state).toBe("ready");
+    expect(r.blockedBy).toBeNull();
+    expect(r.detail).toContain("onboarding records the organisation");
   });
 
   it("grant with both prerequisites: ready", () => {
@@ -86,6 +90,25 @@ describe("issuance states follow the record, and only the record", () => {
     const r = byKey(passportActions(facts()), "material");
     expect(r.state).toBe("blocked");
     expect(r.blockedBy).toBe("Issue the attestation first");
+  });
+
+  it("a deployment without the event outbox blocks material change BEFORE the click", () => {
+    // The server refuses every run with the outbox off ("Material-change
+    // invalidation is part of the partner event outbox, which is not
+    // enabled") — a button that always errors must say so up front.
+    const r = byKey(passportActions(facts({
+      attestationVersion: 1, materialChangeAvailable: false,
+    })), "material");
+    expect(r.state).toBe("blocked");
+    expect(r.blockedBy).toContain("partner event outbox");
+    expect(r.detail).toContain("Reissuing the attestation");
+  });
+
+  it("an UNKNOWN outbox reading changes nothing — the server answers for itself", () => {
+    const r = byKey(passportActions(facts({
+      attestationVersion: 1, materialChangeAvailable: null,
+    })), "material");
+    expect(r.state).toBe("anytime");
   });
 });
 
