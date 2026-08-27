@@ -80,6 +80,22 @@ describe("pinned against the server", () => {
     expect((src.match(/await clearanceBlockReasons\(/g) ?? []).length).toBeGreaterThanOrEqual(4);
   });
 
+  it("a decision syncs all three case dimensions and never the service gate", () => {
+    // The decide op wrote only the legacy `status`; the canonical
+    // `case_stage` stayed at staff_review and the Decision stage never
+    // turned green. It now syncs stage and client-portal status the way the
+    // transition op always has — and deliberately never touches
+    // service_gate_status: the gate moves only on an explicit gate decision.
+    const decide = src.slice(src.indexOf('if (op === "decide")'), src.indexOf('if (op === "policy_snapshot")'));
+    expect(decide).toContain("DECIDE_STATUS_TO_STAGE");
+    expect(decide).toContain("DECIDE_STATUS_TO_CLIENT_PORTAL");
+    expect(decide).toContain("case_stage: DECIDE_STATUS_TO_STAGE[toStatus]");
+    expect(decide).toContain("client_portal_status: DECIDE_STATUS_TO_CLIENT_PORTAL[toStatus]");
+    // As a WRITTEN column (`service_gate_status:`), not as a word — the
+    // comment explaining the rule may name it; the update patch may not.
+    expect(decide).not.toContain("service_gate_status:");
+  });
+
   it("the case subject's determination discharges the case-level requirement wherever it is recorded", () => {
     // Stage 5's dialog records against the primary subject's screening row;
     // demanding a NULL party_screening_subject_id refused clearance to a

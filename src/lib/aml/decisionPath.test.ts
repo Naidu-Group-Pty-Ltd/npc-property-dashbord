@@ -23,6 +23,7 @@ const facts = (over: Partial<DecisionPathFacts> = {}): DecisionPathFacts => ({
   gate: { status: "terminated", effective_at: "2026-08-20T00:00:00Z" },
   canWrite: true,
   canReview: true,
+  isMlro: true,
   ...over,
 });
 
@@ -49,14 +50,49 @@ describe("the order of the decision", () => {
     expect(byKey(steps, "assessment").state).toBe("done");
     expect(byKey(steps, "decision").state).toBe("current");
     expect(byKey(steps, "gate").state).toBe("outstanding");
+    // A decision-maker owes no recommendation to themselves: with nothing
+    // waiting, the step settles rather than nagging as "later".
+    const r = byKey(steps, "recommendation");
+    expect(r.state).toBe("settled");
+    expect(r.detail).toMatch(/you may decide directly/);
+  });
+
+  it("a pending recommendation still ticks the step for a decision-maker", () => {
+    const steps = decisionPath(facts({ pendingRecommendation: true }));
+    expect(byKey(steps, "recommendation").state).toBe("done");
   });
 
   it("for an analyst, the recommendation is current and the decision is blocked with its blocker named", () => {
-    const steps = decisionPath(facts({ canReview: false }));
+    const steps = decisionPath(facts({ canReview: false, isMlro: false }));
     expect(byKey(steps, "recommendation").state).toBe("current");
     const d = byKey(steps, "decision");
     expect(d.state).toBe("blocked");
     expect(d.blockedBy).toBe("Requires a reviewer or the MLRO");
+  });
+
+  it("an escalated decision is a handover, never done: the step stays open for the MLRO", () => {
+    const escalated = { outcome: "escalated", decided_at: "2026-08-27T03:00:00Z" };
+    const mlro = decisionPath(facts({ decision: escalated }));
+    const d = byKey(mlro, "decision");
+    expect(d.state).toBe("current");
+    expect(d.detail).toMatch(/the MLRO's to record/);
+    // Everyone else sees it blocked, with the blocker named.
+    const reviewer = decisionPath(facts({ decision: escalated, isMlro: false }));
+    expect(byKey(reviewer, "decision").state).toBe("blocked");
+    expect(byKey(reviewer, "decision").blockedBy).toBe("Waiting on the MLRO");
+    // And the gate stays outstanding — an escalation grants nothing.
+    expect(byKey(mlro, "gate").state).toBe("outstanding");
+  });
+
+  it("a cleared decision makes the gate step DIRECT, not describe", () => {
+    const steps = decisionPath(facts({
+      decision: { outcome: "cleared", decided_at: "2026-08-27T03:00:00Z" },
+      gate: { status: "under_review", effective_at: "2026-08-20T00:00:00Z" },
+    }));
+    const g = byKey(steps, "gate");
+    expect(g.state).toBe("current");
+    expect(g.detail).toMatch(/set the gate to Approved to grant the service/);
+    expect(g.detail).toMatch(/Currently under review/);
   });
 
   it("a decision without a recommendation SETTLES the recommendation — never ticks it", () => {

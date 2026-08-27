@@ -32,6 +32,7 @@ export interface DecisionPathFacts {
   gate: { status: string; effective_at: string | null } | null;
   canWrite: boolean;
   canReview: boolean;
+  isMlro: boolean;
 }
 
 export type DecisionStepState =
@@ -68,7 +69,13 @@ const REVIEWER_NEEDED = "Requires a reviewer or the MLRO";
  */
 export function decisionPath(f: DecisionPathFacts): DecisionStep[] {
   const assessmentDone = f.assessment !== null && !f.recalcStale;
-  const decisionDone = f.decision !== null;
+  /*
+   * An ESCALATED decision is a handover, not an outcome: the case now waits
+   * on the MLRO's cleared or blocked decision, so the step stays open —
+   * current for the MLRO, blocked-with-the-blocker-named for everyone else.
+   */
+  const escalated = f.decision?.outcome === "escalated";
+  const decisionDone = f.decision !== null && !escalated;
   /* The gate step is done when a gate decision has been recorded SINCE the
    * case decision — an older gate state is context, not the outcome of
    * this decision. */
@@ -104,12 +111,19 @@ export function decisionPath(f: DecisionPathFacts): DecisionStep[] {
         ? "settled"
         : assessmentDone && !f.canReview
           ? "current"
-          : "outstanding",
+          : f.canReview
+            /* A decision-maker owes no recommendation to themselves — for
+             * them the step settles unless an analyst has one waiting. The
+             * form itself only renders for operators who cannot decide. */
+            ? "settled"
+            : "outstanding",
     detail: f.pendingRecommendation
       ? "Recorded — awaiting the reviewer."
       : decisionDone
         ? "None was recorded before the decision — a recommendation is optional."
-        : "Optional: the analyst's recommended outcome, for the reviewer to weigh.",
+        : f.canReview
+          ? "Nothing waiting. An analyst's recommendation would appear beside the decision; as the decision-maker you may decide directly."
+          : "Optional: the analyst's recommended outcome, for the reviewer to weigh.",
     blockedBy: null,
   });
 
@@ -120,13 +134,23 @@ export function decisionPath(f: DecisionPathFacts): DecisionStep[] {
       ? "done"
       : !assessmentDone
         ? "outstanding"
-        : f.canReview
-          ? "current"
-          : "blocked",
+        : escalated
+          ? (f.isMlro ? "current" : "blocked")
+          : f.canReview
+            ? "current"
+            : "blocked",
     detail: decisionDone
       ? `${f.decision!.outcome.replace(/_/g, " ")}.`
-      : "Clear, escalate or block — frozen into the decision snapshot.",
-    blockedBy: !decisionDone && assessmentDone && !f.canReview ? REVIEWER_NEEDED : null,
+      : escalated
+        ? "Escalated — the final cleared or blocked decision is the MLRO's to record."
+        : "Clear, escalate or block — frozen into the decision snapshot.",
+    blockedBy: decisionDone || !assessmentDone
+      ? null
+      : escalated
+        ? (f.isMlro ? null : "Waiting on the MLRO")
+        : f.canReview
+          ? null
+          : REVIEWER_NEEDED,
   });
 
   steps.push({
@@ -141,9 +165,15 @@ export function decisionPath(f: DecisionPathFacts): DecisionStep[] {
           : "blocked",
     detail: gateDone
       ? `${(f.gate!.status).replace(/_/g, " ")}.`
-      : f.gate
-        ? `Currently ${(f.gate.status).replace(/_/g, " ")} — the gate is the entitlement decision, separate from the case stage.`
-        : "The gate is the entitlement decision, separate from the case stage.",
+      : decisionDone && f.decision!.outcome === "cleared"
+        /* The step DIRECTS when it is the open one: what to set, and what
+         * each choice means — not merely what the gate abstractly is. */
+        ? `The case is cleared — set the gate to Approved to grant the service`
+          + ` (or Approved with controls, with an open condition recording them).`
+          + (f.gate ? ` Currently ${(f.gate.status).replace(/_/g, " ")}.` : "")
+        : f.gate
+          ? `Currently ${(f.gate.status).replace(/_/g, " ")} — the gate is the entitlement decision, separate from the case stage.`
+          : "The gate is the entitlement decision, separate from the case stage.",
     blockedBy: !gateDone && decisionDone && !f.canReview ? REVIEWER_NEEDED : null,
   });
 

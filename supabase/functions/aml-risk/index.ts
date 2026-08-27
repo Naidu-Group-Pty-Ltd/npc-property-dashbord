@@ -710,12 +710,35 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       }).select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
 
-      // Reflect on case status
+      /*
+       * Reflect the outcome on the case — ALL THREE dimensions, the way the
+       * transition op has always synced them. This wrote only the legacy
+       * `status`, leaving the canonical `case_stage` at `staff_review`, so a
+       * cleared case's Decision stage never turned green, the live position
+       * still said "Staff review", and the client portal never learned the
+       * outcome (the same desync reopen_case had; caseStage() prefers the
+       * explicit column). Mirrors aml-cases' STATUS_TO_STAGE /
+       * STATUS_TO_CLIENT_PORTAL for these three statuses — and deliberately
+       * NEVER writes the service-gate column; the gate moves only on an
+       * explicit gate decision.
+       */
       let toStatus: string | null = null;
       if (outcome === "cleared") toStatus = "cleared";
       else if (outcome === "blocked") toStatus = "blocked";
       else if (outcome === "escalated") toStatus = "escalated_mlro";
-      if (toStatus) await admin.schema("aml").from("cases").update({ status: toStatus }).eq("id", case_id);
+      if (toStatus) {
+        const DECIDE_STATUS_TO_STAGE: Record<string, string> = {
+          cleared: "cleared", blocked: "blocked", escalated_mlro: "decision_pending",
+        };
+        const DECIDE_STATUS_TO_CLIENT_PORTAL: Record<string, string> = {
+          cleared: "complete", blocked: "contact_adviser", escalated_mlro: "under_review",
+        };
+        await admin.schema("aml").from("cases").update({
+          status: toStatus,
+          case_stage: DECIDE_STATUS_TO_STAGE[toStatus],
+          client_portal_status: DECIDE_STATUS_TO_CLIENT_PORTAL[toStatus],
+        }).eq("id", case_id);
+      }
 
       // Close the recommendation loop (§12.8): the analyst recommendation the
       // reviewer acted on is stamped with this decision, not left dangling.
