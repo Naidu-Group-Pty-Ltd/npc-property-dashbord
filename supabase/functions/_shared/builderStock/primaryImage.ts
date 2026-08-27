@@ -34,7 +34,7 @@ import {
   isMarketplaceEligible, needsEligibilityAssessment, readMarketplaceState,
 } from './marketplaceEligibility.pure.ts';
 import {
-  servableClearanceFor, servableDerivativeFor,
+  servableClearanceFor, servableDerivativeFor, type SanitizedDerivative,
 } from './sanitizedDerivative.pure.ts';
 
 /** The stage whose provenance is the builder's own document. */
@@ -115,6 +115,26 @@ export function isDisplayableSourceImage(image: DisplayableImage): boolean {
 export function servesCleanOriginal(image: DisplayableImage): boolean {
   return isMarketplaceEligible(image.source_detail)
     || !!servableClearanceFor(image.source_detail);
+}
+
+/**
+ * The derivative whose object should be SIGNED for this image — or null,
+ * meaning the original is the picture.
+ *
+ * One image row can carry both facts at once: a derivative made under an old
+ * conviction, and an eligible verdict (or a clearance) reached since — a
+ * better classifier re-judged the same bytes clean, or the precise inspection
+ * cleared them. The signing endpoint used to prefer the derivative
+ * unconditionally, which served a repaired copy of a photograph the platform
+ * itself now judges clean; the builder's own file is always the better
+ * picture where both stand. Ordering, never filtering: an image whose only
+ * claim to a card IS its derivative still serves it, exactly as before.
+ *
+ * Lives beside `servesCleanOriginal` so the sort that prefers clean-original
+ * ROWS and the signature that picks the clean-original OBJECT are one rule.
+ */
+export function derivativeToServe(image: DisplayableImage): SanitizedDerivative | null {
+  return servesCleanOriginal(image) ? null : servableDerivativeFor(image.source_detail);
 }
 
 /**

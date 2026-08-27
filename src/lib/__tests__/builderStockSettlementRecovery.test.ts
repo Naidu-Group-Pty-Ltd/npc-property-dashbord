@@ -50,8 +50,9 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
 import { readMarketingOverlay } from '../../../supabase/functions/_shared/builderStock/marketingOverlay.pure';
 import { eligibilityDetailFor } from '../../../supabase/functions/_shared/builderStock/assessSourceImage';
-import { encodePng } from '../../../supabase/functions/_shared/builderStock/rasterPng';
+import { encodePng, sha256Hex } from '../../../supabase/functions/_shared/builderStock/rasterPng';
 import { annotatedPicture, cleanPicture } from './fixtures/builderStockPictures';
+import { readPostgrestColumn } from './fixtures/postgrestJsonPath';
 
 const ORG = 'org-a';
 const OTHER_ORG = 'org-b';
@@ -166,21 +167,44 @@ function fakeDb(options: {
       return {
         select: (columns = '*') => select(table, columns),
         update(patch: Record<string, unknown>) {
-          const filters: Array<[string, unknown]> = [];
+          const filters: Array<[string, string, unknown]> = [];
+          // The JSON-path filters are RESOLVED against the row, never assumed:
+          // `source_detail->sanitization_attempt->>at` reads the way the server
+          // reads it, or the claim's compare-and-set is a test of nothing.
+          const matchesRow = (row: Row) => filters.every(([op, c, v]) => {
+            const current = readPostgrestColumn(row, c);
+            if (op === 'is') return (current ?? null) === (v ?? null);
+            return current === v;
+          });
+          const apply = (): { applied: Row[]; error: unknown } => {
+            if (options.failWritesFor?.(table)) {
+              return { applied: [], error: { message: 'write rejected' } };
+            }
+            const applied: Row[] = [];
+            for (const row of tables[table] ?? []) {
+              if (matchesRow(row)) {
+                Object.assign(row, patch);
+                writes.push({ table, patch, id: row.id });
+                applied.push(row);
+              }
+            }
+            return { applied, error: null };
+          };
           const builder: any = {
-            eq(c: string, v: unknown) { filters.push([c, v]); return builder; },
+            eq(c: string, v: unknown) { filters.push(['eq', c, v]); return builder; },
+            is(c: string, v: unknown) { filters.push(['is', c, v]); return builder; },
+            select() {
+              return {
+                maybeSingle() {
+                  const { applied, error } = apply();
+                  if (error) return Promise.resolve({ data: null, error });
+                  return Promise.resolve({ data: applied[0] ?? null, error: null });
+                },
+              };
+            },
             then(resolve: (r: unknown) => unknown, reject?: unknown) {
-              if (options.failWritesFor?.(table)) {
-                return Promise.resolve({ data: null, error: { message: 'write rejected' } })
-                  .then(resolve, reject as never);
-              }
-              for (const row of tables[table] ?? []) {
-                if (filters.every(([c, v]) => row[c] === v)) {
-                  Object.assign(row, patch);
-                  writes.push({ table, patch, id: row.id });
-                }
-              }
-              return Promise.resolve({ data: null, error: null }).then(resolve, reject as never);
+              const { error } = apply();
+              return Promise.resolve({ data: null, error }).then(resolve, reject as never);
             },
           };
           return builder;
@@ -230,17 +254,32 @@ const item = (over: Partial<Row> = {}): Row => ({
   ...over,
 });
 
+/**
+ * Give the row the provenance a real one has: `stored_sha256` IS the hash of
+ * the object it references. The legacy fixture's dummy hash stopped being
+ * inert when the eligibility verdict started naming the bytes it judged — a
+ * verdict written for these bytes beside a hash of OTHER bytes now reads as
+ * `pending`, which is the binding working, not the settlement failing.
+ * `source_sha256` keeps the dummy: the binding reads only the stored hash,
+ * and a test asserts the settlement leaves provenance untouched.
+ */
+const withStoredHash = async (row: Row, bytes: Uint8Array): Promise<Row> => {
+  (row.source_detail as Record<string, unknown>).stored_sha256 = await sha256Hex(bytes);
+  return row;
+};
+
 // ---------------------------------------------------------------------------
 // 1 / 2 — the backfill itself
 // ---------------------------------------------------------------------------
 
 describe('1 — a clean legacy primary with no verdict is assessed and restored', () => {
   it('reads its stored bytes, writes eligible, and becomes the chosen image', async () => {
-    const row = image();
+    const bytes = await cleanBytes();
+    const row = await withStoredHash(image(), bytes);
     const db = fakeDb({
       images: [row],
       items: [item({ primary_image_id: null })],
-      objects: { [row.storage_path as string]: await cleanBytes() },
+      objects: { [row.storage_path as string]: bytes },
     });
 
     // Before: no verdict, so the display rule hides it and the card is blank.
@@ -343,6 +382,8 @@ describe('4 — one upload failing must not clear another property in the same o
       id: 'image-stranded', upload_id: 'upload-2', stock_item_id: 'item-stranded',
       storage_path: 'org/items/item-stranded/source/missing.png',
     });
+    const settledBytes = await cleanBytes();
+    await withStoredHash(settledImage, settledBytes);
     const db = fakeDb({
       images: [settledImage, strandedImage],
       items: [
@@ -350,7 +391,7 @@ describe('4 — one upload failing must not clear another property in the same o
         item({ id: 'item-stranded', primary_image_id: 'image-stranded' }),
       ],
       // Only the first upload's object is readable.
-      objects: { [settledImage.storage_path as string]: await cleanBytes() },
+      objects: { [settledImage.storage_path as string]: settledBytes },
     });
 
     await settleMarketplaceEligibility(db as never, ORG, { uploadId: 'upload-1' });
@@ -442,6 +483,10 @@ describe('5 — after a complete settlement the pointers are exactly right', () 
       id: 'image-tile', stock_item_id: 'item-tile',
       storage_path: 'org/items/item-tile/source/tile.png',
     });
+    const cleanObject = await cleanBytes();
+    const tileObject = await annotatedBytes();
+    await withStoredHash(cleanRow, cleanObject);
+    await withStoredHash(tileRow, tileObject);
     const db = fakeDb({
       images: [cleanRow, tileRow],
       items: [
@@ -449,8 +494,8 @@ describe('5 — after a complete settlement the pointers are exactly right', () 
         item({ id: 'item-tile', primary_image_id: 'image-tile' }),
       ],
       objects: {
-        [cleanRow.storage_path as string]: await cleanBytes(),
-        [tileRow.storage_path as string]: await annotatedBytes(),
+        [cleanRow.storage_path as string]: cleanObject,
+        [tileRow.storage_path as string]: tileObject,
       },
     });
 

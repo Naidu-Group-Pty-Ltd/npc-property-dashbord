@@ -33,11 +33,8 @@ import {
   STOCK_ITEM_SELECT, isSelectableAvailability, stockPagination,
 } from '../_shared/builderStock/projection.pure.ts';
 import {
-  isDisplayableSourceImage, type DisplayableImage,
+  derivativeToServe, isDisplayableSourceImage, type DisplayableImage,
 } from '../_shared/builderStock/primaryImage.ts';
-import {
-  servableDerivativeFor,
-} from '../_shared/builderStock/sanitizedDerivative.pure.ts';
 
 const FEATURE_FLAG_KEY = 'builder_stock_marketplace';
 const IMAGE_URL_TTL_SECONDS = 300;
@@ -254,13 +251,17 @@ Deno.serve(async (req) => {
        * repair would repair the same picture on every render, spend a vendor
        * key every time, and hand two viewers two different images.
        *
-       * `servableDerivativeFor` is the same call the card's own filter makes,
-       * so the two cannot disagree about which object this is. It resolves only
-       * while the record still names the SHA-256 the row holds, so a replaced
-       * original falls back to the original — which the gate above has already
-       * decided is displayable.
+       * `derivativeToServe` is built from the same calls the card's own filter
+       * makes, so the two cannot disagree about which object this is. It
+       * resolves only while the record still names the SHA-256 the row holds,
+       * so a replaced original falls back to the original — which the gate
+       * above has already decided is displayable. And it resolves to NOTHING
+       * for an image whose original is itself judged clean (an eligible
+       * verdict or a clearance beside an old repair): the builder's own file
+       * outranks a repaired copy of it wherever both stand, exactly as the
+       * card ordering already prefers clean-original rows.
        */
-      const derivative = servableDerivativeFor(image.source_detail);
+      const derivative = derivativeToServe(image);
       const bucket = derivative?.storage_bucket
         || image.storage_bucket || STOCK_IMAGE_BUCKET;
       const path = derivative?.storage_path || image.storage_path;

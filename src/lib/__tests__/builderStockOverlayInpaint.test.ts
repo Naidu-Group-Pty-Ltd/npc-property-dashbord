@@ -26,6 +26,7 @@ import {
   overlayPlateMask,
 } from '../../../supabase/functions/_shared/builderStock/overlayPlate.pure';
 import { photograph, withCaption, withPlate } from './fixtures/builderStockPictures';
+import { readPostgrestColumn } from './fixtures/postgrestJsonPath';
 import {
   growOverlayMask,
 } from '../../../supabase/functions/_shared/builderStock/sanitizeOverlay.pure';
@@ -919,21 +920,43 @@ function fakeDb(rows: Array<Record<string, any>>, objects: Record<string, Uint8A
       return {
         select: () => build(),
         update(patch: Record<string, unknown>) {
-          const filters: Array<[string, unknown]> = [];
+          const filters: Array<[string, string, unknown]> = [];
+          // JSON-path filters (the claim's compare-and-set) are RESOLVED
+          // against the row, never assumed — see fixtures/postgrestJsonPath.
+          const matchesRow = (row: Record<string, any>) =>
+            filters.every(([op, column, value]) => {
+              const current = readPostgrestColumn(row, column);
+              if (op === 'is') return (current ?? null) === (value ?? null);
+              return current === value;
+            });
+          const apply = (): { applied: Array<Record<string, any>>; error: unknown } => {
+            writes.push((patch.source_detail ?? {}) as Record<string, unknown>);
+            if (state.failWrites) return { applied: [], error: { message: 'write rejected' } };
+            const applied: Array<Record<string, any>> = [];
+            for (const row of rows) {
+              if (matchesRow(row)) { Object.assign(row, patch); applied.push(row); }
+            }
+            return { applied, error: null };
+          };
           const builder: any = {
-            eq(column: string, value: unknown) { filters.push([column, value]); return builder; },
+            eq(column: string, value: unknown) {
+              filters.push(['eq', column, value]); return builder;
+            },
+            is(column: string, value: unknown) {
+              filters.push(['is', column, value]); return builder;
+            },
+            select() {
+              return {
+                maybeSingle() {
+                  const { applied, error } = apply();
+                  if (error) return Promise.resolve({ data: null, error });
+                  return Promise.resolve({ data: applied[0] ?? null, error: null });
+                },
+              };
+            },
             then(resolve: (v: unknown) => unknown, reject?: unknown) {
-              writes.push((patch.source_detail ?? {}) as Record<string, unknown>);
-              if (state.failWrites) {
-                return Promise.resolve({ data: null, error: { message: 'write rejected' } })
-                  .then(resolve, reject as never);
-              }
-              for (const row of rows) {
-                if (filters.every(([column, value]) => row[column] === value)) {
-                  Object.assign(row, patch);
-                }
-              }
-              return Promise.resolve({ data: null, error: null }).then(resolve, reject as never);
+              const { error } = apply();
+              return Promise.resolve({ data: null, error }).then(resolve, reject as never);
             },
           };
           return builder;
@@ -2501,5 +2524,126 @@ describe('the deployment ships both halves of the version', () => {
     }
     expect(targets.length).toBeGreaterThan(0);
     expect(Math.max(...targets)).toBe(SANITIZATION_VERSION);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The claim — one invocation repairs a row, however many are scanning
+// ---------------------------------------------------------------------------
+
+describe('the repair claim', () => {
+  /*
+   * THE DUPLICATE THIS REPRODUCES. The cron tick, the portal's enrichment loop
+   * and a manual dispatch can all scan the same organisation in the same
+   * minute. The attempt stamp was written blind, so concurrent invocations
+   * each built the same shortlist and each did the whole expensive thing — a
+   * full decode, up to four model calls billed to a real vendor account, an
+   * encode — for the same picture, with two whole-column `source_detail`
+   * writes racing at the end. The stamp is now a compare-and-set claim made
+   * BEFORE the work; the loser is told by the database, not by luck.
+   */
+  it('two concurrent sweeps spend one repair between them, not two', async () => {
+    const { clean, badged } = badgedPicture();
+    const mask = maskFor(badged);
+    const bytes = (await encodePng(badged, { width: W, height: H, components: 3 }))!;
+    const row = await refusedRow(bytes);
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    let repairsRun = 0;
+    const sanitize = async (input: Uint8Array) => {
+      repairsRun += 1;
+      // Hold the winner in flight long enough that the second sweep has
+      // certainly scanned and tried to claim before anything settles.
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return sanitizeSourceImage(input, { edit: honestModel(clean, mask) });
+    };
+
+    const [a, b] = await Promise.all([
+      settleImageSanitization(db as never, ORG, { sanitize }),
+      settleImageSanitization(db as never, ORG, { sanitize }),
+    ]);
+
+    expect(repairsRun).toBe(1);
+    expect(a.repaired + b.repaired).toBe(1);
+    expect(db.uploads).toHaveLength(1);
+    // The loser records NOTHING: "somebody else is repairing this" is not an
+    // operational failure and not an outcome...
+    expect(a.unresolved + b.unresolved).toBe(0);
+    // ...but the loser's sweep is honest about not having finished the row,
+    // so no upload marker can advance past it on the loser's say-so.
+    const loser = a.repaired === 1 ? b : a;
+    expect(sanitizationSweepCompleted(loser)).toBe(false);
+
+    // The winner's settling write kept the stamp beside the derivative and
+    // rolled nothing back.
+    const detail = row.source_detail as Record<string, any>;
+    expect(detail.sanitized_derivative).toBeTruthy();
+    expect(detail.sanitization_attempt).toBeTruthy();
+    expect(detail.marketplace_rejection_reason).toBe('annotated_marketing_tile');
+  });
+
+  it('a claim left by a dead invocation expires with the cooldown', async () => {
+    const { clean, badged } = badgedPicture();
+    const mask = maskFor(badged);
+    const bytes = (await encodePng(badged, { width: W, height: H, components: 3 }))!;
+    const row = await refusedRow(bytes);
+    // A stamp older than the cooldown: the scan stops passing the row over,
+    // and the next claim compares against exactly this value and takes it.
+    (row.source_detail as Record<string, unknown>).sanitization_attempt = {
+      at: new Date(Date.now() - 11 * 60 * 1000).toISOString(), operational: true,
+    };
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    const outcome = await settleImageSanitization(db as never, ORG, {
+      sanitize: (input) => sanitizeSourceImage(input, { edit: honestModel(clean, mask) }),
+    });
+    expect(outcome.repaired).toBe(1);
+  });
+
+  it('a fresh stamp parks the row — the cooldown doubles as the lease', async () => {
+    const { badged } = badgedPicture();
+    const bytes = (await encodePng(badged, { width: W, height: H, components: 3 }))!;
+    const row = await refusedRow(bytes);
+    (row.source_detail as Record<string, unknown>).sanitization_attempt = {
+      at: new Date(Date.now() - 60 * 1000).toISOString(), operational: true,
+    };
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    const outcome = await settleImageSanitization(db as never, ORG, {
+      sanitize: async () => { throw new Error('a leased row must not be repaired'); },
+    });
+    expect(outcome.repaired).toBe(0);
+    expect(outcome.outstanding).toBe(1);
+    expect(sanitizationSweepCompleted(outcome)).toBe(false);
+  });
+
+  it('the double\'s compare-and-set is real, not a shape that always matches', async () => {
+    /*
+     * The screening claim's lesson: its test double emulated the filter with a
+     * regex, code and test agreed, and only the server disagreed — the claim
+     * had never once succeeded. So the double under these tests is itself
+     * under test: a compare-and-set against a value the row does not hold
+     * must apply to nothing and return no row.
+     */
+    const { badged } = badgedPicture();
+    const bytes = (await encodePng(badged, { width: W, height: H, components: 3 }))!;
+    const row = await refusedRow(bytes);
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    const miss = await db.from('builder_stock_item_images')
+      .update({ source_detail: { poisoned: true } })
+      .eq('id', 'image-1')
+      .eq('source_detail->sanitization_attempt->>at', 'not-the-stamp')
+      .select('id').maybeSingle();
+    expect(miss.data).toBeNull();
+    expect((row.source_detail as Record<string, unknown>).poisoned).toBeUndefined();
+
+    const absent = await db.from('builder_stock_item_images')
+      .update({ source_detail: { ...(row.source_detail as object), touched: true } })
+      .eq('id', 'image-1')
+      .is('source_detail->sanitization_attempt->>at', null)
+      .select('id').maybeSingle();
+    expect(absent.data?.id).toBe('image-1');
+    expect((row.source_detail as Record<string, unknown>).touched).toBe(true);
   });
 });
