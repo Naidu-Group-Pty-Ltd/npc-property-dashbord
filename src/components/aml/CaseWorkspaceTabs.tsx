@@ -10,7 +10,7 @@
  *     capabilities; write actions gated by `canWrite`.
  *   - No new data model — reuses existing amlVerificationApi / amlRiskApi.
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,10 +33,11 @@ import {
   type AmlAnalystRecommendation, type AmlServiceGateContract, type AmlRecalcStatus,
 } from "@/lib/aml/amlRiskApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
-import { decisionPath, gateChangeHint, reasonHint } from "@/lib/aml/decisionPath.pure";
+import { decisionPath, reasonHint } from "@/lib/aml/decisionPath.pure";
 import { describeClearanceReason } from "@/lib/aml/clearanceReasons.pure";
-import { DECISION_CHOICES, RECOMMENDATION_CHOICES, gateOptionGroups, type GateChoice } from "@/lib/aml/gateOptions.pure";
+import { DECISION_CHOICES, RECOMMENDATION_CHOICES } from "@/lib/aml/gateOptions.pure";
 import { DecisionPathCard } from "@/components/aml/workspace/DecisionPathCard";
+import { ServiceGateCard } from "@/components/aml/ServiceGateCard";
 import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy, type AmlFinanceRequest } from "@/lib/aml/amlFinanceApi";
 import {
   amlEntitiesApi, type AmlEntity, type AmlBeneficialOwner, type AmlAuthorisedRep,
@@ -554,17 +555,6 @@ function ChoiceCard({ selected, label, meaning, onSelect }: {
   );
 }
 
-const GATE_OPTION_LABELS: Record<string, string> = {
-  cdd_incomplete: "CDD incomplete",
-  information_outstanding: "Information outstanding",
-  under_review: "Under review",
-  conditions_outstanding: "Conditions outstanding",
-  approved_with_controls: "Approved with controls",
-  approved: "Approved",
-  locked: "Locked",
-  terminated: "Terminated",
-};
-
 export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssignedMlro }: {
   caseId: string; canWrite: boolean; onChanged: () => void;
   /** Route a clearance blocker to the section that resolves it. */
@@ -587,8 +577,6 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
   const [recRationale, setRecRationale] = useState("");
   const [decideOutcome, setDecideOutcome] = useState<"cleared" | "blocked" | "escalated">("cleared");
   const [decideRationale, setDecideRationale] = useState("");
-  const [gateStatus, setGateStatus] = useState<string>("under_review");
-  const [gateReason, setGateReason] = useState("");
   /*
    * What stands between this case and clearance, from the SAME server
    * computation the decide op enforces (`clearance_readiness`). Null means
@@ -667,35 +655,9 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
     finally { setBusy(false); }
   };
 
-  const applyGate = async () => {
-    setBusy(true);
-    try {
-      await amlRiskApi.setServiceGate({ case_id: caseId, status: gateStatus, reason: gateReason.trim() });
-      toast({ title: "Service gate updated" });
-      setGateReason("");
-      await load(); onChanged();
-    } catch (e: any) { toast({ title: "Gate change failed", description: e.message, variant: "destructive" }); }
-    finally { setBusy(false); }
-  };
-
   const latest = assessments?.[0];
   const pendingRecommendation = recommendations.find((r) => r.status === "pending") ?? null;
   const openConditionCount = conditions.filter((c) => c.status === "open").length;
-
-  /*
-   * ── Seed the gate select from the gate that IS ────────────────────────
-   * The select opened on "Under review" whatever the case's gate said, so
-   * choosing an option always began by correcting a default. Seeded once
-   * per case, from the loaded gate — and only when the loaded status is one
-   * this operator may select (a non-MLRO cannot re-pick locked/terminated).
-   */
-  const gateSeededFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (!gate || gateSeededFor.current === caseId) return;
-    gateSeededFor.current = caseId;
-    const selectable = isMlro || (gate.status !== "locked" && gate.status !== "terminated");
-    if (selectable && GATE_OPTION_LABELS[gate.status]) setGateStatus(gate.status);
-  }, [gate, caseId, isMlro]);
 
   /*
    * The path: the same facts as the cards below, arranged in order with one
@@ -729,15 +691,8 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
       ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
   };
 
-  /* Why each disabled control is disabled, in words — and the server's gate
-   * preconditions read BEFORE the request instead of from its 409. */
+  /* Why each disabled control is disabled, in words. */
   const recRationaleHint = reasonHint(recRationale, "rationale");
-  const gateReasonHint = reasonHint(gateReason);
-  const gatePrecondition = gateChangeHint(gateStatus, {
-    decisionOutcome: latestDecision?.outcome ?? null,
-    openConditions: openConditionCount,
-    isMlro,
-  });
 
   return (
     <div className="space-y-4">
@@ -1086,126 +1041,20 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
         </CardContent>
       </Card>
 
-      <Card id="decision-step-gate" className="scroll-mt-24">
-        <CardHeader><CardTitle className="text-sm">Service gate</CardTitle></CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          {/* The state as a statement, not a ledger: what the gate IS, since
-              when — and, when it grants the service, the door forward. */}
-          {gate ? (
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <span className="text-lg font-semibold">
-                  {GATE_OPTION_LABELS[gate.status] ?? gate.status.replace(/_/g, " ")}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {gate.effective_at ? `Effective ${new Date(gate.effective_at).toLocaleString()}` : "No explicit gate decision recorded yet"}
-                  {gate.policy_version ? ` · Policy ${gate.policy_version}` : ""}
-                </span>
-              </div>
-              {gate.reason && <div className="rounded bg-muted/40 p-2 text-xs">{gate.reason}</div>}
-              {gate.conditions.length > 0 && (
-                <div>
-                  <div className="text-[11px] text-muted-foreground">Attached conditions</div>
-                  <ul className="mt-0.5 space-y-0.5 text-xs">
-                    {gate.conditions.map((c, i) => <li key={c.id ?? i}>• {c.label}</li>)}
-                  </ul>
-                </div>
-              )}
-              {(gate.status === "approved" || gate.status === "approved_with_controls") && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/40 bg-success/5 p-2.5">
-                  <p className="text-xs text-success">
-                    The service gate is {GATE_OPTION_LABELS[gate.status].toLowerCase()} — the case is
-                    service-ready and this cascades into Gate &amp; Passport.
-                  </p>
-                  {onOpenSection && (
-                    <Button size="sm" className="h-7" onClick={() => onOpenSection("passport")}>
-                      Continue to Gate &amp; Passport
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-muted-foreground">Gate state unavailable.</p>
-          )}
-          {canReview && (
-            <div className="space-y-2 border-t border-border/50 pt-3">
-              <div className="text-xs font-semibold uppercase text-muted-foreground">Change service gate</div>
-              <p className="text-[11px] text-muted-foreground">
-                The gate controls service entitlement separately from case stage and risk. Pick the
-                new status, give the reason, and apply — the reason is recorded on the gate decision
-                and the audit trail.
-              </p>
-              {/*
-                Choices that read: what each status DOES, with the statuses
-                the recorded decision already implies offered first. The
-                production table held ZERO gate decisions — the old select
-                plus far-away disabled button meant the act was never
-                completed, and "nothing cascades" was nothing ever applied.
-              */}
-              {(() => {
-                const groups = gateOptionGroups({
-                  decisionOutcome: latestDecision?.outcome ?? null,
-                  currentGate: gate?.status ?? null,
-                  isMlro,
-                });
-                const renderChoice = (c: GateChoice) => (
-                  <ChoiceCard
-                    key={c.value}
-                    selected={gateStatus === c.value}
-                    label={c.label}
-                    meaning={c.meaning}
-                    onSelect={() => setGateStatus(c.value)}
-                  />
-                );
-                return (
-                  <div role="radiogroup" aria-label="New service-gate status" className="space-y-2">
-                    {groups.suggested.length > 0 && (
-                      <>
-                        <p className="text-[11px] uppercase tracking-wide text-primary">
-                          Suggested by the recorded decision
-                        </p>
-                        <div className="grid gap-2 sm:grid-cols-2">{groups.suggested.map(renderChoice)}</div>
-                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">All statuses</p>
-                      </>
-                    )}
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{groups.other.map(renderChoice)}</div>
-                  </div>
-                );
-              })()}
-              {/* The server's approval rules, read BEFORE the request instead
-                  of from its 409; the server still enforces every one. */}
-              {gatePrecondition && (
-                <p className="text-[11px] text-warning" aria-live="polite">{gatePrecondition}</p>
-              )}
-              <textarea
-                className="min-h-[56px] w-full rounded-md border border-input bg-background p-2 text-sm"
-                aria-label="Gate change reason"
-                placeholder="Reason (required, minimum 10 characters) — recorded on the gate decision and audit trail."
-                value={gateReason}
-                onChange={(e) => setGateReason(e.target.value)}
-              />
-              {/* A silently disabled control is indistinguishable from a
-                  broken one — the hint names what enables it, counting down. */}
-              {gateReasonHint && (
-                <p className="text-[11px] text-muted-foreground" aria-live="polite">{gateReasonHint}</p>
-              )}
-              <Button
-                size="sm"
-                disabled={busy || gateReason.trim().length < 10}
-                onClick={applyGate}
-              >
-                Apply gate change — {GATE_OPTION_LABELS[gateStatus] ?? gateStatus.replace(/_/g, " ")}
-              </Button>
-            </div>
-          )}
-          {!canReview && (
-            <p className="border-t border-border/50 pt-3 text-xs text-muted-foreground">
-              Changing the service gate requires a reviewer or the MLRO.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      {/* The gate card is shared with Stage 9 (ServiceGateCard) — here it
+          stands beside the decision, and approval doors forward. */}
+      <ServiceGateCard
+        caseId={caseId}
+        gate={gate}
+        decisionOutcome={latestDecision?.outcome ?? null}
+        openConditionCount={openConditionCount}
+        canReview={canReview}
+        isMlro={isMlro}
+        onChanged={async () => { await load(); onChanged(); }}
+        onOpenSection={onOpenSection}
+        anchorId="decision-step-gate"
+        context="decision"
+      />
     </div>
   );
 }

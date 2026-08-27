@@ -86,8 +86,8 @@ export function gatePassportPath(f: GatePassportFacts): GatePassportStep[] {
     detail: gateApproved
       ? `${f.gateStatus.replace(/_/g, " ")} — the designated service may proceed.`
       : f.decisionOutcome === "cleared"
-        ? "The case is cleared — approve the gate on the Decision stage (its path suggests it)."
-        : `Currently ${f.gateStatus.replace(/_/g, " ")}. The gate is decided on the Decision stage, after the decision.`,
+        ? "The case is cleared — approve the gate on the card below (the recorded decision suggests the status)."
+        : `Currently ${f.gateStatus.replace(/_/g, " ")}. The gate is approved on the card below, once the decision is recorded.`,
     blockedBy: !gateApproved && f.decisionOutcome === "cleared" && !f.canReview
       ? REVIEWER_NEEDED
       : null,

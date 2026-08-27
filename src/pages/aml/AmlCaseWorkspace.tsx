@@ -92,6 +92,7 @@ import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
 import { caseStage, progressRail, serviceGateStatus, type ProgressRailState } from "@/lib/aml/caseDimensions";
 import { gatePassportPath } from "@/lib/aml/gatePassportPath.pure";
 import { GatePassportPathCard } from "@/components/aml/workspace/GatePassportPathCard";
+import { ServiceGateCardStandalone } from "@/components/aml/ServiceGateCard";
 import {
   ScreeningTab, RiskTab, OwnershipControlTab,
   FundingFinanceTab, TimelineTab, AuditTab,
@@ -100,7 +101,7 @@ import { AmlLoadingState } from "@/components/aml/primitives";
 import {
   AmlComplianceSummary, AmlConnectedPortals, AmlContextActionPanel, AmlJourneyFooter,
   AmlJourneyRail, AmlJourneyStageHeader, AmlLivePositionRail, AmlNextActionCard,
-  AmlOutstandingItems, AmlRecentActivity, AmlServiceReadinessCard, AmlWorkspaceHeader,
+  AmlOutstandingItems, AmlRecentActivity, AmlWorkspaceHeader,
   MlroDecisionDossier, SECTION_LABELS,
 } from "@/components/aml/workspace";
 import { AmlPortalAccessCard } from "@/components/aml/AmlPortalAccessCard";
@@ -617,10 +618,11 @@ export default function AmlCaseWorkspace() {
         }, 0);
         return;
       case "record_gate":
-        /* Stage 9's primary act lives on the DECISION stage: the gate card,
-         * where the choice cards and the reason are. */
+        /* Stage 9's primary act is recorded ON Stage 9 — the shared gate
+         * card is mounted in this section, so the button lands on it
+         * instead of bouncing the operator back to the Decision stage. */
         window.setTimeout(() => {
-          document.getElementById("decision-step-gate")
+          document.getElementById("aml-passport-gate")
             ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
         }, 0);
         return;
@@ -1120,12 +1122,17 @@ export default function AmlCaseWorkspace() {
                   canReview: access.isMlro || access.roles.has("reviewer"),
                 })}
                 onStepClick={(key) => {
-                  if (key === "decision" || key === "gate") {
+                  if (key === "decision") {
+                    // The decision is Stage 8's act — it stays there.
                     setSection("risk");
                     window.setTimeout(() => {
-                      document.getElementById(key === "gate" ? "decision-step-gate" : "decision-step-decision")
+                      document.getElementById("decision-step-decision")
                         ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
                     }, 0);
+                  } else if (key === "gate") {
+                    // The gate is THIS stage's act — the card is below.
+                    document.getElementById("aml-passport-gate")
+                      ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
                   } else if (key === "preview") {
                     // The digital passport, exactly as the client and
                     // partners will see it — before anything is issued.
@@ -1137,7 +1144,20 @@ export default function AmlCaseWorkspace() {
                 }}
                 onContinue={() => setSection("monitoring")}
               />
-              <AmlServiceReadinessCard readiness={summary.readiness} />
+              {/*
+                The act itself, in place: the same gate card as Stage 8
+                (shared component), so "Record the service-gate decision"
+                no longer bounces the operator back to the Decision stage.
+                It replaces the SERVICE READINESS ledger, which restated
+                gate facts without offering the act.
+              */}
+              <ServiceGateCardStandalone
+                caseId={caseRow.id}
+                canReview={access.isMlro || access.roles.has("reviewer")}
+                isMlro={access.isMlro}
+                onChanged={load}
+                anchorId="aml-passport-gate"
+              />
               {/* The full journey map keeps its place in the product — it
                   sits where the credential is worked on. */}
               <ComplianceJourneyMap caseRow={caseRow} />
