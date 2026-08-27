@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   LEGAL_ROUTE_CHOICES, PARTNER_PORTAL_CHOICES, PREBUILT_AGREEMENT_TITLE,
-  builderOrgType, defaultPurpose, defaultReviewDate, grantReadiness, isValidEmail, isoDate,
+  BUILDER_ORG_KINDS, amlOrgTypeForKind, builderOrgType, defaultPurpose, defaultReviewDate,
+  grantReadiness, isValidEmail, isoDate, portalAsksOrgKind,
   portalHasPrebuiltAgreement, prebuiltArrangementDraft,
 } from "./partnerOnboarding.pure";
 
@@ -16,14 +17,41 @@ import {
  */
 
 describe("the catalogues explain, and cover the server's vocabulary", () => {
-  it("every portal the server accepts is offered, with a meaning and a default role", () => {
+  it("one card per PORTAL — builder and developer share one, and it says so", () => {
+    // Builder and developer partners sign into the SAME portal, so two
+    // cards described a split that does not exist. The card values stay
+    // in the AML server's vocabulary.
     expect(PARTNER_PORTAL_CHOICES.map((p) => p.value)).toEqual([
-      "finance", "builder", "developer", "solicitor_conveyancer", "other",
+      "finance", "builder", "solicitor_conveyancer", "other",
     ]);
+    const shared = PARTNER_PORTAL_CHOICES.find((p) => p.value === "builder")!;
+    expect(shared.label).toBe("Builder / Developer portal");
+    expect(shared.meaning).toMatch(/one shared portal/i);
     for (const p of PARTNER_PORTAL_CHOICES) {
       expect(p.meaning.length, p.value).toBeGreaterThan(20);
       expect(p.role.length, p.value).toBeGreaterThan(0);
     }
+  });
+
+  it("the shared card asks which organisation it is, and maps to both vocabularies", () => {
+    // The kind is written to three records, so it is asked rather than
+    // guessed — and AML has no combined value, so a builder-developer is
+    // a builder there while the portal keeps the fuller shape.
+    expect(portalAsksOrgKind("builder")).toBe(true);
+    expect(portalAsksOrgKind("developer")).toBe(true);
+    expect(portalAsksOrgKind("finance")).toBe(false);
+    expect(portalAsksOrgKind("solicitor_conveyancer")).toBe(false);
+
+    expect(BUILDER_ORG_KINDS.map((k) => k.value)).toEqual([
+      "builder", "developer", "builder_developer",
+    ]);
+    for (const k of BUILDER_ORG_KINDS) {
+      expect(k.meaning.length, k.value).toBeGreaterThan(20);
+      // Every kind resolves to a type the AML server accepts.
+      expect(["builder", "developer"]).toContain(amlOrgTypeForKind(k.value));
+    }
+    expect(amlOrgTypeForKind("builder_developer")).toBe("builder");
+    expect(builderOrgType("builder_developer")).toBe("builder_developer");
   });
 
   it("every legal route is offered and explained — reliance leads, because a grant is a reliance disclosure", () => {
@@ -84,9 +112,10 @@ describe("the defaults satisfy the server's own validation", () => {
     }
   });
 
-  it("a developer partner is a developer ORGANISATION in the shared builder portal", () => {
+  it("the portal's own org vocabulary follows the chosen kind", () => {
     expect(builderOrgType("developer")).toBe("developer");
     expect(builderOrgType("builder")).toBe("builder");
+    expect(builderOrgType("builder_developer")).toBe("builder_developer");
   });
 });
 
@@ -162,12 +191,34 @@ describe("wired at the source", () => {
     expect(wizard).toMatch(/never this case(?:'|&apos;)s risk assessment/);
   });
 
-  it("existing partners come from each portal's OWN registry — never re-created", () => {
-    expect(wizard).toContain('from("finance_agent_contacts")');
+  it("every registry is read SERVER-side — a browser read of finance contacts returns nothing", () => {
+    // `finance_agent_contacts` grants no privilege to anon/authenticated,
+    // so the browser read returned a permission error that the old
+    // `.catch(() => [])` rendered as an empty list: five active finance
+    // contacts existed and none was ever offered. Every portal now reads
+    // through its own admin function (service role).
+    expect(wizard).toContain('"finance-portal-admin", { operation: "list_users" }');
     expect(wizard).toContain('"solicitor-portal-admin", { operation: "list_users" }');
     expect(wizard).toContain('"builder-portal-admin", { operation: "list_users" }');
+    expect(wizard).not.toMatch(/supabase\s*\n?\s*\.from\(/);
+    expect(wizard).not.toContain('@/integrations/supabase/client');
     // Someone who already holds access is reported, never re-invited.
     expect(wizard).toContain('{ state: "already", email }');
+  });
+
+  it("a failed registry read is never rendered as 'no partners'", () => {
+    expect(wizard).toContain("setContactsError(");
+    expect(wizard).toContain("Existing partners could not be read");
+    // And an empty registry says what to do next rather than nothing.
+    expect(wizard).toMatch(/has been recorded yet — enter the contact below/);
+  });
+
+  it("the dialog owns its own scrolling, so the footer is reachable at any height", () => {
+    // The shared dialog turns overflow VISIBLE at ≥sm; a tall pass ran
+    // off the bottom with the Continue button at the very edge.
+    expect(wizard).toContain("sm:overflow-hidden");
+    expect(wizard).toContain("min-h-0 flex-1 overflow-y-auto");
+    expect(wizard).toMatch(/DialogFooter className="shrink-0/);
   });
 
   it("the invite goes through each portal's existing pipeline — no parallel email path", () => {

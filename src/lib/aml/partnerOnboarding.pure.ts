@@ -30,9 +30,20 @@ export interface PartnerPortalChoice {
 }
 
 /**
- * The portals a partner can belong to. The token a grant mints is
- * redeemed by the partner's portal integration — the partner does NOT
- * need a portal account before the passport is issued to them.
+ * The portals a partner can belong to.
+ *
+ * ── One card per PORTAL, not per organisation type ────────────────────
+ * Builder and Developer partners sign into the SAME portal — the
+ * Builder/Developer portal — so offering them as two cards described a
+ * split that does not exist and made an operator choose between two
+ * doors into one room. They are one card now, with the organisation
+ * kind asked underneath, because the kind is still a real recorded fact
+ * (AML's `organisation_type`, the case link's `portal_type`, and the
+ * builder portal's own `org_type` all carry it).
+ *
+ * The `value` here stays in the AML server's vocabulary
+ * (finance | builder | developer | solicitor_conveyancer | other) so
+ * nothing downstream has to learn a UI-only word.
  */
 export const PARTNER_PORTAL_CHOICES: PartnerPortalChoice[] = [
   {
@@ -40,12 +51,8 @@ export const PARTNER_PORTAL_CHOICES: PartnerPortalChoice[] = [
     meaning: "Mortgage brokers and lenders relying on the completed verification for the lending file.",
   },
   {
-    value: "builder", label: "Builder portal", role: "builder",
-    meaning: "Building partners on the client's construction contract.",
-  },
-  {
-    value: "developer", label: "Developer portal", role: "developer",
-    meaning: "Development partners on the client's purchase.",
+    value: "builder", label: "Builder / Developer portal", role: "builder",
+    meaning: "Builders and developers on the client's construction contract or purchase — one shared portal.",
   },
   {
     value: "solicitor_conveyancer", label: "Solicitors & conveyancers", role: "buyer_solicitor",
@@ -56,6 +63,41 @@ export const PARTNER_PORTAL_CHOICES: PartnerPortalChoice[] = [
     meaning: "Any other organisation with a recorded reason to access this matter.",
   },
 ];
+
+/**
+ * Which organisation the Builder/Developer portal card stands for. Asked
+ * only when that card is chosen, because the answer is written to three
+ * records and guessing it writes the wrong one.
+ */
+export interface BuilderOrgKindChoice {
+  value: "builder" | "developer" | "builder_developer";
+  label: string;
+  meaning: string;
+  /** The AML portal/organisation type — its vocabulary has no combined value. */
+  amlType: "builder" | "developer";
+  /** Default relationship role on the case link. */
+  role: string;
+}
+
+export const BUILDER_ORG_KINDS: BuilderOrgKindChoice[] = [
+  {
+    value: "builder", label: "Builder", amlType: "builder", role: "builder",
+    meaning: "Builds under the client's construction contract.",
+  },
+  {
+    value: "developer", label: "Developer", amlType: "developer", role: "developer",
+    meaning: "Develops the project the client is purchasing in.",
+  },
+  {
+    value: "builder_developer", label: "Builder & developer", amlType: "builder", role: "builder_developer",
+    meaning: "One organisation doing both — recorded as a builder-developer in the portal.",
+  },
+];
+
+/** True when this portal card asks which kind of organisation it is. */
+export function portalAsksOrgKind(portal: string): boolean {
+  return portal === "builder" || portal === "developer";
+}
 
 export interface LegalRouteChoice {
   value: "reliance" | "independent_cdd" | "outsourced_cdd" | "information_share_only";
@@ -162,12 +204,26 @@ export function isValidEmail(value: string): boolean {
 }
 
 /**
- * The builder portal's organisation vocabulary for the two portals it
- * serves. A "developer" partner signs into the Builder/Developer portal
- * as a developer organisation — the portal is shared, the type is not.
+ * The BUILDER PORTAL's own organisation vocabulary, from the kind the
+ * operator chose. One shared portal, three organisation shapes — and
+ * `builder_developer` exists there, so a partner that does both is
+ * recorded as itself rather than flattened into one half.
  */
-export function builderOrgType(portal: string): "builder" | "developer" {
-  return portal === "developer" ? "developer" : "builder";
+export function builderOrgType(
+  kind: string,
+): "builder" | "developer" | "builder_developer" {
+  if (kind === "developer") return "developer";
+  if (kind === "builder_developer") return "builder_developer";
+  return "builder";
+}
+
+/**
+ * The AML vocabulary for the same choice. `aml.partner_organisations`
+ * and `partner_case_links` have no combined value, so a builder-developer
+ * is recorded there as a builder — the portal keeps the fuller shape.
+ */
+export function amlOrgTypeForKind(kind: string): "builder" | "developer" {
+  return BUILDER_ORG_KINDS.find((k) => k.value === kind)?.amlType ?? "builder";
 }
 
 export interface GrantReadinessFacts {
