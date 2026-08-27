@@ -2812,8 +2812,31 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // the history shows every address it was sent to.
         const { data: live } = await admin.schema("aml")
           .from("direct_partner_acknowledgements")
-          .select("id, resend_count").eq("case_id", caseId).eq("partner_org_id", orgId)
+          .select("id, status, resend_count").eq("case_id", caseId).eq("partner_org_id", orgId)
           .in("status", ["sent", "viewed"]).maybeSingle();
+
+        /* ── ORDER MATTERS, and it is the opposite of the grant's ─────────
+           `dpa_one_live_request` permits ONE live (sent|viewed) request per
+           partner per case — that guard is what stops two links both being
+           accepted into two arrangements. So the predecessor must be stood
+           down BEFORE the replacement is written, or the insert collides
+           with the index and the re-send fails outright. It did: every
+           re-send against a live request answered 23505, surfaced as
+           "Internal error".
+
+           The grant re-issue mints first and revokes second, deliberately,
+           because nothing there forbids two live grants and a failure must
+           not leave a partner with no access. Here the invariant forbids
+           the overlap, so the order flips — and the rollback below restores
+           the predecessor if the replacement cannot be written, which keeps
+           the same promise by a different route. */
+        if (live) {
+          const { error: standDownError } = await admin.schema("aml")
+            .from("direct_partner_acknowledgements")
+            .update({ status: "superseded", updated_at: new Date().toISOString() })
+            .eq("id", live.id);
+          if (standDownError) throw standDownError;
+        }
 
         const token = mintAckToken();
         const expiresAt = new Date(Date.now() + ACK_LINK_TTL_DAYS * 864e5).toISOString();
@@ -2829,12 +2852,32 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             sent_by: userId,
             resend_count: live ? (live.resend_count ?? 0) + 1 : 0,
           }).select("*").single();
-        if (insertError) throw insertError;
+
+        if (insertError) {
+          // The replacement could not be written, so the partner keeps the
+          // link they already have rather than being left with none.
+          if (live) {
+            await admin.schema("aml").from("direct_partner_acknowledgements")
+              .update({ status: live.status, updated_at: new Date().toISOString() })
+              .eq("id", live.id);
+          }
+          // A collision here means another live request appeared between the
+          // stand-down and the insert. That is a conflict, not a fault, and
+          // it must not read as an internal error.
+          if (String((insertError as any).code) === "23505") {
+            return jr({
+              error: "Another request for this partner was created at the same moment. Reload the case and send again.",
+              code: "concurrent_request",
+            }, 409);
+          }
+          throw insertError;
+        }
 
         if (live) {
+          // The chain is stamped once the successor exists, so a superseded
+          // row always names what replaced it.
           await admin.schema("aml").from("direct_partner_acknowledgements").update({
-            status: "superseded", superseded_by_id: created.id,
-            updated_at: new Date().toISOString(),
+            superseded_by_id: created.id, updated_at: new Date().toISOString(),
           }).eq("id", live.id);
         }
 
