@@ -74,7 +74,9 @@ import {
   arrangementDraftFromAcceptance,
   hashAckToken,
   isAckLive,
+  mayRequestReplacementLink,
   mintAckToken,
+  passportLinkFor,
 } from "../_shared/aml/directAcknowledgement.ts";
 import {
   PORTAL_TERMS_ACKNOWLEDGEMENTS,
@@ -1225,6 +1227,52 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       return jr({ acknowledgement: { ...publicView, status: "accepted", accepted_at: now.toISOString() } });
     }
 
+
+    /* A partner whose link has EXPIRED asking for a replacement.
+       They mint nothing: the request is recorded and lands in the Command
+       Centre for a person to act on. Deliberately refused for a revoked or
+       suspended grant — revocation is a safety action, and inviting its
+       subject to self-renew would undo the act it was taken for. */
+    if (op === "request_passport_link") {
+      const resolved = await resolveGrant(admin, String(body.access_token ?? ""));
+      if (!resolved) return jr({ error: "Invalid access token" }, 401);
+      if (!mayRequestReplacementLink(resolved.denied)) {
+        return jr({
+          error: resolved.denied
+            ? "This access cannot be renewed from here. Contact the issuing organisation."
+            : "This access is still valid — no new link is needed.",
+          code: resolved.denied ?? "not_expired",
+        }, 409);
+      }
+      const grant = resolved.grant;
+      const agreement = (grant as any).reliance_agreements;
+      const { error: stampError } = await admin.schema("aml").from("reliance_grants").update({
+        link_requested_at: new Date().toISOString(),
+        link_request_count: (grant.link_request_count ?? 0) + 1,
+      }).eq("id", grant.id);
+      if (stampError) console.warn("[aml-reliance] link request stamp skipped:", stampError.message);
+
+      await admin.schema("aml").from("reliance_access_log").insert({
+        grant_id: grant.id, case_id: grant.case_id, action: "view_attestation",
+        actor_label: agreement?.partner_org_name ?? "Partner", ip_address: ip,
+        detail: { requested_replacement_link: true },
+      });
+      await appendCaseEvent(admin, grant.case_id, "system",
+        `${agreement?.partner_org_name ?? "A partner"} requested a new Compliance Passport link`,
+        {
+          grant_id: grant.id,
+          note: "Their previous link expired. Nothing was issued — re-issue from the case workspace.",
+        }, null, agreement?.partner_org_name ?? null);
+      await notifyCommandCentre(admin,
+        "Partner asked for a new Passport link",
+        `${agreement?.partner_org_name ?? "A partner"}'s Compliance Passport link expired and they have asked for a new one. Re-issue it from the case's Gate & Passport stage.`,
+        grant.case_id);
+
+      return jr({
+        requested: true,
+        message: "Your request has been sent to the issuing organisation. They will send a new link.",
+      });
+    }
 
     if (op === "redeem_attestation" || op === "record_independent_assessment") {
       const resolved = await resolveGrant(admin, String(body.access_token ?? ""));
@@ -2397,18 +2445,122 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           if (manifestError) throw manifestError;
         }
 
+        /* ── delivery, and re-issue ──────────────────────────────────────
+           The token is shown once and stored only as a hash, so a link can
+           never be re-read: RE-ISSUING therefore means minting a new grant
+           and revoking the old one. Doing that here rather than in a second
+           operation is deliberate — every precondition above (arrangement
+           active and its review current, client sharing consent, an issued
+           attestation, the partner link) is re-run by construction, so a
+           re-issue can never be a weaker act than the original grant. */
+        const deliverTo = String(body.deliver_to ?? "").trim().toLowerCase();
+        const passportLink = passportLinkFor(rawToken);
+        let linkEmailSent = false;
+        let linkEmailError: string | null = null;
+        if (deliverTo) {
+          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(deliverTo)) {
+            return jr({ error: "deliver_to must be a valid email address" }, 400);
+          }
+          const resendApiKey = Deno.env.get("RESEND_API_KEY");
+          const brandCfg = await getBrandConfig();
+          const orgLabel = String(agreement.partner_org_name).replace(/[<>]/g, "");
+          const expiryLabel = new Date(grant.expires_at).toLocaleDateString("en-AU");
+          const subject = `${brandCfg.companyName} — Compliance Passport access for ${orgLabel}`;
+          const textBody = [
+            `Your organisation has been given access to a Compliance Passport issued by ${brandCfg.companyName}.`,
+            "",
+            "No account or password is needed — open the link below:",
+            passportLink,
+            "",
+            `This access expires on ${expiryLabel}. If the link stops working, you can request a new one from the page itself.`,
+            "",
+            `— ${brandCfg.companyName}`,
+          ].join("\n");
+          const htmlBody = `
+            <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;">
+              <p style="color:#475569;font-size:15px;line-height:1.6;">
+                <strong>${orgLabel}</strong> has been given access to a Compliance Passport issued by
+                ${brandCfg.companyName}. It describes the customer identification procedures that were
+                performed — it does not contain their risk assessment.
+              </p>
+              <p style="color:#475569;font-size:15px;line-height:1.6;">
+                No account or password is needed.
+              </p>
+              <p style="margin:24px 0;">
+                <a href="${passportLink}" style="background:#1d4ed8;color:#ffffff;padding:12px 20px;border-radius:6px;text-decoration:none;font-size:15px;">
+                  Open the Compliance Passport
+                </a>
+              </p>
+              <p style="color:#64748b;font-size:13px;line-height:1.6;">
+                This access expires on ${expiryLabel}. If the link stops working, you can request a new
+                one from the page itself.
+              </p>
+              <p style="color:#64748b;font-size:13px;">— ${brandCfg.companyName}</p>
+            </div>`;
+          if (resendApiKey) {
+            try {
+              const emailRes = await meteredFetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${resendApiKey}` },
+                body: JSON.stringify({
+                  from: brandCfg.fromHeaderAdmin, to: [deliverTo],
+                  subject, html: htmlBody, text: textBody,
+                  tags: [{ name: "category", value: "aml_passport_link" }],
+                }),
+              });
+              const raw = await emailRes.text();
+              if (emailRes.ok) linkEmailSent = true;
+              else linkEmailError = `Resend ${emailRes.status}: ${raw}`;
+            } catch (e: any) {
+              linkEmailError = e?.message ?? String(e);
+            }
+          } else {
+            linkEmailError = "RESEND_API_KEY not configured";
+          }
+          if (linkEmailError) console.error("[aml-reliance] passport link email failed:", linkEmailError);
+
+          // Recorded AFTER the grant exists, and tolerantly: an environment
+          // without the delivery columns still issues the grant.
+          const { error: stampError } = await admin.schema("aml").from("reliance_grants")
+            .update({ delivered_to_email: deliverTo, delivered_at: new Date().toISOString() })
+            .eq("id", grant.id);
+          if (stampError) console.warn("[aml-reliance] delivery stamp skipped:", stampError.message);
+        }
+
+        // Re-issue: the predecessor is revoked only once the replacement
+        // exists, so a failure above leaves the partner with working access
+        // rather than none.
+        const reissueOf = String(body.reissue_of ?? "");
+        if (reissueOf) {
+          const { error: revokeError } = await admin.schema("aml").from("reliance_grants").update({
+            revoked_at: new Date().toISOString(), revoked_by: userId,
+            revoke_reason: "superseded_by_reissue",
+            reissued_by_grant_id: grant.id,
+          }).eq("id", reissueOf).is("revoked_at", null);
+          if (revokeError) console.warn("[aml-reliance] reissue revoke skipped:", revokeError.message);
+        }
+
         await appendCaseEvent(admin, caseId, "mlro_decision",
-          `Reliance access granted to ${agreement.partner_org_name} (attestation v${att.version})`,
+          `Reliance access ${reissueOf ? "re-issued" : "granted"} to ${agreement.partner_org_name} (attestation v${att.version})`,
           {
             grant_id: grant.id, agreement_id: agreementId,
             consent_id: consent.id, expires_at: grant.expires_at,
             partner_org_id: agreement.partner_org_id ?? null,
             partner_case_link_id: linkForGrant?.id ?? null,
+            reissue_of: reissueOf || null,
+            delivered_to_email: deliverTo || null,
+            link_email_sent: deliverTo ? linkEmailSent : null,
           }, userId, userEmail);
 
         return jr({
           grant: { id: grant.id, expires_at: grant.expires_at, attestation_version: att.version },
           access_token: rawToken,
+          // The link is returned whether or not the email sent, so a mail
+          // outage never costs the operator the one-time credential.
+          passport_link: passportLink,
+          delivered_to: deliverTo || null,
+          link_email_sent: deliverTo ? linkEmailSent : null,
+          link_email_error: linkEmailError,
           note: "This token is shown once. Deliver it to the partner organisation through their portal channel.",
         });
       }
@@ -2430,7 +2582,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       case "list_grants": {
         if (!body.case_id) return jr({ error: "case_id required" }, 400);
         const { data, error } = await admin.schema("aml").from("reliance_grants")
-          .select("id, agreement_id, attestation_id, granted_at, expires_at, revoked_at, revoke_reason, reliance_agreements:agreement_id(partner_org_name, partner_org_type, status)")
+          .select("id, agreement_id, attestation_id, granted_at, expires_at, revoked_at, revoke_reason, delivered_to_email, delivered_at, link_requested_at, link_request_count, reissued_by_grant_id, reliance_agreements:agreement_id(partner_org_name, partner_org_type, status)")
           .eq("case_id", body.case_id).order("granted_at", { ascending: false });
         if (error) throw error;
         // The token hash never leaves the database, even to staff.

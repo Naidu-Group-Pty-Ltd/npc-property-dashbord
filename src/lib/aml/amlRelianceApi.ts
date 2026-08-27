@@ -55,6 +55,13 @@ export interface RelianceGrant {
   expires_at: string;
   revoked_at: string | null;
   revoke_reason: string | null;
+  /** Where the one-time link was emailed. The link itself is never stored. */
+  delivered_to_email?: string | null;
+  delivered_at?: string | null;
+  /** Set when the partner asked for a replacement from an expired link. */
+  link_requested_at?: string | null;
+  link_request_count?: number | null;
+  reissued_by_grant_id?: string | null;
   reliance_agreements?: { partner_org_name: string; partner_org_type: string; status: string };
 }
 
@@ -259,12 +266,27 @@ export const amlRelianceApi = {
   listAttestations: (case_id: string) =>
     invoke<{ attestations: ComplianceAttestation[] }>({ op: "list_attestations", case_id }),
 
-  /** Returns the raw partner token exactly once. */
-  grantAccess: (case_id: string, agreement_id: string) =>
+  /**
+   * Returns the raw partner token exactly once.
+   *
+   * `deliver_to` emails the passport link at mint time — the only moment it
+   * exists, since only its hash is stored. `reissue_of` revokes the named
+   * predecessor once the replacement exists, so a failure leaves the
+   * partner with working access rather than none, and every precondition is
+   * re-run by construction.
+   */
+  grantAccess: (
+    case_id: string, agreement_id: string,
+    options: { deliver_to?: string; reissue_of?: string } = {},
+  ) =>
     invoke<{
       grant: { id: string; expires_at: string; attestation_version: number };
       access_token: string; note: string;
-    }>({ op: "grant_access", case_id, agreement_id }),
+      passport_link: string;
+      delivered_to: string | null;
+      link_email_sent: boolean | null;
+      link_email_error: string | null;
+    }>({ op: "grant_access", case_id, agreement_id, ...options }),
   revokeGrant: (grant_id: string, reason: string) =>
     invoke<{ grant: RelianceGrant }>({ op: "revoke_grant", grant_id, reason }),
   listGrants: (case_id: string) =>
