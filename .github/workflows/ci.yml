@@ -219,7 +219,10 @@ jobs:
             src/lib/__tests__/builderStockNotion.test.ts \
             src/lib/__tests__/builderStockNormalise.test.ts \
             src/lib/__tests__/builderStockUrlSource.test.ts \
-            src/lib/__tests__/builderStockOverlayInpaint.test.ts
+            src/lib/__tests__/builderStockOverlayInpaint.test.ts \
+            src/lib/__tests__/builderStockDetectionResidue.test.ts \
+            src/lib/__tests__/builderStockSanitizeOverlay.test.ts \
+            src/lib/__tests__/builderStockDecodeFidelity.test.ts
 
       - name: Build
         run: npm run build
