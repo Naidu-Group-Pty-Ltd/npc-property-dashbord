@@ -88,19 +88,19 @@ describe("no silently disabled control", () => {
   it("the gate's Apply names the missing reason, counts down, and goes quiet at the floor", async () => {
     renderTab();
     const reasonBox = await screen.findByLabelText("Gate change reason");
-    expect(screen.getByRole("button", { name: "Apply gate change" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: /apply gate change/i })).toHaveProperty("disabled", true);
     expect(screen.getByText(/Add a reason of at least 10 characters — 10 more to go/)).toBeTruthy();
     fireEvent.change(reasonBox, { target: { value: "CDD documents outstanding from the client" } });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Apply gate change" })).toHaveProperty("disabled", false);
+      expect(screen.getByRole("button", { name: /apply gate change/i })).toHaveProperty("disabled", false);
     });
     expect(screen.queryByText(/Add a reason of at least 10 characters/)).toBeNull();
   });
 
   it("reads the server's approval preconditions before the 409", async () => {
     renderTab();
-    const select = await screen.findByLabelText("New service-gate status");
-    fireEvent.change(select, { target: { value: "approved" } });
+    await screen.findByRole("radiogroup", { name: "New service-gate status" });
+    fireEvent.click(screen.getByRole("radio", { name: /^Approved\s?Grants the designated service/ }));
     // No cleared decision on this case: the requirement is on screen, not
     // in an error toast after the click.
     expect(await screen.findByText(/Approving the service gate requires a recorded cleared decision first\./)).toBeTruthy();
@@ -120,7 +120,7 @@ describe("the gate select opens on the gate that IS", () => {
   it("seeds from the loaded gate for an MLRO instead of a hardcoded default", async () => {
     renderTab();
     await waitFor(() => {
-      expect((screen.getByLabelText("New service-gate status") as HTMLSelectElement).value).toBe("terminated");
+      expect(screen.getByRole("radio", { name: /^Terminated/ }).getAttribute("aria-checked")).toBe("true");
     });
   });
 
@@ -131,7 +131,9 @@ describe("the gate select opens on the gate that IS", () => {
     await screen.findByText("The decision, in order");
     // A reviewer cannot pick terminated, so the select keeps its default
     // rather than opening on an option that is not in its list.
-    expect((screen.getByLabelText("New service-gate status") as HTMLSelectElement).value).toBe("under_review");
+    expect(screen.getByRole("radio", { name: /^Under review/ }).getAttribute("aria-checked")).toBe("true");
+    // And the MLRO-only statuses never reach this operator's choices.
+    expect(screen.queryByRole("radio", { name: /^Terminated/ })).toBeNull();
   });
 });
 
@@ -201,7 +203,12 @@ describe("the path drives, and the finish drives forward", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText(/Every step of the decision is recorded/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /continue to gate & passport/i }));
+    // Two forward doors — the path card's and the gate card's service-ready
+    // strip — and both open Stage 9.
+    const doors = screen.getAllByRole("button", { name: /continue to gate & passport/i });
+    expect(doors.length).toBe(2);
+    expect(screen.getByText(/service-ready and this cascades into Gate & Passport/)).toBeTruthy();
+    fireEvent.click(doors[0]);
     expect(onOpenSection).toHaveBeenCalledWith("passport");
   });
 
@@ -224,9 +231,9 @@ describe("escalation says where it goes", () => {
         <RiskTab caseId={CASE_ID} canWrite onChanged={vi.fn()} hasAssignedMlro />
       </MemoryRouter>,
     );
-    const select = await screen.findByLabelText("Decision outcome");
-    fireEvent.change(select, { target: { value: "escalated" } });
-    expect(await screen.findByText(/hands the final decision to the/)).toBeTruthy();
+    await screen.findByRole("radiogroup", { name: "Decision outcome" });
+    fireEvent.click(screen.getByRole("radio", { name: /^Escalate to MLRO/ }));
+    expect(await screen.findByText(/this screen shows the decision as theirs to make/)).toBeTruthy();
     expect(screen.getByText(/An MLRO is assigned to this case and will find it waiting/)).toBeTruthy();
   });
 
@@ -236,8 +243,8 @@ describe("escalation says where it goes", () => {
         <RiskTab caseId={CASE_ID} canWrite onChanged={vi.fn()} hasAssignedMlro={false} />
       </MemoryRouter>,
     );
-    const select = await screen.findByLabelText("Decision outcome");
-    fireEvent.change(select, { target: { value: "escalated" } });
+    await screen.findByRole("radiogroup", { name: "Decision outcome" });
+    fireEvent.click(screen.getByRole("radio", { name: /^Escalate to MLRO/ }));
     expect(await screen.findByText(/No MLRO is assigned to this case yet/)).toBeTruthy();
   });
 });
