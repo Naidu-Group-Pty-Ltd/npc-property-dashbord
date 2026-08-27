@@ -330,7 +330,7 @@ function readStoredRecord(stored: unknown): NormalisedStockRecord | null {
       record[key] = out;
       continue;
     }
-    (record as Record<string, unknown>)[key] = value;
+    (record as unknown as Record<string, unknown>)[key] = value;
   }
 
   return identifiesAProperty(record) ? record : null;
@@ -1044,7 +1044,10 @@ export async function repairSourceImagesForUpload(
     if (error) {
       // Not fatal: the next run simply reads the page again, which is the
       // behaviour this replaces rather than a new failure.
-      outcome.problems.push(`row-asset enumeration not recorded: ${error.message}`.slice(0, 200));
+      outcome.problems.push({
+        reference: input.uploadId,
+        reason: `row-asset enumeration not recorded: ${error.message}`.slice(0, 200),
+      });
     }
   }
 
