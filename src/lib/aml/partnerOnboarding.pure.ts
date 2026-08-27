@@ -308,3 +308,62 @@ export function describeAcknowledgement(
       : "Sent — waiting for the partner to review and accept.",
   };
 }
+
+/* ── A passport grant's standing ───────────────────────────────────────
+ * Presentation only. The server decides whether a token still works; this
+ * decides what the workspace SAYS about it, and which act it offers.
+ */
+
+export interface GrantStandingFacts {
+  expiresAt: string;
+  revokedAt: string | null;
+  revokeReason: string | null;
+  /** The partner asked for a replacement from an expired link. */
+  linkRequestedAt?: string | null;
+  /** Days out from expiry at which the workspace starts saying so. */
+  warnWithinDays?: number;
+}
+
+export interface GrantStanding {
+  state: "live" | "expiring" | "expired" | "revoked" | "reissued";
+  /** True when re-issuing is a sensible act for this row. */
+  canReissue: boolean;
+  detail: string;
+}
+
+export function grantStanding(f: GrantStandingFacts, now: Date = new Date()): GrantStanding {
+  const expires = new Date(f.expiresAt).getTime();
+  const days = Math.ceil((expires - now.getTime()) / 864e5);
+  if (f.revokedAt) {
+    // A grant replaced by a re-issue is not a withdrawal of access, and
+    // must not read like one.
+    if (f.revokeReason === "superseded_by_reissue") {
+      return {
+        state: "reissued", canReissue: false,
+        detail: "Replaced by a newer link.",
+      };
+    }
+    return {
+      state: "revoked", canReissue: false,
+      detail: "Access was revoked. Re-issuing is deliberately not offered here — grant access again only as a fresh decision.",
+    };
+  }
+  if (days <= 0) {
+    return {
+      state: "expired", canReissue: true,
+      detail: f.linkRequestedAt
+        ? "Expired — the partner has asked for a new link."
+        : "Expired. Re-issue it to the same address or a different one.",
+    };
+  }
+  if (days <= (f.warnWithinDays ?? 14)) {
+    return {
+      state: "expiring", canReissue: true,
+      detail: `Expires in ${days} day${days === 1 ? "" : "s"} — re-issue before it lapses.`,
+    };
+  }
+  return {
+    state: "live", canReissue: true,
+    detail: `Active until ${new Date(f.expiresAt).toLocaleDateString()}.`,
+  };
+}

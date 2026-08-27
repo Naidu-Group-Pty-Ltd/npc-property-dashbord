@@ -137,6 +137,7 @@ const PartnerReferrals = lazyWithRetry(() => import("./pages/PartnerReferrals"))
 const LoanWriterUndertakings = lazyWithRetry(() => import("./pages/LoanWriterUndertakings"));
 const PublicPartnerConsent = lazyWithRetry(() => import("./pages/PublicPartnerConsent"));
 const PartnerAcknowledgement = lazyWithRetry(() => import("./pages/PartnerAcknowledgement"));
+const PublicPassport = lazyWithRetry(() => import("./pages/PublicPassport"));
 
 const GamePlan = lazyWithRetry(() => import("./pages/GamePlan"));
 const Commissions = lazyWithRetry(() => import("./pages/Commissions"));
@@ -392,6 +393,9 @@ const App = () => (
                             outside the portals. Public and token-addressed:
                             the link is the whole credential. */}
                         <Route path="/partner-acknowledgement/:token" element={<PartnerAcknowledgement />} />
+                        {/* The Compliance Passport itself, opened from a
+                            link. The grant token is the whole credential. */}
+                        <Route path="/passport/:token" element={<PublicPassport />} />
 
                         {/* Client Portal Routes */}
                         <Route path="/client/login" element={

@@ -39,3 +39,38 @@ export const partnerAcknowledgementPublicApi = {
   decline: (ack_token: string, reason?: string) =>
     call<{ acknowledgement: PublicAcknowledgementView }>({ op: "ack_decline", ack_token, reason }),
 };
+
+/* ── The Compliance Passport itself ────────────────────────────────────
+ * The grant's bearer token, presented from a link. `redeem_attestation`
+ * and `record_independent_assessment` are the SAME partner operations the
+ * system-to-system integrations use — this surface only gives them a page.
+ */
+
+export interface PassportRedemption {
+  attestation: Record<string, unknown>;
+  attestation_sha256: string;
+  issued_at: string;
+  schema_version?: number;
+  agreement: { partner_org_name: string; agreement_reference: string; scope: string[] };
+  /** The statutory position, restated by the server at the point of use. */
+  notice: string;
+}
+
+export const passportPublicApi = {
+  redeem: (access_token: string) =>
+    call<PassportRedemption>({ op: "redeem_attestation", access_token }),
+  /**
+   * The partner's OWN determination, made against the records disclosed
+   * here. It never moves the issuing organisation's case — their
+   * compliance is theirs, ours is ours.
+   */
+  recordIndependentAssessment: (access_token: string, params: {
+    assessor_name: string; assessor_role?: string;
+    status: "satisfied" | "not_satisfied" | "records_requested";
+    decision_notes: string;
+  }) => call<{ assessment: { id: string; status: string; decided_at: string }; message: string }>(
+    { op: "record_independent_assessment", access_token, ...params }),
+  /** Available from an EXPIRED link only; it mints nothing. */
+  requestNewLink: (access_token: string) =>
+    call<{ requested: boolean; message: string }>({ op: "request_passport_link", access_token }),
+};

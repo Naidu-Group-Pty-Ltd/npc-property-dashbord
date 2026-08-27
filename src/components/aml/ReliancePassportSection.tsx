@@ -18,7 +18,7 @@ import {
   type IndependentAssessment, type PartnerCaseLink, type PartnerOrganisation,
   type PartnerRecordsRequest, type RelianceAgreement, type RelianceGrant,
 } from "@/lib/aml/amlRelianceApi";
-import { describeAcknowledgement } from "@/lib/aml/partnerOnboarding.pure";
+import { describeAcknowledgement, grantStanding } from "@/lib/aml/partnerOnboarding.pure";
 
 /**
  * Compliance Passport — one completed AML/CTF process, reused across every
@@ -149,11 +149,20 @@ export function ReliancePassportSection({
         "The partner receives the current attestation — what procedures were performed, never our " +
         "assessments. Requires the client's sharing consent and a current written agreement.",
       confirmLabel: "Grant access",
-      fields: [{
-        name: "partner", label: `Partner organisation (${active.map((a) => a.partner_org_name).join(" · ")})`,
-        required: true, placeholder: "Exact partner name from the list above…",
-        helpText: "Must match an active agreement.",
-      }],
+      fields: [
+        {
+          name: "partner", label: `Partner organisation (${active.map((a) => a.partner_org_name).join(" · ")})`,
+          required: true, placeholder: "Exact partner name from the list above…",
+          helpText: "Must match an active agreement.",
+        },
+        {
+          // The token exists for one moment only — emailing it here is the
+          // only chance to deliver it without an operator copying it by hand.
+          name: "deliver_to", label: "Email the passport link to (optional)",
+          required: false, placeholder: "name@partner.com.au",
+          helpText: "They open it without a portal login. Leave blank to hand the link over yourself.",
+        },
+      ],
     });
     if (!values) return;
     const agreement = active.find(
@@ -164,7 +173,9 @@ export function ReliancePassportSection({
     }
     setBusy("grant");
     try {
-      const res = await amlRelianceApi.grantAccess(caseId, agreement.id);
+      const res = await amlRelianceApi.grantAccess(caseId, agreement.id, {
+        deliver_to: values.deliver_to?.trim() || undefined,
+      });
       // The raw token exists only in this moment — surface it once, plainly.
       await prompt({
         title: "Partner access token — shown once",
@@ -217,6 +228,60 @@ export function ReliancePassportSection({
       await refresh();
     } catch (e: any) {
       toast({ title: "Could not send the agreement", description: e?.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  /**
+   * Re-issue a passport link.
+   *
+   * The token is stored only as a hash, so a link can never be re-read: a
+   * re-issue MINTS A NEW GRANT and revokes the old one. That is also why it
+   * re-runs every precondition — arrangement current, client consent,
+   * attestation issued — and will refuse if any has lapsed since. It binds
+   * to the CURRENT attestation, so the partner receives today's record.
+   */
+  const reissueGrant = async (row: RelianceGrant) => {
+    const values = await prompt({
+      title: "Re-issue the passport link",
+      description:
+        "A new link is issued and the previous one stops working. The partner receives the CURRENT attestation, and every condition is re-checked — if the arrangement's review has lapsed, this will refuse and say so.",
+      confirmLabel: "Re-issue link",
+      fields: [{
+        name: "deliver_to", label: "Email the new link to",
+        required: false,
+        placeholder: row.delivered_to_email ?? "name@partner.com.au",
+        helpText: row.delivered_to_email
+          ? `Leave blank to use ${row.delivered_to_email} again.`
+          : "Leave blank to hand the link over yourself.",
+      }],
+    });
+    if (!values) return;
+    setBusy("reissue");
+    try {
+      const res = await amlRelianceApi.grantAccess(caseId, row.agreement_id, {
+        deliver_to: values.deliver_to?.trim() || row.delivered_to_email || undefined,
+        reissue_of: row.id,
+      });
+      if (res.link_email_sent) {
+        toast({
+          title: "New link sent",
+          description: `Emailed ${res.delivered_to}. The previous link no longer works.`,
+        });
+      } else {
+        // The one-time link must never be lost to a mail outage.
+        await prompt({
+          title: "New link issued — deliver it yourself",
+          description: `${res.link_email_error ?? "No delivery address was given."} Copy the link below; it is shown once.`,
+          confirmLabel: "I have delivered it",
+          fields: [{
+            name: "link", label: "Passport link", type: "textarea", required: false,
+            placeholder: res.passport_link, helpText: res.passport_link,
+          }],
+        });
+      }
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Could not re-issue the link", description: e?.message, variant: "destructive" });
     } finally { setBusy(null); }
   };
 
@@ -610,15 +675,48 @@ export function ReliancePassportSection({
             ) : <div className="text-muted-foreground">Not issued</div>}
           </div>
           <div>
-            <div className="font-medium">Active grants</div>
-            {grants.filter((g) => !g.revoked_at).length === 0 ? (
+            <div className="font-medium">Passport links</div>
+            {grants.length === 0 ? (
               <div className="text-muted-foreground">None</div>
-            ) : grants.filter((g) => !g.revoked_at).map((g) => (
-              <div key={g.id} className="text-muted-foreground">
-                {g.reliance_agreements?.partner_org_name ?? "Partner"}
-                {" · expires "}{new Date(g.expires_at).toLocaleDateString()}
-              </div>
-            ))}
+            ) : grants
+              // A grant replaced by a re-issue is history, not a live row.
+              .filter((g) => g.revoke_reason !== "superseded_by_reissue")
+              .map((g) => {
+                const standing = grantStanding({
+                  expiresAt: g.expires_at,
+                  revokedAt: g.revoked_at,
+                  revokeReason: g.revoke_reason,
+                  linkRequestedAt: g.link_requested_at ?? null,
+                });
+                return (
+                  <div key={g.id} className="mt-1 space-y-0.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-medium text-foreground">
+                        {g.reliance_agreements?.partner_org_name ?? "Partner"}
+                      </span>
+                      <Badge variant="outline" className={
+                        standing.state === "live" ? "text-success"
+                          : standing.state === "expiring" ? "text-warning"
+                            : standing.state === "revoked" ? "text-destructive"
+                              : "text-muted-foreground"
+                      }>
+                        {standing.state}
+                      </Badge>
+                    </div>
+                    <div className="text-muted-foreground">{standing.detail}</div>
+                    {g.delivered_to_email && (
+                      <div className="text-muted-foreground/80">Sent to {g.delivered_to_email}</div>
+                    )}
+                    {isMlro && standing.canReissue && (
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs"
+                        onClick={() => reissueGrant(g)} disabled={busy !== null}>
+                        {busy === "reissue" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+                        Re-issue link
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
           </div>
           <div>
             <div className="font-medium">Partner assessments</div>

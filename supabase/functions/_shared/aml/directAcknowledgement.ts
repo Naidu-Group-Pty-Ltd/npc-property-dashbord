@@ -139,3 +139,34 @@ export function ackActionFor(status: string, expiresAt: string | null | undefine
       : "Sent — waiting for the partner to review and accept.",
   };
 }
+
+/* ── The passport link ──────────────────────────────────────────────────
+ * The grant's bearer token, delivered as a URL. The credential and its
+ * lifetime are unchanged — this is only where it is redeemed from.
+ */
+
+/**
+ * The public passport page.
+ *
+ * Pinned to the production origin for the same reason the acknowledgement
+ * link is: a preview URL in a partner's email is a link that stops working.
+ */
+export function passportLinkFor(token: string): string {
+  const configured = (globalThis as any).Deno?.env?.get?.("PUBLIC_APP_URL");
+  const origin = String(configured || APP_ORIGIN_FALLBACK).replace(/\/+$/, "");
+  return `${origin}/passport/${token}`;
+}
+
+/**
+ * May this denial offer the partner a replacement link?
+ *
+ * ONLY an expiry. A revoked grant, or one whose arrangement has been
+ * suspended or terminated, must never offer self-service renewal —
+ * revocation is a safety action, and inviting the subject of it to
+ * re-request would undo the act it was taken for. An expiry is just time
+ * passing, which is exactly the case the operator asked to be able to
+ * repair without friction.
+ */
+export function mayRequestReplacementLink(denied: string | null | undefined): boolean {
+  return denied === "expired";
+}
