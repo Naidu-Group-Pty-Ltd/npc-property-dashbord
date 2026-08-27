@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
-  LEGAL_ROUTE_CHOICES, PARTNER_PORTAL_CHOICES, defaultPurpose, defaultReviewDate,
-  grantReadiness, isoDate,
+  LEGAL_ROUTE_CHOICES, PARTNER_PORTAL_CHOICES, PREBUILT_AGREEMENT_TITLE,
+  defaultPurpose, defaultReviewDate, grantReadiness, isoDate,
+  portalHasPrebuiltAgreement, prebuiltArrangementDraft,
 } from "./partnerOnboarding.pure";
 
 /**
@@ -31,6 +32,35 @@ describe("the catalogues explain, and cover the server's vocabulary", () => {
       "independent_cdd", "information_share_only", "outsourced_cdd", "reliance",
     ]);
     for (const r of LEGAL_ROUTE_CHOICES) expect(r.meaning.length, r.value).toBeGreaterThan(20);
+  });
+});
+
+describe("the prebuilt arrangement — portal sign-up carries it, so nobody types it", () => {
+  it("every portal partner has the prebuilt agreement; a partner outside the portals does not", () => {
+    for (const p of ["finance", "builder", "developer", "solicitor_conveyancer"]) {
+      expect(portalHasPrebuiltAgreement(p), p).toBe(true);
+    }
+    expect(portalHasPrebuiltAgreement("other")).toBe(false);
+  });
+
+  it("the register row names the instrument and where its acknowledgement happens", () => {
+    const draft = prebuiltArrangementDraft(new Date(2026, 7, 27));
+    expect(draft.agreement_reference).toContain(PREBUILT_AGREEMENT_TITLE);
+    expect(draft.agreement_reference).toContain("acknowledged at portal sign-up");
+    // The server caps agreement_reference at 200 characters.
+    expect(draft.agreement_reference.length).toBeLessThanOrEqual(200);
+    expect(draft.executed_on).toBe("2026-08-27");
+    expect(draft.next_review_due).toBe("2027-08-27");
+  });
+
+  it("the claim is CROSS-REFERENCED to the module sign-up enforces, not asserted here", () => {
+    // The prebuilt agreement's mandatory acknowledgement IS the s 37A
+    // arrangement statement, and portal sign-up refuses acceptance
+    // without it — that is what lets onboarding skip the manual step.
+    const signup = readFileSync("supabase/functions/_shared/portalAgreement.ts", "utf8");
+    expect(signup).toContain("'binding_amlctf_arrangement'");
+    expect(signup).toContain("section 37A of the AML/CTF Act");
+    expect(signup).toContain("REQUIRED_TERMS_ACKNOWLEDGEMENTS");
   });
 });
 
@@ -81,6 +111,15 @@ describe("wired at the source", () => {
   it("the reliance panel mounts the wizard as the grant row's paved road", () => {
     expect(section).toContain("PartnerOnboardingWizard");
     expect(section).toContain("Onboard partner");
+  });
+
+  it("a portal partner never sees the arrangement step — the prebuilt draft is recorded instead", () => {
+    expect(wizard).toContain('? ["partner", "link", "grant"]');
+    expect(wizard).toContain(': ["partner", "arrangement", "link", "grant"]');
+    expect(wizard).toContain("portalHasPrebuiltAgreement(portal)");
+    expect(wizard).toContain("prebuiltArrangementDraft(");
+    // The manual step names who it is for: a partner outside the portals.
+    expect(wizard).toContain("A partner outside the portals has no sign-up to carry the prebuilt agreement");
   });
 
   it("the wizard chains the four EXISTING server acts — it invents no operation", () => {

@@ -33,18 +33,21 @@ import {
   amlRelianceApi, type PartnerOrganisation, type RelianceAgreement,
 } from "@/lib/aml/amlRelianceApi";
 import {
-  LEGAL_ROUTE_CHOICES, PARTNER_PORTAL_CHOICES, defaultPurpose, defaultReviewDate,
-  grantReadiness, isoDate,
+  LEGAL_ROUTE_CHOICES, PARTNER_PORTAL_CHOICES, PREBUILT_AGREEMENT_TITLE,
+  defaultPurpose, defaultReviewDate, grantReadiness, isoDate,
+  portalHasPrebuiltAgreement, prebuiltArrangementDraft,
 } from "@/lib/aml/partnerOnboarding.pure";
 
 type WizardStep = "partner" | "arrangement" | "link" | "grant" | "token";
 
-const STEP_TITLES: Record<WizardStep, string> = {
-  partner: "1 · The partner",
-  arrangement: "2 · The written arrangement",
-  link: "3 · Why they may access this matter",
-  grant: "4 · Grant passport access",
-  token: "Access granted",
+/* Numbered at render time — the arrangement step exists only for a
+ * partner OUTSIDE the portals. A portal partner's arrangement is the
+ * prebuilt Compliance Passport agreement, executed at their sign-up. */
+const STEP_TITLES: Record<Exclude<WizardStep, "token">, string> = {
+  partner: "The partner",
+  arrangement: "The written arrangement",
+  link: "Why they may access this matter",
+  grant: "Grant passport access",
 };
 
 function ChoiceCard({ selected, label, meaning, onSelect }: {
@@ -118,6 +121,21 @@ export function PartnerOnboardingWizard({
   const chosenOrg = organisations.find((o) => o.id === existingOrgId) ?? null;
   const partnerName = chosenOrg?.legal_name ?? legalName.trim();
 
+  /* A portal partner's arrangement is PREBUILT: the Portal Access &
+   * AML/CTF Compliance Passport Agreement their sign-up executes (its
+   * binding_amlctf_arrangement acknowledgement is the s 37A statement,
+   * and sign-up is refused without it). The manual arrangement step
+   * exists only for a partner outside the portals. */
+  const prebuilt = portalHasPrebuiltAgreement(portal);
+  const stepOrder: WizardStep[] = prebuilt
+    ? ["partner", "link", "grant"]
+    : ["partner", "arrangement", "link", "grant"];
+  /* An arrangement already on the register for this partner is reused
+   * silently — auto or manual, one register row per partner is enough. */
+  const reusableAgreement = activeAgreements.find(
+    (a) => a.partner_org_name.toLowerCase() === partnerName.toLowerCase(),
+  ) ?? null;
+
   /* Reset per open, so a second onboarding never inherits the first. */
   useEffect(() => {
     if (!open) return;
@@ -187,18 +205,27 @@ export function PartnerOnboardingWizard({
         setCreatedOrgId(orgId);
       }
 
-      // 2 · The written arrangement.
+      // 2 · The written arrangement — PREBUILT for a portal partner (the
+      //     Compliance Passport agreement their sign-up executes; the
+      //     register row is recorded automatically against it), manual
+      //     only for a partner outside the portals. An active register
+      //     row for this partner is reused either way.
       let agreement = existingAgreementId
         ? activeAgreements.find((a) => a.id === existingAgreementId) ?? null
-        : createdAgreement;
+        : createdAgreement ?? reusableAgreement;
       if (!agreement) {
+        const draft = prebuilt
+          ? prebuiltArrangementDraft(new Date())
+          : {
+              agreement_reference: reference.trim(),
+              executed_on: executedOn,
+              next_review_due: reviewDue,
+            };
         const res = await amlRelianceApi.createAgreement({
           partner_org_name: partnerName,
           partner_org_type: portal,
           partner_abn: abn.trim() || undefined,
-          agreement_reference: reference.trim(),
-          executed_on: executedOn,
-          next_review_due: reviewDue,
+          ...draft,
         });
         agreement = res.agreement;
         setCreatedAgreement(agreement);
@@ -254,8 +281,6 @@ export function PartnerOnboardingWizard({
     }
   };
 
-  const stepOrder: WizardStep[] = ["partner", "arrangement", "link", "grant"];
-
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
@@ -268,15 +293,16 @@ export function PartnerOnboardingWizard({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Progress — where this pass is, in words. */}
+        {/* Progress — where this pass is, in words. Numbered at render
+            time, because a portal partner has no arrangement step. */}
         {step !== "token" && (
           <ol className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]" aria-label="Onboarding steps">
-            {stepOrder.map((s) => (
+            {stepOrder.map((s, i) => (
               <li key={s} className={cn(
                 "uppercase tracking-wide",
                 s === step ? "font-semibold text-primary" : "text-muted-foreground",
               )}>
-                {STEP_TITLES[s]}
+                {i + 1} · {STEP_TITLES[s as Exclude<WizardStep, "token">]}
               </li>
             ))}
           </ol>
@@ -337,7 +363,8 @@ export function PartnerOnboardingWizard({
         {step === "arrangement" && (
           <div className="space-y-3 text-sm">
             <p className="text-xs text-muted-foreground">
-              Reliance stands on a written CDD arrangement (AML/CTF Act Pt 2 Div 7) that is
+              A partner outside the portals has no sign-up to carry the prebuilt agreement, so
+              the written CDD arrangement (AML/CTF Act Pt 2 Div 7) is recorded here. It must be
               reviewed regularly — an overdue review blocks new grants. The agreement itself
               lives with legal; this records it.
             </p>
@@ -432,7 +459,11 @@ export function PartnerOnboardingWizard({
                 <span className="font-medium">Arrangement:</span>{" "}
                 {existingAgreementId
                   ? activeAgreements.find((a) => a.id === existingAgreementId)?.agreement_reference
-                  : `${reference.trim() || "—"} (new, review due ${reviewDue})`}
+                  : reusableAgreement
+                    ? `${reusableAgreement.agreement_reference} (already recorded)`
+                    : prebuilt
+                      ? `Prebuilt — ${PREBUILT_AGREEMENT_TITLE} (recorded automatically)`
+                      : `${reference.trim() || "—"} (new, review due ${reviewDue})`}
               </div>
               <div><span className="font-medium">Legal route:</span> {LEGAL_ROUTE_CHOICES.find((r) => r.value === legalRoute)?.label}</div>
               <div>
@@ -446,6 +477,14 @@ export function PartnerOnboardingWizard({
             {readiness.cautions.map((c) => (
               <p key={c} className="text-[11px] text-muted-foreground">{c}</p>
             ))}
+            {prebuilt && !existingAgreementId && !reusableAgreement && (
+              <p className="text-xs text-muted-foreground">
+                No arrangement to type: the partner&apos;s binding acknowledgement of that
+                agreement — including the s&nbsp;37A arrangement statement — is a mandatory part
+                of their portal sign-up, and the executed copy lands in Partner Agreement
+                Records.
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">
               Confirming records anything not yet recorded, then grants access and shows the
               partner&apos;s one-time token. The client sees their completed compliance in their
@@ -478,6 +517,9 @@ export function PartnerOnboardingWizard({
                 Deliver it to the partner through their usual channel. It is shown once — the
                 platform stores only its hash, and a lost token means revoking this grant and
                 issuing another.
+                {prebuilt && (
+                  " When they take up portal access they acknowledge the prebuilt Compliance Passport agreement as part of sign-up — nothing more is needed from you."
+                )}
               </p>
             </div>
           </div>
@@ -491,7 +533,10 @@ export function PartnerOnboardingWizard({
             </Button>
           )}
           {step === "partner" && (
-            <Button disabled={!partnerValid} onClick={() => setStep("arrangement")}>Continue</Button>
+            <Button disabled={!partnerValid}
+              onClick={() => setStep(prebuilt ? "link" : "arrangement")}>
+              Continue
+            </Button>
           )}
           {step === "arrangement" && (
             <Button disabled={!arrangementValid} onClick={() => setStep("link")}>Continue</Button>

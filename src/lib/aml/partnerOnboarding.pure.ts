@@ -111,6 +111,51 @@ export function defaultPurpose(portalLabel: string, role: string): string {
   return `${portalLabel} partner acting as ${role.replace(/_/g, " ")} on this client's matter — access under the recorded arrangement for passport reliance.`;
 }
 
+/**
+ * ── The prebuilt arrangement ──────────────────────────────────────────
+ * Every portal sign-up executes the "Portal Access, Confidentiality,
+ * Privacy and AML/CTF Compliance Passport Agreement" — one prebuilt
+ * instrument across the Finance, Builder/Developer and Solicitor
+ * portals, whose mandatory `binding_amlctf_arrangement` acknowledgement
+ * states that it constitutes the s 37A / rule 6-29 CDD arrangement. The
+ * acceptance is refused without that acknowledgement
+ * (`_shared/portalAgreement.ts`), and the executed copy lands in Partner
+ * Agreement Records.
+ *
+ * So onboarding a PORTAL partner does not ask the operator to type an
+ * arrangement: the register row is recorded automatically against the
+ * prebuilt instrument, and the partner's binding acknowledgement is
+ * captured when they take up portal access. Only a partner outside the
+ * portals ("Other") still records a manual arrangement — there is no
+ * sign-up to carry one for them.
+ */
+export const PREBUILT_AGREEMENT_TITLE =
+  "Portal Access, Confidentiality, Privacy and AML/CTF Compliance Passport Agreement";
+
+export function portalHasPrebuiltAgreement(portal: string): boolean {
+  return portal !== "other";
+}
+
+export interface PrebuiltArrangementDraft {
+  agreement_reference: string;
+  executed_on: string;
+  next_review_due: string;
+}
+
+/**
+ * The register row for the prebuilt instrument. `executed_on` is the
+ * onboarding date — the date this register entry is made; the partner's
+ * own binding acknowledgement is captured at portal sign-up and lives in
+ * Partner Agreement Records, and the reference says so.
+ */
+export function prebuiltArrangementDraft(today: Date): PrebuiltArrangementDraft {
+  return {
+    agreement_reference: `${PREBUILT_AGREEMENT_TITLE} — acknowledged at portal sign-up`,
+    executed_on: isoDate(today),
+    next_review_due: defaultReviewDate(today),
+  };
+}
+
 export interface GrantReadinessFacts {
   /** Current attestation version, null when none is issued. */
   attestationVersion: number | null;

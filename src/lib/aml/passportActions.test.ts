@@ -47,6 +47,16 @@ describe("a blocked act names its enabler before the click", () => {
     expect(r.blockedBy).toBeNull();
   });
 
+  it("the arrangement row is an OPTION, never an owed step in front of the grant", () => {
+    // Portal partners' arrangement is prebuilt (the Compliance Passport
+    // agreement their sign-up executes) and recorded automatically by
+    // onboarding — so an empty register must not read as work owed.
+    const r = byKey(passportActions(facts({ attestationVersion: 1 })), "arrangement");
+    expect(r.state).toBe("anytime");
+    expect(r.detail).toContain("records the prebuilt arrangement automatically");
+    expect(r.meaning).toContain("acknowledged by the partner at portal sign-up");
+  });
+
   it("every MLRO act names the role for a non-MLRO instead of hiding", () => {
     const rows = passportActions(facts({ isMlro: false, attestationVersion: 1, activeAgreements: 1 }));
     for (const key of ["issue", "arrangement", "grant", "material"]) {
