@@ -58,6 +58,14 @@ export const REPAIR_REGION_KEY = 'repair_region';
  * so a mask that approaches the whole frame does not fail that gate, it
  * empties it. A rule stated as "the AI may only touch the graphic" has to be
  * enforced as a bound on how much it may touch, or it is not enforced at all.
+ *
+ * AND THAT IS ALL IT ENFORCES. The ceiling bounds HOW MUCH may be rebuilt,
+ * never WHICH pixels: a wrong mask inside the ceiling spends its whole budget
+ * on the wrong tenth of the house and passes every gate stated in terms of
+ * the mask. A bounded mask does not restore the guarantee the unbounded one
+ * emptied — it caps the blast radius. Whether the permitted set is the RIGHT
+ * set is decided where the mask is derived (`overlayPlate.pure.ts`, which
+ * holds every plate, flooded or fallen back to, to its own line of type).
  */
 export const MAX_REPAIRED_SHARE = 0.35;
 
