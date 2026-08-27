@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   LEGAL_ROUTE_CHOICES, PARTNER_PORTAL_CHOICES, PREBUILT_AGREEMENT_TITLE,
-  defaultPurpose, defaultReviewDate, grantReadiness, isoDate,
+  builderOrgType, defaultPurpose, defaultReviewDate, grantReadiness, isValidEmail, isoDate,
   portalHasPrebuiltAgreement, prebuiltArrangementDraft,
 } from "./partnerOnboarding.pure";
 
@@ -75,6 +75,19 @@ describe("the defaults satisfy the server's own validation", () => {
       expect(defaultPurpose(p.label, p.role).length).toBeGreaterThanOrEqual(10);
     }
   });
+
+  it("the invite email is validated before anything sends", () => {
+    expect(isValidEmail("jordan@partner.com.au")).toBe(true);
+    expect(isValidEmail("  jordan@partner.com.au  ")).toBe(true);
+    for (const bad of ["", "jordan", "jordan@", "@partner.com", "a b@c.d"]) {
+      expect(isValidEmail(bad), bad).toBe(false);
+    }
+  });
+
+  it("a developer partner is a developer ORGANISATION in the shared builder portal", () => {
+    expect(builderOrgType("developer")).toBe("developer");
+    expect(builderOrgType("builder")).toBe("builder");
+  });
 });
 
 describe("grant readiness — blockers named, unknown never a pass", () => {
@@ -144,9 +157,45 @@ describe("wired at the source", () => {
   it("the token is handed over as shown-once, with the no-sign-up rule stated", () => {
     expect(wizard).toContain("One-time access token");
     expect(wizard).toMatch(/shown once/i);
-    expect(wizard).toMatch(/no sign-up is needed/i);
+    expect(wizard).toMatch(/no prior\s+sign-up is needed/i);
     // What the partner receives is procedures, never the risk assessment.
     expect(wizard).toMatch(/never this case(?:'|&apos;)s risk assessment/);
+  });
+
+  it("existing partners come from each portal's OWN registry — never re-created", () => {
+    expect(wizard).toContain('from("finance_agent_contacts")');
+    expect(wizard).toContain('"solicitor-portal-admin", { operation: "list_users" }');
+    expect(wizard).toContain('"builder-portal-admin", { operation: "list_users" }');
+    // Someone who already holds access is reported, never re-invited.
+    expect(wizard).toContain('{ state: "already", email }');
+  });
+
+  it("the invite goes through each portal's existing pipeline — no parallel email path", () => {
+    expect(wizard).toContain('"finance-portal-invite"');
+    expect(wizard).toContain('"builder-portal-invite"');
+    expect(wizard).toContain('"solicitor-portal-invite"');
+    // Builder provisioning is the full chain the portal requires: an
+    // organisation, its activation, the user and a membership — the invite
+    // function refuses a user with no membership.
+    for (const op of ['"upsert_organisation"', '"set_organisation_status"', '"create_user"', '"upsert_membership"']
+      .map((s) => `operation: ${s}`)) {
+      expect(wizard).toContain(op);
+    }
+  });
+
+  it("a failed invite never blocks the grant, and only the invite is retried", () => {
+    // The one-time token must not be lost to a bounced email — the grant
+    // proceeds, the outcome is reported, and the retry re-runs the invite
+    // alone (the grant is done and stays done).
+    expect(wizard).toMatch(/failure never blocks the\s+\* grant|failure is reported and retryable, never fatal/);
+    expect(wizard).toContain("The grant succeeded, but the portal invite");
+    expect(wizard).toContain("Retry portal invite");
+    expect(wizard).toContain("const retryInvite");
+  });
+
+  it("a portal partner needs a deliverable contact — validated before the pass starts", () => {
+    expect(wizard).toContain("isValidEmail(contactEmail)");
+    expect(wizard).toContain("Who receives portal access?");
   });
 
   it("consent is read from the case's own record and an unreadable answer stays unknown", () => {

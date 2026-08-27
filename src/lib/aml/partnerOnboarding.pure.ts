@@ -156,6 +156,20 @@ export function prebuiltArrangementDraft(today: Date): PrebuiltArrangementDraft 
   };
 }
 
+/** The invite email is the door into the portal — validated before anything sends. */
+export function isValidEmail(value: string): boolean {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value.trim());
+}
+
+/**
+ * The builder portal's organisation vocabulary for the two portals it
+ * serves. A "developer" partner signs into the Builder/Developer portal
+ * as a developer organisation — the portal is shared, the type is not.
+ */
+export function builderOrgType(portal: string): "builder" | "developer" {
+  return portal === "developer" ? "developer" : "builder";
+}
+
 export interface GrantReadinessFacts {
   /** Current attestation version, null when none is issued. */
   attestationVersion: number | null;

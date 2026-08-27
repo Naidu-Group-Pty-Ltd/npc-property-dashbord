@@ -1,40 +1,58 @@
 /**
- * Onboard a partner and grant passport access — one guided pass.
+ * Onboard a partner, grant passport access, and get them INTO their
+ * portal — one guided pass, end to end.
  *
- * Chains the four existing `aml-reliance` acts in the order the server
- * requires them: record the canonical organisation → record the written
- * CDD arrangement → link the partner to this case (with a recorded legal
- * route and purpose) → grant access. The final screen hands over the
- * ONE-TIME access token: the partner's portal integration redeems it, so
- * the partner does not need to sign up before the passport reaches them.
+ * Chains the existing acts in the order the servers require them:
+ * canonical organisation → written CDD arrangement (prebuilt for portal
+ * partners — the Compliance Passport agreement their sign-up executes) →
+ * case link → PORTAL ACCESS (the partner's contact receives the invite
+ * email through each portal's own invite function) → grant. The final
+ * screen hands over the ONE-TIME access token and reports where the
+ * invite went.
  *
- * Rules this deliberately keeps (the server enforces all of them):
- *   - MLRO only — every step is outward-facing restricted configuration.
- *   - The client's sharing consent is a precondition of the grant
- *     (APP 6); a known-missing consent blocks with the reason named, an
- *     UNKNOWN reading is a caution and never a pass.
- *   - Created records are cached per step, so a failure midway retries
- *     from where it stopped instead of duplicating what already exists.
- *   - Nothing here bypasses a server refusal — a 409/403 surfaces in
- *     place with its reason.
+ * ── Portal access, per portal ─────────────────────────────────────────
+ * Each portal already has an invite pipeline, and this wizard drives it
+ * rather than inventing one:
+ *   finance   — a `finance_agent_contacts` row, then `finance-portal-invite`
+ *   builder / developer — `builder-portal-admin` (organisation →
+ *               activation → user → membership), then `builder-portal-invite`
+ *   solicitor — `solicitor-portal-admin` upsert_firm, then
+ *               `solicitor-portal-invite` (which creates the user itself)
+ * An EXISTING portal contact can be chosen instead — no re-provisioning,
+ * no duplicate identities; someone who already has access is reported as
+ * such rather than re-invited.
+ *
+ * Rules this deliberately keeps:
+ *   - Every provisioning call runs under its own portal's admin
+ *     permission model — a refusal surfaces with its reason.
+ *   - A failed invite NEVER blocks the grant, and a grant is never
+ *     re-run because an email bounced: the token screen reports the
+ *     invite outcome and offers a retry that re-runs ONLY the invite.
+ *   - Created records are cached per step, so retrying resumes instead
+ *     of duplicating.
+ *   - The server enforces every grant rule (MLRO, arrangement, review
+ *     currency, client sharing consent, attestation) — nothing here
+ *     bypasses one.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Copy, Check, ShieldCheck } from "lucide-react";
+import { Loader2, Copy, Check, ShieldCheck, Mail, AlertTriangle } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
+import { invokeSecureFunction } from "@/lib/secureInvoke";
 import { amlCasesApi } from "@/lib/aml/amlCasesApi";
 import {
   amlRelianceApi, type PartnerOrganisation, type RelianceAgreement,
 } from "@/lib/aml/amlRelianceApi";
 import {
   LEGAL_ROUTE_CHOICES, PARTNER_PORTAL_CHOICES, PREBUILT_AGREEMENT_TITLE,
-  defaultPurpose, defaultReviewDate, grantReadiness, isoDate,
+  builderOrgType, defaultPurpose, defaultReviewDate, grantReadiness, isValidEmail, isoDate,
   portalHasPrebuiltAgreement, prebuiltArrangementDraft,
 } from "@/lib/aml/partnerOnboarding.pure";
 
@@ -49,6 +67,44 @@ const STEP_TITLES: Record<Exclude<WizardStep, "token">, string> = {
   link: "Why they may access this matter",
   grant: "Grant passport access",
 };
+
+/** An existing portal identity, offered so nobody re-provisions one. */
+interface ExistingPortalContact {
+  key: string;
+  name: string;
+  email: string;
+  sub: string;
+  /** Already signed in / accepted — an invite would be noise or a 409. */
+  active: boolean;
+  finance_contact_id?: string;
+  builder_user_id?: string;
+  solicitor_user_id?: string;
+  firm_id?: string;
+}
+
+type InviteOutcome =
+  | { state: "sent"; email: string }
+  | { state: "already"; email: string }
+  | { state: "failed"; email: string; detail: string }
+  | { state: "skipped" };
+
+/** Provisioned ids, cached so a retry resumes instead of duplicating. */
+interface ProvisionCache {
+  financeContactId?: string;
+  organisationId?: string;
+  orgVersion?: number;
+  orgActivated?: boolean;
+  builderUserId?: string;
+  firmId?: string;
+}
+
+/** invokeSecureFunction with the error shapes collapsed to one throw. */
+async function call<T = any>(fn: string, payload: Record<string, unknown>): Promise<T> {
+  const { data, error } = await invokeSecureFunction<T>(fn, payload);
+  if (error) throw new Error(error.message);
+  if ((data as any)?.error) throw new Error(String((data as any).error));
+  return data as T;
+}
 
 function ChoiceCard({ selected, label, meaning, onSelect }: {
   selected: boolean; label: string; meaning: string; onSelect: () => void;
@@ -93,7 +149,15 @@ export function PartnerOnboardingWizard({
   const [portal, setPortal] = useState(PARTNER_PORTAL_CHOICES[0].value);
   const [abn, setAbn] = useState("");
 
-  /* Step 2 — the written arrangement. */
+  /* Step 1 — who receives portal access. An existing portal contact can
+   * be chosen; a new one needs a name and a deliverable email, because
+   * the invite email IS the door into the portal. */
+  const [portalContacts, setPortalContacts] = useState<ExistingPortalContact[]>([]);
+  const [chosenContactKey, setChosenContactKey] = useState<string | null>(null);
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+
+  /* Step 2 — the written arrangement (non-portal partners only). */
   const [existingAgreementId, setExistingAgreementId] = useState<string | null>(null);
   const [reference, setReference] = useState("");
   const [executedOn, setExecutedOn] = useState(() => isoDate(new Date()));
@@ -111,6 +175,8 @@ export function PartnerOnboardingWizard({
   const [createdOrgId, setCreatedOrgId] = useState<string | null>(null);
   const [createdAgreement, setCreatedAgreement] = useState<RelianceAgreement | null>(null);
   const [linkRecorded, setLinkRecorded] = useState(false);
+  const provisionCache = useRef<ProvisionCache>({});
+  const [inviteOutcome, setInviteOutcome] = useState<InviteOutcome | null>(null);
 
   /* The one-time token, shown exactly once. */
   const [grantResult, setGrantResult] = useState<{ token: string; expires_at: string; version: number } | null>(null);
@@ -120,6 +186,7 @@ export function PartnerOnboardingWizard({
   const activeAgreements = agreements.filter((a) => a.status === "active");
   const chosenOrg = organisations.find((o) => o.id === existingOrgId) ?? null;
   const partnerName = chosenOrg?.legal_name ?? legalName.trim();
+  const chosenContact = portalContacts.find((c) => c.key === chosenContactKey) ?? null;
 
   /* A portal partner's arrangement is PREBUILT: the Portal Access &
    * AML/CTF Compliance Passport Agreement their sign-up executes (its
@@ -141,12 +208,15 @@ export function PartnerOnboardingWizard({
     if (!open) return;
     setStep("partner");
     setExistingOrgId(null); setLegalName(""); setPortal(PARTNER_PORTAL_CHOICES[0].value); setAbn("");
+    setChosenContactKey(null); setContactName(""); setContactEmail("");
     setExistingAgreementId(null); setReference("");
     setExecutedOn(isoDate(new Date())); setReviewDue(defaultReviewDate(new Date()));
     setRole(PARTNER_PORTAL_CHOICES[0].role);
     setLegalRoute(LEGAL_ROUTE_CHOICES[0].value);
     setPurpose("");
     setCreatedOrgId(null); setCreatedAgreement(null); setLinkRecorded(false);
+    provisionCache.current = {};
+    setInviteOutcome(null);
     setGrantResult(null); setCopied(false);
   }, [open]);
 
@@ -164,12 +234,71 @@ export function PartnerOnboardingWizard({
     return () => { alive = false; };
   }, [open, caseId]);
 
-  /* The default role and purpose follow the chosen portal until edited. */
+  /*
+   * The EXISTING portal identities for the chosen portal, from each
+   * portal's own registry — so an existing finance, builder or solicitor
+   * partner is chosen, never re-created. A read this operator's admin
+   * permissions refuse simply yields an empty list; the manual fields
+   * remain the road.
+   */
+  useEffect(() => {
+    if (!open || portal === "other") { setPortalContacts([]); return; }
+    let alive = true;
+    const load = async (): Promise<ExistingPortalContact[]> => {
+      if (portal === "finance") {
+        const { data } = await supabase
+          .from("finance_agent_contacts")
+          .select("id, name, email, company, is_active")
+          .eq("is_active", true)
+          .order("name");
+        return (data ?? []).filter((c: any) => c.email).map((c: any) => ({
+          key: `finance:${c.id}`, name: c.name, email: c.email,
+          sub: c.company || "Finance contact",
+          active: false, finance_contact_id: c.id,
+        }));
+      }
+      if (portal === "solicitor_conveyancer") {
+        const res = await call<{ records: any[] }>("solicitor-portal-admin", { operation: "list_users" });
+        return (res.records ?? []).filter((u: any) => u.status !== "revoked").map((u: any) => ({
+          key: `solicitor:${u.id}`, name: u.name, email: u.email,
+          sub: u.firm_name || "Solicitor portal user",
+          active: u.status === "active",
+          solicitor_user_id: u.id, firm_id: u.firm_id,
+        }));
+      }
+      const res = await call<{ users: any[] }>("builder-portal-admin", { operation: "list_users" });
+      return (res.users ?? []).filter((u: any) => u.status !== "revoked").map((u: any) => ({
+        key: `builder:${u.id}`, name: u.name, email: u.email,
+        sub: "Builder/Developer portal user",
+        active: u.status === "active",
+        builder_user_id: u.id,
+      }));
+    };
+    load()
+      .then((rows) => { if (alive) setPortalContacts(rows); })
+      .catch(() => { if (alive) setPortalContacts([]); });
+    return () => { alive = false; };
+  }, [open, portal]);
+
+  /* The default role and purpose follow the chosen portal until edited —
+   * and a portal change clears the contact choice, which belongs to the
+   * previous portal's registry. */
   const applyPortal = (value: typeof portal) => {
     const prev = PARTNER_PORTAL_CHOICES.find((p) => p.value === portal)!;
     setPortal(value);
+    setChosenContactKey(null);
     const next = PARTNER_PORTAL_CHOICES.find((p) => p.value === value)!;
     if (role === prev.role) setRole(next.role);
+  };
+
+  const chooseContact = (contact: ExistingPortalContact) => {
+    if (chosenContactKey === contact.key) {
+      setChosenContactKey(null);
+      return;
+    }
+    setChosenContactKey(contact.key);
+    setContactName(contact.name ?? "");
+    setContactEmail(contact.email ?? "");
   };
 
   const readiness = useMemo(
@@ -177,17 +306,142 @@ export function PartnerOnboardingWizard({
     [attestationVersion, sharingConsent],
   );
 
-  const partnerValid = existingOrgId !== null || legalName.trim().length > 1;
+  /* A portal partner needs someone to invite: a chosen existing contact,
+   * or a name and a deliverable email. "Other" has no portal to enter. */
+  const contactValid = portal === "other"
+    || chosenContact !== null
+    || (contactName.trim().length > 1 && isValidEmail(contactEmail));
+  const partnerValid = (existingOrgId !== null || legalName.trim().length > 1) && contactValid;
   const arrangementValid = existingAgreementId !== null
     || (reference.trim().length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(executedOn) && /^\d{4}-\d{2}-\d{2}$/.test(reviewDue));
   const effectivePurpose = purpose.trim() || defaultPurpose(portalChoice.label, role);
   const linkValid = role.trim().length > 0 && effectivePurpose.length >= 10;
 
   /**
-   * The chain, run when the operator confirms the grant. Each act caches
-   * its result so a retry resumes rather than duplicates. The link is
-   * recorded before the grant (it is the access root that explains WHY);
-   * an already-existing link is fine and does not stop the grant.
+   * Portal access, through each portal's own pipeline. Every created id
+   * is cached, so a retry resumes; an existing identity is reused; and
+   * someone who already has access is reported, never re-invited.
+   */
+  const provisionPortalAccess = async (): Promise<InviteOutcome> => {
+    if (portal === "other") return { state: "skipped" };
+    const cache = provisionCache.current;
+    const email = (chosenContact?.email ?? contactEmail).toLowerCase().trim();
+    const name = (chosenContact?.name ?? contactName).trim();
+    try {
+      if (portal === "finance") {
+        let contactId = chosenContact?.finance_contact_id ?? cache.financeContactId;
+        if (!contactId) {
+          const { data: existing } = await supabase
+            .from("finance_agent_contacts")
+            .select("id").ilike("email", email).maybeSingle();
+          if (existing?.id) {
+            contactId = existing.id;
+          } else {
+            const { data: inserted, error } = await supabase
+              .from("finance_agent_contacts")
+              .insert({ name, email, company: partnerName })
+              .select("id").single();
+            if (error) throw new Error(error.message);
+            contactId = inserted.id;
+          }
+          cache.financeContactId = contactId;
+        }
+        const status = await call<any>("finance-portal-invite", {
+          action: "check_status", finance_contact_id: contactId,
+        });
+        if (status.has_portal_access) return { state: "already", email };
+        await call("finance-portal-invite", {
+          action: "invite", finance_contact_id: contactId,
+          invite_mode: "set_password_link", resend_invite: Boolean(status.is_invited),
+        });
+        return { state: "sent", email };
+      }
+
+      if (portal === "solicitor_conveyancer") {
+        if (chosenContact?.solicitor_user_id) {
+          if (chosenContact.active) return { state: "already", email };
+          await call("solicitor-portal-invite", {
+            action: "invite", solicitor_user_id: chosenContact.solicitor_user_id,
+          });
+          return { state: "sent", email };
+        }
+        let firmId = cache.firmId;
+        if (!firmId) {
+          const res = await call<{ firm_id: string }>("solicitor-portal-admin", {
+            operation: "upsert_firm", name: partnerName, contact_email: email,
+          });
+          firmId = res.firm_id;
+          cache.firmId = firmId;
+        }
+        // The invite function creates the portal user itself — one call,
+        // and an already-known email is reused rather than duplicated.
+        await call("solicitor-portal-invite", { action: "invite", firm_id: firmId, email, name });
+        return { state: "sent", email };
+      }
+
+      // Builder / Developer — one shared portal, typed organisations.
+      let builderUserId = chosenContact?.builder_user_id ?? cache.builderUserId;
+      if (chosenContact?.builder_user_id && chosenContact.active) {
+        return { state: "already", email };
+      }
+      if (!builderUserId) {
+        if (!cache.organisationId) {
+          const res = await call<{ organisation: any }>("builder-portal-admin", {
+            operation: "upsert_organisation",
+            legal_name: partnerName, org_type: builderOrgType(portal), contact_email: email,
+          });
+          cache.organisationId = res.organisation.id;
+          cache.orgVersion = res.organisation.row_version;
+          cache.orgActivated = res.organisation.status === "active";
+        }
+        if (!cache.orgActivated) {
+          const res = await call<{ organisation: any }>("builder-portal-admin", {
+            operation: "set_organisation_status",
+            organisation_id: cache.organisationId, status: "active",
+            expected_version: cache.orgVersion,
+            reason: "Activated during AML partner onboarding",
+          });
+          cache.orgActivated = true;
+          cache.orgVersion = res.organisation?.row_version ?? cache.orgVersion;
+        }
+        try {
+          const res = await call<{ user: any }>("builder-portal-admin", {
+            operation: "create_user", email, name,
+          });
+          builderUserId = res.user.id;
+        } catch (e: any) {
+          // The email already has a portal identity — reuse it, never a twin.
+          if (/already exists/i.test(String(e?.message ?? ""))) {
+            const res = await call<{ users: any[] }>("builder-portal-admin", { operation: "list_users" });
+            builderUserId = (res.users ?? []).find(
+              (u: any) => String(u.email).toLowerCase() === email)?.id;
+          }
+          if (!builderUserId) throw e;
+        }
+        cache.builderUserId = builderUserId;
+        await call("builder-portal-admin", {
+          operation: "upsert_membership",
+          builder_user_id: builderUserId, organisation_id: cache.organisationId,
+          membership_role: "administrator", is_primary: true,
+        });
+      }
+      try {
+        await call("builder-portal-invite", { action: "invite", builder_user_id: builderUserId });
+      } catch (e: any) {
+        if (/already active/i.test(String(e?.message ?? ""))) return { state: "already", email };
+        throw e;
+      }
+      return { state: "sent", email };
+    } catch (e: any) {
+      return { state: "failed", email, detail: e?.message ?? "The portal invite failed." };
+    }
+  };
+
+  /**
+   * The chain, run when the operator confirms. Portal access is
+   * provisioned BEFORE the grant — but its failure never blocks the
+   * grant, because the invite is retryable from the token screen and the
+   * one-time token must not be lost to a bounced email.
    */
   const completeGrant = async () => {
     setBusy(true);
@@ -250,7 +504,15 @@ export function PartnerOnboardingWizard({
         }
       }
 
-      // 4 · The grant — the server re-checks every precondition.
+      // 4 · Portal access — the invite email, through the portal's own
+      //     pipeline. A failure is reported and retryable, never fatal.
+      let outcome = inviteOutcome;
+      if (!outcome || outcome.state === "failed") {
+        outcome = await provisionPortalAccess();
+        setInviteOutcome(outcome);
+      }
+
+      // 5 · The grant — the server re-checks every precondition.
       const res = await amlRelianceApi.grantAccess(caseId, agreement.id);
       setGrantResult({
         token: res.access_token,
@@ -265,6 +527,18 @@ export function PartnerOnboardingWizard({
         description: `${e?.message ?? "The request failed."} What was already recorded is kept — fixing the cause and confirming again resumes from there.`,
         variant: "destructive",
       });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Re-runs ONLY the invite — the grant is done and stays done. */
+  const retryInvite = async () => {
+    setBusy(true);
+    try {
+      const outcome = await provisionPortalAccess();
+      setInviteOutcome(outcome);
+      if (outcome.state === "sent") toast({ title: "Portal invite sent", description: `Emailed ${outcome.email}.` });
     } finally {
       setBusy(false);
     }
@@ -288,8 +562,8 @@ export function PartnerOnboardingWizard({
           <DialogTitle>{step === "token" ? "Partner access granted" : "Onboard a partner & grant passport access"}</DialogTitle>
           <DialogDescription>
             {step === "token"
-              ? "The token below is shown once. The partner's portal redeems it — no sign-up is needed before the passport reaches them."
-              : "One pass records the organisation, the written CDD arrangement and the case link, then grants access. Every rule is still enforced server-side."}
+              ? "The token below is shown once. The partner's portal redeems it — their invite email is how they get in."
+              : "One pass records the organisation, the arrangement and the case link, emails the portal invite, then grants access. Every rule is still enforced server-side."}
           </DialogDescription>
         </DialogHeader>
 
@@ -357,6 +631,48 @@ export function PartnerOnboardingWizard({
                 disabled={existingOrgId !== null}
                 onChange={(e) => setAbn(e.target.value)} />
             </div>
+
+            {/* ── Who receives portal access ─────────────────────────── */}
+            {portal !== "other" && (
+              <div className="space-y-1.5 border-t border-border/50 pt-3">
+                <Label className="text-xs">Who receives portal access?</Label>
+                <p className="text-[11px] text-muted-foreground">
+                  The invite email is how they get into the {portalChoice.label} — no prior
+                  sign-up is needed. Choose an existing contact, or enter a new one.
+                </p>
+                {portalContacts.length > 0 && (
+                  <div role="radiogroup" aria-label="Existing portal contacts" className="grid max-h-44 gap-2 overflow-y-auto pr-1">
+                    {portalContacts.map((c) => (
+                      <ChoiceCard
+                        key={c.key}
+                        selected={chosenContactKey === c.key}
+                        label={`${c.name} — ${c.email}`}
+                        meaning={`${c.sub}${c.active ? " · already has portal access" : ""}`}
+                        onSelect={() => chooseContact(c)}
+                      />
+                    ))}
+                  </div>
+                )}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="pow-contact-name" className="text-xs">Contact name</Label>
+                    <Input id="pow-contact-name" placeholder="e.g. Jordan Lee" value={contactName}
+                      onChange={(e) => { setContactName(e.target.value); setChosenContactKey(null); }} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="pow-contact-email" className="text-xs">Contact email</Label>
+                    <Input id="pow-contact-email" type="email" placeholder="name@partner.com.au" value={contactEmail}
+                      onChange={(e) => { setContactEmail(e.target.value); setChosenContactKey(null); }} />
+                  </div>
+                </div>
+                {!contactValid && (contactName.length > 0 || contactEmail.length > 0) && (
+                  <p className="text-[11px] text-warning" aria-live="polite">
+                    A contact name and a valid email are needed — the invite has nowhere to go
+                    without them.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -466,6 +782,14 @@ export function PartnerOnboardingWizard({
                       : `${reference.trim() || "—"} (new, review due ${reviewDue})`}
               </div>
               <div><span className="font-medium">Legal route:</span> {LEGAL_ROUTE_CHOICES.find((r) => r.value === legalRoute)?.label}</div>
+              {portal !== "other" && (
+                <div>
+                  <span className="font-medium">Portal access:</span>{" "}
+                  {chosenContact?.active
+                    ? `${chosenContact.email} already has ${portalChoice.label} access — no invite is sent.`
+                    : `${(chosenContact?.email ?? contactEmail) || "—"} receives the ${portalChoice.label} invite email.`}
+                </div>
+              )}
               <div>
                 <span className="font-medium">They will receive:</span>{" "}
                 attestation v{attestationVersion ?? "—"} — what was performed, never this case&apos;s risk assessment.
@@ -486,9 +810,9 @@ export function PartnerOnboardingWizard({
               </p>
             )}
             <p className="text-xs text-muted-foreground">
-              Confirming records anything not yet recorded, then grants access and shows the
-              partner&apos;s one-time token. The client sees their completed compliance in their
-              own portal — nothing extra is asked of them.
+              Confirming records anything not yet recorded, emails the portal invite, then
+              grants access and shows the partner&apos;s one-time token. The client sees their
+              completed compliance in their own portal — nothing extra is asked of them.
             </p>
           </div>
         )}
@@ -503,6 +827,44 @@ export function PartnerOnboardingWizard({
                 token below — they see what was performed, never this case&apos;s risk assessment.
               </p>
             </div>
+
+            {/* The invite outcome — reported honestly, retryable in place. */}
+            {inviteOutcome?.state === "sent" && (
+              <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/5 p-3">
+                <Mail className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
+                <p className="text-xs">
+                  Portal invite emailed to <span className="font-medium">{inviteOutcome.email}</span>.
+                  They set their password from the link and, as part of sign-up, acknowledge the
+                  prebuilt Compliance Passport agreement — nothing more is needed from you.
+                </p>
+              </div>
+            )}
+            {inviteOutcome?.state === "already" && (
+              <div className="flex items-start gap-2 rounded-md border border-border/60 p-3">
+                <Mail className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                <p className="text-xs">
+                  <span className="font-medium">{inviteOutcome.email}</span> already has portal
+                  access — no invite was sent.
+                </p>
+              </div>
+            )}
+            {inviteOutcome?.state === "failed" && (
+              <div className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+                <div className="flex min-w-0 items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
+                  <p className="text-xs">
+                    The grant succeeded, but the portal invite to{" "}
+                    <span className="font-medium">{inviteOutcome.email}</span> did not:{" "}
+                    {inviteOutcome.detail}
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" onClick={retryInvite} disabled={busy}>
+                  {busy && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+                  Retry portal invite
+                </Button>
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <Label className="text-xs">One-time access token — copy it now</Label>
               <div className="flex items-center gap-2">
@@ -517,9 +879,6 @@ export function PartnerOnboardingWizard({
                 Deliver it to the partner through their usual channel. It is shown once — the
                 platform stores only its hash, and a lost token means revoking this grant and
                 issuing another.
-                {prebuilt && (
-                  " When they take up portal access they acknowledge the prebuilt Compliance Passport agreement as part of sign-up — nothing more is needed from you."
-                )}
               </p>
             </div>
           </div>
@@ -547,7 +906,7 @@ export function PartnerOnboardingWizard({
           {step === "grant" && (
             <Button disabled={busy || !readiness.ready} onClick={completeGrant}>
               {busy && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-              Record &amp; grant access
+              Record, invite &amp; grant
             </Button>
           )}
           {step === "token" && (
