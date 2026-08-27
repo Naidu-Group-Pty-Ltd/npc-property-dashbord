@@ -19,6 +19,7 @@ import {
   type PartnerRecordsRequest, type RelianceAgreement, type RelianceGrant,
 } from "@/lib/aml/amlRelianceApi";
 import { describeAcknowledgement, grantStanding } from "@/lib/aml/partnerOnboarding.pure";
+import { downloadDirectAcknowledgement } from "@/lib/aml/directAcknowledgementDocument";
 
 /**
  * Compliance Passport — one completed AML/CTF process, reused across every
@@ -282,6 +283,26 @@ export function ReliancePassportSection({
       await refresh();
     } catch (e: any) {
       toast({ title: "Could not re-issue the link", description: e?.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  /**
+   * The executed agreement as a document. Rendered on first request and
+   * stored, so every later request serves the same bytes — the copy the
+   * partner holds and the copy on file are one object.
+   */
+  const downloadAcknowledgement = async (row: DirectPartnerAcknowledgement) => {
+    setBusy("ack-doc");
+    try {
+      const res = await downloadDirectAcknowledgement(row.id);
+      // A signed URL, opened rather than fetched: the browser downloads it
+      // with the filename the server chose.
+      window.open(res.url, "_blank", "noopener,noreferrer");
+    } catch (e: any) {
+      toast({
+        title: "Could not produce the executed agreement",
+        description: e?.message, variant: "destructive",
+      });
     } finally { setBusy(null); }
   };
 
@@ -824,6 +845,15 @@ export function ReliancePassportSection({
                         onClick={() => resendAcknowledgement(row)} disabled={busy !== null}>
                         {busy === "ack" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
                         Re-send
+                      </Button>
+                    )}
+                    {/* Only an accepted acknowledgement is an executed
+                        agreement; there is nothing to produce for the rest. */}
+                    {reading.state === "accepted" && (
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs"
+                        onClick={() => downloadAcknowledgement(row)} disabled={busy !== null}>
+                        {busy === "ack-doc" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+                        Download executed agreement
                       </Button>
                     )}
                   </li>
