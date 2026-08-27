@@ -420,6 +420,40 @@ describe('EXECUTED — the stamp gates the live read, and the stored row carries
         expect(summary[NOTION_ROW_ASSETS_VERSION_KEY]).toBeUndefined();
       });
 
+    it('L — the stored path demotes nothing: it did not look, so it found nothing',
+      async () => {
+        const { repairSourceImagesForUpload } = await import(
+          '../../../supabase/functions/_shared/builderStock/repairSourceImages');
+        const db = liveDb({
+          uploads: [upload({
+            uploaded_document: { ready: 9 },
+            [NOTION_ROW_ASSETS_VERSION_KEY]: PROVENANCE_VERSION,
+          })],
+          items: [{ ...item('a1'), primary_image_id: 'img-served' }],
+        });
+        // A served card whose reference exists ONLY on the live page — the
+        // shape all nine of this deployment's cards actually have — and which
+        // predates the current provenance version, so the re-audit would
+        // convict it if it ran.
+        db.tables.builder_stock_item_images.push({
+          id: 'img-served', stock_item_id: 'item-a1', organisation_id: 'org-a',
+          source_stage: 'uploaded_document', source_provider: 'notion',
+          processing_status: 'ready',
+          source_reference: 'attachment:7661b441-f342-472e-85ca-760b522a962c:cover.jpg',
+          source_detail: { provenance_version: PROVENANCE_VERSION - 1 },
+        });
+
+        const outcome = await repairSourceImagesForUpload(
+          db, { organisationId: 'org-a', uploadId: 'upload-1' },
+          { fetchPackage: async (url: string) => ({ bytes: new Uint8Array(), finalUrl: url }) },
+        );
+
+        expect(outcome.demoted).toBe(0);
+        const served = db.tables.builder_stock_item_images
+          .find((row: FakeRow) => row.id === 'img-served')!;
+        expect(served.processing_status).toBe('ready');
+      });
+
     it('a stored record is never put back through the header normaliser', async () => {
       // The defect this guards: `normaliseStockRow` reads a row keyed by the
       // SOURCE's own headers. A stored record's `unmapped` is a nested object,

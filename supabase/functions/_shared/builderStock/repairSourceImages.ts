@@ -995,8 +995,26 @@ export async function repairSourceImagesForUpload(
    * checked against what the source actually says now. A row written before
    * provenance was recorded, or one naming an asset the source no longer
    * carries, is demoted — kept for the audit trail, refused for display.
+   *
+   * NEVER ON THE STORED-SOURCE PATH. A run that read stored rows deliberately
+   * did not read the live page, and the live page is the ONLY thing that can
+   * name a row asset — every one of this deployment's nine served cards is a
+   * `notion:attachment:…` reference and not one of them appears in any
+   * `source_row.image_urls`. So on that path `provenByItem` is empty for them
+   * BY CONSTRUCTION, and a re-audit would convict pictures it never looked
+   * for. It survives today only because those rows sit at the current
+   * provenance version and the loop skips them; the next version bump would
+   * blank nine working cards in a single tick.
+   *
+   * A run that did not look is not a run that found nothing. This is the same
+   * rule the image library states as "absent evidence never merges", and the
+   * cost of getting it wrong here is a client seeing an empty card for a
+   * photograph the builder did in fact supply.
    */
-  const stage1ByItem = await readStage1Images(db, itemIdsInOrder);
+  const stage1ByItem = storedRecords
+    ? new Map<string, Array<{ id: string; processing_status: string;
+      source_reference: string | null; source_detail: Record<string, unknown> | null }>>()
+    : await readStage1Images(db, itemIdsInOrder);
   for (const itemId of new Set(itemIdsInOrder)) {
     const proven = provenByItem.get(itemId) ?? new Set<string>();
 
