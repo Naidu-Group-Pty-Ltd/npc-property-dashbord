@@ -265,13 +265,23 @@ export async function chooseAndStorePrimaryImage(
     .select('id, source_stage, verification_status, processing_status, position, storage_path, external_url, source_detail')
     .eq('stock_item_id', stockItemId);
 
-  const primary = chooseDisplayableImage((images ?? []) as DisplayableImage[]);
+  /*
+   * THE PRIORITY, NOT THE SOURCE-ONLY RULE. `chooseCardImage` returns the
+   * builder's own picture wherever there is one and only then considers a
+   * verified web photograph or a Street View still — see
+   * `imagePriority.pure.ts`, which is the one place that ranking lives.
+   *
+   * Imported lazily so this module stays importable by everything that only
+   * needs the source rules; the two would otherwise import each other.
+   */
+  const { chooseCardImage } = await import('./imagePriority.pure.ts');
+  const primary = chooseCardImage((images ?? []) as DisplayableImage[]);
 
   await db.from('builder_stock_items')
-    .update({ primary_image_id: primary?.id ?? null })
+    .update({ primary_image_id: primary?.image.id ?? null })
     .eq('id', stockItemId);
 
-  return primary?.id ?? null;
+  return primary?.image.id ?? null;
 }
 
 /**
