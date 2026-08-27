@@ -28,12 +28,13 @@ import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { STOCK_IMAGE_BUCKET } from '../_shared/builderStock/fileTypes.pure.ts';
+import { rankImage } from '../_shared/builderStock/imagePriority.pure.ts';
 import {
   COMMAND_SELECTION_SELECT, COMMAND_SELECTION_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, isSelectableAvailability, stockPagination,
 } from '../_shared/builderStock/projection.pure.ts';
 import {
-  derivativeToServe, isDisplayableSourceImage, type DisplayableImage,
+  derivativeToServe, type DisplayableImage,
 } from '../_shared/builderStock/primaryImage.ts';
 
 const FEATURE_FLAG_KEY = 'builder_stock_marketplace';
@@ -218,7 +219,16 @@ Deno.serve(async (req) => {
        * "no proven primary means no image" holds at the boundary that actually
        * hands over bytes.
        */
-      if (!isDisplayableSourceImage(image as DisplayableImage)) {
+      /*
+       * THE SAME PREDICATE THE CARD APPLIES, WHICH IS NOW THE RANKING. A
+       * verified web photograph and a Street View still of the property's own
+       * address are card images, so this endpoint must be able to sign them —
+       * and it must still refuse everything else, including the 439
+       * `unverified` search rows that have never been checked against a
+       * property and every demoted source row. `rankImage` answers null for
+       * all of them. See `imagePriority.pure.ts`.
+       */
+      if (!rankImage(image as DisplayableImage)) {
         return json({ error: 'Image not found' }, 404);
       }
       /**
