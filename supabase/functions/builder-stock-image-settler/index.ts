@@ -48,9 +48,19 @@
  * project/unit linkage is touched. Those guarantees are `repairSourceImages.ts`'s
  * and are not restated here — this only decides WHICH uploads it runs for.
  *
+ * AND ONE THING THAT IS NOT A SWEEP AT ALL: `preview_sanitization`, which
+ * produces a repair candidate for one image and hands back the PNG without
+ * writing anything anywhere. It lives here because this is the function that
+ * already holds the worker credential and already refuses every caller that is
+ * not internally signed; it exists because the generative route's model is
+ * behind a deployment secret, so before it the only way to SEE a candidate was
+ * to let production write one over a picture a client was already being shown.
+ * See `previewSanitization.ts`.
+ *
  * SECURITY. Internal callers only, through the signed envelope
  * (`verifyInternal`). It holds a service-role client and crosses organisations,
- * which is exactly why it must not be reachable by a portal session.
+ * which is exactly why it must not be reachable by a portal session. The
+ * preview is behind that same gate and adds no other way in.
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { choosePhase } from '../_shared/builderStock/settlementPhase.pure.ts';
@@ -66,6 +76,7 @@ import {
   type SettlementCandidate,
 } from '../_shared/builderStock/settleSourceImages.ts';
 import { newRepairBudget } from '../_shared/builderStock/settleImageSanitization.ts';
+import { previewSanitization } from '../_shared/builderStock/previewSanitization.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 
@@ -130,6 +141,72 @@ Deno.serve(async (req: Request) => {
       errorCode: (gate as { errorCode?: string }).errorCode,
     });
     return json({ error: 'Forbidden' }, 403);
+  }
+
+  /**
+   * LOOK AT A CANDIDATE WITHOUT LETTING IT BECOME A PICTURE.
+   *
+   * The generative route is the only one that can clean some facades, its model
+   * lives behind the private worker, and the worker's token is a deployment
+   * secret — so before this existed the only way to SEE a candidate was to let
+   * production write one over the picture a client is already being shown.
+   *
+   * It is here rather than anywhere else because this is the function that
+   * already holds the worker credential, already refuses everything that is not
+   * an internally-signed caller, and already imports the repair. Nothing about
+   * it reaches a portal session or the marketplace, and it writes nothing at
+   * all — see `previewSanitization.ts`, where that is the enforced property.
+   *
+   * Placed AFTER `verifyInternal` and before any settlement work, so an
+   * unsigned caller is refused exactly as it always was and a tick with no
+   * `operation` behaves precisely as it did before this block existed.
+   */
+  let body: Record<string, unknown> = {};
+  try {
+    body = bounded.raw ? JSON.parse(bounded.raw) as Record<string, unknown> : {};
+  } catch {
+    body = {};
+  }
+
+  if (String(body.operation ?? '') === 'preview_sanitization') {
+    const preview = await previewSanitization(supabase, {
+      organisationId: String(body.organisation_id ?? ''),
+      imageId: String(body.image_id ?? ''),
+      originalSha256: String(body.original_sha256 ?? ''),
+      boxes: (Array.isArray(body.boxes) ? body.boxes : []) as never,
+    });
+
+    if (preview.ok === false) {
+      console.warn('[builder-stock-image-settler] preview refused', {
+        phase: 'preview_sanitization',
+        image_id: String(body.image_id ?? '').slice(0, 64),
+        reason: preview.reason,
+      });
+      return json({ success: false, error: preview.reason, detail: preview.detail },
+        preview.status);
+    }
+
+    /*
+     * The candidate itself, and facts about how it was made. No path, no
+     * bucket, no credential and no worker address: an operator needs to see
+     * the picture and know what it cost, not where the secrets are.
+     */
+    const headers: Record<string, string> = {
+      ...corsHeaders,
+      'Content-Type': 'image/png',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'x-builder-stock-preview': 'true',
+      'x-repaired-share': preview.repairedShare.toFixed(5),
+      'x-repair-route': preview.transformation,
+      'x-regions-removed': String(preview.regionsRemoved),
+    };
+    // Reported only when the metering ledger could actually be read. A count
+    // nobody measured is worse than no count at all.
+    if (preview.modelCalls !== null) headers['x-model-calls'] = String(preview.modelCalls);
+    if (preview.model) headers['x-inpaint-model'] = preview.model;
+
+    return new Response(preview.bytes as unknown as BodyInit, { status: 200, headers });
   }
 
   const startedAt = Date.now();
