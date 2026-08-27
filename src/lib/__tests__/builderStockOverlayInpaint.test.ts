@@ -1850,6 +1850,56 @@ describe('a repair region the caller established, and nothing else about it', ()
       if (out.ok === false) expect(out.reason).toBe('not_annotated');
     }
   });
+
+  it('a LIST of separated regions rebuilds their union and touches nothing between them', async () => {
+    /*
+     * The production shape: a pill in one corner and a strip in the other,
+     * with the house in between. A single rectangle spanning both would be
+     * mostly house; the list says exactly the two marks.
+     */
+    const marks = [
+      { left: 0.05, top: 0.06, right: 0.30, bottom: 0.20 },
+      { left: 0.62, top: 0.80, right: 0.98, bottom: 0.95 },
+    ];
+    const clean = badgedPicture().clean;
+    const bytes = (await encodePng(clean, { width: W, height: H, components: 3 }))!;
+
+    const out = await sanitizeSourceImage(bytes, { repairRegion: marks });
+    // Not dismissed unexamined: a supplied region IS the conviction.
+    if (out.ok === false) expect(out.reason).not.toBe('not_annotated');
+    if (out.ok !== true) return; // a refusal serves the original; nothing altered
+
+    const after = await decodeFullRaster(out.bytes);
+    expect(after).not.toBeNull();
+    // Every pixel well outside BOTH marks — including the house between
+    // them — is identical to the builder's own.
+    let checked = 0;
+    for (let y = 0; y < H; y += 7) {
+      for (let x = 0; x < W; x += 7) {
+        const inside = marks.some((m) =>
+          x >= m.left * W - 4 && x <= m.right * W + 4
+          && y >= m.top * H - 4 && y <= m.bottom * H + 4);
+        if (inside) continue;
+        const at = (y * W + x) * 3;
+        expect(after!.pixels[at]).toBe(clean[at]);
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it('a list with one malformed rectangle is treated as none, whole set voided', async () => {
+    const clean = badgedPicture().clean;
+    const bytes = (await encodePng(clean, { width: W, height: H, components: 3 }))!;
+    const out = await sanitizeSourceImage(bytes, {
+      repairRegion: [
+        { left: 0.05, top: 0.06, right: 0.30, bottom: 0.20 },
+        { left: 0.9, top: 0.5, right: 0.2, bottom: 0.9 }, // inverted
+      ],
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok === false) expect(out.reason).toBe('not_annotated');
+  });
 });
 
 describe('a persisted repair region is repair work the sweep finds by itself', () => {
@@ -1963,7 +2013,10 @@ describe('a persisted repair region is repair work the sweep finds by itself', (
       },
     });
 
-    expect(handed).toEqual(REGION);
+    // The sweep hands the record's rectangles as a LIST — one element for a
+    // legacy one-rectangle record like this — and the sanitizer rebuilds
+    // their union. The persisted record itself is unchanged.
+    expect(handed).toEqual([REGION]);
   });
 
   it('3 — a vendor outage keeps the region, writes no verdict and stays retryable', async () => {
@@ -1976,7 +2029,7 @@ describe('a persisted repair region is repair work the sweep finds by itself', (
       sanitize: outagedSanitize(seen),
     });
 
-    expect(seen.region).toEqual(REGION);
+    expect(seen.region).toEqual([REGION]);
     expect(outcome.unresolved).toBe(1);
     expect(sanitizationSweepCompleted(outcome)).toBe(false);
     const detail = db.rows[0].source_detail as Record<string, any>;

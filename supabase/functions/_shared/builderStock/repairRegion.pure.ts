@@ -77,6 +77,35 @@ export function regionAreaShare(box: RepairRegionBox): number {
   return width * height;
 }
 
+/** The most rectangles one record may carry — the generative route's own patch cap. */
+export const MAX_REGION_BOXES = 4;
+
+/**
+ * The share of the frame a SET of rectangles covers — their union, exactly.
+ *
+ * Computed by coordinate compression rather than by summing areas (which
+ * double-counts overlap and would refuse an honest pair of touching boxes)
+ * and never by their common bounding box (which counts the house between two
+ * corner marks as though it were being rebuilt). At most four boxes, so the
+ * grid is at most 7x7 cells.
+ */
+export function combinedAreaShare(boxes: RepairRegionBox[]): number {
+  const xs = Array.from(new Set(boxes.flatMap((box) => [box.left, box.right]))).sort((a, b) => a - b);
+  const ys = Array.from(new Set(boxes.flatMap((box) => [box.top, box.bottom]))).sort((a, b) => a - b);
+  let covered = 0;
+  for (let i = 0; i + 1 < xs.length; i++) {
+    for (let j = 0; j + 1 < ys.length; j++) {
+      const cx = (xs[i] + xs[i + 1]) / 2;
+      const cy = (ys[j] + ys[j + 1]) / 2;
+      if (boxes.some((box) =>
+        cx > box.left && cx < box.right && cy > box.top && cy < box.bottom)) {
+        covered += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j]);
+      }
+    }
+  }
+  return covered;
+}
+
 /** A rectangle, as fractions of the picture's own width and height. */
 export interface RepairRegionBox {
   left: number;
@@ -85,7 +114,19 @@ export interface RepairRegionBox {
   bottom: number;
 }
 
-export interface StoredRepairRegion extends RepairRegionBox {
+export interface StoredRepairRegion extends Partial<RepairRegionBox> {
+  /**
+   * SEVERAL SEPARATED MARKS, WHERE ONE RECTANGLE WOULD LIE. A picture can
+   * carry a pill in one corner, a plate in another and a strip along the
+   * bottom; a single rectangle spanning all three is mostly house, and a
+   * mask that is mostly house is exactly what the area ceiling exists to
+   * refuse. So a record may carry up to `MAX_REGION_BOXES` rectangles, each
+   * held to the same shape rules, with the CEILING applied to their combined
+   * covered area — never to the bounding box of the set, which would refuse
+   * honest regions for the space between them. A legacy record carrying only
+   * the top-level rectangle reads exactly as it always did.
+   */
+  boxes?: RepairRegionBox[];
   /**
    * The bytes this rectangle was measured on. Required, never inferred.
    *
@@ -101,24 +142,41 @@ export interface StoredRepairRegion extends RepairRegionBox {
   recorded_at?: string;
 }
 
-/** Within the frame, the right way round, not empty — and not the frame. */
-function wellFormed(box: RepairRegionBox): boolean {
+/** Within the frame, the right way round, not empty. Shape only — size is Barrier A's. */
+function shapedLikeARegion(box: RepairRegionBox): boolean {
   for (const value of [box.left, box.top, box.right, box.bottom]) {
     if (!Number.isFinite(value)) return false;
     if (value < 0 || value > 1) return false;
   }
-  if (!(box.right > box.left) || !(box.bottom > box.top)) return false;
-  /*
-   * BARRIER A. Every other check here asks whether the rectangle is a
-   * rectangle; this one asks whether it is a BADGE. Without it `{0,0,1,1}` is
-   * a perfectly well-formed region covering the entire photograph, and it is
-   * the deterministic route's own size ceiling that then hands it to the
-   * model: a region too big to rebuild arithmetically refuses with
-   * `too_much_to_rebuild`, and that is one of exactly two reasons
-   * `sanitizeSourceImage` escalates to the generative route. The bigger the
-   * rectangle somebody writes down, the more certainly it reached the model.
-   */
-  return regionAreaShare(box) <= MAX_REPAIRED_SHARE;
+  return box.right > box.left && box.bottom > box.top;
+}
+
+/**
+ * The rectangles a stored record asks for, shape-checked but not size-checked.
+ *
+ * A record carrying `boxes` is read from them alone; a legacy record carrying
+ * only the top-level rectangle reads as one box, exactly as it always did.
+ * ANY malformed rectangle voids the whole record — a set where three boxes
+ * are honest and one is `{0,0,1,1}` is not three honest boxes.
+ */
+function storedBoxes(record: Partial<StoredRepairRegion>): RepairRegionBox[] | null {
+  const raw: Array<Partial<RepairRegionBox> | undefined> =
+    Array.isArray(record.boxes) && record.boxes.length
+      ? record.boxes
+      : [{ left: record.left, top: record.top, right: record.right, bottom: record.bottom }];
+  if (raw.length > MAX_REGION_BOXES) return null;
+  const boxes: RepairRegionBox[] = [];
+  for (const entry of raw) {
+    const box: RepairRegionBox = {
+      left: Number(entry?.left),
+      top: Number(entry?.top),
+      right: Number(entry?.right),
+      bottom: Number(entry?.bottom),
+    };
+    if (!shapedLikeARegion(box)) return null;
+    boxes.push(box);
+  }
+  return boxes;
 }
 
 /**
@@ -128,11 +186,14 @@ function wellFormed(box: RepairRegionBox): boolean {
  * unattributable rectangle is treated exactly as no rectangle at all — the
  * picture goes on being judged by the detector alone, which is the behaviour
  * every image without a region already has.
+ *
+ * Returns the record's rectangles (one, for a legacy record) — the caller
+ * rebuilds their union and nothing else.
  */
 export function readRepairRegion(
   sourceDetail: Record<string, unknown> | null | undefined,
   originalSha256: string | null | undefined,
-): RepairRegionBox | null {
+): RepairRegionBox[] | null {
   const raw = (sourceDetail ?? {})[REPAIR_REGION_KEY];
   if (!raw || typeof raw !== 'object') return null;
   const record = raw as Partial<StoredRepairRegion>;
@@ -140,15 +201,24 @@ export function readRepairRegion(
   if (typeof record.original_sha256 !== 'string' || !record.original_sha256) return null;
   if (!originalSha256 || record.original_sha256 !== originalSha256) return null;
 
-  const box: RepairRegionBox = {
-    left: Number(record.left),
-    top: Number(record.top),
-    right: Number(record.right),
-    bottom: Number(record.bottom),
-  };
-  if (!wellFormed(box)) return null;
+  const boxes = storedBoxes(record);
+  if (!boxes) return null;
 
-  return box;
+  /*
+   * BARRIER A. Every other check here asks whether the rectangles are
+   * rectangles; this one asks whether they are a BADGE. Without it
+   * `{0,0,1,1}` is a perfectly well-formed region covering the entire
+   * photograph, and it is the deterministic route's own size ceiling that
+   * then hands it to the model: a region too big to rebuild arithmetically
+   * refuses with `too_much_to_rebuild`, and that is one of exactly two
+   * reasons `sanitizeSourceImage` escalates to the generative route. The
+   * bigger the area somebody writes down, the more certainly it reached the
+   * model. Applied to the COMBINED covered area of the set — the pixels that
+   * would actually be writable — never to a bounding box.
+   */
+  if (combinedAreaShare(boxes) > MAX_REPAIRED_SHARE) return null;
+
+  return boxes;
 }
 
 /**
@@ -171,17 +241,9 @@ export function oversizedRepairRegionShare(
   if (typeof record.original_sha256 !== 'string' || !record.original_sha256) return null;
   if (!originalSha256 || record.original_sha256 !== originalSha256) return null;
 
-  const box: RepairRegionBox = {
-    left: Number(record.left),
-    top: Number(record.top),
-    right: Number(record.right),
-    bottom: Number(record.bottom),
-  };
-  for (const value of [box.left, box.top, box.right, box.bottom]) {
-    if (!Number.isFinite(value) || value < 0 || value > 1) return null;
-  }
-  if (!(box.right > box.left) || !(box.bottom > box.top)) return null;
+  const boxes = storedBoxes(record);
+  if (!boxes) return null;
 
-  const share = regionAreaShare(box);
+  const share = combinedAreaShare(boxes);
   return share > MAX_REPAIRED_SHARE ? share : null;
 }

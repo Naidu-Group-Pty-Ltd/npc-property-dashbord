@@ -389,7 +389,7 @@ export async function settleImageSanitization(
   const repairOne = async (
     row: ImageRow & { storage_path: string },
     scanDetail: Record<string, unknown>,
-    region: RepairRegionBox | null,
+    region: RepairRegionBox[] | null,
     /*
      * THE ATTEMPT WAS STAMPED — AS THE CLAIM — BEFORE THE WORK BEGAN, in the
      * spend loop, because the worst way a repair ends is one this function
@@ -677,7 +677,7 @@ export async function settleImageSanitization(
   const shortlist: Array<{
     row: ImageRow & { storage_path: string };
     detail: Record<string, unknown>;
-    region: RepairRegionBox | null;
+    region: RepairRegionBox[] | null;
     waitingSince: number;
   }> = [];
   /** Same truthiness test the loop always used, expressed so it narrows `row`. */
@@ -686,7 +686,7 @@ export async function settleImageSanitization(
   const consider = (
     row: ImageRow & { storage_path: string },
     detail: Record<string, unknown>,
-    region: RepairRegionBox | null,
+    region: RepairRegionBox[] | null,
   ): void => {
     if (slots <= 0) return;
     const waitingSince = attemptedAt(detail);
