@@ -1,21 +1,15 @@
 /**
- * The service gate — one card, rendered wherever the act belongs.
+ * The service gate — the Decision stage's full gate card.
  *
- * ── Why it left RiskTab ───────────────────────────────────────────────
- * Stage 9 is NAMED "Service gate & Passport", yet its "Record the
- * service-gate decision" button bounced the operator back to Stage 8,
- * where the gate card happened to live. Recording the gate is Stage 9's
- * own act, so the card is shared: Stage 8 keeps it beside the decision
- * (context "decision" — its approved strip doors forward to Gate &
- * Passport), Stage 9 renders it in place (context "passport" — approved
- * reads "issue the Passport below", because the door is this page).
- *
- * One component, one set of rules: the choice cards, suggestion grouping,
- * precondition hints and the reason countdown all come from the same pure
- * modules as before. The server's `set_service_gate` still enforces
- * everything.
+ * This is the ONE place every gate status can be recorded: the eight
+ * choice cards, the suggestion grouping, the precondition hints and the
+ * reason countdown. Stage 9 deliberately does NOT repeat it — a full copy
+ * there read as a duplicate of the Decision stage, so Gate & Passport
+ * carries only the one act it owes (approving a cleared case's gate) in
+ * `GateApprovalCard`, and links here for everything else. The server's
+ * `set_service_gate` still enforces every rule.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
@@ -50,7 +44,7 @@ function ChoiceCard({ selected, label, meaning, onSelect }: {
 
 export function ServiceGateCard({
   caseId, gate, decisionOutcome, openConditionCount, canReview, isMlro,
-  onChanged, onOpenSection, anchorId, context,
+  onChanged, onOpenSection, anchorId,
 }: {
   caseId: string;
   gate: AmlServiceGateContract | null;
@@ -61,8 +55,6 @@ export function ServiceGateCard({
   onChanged: () => void | Promise<void>;
   onOpenSection?: (section: string) => void;
   anchorId: string;
-  /** Which stage this card stands on — decides where "approved" doors to. */
-  context: "decision" | "passport";
 }) {
   const [gateStatus, setGateStatus] = useState<string>("under_review");
   const [gateReason, setGateReason] = useState("");
@@ -128,11 +120,10 @@ export function ServiceGateCard({
             {approved && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/40 bg-success/5 p-2.5">
                 <p className="text-xs text-success">
-                  {context === "decision"
-                    ? `The service gate is ${(GATE_LABELS[gate.status] ?? "approved").toLowerCase()} — the case is service-ready and this cascades into Gate & Passport.`
-                    : `The service gate is ${(GATE_LABELS[gate.status] ?? "approved").toLowerCase()} — the case is service-ready. The Passport can now be issued below.`}
+                  The service gate is {(GATE_LABELS[gate.status] ?? "approved").toLowerCase()} — the
+                  case is service-ready and this cascades into Gate &amp; Passport.
                 </p>
-                {context === "decision" && onOpenSection && (
+                {onOpenSection && (
                   <Button size="sm" className="h-7" onClick={() => onOpenSection("passport")}>
                     Continue to Gate &amp; Passport
                   </Button>
@@ -224,46 +215,3 @@ export function ServiceGateCard({
   );
 }
 
-/**
- * Stage 9's self-fetching mount: loads the gate contract, the latest
- * decision and the open conditions itself, so the workspace section can
- * render the act in place without threading RiskTab's state across stages.
- * A failed read renders "Gate state unavailable", never a guess.
- */
-export function ServiceGateCardStandalone({ caseId, canReview, isMlro, onChanged, anchorId }: {
-  caseId: string;
-  canReview: boolean;
-  isMlro: boolean;
-  onChanged: () => void | Promise<void>;
-  anchorId: string;
-}) {
-  const [gate, setGate] = useState<AmlServiceGateContract | null>(null);
-  const [decisionOutcome, setDecisionOutcome] = useState<string | null>(null);
-  const [openConditionCount, setOpenConditionCount] = useState(0);
-
-  const load = useCallback(async () => {
-    const [g, d, c] = await Promise.all([
-      amlRiskApi.gateContract(caseId).catch(() => ({ gate: null as any })),
-      amlRiskApi.latestDecision(caseId).catch(() => ({ decision: null as any })),
-      amlRiskApi.listConditions(caseId).catch(() => ({ conditions: [] as any[] })),
-    ]);
-    setGate(g.gate ?? null);
-    setDecisionOutcome(d.decision?.outcome ?? null);
-    setOpenConditionCount((c.conditions ?? []).filter((x: any) => x.status === "open").length);
-  }, [caseId]);
-  useEffect(() => { void load(); }, [load]);
-
-  return (
-    <ServiceGateCard
-      caseId={caseId}
-      gate={gate}
-      decisionOutcome={decisionOutcome}
-      openConditionCount={openConditionCount}
-      canReview={canReview}
-      isMlro={isMlro}
-      onChanged={async () => { await load(); await onChanged(); }}
-      anchorId={anchorId}
-      context="passport"
-    />
-  );
-}

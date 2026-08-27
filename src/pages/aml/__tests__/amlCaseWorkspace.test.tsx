@@ -42,12 +42,11 @@ vi.mock("@/components/aml/ReliancePassportSection", () => ({
 vi.mock("@/components/aml/ComplianceJourneyMap", () => ({
   ComplianceJourneyMap: () => <div data-testid="journey-map" />,
 }));
-// The shared gate card fetches its own facts (gate contract, latest
-// decision, conditions) — a heavy body of its own; the shell suite only
-// cares that Stage 9 mounts the ACT, not the ledger it replaced.
-vi.mock("@/components/aml/ServiceGateCard", () => ({
-  ServiceGateCard: () => <div data-testid="service-gate-card" />,
-  ServiceGateCardStandalone: () => <div data-testid="service-gate-card" />,
+// Stage 9's approval act fetches its own facts (gate contract, open
+// conditions); the shell suite only cares that the stage mounts the ACT,
+// not the full gate card or the readiness ledger both removed before it.
+vi.mock("@/components/aml/GateApprovalCard", () => ({
+  GateApprovalCard: () => <div data-testid="gate-approval-card" />,
 }));
 vi.mock("@/components/aml/CaseWorkspaceTabs", () => ({
   VerificationTab: () => <div data-testid="tab-verification" />,
@@ -166,14 +165,15 @@ describe("AmlCaseWorkspace — full-page shell", () => {
     expect(screen.getByText("Compliance evidence")).toBeInTheDocument();
   });
 
-  it("mounts the gate ACT on the Passport stage — the readiness ledger it replaced is gone", async () => {
+  it("mounts only the approval ACT on the Passport stage — no full gate card, no readiness ledger", async () => {
     setup(`/admin/aml/cases/${CASE_ID}?section=passport`);
     await screen.findByRole("heading", { name: "Avery Client" });
-    // The SERVICE READINESS card restated gate facts without offering the
-    // act, and "Record the service-gate decision" bounced to Stage 8.
-    // Stage 9 now carries the shared gate card itself.
-    expect(screen.getByTestId("service-gate-card")).toBeInTheDocument();
+    // The readiness ledger restated gate facts without offering the act;
+    // the full eight-status gate card read as a duplicate of the Decision
+    // stage. Stage 9 keeps exactly the act it owes.
+    expect(screen.getByTestId("gate-approval-card")).toBeInTheDocument();
     expect(screen.queryByText("Service readiness")).not.toBeInTheDocument();
+    expect(screen.queryByText("Change service gate")).not.toBeInTheDocument();
   });
 
   it("selecting a stage writes its section to the URL so refresh and sharing keep it", async () => {

@@ -1041,8 +1041,8 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
         </CardContent>
       </Card>
 
-      {/* The gate card is shared with Stage 9 (ServiceGateCard) — here it
-          stands beside the decision, and approval doors forward. */}
+      {/* The Decision stage's full gate card — the one place every gate
+          status can be recorded; approval doors forward to Stage 9. */}
       <ServiceGateCard
         caseId={caseId}
         gate={gate}
@@ -1053,7 +1053,6 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
         onChanged={async () => { await load(); onChanged(); }}
         onOpenSection={onOpenSection}
         anchorId="decision-step-gate"
-        context="decision"
       />
     </div>
   );

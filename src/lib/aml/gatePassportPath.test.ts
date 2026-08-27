@@ -120,12 +120,18 @@ describe("wired at the source", () => {
     expect(journey).toMatch(/section: "passport",\s*\n\s*actionType: "record_gate"/);
   });
 
-  it("the gate act is mounted on Stage 9, replacing the readiness ledger", () => {
-    expect(workspace).toContain("ServiceGateCardStandalone");
+  it("Stage 9 carries ONLY the approval act — never the Decision stage's full gate card", () => {
+    // The full eight-status gate card on Stage 9 read as a duplicate of the
+    // Decision stage and was removed at the user's direction. What remains
+    // is the one act the stage owes: approving a cleared case's gate.
+    expect(workspace).toContain("GateApprovalCard");
     expect(workspace).toContain('anchorId="aml-passport-gate"');
-    // The SERVICE READINESS card restated gate facts without offering the
-    // act — removed at the user's direction, not merely hidden.
+    expect(workspace).not.toContain("ServiceGateCardStandalone");
+    // Neither the readiness ledger nor the full card may return.
     expect(workspace).not.toContain("AmlServiceReadinessCard");
+    // When nothing is owed the card is absent, and the button falls back to
+    // the guided path instead of a dead scroll.
+    expect(workspace).toContain('"aml-passport-path"');
   });
 
   it("preview deep-links the passport hub to THIS case, and the hub honours it", () => {
