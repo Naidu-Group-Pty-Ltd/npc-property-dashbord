@@ -50,7 +50,7 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
 import { readMarketingOverlay } from '../../../supabase/functions/_shared/builderStock/marketingOverlay.pure';
 import { eligibilityDetailFor } from '../../../supabase/functions/_shared/builderStock/assessSourceImage';
-import { encodePng } from '../../../supabase/functions/_shared/builderStock/rasterPng';
+import { encodePng, sha256Hex } from '../../../supabase/functions/_shared/builderStock/rasterPng';
 import { annotatedPicture, cleanPicture } from './fixtures/builderStockPictures';
 
 const ORG = 'org-a';
@@ -230,17 +230,32 @@ const item = (over: Partial<Row> = {}): Row => ({
   ...over,
 });
 
+/**
+ * Give the row the provenance a real one has: `stored_sha256` IS the hash of
+ * the object it references. The legacy fixture's dummy hash stopped being
+ * inert when the eligibility verdict started naming the bytes it judged — a
+ * verdict written for these bytes beside a hash of OTHER bytes now reads as
+ * `pending`, which is the binding working, not the settlement failing.
+ * `source_sha256` keeps the dummy: the binding reads only the stored hash,
+ * and a test asserts the settlement leaves provenance untouched.
+ */
+const withStoredHash = async (row: Row, bytes: Uint8Array): Promise<Row> => {
+  (row.source_detail as Record<string, unknown>).stored_sha256 = await sha256Hex(bytes);
+  return row;
+};
+
 // ---------------------------------------------------------------------------
 // 1 / 2 — the backfill itself
 // ---------------------------------------------------------------------------
 
 describe('1 — a clean legacy primary with no verdict is assessed and restored', () => {
   it('reads its stored bytes, writes eligible, and becomes the chosen image', async () => {
-    const row = image();
+    const bytes = await cleanBytes();
+    const row = await withStoredHash(image(), bytes);
     const db = fakeDb({
       images: [row],
       items: [item({ primary_image_id: null })],
-      objects: { [row.storage_path as string]: await cleanBytes() },
+      objects: { [row.storage_path as string]: bytes },
     });
 
     // Before: no verdict, so the display rule hides it and the card is blank.
@@ -343,6 +358,8 @@ describe('4 — one upload failing must not clear another property in the same o
       id: 'image-stranded', upload_id: 'upload-2', stock_item_id: 'item-stranded',
       storage_path: 'org/items/item-stranded/source/missing.png',
     });
+    const settledBytes = await cleanBytes();
+    await withStoredHash(settledImage, settledBytes);
     const db = fakeDb({
       images: [settledImage, strandedImage],
       items: [
@@ -350,7 +367,7 @@ describe('4 — one upload failing must not clear another property in the same o
         item({ id: 'item-stranded', primary_image_id: 'image-stranded' }),
       ],
       // Only the first upload's object is readable.
-      objects: { [settledImage.storage_path as string]: await cleanBytes() },
+      objects: { [settledImage.storage_path as string]: settledBytes },
     });
 
     await settleMarketplaceEligibility(db as never, ORG, { uploadId: 'upload-1' });
@@ -442,6 +459,10 @@ describe('5 — after a complete settlement the pointers are exactly right', () 
       id: 'image-tile', stock_item_id: 'item-tile',
       storage_path: 'org/items/item-tile/source/tile.png',
     });
+    const cleanObject = await cleanBytes();
+    const tileObject = await annotatedBytes();
+    await withStoredHash(cleanRow, cleanObject);
+    await withStoredHash(tileRow, tileObject);
     const db = fakeDb({
       images: [cleanRow, tileRow],
       items: [
@@ -449,8 +470,8 @@ describe('5 — after a complete settlement the pointers are exactly right', () 
         item({ id: 'item-tile', primary_image_id: 'image-tile' }),
       ],
       objects: {
-        [cleanRow.storage_path as string]: await cleanBytes(),
-        [tileRow.storage_path as string]: await annotatedBytes(),
+        [cleanRow.storage_path as string]: cleanObject,
+        [tileRow.storage_path as string]: tileObject,
       },
     });
 

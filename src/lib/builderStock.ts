@@ -358,6 +358,17 @@ export function isDisplayableSourceImage(image: BuilderStockImage): boolean {
  * ranks only images that already passed the role check above, so there is
  * nothing for it to fall back TO unless the source designated one.
  */
+/**
+ * Does this image serve the builder's ORIGINAL bytes, untouched? Mirrors the
+ * server's `primaryImage.ts`, as `isDisplayableSourceImage` above already
+ * does: true for a measured-clean picture and for a cleared one; false for an
+ * image that reaches a card only through its sanitized derivative.
+ */
+function servesCleanOriginal(image: BuilderStockImage): boolean {
+  return isMarketplaceEligible(image.source_detail)
+    || !!servableClearanceFor(image.source_detail);
+}
+
 export function primaryStockImage(item: BuilderStockItem): BuilderStockImage | null {
   const displayable = (item.images ?? []).filter(isDisplayableSourceImage);
   if (!displayable.length) return null;
@@ -367,10 +378,15 @@ export function primaryStockImage(item: BuilderStockItem): BuilderStockImage | n
     if (chosen) return chosen;
   }
   // The stored choice is missing or stale. Ranked exactly as the server ranks
-  // it — the strength of the source's own evidence first, then the order the
-  // SOURCE gave them, then the id — so the two never disagree.
+  // it — a clean builder original ahead of a cleaned promotional derivative,
+  // then the strength of the source's own evidence, then the order the SOURCE
+  // gave them, then the id — so the two never disagree. (The clean-first key
+  // is the one this mirror was missing after the server gained it: the same
+  // property's clean render and repaired page cover sorted differently here
+  // and there, and two surfaces showed two pictures.)
   return [...displayable].sort((a, b) =>
-    comparePrimaryEvidence(
+    (servesCleanOriginal(a) ? 0 : 1) - (servesCleanOriginal(b) ? 0 : 1)
+    || comparePrimaryEvidence(
       readStoredEvidenceLevel(a.source_detail), readStoredEvidenceLevel(b.source_detail))
     || (a.position ?? 0) - (b.position ?? 0)
     || String(a.id).localeCompare(String(b.id)))[0] ?? null;
