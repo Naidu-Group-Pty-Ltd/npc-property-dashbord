@@ -1346,7 +1346,14 @@ function decisionStage(facts: AmlWorkspaceFacts): StageReading {
     }
   }
 
-  if (stage === "blocked") {
+  /*
+   * Each terminal branch reads the canonical stage OR the legacy status —
+   * the escalated branch below always has. The decide op used to write only
+   * `status`, so a cleared case could carry case_stage = staff_review
+   * forever; the server now syncs both, and this dual read keeps every row
+   * that predates the fix (and any old server) reading correctly.
+   */
+  if (stage === "blocked" || facts.caseRow.status === "blocked") {
     return {
       status: "attention",
       owner: "reviewer",
@@ -1390,11 +1397,14 @@ function decisionStage(facts: AmlWorkspaceFacts): StageReading {
     };
   }
 
-  if (stage === "cleared" || stage === "cleared_with_conditions") {
+  if (stage === "cleared" || stage === "cleared_with_conditions" || facts.caseRow.status === "cleared") {
+    const label = stage === "cleared" || stage === "cleared_with_conditions"
+      ? CASE_STAGE_LABELS[stage]
+      : CASE_STAGE_LABELS.cleared;
     return {
       status: "complete",
       owner: "none",
-      summary: `A decision has been recorded — ${CASE_STAGE_LABELS[stage]}.`,
+      summary: `A decision has been recorded — ${label}.`,
       completedItems: [note("decided", "Compliance decision recorded", "steady"), ...completed],
       warnings,
       sourceFacts,
