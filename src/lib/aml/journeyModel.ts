@@ -1492,6 +1492,11 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
 
   const gateApproved = GATE_APPROVED.has(gate);
   const gateStopped = gate === "locked" || gate === "terminated";
+  /* Dual-read like decisionStage: a cleared case may still carry only the
+   * legacy status column. An open gate on a CLEARED case is a step waiting
+   * for an authorised approval — not doubt about the case. */
+  const caseCleared =
+    caseStage(facts.caseRow) === "cleared" || facts.caseRow.status === "cleared";
 
   if (gateApproved) {
     completed.push(
@@ -1508,7 +1513,9 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
   } else {
     blockers.push(
       note("gate_open", `Service gate: ${SERVICE_GATE_LABELS[gate]}`, "attention", {
-        detail: "The gate is an explicit decision; evidence and risk do not move it.",
+        detail: caseCleared
+          ? "The case is cleared — the gate is its own explicit decision, awaiting an authorised approval."
+          : "The gate is an explicit decision; evidence and risk do not move it.",
       }),
     );
     outstanding.push(note("gate_decision", "Service-gate decision", "attention"));
@@ -1606,7 +1613,9 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
       ? `The service may proceed and the Passport is in force${facts.passport?.version ? ` at v${facts.passport.version}` : ""}.`
       : gateApproved
         ? `Gate approved. Passport: ${passportLabel ?? "state unavailable"}.`
-        : `${SERVICE_GATE_LABELS[gate]} — the designated service may not proceed yet.`,
+        : caseCleared && !gateStopped
+          ? `The case is cleared — the service gate (${SERVICE_GATE_LABELS[gate]}) awaits an authorised approval.`
+          : `${SERVICE_GATE_LABELS[gate]} — the designated service may not proceed yet.`,
     blockers,
     warnings,
     completedItems: completed,
@@ -1618,9 +1627,11 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
         /* `actionType` matters — without one this button fell to the
          * workspace switch's default, a scroll to a screening anchor that
          * does not exist, and changed nothing visible. Same class as the
-         * Stage 6/7/8 buttons before it. */
+         * Stage 6/7/8 buttons before it. The section is THIS stage: the
+         * gate card is mounted on Gate & Passport now, so the button no
+         * longer bounces the operator back to the Decision stage. */
         ? {
-            key: "gate", label: "Record the service-gate decision", section: "risk",
+            key: "gate", label: "Record the service-gate decision", section: "passport",
             actionType: "record_gate",
           }
         : { key: "passport", label: "Open the Compliance Passport", section: "passport" },

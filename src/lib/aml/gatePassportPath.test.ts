@@ -50,7 +50,10 @@ describe("the gate step directs", () => {
   it("cleared + unapproved gate: current for a reviewer, with the route named", () => {
     const s = byKey(gatePassportPath(facts()), "gate");
     expect(s.state).toBe("current");
-    expect(s.detail).toMatch(/approve the gate on the Decision stage/);
+    // The act is ON this stage now — the detail must not send the operator
+    // back to the Decision stage.
+    expect(s.detail).toMatch(/approve the gate on the card below/);
+    expect(s.detail).not.toMatch(/Decision stage/);
   });
 
   it("blocked-with-blocker for an operator who cannot review", () => {
@@ -107,10 +110,22 @@ describe("wired at the source", () => {
   const workspace = readFileSync("src/pages/aml/AmlCaseWorkspace.tsx", "utf8");
   const passports = readFileSync("src/pages/aml/AmlPassports.tsx", "utf8");
 
-  it("the stage's primary button carries a type the workspace handles", () => {
+  it("the stage's primary button carries a type the workspace handles — and stays on Stage 9", () => {
     expect(journey).toContain('actionType: "record_gate"');
     expect(workspace).toContain('case "record_gate":');
-    expect(workspace).toContain('"decision-step-gate"');
+    // "Record the service-gate decision" used to bounce the operator back
+    // to the Decision stage. The gate card is mounted on Gate & Passport
+    // now, so the button lands on it in place.
+    expect(workspace).toContain('"aml-passport-gate"');
+    expect(journey).toMatch(/section: "passport",\s*\n\s*actionType: "record_gate"/);
+  });
+
+  it("the gate act is mounted on Stage 9, replacing the readiness ledger", () => {
+    expect(workspace).toContain("ServiceGateCardStandalone");
+    expect(workspace).toContain('anchorId="aml-passport-gate"');
+    // The SERVICE READINESS card restated gate facts without offering the
+    // act — removed at the user's direction, not merely hidden.
+    expect(workspace).not.toContain("AmlServiceReadinessCard");
   });
 
   it("preview deep-links the passport hub to THIS case, and the hub honours it", () => {
