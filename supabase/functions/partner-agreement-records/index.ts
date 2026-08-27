@@ -43,7 +43,7 @@ import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.
 import { fetchReportBrandSnapshot } from '../_shared/reportDesign/fetchBrandSnapshot.ts';
 import { renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
 import { renderMarkdown } from '../_shared/reports/markdown.pure.ts';
-import { PORTAL_TERMS_ACKNOWLEDGEMENTS } from '../_shared/portalAgreement.ts';
+import { acknowledgementsForChannel } from '../_shared/portalAgreement.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import {
   agreementFileName,
@@ -436,7 +436,10 @@ async function generateAgreementCopy(
   // the agreement defines. An acceptance taken before acknowledgments were
   // recorded prints none rather than inventing four.
   const asserted = new Set<string>(Array.isArray(record.acknowledgements) ? record.acknowledgements : []);
-  const acknowledgements = PORTAL_TERMS_ACKNOWLEDGEMENTS.filter((item) => asserted.has(item.key));
+  // The wording the person actually assented to. A direct partner never saw
+  // the portal statements, so printing them would misdescribe their copy.
+  const acknowledgements = acknowledgementsForChannel(String(record.portal))
+    .filter((item) => asserted.has(item.key));
 
   // A direct acknowledgement keeps its own fingerprints on its own row; a
   // portal acceptance keeps them on the portal store.

@@ -10,6 +10,9 @@ import {
 import { BrandLockup } from "@/components/branding/BrandAssets";
 import { PortalAgreementConsent } from "@/components/portal/PortalAgreementConsent";
 import {
+  DIRECT_AGREEMENT_ACCEPTANCE_NOTICE, DIRECT_AGREEMENT_TITLE, DIRECT_TERMS_ACKNOWLEDGEMENTS,
+} from "@/lib/portalAgreement";
+import {
   partnerAcknowledgementPublicApi, type PublicAcknowledgementView,
 } from "@/lib/aml/partnerAcknowledgementPublic";
 
@@ -105,12 +108,25 @@ export default function PartnerAcknowledgement() {
     }
   };
 
+  /*
+   * The mark is CONSTRAINED here. `BrandLockup` sets no default size, so the
+   * uploaded asset rendered at its natural dimensions — several times the
+   * height of the heading beside it, which made the logo the subject of the
+   * page and the agreement its footnote. A signing page should lead with
+   * what is being signed.
+   */
   const shell = (children: React.ReactNode) => (
-    <div className="min-h-screen bg-background px-4 py-10">
-      <div className="mx-auto w-full max-w-3xl space-y-6">
-        <div className="flex justify-center">
-          <BrandLockup slot="auth" meta="Compliance Agreement" />
-        </div>
+    <div className="min-h-screen bg-background px-4 py-8 sm:py-12">
+      <div className="mx-auto w-full max-w-3xl space-y-5">
+        <header className="flex justify-center border-b border-border/50 pb-5">
+          <BrandLockup
+            slot="auth"
+            meta="Compliance Agreement"
+            logoClassName="h-10 w-auto object-contain sm:h-12"
+            fallbackClassName="h-10 w-10 sm:h-12 sm:w-12"
+            companyClassName="text-sm sm:text-base"
+          />
+        </header>
         {children}
       </div>
     </div>
@@ -182,39 +198,36 @@ export default function PartnerAcknowledgement() {
   return shell(
     <>
       <Card className="glass-panel">
-        <CardContent className="space-y-4 py-5">
+        <CardContent className="space-y-2 py-5">
           <div className="flex items-start gap-3">
             <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
             <div className="space-y-1">
-              <h1 className="text-base font-semibold">
+              <h1 className="text-base font-semibold leading-snug">
                 {view.issuer_name} has asked {view.organisation_name ?? "your organisation"} to accept
                 this agreement
               </h1>
               <p className="text-sm text-muted-foreground">
-                Read the agreement below, tick each acknowledgement, and confirm who is accepting on
-                behalf of the organisation. No account or password is needed.
+                It sets out how an AML/CTF Compliance Passport is made available to you by link — no
+                account and no password. Read it below, tick each acknowledgement, then confirm who is
+                accepting.
               </p>
             </div>
           </div>
-
-          <div className="space-y-1.5 border-t border-border/50 pt-4">
-            <Label htmlFor="pa-signer" className="text-xs">
-              Full name of the person accepting
-            </Label>
-            <Input
-              id="pa-signer"
-              value={signerName}
-              onChange={(e) => { setSignerName(e.target.value); setNameError(null); }}
-              placeholder="e.g. Jordan Lee"
-              aria-invalid={nameError ? true : undefined}
-            />
-            {nameError && (
-              <p className="text-xs text-destructive" aria-live="polite">{nameError}</p>
-            )}
-            <p className="text-[11px] text-muted-foreground">
-              Recorded with the acceptance, alongside the date and the agreement version.
-            </p>
-          </div>
+          {/* Three facts a signatory wants before reading 17 sections. */}
+          <dl className="grid gap-2 border-t border-border/50 pt-3 text-xs sm:grid-cols-3">
+            <div>
+              <dt className="text-muted-foreground">Access</dt>
+              <dd className="font-medium">One link — no portal account</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Available for</dt>
+              <dd className="font-medium">90 days, re-issuable</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">This request expires</dt>
+              <dd className="font-medium">{new Date(view.expires_at).toLocaleDateString()}</dd>
+            </div>
+          </dl>
         </CardContent>
       </Card>
 
@@ -226,6 +239,33 @@ export default function PartnerAcknowledgement() {
             loading={false}
             busy={busy}
             onAccept={(keys) => void accept(keys as string[])}
+            /* Same four keys the portals use; the words describe a link,
+               because that is what this partner is actually given. */
+            acknowledgements={DIRECT_TERMS_ACKNOWLEDGEMENTS}
+            acceptanceNotice={DIRECT_AGREEMENT_ACCEPTANCE_NOTICE}
+            fallbackTitle={DIRECT_AGREEMENT_TITLE}
+            beforeAccept={(
+              <div className="space-y-1.5">
+                <Label htmlFor="pa-signer" className="text-xs">
+                  Full name of the person accepting
+                </Label>
+                <Input
+                  id="pa-signer"
+                  value={signerName}
+                  onChange={(e) => { setSignerName(e.target.value); setNameError(null); }}
+                  placeholder="e.g. Jordan Lee"
+                  aria-invalid={nameError ? true : undefined}
+                  className="max-w-sm"
+                />
+                {nameError && (
+                  <p className="text-xs text-destructive" aria-live="polite">{nameError}</p>
+                )}
+                <p className="text-[11px] text-muted-foreground">
+                  Recorded with the acceptance, alongside the date, the agreement version and its
+                  document hash.
+                </p>
+              </div>
+            )}
           />
         </CardContent>
       </Card>
