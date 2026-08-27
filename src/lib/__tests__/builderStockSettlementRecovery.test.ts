@@ -761,3 +761,136 @@ describe('a missing migration is an operational failure, never a quiet success',
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// 10 — one repair allowance for the whole invocation, whoever is invoking
+// ---------------------------------------------------------------------------
+
+describe('10 — the enrichment loop spends ONE repair allowance, not one per upload', () => {
+  /*
+   * THE SETTLER LEARNED THIS THE EXPENSIVE WAY and wrote it down beside its
+   * own budget: a repair is a full-resolution decode plus a reconstruction or
+   * up to four model calls, the worker dies on its RESOURCE limit long before
+   * any wall clock, and several uploads each spending a private allowance is
+   * how a tick becomes a 546 with nothing written. `settleImageSanitization`
+   * therefore takes the budget as an argument — and defaults to a fresh one
+   * when the caller passes nothing, which is right for a single-upload manual
+   * repair and wrong for every loop. The portal's enrichment loop was the
+   * loop that passed nothing: up to five uploads a call, two repairs each.
+   */
+  const uploadRow = (id: string): Row => ({
+    id,
+    organisation_id: ORG,
+    source_type: 'file',
+    original_filename: 'stock.csv',
+    storage_bucket: 'builder-stock-sources',
+    storage_path: 'org/sources/stock.csv',
+    deleted_at: null,
+    source_images_settled_version: PROVENANCE_VERSION,
+    marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+    image_sanitization_settled_version: null,
+  });
+
+  const convicted = (id: string, uploadId: string, itemId: string, sha: string): Row => ({
+    id,
+    organisation_id: ORG,
+    upload_id: uploadId,
+    stock_item_id: itemId,
+    source_stage: 'uploaded_document',
+    verification_status: 'source_supplied',
+    processing_status: 'ready',
+    position: 0,
+    storage_bucket: 'builder-stock-images',
+    storage_path: `org/items/${itemId}/source/${id}.png`,
+    source_detail: {
+      role: 'primary_property',
+      role_evidence_level: 3,
+      stored_sha256: sha,
+      source_sha256: sha,
+      marketplace_display_eligible: false,
+      marketplace_eligibility_state: 'ineligible',
+      marketplace_rejection_reason: 'annotated_marketing_tile',
+      marketplace_measured: true,
+      marketplace_eligibility_version: MARKETPLACE_ELIGIBILITY_VERSION,
+    },
+  });
+
+  async function worldWithTwoUploads() {
+    const bytes = await annotatedBytes();
+    const { sha256Hex } = await import(
+      '../../../supabase/functions/_shared/builderStock/rasterPng');
+    const sha = await sha256Hex(bytes);
+    const imageA = convicted('image-a', 'upload-1', 'item-1', sha);
+    const imageB = convicted('image-b', 'upload-2', 'item-2', sha);
+    const db = fakeDb({
+      uploads: [uploadRow('upload-1'), uploadRow('upload-2')],
+      images: [imageA, imageB],
+      items: [item({ id: 'item-1', primary_image_id: 'image-a' }),
+        item({ id: 'item-2', primary_image_id: 'image-b' })],
+      objects: {
+        [imageA.storage_path as string]: bytes,
+        [imageB.storage_path as string]: bytes,
+      },
+    });
+    return db;
+  }
+
+  /** The portal loop's shape: several uploads, one call each. */
+  async function enrichLoop(
+    db: ReturnType<typeof fakeDb>,
+    repairBudget: { remaining: number } | undefined,
+    onSanitize: () => void,
+  ) {
+    for (const uploadId of ['upload-1', 'upload-2']) {
+      await settleUploadSourceImages(db as never, {
+        organisationId: ORG, uploadId,
+        needsProvenance: false, needsEligibility: false,
+        repairBudget: repairBudget as never,
+      }, {
+        sanitize: (async () => {
+          onSanitize();
+          return {
+            ok: false, reason: 'inpaint_unavailable',
+            transformation: 'generative_overlay_inpaint',
+            model: null, operational: true, detail: 'held for the budget test',
+          };
+        }) as never,
+      });
+    }
+  }
+
+  it('a SHARED budget is spent once across the whole loop', async () => {
+    const db = await worldWithTwoUploads();
+    let attempts = 0;
+    await enrichLoop(db, { remaining: 1 }, () => { attempts += 1; });
+    // One allowance, however many uploads the loop visits.
+    expect(attempts).toBe(1);
+  });
+
+  it('and omitting it is a fresh allowance per upload — the defect\'s mechanism', async () => {
+    const db = await worldWithTwoUploads();
+    let attempts = 0;
+    await enrichLoop(db, undefined, () => { attempts += 1; });
+    // Each upload minted its own budget. This is the module's documented
+    // default for a single manual repair; in a loop it is the 546.
+    expect(attempts).toBe(2);
+  });
+
+  it('the portal\'s enrichment loop passes the shared budget', () => {
+    // The loop lives in an edge function no test can import, so the contract
+    // is pinned the way the version-pairing test pins the deploy: on the
+    // source itself.
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { resolve } = require('node:path') as typeof import('node:path');
+    const source = readFileSync(resolve(
+      __dirname, '../../../supabase/functions/builder-portal-stock/index.ts'), 'utf8');
+    const enrich = source.slice(source.indexOf("operation === 'enrich_images'"));
+    const call = enrich.slice(
+      enrich.indexOf('settleUploadSourceImages('),
+      enrich.indexOf('settleUploadSourceImages(') + 700);
+    expect(call).toContain('repairBudget');
+    // And the budget is minted once, before the loop — not per iteration.
+    const beforeLoop = enrich.slice(0, enrich.indexOf('for (const id of outstanding)'));
+    expect(beforeLoop).toContain('newRepairBudget()');
+  });
+});
