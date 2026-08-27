@@ -87,6 +87,47 @@ lands as `rate_missing` on its dashboard.
 `service_name` is a vendor, not a credential: `google-maps` and `google-ai` are
 the same vendor and separate bills. Keep them apart.
 
+## Metering it is not the same as being worth spending
+
+Metering answers *who pays*. It does not ask whether the call needed making,
+and the two get conflated because a correctly-metered call looks entirely
+healthy on the dashboard.
+
+Builder Stock is the worked example. Its stage-2 and stage-3 image enrichment
+spend three Google calls (geocode, Street View metadata, the image) and one
+Perplexity call per property, all correctly metered. They ran unconditionally
+for every property with no builder photograph — and once imports began
+re-queueing every item they touched, importing the same stock list a second
+time bought the same pictures a second time. On the 70-property Notion list
+that is ~280 vendor calls to reach an answer already on the row, and under the
+strict display rule (`primaryImage.ts`) none of that imagery can ever appear on
+a card, so not one of those calls could change what a client sees.
+
+The rule is `_shared/builderStock/enrichmentRetry.pure.ts`, and it is worth
+copying rather than the alternative that suggests itself:
+
+> A paid stage runs again when it has never answered, when its last answer was
+> about **us** rather than about the subject, or when the **input** it answered
+> for has changed. Otherwise the recorded answer stands.
+
+**Not a cache expiry.** A TTL is a number nobody can justify. "The key was
+missing", "the kill switch was on", "the circuit was open", "the ceiling was
+reached", "the request failed" are statements about this deployment at a
+moment — fix the key and the honest thing is to ask again. "This address has no
+Street View coverage", "nothing published was found" are statements about the
+subject, and the same input buys the same answer. So the reason is **classified
+and recorded** on the row (`stage_reason`) alongside the input it answered for
+(`stage_input`); matching on the human-readable message would have worked until
+somebody improved the wording.
+
+Two details that keep it honest. Membership is tested against the **settled**
+set, so anything unrecognised — a future reason, a typo, the absent reason on a
+row written before this existed — falls to "ask again": being wrong that way
+costs one call, being wrong the other way costs a picture for ever and nothing
+reports it. And a **changed input outranks an artefact already in hand**,
+because a Street View bought for a corrected address is a photograph of the
+wrong house.
+
 ## `meteredFetch` — how a call gets metered now
 
 Instrumenting by hand meant a rule ("remember to log") that decays the moment
