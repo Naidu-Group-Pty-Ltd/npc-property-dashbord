@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, Share2, FileSignature, ShieldCheck, Link2 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Loader2, Share2, FileSignature, ShieldCheck, Link2, Eye, CheckCircle2, CircleDot, Lock } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
+import { passportActions, type PassportActionRow } from "@/lib/aml/passportActions.pure";
 import {
   amlRelianceApi, type ComplianceAttestation, type IndependentAssessment,
   type PartnerCaseLink, type PartnerOrganisation, type PartnerRecordsRequest,
@@ -19,10 +25,18 @@ import {
  * What this panel never does: it never shows a partner our risk assessment,
  * and a partner's independent assessment never moves our case. The two
  * organisations' compliance states are linked by evidence, not by authority.
+ *
+ * The acts are rendered as an EXPLAINED, ordered list (passportActions.pure)
+ * rather than four bare header buttons: production held zero written
+ * arrangements, so "Grant access" refused every click with a toast that read
+ * as a broken button. A blocked act names its enabler before the click, and
+ * issuing an attestation asks for confirmation with the preview one click
+ * away — an outward-facing version should be looked at before it exists.
  */
 export function ReliancePassportSection({
   caseId, isMlro,
 }: { caseId: string; isMlro: boolean }) {
+  const navigate = useNavigate();
   const [attestations, setAttestations] = useState<ComplianceAttestation[]>([]);
   const [grants, setGrants] = useState<RelianceGrant[]>([]);
   const [assessments, setAssessments] = useState<IndependentAssessment[]>([]);
@@ -30,8 +44,11 @@ export function ReliancePassportSection({
   const [links, setLinks] = useState<PartnerCaseLink[]>([]);
   const [organisations, setOrganisations] = useState<PartnerOrganisation[]>([]);
   const [recordsRequests, setRecordsRequests] = useState<PartnerRecordsRequest[]>([]);
+  /** SERVER-derived passport state code; null when the reading failed. */
+  const [passportStateCode, setPassportStateCode] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [confirmIssue, setConfirmIssue] = useState(false);
   const { prompt, dialog } = usePromptDialog();
 
   const refresh = useCallback(async () => {
@@ -66,6 +83,14 @@ export function ReliancePassportSection({
       setRecordsRequests(rr.requests ?? []);
     } catch {
       // Phase 4 tables not present yet — hide the requests block.
+    }
+    try {
+      // The server-derived passport state (refresh flags, supersession) —
+      // a failed read stays null and is never treated as "not issued".
+      const status = await amlRelianceApi.getPassportDistributionStatus(caseId);
+      setPassportStateCode(status.passport?.state?.code ?? null);
+    } catch {
+      setPassportStateCode(null);
     } finally {
       setLoaded(true);
     }
@@ -79,7 +104,7 @@ export function ReliancePassportSection({
       const { attestation } = await amlRelianceApi.issueAttestation(caseId);
       toast({
         title: `Attestation v${attestation.version} issued`,
-        description: `Content hash ${attestation.payload_sha256.slice(0, 12)}…`,
+        description: `Content hash ${attestation.payload_sha256.slice(0, 12)}… — nothing is shared yet; grant partner access when ready.`,
       });
       await refresh();
     } catch (e: any) {
@@ -385,35 +410,105 @@ export function ReliancePassportSection({
 
   if (!loaded) return null;
   const current = attestations.find((a) => !a.superseded_at) ?? null;
+  const nextVersion = (current?.version ?? 0) + 1;
+
+  const actionRows = passportActions({
+    attestationVersion: current?.version ?? null,
+    issuedAt: current?.issued_at ?? null,
+    passportStateCode,
+    activeAgreements: agreements.filter((a) => a.status === "active").length,
+    activeGrants: grants.filter((g) => !g.revoked_at).length,
+    isMlro,
+  });
+
+  /* Each explained row carries its own act — the same handlers the old
+   * header buttons invoked, minus the guessing about what they do. */
+  const actionButton = (row: PassportActionRow) => {
+    if (!isMlro && row.key !== "preview") return null;
+    const spinning = (key: string) => busy === key && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />;
+    switch (row.key) {
+      case "preview":
+        return (
+          <Button size="sm" variant="outline"
+            onClick={() => navigate(`/admin/aml/passport?case=${caseId}`)}>
+            <Eye className="mr-1.5 h-3.5 w-3.5" /> Preview
+          </Button>
+        );
+      case "issue":
+        return (
+          <Button size="sm" onClick={() => setConfirmIssue(true)} disabled={busy !== null}>
+            {spinning("issue")}
+            {current ? `Reissue as v${nextVersion}` : "Issue v1"}
+          </Button>
+        );
+      case "arrangement":
+        return (
+          <Button size="sm" variant="outline" onClick={addAgreement} disabled={busy !== null}>
+            <FileSignature className="mr-1.5 h-3.5 w-3.5" /> Record arrangement
+          </Button>
+        );
+      case "grant":
+        return (
+          <Button size="sm" onClick={grant} disabled={busy !== null || row.state === "blocked"}>
+            {spinning("grant")} Grant access
+          </Button>
+        );
+      case "material":
+        return (
+          <Button size="sm" variant="outline" onClick={materialChange}
+            disabled={busy !== null || row.state === "blocked"}>
+            {spinning("material")} Run check
+          </Button>
+        );
+    }
+  };
+
+  const stateChip = (row: PassportActionRow) => {
+    switch (row.state) {
+      case "done":
+        return <span className="inline-flex items-center gap-1 text-[11px] font-medium uppercase text-success"><CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> Done</span>;
+      case "ready":
+        return <span className="inline-flex items-center gap-1 text-[11px] font-medium uppercase text-primary"><CircleDot className="h-3.5 w-3.5" aria-hidden /> Next</span>;
+      case "blocked":
+        return <span className="inline-flex items-center gap-1 text-[11px] font-medium uppercase text-warning"><Lock className="h-3.5 w-3.5" aria-hidden /> Blocked</span>;
+      default:
+        return <span className="inline-flex items-center gap-1 text-[11px] font-medium uppercase text-muted-foreground"><Eye className="h-3.5 w-3.5" aria-hidden /> Anytime</span>;
+    }
+  };
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
+      <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2">
           <Share2 className="h-4 w-4 text-primary" /> Compliance passport — cross-portal reliance
         </CardTitle>
-        {isMlro && (
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={addAgreement} disabled={busy !== null}>
-              <FileSignature className="mr-1.5 h-3.5 w-3.5" /> Arrangement
-            </Button>
-            <Button size="sm" variant="outline" onClick={issue} disabled={busy !== null}>
-              {busy === "issue" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-              Issue attestation
-            </Button>
-            <Button size="sm" variant="outline" onClick={materialChange}
-              disabled={busy !== null || !current} title="Re-evaluate the material inputs and flag partner surfaces for refresh if they changed">
-              {busy === "material" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-              Material change
-            </Button>
-            <Button size="sm" onClick={grant} disabled={busy !== null || !current}>
-              {busy === "grant" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-              Grant access
-            </Button>
-          </div>
-        )}
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
+        {/*
+          The acts, in order and in words. What each button DOES sits
+          beside it, a blocked act names its enabler before the click, and
+          nothing here is a compliance claim — availability only.
+        */}
+        <ol className="space-y-2" aria-label="Passport actions, in order">
+          {actionRows.map((row) => (
+            <li key={row.key}
+              className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-border/60 p-2.5">
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">{row.label}</span>
+                  {stateChip(row)}
+                </div>
+                <p className="text-xs text-muted-foreground">{row.meaning}</p>
+                <p className="text-[11px] text-muted-foreground/90">{row.detail}</p>
+                {row.blockedBy && (
+                  <p className="text-[11px] text-warning">{row.blockedBy}.</p>
+                )}
+              </div>
+              <div className="shrink-0">{actionButton(row)}</div>
+            </li>
+          ))}
+        </ol>
+
         <Alert>
           <ShieldCheck className="h-4 w-4" />
           <AlertTitle className="text-sm">One process, every portal</AlertTitle>
@@ -621,6 +716,42 @@ export function ReliancePassportSection({
           </div>
         )}
       </CardContent>
+      {/*
+        Issuing is an outward act — a numbered version partners will read —
+        so it confirms, says exactly what will happen, and keeps the visual
+        preview one click away. It never issues silently on a stray click.
+      */}
+      <AlertDialog open={confirmIssue} onOpenChange={setConfirmIssue}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Issue attestation v{nextVersion}?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 text-left">
+              <span className="block">
+                This freezes the case&apos;s verified facts — identity verification, screening and
+                consents — as <strong>v{nextVersion}</strong>, stamped with a content hash.
+                {current
+                  ? ` The current v${current.version} is superseded and partners are pointed at the new version.`
+                  : " It becomes the version partners read once access is granted."}
+              </span>
+              <span className="block">
+                Nothing is shared by issuing alone — partner access is a separate grant. If you
+                have not looked at the Passport as the client and partners will see it, preview it
+                first.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button variant="outline"
+              onClick={() => { setConfirmIssue(false); navigate(`/admin/aml/passport?case=${caseId}`); }}>
+              <Eye className="mr-1.5 h-3.5 w-3.5" /> Preview first
+            </Button>
+            <AlertDialogAction onClick={() => { setConfirmIssue(false); void issue(); }}>
+              Issue v{nextVersion}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {dialog}
     </Card>
   );
