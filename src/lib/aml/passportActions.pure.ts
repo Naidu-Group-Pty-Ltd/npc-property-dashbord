@@ -94,16 +94,22 @@ export function passportActions(f: PassportActionFacts): PassportActionRow[] {
     blockedBy: f.isMlro ? null : MLRO_NEEDED,
   });
 
-  /* 3 · The written arrangement reliance stands on. */
+  /* 3 · The written arrangement reliance stands on. For portal partners
+   *     it is PREBUILT — the Portal Access & AML/CTF Compliance Passport
+   *     Agreement their sign-up executes (its mandatory acknowledgement
+   *     is the s 37A arrangement statement) — and onboarding records the
+   *     register row automatically. The manual act remains for a partner
+   *     outside the portals, so this row is an option, never an owed
+   *     "next" step in front of the grant. */
   rows.push({
     key: "arrangement",
     label: "Record the written arrangement",
     meaning:
-      "Records the written CDD arrangement with the partner organisation (AML/CTF Act Pt 2 Div 7). Reliance is unavailable without one, and an overdue review blocks new grants. The agreement itself lives with legal — this records it.",
-    state: !f.isMlro ? "blocked" : f.activeAgreements > 0 ? "done" : "ready",
+      "For portal partners (finance, builder/developer, solicitors) the arrangement is prebuilt: the Portal Access & AML/CTF Compliance Passport Agreement, recorded automatically during onboarding and acknowledged by the partner at portal sign-up (the s 37A statement is a mandatory part of it). Record one manually only for a partner outside the portals.",
+    state: !f.isMlro ? "blocked" : f.activeAgreements > 0 ? "done" : "anytime",
     detail: f.activeAgreements > 0
       ? `${f.activeAgreements} active arrangement${f.activeAgreements === 1 ? "" : "s"} recorded.`
-      : "No written arrangement recorded yet.",
+      : "None recorded yet — onboarding a portal partner records the prebuilt arrangement automatically.",
     blockedBy: f.isMlro ? null : MLRO_NEEDED,
   });
 
