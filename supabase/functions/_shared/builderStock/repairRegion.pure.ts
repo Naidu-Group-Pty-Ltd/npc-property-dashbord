@@ -37,6 +37,38 @@
 /** Where the record lives inside `source_detail`. */
 export const REPAIR_REGION_KEY = 'repair_region';
 
+/**
+ * The most of a photograph any repair may ever rebuild.
+ *
+ * THE NUMBER IS FITTED TO PRODUCTION, NOT CHOSEN. Across all 17 derivatives
+ * this programme has made, the repaired share runs 2.96% to 22.73% — median
+ * 7.58%, p90 15.15% — and the largest, Lot 1663's two-region cover, is the
+ * 22.73%. The only persisted rectangle anyone has recorded by hand, Lot 914
+ * Covella's, is 2.34%. A banner run the full width of a frame at a third of
+ * its height is 33%. So 35% clears every real promotional treatment this
+ * marketplace has met, with the widest of them at two thirds of the ceiling,
+ * and nothing in production is invalidated by it.
+ *
+ * WHAT IT IS ACTUALLY FOR is the other end. Past roughly a third of the frame
+ * the words stop describing a badge on a photograph and start describing a
+ * photograph with some corners kept: the model is no longer reconstructing
+ * what a graphic covered, it is inventing a house. Worse, every guarantee in
+ * this area is written in terms of the pixels OUTSIDE the repair —
+ * `outsidePermittedRegionUnchanged` compares exactly those and nothing else —
+ * so a mask that approaches the whole frame does not fail that gate, it
+ * empties it. A rule stated as "the AI may only touch the graphic" has to be
+ * enforced as a bound on how much it may touch, or it is not enforced at all.
+ */
+export const MAX_REPAIRED_SHARE = 0.35;
+
+/** How much of the frame a rectangle covers, as a fraction of its area. */
+export function regionAreaShare(box: RepairRegionBox): number {
+  const width = box.right - box.left;
+  const height = box.bottom - box.top;
+  if (!(width > 0) || !(height > 0)) return 0;
+  return width * height;
+}
+
 /** A rectangle, as fractions of the picture's own width and height. */
 export interface RepairRegionBox {
   left: number;
@@ -61,13 +93,24 @@ export interface StoredRepairRegion extends RepairRegionBox {
   recorded_at?: string;
 }
 
-/** Within the frame, the right way round, and not empty. */
+/** Within the frame, the right way round, not empty — and not the frame. */
 function wellFormed(box: RepairRegionBox): boolean {
   for (const value of [box.left, box.top, box.right, box.bottom]) {
     if (!Number.isFinite(value)) return false;
     if (value < 0 || value > 1) return false;
   }
-  return box.right > box.left && box.bottom > box.top;
+  if (!(box.right > box.left) || !(box.bottom > box.top)) return false;
+  /*
+   * BARRIER A. Every other check here asks whether the rectangle is a
+   * rectangle; this one asks whether it is a BADGE. Without it `{0,0,1,1}` is
+   * a perfectly well-formed region covering the entire photograph, and it is
+   * the deterministic route's own size ceiling that then hands it to the
+   * model: a region too big to rebuild arithmetically refuses with
+   * `too_much_to_rebuild`, and that is one of exactly two reasons
+   * `sanitizeSourceImage` escalates to the generative route. The bigger the
+   * rectangle somebody writes down, the more certainly it reached the model.
+   */
+  return regionAreaShare(box) <= MAX_REPAIRED_SHARE;
 }
 
 /**
@@ -98,4 +141,39 @@ export function readRepairRegion(
   if (!wellFormed(box)) return null;
 
   return box;
+}
+
+/**
+ * A region this row genuinely records, refused ONLY for its size.
+ *
+ * `readRepairRegion` fails closed, which is right and which also makes an
+ * oversized rectangle indistinguishable from no rectangle at all — and those
+ * are very different things to whoever wrote one down. This says "there is a
+ * region here, it is attributed to these exact bytes, and it asks for more of
+ * the photograph than any repair may rebuild", so the caller can say so once
+ * instead of silently doing nothing. Returns the share, or null.
+ */
+export function oversizedRepairRegionShare(
+  sourceDetail: Record<string, unknown> | null | undefined,
+  originalSha256: string | null | undefined,
+): number | null {
+  const raw = (sourceDetail ?? {})[REPAIR_REGION_KEY];
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Partial<StoredRepairRegion>;
+  if (typeof record.original_sha256 !== 'string' || !record.original_sha256) return null;
+  if (!originalSha256 || record.original_sha256 !== originalSha256) return null;
+
+  const box: RepairRegionBox = {
+    left: Number(record.left),
+    top: Number(record.top),
+    right: Number(record.right),
+    bottom: Number(record.bottom),
+  };
+  for (const value of [box.left, box.top, box.right, box.bottom]) {
+    if (!Number.isFinite(value) || value < 0 || value > 1) return null;
+  }
+  if (!(box.right > box.left) || !(box.bottom > box.top)) return null;
+
+  const share = regionAreaShare(box);
+  return share > MAX_REPAIRED_SHARE ? share : null;
 }

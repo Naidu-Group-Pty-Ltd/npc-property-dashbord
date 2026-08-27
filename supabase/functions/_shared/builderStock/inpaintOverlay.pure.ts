@@ -444,3 +444,28 @@ export function outsidePermittedRegionUnchanged(
   }
   return { ok: changed === 0, changed };
 }
+
+/**
+ * How much of the frame the model would be permitted to touch.
+ *
+ * BARRIER B MEASURES THE FINAL SET, NOT THE REQUEST. The number that matters
+ * is not the rectangle somebody asked for, nor the mask the detector drew: it
+ * is `weights`, the exact pixels `compositePatch` may write and the exact
+ * pixels `outsidePermittedRegionUnchanged` then declines to check. Between the
+ * source rectangle and that set sit `growOverlayMask`'s dilation, the merge of
+ * overlapping components, and this module's own FEATHER ring — every one of
+ * which only ever adds area. A ceiling applied to the request would be a
+ * ceiling with a gap in it exactly the width of everything that grows.
+ *
+ * Counting the permitted set also makes the multi-region case fall out for
+ * free: four separate rectangles, individually modest, are one number here.
+ */
+export function permittedShare(
+  weights: Uint8Array, width: number, height: number,
+): number {
+  const count = width * height;
+  if (count <= 0 || weights.length !== count) return 0;
+  let permitted = 0;
+  for (let i = 0; i < count; i++) if (weights[i]) permitted += 1;
+  return permitted / count;
+}
