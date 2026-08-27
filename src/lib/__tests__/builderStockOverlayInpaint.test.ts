@@ -885,6 +885,10 @@ const ORG = 'org-a';
 
 function fakeDb(rows: Array<Record<string, any>>, objects: Record<string, Uint8Array>) {
   const uploads: Array<{ path: string; bytes: Uint8Array }> = [];
+  // Every `source_detail` patch this database is asked to apply, in order, so a
+  // test can count the WRITES rather than infer them from the row's end state —
+  // which is how a write that is immediately overwritten stays invisible.
+  const writes: Array<Record<string, unknown>> = [];
   const state = { failWrites: false, failUploads: false };
   const build = () => {
     const filters: Array<[string, string, unknown]> = [];
@@ -908,6 +912,7 @@ function fakeDb(rows: Array<Record<string, any>>, objects: Record<string, Uint8A
   return {
     uploads,
     rows,
+    writes,
     set failWrites(value: boolean) { state.failWrites = value; },
     set failUploads(value: boolean) { state.failUploads = value; },
     from() {
@@ -918,6 +923,7 @@ function fakeDb(rows: Array<Record<string, any>>, objects: Record<string, Uint8A
           const builder: any = {
             eq(column: string, value: unknown) { filters.push([column, value]); return builder; },
             then(resolve: (v: unknown) => unknown, reject?: unknown) {
+              writes.push((patch.source_detail ?? {}) as Record<string, unknown>);
               if (state.failWrites) {
                 return Promise.resolve({ data: null, error: { message: 'write rejected' } })
                   .then(resolve, reject as never);
@@ -1417,6 +1423,321 @@ describe('a repair the runtime kills mid-flight cannot monopolise the queue', ()
     expect((db.rows as any[]).find((r) => r.id === 'image-99')
       ?.source_detail?.sanitization_attempt?.at)
       .toBe(stampsAfterTickOne.get('image-99'));
+  });
+});
+
+describe('a settlement write can never take the cooldown off the row', () => {
+  /*
+   * THE SECOND HALF OF THE LOT 914 DEFECT, AND THE ONE THE FIRST FIX MISSED.
+   *
+   * Stamping the attempt before the work protects a repair the runtime kills:
+   * nothing downstream runs, so nothing can undo the stamp. It does NOT
+   * protect a repair that FINISHES, because every settling write rebuilt the
+   * whole `source_detail` column out of the snapshot the scan had read —
+   * captured before the stamp existed. The stamp went in, the work ran, and
+   * the success/failure/clearance write put the pre-stamp column back on top
+   * of it. The cooldown was gone within the same tick that created it.
+   *
+   * Invisible while a settled row is a settled row: the scan skips it on the
+   * settling key and never consults the stamp. It becomes the original defect
+   * again the moment a row CANNOT satisfy `sanitizationSettled` — a stored
+   * hash that no longer describes the object, or one that was never written.
+   * Then: attempted, stamped, repaired, stamp erased by its own settlement,
+   * still unsettled, oldest waiter again, picked again by the very next tick,
+   * with a model call spent on every one of them and every other row starved.
+   *
+   * A settling write may only ever ADD its own keys to the row as it stands.
+   */
+  const ATTEMPT = 'sanitization_attempt';
+
+  /** A write whose only business is the stamp — not one that settles a row. */
+  const bareStamps = (db: { writes: Array<Record<string, unknown>> }) =>
+    db.writes.filter((patch) => !!patch[ATTEMPT]
+      && patch[DERIVATIVE_KEY] === undefined
+      && patch[FAILURE_KEY] === undefined
+      && patch[CLEARANCE_KEY] === undefined);
+
+  const stampAt = (row: Record<string, any>): string | null =>
+    ((row.source_detail as Record<string, any>)[ATTEMPT] as { at?: string } | undefined)?.at ?? null;
+
+  const repaired = (bytes: Uint8Array) => ({
+    ok: true as const,
+    bytes,
+    transformation: 'generative_overlay_inpaint' as const,
+    model: '@cf/runwayml/stable-diffusion-v1-5-inpainting',
+    repairedShare: 0.05,
+    regionsRemoved: 1,
+    width: W,
+    height: H,
+    verdict: 'eligible' as const,
+    classifierState: 'eligible' as const,
+  });
+
+  const cleared = {
+    ok: false as const,
+    reason: 'nothing_to_remove' as const,
+    transformation: 'deterministic_overlay_reconstruction' as const,
+    model: null,
+    clearance: {
+      textRunCount: 0,
+      strictTextLines: 0,
+      faintTextLines: 0,
+      flatRegionCount: 1,
+      promotionalRegionCount: 0,
+      plateCount: 0,
+    },
+  };
+
+  const refused = {
+    ok: false as const,
+    reason: 'still_annotated' as const,
+    transformation: 'generative_overlay_inpaint' as const,
+    model: '@cf/runwayml/stable-diffusion-v1-5-inpainting',
+    detail: 'the plate survived the repair',
+  };
+
+  const unreachable = {
+    ok: false as const,
+    reason: 'inpaint_unavailable' as const,
+    transformation: 'generative_overlay_inpaint' as const,
+    model: null,
+    operational: true,
+    detail: 'no worker configured',
+  };
+
+  async function seed(overrides: Record<string, unknown> = {}, id = 'image-1') {
+    const px = new Uint8Array(W * H * 3).fill(128);
+    const bytes = (await encodePng(px, { width: W, height: H, components: 3 }))!;
+    const row = { ...await refusedRow(bytes), id };
+    Object.assign(row.source_detail, overrides);
+    return { row, bytes };
+  }
+
+  it('B — a successful repair settles the row and leaves the stamp standing', async () => {
+    const { row, bytes } = await seed();
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async () => repaired(bytes) as never,
+    });
+
+    const detail = db.rows[0].source_detail as Record<string, any>;
+    expect(detail[DERIVATIVE_KEY]?.verdict).toBe('eligible');
+    // THE POINT: settling did not take the cooldown with it.
+    expect(stampAt(db.rows[0])).toBeTruthy();
+    expect(sanitizationSettled(detail, detail.stored_sha256)).toBe(true);
+
+    // And a settled row is not repaired again, stamp or no stamp.
+    let second = 0;
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async () => { second += 1; return repaired(bytes) as never; },
+    });
+    expect(second).toBe(0);
+  });
+
+  it('C — a clearance settles the row and leaves the stamp standing', async () => {
+    const { row, bytes } = await seed();
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async () => cleared as never,
+    });
+
+    const detail = db.rows[0].source_detail as Record<string, any>;
+    expect(detail[CLEARANCE_KEY]).toBeTruthy();
+    expect(stampAt(db.rows[0])).toBeTruthy();
+  });
+
+  it('D — a terminal failure settles the row and leaves the stamp standing', async () => {
+    const { row, bytes } = await seed();
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async () => refused as never,
+    });
+
+    const detail = db.rows[0].source_detail as Record<string, any>;
+    expect(detail[FAILURE_KEY]?.reason).toBe('still_annotated');
+    expect(stampAt(db.rows[0])).toBeTruthy();
+  });
+
+  it('E — an operational failure records ONE attempt, not two', async () => {
+    const { row, bytes } = await seed();
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async () => unreachable as never,
+    });
+
+    // One repair, one operational failure, exactly one stamp written. The
+    // attempt is stamped before the work; finishing badly is not a second
+    // attempt, and writing it twice widens the window in which a concurrent
+    // write can be reverted for no gain at all.
+    expect(bareStamps(db).length).toBe(1);
+    expect(stampAt(db.rows[0])).toBeTruthy();
+    // Nothing that settles a row or blanks a card was written.
+    const detail = db.rows[0].source_detail as Record<string, any>;
+    expect(detail[DERIVATIVE_KEY] ?? null).toBeNull();
+    expect(detail[FAILURE_KEY] ?? null).toBeNull();
+    expect(detail[CLEARANCE_KEY] ?? null).toBeNull();
+  });
+
+  it('F — a row whose hash cannot settle still cools down, and the queue rotates', async () => {
+    // The pathological row: its recorded hash does not describe the object in
+    // the bucket, so no record it writes can ever satisfy `sanitizationSettled`.
+    const { row: sick, bytes } = await seed({ stored_sha256: 'f'.repeat(64), source_sha256: 'f'.repeat(64) }, 'image-00');
+    const { row: waiting } = await seed({}, 'image-01');
+    const db = fakeDb([sick, waiting], { [PATH]: bytes });
+
+    const attempted: string[] = [];
+    const sanitize = async () => { return repaired(bytes) as never; };
+
+    // Tick one, one slot: the never-attempted pair tie, so scan order picks
+    // `image-00` — the sick one.
+    await settleImageSanitization(db as never, ORG, {
+      budget: { remaining: 1 },
+      sanitize: async (...args) => { attempted.push('tick1'); return sanitize(...args as []); },
+    });
+    expect(stampAt(db.rows[0])).toBeTruthy();
+    expect(sanitizationSettled(
+      db.rows[0].source_detail as Record<string, any>,
+      'f'.repeat(64),
+    )).toBe(false);
+
+    // Tick two, one slot: the sick row is inside its cooldown, so the
+    // allowance goes to the row that has been waiting behind it.
+    const before = stampAt(db.rows[0]);
+    await settleImageSanitization(db as never, ORG, {
+      budget: { remaining: 1 },
+      sanitize: async (...args) => { attempted.push('tick2'); return sanitize(...args as []); },
+    });
+    expect(stampAt(db.rows[0])).toBe(before);
+    expect((db.rows[1].source_detail as Record<string, any>)[DERIVATIVE_KEY]?.verdict)
+      .toBe('eligible');
+  });
+
+  it('G — a row with no recorded hash at all cannot monopolise the queue', async () => {
+    const { row: sick, bytes } = await seed({ stored_sha256: null, source_sha256: null }, 'image-00');
+    const { row: waiting } = await seed({}, 'image-01');
+    const db = fakeDb([sick, waiting], { [PATH]: bytes });
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: { remaining: 1 },
+      sanitize: async () => repaired(bytes) as never,
+    });
+    const first = stampAt(db.rows[0]);
+    expect(first).toBeTruthy();
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: { remaining: 1 },
+      sanitize: async () => repaired(bytes) as never,
+    });
+    expect(stampAt(db.rows[0])).toBe(first);
+    expect((db.rows[1].source_detail as Record<string, any>)[DERIVATIVE_KEY]).toBeTruthy();
+  });
+
+  it('H — one pathological row cannot hold up nine others', async () => {
+    const px = new Uint8Array(W * H * 3).fill(128);
+    const bytes = (await encodePng(px, { width: W, height: H, components: 3 }))!;
+    const rows = [(await seed({ stored_sha256: 'f'.repeat(64), source_sha256: 'f'.repeat(64) }, 'image-00')).row];
+    for (let n = 1; n <= 9; n += 1) {
+      rows.push((await seed({}, `image-0${n}`)).row);
+    }
+    const db = fakeDb(rows, { [PATH]: bytes });
+
+    // Five ticks of one slot each. Without a cooldown that survives its own
+    // settlement, `image-00` takes every one of them.
+    for (let tick = 0; tick < 5; tick += 1) {
+      await settleImageSanitization(db as never, ORG, {
+        budget: { remaining: 1 },
+        sanitize: async () => repaired(bytes) as never,
+      });
+    }
+
+    const settled = db.rows.filter((r: Record<string, any>) =>
+      !!(r.source_detail as Record<string, any>)[DERIVATIVE_KEY]).length;
+    expect(settled).toBeGreaterThanOrEqual(4);
+  });
+
+  it('I — rows that have waited exactly as long are ordered deterministically', async () => {
+    const px = new Uint8Array(W * H * 3).fill(128);
+    const bytes = (await encodePng(px, { width: W, height: H, components: 3 }))!;
+    const at = new Date(Date.now() - 30 * 60_000).toISOString();
+    const rows = [];
+    for (const id of ['image-03', 'image-01', 'image-02']) {
+      const { row } = await seed({ [ATTEMPT]: { at, operational: true } }, id);
+      rows.push(row);
+    }
+    const db = fakeDb(rows, { [PATH]: bytes });
+
+    const order: string[] = [];
+    await settleImageSanitization(db as never, ORG, {
+      budget: { remaining: 3 },
+      sanitize: async () => {
+        order.push(db.rows.filter((r: Record<string, any>) => stampAt(r) !== at)
+          .map((r: Record<string, any>) => String(r.id)).sort().join(','));
+        return repaired(bytes) as never;
+      },
+    });
+    // Identical waits fall back to the scan's own order, which is by id.
+    expect(order[0]).toBe('image-01');
+    expect(order[1]).toBe('image-01,image-02');
+    expect(order[2]).toBe('image-01,image-02,image-03');
+  });
+
+  it('J — a stamp the database refuses is reported, and the sweep carries on', async () => {
+    const { row, bytes } = await seed();
+    const db = fakeDb([row], { [PATH]: bytes });
+    db.failWrites = true;
+
+    const warnings: unknown[][] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args); };
+    try {
+      const outcome = await settleImageSanitization(db as never, ORG, {
+        budget: newRepairBudget(),
+        sanitize: async () => repaired(bytes) as never,
+      });
+      // The sweep does not throw, and does not claim the row is answered.
+      expect(outcome.outstanding).toBeGreaterThan(0);
+    } finally {
+      console.warn = warn;
+    }
+
+    // A stamp that did not land must not be silent: it is the whole cooldown.
+    const said = warnings.map((args) => String(args[0])).join(' | ');
+    expect(said).toContain('[builderStock]');
+    expect(said.toLowerCase()).toContain('attempt');
+    // And nothing was corrupted on the way past.
+    const detail = db.rows[0].source_detail as Record<string, any>;
+    expect(detail.role).toBe('primary_property');
+    expect(detail[DERIVATIVE_KEY] ?? null).toBeNull();
+  });
+
+  it('K — a settling write never rewinds a stamp written after it started', async () => {
+    const { row, bytes } = await seed();
+    const db = fakeDb([row], { [PATH]: bytes });
+
+    // While the repair is in flight, another runner stamps the same row — the
+    // shape of an overlapping invocation. The settling write that lands after
+    // it must not put the older column back.
+    const newer = new Date(Date.now() + 60_000).toISOString();
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async () => {
+        const detail = db.rows[0].source_detail as Record<string, any>;
+        detail[ATTEMPT] = { at: newer, operational: true };
+        return repaired(bytes) as never;
+      },
+    });
+
+    expect(stampAt(db.rows[0])).toBe(newer);
+    expect((db.rows[0].source_detail as Record<string, any>)[DERIVATIVE_KEY]).toBeTruthy();
   });
 });
 

@@ -241,24 +241,84 @@ export async function settleImageSanitization(
    * bump into meaning anything. It records only that we tried and could not
    * look, and it expires.
    */
-  const stampAttempt = async (row: ImageRow): Promise<void> => {
+  const stampAttempt = async (row: ImageRow): Promise<Record<string, unknown>> => {
+    const stamp = { at: new Date().toISOString(), operational: true };
     try {
-      await db.from('builder_stock_item_images')
+      const { error } = await db.from('builder_stock_item_images')
         .update({
-          source_detail: {
-            ...(row.source_detail ?? {}),
-            [ATTEMPT_KEY]: { at: new Date().toISOString(), operational: true },
-          },
+          source_detail: { ...(row.source_detail ?? {}), [ATTEMPT_KEY]: stamp },
         })
         .eq('id', row.id);
-    } catch {
-      /* Recording the attempt is an optimisation; failing to is not a fault. */
+      /*
+       * A REFUSED STAMP IS NOT A NON-EVENT, and it used to be an invisible
+       * one: the returned `error` was never read, so a policy change, a
+       * constraint or a PostgREST fault took the cooldown away silently and
+       * the settler went back to spending every tick on the same row with
+       * nothing anywhere saying why. Still best-effort — the sweep carries on
+       * and the row simply has no cooldown this time round — but it says so.
+       */
+      if (error) {
+        console.warn('[builderStock] the repair attempt stamp was not recorded', {
+          image_id: row.id,
+          phase: 'image_sanitization',
+          detail: String((error as { message?: unknown }).message ?? error).slice(0, 200),
+        });
+      }
+    } catch (error) {
+      console.warn('[builderStock] the repair attempt stamp was not recorded', {
+        image_id: row.id,
+        phase: 'image_sanitization',
+        detail: String(error).slice(0, 200),
+      });
     }
+    return stamp;
   };
 
-  const noteOperationalFailure = async (row: ImageRow): Promise<void> => {
+  /**
+   * Write the keys that settle a row, onto the row AS IT STANDS NOW.
+   *
+   * Every settling write used to rebuild the whole column from the snapshot
+   * the scan read, which was taken before this repair stamped its attempt —
+   * so settling put the pre-stamp column back and the cooldown died inside
+   * the tick that created it. Harmless while the row then counted as settled;
+   * the original starvation again the moment it could not, because a row that
+   * cannot satisfy `sanitizationSettled` came back as the oldest waiter on the
+   * very next tick, for ever, one model call each time.
+   *
+   * Re-reading first is what makes this safe against the other direction too:
+   * an overlapping invocation that stamped the row while this repair was in
+   * flight keeps its stamp, rather than being rewound to an older one. The
+   * caller's own detail is the fallback for a read that fails, and it now
+   * carries the stamp, so neither path can erase it.
+   */
+  const settleWrite = async (
+    row: ImageRow,
+    fallbackDetail: Record<string, unknown>,
+    settlingKeys: Record<string, unknown>,
+  ): Promise<{ error: unknown }> => {
+    let base = fallbackDetail;
+    try {
+      const { data, error } = await db.from('builder_stock_item_images')
+        .select('source_detail').eq('id', row.id).limit(1);
+      const current = (data as Array<{ source_detail?: Record<string, unknown> | null }> | null)
+        ?.[0]?.source_detail;
+      if (!error && current && typeof current === 'object') base = current;
+    } catch {
+      /* The fallback already carries everything this repair knows. */
+    }
+    return await db.from('builder_stock_item_images')
+      .update({ source_detail: { ...base, ...settlingKeys } })
+      .eq('id', row.id);
+  };
+
+  /*
+   * The attempt was stamped before the work began, so there is nothing to
+   * record here. Finishing badly is not a second attempt: the stamp this used
+   * to write bought no extra cooldown and widened the window in which a
+   * concurrent write could be reverted.
+   */
+  const noteOperationalFailure = (): void => {
     outcome.unresolved += 1;
-    await stampAttempt(row);
   };
 
   /** True while a recent operational attempt says to spend the tick elsewhere. */
@@ -277,7 +337,7 @@ export async function settleImageSanitization(
    */
   const repairOne = async (
     row: ImageRow & { storage_path: string },
-    detail: Record<string, unknown>,
+    scanDetail: Record<string, unknown>,
     region: RepairRegionBox | null,
   ): Promise<void> => {
     /*
@@ -295,13 +355,25 @@ export async function settleImageSanitization(
      *
      * Stamped first, a death mid-repair leaves the cooldown behind it, so the
      * next tick spends the allowance on a DIFFERENT row and the oversized one
-     * is retried at the cooldown's pace instead of every tick. On any path
-     * this function does complete, the stamp is invisible: success writes a
-     * settling key beside it, and a completed operational failure refreshes
-     * it. The stamp still cannot settle a row, blank a card, or outlive its
-     * meaning — see `noteOperationalFailure` above.
+     * is retried at the cooldown's pace instead of every tick.
+     *
+     * ONE STAMP PER ATTEMPT, AND IT OUTLIVES THE OUTCOME. Every path that
+     * finishes settles BESIDE this stamp rather than over it — see
+     * `settleWrite`, which was the second half of this defect: a settling
+     * write built from the scan's pre-stamp snapshot put the cooldown back to
+     * absent, and a row that could not then count as settled was the oldest
+     * waiter again on the very next tick. The stamp still cannot settle a
+     * row, blank a card, or outlive its meaning.
      */
-    await stampAttempt(row);
+    const attempt = await stampAttempt(row);
+    /*
+     * Everything below settles onto THIS object, which carries the stamp — so
+     * a settling write can no longer put a pre-stamp column back on the row.
+     * `settleWrite` re-reads the live column as well; this is the fallback for
+     * a read that fails, and the two together are what make the cooldown
+     * survive every outcome.
+     */
+    const detail = { ...scanDetail, [ATTEMPT_KEY]: attempt };
 
     const bucket = row.storage_bucket || STOCK_IMAGE_BUCKET;
     const { data: blob, error: downloadError } = await db.storage
@@ -361,7 +433,7 @@ export async function settleImageSanitization(
           phase: 'image_sanitization',
           detail: String(result.detail ?? '').slice(0, 200),
         });
-        await noteOperationalFailure(row);
+        noteOperationalFailure();
         return;
       }
 
@@ -400,9 +472,9 @@ export async function settleImageSanitization(
           },
           cleared_at: new Date().toISOString(),
         };
-        const { error: clearError } = await db.from('builder_stock_item_images')
-          .update({ source_detail: { ...detail, ...clearanceDetail(clearance) } })
-          .eq('id', row.id);
+        const { error: clearError } = await settleWrite(
+          row, detail, clearanceDetail(clearance),
+        );
         if (clearError) {
           outcome.unresolved += 1;
           return;
@@ -418,7 +490,7 @@ export async function settleImageSanitization(
        * a refusal would park it until the next version bump.
        */
       if (result.operational) {
-        await noteOperationalFailure(row);
+        noteOperationalFailure();
         return;
       }
 
@@ -466,9 +538,9 @@ export async function settleImageSanitization(
         failed_at: new Date().toISOString(),
         rejected_path: rejectedPath,
       };
-      const { error: writeError } = await db.from('builder_stock_item_images')
-        .update({ source_detail: { ...detail, ...failureDetail(failure) } })
-        .eq('id', row.id);
+      const { error: writeError } = await settleWrite(
+        row, detail, failureDetail(failure),
+      );
       if (writeError) {
         outcome.unresolved += 1;
         return;
@@ -510,9 +582,9 @@ export async function settleImageSanitization(
       classifier_state: result.classifierState,
     };
 
-    const { error: recordError } = await db.from('builder_stock_item_images')
-      .update({ source_detail: { ...detail, ...derivativeDetail(derivative) } })
-      .eq('id', row.id);
+    const { error: recordError } = await settleWrite(
+      row, detail, derivativeDetail(derivative),
+    );
     if (recordError) {
       // The bytes are in the bucket and the record is not, so nothing will
       // serve them. Unresolved: the next pass remakes and re-records, and
