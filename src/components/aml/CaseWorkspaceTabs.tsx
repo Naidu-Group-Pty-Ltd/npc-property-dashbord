@@ -35,6 +35,7 @@ import {
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { decisionPath, gateChangeHint, reasonHint } from "@/lib/aml/decisionPath.pure";
 import { describeClearanceReason } from "@/lib/aml/clearanceReasons.pure";
+import { DECISION_CHOICES, gateOptionGroups, type GateChoice } from "@/lib/aml/gateOptions.pure";
 import { DecisionPathCard } from "@/components/aml/workspace/DecisionPathCard";
 import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy, type AmlFinanceRequest } from "@/lib/aml/amlFinanceApi";
 import {
@@ -527,6 +528,32 @@ export function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; 
 
 /* -------------------- Risk & Decision -------------------- */
 
+/**
+ * One choice, readable: what it is called and what it DOES. Replaces the
+ * bare <select> over enum spellings — a choice an operator cannot read the
+ * consequence of is a choice they hesitate over, and the production table
+ * showed the hesitation: zero gate decisions ever recorded.
+ */
+function ChoiceCard({ selected, label, meaning, onSelect }: {
+  selected: boolean; label: string; meaning: string; onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      className={cn(
+        "rounded-md border p-2.5 text-left transition-colors",
+        selected ? "border-primary bg-primary/5" : "border-border/60 hover:border-primary/50",
+      )}
+    >
+      <span className="block text-sm font-medium">{label}</span>
+      <span className="block text-xs text-muted-foreground">{meaning}</span>
+    </button>
+  );
+}
+
 const RECOMMENDATION_OUTCOMES: Array<{ value: AmlAnalystRecommendation["recommended_outcome"]; label: string }> = [
   { value: "cleared", label: "Clear" },
   { value: "cleared_with_conditions", label: "Clear with conditions" },
@@ -902,15 +929,22 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
       <Card id="decision-step-decision" className="scroll-mt-24">
         <CardHeader><CardTitle className="text-sm">Latest decision</CardTitle></CardHeader>
         <CardContent className="text-sm space-y-3">
+          {/* The recorded fact as one readable line, not a ledger of rows. */}
           {!latestDecision ? (
             <p className="text-muted-foreground">No decision recorded.</p>
           ) : (
-            <div>
-              <Row k="Outcome" v={latestDecision.outcome} />
-              <Row k="Decided" v={new Date(latestDecision.decided_at).toLocaleString()} />
-              {latestDecision.program_version && <Row k="Policy" v={latestDecision.program_version} />}
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <Badge variant={latestDecision.outcome === "cleared" ? "default" : latestDecision.outcome === "blocked" ? "destructive" : "outline"}>
+                  {latestDecision.outcome.replace(/_/g, " ")}
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  Decided {new Date(latestDecision.decided_at).toLocaleString()}
+                  {latestDecision.program_version ? ` · Policy ${latestDecision.program_version}` : ""}
+                </span>
+              </div>
               {latestDecision.rationale && (
-                <div className="mt-2 rounded bg-muted/40 p-2 text-xs">{latestDecision.rationale}</div>
+                <div className="rounded bg-muted/40 p-2 text-xs">{latestDecision.rationale}</div>
               )}
             </div>
           )}
@@ -967,28 +1001,22 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
           {canReview && (
             <div className="space-y-2 border-t border-border/50 pt-3">
               <div className="text-xs font-semibold uppercase text-muted-foreground">Record decision</div>
-              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
-                <select
-                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                  aria-label="Decision outcome"
-                  value={decideOutcome}
-                  onChange={(e) => setDecideOutcome(e.target.value as typeof decideOutcome)}
-                >
-                  <option value="cleared">Clear</option>
-                  <option value="escalated">Escalate to MLRO</option>
-                  <option value="blocked">Block</option>
-                </select>
-                <Button size="sm" className="sm:justify-self-start" disabled={busy} onClick={recordDecision}>
-                  Record decision
-                </Button>
+              {/*
+                The outcome is a CHOICE READ, not an enum picked: each option
+                says what it does before it is chosen, and the button names
+                the act it will record.
+              */}
+              <div role="radiogroup" aria-label="Decision outcome" className="grid gap-2 sm:grid-cols-3">
+                {DECISION_CHOICES.map((c) => (
+                  <ChoiceCard
+                    key={c.value}
+                    selected={decideOutcome === c.value}
+                    label={c.label}
+                    meaning={c.meaning}
+                    onSelect={() => setDecideOutcome(c.value)}
+                  />
+                ))}
               </div>
-              <textarea
-                className="min-h-[56px] w-full rounded-md border border-input bg-background p-2 text-sm"
-                aria-label="Decision rationale"
-                placeholder="Decision rationale — frozen into the decision snapshot."
-                value={decideRationale}
-                onChange={(e) => setDecideRationale(e.target.value)}
-              />
               {/*
                 An escalation must say where it goes. The option read
                 "Escalate to MLRO" and the click just… recorded — no word on
@@ -1009,9 +1037,21 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
                   </p>
                 </div>
               )}
-              <p className="text-[11px] text-muted-foreground">
-                Clearance is refused while mandatory holds or open conditions remain.
-              </p>
+              <textarea
+                className="min-h-[56px] w-full rounded-md border border-input bg-background p-2 text-sm"
+                aria-label="Decision rationale"
+                placeholder="Decision rationale — frozen into the decision snapshot."
+                value={decideRationale}
+                onChange={(e) => setDecideRationale(e.target.value)}
+              />
+              <div className="flex flex-wrap items-center gap-3">
+                <Button size="sm" disabled={busy} onClick={recordDecision}>
+                  Record decision — {DECISION_CHOICES.find((c) => c.value === decideOutcome)?.label}
+                </Button>
+                <p className="text-[11px] text-muted-foreground">
+                  Clearance is refused while mandatory holds or open conditions remain.
+                </p>
+              </div>
             </div>
           )}
           {/* Hidden controls read as a missing feature; a named requirement
@@ -1028,18 +1068,39 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
       <Card id="decision-step-gate" className="scroll-mt-24">
         <CardHeader><CardTitle className="text-sm">Service gate</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
+          {/* The state as a statement, not a ledger: what the gate IS, since
+              when — and, when it grants the service, the door forward. */}
           {gate ? (
-            <div>
-              <Row k="Status" v={GATE_OPTION_LABELS[gate.status] ?? gate.status.replace(/_/g, " ")} />
-              <Row k="Effective" v={gate.effective_at ? new Date(gate.effective_at).toLocaleString() : "—"} />
-              {gate.policy_version && <Row k="Policy" v={gate.policy_version} />}
-              {gate.reason && <div className="mt-2 rounded bg-muted/40 p-2 text-xs">{gate.reason}</div>}
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="text-lg font-semibold">
+                  {GATE_OPTION_LABELS[gate.status] ?? gate.status.replace(/_/g, " ")}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {gate.effective_at ? `Effective ${new Date(gate.effective_at).toLocaleString()}` : "No explicit gate decision recorded yet"}
+                  {gate.policy_version ? ` · Policy ${gate.policy_version}` : ""}
+                </span>
+              </div>
+              {gate.reason && <div className="rounded bg-muted/40 p-2 text-xs">{gate.reason}</div>}
               {gate.conditions.length > 0 && (
-                <div className="mt-2">
+                <div>
                   <div className="text-[11px] text-muted-foreground">Attached conditions</div>
                   <ul className="mt-0.5 space-y-0.5 text-xs">
                     {gate.conditions.map((c, i) => <li key={c.id ?? i}>• {c.label}</li>)}
                   </ul>
+                </div>
+              )}
+              {(gate.status === "approved" || gate.status === "approved_with_controls") && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/40 bg-success/5 p-2.5">
+                  <p className="text-xs text-success">
+                    The service gate is {GATE_OPTION_LABELS[gate.status].toLowerCase()} — the case is
+                    service-ready and this cascades into Gate &amp; Passport.
+                  </p>
+                  {onOpenSection && (
+                    <Button size="sm" className="h-7" onClick={() => onOpenSection("passport")}>
+                      Continue to Gate &amp; Passport
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
@@ -1050,29 +1111,52 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
             <div className="space-y-2 border-t border-border/50 pt-3">
               <div className="text-xs font-semibold uppercase text-muted-foreground">Change service gate</div>
               <p className="text-[11px] text-muted-foreground">
-                The gate controls service entitlement separately from case stage and risk.
-                Approval requires a recorded cleared decision; approval with controls requires
-                open conditions documenting those controls.
+                The gate controls service entitlement separately from case stage and risk. Pick the
+                new status, give the reason, and apply — the reason is recorded on the gate decision
+                and the audit trail.
               </p>
-              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
-                <select
-                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                  aria-label="New service-gate status"
-                  value={gateStatus}
-                  onChange={(e) => setGateStatus(e.target.value)}
-                >
-                  {Object.entries(GATE_OPTION_LABELS)
-                    .filter(([k]) => (isMlro ? true : k !== "locked" && k !== "terminated"))
-                    .map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-                </select>
-                <Button
-                  size="sm" variant="outline" className="sm:justify-self-start"
-                  disabled={busy || gateReason.trim().length < 10}
-                  onClick={applyGate}
-                >
-                  Apply gate change
-                </Button>
-              </div>
+              {/*
+                Choices that read: what each status DOES, with the statuses
+                the recorded decision already implies offered first. The
+                production table held ZERO gate decisions — the old select
+                plus far-away disabled button meant the act was never
+                completed, and "nothing cascades" was nothing ever applied.
+              */}
+              {(() => {
+                const groups = gateOptionGroups({
+                  decisionOutcome: latestDecision?.outcome ?? null,
+                  currentGate: gate?.status ?? null,
+                  isMlro,
+                });
+                const renderChoice = (c: GateChoice) => (
+                  <ChoiceCard
+                    key={c.value}
+                    selected={gateStatus === c.value}
+                    label={c.label}
+                    meaning={c.meaning}
+                    onSelect={() => setGateStatus(c.value)}
+                  />
+                );
+                return (
+                  <div role="radiogroup" aria-label="New service-gate status" className="space-y-2">
+                    {groups.suggested.length > 0 && (
+                      <>
+                        <p className="text-[11px] uppercase tracking-wide text-primary">
+                          Suggested by the recorded decision
+                        </p>
+                        <div className="grid gap-2 sm:grid-cols-2">{groups.suggested.map(renderChoice)}</div>
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">All statuses</p>
+                      </>
+                    )}
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{groups.other.map(renderChoice)}</div>
+                  </div>
+                );
+              })()}
+              {/* The server's approval rules, read BEFORE the request instead
+                  of from its 409; the server still enforces every one. */}
+              {gatePrecondition && (
+                <p className="text-[11px] text-warning" aria-live="polite">{gatePrecondition}</p>
+              )}
               <textarea
                 className="min-h-[56px] w-full rounded-md border border-input bg-background p-2 text-sm"
                 aria-label="Gate change reason"
@@ -1080,18 +1164,18 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
                 value={gateReason}
                 onChange={(e) => setGateReason(e.target.value)}
               />
-              {/* "Apply gate change" used to sit greyed under an empty reason
-                  box with nothing saying the reason is what enables it — a
-                  silently disabled control is indistinguishable from a broken
-                  one. The precondition line reads the server's approval rules
-                  BEFORE the request instead of from its 409; the server still
-                  enforces every one of them. */}
+              {/* A silently disabled control is indistinguishable from a
+                  broken one — the hint names what enables it, counting down. */}
               {gateReasonHint && (
                 <p className="text-[11px] text-muted-foreground" aria-live="polite">{gateReasonHint}</p>
               )}
-              {gatePrecondition && (
-                <p className="text-[11px] text-warning" aria-live="polite">{gatePrecondition}</p>
-              )}
+              <Button
+                size="sm"
+                disabled={busy || gateReason.trim().length < 10}
+                onClick={applyGate}
+              >
+                Apply gate change — {GATE_OPTION_LABELS[gateStatus] ?? gateStatus.replace(/_/g, " ")}
+              </Button>
             </div>
           )}
           {!canReview && (
