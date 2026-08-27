@@ -67,7 +67,10 @@ import {
   CLEARANCE_KEY, SANITIZATION_VERSION, type SanitizationClearance, type SanitizationFailure,
   type SanitizedDerivative,
 } from './sanitizedDerivative.pure.ts';
-import { readRepairRegion, type RepairRegionBox } from './repairRegion.pure.ts';
+import {
+  oversizedRepairRegionShare, readRepairRegion, MAX_REPAIRED_SHARE,
+  type RepairRegionBox,
+} from './repairRegion.pure.ts';
 import { readMarketplaceState } from './marketplaceEligibility.pure.ts';
 import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
 import { SOURCE_SUPPLIED_STAGE, SOURCE_SUPPLIED_VERIFICATION } from './primaryImage.ts';
@@ -698,6 +701,22 @@ export async function settleImageSanitization(
        * origin test, which is the same one a derivative gets.
        */
       const region = readRepairRegion(detail, storedOriginalSha(detail));
+      /*
+       * A rectangle somebody recorded against these exact bytes and the area
+       * ceiling refused. `readRepairRegion` fails closed, which makes it
+       * indistinguishable from no rectangle at all — so say it once, because
+       * whoever wrote it down is owed an answer other than silence.
+       */
+      const oversized = region ? null : oversizedRepairRegionShare(
+        detail, storedOriginalSha(detail));
+      if (oversized !== null) {
+        console.warn('[builderStock] a recorded repair region asks for too much of the picture', {
+          image_id: row.id,
+          phase: 'image_sanitization',
+          detail: `region covers ${(oversized * 100).toFixed(1)}% of the frame; the ceiling `
+            + `is ${(MAX_REPAIRED_SHARE * 100).toFixed(0)}%`,
+        });
+      }
 
       /*
        * ONLY A PICTURE THE GATE CONVICTED — OR ONE CARRYING A REGION.
