@@ -50,6 +50,16 @@ describe("the order of the decision", () => {
     expect(byKey(steps, "assessment").state).toBe("done");
     expect(byKey(steps, "decision").state).toBe("current");
     expect(byKey(steps, "gate").state).toBe("outstanding");
+    // A decision-maker owes no recommendation to themselves: with nothing
+    // waiting, the step settles rather than nagging as "later".
+    const r = byKey(steps, "recommendation");
+    expect(r.state).toBe("settled");
+    expect(r.detail).toMatch(/you may decide directly/);
+  });
+
+  it("a pending recommendation still ticks the step for a decision-maker", () => {
+    const steps = decisionPath(facts({ pendingRecommendation: true }));
+    expect(byKey(steps, "recommendation").state).toBe("done");
   });
 
   it("for an analyst, the recommendation is current and the decision is blocked with its blocker named", () => {

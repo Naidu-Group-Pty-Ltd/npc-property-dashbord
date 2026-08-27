@@ -52,6 +52,7 @@ import { readMarketingOverlay } from '../../../supabase/functions/_shared/builde
 import { eligibilityDetailFor } from '../../../supabase/functions/_shared/builderStock/assessSourceImage';
 import { encodePng, sha256Hex } from '../../../supabase/functions/_shared/builderStock/rasterPng';
 import { annotatedPicture, cleanPicture } from './fixtures/builderStockPictures';
+import { readPostgrestColumn } from './fixtures/postgrestJsonPath';
 
 const ORG = 'org-a';
 const OTHER_ORG = 'org-b';
@@ -166,21 +167,44 @@ function fakeDb(options: {
       return {
         select: (columns = '*') => select(table, columns),
         update(patch: Record<string, unknown>) {
-          const filters: Array<[string, unknown]> = [];
+          const filters: Array<[string, string, unknown]> = [];
+          // The JSON-path filters are RESOLVED against the row, never assumed:
+          // `source_detail->sanitization_attempt->>at` reads the way the server
+          // reads it, or the claim's compare-and-set is a test of nothing.
+          const matchesRow = (row: Row) => filters.every(([op, c, v]) => {
+            const current = readPostgrestColumn(row, c);
+            if (op === 'is') return (current ?? null) === (v ?? null);
+            return current === v;
+          });
+          const apply = (): { applied: Row[]; error: unknown } => {
+            if (options.failWritesFor?.(table)) {
+              return { applied: [], error: { message: 'write rejected' } };
+            }
+            const applied: Row[] = [];
+            for (const row of tables[table] ?? []) {
+              if (matchesRow(row)) {
+                Object.assign(row, patch);
+                writes.push({ table, patch, id: row.id });
+                applied.push(row);
+              }
+            }
+            return { applied, error: null };
+          };
           const builder: any = {
-            eq(c: string, v: unknown) { filters.push([c, v]); return builder; },
+            eq(c: string, v: unknown) { filters.push(['eq', c, v]); return builder; },
+            is(c: string, v: unknown) { filters.push(['is', c, v]); return builder; },
+            select() {
+              return {
+                maybeSingle() {
+                  const { applied, error } = apply();
+                  if (error) return Promise.resolve({ data: null, error });
+                  return Promise.resolve({ data: applied[0] ?? null, error: null });
+                },
+              };
+            },
             then(resolve: (r: unknown) => unknown, reject?: unknown) {
-              if (options.failWritesFor?.(table)) {
-                return Promise.resolve({ data: null, error: { message: 'write rejected' } })
-                  .then(resolve, reject as never);
-              }
-              for (const row of tables[table] ?? []) {
-                if (filters.every(([c, v]) => row[c] === v)) {
-                  Object.assign(row, patch);
-                  writes.push({ table, patch, id: row.id });
-                }
-              }
-              return Promise.resolve({ data: null, error: null }).then(resolve, reject as never);
+              const { error } = apply();
+              return Promise.resolve({ data: null, error }).then(resolve, reject as never);
             },
           };
           return builder;

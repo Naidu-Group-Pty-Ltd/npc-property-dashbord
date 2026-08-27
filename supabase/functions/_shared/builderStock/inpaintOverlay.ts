@@ -285,6 +285,11 @@ export async function inpaintOverlay(input: InpaintInput): Promise<InpaintResult
    * is deterministic in the picture's own geometry, so the settler records it
    * as a terminal `too_much_to_rebuild` and the row is not retried into the
    * same refusal for ever.
+   *
+   * WHAT THIS DOES NOT ESTABLISH: that the permitted set is the RIGHT set. A
+   * wrong mask inside the ceiling passes here and passes the integrity gate,
+   * which inspects only the pixels outside it. Correctness of the region is
+   * `overlayPlate.pure.ts`'s burden — every plate held to its own text.
    */
   const permitted = permittedShare(weights, width, height);
   if (permitted > MAX_REPAIRED_SHARE) {
