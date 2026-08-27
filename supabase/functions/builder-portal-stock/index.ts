@@ -892,7 +892,21 @@ Deno.serve(async (req) => {
       for (const item of pending ?? []) {
         if (Date.now() - startedAt > ENRICHMENT_BUDGET_MS) break;
         try {
-          await enrichStockItem(supabase, item as EnrichableStockItem, organisationName);
+          /*
+           * WHILE ANY SOURCE IS STILL BEING READ, THE PAID STAGES WAIT.
+           *
+           * `settlementRemaining` is the count of uploads whose imagery has
+           * not finished settling, and a property in one of them may be about
+           * to gain the builder's own render. Buying a search or a Street View
+           * against it spends money to be discarded — and worse, can put a
+           * fallback on a card that is about to have the real picture. The
+           * browser's loop keeps calling until this reaches zero, so nothing
+           * is skipped, only deferred.
+           */
+          await enrichStockItem(supabase, {
+            ...(item as EnrichableStockItem),
+            sourceSettlementComplete: settlementRemaining === 0,
+          }, organisationName);
         } catch (error) {
           // Enrichment is allowed to fail. The property stays.
           console.warn('[builder-portal-stock] enrichment failed', {
