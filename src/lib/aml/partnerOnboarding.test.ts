@@ -155,13 +155,18 @@ describe("wired at the source", () => {
     expect(section).toContain("Onboard partner");
   });
 
-  it("a portal partner never sees the arrangement step — the prebuilt draft is recorded instead", () => {
-    expect(wizard).toContain('? ["partner", "link", "grant"]');
-    expect(wizard).toContain(': ["partner", "arrangement", "link", "grant"]');
+  it("NOBODY types an arrangement any more — the step is gone from the wizard", () => {
+    // A portal partner's arrangement is the prebuilt agreement their sign-up
+    // executes; a partner outside the portals accepts the same agreement by
+    // email, and that acceptance records it. Neither asks the operator to
+    // type an instrument on the partner's behalf.
+    expect(wizard).toContain('const stepOrder: WizardStep[] = ["partner", "link", "grant"]');
     expect(wizard).toContain("portalHasPrebuiltAgreement(portal)");
     expect(wizard).toContain("prebuiltArrangementDraft(");
-    // The manual step names who it is for: a partner outside the portals.
-    expect(wizard).toContain("A partner outside the portals has no sign-up to carry the prebuilt agreement");
+    expect(wizard).toContain("if (!agreement && !directAck)");
+    // The manual arrangement fields no longer exist anywhere in the wizard.
+    expect(wizard).not.toContain("Written agreement reference");
+    expect(wizard).not.toContain("existingAgreementId");
   });
 
   it("the wizard chains the four EXISTING server acts — it invents no operation", () => {

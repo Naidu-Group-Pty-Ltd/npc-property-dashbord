@@ -68,6 +68,21 @@ import {
   materialInputsFromV2Payload,
 } from "../_shared/aml/partnerEvents.ts";
 import { evaluateEvidenceObjectDelivery } from "../_shared/aml/partnerRetention.ts";
+import {
+  ACK_LINK_TTL_DAYS,
+  acknowledgementLinkFor,
+  arrangementDraftFromAcceptance,
+  hashAckToken,
+  isAckLive,
+  mintAckToken,
+} from "../_shared/aml/directAcknowledgement.ts";
+import {
+  PORTAL_TERMS_ACKNOWLEDGEMENTS,
+  readAcknowledgements,
+  ACKNOWLEDGEMENTS_INCOMPLETE_ERROR,
+} from "../_shared/portalAgreement.ts";
+import { getBrandConfig } from "../_shared/brand-config.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { buildPassportView } from "../_shared/aml/passport/passportView.pure.ts";
 import { derivePassportState } from "../_shared/aml/passport/passportState.pure.ts";
 import {
@@ -107,6 +122,33 @@ const jr = (data: unknown, status = 200) =>
 async function sha256Hex(input: string) {
   const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
   return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * A Command Centre notification, broadcast to staff.
+ *
+ * `target_user_id` null is a deliberate broadcast: a partner accepting or
+ * declining an agreement happens with nobody signed in, so there is no
+ * "current user" to address it to, and the operator who sent the request is
+ * not necessarily the one who will act on it. A failure to notify must never
+ * roll back the acceptance itself — the case event is the durable record.
+ */
+async function notifyCommandCentre(
+  admin: any, title: string, message: string, caseId: string | null,
+) {
+  try {
+    await admin.from("notifications").insert({
+      type: "aml_partner_acknowledgement",
+      title: title.slice(0, 300),
+      message: message.slice(0, 2000),
+      entity_id: caseId,
+      target_user_id: null,
+      link: caseId ? `/admin/aml/cases/${caseId}?section=passport` : null,
+      read: false,
+    });
+  } catch (e) {
+    console.error("[aml-reliance] notification insert failed", e);
+  }
 }
 
 async function appendCaseEvent(admin: any, caseId: string, category: string, summary: string, payload: any, actorId: string | null, actorLabel: string | null) {
@@ -1025,6 +1067,164 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
 
     /* ── partner ops: bearer token, no staff session ─────────────────────── */
+
+    /* ── direct partner acknowledgement: link token, no session ──────────
+       A partner outside the portals reviews and accepts the SAME AML/CTF
+       Compliance Passport Agreement the portals execute at sign-up. The
+       token in the emailed link is the only credential, and it is matched
+       by hash — nothing here reads a session, and nothing here discloses
+       the customer: at this point the partner has been granted nothing. */
+
+    if (op === "ack_view" || op === "ack_accept" || op === "ack_decline") {
+      const rawToken = String(body.ack_token ?? "");
+      if (rawToken.length < 20) return jr({ error: "Invalid link" }, 401);
+      const tokenHash = await hashAckToken(rawToken);
+      const { data: ack } = await admin.schema("aml")
+        .from("direct_partner_acknowledgements")
+        .select("*, partner_organisations:partner_org_id(legal_name)")
+        .eq("token_hash", tokenHash).maybeSingle();
+      if (!ack) return jr({ error: "Invalid link" }, 401);
+
+      const brandCfg = await getBrandConfig();
+      const { data: terms } = await admin.from("portal_terms_versions")
+        .select("id, version, title, content_markdown, document_hash")
+        .eq("id", ack.terms_version_id).maybeSingle();
+
+      // A link that lapsed unaccepted is STAMPED as expired the moment it is
+      // read, so the register stops describing it as outstanding.
+      let status = String(ack.status);
+      if ((status === "sent" || status === "viewed") && !isAckLive(status, ack.expires_at)) {
+        await admin.schema("aml").from("direct_partner_acknowledgements")
+          .update({ status: "expired", updated_at: new Date().toISOString() })
+          .eq("id", ack.id);
+        status = "expired";
+      }
+
+      const publicView = {
+        status,
+        organisation_name: (ack as any).partner_organisations?.legal_name ?? null,
+        recipient_name: ack.recipient_name,
+        recipient_email: ack.recipient_email,
+        expires_at: ack.expires_at,
+        accepted_at: ack.accepted_at,
+        declined_at: ack.declined_at,
+        issuer_name: brandCfg.companyName,
+        // The instrument itself, exactly as stored — never re-typed here.
+        terms: terms
+          ? { version: terms.version, title: terms.title, content_markdown: terms.content_markdown }
+          : null,
+        acknowledgements: PORTAL_TERMS_ACKNOWLEDGEMENTS,
+      };
+
+      if (op === "ack_view") {
+        if (status === "sent") {
+          await admin.schema("aml").from("direct_partner_acknowledgements")
+            .update({ status: "viewed", viewed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+            .eq("id", ack.id);
+          publicView.status = "viewed";
+        }
+        return jr({ acknowledgement: publicView });
+      }
+
+      // Both write paths are terminal-once: a link that has been accepted,
+      // declined, expired or superseded cannot be replayed into a second
+      // outcome. This is what stops one emailed link binding twice.
+      if (!isAckLive(status, ack.expires_at)) {
+        return jr({
+          error: status === "accepted"
+            ? "This agreement has already been accepted."
+            : status === "declined"
+              ? "This request was declined. Ask the issuing organisation to send a new one."
+              : "This link is no longer valid. Ask the issuing organisation to send a new one.",
+          code: status,
+        }, 409);
+      }
+
+      const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+      const ua = req.headers.get("user-agent") ?? null;
+      const hashOrNull = async (v: string | null) => (v ? await hashAckToken(v) : null);
+      const now = new Date();
+
+      if (op === "ack_decline") {
+        await admin.schema("aml").from("direct_partner_acknowledgements").update({
+          status: "declined", declined_at: now.toISOString(),
+          decline_reason: String(body.reason ?? "").slice(0, 2000) || null,
+          ip_hash: await hashOrNull(ip), user_agent_hash: await hashOrNull(ua),
+          updated_at: now.toISOString(),
+        }).eq("id", ack.id);
+
+        await appendCaseEvent(admin, ack.case_id, "system",
+          `Partner declined the AML/CTF Compliance Passport Agreement: ${(ack as any).partner_organisations?.legal_name ?? "partner"}`,
+          {
+            direct_acknowledgement_id: ack.id, partner_org_id: ack.partner_org_id,
+            note: "No arrangement is recorded. The passport cannot be granted to this partner.",
+          }, null, ack.recipient_email);
+        await notifyCommandCentre(admin,
+          "Partner declined the compliance agreement",
+          `${(ack as any).partner_organisations?.legal_name ?? "A partner"} declined the AML/CTF Compliance Passport Agreement. No passport can be issued to them.`,
+          ack.case_id);
+        return jr({ acknowledgement: { ...publicView, status: "declined" } });
+      }
+
+      /* ── acceptance ────────────────────────────────────────────────── */
+      // The SAME mandatory acknowledgements the portals enforce, read by the
+      // SAME module. An acceptance missing any of them claims assent nobody
+      // gave, so it is refused rather than stored partially.
+      const check = readAcknowledgements(body as Record<string, unknown>);
+      if (check.missing.length > 0) {
+        return jr({ error: ACKNOWLEDGEMENTS_INCOMPLETE_ERROR, missing: check.missing }, 400);
+      }
+      const signerName = String(body.accepted_by_name ?? "").trim();
+      if (signerName.length < 2) {
+        return jr({ error: "Enter the full name of the person accepting on behalf of the organisation." }, 400);
+      }
+
+      // The arrangement IS the acceptance. `grant_access` already refuses
+      // without an active arrangement whose review is current, so writing
+      // this row here is what opens the passport gate — there is no second
+      // rule to keep in step.
+      const draft = arrangementDraftFromAcceptance(now);
+      const { data: org } = await admin.schema("aml").from("partner_organisations")
+        .select("id, legal_name, organisation_type, abn").eq("id", ack.partner_org_id).maybeSingle();
+      const { data: agreement, error: agreementError } = await admin.schema("aml")
+        .from("reliance_agreements").insert({
+          partner_org_name: org?.legal_name ?? ack.recipient_name,
+          partner_org_type: org?.organisation_type ?? "other",
+          partner_abn: org?.abn ?? null,
+          partner_org_id: ack.partner_org_id,
+          agreement_reference: draft.agreement_reference,
+          executed_on: draft.executed_on,
+          next_review_due: draft.next_review_due,
+          notes: `Accepted by ${signerName} (${ack.recipient_email}) through a one-time acknowledgement link.`,
+        }).select("*").single();
+      if (agreementError) throw agreementError;
+
+      const { error: ackError } = await admin.schema("aml")
+        .from("direct_partner_acknowledgements").update({
+          status: "accepted", accepted_at: now.toISOString(),
+          accepted_by_name: signerName.slice(0, 200),
+          acknowledgements: check.acknowledgements,
+          ip_hash: await hashOrNull(ip), user_agent_hash: await hashOrNull(ua),
+          agreement_id: agreement.id, updated_at: now.toISOString(),
+        }).eq("id", ack.id);
+      if (ackError) throw ackError;
+
+      await appendCaseEvent(admin, ack.case_id, "system",
+        `Partner acknowledged the AML/CTF Compliance Passport Agreement: ${org?.legal_name ?? "partner"}`,
+        {
+          direct_acknowledgement_id: ack.id, partner_org_id: ack.partner_org_id,
+          agreement_id: agreement.id, terms_version_id: ack.terms_version_id,
+          acknowledgements: check.acknowledgements, accepted_by_name: signerName,
+          note: "Accepted through a one-time link. The arrangement is recorded and the passport may now be granted.",
+        }, null, ack.recipient_email);
+      await notifyCommandCentre(admin,
+        "Partner acknowledged the compliance agreement",
+        `${org?.legal_name ?? "A partner"} accepted the AML/CTF Compliance Passport Agreement. The passport can now be issued to them.`,
+        ack.case_id);
+
+      return jr({ acknowledgement: { ...publicView, status: "accepted", accepted_at: now.toISOString() } });
+    }
+
 
     if (op === "redeem_attestation" || op === "record_independent_assessment") {
       const resolved = await resolveGrant(admin, String(body.access_token ?? ""));
@@ -2394,6 +2594,182 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .select("*").single();
         if (error) throw error;
         return jr({ membership: data });
+      }
+
+      case "list_partner_acknowledgements": {
+        if (!body.case_id) return jr({ error: "case_id required" }, 400);
+        const { data, error } = await admin.schema("aml")
+          .from("direct_partner_acknowledgements")
+          .select("id, case_id, partner_org_id, recipient_name, recipient_email, status, sent_at, resend_count, viewed_at, accepted_at, declined_at, decline_reason, expires_at, agreement_id, accepted_by_name, partner_organisations:partner_org_id(legal_name)")
+          .eq("case_id", String(body.case_id))
+          .order("sent_at", { ascending: false });
+        if (error) throw error;
+        // The token hash never leaves the server, and there is no column here
+        // that could reconstruct the link.
+        return jr({ acknowledgements: data ?? [] });
+      }
+
+      case "send_partner_acknowledgement": {
+        // Sending an agreement for execution is an outward-facing act, like
+        // every other instrument in this module.
+        if (!isMlro) {
+          return jr({ error: "MLRO role required — this sends an agreement for execution" }, 403);
+        }
+        const caseId = String(body.case_id ?? "");
+        const orgId = String(body.partner_org_id ?? "");
+        const recipientName = String(body.recipient_name ?? "").trim();
+        const recipientEmail = String(body.recipient_email ?? "").trim().toLowerCase();
+        if (!caseId || !orgId) return jr({ error: "case_id and partner_org_id are required" }, 400);
+        if (!recipientName) return jr({ error: "recipient_name is required" }, 400);
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(recipientEmail)) {
+          return jr({ error: "A valid recipient email is required — the link is the only way in" }, 400);
+        }
+
+        const { data: org } = await admin.schema("aml").from("partner_organisations")
+          .select("id, legal_name, status").eq("id", orgId).maybeSingle();
+        if (!org) return jr({ error: "Partner organisation not found" }, 404);
+        if (org.status !== "active") return jr({ error: `Partner organisation is ${org.status}` }, 409);
+
+        // Already acknowledged: say so rather than sending a second
+        // instrument for an arrangement that already exists.
+        const { data: existingAccepted } = await admin.schema("aml")
+          .from("direct_partner_acknowledgements")
+          .select("id, accepted_at, agreement_id").eq("case_id", caseId)
+          .eq("partner_org_id", orgId).eq("status", "accepted").maybeSingle();
+        if (existingAccepted && body.force !== true) {
+          return jr({
+            error: "This partner has already acknowledged the agreement for this case.",
+            code: "already_accepted",
+            agreement_id: existingAccepted.agreement_id,
+          }, 409);
+        }
+
+        const { data: terms } = await admin.from("portal_terms_versions")
+          .select("id, version, title")
+          .eq("portal", "direct").is("retired_at", null)
+          .order("effective_at", { ascending: false }).limit(1).maybeSingle();
+        if (!terms) {
+          return jr({
+            error: "No direct-channel agreement version is published, so there is nothing to send.",
+            code: "terms_unavailable",
+          }, 503);
+        }
+
+        // Re-issuing SUPERSEDES the live request rather than editing it: the
+        // previous link stops working, and the register keeps both rows so
+        // the history shows every address it was sent to.
+        const { data: live } = await admin.schema("aml")
+          .from("direct_partner_acknowledgements")
+          .select("id, resend_count").eq("case_id", caseId).eq("partner_org_id", orgId)
+          .in("status", ["sent", "viewed"]).maybeSingle();
+
+        const token = mintAckToken();
+        const expiresAt = new Date(Date.now() + ACK_LINK_TTL_DAYS * 864e5).toISOString();
+        const { data: created, error: insertError } = await admin.schema("aml")
+          .from("direct_partner_acknowledgements").insert({
+            tenant_id: tenantForCase(caseId),
+            case_id: caseId, partner_org_id: orgId,
+            terms_version_id: terms.id,
+            recipient_name: recipientName.slice(0, 200),
+            recipient_email: recipientEmail,
+            token_hash: await hashAckToken(token),
+            expires_at: expiresAt,
+            sent_by: userId,
+            resend_count: live ? (live.resend_count ?? 0) + 1 : 0,
+          }).select("*").single();
+        if (insertError) throw insertError;
+
+        if (live) {
+          await admin.schema("aml").from("direct_partner_acknowledgements").update({
+            status: "superseded", superseded_by_id: created.id,
+            updated_at: new Date().toISOString(),
+          }).eq("id", live.id);
+        }
+
+        const link = acknowledgementLinkFor(token);
+        const brandCfg = await getBrandConfig();
+        const resendApiKey = Deno.env.get("RESEND_API_KEY");
+        const safeName = recipientName.replace(/[<>]/g, "");
+        const subject = `${brandCfg.companyName} — AML/CTF Compliance Passport Agreement for your acceptance`;
+        const textBody = [
+          `Hi ${safeName},`,
+          "",
+          `${brandCfg.companyName} has asked you to review and accept the AML/CTF Compliance Passport Agreement on behalf of ${org.legal_name}.`,
+          "",
+          "You do not need an account. Open the link below to read the agreement and accept it:",
+          link,
+          "",
+          `This link expires in ${ACK_LINK_TTL_DAYS} days. If it lapses, ask us to send a new one.`,
+          "",
+          `— ${brandCfg.companyName}`,
+        ].join("\n");
+        const htmlBody = `
+          <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;">
+            <p style="color:#0f172a;font-size:16px;">Hi ${safeName},</p>
+            <p style="color:#475569;font-size:15px;line-height:1.6;">
+              ${brandCfg.companyName} has asked you to review and accept the
+              <strong>AML/CTF Compliance Passport Agreement</strong> on behalf of
+              <strong>${String(org.legal_name).replace(/[<>]/g, "")}</strong>.
+            </p>
+            <p style="color:#475569;font-size:15px;line-height:1.6;">
+              You do not need an account or a password — the link below opens the agreement itself.
+            </p>
+            <p style="margin:24px 0;">
+              <a href="${link}" style="background:#1d4ed8;color:#ffffff;padding:12px 20px;border-radius:6px;text-decoration:none;font-size:15px;">
+                Review &amp; accept the agreement
+              </a>
+            </p>
+            <p style="color:#64748b;font-size:13px;line-height:1.6;">
+              This link expires in ${ACK_LINK_TTL_DAYS} days. If it lapses, ask us to send a new one.
+            </p>
+            <p style="color:#64748b;font-size:13px;">— ${brandCfg.companyName}</p>
+          </div>`;
+
+        let emailSent = false;
+        let emailError: string | null = null;
+        if (resendApiKey) {
+          try {
+            const emailRes = await meteredFetch("https://api.resend.com/emails", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${resendApiKey}` },
+              body: JSON.stringify({
+                from: brandCfg.fromHeaderAdmin, to: [recipientEmail],
+                subject, html: htmlBody, text: textBody,
+                tags: [{ name: "category", value: "aml_partner_acknowledgement" }],
+              }),
+            });
+            const raw = await emailRes.text();
+            if (emailRes.ok) emailSent = true;
+            else emailError = `Resend ${emailRes.status}: ${raw}`;
+          } catch (e: any) {
+            emailError = e?.message ?? String(e);
+          }
+        } else {
+          emailError = "RESEND_API_KEY not configured";
+        }
+        if (emailError) console.error("[aml-reliance] acknowledgement email failed:", emailError);
+
+        await appendCaseEvent(admin, caseId, "system",
+          `AML/CTF Compliance Passport Agreement sent to ${org.legal_name} for acceptance`,
+          {
+            direct_acknowledgement_id: created.id, partner_org_id: orgId,
+            recipient_email: recipientEmail, expires_at: expiresAt,
+            superseded_id: live?.id ?? null, email_sent: emailSent,
+            note: "No arrangement is recorded until the partner accepts.",
+          }, userId, userEmail);
+
+        // The link is returned so an operator can deliver it by hand when
+        // the mail provider is down — the request is real either way, and a
+        // failed send must not look like a failed request.
+        return jr({
+          acknowledgement: {
+            id: created.id, status: created.status, expires_at: created.expires_at,
+            recipient_email: recipientEmail, resend_count: created.resend_count,
+          },
+          email_sent: emailSent,
+          email_error: emailError,
+          link,
+        });
       }
 
       case "list_partner_case_links": {

@@ -55,14 +55,14 @@ import {
   isValidEmail, isoDate, portalAsksOrgKind, portalHasPrebuiltAgreement, prebuiltArrangementDraft,
 } from "@/lib/aml/partnerOnboarding.pure";
 
-type WizardStep = "partner" | "arrangement" | "link" | "grant" | "token";
+type WizardStep = "partner" | "link" | "grant" | "token" | "ack_sent";
 
-/* Numbered at render time — the arrangement step exists only for a
- * partner OUTSIDE the portals. A portal partner's arrangement is the
- * prebuilt Compliance Passport agreement, executed at their sign-up. */
-const STEP_TITLES: Record<Exclude<WizardStep, "token">, string> = {
+/* Nobody types an arrangement here any more. A PORTAL partner's is the
+ * prebuilt Compliance Passport agreement their sign-up executes; a partner
+ * OUTSIDE the portals acknowledges the same agreement through a one-time
+ * emailed link, and their acceptance is what creates it. */
+const STEP_TITLES: Record<"partner" | "link" | "grant", string> = {
   partner: "The partner",
-  arrangement: "The written arrangement",
   link: "Why they may access this matter",
   grant: "Grant passport access",
 };
@@ -163,12 +163,6 @@ export function PartnerOnboardingWizard({
   /* Which organisation the one Builder/Developer card stands for. */
   const [builderKind, setBuilderKind] = useState<string>("builder");
 
-  /* Step 2 — the written arrangement (non-portal partners only). */
-  const [existingAgreementId, setExistingAgreementId] = useState<string | null>(null);
-  const [reference, setReference] = useState("");
-  const [executedOn, setExecutedOn] = useState(() => isoDate(new Date()));
-  const [reviewDue, setReviewDue] = useState(() => defaultReviewDate(new Date()));
-
   /* Step 3 — the case link. */
   const [role, setRole] = useState(PARTNER_PORTAL_CHOICES[0].role);
   const [legalRoute, setLegalRoute] = useState(LEGAL_ROUTE_CHOICES[0].value);
@@ -183,6 +177,11 @@ export function PartnerOnboardingWizard({
   const [linkRecorded, setLinkRecorded] = useState(false);
   const provisionCache = useRef<ProvisionCache>({});
   const [inviteOutcome, setInviteOutcome] = useState<InviteOutcome | null>(null);
+  /* The emailed agreement, for a partner outside the portals. */
+  const [ackResult, setAckResult] = useState<{
+    email: string; expires_at: string; emailSent: boolean;
+    emailError: string | null; link: string;
+  } | null>(null);
 
   /* The one-time token, shown exactly once. */
   const [grantResult, setGrantResult] = useState<{ token: string; expires_at: string; version: number } | null>(null);
@@ -205,9 +204,12 @@ export function PartnerOnboardingWizard({
    * and sign-up is refused without it). The manual arrangement step
    * exists only for a partner outside the portals. */
   const prebuilt = portalHasPrebuiltAgreement(portal);
-  const stepOrder: WizardStep[] = prebuilt
-    ? ["partner", "link", "grant"]
-    : ["partner", "arrangement", "link", "grant"];
+  /* A partner outside the portals signs the agreement by email. The pass
+   * therefore ENDS at sending it: the passport is granted later, from the
+   * workspace, once they have accepted — because waiting days for a
+   * signature is not a wizard step. */
+  const directAck = !prebuilt;
+  const stepOrder: WizardStep[] = ["partner", "link", "grant"];
   /* An arrangement already on the register for this partner is reused
    * silently — auto or manual, one register row per partner is enough. */
   const reusableAgreement = activeAgreements.find(
@@ -222,14 +224,12 @@ export function PartnerOnboardingWizard({
     setChosenContactKey(null); setContactName(""); setContactEmail("");
     setBuilderKind("builder"); setContactSearch("");
     setPortalContacts([]); setContactsError(null); setContactsLoading(false);
-    setExistingAgreementId(null); setReference("");
-    setExecutedOn(isoDate(new Date())); setReviewDue(defaultReviewDate(new Date()));
     setRole(PARTNER_PORTAL_CHOICES[0].role);
     setLegalRoute(LEGAL_ROUTE_CHOICES[0].value);
     setPurpose("");
     setCreatedOrgId(null); setCreatedAgreement(null); setLinkRecorded(false);
     provisionCache.current = {};
-    setInviteOutcome(null);
+    setInviteOutcome(null); setAckResult(null);
     setGrantResult(null); setCopied(false);
   }, [open]);
 
@@ -358,14 +358,12 @@ export function PartnerOnboardingWizard({
       (c) => c.name?.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q));
   }, [portalContacts, contactSearch]);
 
-  /* A portal partner needs someone to invite: a chosen existing contact,
-   * or a name and a deliverable email. "Other" has no portal to enter. */
-  const contactValid = portal === "other"
-    || chosenContact !== null
+  /* Everyone needs a deliverable address: a portal partner receives their
+   * invite there, and a partner outside the portals receives the agreement
+   * itself — which is the only way they can accept it. */
+  const contactValid = chosenContact !== null
     || (contactName.trim().length > 1 && isValidEmail(contactEmail));
   const partnerValid = (existingOrgId !== null || legalName.trim().length > 1) && contactValid;
-  const arrangementValid = existingAgreementId !== null
-    || (reference.trim().length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(executedOn) && /^\d{4}-\d{2}-\d{2}$/.test(reviewDue));
   const effectivePurpose = purpose.trim() || defaultPurpose(portalChoice.label, role);
   const linkValid = role.trim().length > 0 && effectivePurpose.length >= 10;
 
@@ -511,27 +509,18 @@ export function PartnerOnboardingWizard({
         setCreatedOrgId(orgId);
       }
 
-      // 2 · The written arrangement — PREBUILT for a portal partner (the
-      //     Compliance Passport agreement their sign-up executes; the
-      //     register row is recorded automatically against it), manual
-      //     only for a partner outside the portals. An active register
-      //     row for this partner is reused either way.
-      let agreement = existingAgreementId
-        ? activeAgreements.find((a) => a.id === existingAgreementId) ?? null
-        : createdAgreement ?? reusableAgreement;
-      if (!agreement) {
-        const draft = prebuilt
-          ? prebuiltArrangementDraft(new Date())
-          : {
-              agreement_reference: reference.trim(),
-              executed_on: executedOn,
-              next_review_due: reviewDue,
-            };
+      // 2 · The written arrangement. A PORTAL partner's is the prebuilt
+      //     Compliance Passport agreement their sign-up executes, so the
+      //     register row is recorded automatically. A partner OUTSIDE the
+      //     portals has no sign-up: their acceptance of the emailed
+      //     agreement creates the row, so nothing is recorded here.
+      let agreement = createdAgreement ?? reusableAgreement;
+      if (!agreement && !directAck) {
         const res = await amlRelianceApi.createAgreement({
           partner_org_name: partnerName,
           partner_org_type: amlType,
           partner_abn: abn.trim() || undefined,
-          ...draft,
+          ...prebuiltArrangementDraft(new Date()),
         });
         agreement = res.agreement;
         setCreatedAgreement(agreement);
@@ -554,6 +543,28 @@ export function PartnerOnboardingWizard({
             throw e;
           }
         }
+      }
+
+      // 3b · A partner outside the portals: send the agreement and STOP.
+      //      The passport is granted later, from the workspace, once they
+      //      have accepted — because their acceptance is the arrangement,
+      //      and waiting days for a signature is not a wizard step.
+      if (directAck) {
+        const res = await amlRelianceApi.sendPartnerAcknowledgement({
+          case_id: caseId, partner_org_id: orgId,
+          recipient_name: (chosenContact?.name ?? contactName).trim(),
+          recipient_email: (chosenContact?.email ?? contactEmail).toLowerCase().trim(),
+        });
+        setAckResult({
+          email: res.acknowledgement.recipient_email,
+          expires_at: res.acknowledgement.expires_at,
+          emailSent: res.email_sent,
+          emailError: res.email_error,
+          link: res.link,
+        });
+        setStep("ack_sent");
+        await onDone();
+        return;
       }
 
       // 4 · Portal access — the invite email, through the portal's own
@@ -624,17 +635,25 @@ export function PartnerOnboardingWizard({
         )}
       >
         <DialogHeader className="shrink-0 pr-8">
-          <DialogTitle>{step === "token" ? "Partner access granted" : "Onboard a partner & grant passport access"}</DialogTitle>
+          <DialogTitle>
+            {step === "token" ? "Partner access granted"
+              : step === "ack_sent" ? "Agreement sent for acceptance"
+              : "Onboard a partner & grant passport access"}
+          </DialogTitle>
           <DialogDescription>
             {step === "token"
               ? "The token below is shown once. The partner's portal redeems it — their invite email is how they get in."
-              : "One pass records the organisation, the arrangement and the case link, emails the portal invite, then grants access. Every rule is still enforced server-side."}
+              : step === "ack_sent"
+                ? "The partner reviews and accepts by email. The passport can be issued once they have."
+                : directAck
+                  ? "One pass records the organisation and the case link, then emails the partner the agreement to accept. The passport follows their acceptance."
+                  : "One pass records the organisation, the arrangement and the case link, emails the portal invite, then grants access. Every rule is still enforced server-side."}
           </DialogDescription>
         </DialogHeader>
 
         {/* Progress — where this pass is, in words. Numbered at render
             time, because a portal partner has no arrangement step. */}
-        {step !== "token" && (
+        {step !== "token" && step !== "ack_sent" && (
           <ol className="shrink-0 flex flex-wrap gap-x-3 gap-y-1 text-[11px]" aria-label="Onboarding steps">
             {stepOrder.map((s, i) => (
               <li key={s} className={cn(
@@ -720,12 +739,15 @@ export function PartnerOnboardingWizard({
             </div>
 
             {/* ── Who receives portal access ─────────────────────────── */}
-            {portal !== "other" && (
+            {(
               <div className="space-y-1.5 border-t border-border/50 pt-3">
-                <Label className="text-xs">Who receives portal access?</Label>
+                <Label className="text-xs">
+                  {directAck ? "Who accepts the agreement?" : "Who receives portal access?"}
+                </Label>
                 <p className="text-[11px] text-muted-foreground">
-                  The invite email is how they get into the {portalChoice.label} — no prior
-                  sign-up is needed. Choose an existing contact, or enter a new one.
+                  {directAck
+                    ? "They receive the AML/CTF Compliance Passport Agreement by email and accept it there — no account, no portal. Their acceptance is what records the arrangement."
+                    : `The invite email is how they get into the ${portalChoice.label} — no prior sign-up is needed. Choose an existing contact, or enter a new one.`}
                 </p>
                 {contactsLoading && (
                   <p className="flex items-center gap-2 text-[11px] text-muted-foreground" role="status">
@@ -790,62 +812,13 @@ export function PartnerOnboardingWizard({
                 </div>
                 {!contactValid && (contactName.length > 0 || contactEmail.length > 0) && (
                   <p className="text-[11px] text-warning" aria-live="polite">
-                    A contact name and a valid email are needed — the invite has nowhere to go
-                    without them.
+                    {directAck
+                      ? "A name and a valid email are needed — the agreement has nowhere to go without them."
+                      : "A contact name and a valid email are needed — the invite has nowhere to go without them."}
                   </p>
                 )}
               </div>
             )}
-          </div>
-        )}
-
-        {step === "arrangement" && (
-          <div className="space-y-3 text-sm">
-            <p className="text-xs text-muted-foreground">
-              A partner outside the portals has no sign-up to carry the prebuilt agreement, so
-              the written CDD arrangement (AML/CTF Act Pt 2 Div 7) is recorded here. It must be
-              reviewed regularly — an overdue review blocks new grants. The agreement itself
-              lives with legal; this records it.
-            </p>
-            {activeAgreements.some((a) => a.partner_org_name.toLowerCase() === partnerName.toLowerCase()) && (
-              <div className="space-y-1.5">
-                <Label className="text-xs">An arrangement with this partner already exists</Label>
-                <div role="radiogroup" aria-label="Existing arrangements" className="grid gap-2">
-                  {activeAgreements
-                    .filter((a) => a.partner_org_name.toLowerCase() === partnerName.toLowerCase())
-                    .map((a) => (
-                      <ChoiceCard
-                        key={a.id}
-                        selected={existingAgreementId === a.id}
-                        label={a.agreement_reference}
-                        meaning={`Review due ${new Date(a.next_review_due).toLocaleDateString()}`}
-                        onSelect={() => setExistingAgreementId(existingAgreementId === a.id ? null : a.id)}
-                      />
-                    ))}
-                </div>
-                <p className="text-[11px] text-muted-foreground">— or record a new one below.</p>
-              </div>
-            )}
-            <div className="space-y-1.5">
-              <Label htmlFor="pow-reference" className="text-xs">Written agreement reference</Label>
-              <Input id="pow-reference" placeholder="e.g. CDD-2026-014" value={reference}
-                disabled={existingAgreementId !== null}
-                onChange={(e) => setReference(e.target.value)} />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="pow-executed" className="text-xs">Executed on</Label>
-                <Input id="pow-executed" type="date" value={executedOn}
-                  disabled={existingAgreementId !== null}
-                  onChange={(e) => setExecutedOn(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="pow-review" className="text-xs">Next review due</Label>
-                <Input id="pow-review" type="date" value={reviewDue}
-                  disabled={existingAgreementId !== null}
-                  onChange={(e) => setReviewDue(e.target.value)} />
-              </div>
-            </div>
           </div>
         )}
 
@@ -896,16 +869,21 @@ export function PartnerOnboardingWizard({
               <div><span className="font-medium">Partner:</span> {partnerName} · {portalChoice.label}</div>
               <div>
                 <span className="font-medium">Arrangement:</span>{" "}
-                {existingAgreementId
-                  ? activeAgreements.find((a) => a.id === existingAgreementId)?.agreement_reference
-                  : reusableAgreement
-                    ? `${reusableAgreement.agreement_reference} (already recorded)`
-                    : prebuilt
-                      ? `Prebuilt — ${PREBUILT_AGREEMENT_TITLE} (recorded automatically)`
-                      : `${reference.trim() || "—"} (new, review due ${reviewDue})`}
+                {reusableAgreement
+                  ? `${reusableAgreement.agreement_reference} (already recorded)`
+                  : prebuilt
+                    ? `Prebuilt — ${PREBUILT_AGREEMENT_TITLE} (recorded automatically)`
+                    : "Created when the partner accepts the emailed agreement"}
               </div>
               <div><span className="font-medium">Legal route:</span> {LEGAL_ROUTE_CHOICES.find((r) => r.value === legalRoute)?.label}</div>
-              {portal !== "other" && (
+              {directAck && (
+                <div>
+                  <span className="font-medium">Agreement to:</span>{" "}
+                  {(chosenContact?.email ?? contactEmail) || "—"} — they accept by email; the
+                  passport follows.
+                </div>
+              )}
+              {!directAck && (
                 <div>
                   <span className="font-medium">Portal access:</span>{" "}
                   {chosenContact?.active
@@ -915,7 +893,9 @@ export function PartnerOnboardingWizard({
               )}
               <div>
                 <span className="font-medium">They will receive:</span>{" "}
-                attestation v{attestationVersion ?? "—"} — what was performed, never this case&apos;s risk assessment.
+                {directAck
+                  ? "the agreement now; the passport (what was performed, never this case's risk assessment) once they accept."
+                  : `attestation v${attestationVersion ?? "—"} — what was performed, never this case's risk assessment.`}
               </div>
             </div>
             {readiness.blockers.map((b) => (
@@ -924,7 +904,7 @@ export function PartnerOnboardingWizard({
             {readiness.cautions.map((c) => (
               <p key={c} className="text-[11px] text-muted-foreground">{c}</p>
             ))}
-            {prebuilt && !existingAgreementId && !reusableAgreement && (
+            {prebuilt && !reusableAgreement && (
               <p className="text-xs text-muted-foreground">
                 No arrangement to type: the partner&apos;s binding acknowledgement of that
                 agreement — including the s&nbsp;37A arrangement statement — is a mandatory part
@@ -937,6 +917,40 @@ export function PartnerOnboardingWizard({
               grants access and shows the partner&apos;s one-time token. The client sees their
               completed compliance in their own portal — nothing extra is asked of them.
             </p>
+          </div>
+        )}
+
+        {step === "ack_sent" && ackResult && (
+          <div className="space-y-3 text-sm">
+            <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/5 p-3">
+              <Mail className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
+              <p className="text-xs">
+                The AML/CTF Compliance Passport Agreement has been sent to{" "}
+                <span className="font-medium">{ackResult.email}</span> for acceptance. They need no
+                account — the link opens the agreement itself, and it expires{" "}
+                {new Date(ackResult.expires_at).toLocaleDateString()}.
+              </p>
+            </div>
+            {/* The passport is deliberately NOT issued yet: their acceptance
+                is what creates the arrangement a grant requires. */}
+            <p className="text-xs text-muted-foreground">
+              No passport has been issued and nothing has been shared. When they accept, the
+              arrangement is recorded, you are notified, and the passport can be granted from this
+              stage. If they decline or the link lapses, you can send it again — to the same
+              address or a different one.
+            </p>
+            {!ackResult.emailSent && (
+              <div className="space-y-1.5 rounded-md border border-warning/40 bg-warning/5 p-3">
+                <p className="text-xs text-warning">
+                  The request was recorded, but the email did not send
+                  {ackResult.emailError ? `: ${ackResult.emailError}` : "."} The link below is live —
+                  deliver it to the partner yourself, or re-send from this stage.
+                </p>
+                <code className="block break-all rounded border border-border/60 bg-muted/40 p-2 text-[11px]">
+                  {ackResult.link}
+                </code>
+              </div>
+            )}
           </div>
         )}
 
@@ -1010,31 +1024,25 @@ export function PartnerOnboardingWizard({
         </div>
 
         <DialogFooter className="shrink-0 gap-2 border-t border-border/50 pt-3">
-          {step !== "token" && step !== "partner" && (
+          {step !== "token" && step !== "ack_sent" && step !== "partner" && (
             <Button variant="ghost" disabled={busy}
               onClick={() => setStep(stepOrder[stepOrder.indexOf(step) - 1])}>
               Back
             </Button>
           )}
           {step === "partner" && (
-            <Button disabled={!partnerValid}
-              onClick={() => setStep(prebuilt ? "link" : "arrangement")}>
-              Continue
-            </Button>
-          )}
-          {step === "arrangement" && (
-            <Button disabled={!arrangementValid} onClick={() => setStep("link")}>Continue</Button>
+            <Button disabled={!partnerValid} onClick={() => setStep("link")}>Continue</Button>
           )}
           {step === "link" && (
             <Button disabled={!linkValid} onClick={() => setStep("grant")}>Continue</Button>
           )}
           {step === "grant" && (
-            <Button disabled={busy || !readiness.ready} onClick={completeGrant}>
+            <Button disabled={busy || (!directAck && !readiness.ready)} onClick={completeGrant}>
               {busy && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-              Record, invite &amp; grant
+              {directAck ? "Record & send the agreement" : "Record, invite & grant"}
             </Button>
           )}
-          {step === "token" && (
+          {(step === "token" || step === "ack_sent") && (
             <Button onClick={() => onOpenChange(false)}>Done</Button>
           )}
         </DialogFooter>

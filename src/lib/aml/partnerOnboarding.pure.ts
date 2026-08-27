@@ -254,3 +254,57 @@ export function grantReadiness(f: GrantReadinessFacts): GrantReadiness {
   }
   return { ready: blockers.length === 0, blockers, cautions };
 }
+
+/* ── The emailed agreement, as the workspace reads it ──────────────────
+ * The browser side of `ackActionFor` in
+ * `supabase/functions/_shared/aml/directAcknowledgement.ts`; the two must
+ * agree, and a test asserts they carry the same statuses. Presentation
+ * only — the server decides what a row's status actually is.
+ */
+
+export type DirectAckReading = {
+  state: "sent" | "viewed" | "accepted" | "declined" | "expired" | "superseded";
+  /** True when the passport may now be granted to this partner. */
+  gateOpen: boolean;
+  /** True when re-sending is the sensible next act. */
+  canResend: boolean;
+  detail: string;
+};
+
+export function describeAcknowledgement(
+  status: string, expiresAt: string | null | undefined,
+): DirectAckReading {
+  if (status === "accepted") {
+    return {
+      state: "accepted", gateOpen: true, canResend: false,
+      detail: "Acknowledged — the arrangement is recorded and the passport can be issued.",
+    };
+  }
+  if (status === "declined") {
+    return {
+      state: "declined", gateOpen: false, canResend: true,
+      detail: "The partner declined. Nothing is recorded against them; a new request can be sent if the position changes.",
+    };
+  }
+  if (status === "superseded") {
+    return {
+      state: "superseded", gateOpen: false, canResend: false,
+      detail: "Replaced by a newer request.",
+    };
+  }
+  const live = (status === "sent" || status === "viewed")
+    && Boolean(expiresAt) && new Date(expiresAt as string).getTime() > Date.now();
+  if (!live) {
+    return {
+      state: "expired", gateOpen: false, canResend: true,
+      detail: "The link lapsed before it was accepted. Re-send it to the same address or a different one.",
+    };
+  }
+  return {
+    state: status === "viewed" ? "viewed" : "sent",
+    gateOpen: false, canResend: true,
+    detail: status === "viewed"
+      ? "The partner has opened the agreement but not yet accepted it."
+      : "Sent — waiting for the partner to review and accept.",
+  };
+}
