@@ -89,7 +89,9 @@ import {
 import { useLiveCaseRefresh } from "@/lib/aml/useLiveCaseRefresh";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
-import { progressRail, type ProgressRailState } from "@/lib/aml/caseDimensions";
+import { caseStage, progressRail, serviceGateStatus, type ProgressRailState } from "@/lib/aml/caseDimensions";
+import { gatePassportPath } from "@/lib/aml/gatePassportPath.pure";
+import { GatePassportPathCard } from "@/components/aml/workspace/GatePassportPathCard";
 import {
   ScreeningTab, RiskTab, OwnershipControlTab,
   FundingFinanceTab, TimelineTab, AuditTab,
@@ -614,6 +616,14 @@ export default function AmlCaseWorkspace() {
             ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
         }, 0);
         return;
+      case "record_gate":
+        /* Stage 9's primary act lives on the DECISION stage: the gate card,
+         * where the choice cards and the reason are. */
+        window.setTimeout(() => {
+          document.getElementById("decision-step-gate")
+            ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+        }, 0);
+        return;
       case "adjudicate_match":
       case "escalate":
       default:
@@ -1085,11 +1095,55 @@ export default function AmlCaseWorkspace() {
           {/* ── Stage 9 · Service gate & Passport ───────────────────── */}
           {section === "passport" && (
             <div className="space-y-4">
+              {/*
+                ── The road to an issued Passport, in order ──────────────
+                Stage 9 kept silent about the Stage 8 outcome — a cleared
+                case read "Under review — not yet decided" about the gate
+                and looked like the decision had not pulled through. The
+                path pulls it through as step 1, orders gate → preview →
+                issue, and every step lands where the act is done: the
+                Decision stage, the digital passport page, the reliance
+                panel below. The passport state is the SERVER's own code —
+                nothing here derives one.
+              */}
+              <GatePassportPathCard
+                steps={gatePassportPath({
+                  decisionOutcome:
+                    caseStage(caseRow) === "cleared" || caseRow.status === "cleared"
+                      ? "cleared"
+                      : caseStage(caseRow) === "blocked" || caseRow.status === "blocked"
+                        ? "blocked"
+                        : null,
+                  gateStatus: serviceGateStatus(caseRow),
+                  passportState: facts.passport?.state?.code ?? null,
+                  passportVersion: facts.passport?.version ?? null,
+                  canReview: access.isMlro || access.roles.has("reviewer"),
+                })}
+                onStepClick={(key) => {
+                  if (key === "decision" || key === "gate") {
+                    setSection("risk");
+                    window.setTimeout(() => {
+                      document.getElementById(key === "gate" ? "decision-step-gate" : "decision-step-decision")
+                        ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+                    }, 0);
+                  } else if (key === "preview") {
+                    // The digital passport, exactly as the client and
+                    // partners will see it — before anything is issued.
+                    navigate(`/admin/aml/passport?case=${caseRow.id}`);
+                  } else {
+                    document.getElementById("aml-passport-issue")
+                      ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+                  }
+                }}
+                onContinue={() => setSection("monitoring")}
+              />
               <AmlServiceReadinessCard readiness={summary.readiness} />
               {/* The full journey map keeps its place in the product — it
                   sits where the credential is worked on. */}
               <ComplianceJourneyMap caseRow={caseRow} />
-              <ReliancePassportSection caseId={caseRow.id} isMlro={access.isMlro} />
+              <div id="aml-passport-issue" className="scroll-mt-24">
+                <ReliancePassportSection caseId={caseRow.id} isMlro={access.isMlro} />
+              </div>
             </div>
           )}
 
