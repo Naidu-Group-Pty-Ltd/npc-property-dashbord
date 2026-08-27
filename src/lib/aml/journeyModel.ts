@@ -1423,7 +1423,16 @@ function decisionStage(facts: AmlWorkspaceFacts): StageReading {
       warnings,
       completedItems: completed,
       outstandingItems: outstanding,
-      primaryAction: { key: "risk", label: "Complete the risk assessment", section: "risk" },
+      /*
+       * `actionType` matters: without one the workspace's action switch fell
+       * to its default — a scroll to a screening anchor that does not exist
+       * on the risk section — so the stage's primary button changed nothing
+       * visible for an operator already standing on stage 8.
+       */
+      primaryAction: {
+        key: "risk", label: "Complete the risk assessment", section: "risk",
+        actionType: "complete_assessment",
+      },
       sourceFacts,
     };
   }

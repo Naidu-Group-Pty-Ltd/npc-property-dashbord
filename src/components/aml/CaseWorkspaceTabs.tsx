@@ -10,7 +10,7 @@
  *     capabilities; write actions gated by `canWrite`.
  *   - No new data model — reuses existing amlVerificationApi / amlRiskApi.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,6 +33,8 @@ import {
   type AmlAnalystRecommendation, type AmlServiceGateContract, type AmlRecalcStatus,
 } from "@/lib/aml/amlRiskApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
+import { decisionPath, gateChangeHint, reasonHint } from "@/lib/aml/decisionPath.pure";
+import { DecisionPathCard } from "@/components/aml/workspace/DecisionPathCard";
 import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy, type AmlFinanceRequest } from "@/lib/aml/amlFinanceApi";
 import {
   amlEntitiesApi, type AmlEntity, type AmlBeneficialOwner, type AmlAuthorisedRep,
@@ -628,9 +630,57 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
 
   const latest = assessments?.[0];
   const pendingRecommendation = recommendations.find((r) => r.status === "pending") ?? null;
+  const openConditionCount = conditions.filter((c) => c.status === "open").length;
+
+  /*
+   * ── Seed the gate select from the gate that IS ────────────────────────
+   * The select opened on "Under review" whatever the case's gate said, so
+   * choosing an option always began by correcting a default. Seeded once
+   * per case, from the loaded gate — and only when the loaded status is one
+   * this operator may select (a non-MLRO cannot re-pick locked/terminated).
+   */
+  const gateSeededFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!gate || gateSeededFor.current === caseId) return;
+    gateSeededFor.current = caseId;
+    const selectable = isMlro || (gate.status !== "locked" && gate.status !== "terminated");
+    if (selectable && GATE_OPTION_LABELS[gate.status]) setGateStatus(gate.status);
+  }, [gate, caseId, isMlro]);
+
+  /*
+   * The path: the same facts as the cards below, arranged in order with one
+   * step open (decisionPath.pure.ts). Derives nothing — the audited actions
+   * stay on the cards.
+   */
+  const pathSteps = decisionPath({
+    assessment: latest
+      ? { created_at: latest.created_at, risk_rating: latest.risk_rating ?? null }
+      : null,
+    recalcStale: recalc?.stale ?? false,
+    recalcReasons: recalc?.reasons ?? [],
+    openConditions: openConditionCount,
+    pendingRecommendation: pendingRecommendation !== null,
+    decision: latestDecision
+      ? { outcome: latestDecision.outcome, decided_at: latestDecision.decided_at }
+      : null,
+    gate: gate ? { status: gate.status, effective_at: gate.effective_at ?? null } : null,
+    canWrite,
+    canReview,
+  });
+
+  /* Why each disabled control is disabled, in words — and the server's gate
+   * preconditions read BEFORE the request instead of from its 409. */
+  const recRationaleHint = reasonHint(recRationale, "rationale");
+  const gateReasonHint = reasonHint(gateReason);
+  const gatePrecondition = gateChangeHint(gateStatus, {
+    decisionOutcome: latestDecision?.outcome ?? null,
+    openConditions: openConditionCount,
+    isMlro,
+  });
 
   return (
     <div className="space-y-4">
+      <DecisionPathCard steps={pathSteps} />
       {recalc?.stale && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
           <div className="flex items-start gap-2">
@@ -796,6 +846,11 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
                 value={recRationale}
                 onChange={(e) => setRecRationale(e.target.value)}
               />
+              {/* A silent disabled button reads as a broken one — the hint
+                  names exactly what enables it. */}
+              {recRationaleHint && (
+                <p className="text-[11px] text-muted-foreground" aria-live="polite">{recRationaleHint}</p>
+              )}
             </div>
           )}
         </CardContent>
@@ -845,6 +900,14 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
                 Clearance is refused while mandatory holds or open conditions remain.
               </p>
             </div>
+          )}
+          {/* Hidden controls read as a missing feature; a named requirement
+              reads as a rule. */}
+          {!canReview && (
+            <p className="border-t border-border/50 pt-3 text-xs text-muted-foreground">
+              Recording the decision requires a reviewer or the MLRO. Record an analyst
+              recommendation above for them to weigh.
+            </p>
           )}
         </CardContent>
       </Card>
@@ -904,7 +967,24 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
                 value={gateReason}
                 onChange={(e) => setGateReason(e.target.value)}
               />
+              {/* "Apply gate change" used to sit greyed under an empty reason
+                  box with nothing saying the reason is what enables it — a
+                  silently disabled control is indistinguishable from a broken
+                  one. The precondition line reads the server's approval rules
+                  BEFORE the request instead of from its 409; the server still
+                  enforces every one of them. */}
+              {gateReasonHint && (
+                <p className="text-[11px] text-muted-foreground" aria-live="polite">{gateReasonHint}</p>
+              )}
+              {gatePrecondition && (
+                <p className="text-[11px] text-warning" aria-live="polite">{gatePrecondition}</p>
+              )}
             </div>
+          )}
+          {!canReview && (
+            <p className="border-t border-border/50 pt-3 text-xs text-muted-foreground">
+              Changing the service gate requires a reviewer or the MLRO.
+            </p>
           )}
         </CardContent>
       </Card>

@@ -603,6 +603,17 @@ export default function AmlCaseWorkspace() {
           block: "start", behavior: "smooth",
         });
         return;
+      case "complete_assessment":
+        /*
+         * Stage 8's primary act: land on the decision work, not merely the
+         * section the operator is already viewing. The guided path at the
+         * top of the risk panel then names the open step.
+         */
+        window.setTimeout(() => {
+          document.getElementById("aml-risk-decision")
+            ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+        }, 0);
+        return;
       case "adjudicate_match":
       case "escalate":
       default:
@@ -1059,7 +1070,9 @@ export default function AmlCaseWorkspace() {
                 events={events}
                 onOpenSection={setSection}
               />
-              <RiskTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+              <div id="aml-risk-decision" className="scroll-mt-24">
+                <RiskTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+              </div>
             </div>
           )}
 
