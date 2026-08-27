@@ -1615,7 +1615,14 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
     primaryAction: complete
       ? null
       : !gateApproved
-        ? { key: "gate", label: "Record the service-gate decision", section: "risk" }
+        /* `actionType` matters — without one this button fell to the
+         * workspace switch's default, a scroll to a screening anchor that
+         * does not exist, and changed nothing visible. Same class as the
+         * Stage 6/7/8 buttons before it. */
+        ? {
+            key: "gate", label: "Record the service-gate decision", section: "risk",
+            actionType: "record_gate",
+          }
         : { key: "passport", label: "Open the Compliance Passport", section: "passport" },
     secondaryActions: [{ key: "passport_open", label: "Passport & reliance", section: "passport" }],
     sourceFacts,
