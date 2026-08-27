@@ -44,16 +44,15 @@ import { Label } from "@/components/ui/label";
 import { Loader2, Copy, Check, ShieldCheck, Mail, AlertTriangle } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { supabase } from "@/integrations/supabase/client";
 import { invokeSecureFunction } from "@/lib/secureInvoke";
 import { amlCasesApi } from "@/lib/aml/amlCasesApi";
 import {
   amlRelianceApi, type PartnerOrganisation, type RelianceAgreement,
 } from "@/lib/aml/amlRelianceApi";
 import {
-  LEGAL_ROUTE_CHOICES, PARTNER_PORTAL_CHOICES, PREBUILT_AGREEMENT_TITLE,
-  builderOrgType, defaultPurpose, defaultReviewDate, grantReadiness, isValidEmail, isoDate,
-  portalHasPrebuiltAgreement, prebuiltArrangementDraft,
+  BUILDER_ORG_KINDS, LEGAL_ROUTE_CHOICES, PARTNER_PORTAL_CHOICES, PREBUILT_AGREEMENT_TITLE,
+  amlOrgTypeForKind, builderOrgType, defaultPurpose, defaultReviewDate, grantReadiness,
+  isValidEmail, isoDate, portalAsksOrgKind, portalHasPrebuiltAgreement, prebuiltArrangementDraft,
 } from "@/lib/aml/partnerOnboarding.pure";
 
 type WizardStep = "partner" | "arrangement" | "link" | "grant" | "token";
@@ -153,9 +152,16 @@ export function PartnerOnboardingWizard({
    * be chosen; a new one needs a name and a deliverable email, because
    * the invite email IS the door into the portal. */
   const [portalContacts, setPortalContacts] = useState<ExistingPortalContact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  /* A registry read that FAILED is not a registry that is empty — the
+   * finance list silently rendered empty for exactly that reason. */
+  const [contactsError, setContactsError] = useState<string | null>(null);
+  const [contactSearch, setContactSearch] = useState("");
   const [chosenContactKey, setChosenContactKey] = useState<string | null>(null);
   const [contactName, setContactName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
+  /* Which organisation the one Builder/Developer card stands for. */
+  const [builderKind, setBuilderKind] = useState<string>("builder");
 
   /* Step 2 — the written arrangement (non-portal partners only). */
   const [existingAgreementId, setExistingAgreementId] = useState<string | null>(null);
@@ -187,6 +193,11 @@ export function PartnerOnboardingWizard({
   const chosenOrg = organisations.find((o) => o.id === existingOrgId) ?? null;
   const partnerName = chosenOrg?.legal_name ?? legalName.trim();
   const chosenContact = portalContacts.find((c) => c.key === chosenContactKey) ?? null;
+  /* The AML vocabulary for this partner. The Builder/Developer card is
+   * ONE portal, so which of AML's two types it means comes from the
+   * organisation kind chosen underneath it. */
+  const asksOrgKind = portalAsksOrgKind(portal);
+  const amlType = asksOrgKind ? amlOrgTypeForKind(builderKind) : portal;
 
   /* A portal partner's arrangement is PREBUILT: the Portal Access &
    * AML/CTF Compliance Passport Agreement their sign-up executes (its
@@ -209,6 +220,8 @@ export function PartnerOnboardingWizard({
     setStep("partner");
     setExistingOrgId(null); setLegalName(""); setPortal(PARTNER_PORTAL_CHOICES[0].value); setAbn("");
     setChosenContactKey(null); setContactName(""); setContactEmail("");
+    setBuilderKind("builder"); setContactSearch("");
+    setPortalContacts([]); setContactsError(null); setContactsLoading(false);
     setExistingAgreementId(null); setReference("");
     setExecutedOn(isoDate(new Date())); setReviewDue(defaultReviewDate(new Date()));
     setRole(PARTNER_PORTAL_CHOICES[0].role);
@@ -237,25 +250,37 @@ export function PartnerOnboardingWizard({
   /*
    * The EXISTING portal identities for the chosen portal, from each
    * portal's own registry — so an existing finance, builder or solicitor
-   * partner is chosen, never re-created. A read this operator's admin
-   * permissions refuse simply yields an empty list; the manual fields
-   * remain the road.
+   * partner is chosen, never re-created.
+   *
+   * ── Why finance goes through the edge function ──────────────────────
+   * `finance_agent_contacts` grants SELECT to `service_role` alone, so a
+   * browser read returns a permission error, not rows — and the old
+   * `.catch(() => [])` turned that into an empty list. Five active
+   * finance contacts existed and none was ever offered. Every portal now
+   * reads through its own admin function (service role), and a read that
+   * FAILED says so instead of rendering as "none".
    */
   useEffect(() => {
-    if (!open || portal === "other") { setPortalContacts([]); return; }
+    if (!open || portal === "other") {
+      setPortalContacts([]); setContactsError(null); setContactsLoading(false);
+      return;
+    }
     let alive = true;
+    setContactsLoading(true);
+    setContactsError(null);
     const load = async (): Promise<ExistingPortalContact[]> => {
       if (portal === "finance") {
-        const { data } = await supabase
-          .from("finance_agent_contacts")
-          .select("id, name, email, company, is_active")
-          .eq("is_active", true)
-          .order("name");
-        return (data ?? []).filter((c: any) => c.email).map((c: any) => ({
-          key: `finance:${c.id}`, name: c.name, email: c.email,
-          sub: c.company || "Finance contact",
-          active: false, finance_contact_id: c.id,
-        }));
+        // `records` = every finance contact with its portal status,
+        // assembled server-side (finance-portal-admin list_users).
+        const res = await call<{ records: any[] }>("finance-portal-admin", { operation: "list_users" });
+        return (res.records ?? [])
+          .filter((c: any) => c.email && c.is_active !== false)
+          .map((c: any) => ({
+            key: `finance:${c.id}`, name: c.name, email: c.email,
+            sub: c.company || "Finance contact",
+            active: c.status === "active",
+            finance_contact_id: c.id,
+          }));
       }
       if (portal === "solicitor_conveyancer") {
         const res = await call<{ records: any[] }>("solicitor-portal-admin", { operation: "list_users" });
@@ -276,7 +301,12 @@ export function PartnerOnboardingWizard({
     };
     load()
       .then((rows) => { if (alive) setPortalContacts(rows); })
-      .catch(() => { if (alive) setPortalContacts([]); });
+      .catch((e: any) => {
+        if (!alive) return;
+        setPortalContacts([]);
+        setContactsError(e?.message ?? "The existing partners could not be read.");
+      })
+      .finally(() => { if (alive) setContactsLoading(false); });
     return () => { alive = false; };
   }, [open, portal]);
 
@@ -286,9 +316,21 @@ export function PartnerOnboardingWizard({
   const applyPortal = (value: typeof portal) => {
     const prev = PARTNER_PORTAL_CHOICES.find((p) => p.value === portal)!;
     setPortal(value);
+    // The contact choice and the search belong to the previous portal's
+    // registry; carrying either across would offer the wrong people.
     setChosenContactKey(null);
+    setContactSearch("");
     const next = PARTNER_PORTAL_CHOICES.find((p) => p.value === value)!;
     if (role === prev.role) setRole(next.role);
+  };
+
+  /* The kind sets the role the same way the portal does: only while the
+   * operator has not written their own. */
+  const applyBuilderKind = (value: string) => {
+    const prev = BUILDER_ORG_KINDS.find((k) => k.value === builderKind);
+    setBuilderKind(value);
+    const next = BUILDER_ORG_KINDS.find((k) => k.value === value);
+    if (next && (role === prev?.role || role === "builder")) setRole(next.role);
   };
 
   const chooseContact = (contact: ExistingPortalContact) => {
@@ -305,6 +347,16 @@ export function PartnerOnboardingWizard({
     () => grantReadiness({ attestationVersion, sharingConsent }),
     [attestationVersion, sharingConsent],
   );
+
+  /* A long registry is searchable rather than a wall of cards — the
+   * builder portal's user list is every builder user, not just this
+   * partner's. */
+  const filteredContacts = useMemo(() => {
+    const q = contactSearch.trim().toLowerCase();
+    if (!q) return portalContacts;
+    return portalContacts.filter(
+      (c) => c.name?.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q));
+  }, [portalContacts, contactSearch]);
 
   /* A portal partner needs someone to invite: a chosen existing contact,
    * or a name and a deliverable email. "Other" has no portal to enter. */
@@ -331,18 +383,18 @@ export function PartnerOnboardingWizard({
       if (portal === "finance") {
         let contactId = chosenContact?.finance_contact_id ?? cache.financeContactId;
         if (!contactId) {
-          const { data: existing } = await supabase
-            .from("finance_agent_contacts")
-            .select("id").ilike("email", email).maybeSingle();
-          if (existing?.id) {
-            contactId = existing.id;
+          // A contact already loaded for this portal wins — the browser
+          // cannot read this table itself (service_role only), so the
+          // list this dialog already holds is the lookup.
+          const known = portalContacts.find(
+            (c) => c.email.toLowerCase() === email && c.finance_contact_id);
+          if (known?.finance_contact_id) {
+            contactId = known.finance_contact_id;
           } else {
-            const { data: inserted, error } = await supabase
-              .from("finance_agent_contacts")
-              .insert({ name, email, company: partnerName })
-              .select("id").single();
-            if (error) throw new Error(error.message);
-            contactId = inserted.id;
+            const res = await call<{ contact: { id: string } }>("finance-portal-admin", {
+              operation: "create_contact", name, email, company: partnerName,
+            });
+            contactId = res.contact.id;
           }
           cache.financeContactId = contactId;
         }
@@ -388,7 +440,7 @@ export function PartnerOnboardingWizard({
         if (!cache.organisationId) {
           const res = await call<{ organisation: any }>("builder-portal-admin", {
             operation: "upsert_organisation",
-            legal_name: partnerName, org_type: builderOrgType(portal), contact_email: email,
+            legal_name: partnerName, org_type: builderOrgType(builderKind), contact_email: email,
           });
           cache.organisationId = res.organisation.id;
           cache.orgVersion = res.organisation.row_version;
@@ -451,9 +503,9 @@ export function PartnerOnboardingWizard({
       if (!orgId) {
         const { partner_organisation } = await amlRelianceApi.upsertPartnerOrganisation({
           legal_name: legalName.trim(),
-          organisation_type: portal,
+          organisation_type: amlType,
           abn: abn.trim() || undefined,
-          portal_types: portal === "other" ? [] : [portal],
+          portal_types: portal === "other" ? [] : [amlType],
         });
         orgId = partner_organisation.id;
         setCreatedOrgId(orgId);
@@ -477,7 +529,7 @@ export function PartnerOnboardingWizard({
             };
         const res = await amlRelianceApi.createAgreement({
           partner_org_name: partnerName,
-          partner_org_type: portal,
+          partner_org_type: amlType,
           partner_abn: abn.trim() || undefined,
           ...draft,
         });
@@ -491,7 +543,7 @@ export function PartnerOnboardingWizard({
         try {
           await amlRelianceApi.linkPartnerToCase({
             case_id: caseId, partner_org_id: orgId,
-            portal_type: portal, relationship_role: role.trim(),
+            portal_type: amlType, relationship_role: role.trim(),
             legal_route: legalRoute, purpose: effectivePurpose,
           });
           setLinkRecorded(true);
@@ -557,8 +609,21 @@ export function PartnerOnboardingWizard({
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
-        <DialogHeader>
+      {/*
+        ── Viewport ────────────────────────────────────────────────────
+        The shared dialog is `grid` and turns overflow VISIBLE at ≥sm, so
+        a tall pass ran off the bottom of the screen with the Continue
+        button pinned to the very edge and nothing to scroll. This owns
+        its layout instead: a fixed header, ONE scrolling body, and a
+        footer that is always reachable at any window height.
+      */}
+      <DialogContent
+        className={cn(
+          "flex flex-col gap-3 overflow-hidden",
+          "max-h-[92dvh] sm:max-h-[88dvh] sm:max-w-2xl sm:overflow-hidden",
+        )}
+      >
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle>{step === "token" ? "Partner access granted" : "Onboard a partner & grant passport access"}</DialogTitle>
           <DialogDescription>
             {step === "token"
@@ -570,7 +635,7 @@ export function PartnerOnboardingWizard({
         {/* Progress — where this pass is, in words. Numbered at render
             time, because a portal partner has no arrangement step. */}
         {step !== "token" && (
-          <ol className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]" aria-label="Onboarding steps">
+          <ol className="shrink-0 flex flex-wrap gap-x-3 gap-y-1 text-[11px]" aria-label="Onboarding steps">
             {stepOrder.map((s, i) => (
               <li key={s} className={cn(
                 "uppercase tracking-wide",
@@ -582,6 +647,9 @@ export function PartnerOnboardingWizard({
           </ol>
         )}
 
+        {/* The one scrolling region: every step's content, and nothing
+            else, so the footer stays put. */}
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         {step === "partner" && (
           <div className="space-y-3 text-sm">
             {organisations.length > 0 && (
@@ -625,6 +693,25 @@ export function PartnerOnboardingWizard({
                 ))}
               </div>
             </div>
+            {/* One portal, three organisation shapes. Asked only for the
+                Builder/Developer card, because the answer is written to
+                the AML record, the case link and the portal itself. */}
+            {asksOrgKind && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Which best describes them?</Label>
+                <div role="radiogroup" aria-label="Organisation kind" className="grid gap-2 sm:grid-cols-3">
+                  {BUILDER_ORG_KINDS.map((k) => (
+                    <ChoiceCard
+                      key={k.value}
+                      selected={builderKind === k.value}
+                      label={k.label}
+                      meaning={k.meaning}
+                      onSelect={() => applyBuilderKind(k.value)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="pow-abn" className="text-xs">ABN (optional)</Label>
               <Input id="pow-abn" placeholder="11 digits" value={abn}
@@ -640,18 +727,54 @@ export function PartnerOnboardingWizard({
                   The invite email is how they get into the {portalChoice.label} — no prior
                   sign-up is needed. Choose an existing contact, or enter a new one.
                 </p>
-                {portalContacts.length > 0 && (
-                  <div role="radiogroup" aria-label="Existing portal contacts" className="grid max-h-44 gap-2 overflow-y-auto pr-1">
-                    {portalContacts.map((c) => (
-                      <ChoiceCard
-                        key={c.key}
-                        selected={chosenContactKey === c.key}
-                        label={`${c.name} — ${c.email}`}
-                        meaning={`${c.sub}${c.active ? " · already has portal access" : ""}`}
-                        onSelect={() => chooseContact(c)}
-                      />
-                    ))}
-                  </div>
+                {contactsLoading && (
+                  <p className="flex items-center gap-2 text-[11px] text-muted-foreground" role="status">
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                    Loading existing {portalChoice.label} partners…
+                  </p>
+                )}
+                {/* A read that FAILED is never rendered as "no partners" —
+                    that silence is what hid five finance contacts. */}
+                {!contactsLoading && contactsError && (
+                  <p className="text-[11px] text-warning" aria-live="polite">
+                    Existing partners could not be read ({contactsError}). Enter the contact
+                    below to invite them — nothing is lost by doing so.
+                  </p>
+                )}
+                {!contactsLoading && !contactsError && portalContacts.length > 6 && (
+                  <Input
+                    aria-label="Search existing partners"
+                    placeholder="Search by name or email…"
+                    value={contactSearch}
+                    onChange={(e) => setContactSearch(e.target.value)}
+                    className="h-8"
+                  />
+                )}
+                {!contactsLoading && !contactsError && portalContacts.length > 0 && (
+                  filteredContacts.length > 0 ? (
+                    <div role="radiogroup" aria-label="Existing portal contacts"
+                      className="grid max-h-52 gap-2 overflow-y-auto pr-1">
+                      {filteredContacts.map((c) => (
+                        <ChoiceCard
+                          key={c.key}
+                          selected={chosenContactKey === c.key}
+                          label={`${c.name} — ${c.email}`}
+                          meaning={`${c.sub}${c.active ? " · already has portal access" : ""}`}
+                          onSelect={() => chooseContact(c)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">
+                      No existing partner matches that search.
+                    </p>
+                  )
+                )}
+                {!contactsLoading && !contactsError && portalContacts.length === 0 && (
+                  <p className="text-[11px] text-muted-foreground">
+                    No {portalChoice.label} partner has been recorded yet — enter the contact below
+                    and they will be created and invited.
+                  </p>
                 )}
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
@@ -884,7 +1007,9 @@ export function PartnerOnboardingWizard({
           </div>
         )}
 
-        <DialogFooter className="gap-2">
+        </div>
+
+        <DialogFooter className="shrink-0 gap-2 border-t border-border/50 pt-3">
           {step !== "token" && step !== "partner" && (
             <Button variant="ghost" disabled={busy}
               onClick={() => setStep(stepOrder[stepOrder.indexOf(step) - 1])}>
