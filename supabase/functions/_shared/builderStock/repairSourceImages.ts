@@ -206,6 +206,18 @@ const MAX_ITEMS_RESTORED_PER_RUN = 4;
  */
 const MAX_PACKAGE_RECOVERIES_PER_RUN = 1;
 
+/**
+ * How much of the budget one package recovery is assumed to need.
+ *
+ * Not a measurement of a particular document — it cannot be, since the cost is
+ * whatever PDF a builder linked — but the size of the bet this run is willing
+ * to place. Fitted to the production kills: a recovery that began around ten
+ * seconds in ran the invocation to twenty-two. Ten seconds of headroom means
+ * the run declines the bet instead of losing it, reports `incomplete`, and the
+ * next tick takes it with a full budget.
+ */
+const PACKAGE_RECOVERY_RESERVE_MS = 10_000;
+
 async function readStage1Images(
   db: any,
   stockItemIds: string[],
@@ -638,7 +650,27 @@ export async function repairSourceImagesForUpload(
 
     if (restored >= MAX_ITEMS_RESTORED_PER_RUN) { outcome.incomplete = true; break; }
     if (recoveries >= MAX_PACKAGE_RECOVERIES_PER_RUN) { outcome.incomplete = true; break; }
-    if (input.deadlineAt && Date.now() > input.deadlineAt) { outcome.incomplete = true; break; }
+    /**
+     * A DEADLINE YOU CHECK BEFORE AN UNINTERRUPTIBLE STEP MUST RESERVE ROOM
+     * FOR IT.
+     *
+     * "Is there time left?" is the wrong question in front of a package
+     * recovery. It downloads a multi-megabyte PDF, extracts its rasters and
+     * classifies them, and once begun nothing stops it — so a run with one
+     * second left happily starts fifteen seconds of work and is killed on the
+     * worker's resource limit, having written no marker and logged nothing.
+     *
+     * PRODUCTION, 27 AUG 2026. This is what survived giving the step its own
+     * budget: the run ended at 22-24 seconds against a 12-second deadline,
+     * with zero images stored, because the deadline was tested at ~10s and the
+     * recovery then ran past it. The right question is "is there time for THIS
+     * step", and `PACKAGE_RECOVERY_RESERVE_MS` is what makes it askable.
+     */
+    if (input.deadlineAt
+      && Date.now() + PACKAGE_RECOVERY_RESERVE_MS > input.deadlineAt) {
+      outcome.incomplete = true;
+      break;
+    }
 
     restored += 1;
     recoveries += 1;
