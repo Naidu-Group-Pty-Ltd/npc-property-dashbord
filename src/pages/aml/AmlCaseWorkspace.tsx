@@ -1071,7 +1071,12 @@ export default function AmlCaseWorkspace() {
                 onOpenSection={setSection}
               />
               <div id="aml-risk-decision" className="scroll-mt-24">
-                <RiskTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+                <RiskTab
+                  caseId={caseRow.id}
+                  canWrite={canWrite}
+                  onChanged={load}
+                  onOpenSection={(s) => setSection(s as SectionKey)}
+                />
               </div>
             </div>
           )}

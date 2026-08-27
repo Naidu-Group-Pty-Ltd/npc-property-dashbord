@@ -23,6 +23,7 @@ const api = {
   evaluate: vi.fn(),
   recommend: vi.fn(),
   decide: vi.fn(),
+  clearanceReadiness: vi.fn(),
 };
 vi.mock("@/lib/aml/amlRiskApi", () => ({
   amlRiskApi: new Proxy({}, { get: (_t, k: string) => (...a: unknown[]) => (api as any)[k]?.(...a) }),
@@ -52,6 +53,7 @@ beforeEach(() => {
     gate: { status: "terminated", effective_at: "2026-08-20T00:00:00Z", conditions: [], reason: null, policy_version: "v1" },
   });
   api.recalcStatus.mockResolvedValue({ recalc: { stale: false, reasons: [] } });
+  api.clearanceReadiness.mockResolvedValue({ ready: true, reasons: [] });
 });
 
 const renderTab = () => render(
@@ -142,6 +144,45 @@ describe("a non-reviewer sees the rule, not a missing feature", () => {
     expect(screen.getByText(/Changing the service gate requires a reviewer or the MLRO\./)).toBeTruthy();
     // And the path says the same, as a blocked step with its blocker named.
     expect(screen.getAllByText("Blocked").length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("the path to clearance is named before the click", () => {
+  it("lists each blocker in words with a route to where it is resolved", async () => {
+    api.clearanceReadiness.mockResolvedValue({
+      ready: false,
+      reasons: ["pep_determination_outstanding", "2_open_conditions"],
+    });
+    const onOpenSection = vi.fn();
+    render(
+      <MemoryRouter>
+        <RiskTab caseId={CASE_ID} canWrite onChanged={vi.fn()} onOpenSection={onOpenSection} />
+      </MemoryRouter>,
+    );
+    // The exact class of the reported defect: refused for a blocker nothing
+    // on the page named. Now the blocker is on the page, in words.
+    expect(await screen.findByText(/No current PEP determination for the case subject/)).toBeTruthy();
+    expect(screen.getByText(/2 open conditions on the case/)).toBeTruthy();
+    expect(screen.getByText(/Escalating or blocking is not gated by these — only clearance is\./)).toBeTruthy();
+    // The screening blocker routes to the screening section; the conditions
+    // blocker is fixed on this screen and carries no route.
+    const openButtons = screen.getAllByRole("button", { name: "Open" });
+    expect(openButtons.length).toBe(1);
+    fireEvent.click(openButtons[0]);
+    expect(onOpenSection).toHaveBeenCalledWith("screening");
+  });
+
+  it("says so, in green, when the server will accept a cleared decision", async () => {
+    renderTab();
+    expect(await screen.findByText(/Nothing stands between this case and clearance/)).toBeTruthy();
+  });
+
+  it("an unavailable reading renders as nothing — a failed read is never a clean bill", async () => {
+    api.clearanceReadiness.mockRejectedValue(new Error("Unknown op"));
+    renderTab();
+    await screen.findByText("The decision, in order");
+    expect(screen.queryByText(/Nothing stands between this case and clearance/)).toBeNull();
+    expect(screen.queryByText(/stand between this case and clearance:/)).toBeNull();
   });
 });
 
