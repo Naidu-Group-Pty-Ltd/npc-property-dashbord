@@ -323,7 +323,23 @@ async function screeningCompletenessReasons(admin: any, caseId: string): Promise
   const { pepDeterminationRequiredForRole } = await import("../_shared/aml/partyScreening.pure.ts");
   const current = (pepDets ?? []).filter((d: any) => pepDeterminationCurrent(d, nowIso));
   const subjectIsIndividual = !gateCase?.subject_type || gateCase.subject_type === "individual";
-  const caseLevelCurrent = current.some((d: any) => !d.party_screening_subject_id);
+  /*
+   * The case subject's determination discharges the case-level requirement
+   * WHEREVER it is recorded. Stage 5's determination dialog writes against
+   * the primary subject's `party_screening_subjects` row — the same person
+   * this rule is about — but this check used to accept only a NULL
+   * party_screening_subject_id, so a case whose subject held a current
+   * not_pep determination was refused clearance for a "missing" PEP
+   * determination it demonstrably had. One person, one requirement: a
+   * current determination bound to a primary_subject row is the case-level
+   * determination.
+   */
+  const primarySubjectRowIds = new Set((subjects ?? [])
+    .filter((s: any) => String(s.party_type) === "primary_subject")
+    .map((s: any) => String(s.id)));
+  const caseLevelCurrent = current.some((d: any) =>
+    !d.party_screening_subject_id
+    || primarySubjectRowIds.has(String(d.party_screening_subject_id)));
   if (subjectIsIndividual && !caseLevelCurrent) reasons.push("pep_determination_outstanding");
   const coveredSubjects = new Set(current
     .filter((d: any) => d.party_screening_subject_id)
@@ -713,6 +729,28 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         `Decision recorded: ${outcome} [policy ${programVersion}]`,
         { decision_id: dec?.id, snapshot_hash, program_version: programVersion }, userId, userLabel);
       return jr({ decision: dec });
+    }
+
+    /*
+     * What stands between this case and clearance, as a READ — the same
+     * `clearanceBlockReasons` the decide and gate ops enforce, exposed so
+     * the screen can show the named blockers BEFORE the click instead of
+     * a 409 whose reasons the client used to discard. One implementation:
+     * this op can never disagree with the refusal.
+     */
+    if (op === "clearance_readiness") {
+      const caseId = String(body.case_id ?? "");
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canRead) return jr({ error: "AML role required for case tenant" }, 403);
+      const [{ data: ass }, { data: conds }] = await Promise.all([
+        admin.schema("aml").from("risk_assessments").select("*").eq("case_id", caseId)
+          .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+        admin.schema("aml").from("case_conditions").select("*").eq("case_id", caseId).eq("status", "open"),
+      ]);
+      const reasons = await clearanceBlockReasons(admin, caseId, ass, conds ?? []);
+      return jr({ ready: reasons.length === 0, reasons });
     }
 
     if (op === "policy_snapshot") {

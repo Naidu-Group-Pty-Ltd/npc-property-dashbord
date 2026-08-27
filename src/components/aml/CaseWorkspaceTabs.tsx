@@ -34,6 +34,7 @@ import {
 } from "@/lib/aml/amlRiskApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { decisionPath, gateChangeHint, reasonHint } from "@/lib/aml/decisionPath.pure";
+import { describeClearanceReason } from "@/lib/aml/clearanceReasons.pure";
 import { DecisionPathCard } from "@/components/aml/workspace/DecisionPathCard";
 import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy, type AmlFinanceRequest } from "@/lib/aml/amlFinanceApi";
 import {
@@ -545,7 +546,11 @@ const GATE_OPTION_LABELS: Record<string, string> = {
   terminated: "Terminated",
 };
 
-export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
+export function RiskTab({ caseId, canWrite, onChanged, onOpenSection }: {
+  caseId: string; canWrite: boolean; onChanged: () => void;
+  /** Route a clearance blocker to the section that resolves it. */
+  onOpenSection?: (section: string) => void;
+}) {
   const access = useAmlAccess();
   const canReview = access.roles.has("reviewer") || access.roles.has("mlro");
   const isMlro = access.isMlro;
@@ -562,21 +567,30 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
   const [decideRationale, setDecideRationale] = useState("");
   const [gateStatus, setGateStatus] = useState<string>("under_review");
   const [gateReason, setGateReason] = useState("");
+  /*
+   * What stands between this case and clearance, from the SAME server
+   * computation the decide op enforces (`clearance_readiness`). Null means
+   * the reading was unavailable (an old server, a failed read) — which
+   * renders as nothing, never as "ready": a failed read is not a clean bill.
+   */
+  const [clearance, setClearance] = useState<{ ready: boolean; reasons: string[] } | null>(null);
 
   const load = async () => {
     try {
-      const [a, c, d, r, g, rc] = await Promise.all([
+      const [a, c, d, r, g, rc, cl] = await Promise.all([
         amlRiskApi.listAssessments(caseId),
         amlRiskApi.listConditions(caseId),
         amlRiskApi.latestDecision(caseId),
         amlRiskApi.listRecommendations(caseId).catch(() => ({ recommendations: [] })),
         amlRiskApi.gateContract(caseId).catch(() => ({ gate: null as any })),
         amlRiskApi.recalcStatus(caseId).catch(() => ({ recalc: null as any })),
+        amlRiskApi.clearanceReadiness(caseId).catch(() => null),
       ]);
       setAssessments(a.assessments); setConditions(c.conditions); setLatestDecision(d.decision);
       setRecommendations(r.recommendations ?? []);
       setGate(g.gate ?? null);
       setRecalc(rc.recalc ?? null);
+      setClearance(cl);
     } catch (e: any) { toast({ title: "Load failed", description: e.message, variant: "destructive" }); }
   };
   useEffect(() => { load();   }, [caseId]);
@@ -613,7 +627,21 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
       toast({ title: "Decision recorded" });
       setDecideRationale("");
       await load(); onChanged();
-    } catch (e: any) { toast({ title: "Decision failed", description: e.message, variant: "destructive" }); }
+    } catch (e: any) {
+      /*
+       * A refusal names its reasons — the server sends them and the panel
+       * lists them beside these controls. Reload so the list is current at
+       * the moment of the refusal, and say where to look.
+       */
+      toast({
+        title: "Decision failed",
+        description: clearance !== null
+          ? `${e.message}. The named blockers are listed beside the decision controls.`
+          : e.message,
+        variant: "destructive",
+      });
+      await load();
+    }
     finally { setBusy(false); }
   };
 
@@ -870,6 +898,56 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
                 <div className="mt-2 rounded bg-muted/40 p-2 text-xs">{latestDecision.rationale}</div>
               )}
             </div>
+          )}
+          {/*
+            ── The path to clearance, named BEFORE the click ──────────────
+            The decide op refused with "unresolved mandatory holds" while the
+            page showed a LOW rating, no holds and no open conditions — the
+            reasons existed only inside the 409, and the client discarded
+            them. This block reads the SAME server computation as the refusal
+            (clearance_readiness → clearanceBlockReasons), names each blocker
+            in words, and routes to the section that resolves it. Absent when
+            the reading is unavailable — a failed read is never a clean bill.
+          */}
+          {clearance !== null && !latestDecision && (
+            clearance.ready ? (
+              <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/5 p-2.5 text-xs text-success">
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span>Nothing stands between this case and clearance — the server will accept a cleared decision.</span>
+              </div>
+            ) : (
+              <div className="space-y-1.5 rounded-md border border-warning/40 bg-warning/5 p-2.5">
+                <p className="text-xs font-medium text-warning">
+                  {clearance.reasons.length === 1
+                    ? "One thing stands between this case and clearance:"
+                    : `${clearance.reasons.length} things stand between this case and clearance:`}
+                </p>
+                <ul className="space-y-1">
+                  {clearance.reasons.map((code) => {
+                    const view = describeClearanceReason(code);
+                    return (
+                      <li key={code} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span>
+                          {view.label}
+                          <span className="text-muted-foreground"> — {view.action}.</span>
+                        </span>
+                        {view.section && onOpenSection && (
+                          <Button
+                            size="sm" variant="outline" className="h-6 px-2 text-[11px]"
+                            onClick={() => onOpenSection(view.section!)}
+                          >
+                            Open
+                          </Button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="text-[11px] text-muted-foreground">
+                  Escalating or blocking is not gated by these — only clearance is.
+                </p>
+              </div>
+            )
           )}
           {canReview && (
             <div className="space-y-2 border-t border-border/50 pt-3">
