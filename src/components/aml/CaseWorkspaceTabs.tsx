@@ -35,7 +35,7 @@ import {
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { decisionPath, gateChangeHint, reasonHint } from "@/lib/aml/decisionPath.pure";
 import { describeClearanceReason } from "@/lib/aml/clearanceReasons.pure";
-import { DECISION_CHOICES, gateOptionGroups, type GateChoice } from "@/lib/aml/gateOptions.pure";
+import { DECISION_CHOICES, RECOMMENDATION_CHOICES, gateOptionGroups, type GateChoice } from "@/lib/aml/gateOptions.pure";
 import { DecisionPathCard } from "@/components/aml/workspace/DecisionPathCard";
 import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy, type AmlFinanceRequest } from "@/lib/aml/amlFinanceApi";
 import {
@@ -554,14 +554,6 @@ function ChoiceCard({ selected, label, meaning, onSelect }: {
   );
 }
 
-const RECOMMENDATION_OUTCOMES: Array<{ value: AmlAnalystRecommendation["recommended_outcome"]; label: string }> = [
-  { value: "cleared", label: "Clear" },
-  { value: "cleared_with_conditions", label: "Clear with conditions" },
-  { value: "edd_required", label: "Enhanced due diligence" },
-  { value: "escalated", label: "Escalate to MLRO" },
-  { value: "blocked", label: "Block" },
-];
-
 const GATE_OPTION_LABELS: Record<string, string> = {
   cdd_incomplete: "CDD incomplete",
   information_outstanding: "Information outstanding",
@@ -727,10 +719,13 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
     isMlro,
   });
 
-  /* Each path step lands on the card that performs it. Optional call:
-   * jsdom implements getElementById but not scrollIntoView. */
+  /* Each path step lands on the card that performs it. For a decision-maker
+   * the recommendation has no card of its own — anything waiting is shown
+   * beside the decision — so its step falls through to the decision card.
+   * Optional call: jsdom implements getElementById but not scrollIntoView. */
   const scrollToStep = (key: string) => {
-    document.getElementById(`decision-step-${key}`)
+    (document.getElementById(`decision-step-${key}`)
+      ?? document.getElementById("decision-step-decision"))
       ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
   };
 
@@ -868,63 +863,72 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
         </CardContent>
       </Card>
 
-      <Card id="decision-step-recommendation" className="scroll-mt-24">
-        <CardHeader><CardTitle className="text-sm">Analyst recommendation</CardTitle></CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          {pendingRecommendation ? (
-            <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
-              <div className="text-xs font-semibold uppercase text-muted-foreground">Awaiting review</div>
-              <div className="mt-1 font-medium capitalize">
-                {pendingRecommendation.recommended_outcome.replace(/_/g, " ")}
+      {/*
+        ── One act per role — the "double-up" resolved ───────────────────
+        The recommendation is not a duplicate of the decision: it is the
+        ANALYST's half of a two-role workflow (the server stamps each
+        recommendation `actioned` by the decision that weighed it). The
+        double-up FEELING came from showing the form to an operator who can
+        decide — recommending to yourself is noise. So: the form renders
+        only for operators who cannot decide, as their own act in the same
+        choice-card language; a decision-maker sees anything waiting INSIDE
+        the decision card, beside the act it informs. History stays on the
+        audit trail, where records live.
+      */}
+      {canWrite && !canReview && (
+        <Card id="decision-step-recommendation" className="scroll-mt-24">
+          <CardHeader><CardTitle className="text-sm">Your recommendation</CardTitle></CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {pendingRecommendation ? (
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
+                <div className="text-xs font-semibold uppercase text-muted-foreground">Awaiting the reviewer</div>
+                <div className="mt-1 font-medium capitalize">
+                  {pendingRecommendation.recommended_outcome.replace(/_/g, " ")}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{pendingRecommendation.rationale}</p>
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  Recorded {new Date(pendingRecommendation.created_at).toLocaleString()} — recording
+                  another replaces it as the one awaiting review.
+                </div>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">{pendingRecommendation.rationale}</p>
-              <div className="mt-1 text-[11px] text-muted-foreground">
-                Recorded {new Date(pendingRecommendation.created_at).toLocaleString()}
-              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Your recommended outcome goes to the reviewer or MLRO beside their decision.
+              </p>
+            )}
+            <div role="radiogroup" aria-label="Recommended outcome" className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {RECOMMENDATION_CHOICES.map((c) => (
+                <ChoiceCard
+                  key={c.value}
+                  selected={recOutcome === c.value}
+                  label={c.label}
+                  meaning={c.meaning}
+                  onSelect={() => setRecOutcome(c.value)}
+                />
+              ))}
             </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              No recommendation awaiting review.
-              {recommendations.length > 0 && ` ${recommendations.length} previous recommendation${recommendations.length === 1 ? "" : "s"} on record.`}
-            </p>
-          )}
-          {canWrite && (
-            <div className="space-y-2 border-t border-border/50 pt-3">
-              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
-                <select
-                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                  aria-label="Recommended outcome"
-                  value={recOutcome}
-                  onChange={(e) => setRecOutcome(e.target.value as typeof recOutcome)}
-                >
-                  {RECOMMENDATION_OUTCOMES.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-                <Button
-                  size="sm" variant="outline" className="sm:justify-self-start"
-                  disabled={busy || recRationale.trim().length < 10}
-                  onClick={recordRecommendation}
-                >
-                  Record recommendation
-                </Button>
-              </div>
-              <textarea
-                className="min-h-[64px] w-full rounded-md border border-input bg-background p-2 text-sm"
-                aria-label="Recommendation rationale"
-                placeholder="Rationale (required, minimum 10 characters) — what the reviewer needs to know."
-                value={recRationale}
-                onChange={(e) => setRecRationale(e.target.value)}
-              />
-              {/* A silent disabled button reads as a broken one — the hint
-                  names exactly what enables it. */}
-              {recRationaleHint && (
-                <p className="text-[11px] text-muted-foreground" aria-live="polite">{recRationaleHint}</p>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            <textarea
+              className="min-h-[64px] w-full rounded-md border border-input bg-background p-2 text-sm"
+              aria-label="Recommendation rationale"
+              placeholder="Rationale (required, minimum 10 characters) — what the reviewer needs to know."
+              value={recRationale}
+              onChange={(e) => setRecRationale(e.target.value)}
+            />
+            {/* A silent disabled button reads as a broken one — the hint
+                names exactly what enables it. */}
+            {recRationaleHint && (
+              <p className="text-[11px] text-muted-foreground" aria-live="polite">{recRationaleHint}</p>
+            )}
+            <Button
+              size="sm"
+              disabled={busy || recRationale.trim().length < 10}
+              onClick={recordRecommendation}
+            >
+              Record recommendation — {RECOMMENDATION_CHOICES.find((c) => c.value === recOutcome)?.label}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Card id="decision-step-decision" className="scroll-mt-24">
         <CardHeader><CardTitle className="text-sm">Latest decision</CardTitle></CardHeader>
@@ -1001,6 +1005,23 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
           {canReview && (
             <div className="space-y-2 border-t border-border/50 pt-3">
               <div className="text-xs font-semibold uppercase text-muted-foreground">Record decision</div>
+              {/* The analyst's recommendation, beside the act it informs —
+                  not in a separate card the decider has to correlate. */}
+              {pendingRecommendation && (
+                <div className="rounded-md border border-primary/30 bg-primary/5 p-2.5">
+                  <div className="text-[11px] font-semibold uppercase text-muted-foreground">
+                    Analyst recommendation — awaiting your review
+                  </div>
+                  <div className="mt-0.5 text-sm font-medium capitalize">
+                    {pendingRecommendation.recommended_outcome.replace(/_/g, " ")}
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{pendingRecommendation.rationale}</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    Recorded {new Date(pendingRecommendation.created_at).toLocaleString()} · your decision
+                    marks it actioned.
+                  </p>
+                </div>
+              )}
               {/*
                 The outcome is a CHOICE READ, not an enum picked: each option
                 says what it does before it is chosen, and the button names

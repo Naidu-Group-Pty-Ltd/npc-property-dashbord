@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DECISION_CHOICES, GATE_CHOICES, gateOptionGroups } from "./gateOptions.pure";
+import { DECISION_CHOICES, GATE_CHOICES, RECOMMENDATION_CHOICES, gateOptionGroups } from "./gateOptions.pure";
 
 /**
  * The choices an operator reads, and which gate statuses the moment
@@ -50,6 +50,20 @@ describe("every choice says what it does", () => {
       expect(c.meaning.length).toBeGreaterThan(20);
     }
     expect(GATE_CHOICES.find((c) => c.value === "approved")!.meaning).toMatch(/service-ready/);
+  });
+
+  it("the recommendation vocabulary is wider than the decision's — that is why they are two acts", () => {
+    // Conditions and EDD are proposals an analyst can make that a decision
+    // cannot spell; a recommendation is never a decision.
+    const recValues = RECOMMENDATION_CHOICES.map((c) => c.value);
+    const decisionValues = DECISION_CHOICES.map((c) => c.value as string);
+    expect(recValues).toContain("cleared_with_conditions");
+    expect(recValues).toContain("edd_required");
+    expect(decisionValues).not.toContain("cleared_with_conditions");
+    expect(decisionValues).not.toContain("edd_required");
+    for (const c of RECOMMENDATION_CHOICES) {
+      expect(c.meaning.toLowerCase()).toContain("recommend");
+    }
   });
 
   it("the decision choices keep the vocabulary apart: clearing is not granting the service", () => {
