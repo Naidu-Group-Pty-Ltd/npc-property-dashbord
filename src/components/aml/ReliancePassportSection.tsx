@@ -8,7 +8,10 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, Share2, FileSignature, ShieldCheck, Link2, Eye, CheckCircle2, CircleDot, Lock } from "lucide-react";
+import {
+  Loader2, Share2, FileSignature, ShieldCheck, Link2, Eye, CheckCircle2, CircleDot, Lock,
+  Send, Download,
+} from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import { PartnerOnboardingWizard } from "@/components/aml/PartnerOnboardingWizard";
@@ -819,43 +822,62 @@ export function ReliancePassportSection({
             <div className="text-xs font-medium flex items-center gap-1.5">
               <FileSignature className="h-3.5 w-3.5 text-primary" /> Compliance agreement — sent for acceptance
             </div>
-            <ul className="mt-1.5 space-y-1.5 text-xs">
+            {/* One row per request: who and where on the left, the act on
+                the right. The actions used to be ghost buttons dropped
+                inline after the wrapping text, so "Re-send" read as a
+                stray word rather than the thing to click. */}
+            <ul className="mt-2 space-y-2 text-xs">
               {acknowledgements.map((row) => {
                 const reading = describeAcknowledgement(row.status, row.expires_at);
                 return (
-                  <li key={row.id} className="flex flex-wrap items-start gap-2">
-                    <span className="font-medium">
-                      {row.partner_organisations?.legal_name ?? "Partner"}
-                    </span>
-                    <Badge variant="outline" className={
-                      reading.state === "accepted" ? "text-success"
-                        : reading.state === "declined" ? "text-destructive"
-                          : reading.state === "expired" ? "text-warning"
-                            : "text-muted-foreground"
-                    }>
-                      {reading.state}
-                    </Badge>
-                    <span className="text-muted-foreground">{row.recipient_email}</span>
-                    <span className="w-full text-[11px] text-muted-foreground">
-                      {reading.detail}
-                      {row.resend_count > 0 && ` · sent ${row.resend_count + 1} times`}
-                    </span>
-                    {isMlro && reading.canResend && (
-                      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs"
-                        onClick={() => resendAcknowledgement(row)} disabled={busy !== null}>
-                        {busy === "ack" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-                        Re-send
-                      </Button>
-                    )}
-                    {/* Only an accepted acknowledgement is an executed
-                        agreement; there is nothing to produce for the rest. */}
-                    {reading.state === "accepted" && (
-                      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs"
-                        onClick={() => downloadAcknowledgement(row)} disabled={busy !== null}>
-                        {busy === "ack-doc" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-                        Download executed agreement
-                      </Button>
-                    )}
+                  <li
+                    key={row.id}
+                    className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-md border border-border/60 p-2.5"
+                  >
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium">
+                          {row.partner_organisations?.legal_name ?? "Partner"}
+                        </span>
+                        <Badge variant="outline" className={
+                          reading.state === "accepted" ? "text-success"
+                            : reading.state === "declined" ? "text-destructive"
+                              : reading.state === "expired" ? "text-warning"
+                                : "text-muted-foreground"
+                        }>
+                          {reading.state}
+                        </Badge>
+                      </div>
+                      <div className="truncate text-muted-foreground" title={row.recipient_email}>
+                        {row.recipient_email}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {reading.detail}
+                        {row.resend_count > 0 && ` · sent ${row.resend_count + 1} times`}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      {isMlro && reading.canResend && (
+                        <Button size="sm" variant="outline" className="h-8"
+                          onClick={() => resendAcknowledgement(row)} disabled={busy !== null}>
+                          {busy === "ack"
+                            ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                            : <Send className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+                          Re-send agreement
+                        </Button>
+                      )}
+                      {/* Only an accepted acknowledgement is an executed
+                          agreement; there is nothing to produce for the rest. */}
+                      {reading.state === "accepted" && (
+                        <Button size="sm" variant="outline" className="h-8"
+                          onClick={() => downloadAcknowledgement(row)} disabled={busy !== null}>
+                          {busy === "ack-doc"
+                            ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                            : <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+                          Executed agreement
+                        </Button>
+                      )}
+                    </div>
                   </li>
                 );
               })}

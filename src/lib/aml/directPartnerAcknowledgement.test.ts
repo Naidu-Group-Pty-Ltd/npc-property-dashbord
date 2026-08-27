@@ -83,6 +83,33 @@ describe("re-issue: the partner is never stranded", () => {
     expect(send).toContain("resend_count");
   });
 
+  it("the predecessor is stood down BEFORE the replacement is written", () => {
+    // `dpa_one_live_request` permits one live request per partner per case.
+    // Inserting first collided with it, so every re-send against a live
+    // request answered 23505 — surfaced to the operator as "Internal error".
+    // The order here is the opposite of the grant re-issue's, and
+    // deliberately so: the index forbids the overlap.
+    const send = relianceFn.slice(
+      relianceFn.indexOf('case "send_partner_acknowledgement"'),
+      relianceFn.indexOf('case "list_partner_case_links"'));
+    const standDown = send.indexOf('status: "superseded"');
+    const insert = send.indexOf('.from("direct_partner_acknowledgements").insert(');
+    expect(standDown).toBeGreaterThan(-1);
+    expect(insert).toBeGreaterThan(-1);
+    expect(standDown).toBeLessThan(insert);
+  });
+
+  it("a failed replacement restores the predecessor, never stranding the partner", () => {
+    const send = relianceFn.slice(
+      relianceFn.indexOf('case "send_partner_acknowledgement"'),
+      relianceFn.indexOf('case "list_partner_case_links"'));
+    expect(send).toContain("if (insertError) {");
+    expect(send).toContain("status: live.status");
+    // And a genuine collision is a conflict, not an internal error.
+    expect(send).toContain('code: "concurrent_request"');
+    expect(send).toMatch(/23505/);
+  });
+
   it("expired and declined are re-sendable; superseded and accepted are not", () => {
     const future = new Date(Date.now() + 864e5).toISOString();
     const past = new Date(Date.now() - 864e5).toISOString();

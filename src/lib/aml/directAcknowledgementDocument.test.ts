@@ -54,8 +54,10 @@ describe("only an executed agreement can be produced", () => {
   });
 
   it("the panel offers the download on accepted rows alone", () => {
+    // Pinned to the CONDITION and the handler, not the button's wording —
+    // the label is presentation and may be reworded.
     expect(panel).toContain('reading.state === "accepted" && (');
-    expect(panel).toContain("Download executed agreement");
+    expect(panel).toContain("downloadAcknowledgement(row)");
   });
 });
 
