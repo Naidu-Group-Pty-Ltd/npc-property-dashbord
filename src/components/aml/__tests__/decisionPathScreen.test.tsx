@@ -186,6 +186,62 @@ describe("the path to clearance is named before the click", () => {
   });
 });
 
+describe("the path drives, and the finish drives forward", () => {
+  it("a finished path says so and opens the road to Gate & Passport", async () => {
+    api.latestDecision.mockResolvedValue({
+      decision: { outcome: "cleared", decided_at: "2026-08-27T03:00:00Z", rationale: null, program_version: "v1" },
+    });
+    api.gateContract.mockResolvedValue({
+      gate: { status: "approved", effective_at: "2026-08-27T04:00:00Z", conditions: [], reason: null, policy_version: "v1" },
+    });
+    const onOpenSection = vi.fn();
+    render(
+      <MemoryRouter>
+        <RiskTab caseId={CASE_ID} canWrite onChanged={vi.fn()} onOpenSection={onOpenSection} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(/Every step of the decision is recorded/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /continue to gate & passport/i }));
+    expect(onOpenSection).toHaveBeenCalledWith("passport");
+  });
+
+  it("every step is a link to the card that performs it", async () => {
+    renderTab();
+    await screen.findByText("The decision, in order");
+    // The anchors exist and the steps are buttons that route to them.
+    fireEvent.click(screen.getByRole("button", { name: /go to step 4: service gate applied/i }));
+    expect(document.getElementById("decision-step-gate")).toBeTruthy();
+    expect(document.getElementById("decision-step-assessment")).toBeTruthy();
+    expect(document.getElementById("decision-step-decision")).toBeTruthy();
+    expect(document.getElementById("decision-step-recommendation")).toBeTruthy();
+  });
+});
+
+describe("escalation says where it goes", () => {
+  it("names the MLRO handover and confirms an assigned MLRO will receive it", async () => {
+    render(
+      <MemoryRouter>
+        <RiskTab caseId={CASE_ID} canWrite onChanged={vi.fn()} hasAssignedMlro />
+      </MemoryRouter>,
+    );
+    const select = await screen.findByLabelText("Decision outcome");
+    fireEvent.change(select, { target: { value: "escalated" } });
+    expect(await screen.findByText(/hands the final decision to the/)).toBeTruthy();
+    expect(screen.getByText(/An MLRO is assigned to this case and will find it waiting/)).toBeTruthy();
+  });
+
+  it("warns when no MLRO is assigned — an escalation must reach somebody", async () => {
+    render(
+      <MemoryRouter>
+        <RiskTab caseId={CASE_ID} canWrite onChanged={vi.fn()} hasAssignedMlro={false} />
+      </MemoryRouter>,
+    );
+    const select = await screen.findByLabelText("Decision outcome");
+    fireEvent.change(select, { target: { value: "escalated" } });
+    expect(await screen.findByText(/No MLRO is assigned to this case yet/)).toBeTruthy();
+  });
+});
+
 describe("the stage's primary button lands on this work — pinned at the source", () => {
   const workspace = readFileSync(join(__dirname, "../../../pages/aml/AmlCaseWorkspace.tsx"), "utf8");
   const journey = readFileSync(join(__dirname, "../../../lib/aml/journeyModel.ts"), "utf8");

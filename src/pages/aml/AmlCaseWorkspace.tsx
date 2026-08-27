@@ -1076,6 +1076,7 @@ export default function AmlCaseWorkspace() {
                   canWrite={canWrite}
                   onChanged={load}
                   onOpenSection={(s) => setSection(s as SectionKey)}
+                  hasAssignedMlro={Boolean(caseRow.assigned_mlro_id)}
                 />
               </div>
             </div>

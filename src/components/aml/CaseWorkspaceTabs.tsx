@@ -546,10 +546,13 @@ const GATE_OPTION_LABELS: Record<string, string> = {
   terminated: "Terminated",
 };
 
-export function RiskTab({ caseId, canWrite, onChanged, onOpenSection }: {
+export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssignedMlro }: {
   caseId: string; canWrite: boolean; onChanged: () => void;
   /** Route a clearance blocker to the section that resolves it. */
   onOpenSection?: (section: string) => void;
+  /** Whether the case names an MLRO — the escalate directive says where an
+   *  escalation actually lands. */
+  hasAssignedMlro?: boolean;
 }) {
   const access = useAmlAccess();
   const canReview = access.roles.has("reviewer") || access.roles.has("mlro");
@@ -694,7 +697,15 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection }: {
     gate: gate ? { status: gate.status, effective_at: gate.effective_at ?? null } : null,
     canWrite,
     canReview,
+    isMlro,
   });
+
+  /* Each path step lands on the card that performs it. Optional call:
+   * jsdom implements getElementById but not scrollIntoView. */
+  const scrollToStep = (key: string) => {
+    document.getElementById(`decision-step-${key}`)
+      ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  };
 
   /* Why each disabled control is disabled, in words — and the server's gate
    * preconditions read BEFORE the request instead of from its 409. */
@@ -708,7 +719,11 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection }: {
 
   return (
     <div className="space-y-4">
-      <DecisionPathCard steps={pathSteps} />
+      <DecisionPathCard
+        steps={pathSteps}
+        onStepClick={scrollToStep}
+        onContinue={onOpenSection ? () => onOpenSection("passport") : undefined}
+      />
       {recalc?.stale && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
           <div className="flex items-start gap-2">
@@ -727,7 +742,7 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection }: {
         </div>
       )}
 
-      <Card>
+      <Card id="decision-step-assessment" className="scroll-mt-24">
         <CardHeader className="flex flex-row items-center justify-between">
           <div className="flex items-center gap-2 flex-wrap">
             <CardTitle className="text-sm">Latest risk assessment</CardTitle>
@@ -826,7 +841,7 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection }: {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="decision-step-recommendation" className="scroll-mt-24">
         <CardHeader><CardTitle className="text-sm">Analyst recommendation</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
           {pendingRecommendation ? (
@@ -884,7 +899,7 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection }: {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="decision-step-decision" className="scroll-mt-24">
         <CardHeader><CardTitle className="text-sm">Latest decision</CardTitle></CardHeader>
         <CardContent className="text-sm space-y-3">
           {!latestDecision ? (
@@ -974,6 +989,26 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection }: {
                 value={decideRationale}
                 onChange={(e) => setDecideRationale(e.target.value)}
               />
+              {/*
+                An escalation must say where it goes. The option read
+                "Escalate to MLRO" and the click just… recorded — no word on
+                who that is, what changes, or what happens next.
+              */}
+              {decideOutcome === "escalated" && (
+                <div className="space-y-1 rounded-md border border-border/60 bg-muted/20 p-2.5 text-xs text-muted-foreground">
+                  <p>
+                    Escalating hands the final decision to the <span className="font-medium">Money
+                    Laundering Reporting Officer</span>: the case moves to <span className="font-medium">Decision
+                    pending</span>, this screen shows the decision as theirs to make, and only their
+                    cleared or blocked decision moves the case on.
+                  </p>
+                  <p className={hasAssignedMlro ? undefined : "text-warning"}>
+                    {hasAssignedMlro
+                      ? "An MLRO is assigned to this case and will find it waiting under their cases."
+                      : "No MLRO is assigned to this case yet — assign one on the case record so the escalation reaches somebody."}
+                  </p>
+                </div>
+              )}
               <p className="text-[11px] text-muted-foreground">
                 Clearance is refused while mandatory holds or open conditions remain.
               </p>
@@ -990,7 +1025,7 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection }: {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="decision-step-gate" className="scroll-mt-24">
         <CardHeader><CardTitle className="text-sm">Service gate</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
           {gate ? (
