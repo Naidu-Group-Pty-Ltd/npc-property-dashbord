@@ -88,25 +88,27 @@ describe("no silently disabled control", () => {
   it("the gate's Apply names the missing reason, counts down, and goes quiet at the floor", async () => {
     renderTab();
     const reasonBox = await screen.findByLabelText("Gate change reason");
-    expect(screen.getByRole("button", { name: "Apply gate change" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: /apply gate change/i })).toHaveProperty("disabled", true);
     expect(screen.getByText(/Add a reason of at least 10 characters — 10 more to go/)).toBeTruthy();
     fireEvent.change(reasonBox, { target: { value: "CDD documents outstanding from the client" } });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Apply gate change" })).toHaveProperty("disabled", false);
+      expect(screen.getByRole("button", { name: /apply gate change/i })).toHaveProperty("disabled", false);
     });
     expect(screen.queryByText(/Add a reason of at least 10 characters/)).toBeNull();
   });
 
   it("reads the server's approval preconditions before the 409", async () => {
     renderTab();
-    const select = await screen.findByLabelText("New service-gate status");
-    fireEvent.change(select, { target: { value: "approved" } });
+    await screen.findByRole("radiogroup", { name: "New service-gate status" });
+    fireEvent.click(screen.getByRole("radio", { name: /^Approved\s?Grants the designated service/ }));
     // No cleared decision on this case: the requirement is on screen, not
     // in an error toast after the click.
     expect(await screen.findByText(/Approving the service gate requires a recorded cleared decision first\./)).toBeTruthy();
   });
 
-  it("the recommendation's rationale hint appears only while it is what disables the button", async () => {
+  it("the analyst's rationale hint appears only while it is what disables the button", async () => {
+    access.roles = new Set(["analyst"]);
+    access.isMlro = false;
     renderTab();
     expect(await screen.findByText(/Add a rationale of at least 10 characters/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Recommendation rationale"), {
@@ -120,7 +122,7 @@ describe("the gate select opens on the gate that IS", () => {
   it("seeds from the loaded gate for an MLRO instead of a hardcoded default", async () => {
     renderTab();
     await waitFor(() => {
-      expect((screen.getByLabelText("New service-gate status") as HTMLSelectElement).value).toBe("terminated");
+      expect(screen.getByRole("radio", { name: /^Terminated/ }).getAttribute("aria-checked")).toBe("true");
     });
   });
 
@@ -131,7 +133,9 @@ describe("the gate select opens on the gate that IS", () => {
     await screen.findByText("The decision, in order");
     // A reviewer cannot pick terminated, so the select keeps its default
     // rather than opening on an option that is not in its list.
-    expect((screen.getByLabelText("New service-gate status") as HTMLSelectElement).value).toBe("under_review");
+    expect(screen.getByRole("radio", { name: /^Under review/ }).getAttribute("aria-checked")).toBe("true");
+    // And the MLRO-only statuses never reach this operator's choices.
+    expect(screen.queryByRole("radio", { name: /^Terminated/ })).toBeNull();
   });
 });
 
@@ -201,7 +205,12 @@ describe("the path drives, and the finish drives forward", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText(/Every step of the decision is recorded/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /continue to gate & passport/i }));
+    // Two forward doors — the path card's and the gate card's service-ready
+    // strip — and both open Stage 9.
+    const doors = screen.getAllByRole("button", { name: /continue to gate & passport/i });
+    expect(doors.length).toBe(2);
+    expect(screen.getByText(/service-ready and this cascades into Gate & Passport/)).toBeTruthy();
+    fireEvent.click(doors[0]);
     expect(onOpenSection).toHaveBeenCalledWith("passport");
   });
 
@@ -213,7 +222,10 @@ describe("the path drives, and the finish drives forward", () => {
     expect(document.getElementById("decision-step-gate")).toBeTruthy();
     expect(document.getElementById("decision-step-assessment")).toBeTruthy();
     expect(document.getElementById("decision-step-decision")).toBeTruthy();
-    expect(document.getElementById("decision-step-recommendation")).toBeTruthy();
+    // The recommendation has no card of its own for a decision-maker — its
+    // step falls through to the decision card, where anything waiting shows.
+    expect(document.getElementById("decision-step-recommendation")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /go to step 2: analyst recommendation/i }));
   });
 });
 
@@ -224,9 +236,9 @@ describe("escalation says where it goes", () => {
         <RiskTab caseId={CASE_ID} canWrite onChanged={vi.fn()} hasAssignedMlro />
       </MemoryRouter>,
     );
-    const select = await screen.findByLabelText("Decision outcome");
-    fireEvent.change(select, { target: { value: "escalated" } });
-    expect(await screen.findByText(/hands the final decision to the/)).toBeTruthy();
+    await screen.findByRole("radiogroup", { name: "Decision outcome" });
+    fireEvent.click(screen.getByRole("radio", { name: /^Escalate to MLRO/ }));
+    expect(await screen.findByText(/this screen shows the decision as theirs to make/)).toBeTruthy();
     expect(screen.getByText(/An MLRO is assigned to this case and will find it waiting/)).toBeTruthy();
   });
 
@@ -236,9 +248,43 @@ describe("escalation says where it goes", () => {
         <RiskTab caseId={CASE_ID} canWrite onChanged={vi.fn()} hasAssignedMlro={false} />
       </MemoryRouter>,
     );
-    const select = await screen.findByLabelText("Decision outcome");
-    fireEvent.change(select, { target: { value: "escalated" } });
+    await screen.findByRole("radiogroup", { name: "Decision outcome" });
+    fireEvent.click(screen.getByRole("radio", { name: /^Escalate to MLRO/ }));
     expect(await screen.findByText(/No MLRO is assigned to this case yet/)).toBeTruthy();
+  });
+});
+
+describe("one act per role — the double-up resolved", () => {
+  it("a decision-maker gets no recommendation form; anything waiting sits beside the decision", async () => {
+    api.listRecommendations.mockResolvedValue({
+      recommendations: [{
+        id: "r1", status: "pending", recommended_outcome: "cleared_with_conditions",
+        rationale: "Verified identity; attach a source-of-funds condition.",
+        created_at: "2026-08-27T01:00:00Z",
+      }],
+    });
+    renderTab();
+    expect(await screen.findByText(/Analyst recommendation — awaiting your review/)).toBeTruthy();
+    expect(screen.getByText("cleared with conditions")).toBeTruthy();
+    // No standalone form for someone who can decide directly.
+    expect(screen.queryByText("Your recommendation")).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "Recommended outcome" })).toBeNull();
+  });
+
+  it("an analyst records their recommendation as readable choices, and the button names the act", async () => {
+    access.roles = new Set(["analyst"]);
+    access.isMlro = false;
+    renderTab();
+    expect(await screen.findByText("Your recommendation")).toBeTruthy();
+    await screen.findByRole("radiogroup", { name: "Recommended outcome" });
+    fireEvent.click(screen.getByRole("radio", { name: /^Enhanced due diligence/ }));
+    expect(screen.getByRole("button", { name: "Record recommendation — Enhanced due diligence" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Recommendation rationale"), {
+      target: { value: "Source of funds needs deeper verification before deciding." },
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /record recommendation/i })).toHaveProperty("disabled", false);
+    });
   });
 });
 

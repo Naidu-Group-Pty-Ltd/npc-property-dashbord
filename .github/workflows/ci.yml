@@ -219,6 +219,11 @@ jobs:
             src/lib/__tests__/builderStockNotion.test.ts \
             src/lib/__tests__/builderStockNormalise.test.ts \
             src/lib/__tests__/builderStockUrlSource.test.ts \
+            src/lib/__tests__/builderStockMarketplaceEligibility.test.ts \
+            src/lib/__tests__/builderStockOverlayInpaint.test.ts \
+            src/lib/__tests__/builderStockDetectionResidue.test.ts \
+            src/lib/__tests__/builderStockSanitizeOverlay.test.ts \
+            src/lib/__tests__/builderStockDecodeFidelity.test.ts \
             src/lib/__tests__/builderStockCloudflareWorker.test.ts
 
       # The Cloudflare worker ships OUTSIDE supabase/functions and src, so no
