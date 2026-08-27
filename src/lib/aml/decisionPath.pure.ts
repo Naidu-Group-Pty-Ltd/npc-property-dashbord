@@ -111,12 +111,19 @@ export function decisionPath(f: DecisionPathFacts): DecisionStep[] {
         ? "settled"
         : assessmentDone && !f.canReview
           ? "current"
-          : "outstanding",
+          : f.canReview
+            /* A decision-maker owes no recommendation to themselves — for
+             * them the step settles unless an analyst has one waiting. The
+             * form itself only renders for operators who cannot decide. */
+            ? "settled"
+            : "outstanding",
     detail: f.pendingRecommendation
       ? "Recorded — awaiting the reviewer."
       : decisionDone
         ? "None was recorded before the decision — a recommendation is optional."
-        : "Optional: the analyst's recommended outcome, for the reviewer to weigh.",
+        : f.canReview
+          ? "Nothing waiting. An analyst's recommendation would appear beside the decision; as the decision-maker you may decide directly."
+          : "Optional: the analyst's recommended outcome, for the reviewer to weigh.",
     blockedBy: null,
   });
 

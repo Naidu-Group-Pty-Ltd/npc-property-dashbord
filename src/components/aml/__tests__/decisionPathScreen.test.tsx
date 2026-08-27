@@ -106,7 +106,9 @@ describe("no silently disabled control", () => {
     expect(await screen.findByText(/Approving the service gate requires a recorded cleared decision first\./)).toBeTruthy();
   });
 
-  it("the recommendation's rationale hint appears only while it is what disables the button", async () => {
+  it("the analyst's rationale hint appears only while it is what disables the button", async () => {
+    access.roles = new Set(["analyst"]);
+    access.isMlro = false;
     renderTab();
     expect(await screen.findByText(/Add a rationale of at least 10 characters/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Recommendation rationale"), {
@@ -220,7 +222,10 @@ describe("the path drives, and the finish drives forward", () => {
     expect(document.getElementById("decision-step-gate")).toBeTruthy();
     expect(document.getElementById("decision-step-assessment")).toBeTruthy();
     expect(document.getElementById("decision-step-decision")).toBeTruthy();
-    expect(document.getElementById("decision-step-recommendation")).toBeTruthy();
+    // The recommendation has no card of its own for a decision-maker — its
+    // step falls through to the decision card, where anything waiting shows.
+    expect(document.getElementById("decision-step-recommendation")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /go to step 2: analyst recommendation/i }));
   });
 });
 
@@ -246,6 +251,40 @@ describe("escalation says where it goes", () => {
     await screen.findByRole("radiogroup", { name: "Decision outcome" });
     fireEvent.click(screen.getByRole("radio", { name: /^Escalate to MLRO/ }));
     expect(await screen.findByText(/No MLRO is assigned to this case yet/)).toBeTruthy();
+  });
+});
+
+describe("one act per role — the double-up resolved", () => {
+  it("a decision-maker gets no recommendation form; anything waiting sits beside the decision", async () => {
+    api.listRecommendations.mockResolvedValue({
+      recommendations: [{
+        id: "r1", status: "pending", recommended_outcome: "cleared_with_conditions",
+        rationale: "Verified identity; attach a source-of-funds condition.",
+        created_at: "2026-08-27T01:00:00Z",
+      }],
+    });
+    renderTab();
+    expect(await screen.findByText(/Analyst recommendation — awaiting your review/)).toBeTruthy();
+    expect(screen.getByText("cleared with conditions")).toBeTruthy();
+    // No standalone form for someone who can decide directly.
+    expect(screen.queryByText("Your recommendation")).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "Recommended outcome" })).toBeNull();
+  });
+
+  it("an analyst records their recommendation as readable choices, and the button names the act", async () => {
+    access.roles = new Set(["analyst"]);
+    access.isMlro = false;
+    renderTab();
+    expect(await screen.findByText("Your recommendation")).toBeTruthy();
+    await screen.findByRole("radiogroup", { name: "Recommended outcome" });
+    fireEvent.click(screen.getByRole("radio", { name: /^Enhanced due diligence/ }));
+    expect(screen.getByRole("button", { name: "Record recommendation — Enhanced due diligence" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Recommendation rationale"), {
+      target: { value: "Source of funds needs deeper verification before deciding." },
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /record recommendation/i })).toHaveProperty("disabled", false);
+    });
   });
 });
 

@@ -43,6 +43,47 @@ export const DECISION_CHOICES: DecisionChoice[] = [
   },
 ];
 
+export interface RecommendationChoice {
+  value: "cleared" | "cleared_with_conditions" | "edd_required" | "escalated" | "blocked";
+  label: string;
+  meaning: string;
+}
+
+/**
+ * The analyst's recommended outcomes. A RECOMMENDATION, not a decision:
+ * this vocabulary is wider than the decision's (conditions and EDD are
+ * things an analyst can propose that a decision cannot spell), which is
+ * exactly why the surfaces are two and not one — see the RiskTab note on
+ * why the form shows only to operators who cannot decide.
+ */
+export const RECOMMENDATION_CHOICES: RecommendationChoice[] = [
+  {
+    value: "cleared",
+    label: "Clear",
+    meaning: "Recommend the case proceeds as it stands.",
+  },
+  {
+    value: "cleared_with_conditions",
+    label: "Clear with conditions",
+    meaning: "Recommend proceeding, with named conditions attached to the case.",
+  },
+  {
+    value: "edd_required",
+    label: "Enhanced due diligence",
+    meaning: "Recommend deeper checks before any decision is made.",
+  },
+  {
+    value: "escalated",
+    label: "Escalate to MLRO",
+    meaning: "Recommend the MLRO takes this one directly.",
+  },
+  {
+    value: "blocked",
+    label: "Block",
+    meaning: "Recommend the case is stopped.",
+  },
+];
+
 export interface GateChoice {
   value: string;
   label: string;
