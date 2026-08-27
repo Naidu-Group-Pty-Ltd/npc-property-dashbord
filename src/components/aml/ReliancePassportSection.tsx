@@ -14,10 +14,11 @@ import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import { PartnerOnboardingWizard } from "@/components/aml/PartnerOnboardingWizard";
 import { passportActions, type PassportActionRow } from "@/lib/aml/passportActions.pure";
 import {
-  amlRelianceApi, type ComplianceAttestation, type IndependentAssessment,
-  type PartnerCaseLink, type PartnerOrganisation, type PartnerRecordsRequest,
-  type RelianceAgreement, type RelianceGrant,
+  amlRelianceApi, type ComplianceAttestation, type DirectPartnerAcknowledgement,
+  type IndependentAssessment, type PartnerCaseLink, type PartnerOrganisation,
+  type PartnerRecordsRequest, type RelianceAgreement, type RelianceGrant,
 } from "@/lib/aml/amlRelianceApi";
+import { describeAcknowledgement } from "@/lib/aml/partnerOnboarding.pure";
 
 /**
  * Compliance Passport — one completed AML/CTF process, reused across every
@@ -45,6 +46,8 @@ export function ReliancePassportSection({
   const [links, setLinks] = useState<PartnerCaseLink[]>([]);
   const [organisations, setOrganisations] = useState<PartnerOrganisation[]>([]);
   const [recordsRequests, setRecordsRequests] = useState<PartnerRecordsRequest[]>([]);
+  /* Agreements sent by email to partners outside the portals. */
+  const [acknowledgements, setAcknowledgements] = useState<DirectPartnerAcknowledgement[]>([]);
   /** SERVER-derived passport state code; null when the reading failed. */
   const [passportStateCode, setPassportStateCode] = useState<string | null>(null);
   /** Whether the deployment can run material-change invalidation; null = unknown. */
@@ -87,6 +90,12 @@ export function ReliancePassportSection({
       setRecordsRequests(rr.requests ?? []);
     } catch {
       // Phase 4 tables not present yet — hide the requests block.
+    }
+    try {
+      const ack = await amlRelianceApi.listPartnerAcknowledgements(caseId);
+      setAcknowledgements(ack.acknowledgements ?? []);
+    } catch {
+      // The acknowledgement table is not present in this environment yet.
     }
     try {
       // The server-derived passport state (refresh flags, supersession) —
@@ -170,6 +179,44 @@ export function ReliancePassportSection({
       await refresh();
     } catch (e: any) {
       toast({ title: "Could not grant access", description: e?.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  /**
+   * Re-issue the emailed agreement — to the same address or a different
+   * one. The server supersedes the live request, so the previous link
+   * stops working: that is what makes "send it somewhere else" safe.
+   */
+  const resendAcknowledgement = async (row: DirectPartnerAcknowledgement) => {
+    const values = await prompt({
+      title: "Re-send the compliance agreement",
+      description:
+        "A fresh link is sent and the previous one stops working. Change the address if it should go to someone else — the history keeps every address it was sent to.",
+      confirmLabel: "Send agreement",
+      fields: [
+        { name: "recipient_name", label: "Recipient name", required: true, placeholder: row.recipient_name },
+        { name: "recipient_email", label: "Recipient email", required: true, placeholder: row.recipient_email },
+      ],
+    });
+    if (!values) return;
+    setBusy("ack");
+    try {
+      const res = await amlRelianceApi.sendPartnerAcknowledgement({
+        case_id: caseId, partner_org_id: row.partner_org_id,
+        recipient_name: values.recipient_name.trim() || row.recipient_name,
+        recipient_email: values.recipient_email.trim() || row.recipient_email,
+        force: true,
+      });
+      toast({
+        title: res.email_sent ? "Agreement sent" : "Agreement recorded — email did not send",
+        description: res.email_sent
+          ? `Emailed ${res.acknowledgement.recipient_email}.`
+          : `${res.email_error ?? "The mail provider refused it."} The link is live; deliver it by hand if needed.`,
+        variant: res.email_sent ? undefined : "destructive",
+      });
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Could not send the agreement", description: e?.message, variant: "destructive" });
     } finally { setBusy(null); }
   };
 
@@ -641,6 +688,50 @@ export function ReliancePassportSection({
               that cannot rely completes its own independent CDD instead — that route is always
               available.
             </div>
+          </div>
+        )}
+
+        {/* Agreements sent by email to partners outside the portals. Their
+            ACCEPTANCE is what records the arrangement a grant requires, so
+            this block is the passport gate made visible — and the place a
+            lapsed or declined request is re-issued from. */}
+        {acknowledgements.length > 0 && (
+          <div className="border-t pt-3">
+            <div className="text-xs font-medium flex items-center gap-1.5">
+              <FileSignature className="h-3.5 w-3.5 text-primary" /> Compliance agreement — sent for acceptance
+            </div>
+            <ul className="mt-1.5 space-y-1.5 text-xs">
+              {acknowledgements.map((row) => {
+                const reading = describeAcknowledgement(row.status, row.expires_at);
+                return (
+                  <li key={row.id} className="flex flex-wrap items-start gap-2">
+                    <span className="font-medium">
+                      {row.partner_organisations?.legal_name ?? "Partner"}
+                    </span>
+                    <Badge variant="outline" className={
+                      reading.state === "accepted" ? "text-success"
+                        : reading.state === "declined" ? "text-destructive"
+                          : reading.state === "expired" ? "text-warning"
+                            : "text-muted-foreground"
+                    }>
+                      {reading.state}
+                    </Badge>
+                    <span className="text-muted-foreground">{row.recipient_email}</span>
+                    <span className="w-full text-[11px] text-muted-foreground">
+                      {reading.detail}
+                      {row.resend_count > 0 && ` · sent ${row.resend_count + 1} times`}
+                    </span>
+                    {isMlro && reading.canResend && (
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs"
+                        onClick={() => resendAcknowledgement(row)} disabled={busy !== null}>
+                        {busy === "ack" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+                        Re-send
+                      </Button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         )}
 

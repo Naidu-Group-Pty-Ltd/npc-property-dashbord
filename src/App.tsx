@@ -136,6 +136,7 @@ const PartnerCompliance = lazyWithRetry(() => import("./pages/PartnerCompliance"
 const PartnerReferrals = lazyWithRetry(() => import("./pages/PartnerReferrals"));
 const LoanWriterUndertakings = lazyWithRetry(() => import("./pages/LoanWriterUndertakings"));
 const PublicPartnerConsent = lazyWithRetry(() => import("./pages/PublicPartnerConsent"));
+const PartnerAcknowledgement = lazyWithRetry(() => import("./pages/PartnerAcknowledgement"));
 
 const GamePlan = lazyWithRetry(() => import("./pages/GamePlan"));
 const Commissions = lazyWithRetry(() => import("./pages/Commissions"));
@@ -387,6 +388,10 @@ const App = () => (
                         <Route path="/template-share/:token" element={<TemplateSharePreview />} />
                         {/* Public partner referral consent signing (no auth) */}
                         <Route path="/partner-consent/:token" element={<PublicPartnerConsent />} />
+                        {/* AML/CTF Compliance Passport Agreement for a partner
+                            outside the portals. Public and token-addressed:
+                            the link is the whole credential. */}
+                        <Route path="/partner-acknowledgement/:token" element={<PartnerAcknowledgement />} />
 
                         {/* Client Portal Routes */}
                         <Route path="/client/login" element={
