@@ -479,20 +479,42 @@ async function finish(
    * one the repair can actually answer: IS THE MARKETING GONE, AND DID I LEAVE
    * ANYTHING BEHIND?
    *
-   *   no type survives anywhere — strict pass or faint — so a badge that was
-   *   only partly removed, or a second one that was never masked, still fails;
+   *   no type survives anywhere — strict pass or faint, and the faint pass is
+   *   ASKED rather than read off a verdict that suppressed it — so a badge that
+   *   was only partly removed still fails;
    *
-   *   and nothing I REBUILT came back as a flat coloured block, which is what
+   *   nothing I REBUILT came back as a flat coloured block, which is what
    *   catches a model that painted the mask over in one colour instead of
-   *   reconstructing what was behind it.
+   *   reconstructing what was behind it;
    *
-   * A flat block that does not overlap the repaired area is not the repair's
-   * business and never was.
+   *   and no flat block ANYWHERE on the result is filled with a brand colour,
+   *   which is what catches a second badge the mask never covered — the case a
+   *   supplied `repair_region` makes reachable, because the operator's
+   *   rectangle replaces the derived mask entirely.
+   *
+   * A NEUTRAL flat block that does not overlap the repaired area is not the
+   * repair's business and never was: that is the garage door, and holding the
+   * repair to it would be holding it responsible for the house.
    */
   const surviving = readMarketingOverlay(check.thumbnail);
   const classifierState = decideMarketplaceEligibility(surviving).state;
 
-  if (surviving.textLineCount > 0 || surviving.faintTextLineCount > 0) {
+  /*
+   * THE FAINT PASS, ASKED EXPLICITLY — the same rule the pre-repair inspection
+   * already states at its own call site: `readMarketingOverlay` skips the faint
+   * pass on a picture it has already convicted and reports zero, and that zero
+   * means "not asked", not "asked and silent". A repaired picture with a
+   * surviving flat region — which is exactly the Lot 13 garage-door case this
+   * gate deliberately tolerates — set `annotated` and therefore suppressed the
+   * one measurement that could see pale residue. Every derivative served with
+   * `classifier_state: 'ineligible'` had, by construction, never been asked the
+   * faint question. So it is asked here, of the artefact that will be stored.
+   */
+  const survivingFaint = surviving.annotated
+    ? measureFaintOverlayText(check.thumbnail)
+    : { heightShare: surviving.faintTextHeightShare, lineCount: surviving.faintTextLineCount };
+
+  if (surviving.textLineCount > 0 || survivingFaint.lineCount > 0) {
     return {
       ok: false, reason: 'still_annotated', transformation, model,
       detail: 'the repaired picture still carries laid-over type',
@@ -500,13 +522,40 @@ async function finish(
     };
   }
 
-  const painted = measureFlatColourRegions(check.thumbnail).regions.find((region) =>
+  const survivingFlat = measureFlatColourRegions(check.thumbnail);
+  const painted = survivingFlat.regions.find((region) =>
     boxTouchesMask(region.box, repairedMask, maskWidth, maskHeight,
       check.thumbnail.width, check.thumbnail.height));
   if (painted) {
     return {
       ok: false, reason: 'still_annotated', transformation, model,
       detail: 'the repaired area came back as a flat coloured block rather than a reconstruction',
+      rejected: { bytes, width, height },
+    };
+  }
+
+  /*
+   * AND NO BRAND-COLOURED PLATE SURVIVES ANYWHERE — not just under the mask.
+   *
+   * The claim above ("a second badge that was never masked still fails") was
+   * false for a wordless badge: its own flat region set `annotated`, which
+   * suppressed the faint pass, and it sits away from the repaired area, which
+   * is all the flat-block test looks at. The reachable case is a repair driven
+   * by a supplied `repair_region`: the operator's rectangle replaces the
+   * derived mask entirely, so a chromatic pill the detector can see is left
+   * unmasked, survives the repair, and was served. The colour rule is the one
+   * the mask builder and the clearance already trust — `isPromotionalFill`
+   * excludes every neutral garage door, roof, wall and patch of sky — so this
+   * cannot re-import the Lot 13 false positive; a saturated brand-colour block
+   * on a repaired picture is a badge, and the repair is refused rather than
+   * served with it on.
+   */
+  const survivingPromotional = promotionalRegions(
+    check.thumbnail, survivingFlat.regions.map((region) => region.box));
+  if (survivingPromotional.length) {
+    return {
+      ok: false, reason: 'still_annotated', transformation, model,
+      detail: 'a promotional colour block survives on the repaired picture',
       rejected: { bytes, width, height },
     };
   }
