@@ -399,7 +399,7 @@ export async function importStockRecords(
   }
 
   await attachDocumentMedia(
-    db, input, outcome.itemIds, itemIdByAnchor,
+    db, { ...input, documentRowCount: records.length }, outcome.itemIds, itemIdByAnchor,
     input.pageTexts?.length
       ? {
         labelByItemId,
@@ -489,6 +489,14 @@ export async function attachDocumentMedia(
     organisationId: string; uploadId: string; media: ExtractedMedia[];
     /** The document these pictures came out of, recorded on each of them. */
     filename?: string | null;
+    /**
+     * How many property rows the DOCUMENT stated — which can exceed the
+     * imported list when rows failed to import or, in the repair, when only
+     * some re-matched. The one-property containment fallback keys on this,
+     * so a caller holding one match out of a twelve-row file cannot present
+     * the file as a one-property document.
+     */
+    documentRowCount?: number;
   },
   itemIdsInOrder: string[],
   itemIdByAnchor: Map<string, string | null>,
@@ -524,6 +532,7 @@ export async function attachDocumentMedia(
     anchors: input.media.map((media) => media.anchor ?? null),
     itemIdByAnchor: resolvedAnchors,
     itemIdsInOrder: pageAnchored ? [] : itemIdsInOrder,
+    rowCount: input.documentRowCount,
   });
 
   /**
@@ -543,6 +552,7 @@ export async function attachDocumentMedia(
     : settleContainerMediaRoles({
       media: input.media.map((media) => ({ name: media.name, anchor: media.anchor ?? null })),
       stockItemIds: attributions.map((attribution) => attribution.stockItemId),
+      structural: attributions.map((attribution) => attribution.structural),
       container: 'the container in the builder\'s own document',
     });
 
@@ -573,10 +583,18 @@ export async function attachDocumentMedia(
         processing_status: 'ready',
         position: index,
         source_detail: {
+          // The origin every embedded-document image shares, stamped so a
+          // census can SEE this path — it used to write no origin at all, and
+          // every row it produced landed in the legacy no-origin bucket.
+          origin: 'document_media',
           attributed: !!stockItemId,
           structural: attribution.structural,
           anchor: media.anchor ?? null,
           reason: attribution.reason,
+          // What the enumeration that produced this entry looked like, when
+          // the extractor recorded one. A truncated read is a fact about the
+          // row, not a silence.
+          ...(media.enumeration ? { enumeration: media.enumeration } : {}),
           ...roleDetail(roles[index]),
           // Whether the marketplace may DRAW it. Every format lands here or
           // in `sourceImages.ts`, and both ask the same question of the bytes.

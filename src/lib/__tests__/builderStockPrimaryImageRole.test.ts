@@ -391,6 +391,7 @@ describe('H — a spreadsheet whose media the workbook merely contains', () => {
         { name: 'xl/media/image2.png', anchor: 'sheet:Stock!A2' },
       ],
       stockItemIds: ['item-1', 'item-1'],
+      structural: [true, true],
       container: 'the spreadsheet row',
     });
     expect(roles.every((role) => !isPrimaryRole(role.role))).toBe(true);
@@ -404,6 +405,7 @@ describe('H — a spreadsheet whose media the workbook merely contains', () => {
         { name: 'xl/media/image2.png', anchor: 'sheet:Stock!A3' },
       ],
       stockItemIds: ['item-1', 'item-2'],
+      structural: [true, true],
       container: 'the spreadsheet row',
     });
     expect(roles[0].role).toBe('primary_property');
@@ -424,6 +426,7 @@ describe('I — a DOCX property section with a hero and a later interior', () =>
         { name: 'word/media/kitchen.png', anchor: 'docx:table1:row2' },
       ],
       stockItemIds: ['item-1', 'item-1'],
+      structural: [true, true],
       container: 'the property table row',
     });
     expect(roles[0].role).toBe('primary_property');
@@ -440,6 +443,7 @@ describe('J — a PPTX property slide and later imagery', () => {
         { name: 'ppt/media/company-logo.png', anchor: null },
       ],
       stockItemIds: ['item-1', 'item-1', null],
+      structural: [true, true, false],
       container: 'the slide',
     });
     expect(roles[0].role).toBe('primary_property');
@@ -535,7 +539,10 @@ describe('O — a direct image upload for one property', () => {
   it('makes those exact bytes the property\'s image', () => {
     const roles = settleContainerMediaRoles({
       media: [{ name: 'lot-12-render.jpg', anchor: null }],
+      // The one-property containment attribution: structural, because the
+      // document's own boundary is the statement.
       stockItemIds: ['item-1'],
+      structural: [true],
       container: 'the uploaded image',
     });
     expect(roles[0].role).toBe('primary_property');
@@ -713,6 +720,7 @@ describe('Q — a builder source with only interior photographs', () => {
         { name: 'ensuite.jpg', anchor: 'docx:table1:row2' },
       ],
       stockItemIds: ['item-1', 'item-1', 'item-1'],
+      structural: [true, true, true],
       container: 'the property table row',
     });
     expect(roles.map((role) => role.role)).toEqual(['interior', 'interior', 'interior']);
