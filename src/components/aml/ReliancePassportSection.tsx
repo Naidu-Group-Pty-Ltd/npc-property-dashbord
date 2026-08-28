@@ -18,8 +18,10 @@ import { PartnerOnboardingWizard } from "@/components/aml/PartnerOnboardingWizar
 import {
   PassportIssuedDialog, type PassportIssueResult,
 } from "@/components/aml/PassportIssuedDialog";
-import { PassportRecipientsPanel } from "@/components/aml/PassportRecipientsPanel";
+import { PartnerRosterPanel } from "@/components/aml/PartnerRosterPanel";
 import type { RecipientRow } from "@/lib/aml/passport/passportRecipients.pure";
+import type { RosterRow } from "@/lib/aml/passport/partnerRoster.pure";
+import { passportRecipients } from "@/lib/aml/passport/passportRecipients.pure";
 import { useAnyPartnerWorkspaceEnabled } from "@/lib/aml/usePartnerWorkspaceFlags";
 import { passportActions, type PassportActionRow } from "@/lib/aml/passportActions.pure";
 import {
@@ -407,6 +409,32 @@ export function ReliancePassportSection({
      showed the new link as a prompt field PLACEHOLDER — the same
      uncopyable-empty-box defect that was fixed on the issue path and
      survived here, because there were two paths. */
+
+  /* ── the roster's acts, onto the acts that already exist ───────────
+     `sendPassport` and `revokeAccess` are unchanged and still take the
+     recipients reading, which is the module that decides how a send
+     supersedes. These translate one row shape into the other rather than
+     duplicating that decision — two implementations of "what does sending
+     do to the link they hold" is exactly how this feature has gone wrong
+     before. */
+  const recipientFor = (row: RosterRow): RecipientRow | null => {
+    const reading = passportRecipients({
+      agreements, grants, acknowledgements,
+      hasAttestation: Boolean(attestations.find((a) => !a.superseded_at)),
+      isMlro,
+    });
+    return reading.rows.find((r) => r.agreementId === row.agreementId) ?? null;
+  };
+
+  const sendFromRoster = (row: RosterRow) => {
+    const recipient = recipientFor(row);
+    if (recipient) void sendPassport(recipient);
+  };
+
+  const revokeFromRoster = (row: RosterRow) => {
+    const recipient = recipientFor(row);
+    if (recipient?.revokeGrantId) void revokeAccess(recipient);
+  };
 
   /**
    * Withdraw a partner's access.
@@ -911,20 +939,36 @@ export function ReliancePassportSection({
             second partner was a five-step wizard for a partner who already
             existed. Each row here is an active written arrangement with
             exactly one act, and its address opens pre-filled. */}
-        <PassportRecipientsPanel
+        <PartnerRosterPanel
           facts={{
-            agreements,
-            grants,
-            acknowledgements,
+            agreements, links, acknowledgements, grants,
             hasAttestation: Boolean(current),
             isMlro,
           }}
-          busyAgreementId={sending}
-          onSend={sendPassport}
-          onRevoke={revokeAccess}
-          onCopyEmail={copyRecipientEmail}
-          onOnboard={() => setWizardOpen(true)}
+          busyKey={sending}
           workspaceEnabled={partnerWorkspace.enabled}
+          handlers={{
+            onSend: sendFromRoster,
+            onRevoke: revokeFromRoster,
+            onCopyEmail: copyRecipientEmail,
+            onRecordAssessment: (agreementId) => {
+              const a = agreements.find((x) => x.id === agreementId);
+              if (a) void recordAssessment(a);
+            },
+            onResendAgreement: (ackId) => {
+              const row = acknowledgements.find((x) => x.id === ackId);
+              if (row) void resendAcknowledgement(row);
+            },
+            onDownloadAgreement: (ackId) => {
+              const row = acknowledgements.find((x) => x.id === ackId);
+              if (row) void downloadAcknowledgement(row);
+            },
+            onEndLink: (linkId) => {
+              const l = links.find((x) => x.id === linkId);
+              if (l) void endLink(l);
+            },
+            onOnboard: () => setWizardOpen(true),
+          }}
         />
 
         {/* ── the acts ────────────────────────────────────────────────
@@ -1037,216 +1081,36 @@ export function ReliancePassportSection({
           </div>
         </div>
 
-        {/* Arrangement governance (Phase 2). The written arrangement and
-            its immutable assessment history. An overdue, unsuitable or
-            inactive arrangement blocks NEW reliance grants; the independent
-            CDD route is never affected. */}
-        {agreements.length > 0 && (
-          <div className="border-t pt-3">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-medium flex items-center gap-1.5">
-                <FileSignature className="h-3.5 w-3.5 text-primary" /> Written arrangements
-              </div>
-            </div>
-            <ul className="mt-1.5 space-y-1.5 text-xs">
-              {agreements.map((a) => {
-                const reviewOverdue = new Date(a.next_review_due).getTime() < Date.now();
-                return (
-                  <li key={a.id} className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{a.partner_org_name}</span>
-                    <Badge variant="outline" className={
-                      a.status === "active" ? "text-success"
-                        : a.status === "suspended" ? "text-warning" : "text-muted-foreground"
-                    }>
-                      {a.status}
-                    </Badge>
-                    {reviewOverdue && (
-                      <Badge variant="outline" className="text-destructive">review overdue</Badge>
-                    )}
-                    {(a.eligibility_classification ?? "unassessed") === "unassessed" && (
-                      <Badge variant="outline" className="text-warning">eligibility not recorded</Badge>
-                    )}
-                    {!a.current_assessment_id && (
-                      <Badge variant="outline" className="text-warning">no assessment</Badge>
-                    )}
-                    {isMlro && (
-                      <Button
-                        size="sm" variant="ghost" className="h-6 px-2 text-xs"
-                        onClick={() => recordAssessment(a)} disabled={busy !== null}
-                      >
-                        Record assessment
-                      </Button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="text-[11px] text-muted-foreground mt-1.5">
-              An overdue, unsuitable or inactive arrangement blocks new reliance grants. A partner
-              that cannot rely completes its own independent CDD instead — that route is always
-              available.
-            </div>
+        {/* Written arrangements, the emailed compliance agreement and the
+            partner links used to be three more lists here, of the same
+            organisations the roster above already names. They were the
+            reported eyesore: eleven amber chips spelled in database
+            vocabulary, and not one of them saying what to do. Every fact and
+            every act survives inside a partner's own row — the arrangement's
+            assessment, the executed agreement, ending a link — one click
+            away, because reference material is not a step.
+
+            The two acts that belong to the MATTER rather than to a partner
+            stay here, because there is nowhere in a partner row to put
+            "record an organisation we have not linked yet". */}
+        {isMlro && (
+          <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+            <span className="text-xs text-muted-foreground">Partner records:</span>
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+              onClick={addOrganisation} disabled={busy !== null}>
+              Record an organisation
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+              onClick={addLink} disabled={busy !== null}>
+              {busy === "link" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+              Link a partner to this matter
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+              onClick={addAgreement} disabled={busy !== null}>
+              Record an arrangement
+            </Button>
           </div>
         )}
-
-        {/* Agreements sent by email to partners outside the portals. Their
-            ACCEPTANCE is what records the arrangement a grant requires, so
-            this block is the passport gate made visible — and the place a
-            lapsed or declined request is re-issued from. */}
-        {acknowledgements.length > 0 && (
-          <div className="border-t pt-3">
-            <div className="text-xs font-medium flex items-center gap-1.5">
-              <FileSignature className="h-3.5 w-3.5 text-primary" /> Compliance agreement — sent for acceptance
-            </div>
-            {/* One row per request: who and where on the left, the act on
-                the right. The actions used to be ghost buttons dropped
-                inline after the wrapping text, so "Re-send" read as a
-                stray word rather than the thing to click. */}
-            <ul className="mt-2 space-y-2 text-xs">
-              {acknowledgements.map((row) => {
-                const reading = describeAcknowledgement(row.status, row.expires_at);
-                return (
-                  <li
-                    key={row.id}
-                    className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-md border border-border/60 p-2.5"
-                  >
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium">
-                          {row.partner_organisations?.legal_name ?? "Partner"}
-                        </span>
-                        <Badge variant="outline" className={
-                          reading.state === "accepted" ? "text-success"
-                            : reading.state === "declined" ? "text-destructive"
-                              : reading.state === "expired" ? "text-warning"
-                                : "text-muted-foreground"
-                        }>
-                          {reading.state}
-                        </Badge>
-                      </div>
-                      <div className="truncate text-muted-foreground" title={row.recipient_email}>
-                        {row.recipient_email}
-                      </div>
-                      {/* An acceptance is a signed act by a named person on a
-                          date. "Acknowledged" alone is the summary of it, not
-                          the record of it. */}
-                      {reading.state === "accepted" && (row.accepted_by_name || row.accepted_at) && (
-                        <p className="text-[11px] font-medium text-success">
-                          Accepted{row.accepted_by_name ? ` by ${row.accepted_by_name}` : ""}
-                          {row.accepted_at
-                            ? ` on ${new Date(row.accepted_at).toLocaleDateString()} at ${new Date(row.accepted_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                            : ""}
-                        </p>
-                      )}
-                      <p className="text-[11px] text-muted-foreground">
-                        {reading.detail}
-                        {row.resend_count > 0 && ` · sent ${row.resend_count + 1} times`}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
-                      {isMlro && reading.canResend && (
-                        <Button size="sm" variant="outline" className="h-8"
-                          onClick={() => resendAcknowledgement(row)} disabled={busy !== null}>
-                          {busy === "ack"
-                            ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
-                            : <Send className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
-                          Re-send agreement
-                        </Button>
-                      )}
-                      {/* The act the acceptance unlocked, offered on the row
-                          that reports it. An accepted agreement with no
-                          Passport is the one state here that owes somebody
-                          something, so it gets the primary button. */}
-                      {isMlro && awaitingIssueById.has(row.id) && (
-                        <Button size="sm" className="h-8"
-                          onClick={() => issuePassportTo(awaitingIssueById.get(row.id)!)}
-                          disabled={busy !== null}>
-                          {busy === "handover"
-                            ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
-                            : <KeyRound className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
-                          Issue the Passport
-                        </Button>
-                      )}
-                      {/* Only an accepted acknowledgement is an executed
-                          agreement; there is nothing to produce for the rest. */}
-                      {reading.state === "accepted" && (
-                        <Button size="sm" variant="outline" className="h-8"
-                          onClick={() => downloadAcknowledgement(row)} disabled={busy !== null}>
-                          {busy === "ack-doc"
-                            ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
-                            : <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
-                          Executed agreement
-                        </Button>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
-
-        {/* Canonical partner links (Phase 1). A link is the access root —
-            it explains WHY an organisation may see this matter. It is never
-            itself a passport, a reliance decision or a disclosure. */}
-        <div className="border-t pt-3">
-          <div className="flex items-center justify-between">
-            <div className="text-xs font-medium flex items-center gap-1.5">
-              <Link2 className="h-3.5 w-3.5 text-primary" /> Partner links
-            </div>
-            {isMlro && (
-              <div className="flex gap-2">
-                <Button size="sm" variant="ghost" onClick={addOrganisation} disabled={busy !== null}>
-                  Record organisation
-                </Button>
-                <Button size="sm" variant="outline" onClick={addLink} disabled={busy !== null}>
-                  {busy === "link" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-                  Link partner
-                </Button>
-              </div>
-            )}
-          </div>
-          {links.length === 0 ? (
-            <div className="text-xs text-muted-foreground mt-1.5">
-              No partners linked. A partner sees this matter only through an active link with a
-              recorded legal route and purpose — and a link alone still grants no passport or
-              reliance access. The fastest path for a new partner is &ldquo;Onboard partner &amp;
-              grant&rdquo; in the actions above, which records the link on the way.
-            </div>
-          ) : (
-            <ul className="mt-1.5 space-y-1.5 text-xs">
-              {links.map((l) => (
-                <li key={l.id} className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">
-                    {l.partner_organisations?.legal_name ?? "Partner organisation"}
-                  </span>
-                  <Badge variant="outline">{l.relationship_role}</Badge>
-                  <Badge variant="outline">{l.legal_route.replace(/_/g, " ")}</Badge>
-                  <Badge
-                    variant="outline"
-                    className={
-                      l.state === "active" ? "text-success"
-                        : l.state === "suspended" ? "text-warning" : "text-muted-foreground"
-                    }
-                  >
-                    {l.state}
-                  </Badge>
-                  {l.partner_organisations?.classification_status !== "classified" && (
-                    <Badge variant="outline" className="text-warning">classification incomplete</Badge>
-                  )}
-                  {isMlro && l.state === "active" && (
-                    <Button
-                      size="sm" variant="ghost" className="h-6 px-2 text-xs"
-                      onClick={() => endLink(l)} disabled={busy !== null}
-                    >
-                      End link
-                    </Button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
 
         {/* Partner records requests (Phase 4). Origin review of controlled
             record-class requests; nothing is delivered without an explicit

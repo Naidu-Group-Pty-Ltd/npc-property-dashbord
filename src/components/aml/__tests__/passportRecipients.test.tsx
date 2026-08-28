@@ -80,8 +80,9 @@ const CASE_ID = "8b668f2f-0132-436f-b32c-d6709ea69526";
 const AG_FINANCE = "5b83cb1e-6676-4457-9b48-3e5fcc7a92a6";
 const AG_BUILDER = "1f0c9d54-2f6f-4d19-9d1c-27d2f0b2ee31";
 
-const agreement = (id: string, name: string, type: string) => ({
-  id, partner_org_name: name, partner_org_type: type,
+const agreement = (id: string, name: string, type: string, orgId?: string) => ({
+  id, partner_org_id: orgId ?? null, partner_org_name: name, partner_org_type: type,
+  eligibility_classification: "eligible_reporting_entity", current_assessment_id: "as-1",
   partner_abn: null, agreement_reference: "ref", executed_on: "2026-08-01",
   next_review_due: "2027-08-01", last_reviewed_at: null,
   scope: ["customer_identification"], status: "active", notes: null,
@@ -110,11 +111,24 @@ beforeEach(() => {
   listAssessments.mockResolvedValue({ assessments: [] });
   listAgreements.mockResolvedValue({
     agreements: [
-      agreement(AG_FINANCE, "Meridian Finance Group", "finance"),
-      agreement(AG_BUILDER, "Ridgeline Builders", "builder"),
+      agreement(AG_FINANCE, "Meridian Finance Group", "finance", "org-finance"),
+      agreement(AG_BUILDER, "Ridgeline Builders", "builder", "org-builder"),
     ],
   });
-  listPartnerCaseLinks.mockResolvedValue({ links: [] });
+  listPartnerCaseLinks.mockResolvedValue({
+    links: [
+      {
+        id: "L1", partner_org_id: "org-finance", relationship_role: "lender",
+        legal_route: "reliance", state: "active", portal_type: "finance",
+        partner_organisations: { legal_name: "Meridian Finance Group", classification_status: "classified" },
+      },
+      {
+        id: "L2", partner_org_id: "org-builder", relationship_role: "builder_developer",
+        legal_route: "reliance", state: "active", portal_type: "builder",
+        partner_organisations: { legal_name: "Ridgeline Builders", classification_status: "classified" },
+      },
+    ],
+  });
   listPartnerOrganisations.mockResolvedValue({ partner_organisations: [] });
   staffListPartnerRecordsRequests.mockResolvedValue({ requests: [] });
   listPartnerAcknowledgements.mockResolvedValue({ acknowledgements: [] });
@@ -127,7 +141,7 @@ afterEach(() => { vi.useRealTimers(); });
 describe("every partner with an arrangement is a row that can be sent to", () => {
   it("renders one row per active arrangement, not one grant total", async () => {
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    const panel = await screen.findByRole("region", { name: /passport recipients/i });
+    const panel = await screen.findByRole("region", { name: /partners on this matter/i });
     expect(panel).toHaveTextContent("Meridian Finance Group");
     expect(panel).toHaveTextContent("Ridgeline Builders");
     // Both are offered the act; multiple distribution is the ordinary case.
@@ -137,9 +151,8 @@ describe("every partner with an arrangement is a row that can be sent to", () =>
   it("a grant that was never emailed is reported as such, not as live", async () => {
     listGrants.mockResolvedValue({ grants: [grant()] });
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    const panel = await screen.findByRole("region", { name: /passport recipients/i });
+    const panel = await screen.findByRole("region", { name: /partners on this matter/i });
     expect(panel).toHaveTextContent(/never emailed/i);
-    expect(panel).toHaveTextContent(/they have no link/i);
     // And the act is offered on that row.
     expect(await screen.findByRole("button", { name: /Send their link/i })).toBeInTheDocument();
   });
@@ -149,8 +162,12 @@ describe("every partner with an arrangement is a row that can be sent to", () =>
       grants: [grant({ delivered_to_email: "ops@meridian.example", delivered_at: "2026-08-20T00:00:00.000Z" })],
     });
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    const panel = await screen.findByRole("region", { name: /passport recipients/i });
-    expect(panel).toHaveTextContent("ops@meridian.example");
+    /* The address is detail, not a step, so it lives in the expanded row —
+       the closed row says what to DO. */
+    const panel = await screen.findByRole("region", { name: /partners on this matter/i });
+    expect(panel).toHaveTextContent(/Meridian Finance Group/);
+    fireEvent.click(screen.getAllByRole("button", { name: /Meridian Finance Group/i })[0]);
+    expect(await screen.findByText(/ops@meridian\.example/)).toBeInTheDocument();
   });
 });
 
@@ -187,7 +204,11 @@ describe("clicking the act actually delivers", () => {
       note: "ok",
     });
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    fireEvent.click(await screen.findByRole("button", { name: /Re-issue and send/i }));
+    /* A live, delivered Passport is SETTLED — nothing is owed, so there is no
+       button competing for attention. Replacing it is still available, in the
+       row's menu, and it still supersedes. */
+    await openRowMenu(/More actions for Meridian/i);
+    fireEvent.click(await screen.findByText(/Re-issue their link/i));
     await waitFor(() => expect(grantAccess).toHaveBeenCalled());
     expect(grantAccess.mock.calls[0][2].reissue_of).toBe("gr-1");
   });
@@ -198,7 +219,8 @@ describe("clicking the act actually delivers", () => {
     });
     prompt.mockResolvedValue(null);
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    fireEvent.click(await screen.findByRole("button", { name: /Re-issue and send/i }));
+    await openRowMenu(/More actions for Meridian/i);
+    fireEvent.click(await screen.findByText(/Re-issue their link/i));
     await waitFor(() => expect(prompt).toHaveBeenCalled());
     /* A placeholder is not a value — the whole class of defect this replaces.
        The field must open holding the address, so the operator confirms
@@ -234,19 +256,18 @@ describe("clicking the act actually delivers", () => {
 describe("what stops a send is on the row, before the click", () => {
   it("an analyst is told who can send rather than shown a dead button", async () => {
     render(<ReliancePassportSection caseId={CASE_ID} isMlro={false} />);
-    const panel = await screen.findByRole("region", { name: /passport recipients/i });
-    expect(panel).toHaveTextContent(/Only the MLRO can send a Passport/i);
-    /* The act is named and visible, and it cannot be performed — a blocked
-       act that disappears teaches an analyst the feature does not exist. */
-    for (const b of screen.getAllByRole("button", { name: /Send the Passport/i })) {
-      expect(b).toBeDisabled();
-    }
+    const panel = await screen.findByRole("region", { name: /partners on this matter/i });
+    expect(panel).toHaveTextContent(/Requires the MLRO/i);
+    /* The reason is stated once per row rather than as a disabled button an
+       analyst can click at: the roster reports "Requires the MLRO" and
+       offers nothing, which is honest and quieter. */
+    expect(screen.queryByRole("button", { name: /Send the Passport/i })).toBeNull();
   });
 
   it("with no attestation, every row says there is nothing to send yet", async () => {
     listAttestations.mockResolvedValue({ attestations: [] });
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    const panel = await screen.findByRole("region", { name: /passport recipients/i });
+    const panel = await screen.findByRole("region", { name: /partners on this matter/i });
     expect(panel).toHaveTextContent(/Issue the attestation first/i);
   });
 });
@@ -254,7 +275,7 @@ describe("what stops a send is on the row, before the click", () => {
 describe("where the Passport actually appears", () => {
   it("says the emailed link is the only channel when no portal surface exists", async () => {
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    const panel = await screen.findByRole("region", { name: /passport recipients/i });
+    const panel = await screen.findByRole("region", { name: /partners on this matter/i });
     expect(panel).toHaveTextContent(
       /the emailed link is the only way a partner reaches this record/i);
   });
@@ -298,7 +319,7 @@ describe("access can be withdrawn — and withdrawing is not deleting", () => {
   it("says plainly that the grant is KEPT — a register records what happened", async () => {
     listGrants.mockResolvedValue({ grants: [live()] });
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    const panel = await screen.findByRole("region", { name: /passport recipients/i });
+    const panel = await screen.findByRole("region", { name: /partners on this matter/i });
     expect(panel).toHaveTextContent(/the grant is kept as the record that it was issued/i);
   });
 
@@ -307,8 +328,6 @@ describe("access can be withdrawn — and withdrawing is not deleting", () => {
       grants: [grant({ expires_at: "2020-01-01T00:00:00.000Z", delivered_to_email: "x@y.example" })],
     });
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    // The lapsed row is in Ended access; open it and check the menu.
-    fireEvent.click(await screen.findByRole("button", { name: /Ended access/i }));
     await openRowMenu(/More actions for Meridian/i);
     expect(screen.queryByText(/Withdraw access/i)).toBeNull();
   });
@@ -316,24 +335,28 @@ describe("access can be withdrawn — and withdrawing is not deleting", () => {
   it("an analyst is never offered it — stopping access is still an MLRO act", async () => {
     listGrants.mockResolvedValue({ grants: [live()] });
     render(<ReliancePassportSection caseId={CASE_ID} isMlro={false} />);
-    await screen.findByRole("region", { name: /passport recipients/i });
+    const panel = await screen.findByRole("region", { name: /partners on this matter/i });
+    // The row says who can, once, rather than offering a dead control.
+    expect(panel).toHaveTextContent(/Requires the MLRO/i);
+    /* Asserted after, because an open Radix menu aria-hides the page behind
+       it and `screen` can no longer see the panel. */
     await openRowMenu(/More actions for Meridian/i);
     expect(screen.queryByText(/Withdraw access/i)).toBeNull();
   });
 });
 
 describe("the card reads as one list, not nine stacked blocks", () => {
-  it("ended access is collapsed, and counted, rather than removed", async () => {
+  it("a withdrawn partner stays a row, and its step becomes sending again", async () => {
+    /* Withdrawn access is not history to be filed away: the partner still has
+       an arrangement on this matter, so they remain a row whose next step is
+       a fresh decision. Detail stays folded until asked for. */
     listGrants.mockResolvedValue({
       grants: [grant({ revoked_at: "2026-08-25T00:00:00.000Z", revoke_reason: "partner terminated" })],
     });
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    const toggle = await screen.findByRole("button", { name: /Ended access \(1\)/i });
-    // Collapsed by default; one click reveals it. "Did we share this, and did
-    // we stop?" is an audit question, so the answer stays reachable.
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const panel = await screen.findByRole("region", { name: /partners on this matter/i });
+    expect(panel).toHaveTextContent(/withdrawn/i);
+    expect(await screen.findByRole("button", { name: /Send a new link/i })).toBeInTheDocument();
   });
 
   it("the same grants are not listed a second time as Link history", async () => {
@@ -341,13 +364,13 @@ describe("the card reads as one list, not nine stacked blocks", () => {
       grants: [grant({ delivered_to_email: "ops@meridian.example" })],
     });
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    await screen.findByRole("region", { name: /passport recipients/i });
+    await screen.findByRole("region", { name: /partners on this matter/i });
     expect(screen.queryByText(/^Link history$/)).toBeNull();
   });
 
   it("ONE act is open — the rest are a disclosure, not a wall", async () => {
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    await screen.findByRole("region", { name: /passport recipients/i });
+    await screen.findByRole("region", { name: /partners on this matter/i });
     const list = screen.getByRole("list", { name: /Passport actions, in order/i });
     // The list exists and is inside a closed <details>, so its contents are
     // present for a screen reader and absent from the first glance.
