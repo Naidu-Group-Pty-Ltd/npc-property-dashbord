@@ -99,6 +99,10 @@ import {
   type ReadinessItem,
   type SlaTarget,
 } from "../_shared/aml/partnerOperations.ts";
+import {
+  partnerSurfaceMode, passportDisclosure,
+  type PartnerSurfaceMode,
+} from "../_shared/aml/partnerSurface.pure.ts";
 import { extractFinanceToken, resolveFinancePartner } from "../_shared/finance-portal-session.ts";
 import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
@@ -657,6 +661,13 @@ async function flagEnabled(admin: any, key: string): Promise<boolean> {
 const partnerIdentityEnforced = (admin: any) => flagEnabled(admin, "aml_partner_identity");
 const arrangementGovernanceEnforced = (admin: any) => flagEnabled(admin, "aml_arrangement_governance");
 const attestationV2Enabled = (admin: any) => flagEnabled(admin, "aml_attestation_v2");
+/* The Compliance Passport, inside a partner's own portal. Turning this on
+   NARROWS the compliance page to the document alone (see
+   `_shared/aml/partnerSurface.pure.ts`) unless the full workspace is
+   separately enabled — so a deployment cannot acquire eight unreviewed
+   panels as a side effect of showing a Passport. */
+const partnerPassportViewEnabled = (admin: any) => flagEnabled(admin, "aml_partner_passport_view");
+const partnerFullWorkspaceEnabled = (admin: any) => flagEnabled(admin, "aml_partner_workspace_full");
 
 const PARTNER_ORG_TYPES = ["finance", "builder", "developer", "solicitor_conveyancer", "other"];
 const PARTNER_PORTAL_TYPES = ["finance", "builder", "developer", "solicitor_conveyancer"];
@@ -891,6 +902,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (!ctx.ok) return jr({ error: ctx.error, code: ctx.code }, ctx.status);
       const { surface, source, portalUserId, portalUserLabel, membership, partnerOrg } = ctx;
 
+      /* What this partner's compliance page IS. Decided here, on the server,
+         and sent to the browser — never derived client-side, because a page
+         that decided its own scope could show a panel the deployment has not
+         enabled. `partnerSurfaceMode` is the same module the browser uses to
+         turn this answer into a panel list. */
+      const surfaceMode: PartnerSurfaceMode = partnerSurfaceMode({
+        passportViewEnabled: await partnerPassportViewEnabled(admin),
+        fullWorkspaceEnabled: await partnerFullWorkspaceEnabled(admin),
+      });
+
       if (op === "get_partner_compliance_workspace") {
         const linkId = String(body.partner_case_link_id ?? "");
         if (!linkId) {
@@ -903,6 +924,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return jr({
             organisation: { legal_name: partnerOrg.legal_name, classification_status: partnerOrg.classification_status },
             links: links ?? [],
+            surface_mode: surfaceMode,
           });
         }
         const link = await loadScopedPartnerLink(admin, linkId, partnerOrg.id, surface);
@@ -970,17 +992,63 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           now: new Date(),
         });
 
-        // A workspace view that actually disclosed procedure content is an
-        // access — logged like a token redemption.
-        if (grant && dto.procedures) {
+        /* ── the Compliance Passport, in the partner's own portal ───────
+           The DOCUMENT, from `buildCasePassportView` — the same assembler,
+           the same composer and the same `assertPartnerSafe` boundary that
+           `redeem_attestation` serves to the emailed link. It is deliberately
+           the same call rather than a portal-specific projection: the
+           standing requirement is that the partner's copy and the Command
+           Centre's are one record, and two implementations of "the partner's
+           view" is precisely how that stops being true.
+
+           Whether it may be shown is decided by `passportDisclosure` from the
+           grant and the attestation — never by the page, never by the mode.
+           A revoked grant, a lapsed one, a superseded attestation or one
+           flagged for refresh all withhold it and say which, in words a
+           partner may read. */
+        const disclosure = passportDisclosure({
+          grant: grant ? { revoked_at: grant.revoked_at ?? null, expires_at: grant.expires_at } : null,
+          attestation: attestation
+            ? {
+              superseded_at: attestation.superseded_at ?? null,
+              refresh_required_at: attestation.refresh_required_at ?? null,
+            }
+            : null,
+        });
+        const passportEnabled = surfaceMode === "passport_only"
+          || await partnerPassportViewEnabled(admin);
+        let passportView: unknown = null;
+        if (passportEnabled && disclosure.disclosable) {
+          passportView = await buildCasePassportView(admin, link.case_id, "partner");
+        }
+
+        // A workspace view that actually disclosed the record — procedure
+        // content, the Passport document, or both — is an access, logged
+        // exactly like a token redemption. One row per view, never two.
+        if (grant && (dto.procedures || passportView)) {
           await admin.schema("aml").from("reliance_access_log").insert({
             grant_id: grant.id, case_id: link.case_id, action: "view_attestation",
             actor_label: `${partnerOrg.legal_name} — ${portalUserLabel ?? "portal user"}`,
             ip_address: ip,
-            detail: { via: "partner_workspace", partner_case_link_id: link.id, attestation_version: attestation?.version ?? null },
+            detail: {
+              via: "partner_workspace", partner_case_link_id: link.id,
+              attestation_version: attestation?.version ?? null,
+              passport_disclosed: Boolean(passportView),
+              procedures_disclosed: Boolean(dto.procedures),
+            },
           });
         }
-        return jr({ workspace: dto });
+        return jr({
+          workspace: dto,
+          surface_mode: surfaceMode,
+          passport: passportView,
+          /* Said even when the document is withheld, and especially then: a
+             page with nothing on it and no explanation is the failure this
+             whole programme keeps finding. */
+          passport_availability: passportEnabled
+            ? { code: disclosure.code, message: disclosure.message }
+            : { code: "not_enabled", message: "" },
+        });
       }
 
       if (op === "request_cdd_records") {
@@ -2885,6 +2953,174 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .select("*").single();
         if (error) throw error;
         return jr({ membership: data });
+      }
+
+      /* ── enrolling a portal identity for the compliance surface ───────
+         The act that did not exist, and whose absence made every in-portal
+         Passport unreachable however correct everything else was.
+
+         `resolvePartnerPortalContext` walks portal session → membership →
+         canonical organisation, and cross-checks that organisation against
+         the portal organisation on the session. In production BOTH ends of
+         that walk were empty: `partner_portal_memberships` had zero rows,
+         and `builder_organisation_id` / `solicitor_firm_id` /
+         `finance_agent_contact_id` were null on every canonical
+         organisation — declared by the Phase 1 migration and written by
+         nothing, ever. A partner with a working portal login, an active
+         arrangement, a live grant and a linked matter still met
+         `membership_missing`, and if that were fixed alone, then
+         `partner_org_unmapped`.
+
+         They are one act, so this is one operation: a membership without the
+         organisation binding is still a locked door, and binding without a
+         membership is a mapping nobody can use. Doing them separately is two
+         ways to half-succeed.
+
+         Two rules it enforces.
+
+         **A portal identity is never minted here.** The user must already
+         exist in its own portal's table — this maps a real identity, it does
+         not create one, and authentication stays with the portal.
+
+         **A cross-reference is bound once and never silently re-pointed.**
+         If the canonical organisation already names a different portal
+         organisation, this refuses and says so. Re-pointing it would move
+         which partner an existing portal account speaks for, retroactively,
+         across every matter they hold — the same "never guess between
+         organisations" rule the session resolver applies at read time. */
+      case "enrol_partner_portal_access": {
+        if (!isMlro) return jr({ error: "MLRO role required — partner portal enrolment is outward-facing configuration" }, 403);
+        const orgId = String(body.partner_org_id ?? "");
+        const source = String(body.portal_user_source ?? "");
+        const portalUserId = String(body.portal_user_id ?? "");
+        const portalType = String(body.portal_type ?? "");
+        if (!orgId || !source || !portalUserId || !portalType) {
+          return jr({ error: "partner_org_id, portal_user_source, portal_user_id and portal_type are required" }, 400);
+        }
+        if (!PARTNER_USER_SOURCES.includes(source)) {
+          return jr({ error: `portal_user_source must be one of: ${PARTNER_USER_SOURCES.join(", ")}` }, 400);
+        }
+        if (!PARTNER_PORTAL_TYPES.includes(portalType)) {
+          return jr({ error: `portal_type must be one of: ${PARTNER_PORTAL_TYPES.join(", ")}` }, 400);
+        }
+        const { data: org } = await admin.schema("aml").from("partner_organisations")
+          .select("id, status, legal_name, builder_organisation_id, solicitor_firm_id, finance_agent_contact_id")
+          .eq("id", orgId).maybeSingle();
+        if (!org) return jr({ error: "Partner organisation not found" }, 404);
+        if (org.status !== "active") {
+          return jr({ error: `Partner organisation is ${org.status}`, code: "organisation_not_active" }, 409);
+        }
+
+        // The portal user must exist in its home table.
+        const { data: portalUser } = await admin.from(source)
+          .select("*").eq("id", portalUserId).maybeSingle();
+        if (!portalUser) {
+          return jr({ error: "Portal user not found in the named portal user table", code: "portal_user_missing" }, 404);
+        }
+
+        /* The portal ORGANISATION this identity belongs to, read from the
+           portal's own records rather than taken from the request — a body
+           that could name the organisation could bind a partner to one they
+           do not belong to. */
+        let column: "builder_organisation_id" | "solicitor_firm_id" | "finance_agent_contact_id";
+        let portalOrgId: string | null = null;
+        let portalOrgLabel = "portal organisation";
+        if (source === "builder_portal_users") {
+          column = "builder_organisation_id";
+          portalOrgLabel = "builder organisation";
+          const explicit = String(body.builder_organisation_id ?? "");
+          /* The SAME membership table `resolveBuilderSession` walks, filtered
+             the same way — an organisation this account cannot actually
+             select is not one it may be bound to. */
+          const { data: memberships } = await admin.from("builder_organisation_memberships")
+            .select("organisation_id, is_primary, status, revoked_at")
+            .eq("builder_user_id", portalUserId)
+            .eq("status", "active").is("revoked_at", null);
+          const rows: any[] = memberships ?? [];
+          if (explicit) {
+            // An explicitly named organisation is accepted only when the
+            // user is actually a member of it.
+            portalOrgId = rows.some((r) => String(r.organisation_id) === explicit) ? explicit : null;
+            if (!portalOrgId) {
+              return jr({ error: "That builder organisation is not one this portal user belongs to", code: "portal_org_not_member" }, 409);
+            }
+          } else {
+            const primary = rows.find((r) => r.is_primary) ?? rows[0];
+            portalOrgId = primary ? String(primary.organisation_id) : null;
+          }
+        } else if (source === "solicitor_portal_users") {
+          column = "solicitor_firm_id";
+          portalOrgLabel = "legal practice";
+          portalOrgId = portalUser.firm_id ? String(portalUser.firm_id) : null;
+        } else {
+          column = "finance_agent_contact_id";
+          portalOrgLabel = "finance contact";
+          portalOrgId = portalUser.finance_contact_id ? String(portalUser.finance_contact_id) : null;
+        }
+        if (!portalOrgId) {
+          return jr({
+            error: `This portal account is not attached to a ${portalOrgLabel} yet, so there is nothing to map it to. Complete their portal setup first.`,
+            code: "portal_org_unresolved",
+          }, 409);
+        }
+
+        // Bind once; never re-point.
+        const existingBinding = org[column] ? String(org[column]) : null;
+        let bound: "already" | "set" = "already";
+        if (existingBinding && existingBinding !== portalOrgId) {
+          return jr({
+            error: `${org.legal_name} is already mapped to a different ${portalOrgLabel}. Re-pointing it would change which partner every existing portal account speaks for — correct the records rather than re-mapping.`,
+            code: "portal_org_conflict",
+          }, 409);
+        }
+        if (!existingBinding) {
+          const { error: bindError } = await admin.schema("aml").from("partner_organisations")
+            .update({ [column]: portalOrgId }).eq("id", orgId);
+          if (bindError) throw bindError;
+          bound = "set";
+        }
+
+        /* The membership. `active` immediately: the MLRO has already decided
+           this partner may rely, and an `invited` state nothing ever
+           promotes is one more way to be silently locked out of a page. */
+        const status = ["invited", "active", "suspended", "ended"].includes(String(body.status ?? ""))
+          ? String(body.status)
+          : "active";
+        const nowIso = new Date().toISOString();
+        const { data: membershipRow, error: membershipError } = await admin.schema("aml")
+          .from("partner_portal_memberships")
+          .upsert({
+            partner_org_id: orgId, portal_type: portalType,
+            portal_user_source: source, portal_user_id: portalUserId,
+            organisation_role: String(body.organisation_role ?? "member").slice(0, 100),
+            compliance_role: ["compliance_officer", "operations", "read_only"].includes(String(body.compliance_role))
+              ? String(body.compliance_role) : null,
+            status,
+            activated_at: status === "active" ? nowIso : null,
+            created_by: userId,
+          }, { onConflict: "portal_user_source,portal_user_id,partner_org_id" })
+          .select("*").single();
+        if (membershipError) throw membershipError;
+
+        /* The organisation must also DECLARE the portal, or the directory
+           read filters this partner's own matters out of their own page. */
+        const declared: string[] = Array.isArray((org as any).portal_types) ? (org as any).portal_types : [];
+        if (!declared.includes(portalType)) {
+          const { error: portalTypesError } = await admin.schema("aml").from("partner_organisations")
+            .update({ portal_types: [...declared, portalType] }).eq("id", orgId);
+          if (portalTypesError) console.warn("[aml-reliance] portal_types not updated:", portalTypesError.message);
+        }
+
+        return jr({
+          membership: membershipRow,
+          organisation_binding: { column, portal_organisation_id: portalOrgId, bound },
+          /* Enrolment is necessary and not sufficient: the surface flags
+             decide whether the page exists at all, and this reports that
+             plainly rather than implying the partner can now see something. */
+          surface_enabled: (await flagEnabled(admin, "aml_partner_compliance_workspace"))
+            && (await flagEnabled(admin, WORKSPACE_PORTAL_FLAGS[portalType === "developer" ? "builder" : portalType] ?? "")),
+          passport_view_enabled: await partnerPassportViewEnabled(admin),
+        });
       }
 
       case "list_partner_acknowledgements": {

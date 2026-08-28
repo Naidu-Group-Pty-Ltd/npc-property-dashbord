@@ -5,8 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import type {
   PartnerLinkSummary, PartnerPortalAdapter, PartnerRecordsRequestView,
-  PartnerWorkspaceClient, PartnerWorkspaceDirectory, PartnerWorkspaceDto,
+  PartnerSurfaceMode, PartnerWorkspaceClient, PartnerWorkspaceDirectory,
+  PartnerWorkspaceDto,
 } from "./types";
+import type { PassportView } from "@/lib/aml/passport";
+import { partnerWorkspacePanels } from "@/lib/aml/partnerSurface";
+import { PartnerPassportPanel } from "./PartnerPassportPanel";
 import { ResponsibilityNotice } from "./ResponsibilityNotice";
 import { RefreshBanner } from "./RefreshBanner";
 import { ComplianceSummaryCard } from "./ComplianceSummaryCard";
@@ -33,6 +37,14 @@ export function PartnerComplianceWorkspace({
   const [directory, setDirectory] = useState<PartnerWorkspaceDirectory | null>(null);
   const [selectedLink, setSelectedLink] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<PartnerWorkspaceDto | null>(null);
+  /* The Compliance Passport as the server built it for this partner, and why
+     it is absent when it is. Neither is derived here. */
+  const [passport, setPassport] = useState<PassportView | null>(null);
+  const [passportAvailability, setPassportAvailability] =
+    useState<{ code: string; message: string } | undefined>(undefined);
+  /* What this page IS. The server decides; an older deployment that does not
+     say reads as `full`, which is exactly how it behaved before. */
+  const [surfaceMode, setSurfaceMode] = useState<PartnerSurfaceMode>("full");
   const [requests, setRequests] = useState<PartnerRecordsRequestView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +58,7 @@ export function PartnerComplianceWorkspace({
       return;
     }
     setDirectory(res.data);
+    if (res.data.surface_mode) setSurfaceMode(res.data.surface_mode);
     const active = res.data.links.filter((l) => l.state === "active");
     if (active.length === 1) setSelectedLink(active[0].id);
   }, [client]);
@@ -62,18 +75,27 @@ export function PartnerComplianceWorkspace({
       return;
     }
     setWorkspace(w.data.workspace);
+    setPassport((w.data.passport as PassportView | null) ?? null);
+    setPassportAvailability(w.data.passport_availability);
+    if (w.data.surface_mode) setSurfaceMode(w.data.surface_mode);
     setRequests(r.data?.requests ?? []);
   }, [client]);
 
   useEffect(() => { loadDirectory(); }, [loadDirectory]);
   useEffect(() => {
     if (selectedLink) loadWorkspace(selectedLink);
-    else setWorkspace(null);
+    else { setWorkspace(null); setPassport(null); setPassportAvailability(undefined); }
   }, [selectedLink, loadWorkspace]);
 
   const refresh = useCallback(() => {
     if (selectedLink) loadWorkspace(selectedLink);
   }, [selectedLink, loadWorkspace]);
+
+  /* Which panels this page draws. The adapter stays the CEILING — a mode can
+     only ever subtract from what a portal already permitted — and the rule is
+     the shared module the server derives the mode with, so the two cannot
+     disagree about what `passport_only` means. */
+  const panels = partnerWorkspacePanels(surfaceMode, adapter.panels);
 
   if (loading && !directory) {
     return (
@@ -144,26 +166,33 @@ export function PartnerComplianceWorkspace({
           <RefreshBanner state={workspace.attestation_state} />
           {/* Phase 4: the Passport identity strip — presentation of data the
               workspace DTO already discloses; renders nothing pre-share. */}
-          <PartnerPassportStrip workspace={workspace} adapter={adapter} />
-          <ComplianceSummaryCard workspace={workspace} adapter={adapter} />
-          <TaskDeadlineRail workspace={workspace} adapter={adapter} />
-          {adapter.panels.procedures && <ProcedureEvidenceViewer workspace={workspace} />}
-          {adapter.panels.determination && (
+          {panels.passportStrip && <PartnerPassportStrip workspace={workspace} adapter={adapter} />}
+          {/* The DOCUMENT itself — the same record the issuing organisation
+              holds, so this partner never has to repeat due diligence they
+              are entitled to rely on. Drawn from the server's own partner
+              projection; nothing here selects or relabels a page. */}
+          {panels.passport && (
+            <PartnerPassportPanel passport={passport} availability={passportAvailability} />
+          )}
+          {panels.summary && <ComplianceSummaryCard workspace={workspace} adapter={adapter} />}
+          {panels.tasks && <TaskDeadlineRail workspace={workspace} adapter={adapter} />}
+          {panels.procedures && <ProcedureEvidenceViewer workspace={workspace} />}
+          {panels.determination && (
             <IndependentAssessmentForm workspace={workspace} client={client} onRecorded={refresh} />
           )}
-          {adapter.panels.recordsRequests && (
+          {panels.recordsRequests && (
             <RecordsRequestBuilder
               workspace={workspace} requests={requests} client={client} onSubmitted={refresh}
             />
           )}
-          {adapter.panels.deliveries && (
+          {panels.deliveries && (
             <EvidenceDeliveriesPanel workspace={workspace} client={client} />
           )}
-          {adapter.panels.auditReceipt && (
+          {panels.auditReceipt && (
             <AuditReceiptPanel workspace={workspace} client={client} />
           )}
-          {adapter.panels.clarification && <ClarificationChannel adapter={adapter} />}
-          <SupportEscalationPanel adapter={adapter} />
+          {panels.clarification && <ClarificationChannel adapter={adapter} />}
+          {panels.support && <SupportEscalationPanel adapter={adapter} />}
         </>
       )}
     </div>

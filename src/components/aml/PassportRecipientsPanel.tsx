@@ -87,12 +87,23 @@ export function PassportRecipientsPanel({
         </div>
       )}
 
-      {/* Where a Passport actually appears, stated rather than assumed. */}
+      {/* Where a Passport actually appears, stated rather than assumed.
+          Both readings are facts about this deployment, not about the
+          partner — an operator who believes a Passport is waiting in a
+          portal that has no such page waits forever, which is half of the
+          defect this panel exists for. */}
       {workspaceEnabled === false && (
         <p className="mt-2 text-[11px] text-muted-foreground">
-          The in-portal compliance workspace is switched off on this deployment, so the emailed
-          link is the only way a partner reaches this Passport — nothing will appear inside their
+          The in-portal Compliance Passport is switched off on this deployment, so the emailed
+          link is the only way a partner reaches this record — nothing will appear inside their
           portal.
+        </p>
+      )}
+      {workspaceEnabled === true && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Partners enrolled for their portal can also open this Passport signed in, from their
+          own <span className="text-foreground">AML/CTF Compliance</span> page — the same record,
+          with no link to keep.
         </p>
       )}
 
