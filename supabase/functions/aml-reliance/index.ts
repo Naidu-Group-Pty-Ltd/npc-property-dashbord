@@ -153,6 +153,39 @@ async function notifyCommandCentre(
   }
 }
 
+/**
+ * An unexpected fault on a PUBLIC link, answered so that both sides learn.
+ *
+ * `internalError` is right about what it withholds — an anonymous caller is
+ * told nothing about our internals, and gets a correlation id instead. It is
+ * wrong about who is reading it here. "Internal error" is written for an
+ * operator with a support channel; the recipient of a one-time link has none,
+ * so the message has to carry the next step itself, and somebody on this side
+ * has to be told, because the only party who witnessed the failure is the one
+ * party who cannot report it.
+ *
+ * The notification carries the correlation id, so the console line and the
+ * Command Centre entry name the same incident.
+ */
+async function publicLinkFailure(admin: any, err: unknown, caseId: string | null, what: string) {
+  const correlationId = crypto.randomUUID();
+  const body = internalError(err, "aml-reliance", correlationId);
+  await notifyCommandCentre(
+    admin,
+    "A partner could not complete the compliance agreement",
+    `${what} through a one-time link could not be recorded (reference ${correlationId}). `
+    + "Nothing was written, so their agreement still stands as outstanding. They have been asked to "
+    + "contact you — re-issue the link from the case's Gate & Passport stage once the fault is cleared.",
+    caseId,
+  );
+  return jr({
+    ...body,
+    error: "This could not be completed just now, and nothing has been recorded. "
+      + "The organisation that sent you this link has been notified — please contact them, "
+      + "and they will send a new one.",
+  }, 500);
+}
+
 async function appendCaseEvent(admin: any, caseId: string, category: string, summary: string, payload: any, actorId: string | null, actorLabel: string | null) {
   const { data: prev } = await admin.schema("aml").from("case_events")
     .select("row_hash").eq("case_id", caseId).order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -1142,89 +1175,137 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }, 409);
       }
 
-      const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-      const ua = req.headers.get("user-agent") ?? null;
-      const hashOrNull = async (v: string | null) => (v ? await hashAckToken(v) : null);
-      const now = new Date();
+      /* ── from here the link WRITES ────────────────────────────────────
+         Everything below records something, and the person doing it has no
+         account here, no session and nobody to tell. The generic 500 this
+         handler otherwise returns is written for an operator who can raise a
+         ticket; to a partner it is a dead end, and — worse — it is a SILENT
+         one, because the only party who knows the acceptance failed is the
+         party with no way to report it. So an unexpected fault on this path
+         is answered in words the partner can act on AND raised in the
+         Command Centre, where somebody can see it and re-issue. */
+      try {
+        const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+        const ua = req.headers.get("user-agent") ?? null;
+        const hashOrNull = async (v: string | null) => (v ? await hashAckToken(v) : null);
+        const now = new Date();
 
-      if (op === "ack_decline") {
-        await admin.schema("aml").from("direct_partner_acknowledgements").update({
-          status: "declined", declined_at: now.toISOString(),
-          decline_reason: String(body.reason ?? "").slice(0, 2000) || null,
-          ip_hash: await hashOrNull(ip), user_agent_hash: await hashOrNull(ua),
-          updated_at: now.toISOString(),
-        }).eq("id", ack.id);
+        if (op === "ack_decline") {
+          await admin.schema("aml").from("direct_partner_acknowledgements").update({
+            status: "declined", declined_at: now.toISOString(),
+            decline_reason: String(body.reason ?? "").slice(0, 2000) || null,
+            ip_hash: await hashOrNull(ip), user_agent_hash: await hashOrNull(ua),
+            updated_at: now.toISOString(),
+          }).eq("id", ack.id);
+
+          await appendCaseEvent(admin, ack.case_id, "system",
+            `Partner declined the AML/CTF Compliance Passport Agreement: ${(ack as any).partner_organisations?.legal_name ?? "partner"}`,
+            {
+              direct_acknowledgement_id: ack.id, partner_org_id: ack.partner_org_id,
+              note: "No arrangement is recorded. The passport cannot be granted to this partner.",
+            }, null, ack.recipient_email);
+          await notifyCommandCentre(admin,
+            "Partner declined the compliance agreement",
+            `${(ack as any).partner_organisations?.legal_name ?? "A partner"} declined the AML/CTF Compliance Passport Agreement. No passport can be issued to them.`,
+            ack.case_id);
+          return jr({ acknowledgement: { ...publicView, status: "declined" } });
+        }
+
+        /* ── acceptance ────────────────────────────────────────────────── */
+        // The SAME mandatory acknowledgements the portals enforce, read by the
+        // SAME module. An acceptance missing any of them claims assent nobody
+        // gave, so it is refused rather than stored partially.
+        const check = readAcknowledgements(body as Record<string, unknown>);
+        if (check.missing.length > 0) {
+          return jr({ error: ACKNOWLEDGEMENTS_INCOMPLETE_ERROR, missing: check.missing }, 400);
+        }
+        const signerName = String(body.accepted_by_name ?? "").trim();
+        if (signerName.length < 2) {
+          return jr({ error: "Enter the full name of the person accepting on behalf of the organisation." }, 400);
+        }
+
+        // The arrangement IS the acceptance. `grant_access` already refuses
+        // without an active arrangement whose review is current, so writing
+        // this row here is what opens the passport gate — there is no second
+        // rule to keep in step.
+        const draft = arrangementDraftFromAcceptance(now);
+        const { data: org } = await admin.schema("aml").from("partner_organisations")
+          .select("id, legal_name, organisation_type, abn").eq("id", ack.partner_org_id).maybeSingle();
+
+        /* ── who the arrangement belongs to on OUR side ───────────────────
+           `reliance_agreements.created_by` is NOT NULL, and rightly so: an
+           arrangement under section 37A is entered into by this business, and
+           a record of one with no responsible officer is not a record of
+           anything. Every other path fills it with the staff member making
+           the request.
+
+           This path has no staff member in the request at all — the actor is
+           the partner, over a public link, and there is deliberately no
+           session to read. Omitting the column was therefore not an oversight
+           about a value that was available; it was the one path where the
+           obvious source does not exist, and Postgres refused every acceptance
+           with 23502 while the partner was shown "Internal error".
+
+           The answer is the officer who ISSUED the request. They chose this
+           partner, this case and this address, and sending the agreement is
+           the act that commits this business to the arrangement the partner's
+           acceptance completes. `sent_by` is written from an authenticated
+           staff op and the column is NOT NULL, so it is always there — but
+           this refuses rather than throwing if it ever is not, because a
+           partner who has read and ticked everything deserves a sentence they
+           can act on rather than a 500. */
+        if (!ack.sent_by) {
+          return jr({
+            error: "This request cannot be completed because the record of who issued it is incomplete. "
+              + "Nothing has been recorded. Please ask the organisation that sent this link to issue a new one.",
+            code: "issuer_unknown",
+          }, 409);
+        }
+
+        const { data: agreement, error: agreementError } = await admin.schema("aml")
+          .from("reliance_agreements").insert({
+            partner_org_name: org?.legal_name ?? ack.recipient_name,
+            partner_org_type: org?.organisation_type ?? "other",
+            partner_abn: org?.abn ?? null,
+            partner_org_id: ack.partner_org_id,
+            agreement_reference: draft.agreement_reference,
+            executed_on: draft.executed_on,
+            next_review_due: draft.next_review_due,
+            notes: `Accepted by ${signerName} (${ack.recipient_email}) through a one-time acknowledgement link.`,
+            created_by: ack.sent_by,
+          }).select("*").single();
+        if (agreementError) throw agreementError;
+
+        const { error: ackError } = await admin.schema("aml")
+          .from("direct_partner_acknowledgements").update({
+            status: "accepted", accepted_at: now.toISOString(),
+            accepted_by_name: signerName.slice(0, 200),
+            acknowledgements: check.acknowledgements,
+            ip_hash: await hashOrNull(ip), user_agent_hash: await hashOrNull(ua),
+            agreement_id: agreement.id, updated_at: now.toISOString(),
+          }).eq("id", ack.id);
+        if (ackError) throw ackError;
 
         await appendCaseEvent(admin, ack.case_id, "system",
-          `Partner declined the AML/CTF Compliance Passport Agreement: ${(ack as any).partner_organisations?.legal_name ?? "partner"}`,
+          `Partner acknowledged the AML/CTF Compliance Passport Agreement: ${org?.legal_name ?? "partner"}`,
           {
             direct_acknowledgement_id: ack.id, partner_org_id: ack.partner_org_id,
-            note: "No arrangement is recorded. The passport cannot be granted to this partner.",
+            agreement_id: agreement.id, terms_version_id: ack.terms_version_id,
+            acknowledgements: check.acknowledgements, accepted_by_name: signerName,
+            note: "Accepted through a one-time link. The arrangement is recorded and the passport may now be granted.",
           }, null, ack.recipient_email);
         await notifyCommandCentre(admin,
-          "Partner declined the compliance agreement",
-          `${(ack as any).partner_organisations?.legal_name ?? "A partner"} declined the AML/CTF Compliance Passport Agreement. No passport can be issued to them.`,
+          "Partner acknowledged the compliance agreement",
+          `${org?.legal_name ?? "A partner"} accepted the AML/CTF Compliance Passport Agreement. The passport can now be issued to them.`,
           ack.case_id);
-        return jr({ acknowledgement: { ...publicView, status: "declined" } });
+
+        return jr({ acknowledgement: { ...publicView, status: "accepted", accepted_at: now.toISOString() } });
+      } catch (e) {
+        return await publicLinkFailure(
+          admin, e, ack.case_id,
+          op === "ack_decline" ? "A partner's decline" : "A partner's acceptance",
+        );
       }
-
-      /* ── acceptance ────────────────────────────────────────────────── */
-      // The SAME mandatory acknowledgements the portals enforce, read by the
-      // SAME module. An acceptance missing any of them claims assent nobody
-      // gave, so it is refused rather than stored partially.
-      const check = readAcknowledgements(body as Record<string, unknown>);
-      if (check.missing.length > 0) {
-        return jr({ error: ACKNOWLEDGEMENTS_INCOMPLETE_ERROR, missing: check.missing }, 400);
-      }
-      const signerName = String(body.accepted_by_name ?? "").trim();
-      if (signerName.length < 2) {
-        return jr({ error: "Enter the full name of the person accepting on behalf of the organisation." }, 400);
-      }
-
-      // The arrangement IS the acceptance. `grant_access` already refuses
-      // without an active arrangement whose review is current, so writing
-      // this row here is what opens the passport gate — there is no second
-      // rule to keep in step.
-      const draft = arrangementDraftFromAcceptance(now);
-      const { data: org } = await admin.schema("aml").from("partner_organisations")
-        .select("id, legal_name, organisation_type, abn").eq("id", ack.partner_org_id).maybeSingle();
-      const { data: agreement, error: agreementError } = await admin.schema("aml")
-        .from("reliance_agreements").insert({
-          partner_org_name: org?.legal_name ?? ack.recipient_name,
-          partner_org_type: org?.organisation_type ?? "other",
-          partner_abn: org?.abn ?? null,
-          partner_org_id: ack.partner_org_id,
-          agreement_reference: draft.agreement_reference,
-          executed_on: draft.executed_on,
-          next_review_due: draft.next_review_due,
-          notes: `Accepted by ${signerName} (${ack.recipient_email}) through a one-time acknowledgement link.`,
-        }).select("*").single();
-      if (agreementError) throw agreementError;
-
-      const { error: ackError } = await admin.schema("aml")
-        .from("direct_partner_acknowledgements").update({
-          status: "accepted", accepted_at: now.toISOString(),
-          accepted_by_name: signerName.slice(0, 200),
-          acknowledgements: check.acknowledgements,
-          ip_hash: await hashOrNull(ip), user_agent_hash: await hashOrNull(ua),
-          agreement_id: agreement.id, updated_at: now.toISOString(),
-        }).eq("id", ack.id);
-      if (ackError) throw ackError;
-
-      await appendCaseEvent(admin, ack.case_id, "system",
-        `Partner acknowledged the AML/CTF Compliance Passport Agreement: ${org?.legal_name ?? "partner"}`,
-        {
-          direct_acknowledgement_id: ack.id, partner_org_id: ack.partner_org_id,
-          agreement_id: agreement.id, terms_version_id: ack.terms_version_id,
-          acknowledgements: check.acknowledgements, accepted_by_name: signerName,
-          note: "Accepted through a one-time link. The arrangement is recorded and the passport may now be granted.",
-        }, null, ack.recipient_email);
-      await notifyCommandCentre(admin,
-        "Partner acknowledged the compliance agreement",
-        `${org?.legal_name ?? "A partner"} accepted the AML/CTF Compliance Passport Agreement. The passport can now be issued to them.`,
-        ack.case_id);
-
-      return jr({ acknowledgement: { ...publicView, status: "accepted", accepted_at: now.toISOString() } });
     }
 
 
