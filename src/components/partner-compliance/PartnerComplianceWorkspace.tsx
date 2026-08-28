@@ -124,13 +124,26 @@ export function PartnerComplianceWorkspace({
   }
 
   if (error && !directory) {
-    // Safe closed state: no membership / disabled / no mapping. The exact
-    // denial reason from the server is already partner-safe.
+    /* Safe closed state: no membership, the surface disabled, or no
+       organisation mapping. The server's denial is already partner-safe, and
+       it is now given a heading and a route out — a partner who followed
+       "Open it in your Finance Portal" from an email and landed on one grey
+       sentence has no idea whether the product is broken, whether they are
+       in the wrong place, or what to do next. */
     return (
       <div className="space-y-3 max-w-3xl">
+        <h1 className="text-lg font-semibold">{adapter.workspaceTitle}</h1>
         <ResponsibilityNotice intro={adapter.responsibilityIntro} />
         <Card>
-          <CardContent className="py-6 text-sm text-muted-foreground">{error}</CardContent>
+          <CardContent className="space-y-2 py-6 text-sm">
+            <p className="font-medium">This page is not available to your account yet</p>
+            <p className="text-muted-foreground">{error}</p>
+            <p className="text-xs text-muted-foreground">
+              If you were sent a Compliance Passport link by email, that link still works and
+              opens the same record without signing in. Your organisation&apos;s own AML/CTF
+              obligations are unaffected either way.
+            </p>
+          </CardContent>
         </Card>
       </div>
     );
