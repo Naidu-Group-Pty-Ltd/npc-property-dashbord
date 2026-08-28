@@ -642,6 +642,11 @@ export function PartnerOnboardingWizard({
       let agreement = createdAgreement ?? reusableAgreement;
       if (!agreement && !directAck) {
         const res = await amlRelianceApi.createAgreement({
+          // The pointer that was never written. Without it the grant carries
+          // no `partner_org_id`, and the partner's own portal — which looks a
+          // grant up BY organisation — reports a Passport it holds as never
+          // shared. See `create_agreement` for the whole story.
+          partner_org_id: orgId,
           partner_org_name: partnerName,
           partner_org_type: amlType,
           partner_abn: abn.trim() || undefined,
@@ -649,6 +654,21 @@ export function PartnerOnboardingWizard({
         });
         agreement = res.agreement;
         setCreatedAgreement(agreement);
+      } else if (agreement && !agreement.partner_org_id && !directAck) {
+        /* An arrangement recorded before that pointer existed. The operator
+           has selected both records in this pass, so binding them is their
+           explicit act rather than a name match — and this is the repair
+           path for every partner onboarded before it. The server binds once
+           and refuses to re-point. */
+        try {
+          const bound = await amlRelianceApi.bindAgreementOrganisation(agreement.id, orgId);
+          agreement = bound.agreement;
+          setCreatedAgreement(agreement);
+        } catch (e: any) {
+          // Never fatal: the Passport still issues and still emails. It only
+          // costs the in-portal route, which the final screen reports.
+          console.warn("[onboarding] arrangement organisation binding skipped:", e?.message);
+        }
       }
 
       // 3 · The case link — the recorded reason this organisation may see

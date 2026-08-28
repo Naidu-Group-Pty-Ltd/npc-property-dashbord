@@ -34,7 +34,7 @@ const NAV_ITEMS = [
   // Feature-flagged (aml_partner_compliance_workspace + solicitor surface
   // flag); filtered out of the nav until enabled. Presentation gating only —
   // the server enforces the same flags on every workspace operation.
-  { to: '/solicitor/compliance', label: 'Client Verification', icon: ShieldCheck, end: false, tourId: 'compliance', partnerWorkspace: true },
+  { to: '/solicitor/compliance', label: 'AML/CTF Compliance', icon: ShieldCheck, end: false, tourId: 'compliance', partnerWorkspace: true },
 ];
 
 function getInitials(name?: string | null, email?: string | null): string {

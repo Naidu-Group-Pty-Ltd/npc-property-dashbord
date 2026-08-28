@@ -307,6 +307,19 @@ would change which partner every existing portal account speaks for. And
 **a withheld Passport renders its reason** — enrolled, linked and nothing to
 read is a real state, and a blank area reads as a broken page.
 
+Two more faults sat behind the same symptom. **`create_agreement` never
+accepted a `partner_org_id`**, so every wizard-written arrangement had NULL
+there and `grant_access` stamps a grant only `if (agreement.partner_org_id)` —
+the portal looks a grant up BY organisation, so it reported a Passport the
+partner held as never shared; the fix is a validated field, an explicit
+`bind_agreement_organisation` repair that never re-points, and a read path
+that accepts either explicit route. And **nothing led from the emailed link to
+the portal**: `portal_handoff` now offers "View in your portal" on the page and
+in the email, but only when the surface is on AND an active membership exists,
+because a door that refuses is worse than no door. The deep link carries a
+matter id and never the token, and `returnToPath`/`safeReturnTo` are one rule
+for all three logins — two of which used to discard the destination entirely.
+
 The raw bearer token is **gone from the Command Centre**: it and the
 `/passport/<token>` link are one credential, and showing it twice invited an
 operator to send "the code" instead of the link.

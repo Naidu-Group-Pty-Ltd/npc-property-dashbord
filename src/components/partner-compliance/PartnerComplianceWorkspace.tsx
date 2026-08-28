@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import type {
   PartnerLinkSummary, PartnerPortalAdapter, PartnerRecordsRequestView,
@@ -34,6 +35,15 @@ import { SupportEscalationPanel } from "./SupportEscalationPanel";
 export function PartnerComplianceWorkspace({
   adapter, client,
 }: { adapter: PartnerPortalAdapter; client: PartnerWorkspaceClient }) {
+  /* ── the deep link ──────────────────────────────────────────────────
+     `?matter=<partner_case_link_id>` is what "View in your portal" on the
+     emailed Passport link hands over. It is a DESTINATION and never an
+     authority: the server re-derives this partner's organisation from their
+     portal session, and a matter belonging to somebody else simply is not in
+     the directory it returns — so an unrecognised value falls through to the
+     ordinary selection rather than being an error. */
+  const [searchParams] = useSearchParams();
+  const requestedMatter = searchParams.get("matter");
   const [directory, setDirectory] = useState<PartnerWorkspaceDirectory | null>(null);
   const [selectedLink, setSelectedLink] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<PartnerWorkspaceDto | null>(null);
@@ -60,8 +70,16 @@ export function PartnerComplianceWorkspace({
     setDirectory(res.data);
     if (res.data.surface_mode) setSurfaceMode(res.data.surface_mode);
     const active = res.data.links.filter((l) => l.state === "active");
-    if (active.length === 1) setSelectedLink(active[0].id);
-  }, [client]);
+    /* A named matter wins, and it is checked against what the SERVER
+       returned — never trusted as given. Falling back rather than erroring
+       matters: a stale link in an old email must land the partner on their
+       compliance page, not on a failure. */
+    const named = requestedMatter
+      ? res.data.links.find((l) => l.id === requestedMatter)
+      : undefined;
+    if (named) setSelectedLink(named.id);
+    else if (active.length === 1) setSelectedLink(active[0].id);
+  }, [client, requestedMatter]);
 
   const loadWorkspace = useCallback(async (linkId: string) => {
     setLoading(true); setError(null);
