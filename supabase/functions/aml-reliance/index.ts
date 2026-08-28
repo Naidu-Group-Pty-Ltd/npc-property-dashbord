@@ -1039,6 +1039,48 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // the master or surface flag off these ops answer 404 and the system
     // behaves exactly as before Phase 4.
 
+    /* ── does this portal's compliance page exist? ────────────────────
+       Answered HERE, before the workspace gate, and deliberately without a
+       session.
+
+       The browser used to answer this itself with
+       `supabase.from("feature_flags").select(...)`, and that read can never
+       work for a partner: `public.feature_flags` grants SELECT `TO
+       authenticated`, and a portal user's browser client is anon — their
+       identity is the portal's own cookie or token session, not a Supabase
+       one. RLS does not error on a role that matches no policy, it FILTERS.
+       So the query returned `[]` with HTTP 200, `error` was null, every flag
+       coerced from `undefined` to `false`, and the page reported "The
+       compliance workspace is not available" however the database was set.
+
+       The same trap is documented on `useAmlV3Flags` and
+       `useBuilderStockMarketplaceFlag`. The rule they state is the rule
+       here: read through the server.
+
+       It discloses nothing. Whether a page exists is what the navigation
+       shows anyway, and no case, partner or record is named. */
+    if (op === "get_partner_surface_availability") {
+      const requested = String(body.portal_type ?? "");
+      const surface = requested === "developer" ? "builder" : requested;
+      const flagKey = WORKSPACE_PORTAL_FLAGS[surface];
+      if (!flagKey) {
+        return jr({ error: `portal_type must be one of: ${Object.keys(WORKSPACE_PORTAL_FLAGS).join(", ")}` }, 400);
+      }
+      const master = await flagEnabled(admin, "aml_partner_compliance_workspace");
+      const surfaceOn = await flagEnabled(admin, flagKey);
+      return jr({
+        availability: {
+          portal_type: surface,
+          /* The PAGE exists when the master and the surface are both on. The
+             document on it is a second question, so it is reported
+             separately rather than folded in — a page with a withheld
+             Passport is a real state and must not read as no page. */
+          compliance_page: master && surfaceOn,
+          passport_view: master && surfaceOn && await partnerPassportViewEnabled(admin),
+        },
+      });
+    }
+
     if (PARTNER_WORKSPACE_OPS.has(op)) {
       const surfaceForFlag = String(body.portal_type ?? "");
       const masterOn = await flagEnabled(admin, "aml_partner_compliance_workspace");

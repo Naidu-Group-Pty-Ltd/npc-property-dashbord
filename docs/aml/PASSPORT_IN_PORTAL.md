@@ -188,3 +188,57 @@ reads, and records nothing. Reversible by setting the five keys back to false.
 The nav entry is now called **AML/CTF Compliance** in all three portals — the
 same words the email and the Command Centre use, so a partner following an
 instruction finds what they were told to look for.
+
+## The eighth fault: the page asked a question a partner cannot ask
+
+Everything above shipped, the flags went on, the email carried "Open it in
+your Finance Portal", the partner was **fully enrolled** — membership active,
+`finance_agent_contact_id` cross-referenced, arrangement bound, matter linked,
+the session cross-check passing — and the page still said:
+
+> The compliance workspace is not available.
+
+`usePartnerWorkspaceFlags` gated the page and the nav entry on
+`supabase.from("feature_flags").select(...)` **from the browser**. That read
+can never work for a partner:
+
+- `public.feature_flags` grants SELECT `TO authenticated`.
+- A Finance, Builder or Solicitor portal user is **not a Supabase-auth user**.
+  Their identity is that portal's own cookie or token session; the browser's
+  Supabase client is anon.
+- RLS does not error on a role that matches no policy. It **filters**. The
+  query returned `[]` with HTTP 200, `error` was null, and every flag coerced
+  from `undefined` to `false`.
+
+So every partner in every portal was told the page did not exist, however the
+database was set — and the nav entry never rendered, which is what *"I cannot
+see anywhere the AML/CTF Compliance page is located"* actually was.
+
+**This is the third surface in this repository to hit that exact trap.**
+`useAmlV3Flags` and `useBuilderStockMarketplaceFlag` both carry a header
+comment describing it, and both were fixed the same way. The rule they state
+is the rule here: **read through the server, not the table.**
+
+Three rules now carry it.
+
+**One authority decides whether a partner may see the page.** The portal
+pages no longer gate at all — they mount the workspace, and the server
+refuses the operations on its own terms and says so in its own words. A
+second authority in front of the first is what produced a page announcing
+itself unavailable while the server was ready to serve it.
+
+**A failure is never cached, and never reported as "off".** `unknown` is a
+distinct answer from `false`. It hides a nav entry — an entry that leads
+nowhere is worse than none — but the Command Centre says *nothing* rather
+than claiming the surface is switched off, and the next mount asks again.
+
+**A closed page explains itself and leaves the emailed link standing.** A
+partner who followed a link from an email and landed on one grey sentence
+cannot tell whether the product is broken, whether they are in the wrong
+place, or what to do. The closed state now names the situation and says the
+emailed link still works and their own obligations are unaffected.
+
+`get_partner_surface_availability` answers it server-side with no session. It
+discloses nothing — whether a page exists is what the navigation shows anyway
+— and it reports the page and the document **separately**, because a page
+with a withheld Passport is a real state and must not read as no page at all.

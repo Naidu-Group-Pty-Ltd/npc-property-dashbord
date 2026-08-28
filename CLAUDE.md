@@ -347,6 +347,21 @@ would change which partner every existing portal account speaks for. And
 **a withheld Passport renders its reason** — enrolled, linked and nothing to
 read is a real state, and a blank area reads as a broken page.
 
+An eighth fault sat in front of all of it: the page and the nav entry gated on
+`supabase.from("feature_flags")` **from the browser**, and that read can never
+work for a partner — the table grants SELECT `TO authenticated`, a portal
+user's client is anon, and RLS FILTERS rather than erroring, so it returned
+`[]` with HTTP 200 and every flag coerced to `false`. Every partner in every
+portal was told the page did not exist however the database was set. **This
+was the third surface to hit that trap** (`useAmlV3Flags` and
+`useBuilderStockMarketplaceFlag` carry the same header), so the rule is theirs:
+**read through the server, not the table** —
+`get_partner_surface_availability`. Two more rules follow: **one authority
+decides** (the pages no longer gate at all; the server refuses and says why),
+and **a failure is never cached and never reported as "off"** — `unknown` is a
+distinct answer, so the Command Centre says nothing rather than something
+false.
+
 Two more faults sat behind the same symptom. **`create_agreement` never
 accepted a `partner_org_id`**, so every wizard-written arrangement had NULL
 there and `grant_access` stamps a grant only `if (agreement.partner_org_id)` —
