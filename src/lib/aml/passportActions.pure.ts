@@ -29,6 +29,18 @@ export interface PassportActionFacts {
   activeGrants: number;
   isMlro: boolean;
   /**
+   * Partners who accepted the emailed agreement and hold no live Passport.
+   *
+   * An acceptance is the moment this act stops being optional and becomes
+   * owed — somebody outside the portals has signed, and until the Passport is
+   * issued they have an executed arrangement and nothing to open. The row
+   * said "No partner has access yet" either way, which reads as an empty
+   * state rather than as work.
+   */
+  awaitingPassportIssue?: number;
+  /** Named so the row says WHO is waiting, not just how many. */
+  awaitingPassportName?: string | null;
+  /**
    * Whether material-change invalidation can run on this deployment (the
    * partner event outbox flag, read from the server's own health op).
    * null = the reading was unavailable, which changes nothing — the
@@ -123,11 +135,19 @@ export function passportActions(f: PassportActionFacts): PassportActionRow[] {
     meaning:
       "Gives a partner the current attestation under an active arrangement, via a one-time access token their portal redeems — the partner needs no sign-up before the passport reaches them. They see what was performed — never this case's risk assessment.",
     state: !f.isMlro || !hasAttestation ? "blocked" : "ready",
-    detail: f.activeGrants > 0
-      ? `${f.activeGrants} active grant${f.activeGrants === 1 ? "" : "s"}.`
-      : f.activeAgreements === 0
-        ? "No partner has access yet — onboarding records the organisation, the written arrangement and the case link on the way to the grant."
-        : "No partner has access yet.",
+    detail: (f.awaitingPassportIssue ?? 0) > 0
+      ? `${
+        f.awaitingPassportName
+          ? `${f.awaitingPassportName} accepted the agreement`
+          : `${f.awaitingPassportIssue} partner${f.awaitingPassportIssue === 1 ? "" : "s"} accepted the agreement`
+      } and has no Passport yet — issuing emails them a one-time link.${
+        f.activeGrants > 0 ? ` ${f.activeGrants} other grant${f.activeGrants === 1 ? "" : "s"} active.` : ""
+      }`
+      : f.activeGrants > 0
+        ? `${f.activeGrants} active grant${f.activeGrants === 1 ? "" : "s"}.`
+        : f.activeAgreements === 0
+          ? "No partner has access yet — onboarding records the organisation, the written arrangement and the case link on the way to the grant."
+          : "No partner has access yet.",
     blockedBy: !f.isMlro
       ? MLRO_NEEDED
       : !hasAttestation

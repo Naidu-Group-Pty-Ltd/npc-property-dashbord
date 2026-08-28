@@ -139,7 +139,15 @@ async function notifyCommandCentre(
   admin: any, title: string, message: string, caseId: string | null,
 ) {
   try {
-    await admin.from("notifications").insert({
+    /* A PostgREST failure is RETURNED, not thrown — the `catch` below only
+       ever saw a network fault. This producer therefore had no way of
+       reporting a rejected insert at all, which is the exact failure mode
+       `notificationsContract.test.ts` was written for: of ~55 notification
+       types the UI can render, only 11 had ever been written, because
+       producers named columns the table does not have and nothing said so.
+       The error is read explicitly now, and the caller carries on either way
+       — a bell entry must never be able to fail an acceptance. */
+    const { error } = await admin.from("notifications").insert({
       type: "aml_partner_acknowledgement",
       title: title.slice(0, 300),
       message: message.slice(0, 2000),
@@ -148,6 +156,11 @@ async function notifyCommandCentre(
       link: caseId ? `/admin/aml/cases/${caseId}?section=passport` : null,
       read: false,
     });
+    if (error) {
+      console.error("[aml-reliance] notification insert rejected", {
+        code: (error as any).code, message: error.message,
+      });
+    }
   } catch (e) {
     console.error("[aml-reliance] notification insert failed", e);
   }
@@ -1142,6 +1155,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         recipient_email: ack.recipient_email,
         expires_at: ack.expires_at,
         accepted_at: ack.accepted_at,
+        // The signatory's own name, so the accepted page can show them what
+        // was recorded rather than only that something was.
+        accepted_by_name: ack.accepted_by_name,
         declined_at: ack.declined_at,
         issuer_name: brandCfg.companyName,
         // The instrument itself, exactly as stored — never re-typed here.
@@ -1299,7 +1315,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           `${org?.legal_name ?? "A partner"} accepted the AML/CTF Compliance Passport Agreement. The passport can now be issued to them.`,
           ack.case_id);
 
-        return jr({ acknowledgement: { ...publicView, status: "accepted", accepted_at: now.toISOString() } });
+        return jr({
+          acknowledgement: {
+            ...publicView, status: "accepted",
+            accepted_at: now.toISOString(), accepted_by_name: signerName,
+          },
+        });
       } catch (e) {
         return await publicLinkFailure(
           admin, e, ack.case_id,

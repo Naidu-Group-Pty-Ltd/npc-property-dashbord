@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Loader2, Share2, FileSignature, ShieldCheck, Link2, Eye, CheckCircle2, CircleDot, Lock,
-  Send, Download,
+  Send, Download, KeyRound, RefreshCw,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
@@ -22,6 +22,10 @@ import {
   type PartnerRecordsRequest, type RelianceAgreement, type RelianceGrant,
 } from "@/lib/aml/amlRelianceApi";
 import { describeAcknowledgement, grantStanding } from "@/lib/aml/partnerOnboarding.pure";
+import {
+  newlyAccepted, readHandover, shouldWatchForAcceptance,
+  type AcceptedPartner,
+} from "@/lib/aml/passportHandover.pure";
 import { downloadDirectAcknowledgement } from "@/lib/aml/directAcknowledgementDocument";
 
 /**
@@ -123,6 +127,74 @@ export function ReliancePassportSection({
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  /* ── the live indicator ───────────────────────────────────────────────
+     A partner accepts on their own schedule, from an email, with nobody
+     watching. This panel fetched once at mount, so an operator with the case
+     open — which is exactly what an operator waiting on an acceptance does —
+     kept reading "the partner has opened the agreement but not yet accepted
+     it" for as long as the tab stayed open, while the register, the
+     arrangement and the audit trail all said otherwise.
+
+     Polling is bounded by the same rule the notification bell uses and by one
+     more of its own: it runs only while something is actually out with a
+     partner (`shouldWatchForAcceptance`), and never while the tab is hidden.
+     A settled list asks nothing. Focus and visibility changes refresh
+     regardless, because returning to the tab is the moment an operator most
+     expects what they are looking at to be current. */
+  const watching = shouldWatchForAcceptance(acknowledgements);
+  const previousAcks = useRef<DirectPartnerAcknowledgement[] | null>(null);
+
+  useEffect(() => {
+    /* Nothing is compared until the first load has actually answered. The
+       initial empty array is not a reading of anything — treating it as one
+       announces every existing acceptance as though it had just arrived, on
+       every page load, which is how an operator learns to dismiss these
+       unread. */
+    if (!loaded) return;
+    const arrivals = newlyAccepted(previousAcks.current, acknowledgements);
+    previousAcks.current = acknowledgements;
+    for (const partner of arrivals) {
+      toast({
+        title: `${partner.partnerName} accepted the compliance agreement`,
+        description: partner.acceptedByName
+          ? `Signed by ${partner.acceptedByName}. The arrangement is recorded — the Passport can be issued to them now.`
+          : "The arrangement is recorded — the Passport can be issued to them now.",
+      });
+    }
+  }, [acknowledgements, loaded]);
+
+  useEffect(() => {
+    const onFocus = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    let timer: number | undefined;
+    if (watching) {
+      timer = window.setInterval(() => {
+        if (document.visibilityState === "visible") refresh();
+      }, 30_000);
+    }
+    return () => {
+      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("focus", onFocus);
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [watching, refresh]);
+
+  /** What the acceptance has unlocked, and what is owed because of it. */
+  const handover = useMemo(() => readHandover({
+    acknowledgements,
+    agreements,
+    grants,
+    hasAttestation: attestations.some((a) => !a.superseded_at),
+    isMlro,
+  }), [acknowledgements, agreements, grants, attestations, isMlro]);
+
+  /** The same reading, addressed by acknowledgement, for the row that reports it. */
+  const awaitingIssueById = useMemo(
+    () => new Map(handover.awaitingIssue.map((p) => [p.acknowledgementId, p])),
+    [handover.awaitingIssue],
+  );
+
   const issue = async () => {
     setBusy("issue");
     try {
@@ -194,6 +266,73 @@ export function ReliancePassportSection({
       await refresh();
     } catch (e: any) {
       toast({ title: "Could not grant access", description: e?.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  /**
+   * Issue the Passport to a partner who has already accepted.
+   *
+   * Everything the general "Grant partner access" flow asks for is already
+   * known here: the acceptance named the arrangement, and the email it was
+   * accepted from is where the link goes. Asking an operator to retype the
+   * partner's name into a free-text field that must match an agreement
+   * exactly — which is what the general flow does — is how a completed
+   * acceptance ends up sitting there unissued.
+   *
+   * It performs nothing the server does not re-check. `grant_access` still
+   * verifies the arrangement is active, that its review is not overdue, that
+   * the client consented to sharing and that an attestation exists, and
+   * refuses in its own words if any of that has lapsed.
+   */
+  const issuePassportTo = async (partner: AcceptedPartner) => {
+    if (!partner.agreementId) {
+      toast({
+        title: "No arrangement on this acceptance",
+        description: "Re-send the agreement — the acceptance is what records the arrangement a Passport requires.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setBusy("handover");
+    try {
+      const res = await amlRelianceApi.grantAccess(caseId, partner.agreementId, {
+        deliver_to: partner.recipientEmail,
+      });
+      /* The raw link exists in this moment and never again — it is stored
+         only as a hash. So it is shown here whatever happened to the email,
+         and the dialog says which of the two occurred: reporting "emailed"
+         when Resend refused would leave an operator waiting on a message
+         that is never coming, holding the only copy of the credential
+         behind a button they have already dismissed. */
+      const delivered = res.link_email_sent === true;
+      await prompt({
+        title: `Passport issued to ${partner.partnerName}`,
+        description: delivered
+          ? `Emailed to ${partner.recipientEmail}. The link opens without a portal login and expires `
+            + `${new Date(res.grant.expires_at).toLocaleDateString()}. It is shown here once and cannot be read again.`
+          : `The Passport is issued and expires ${new Date(res.grant.expires_at).toLocaleDateString()}, but the `
+            + `email to ${partner.recipientEmail} did not send${res.link_email_error ? ` (${res.link_email_error})` : ""}. `
+            + "Copy the link below and send it yourself — it is shown once and cannot be read again.",
+        confirmLabel: delivered ? "Done" : "I have copied the link",
+        fields: [{
+          name: "token",
+          label: delivered ? "One-time link (copy now if you need it)" : "One-time link — copy it now",
+          type: "textarea",
+          required: false,
+          placeholder: res.passport_link ?? res.access_token,
+          helpText: res.passport_link ?? res.access_token,
+        }],
+      });
+      if (!delivered) {
+        toast({
+          title: "The Passport was issued, but the email did not send",
+          description: `Send the link to ${partner.recipientEmail} yourself, or re-issue once mail is working.`,
+          variant: "destructive",
+        });
+      }
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Could not issue the Passport", description: e?.message, variant: "destructive" });
     } finally { setBusy(null); }
   };
 
@@ -571,6 +710,10 @@ export function ReliancePassportSection({
     activeGrants: grants.filter((g) => !g.revoked_at).length,
     isMlro,
     materialChangeAvailable: outboxEnabled,
+    awaitingPassportIssue: handover.awaitingIssue.length,
+    awaitingPassportName: handover.awaitingIssue.length === 1
+      ? handover.awaitingIssue[0].partnerName
+      : null,
   });
 
   /* Each explained row carries its own act — the same handlers the old
@@ -650,6 +793,76 @@ export function ReliancePassportSection({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
+        {/* ── the handover, at the top, where a next step belongs ─────────
+            An acceptance arrives from an email with nobody watching, and
+            everything it unlocks is true in the database and silent on the
+            screen. This says what happened, what is owed because of it, and
+            offers exactly that act — so the answer to "the partner has
+            signed, now what?" is the first thing on the card rather than
+            something to be inferred from a badge four blocks down. */}
+        {handover.state !== "none" && (
+          <div
+            className={`rounded-md border p-3 ${
+              handover.state === "ready_to_issue"
+                ? "border-primary/40 bg-primary/5"
+                : handover.state === "issued"
+                  ? "border-success/40 bg-success/5"
+                  : "border-border/60"
+            }`}
+            aria-live="polite"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="flex items-center gap-2">
+                  {handover.state === "issued" ? (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-success" aria-hidden />
+                  ) : handover.state === "awaiting" ? (
+                    <CircleDot className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  ) : (
+                    <KeyRound className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                  )}
+                  <span className="text-sm font-medium">{handover.headline}</span>
+                  {watching && (
+                    <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <RefreshCw className="h-3 w-3 animate-spin [animation-duration:3s]" aria-hidden />
+                      live
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">{handover.detail}</p>
+                {handover.blockedBy && (
+                  <p className="text-[11px] text-warning">{handover.blockedBy}.</p>
+                )}
+                {handover.awaitingIssue.length > 0 && (
+                  <ul className="space-y-0.5 pt-0.5">
+                    {handover.awaitingIssue.map((partner) => (
+                      <li key={partner.acknowledgementId} className="text-[11px] text-muted-foreground">
+                        {partner.partnerName} · accepted
+                        {partner.acceptedByName ? ` by ${partner.acceptedByName}` : ""}
+                        {partner.acceptedAt
+                          ? ` on ${new Date(partner.acceptedAt).toLocaleDateString()}`
+                          : ""} · {partner.recipientEmail}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              {handover.state === "ready_to_issue" && handover.awaitingIssue.length === 1 && (
+                <Button
+                  size="sm"
+                  onClick={() => issuePassportTo(handover.awaitingIssue[0])}
+                  disabled={busy !== null}
+                >
+                  {busy === "handover"
+                    ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                    : <KeyRound className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+                  Issue the Passport
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/*
           The acts, in order and in words. What each button DOES sits
           beside it, a blocked act names its enabler before the click, and
@@ -851,6 +1064,17 @@ export function ReliancePassportSection({
                       <div className="truncate text-muted-foreground" title={row.recipient_email}>
                         {row.recipient_email}
                       </div>
+                      {/* An acceptance is a signed act by a named person on a
+                          date. "Acknowledged" alone is the summary of it, not
+                          the record of it. */}
+                      {reading.state === "accepted" && (row.accepted_by_name || row.accepted_at) && (
+                        <p className="text-[11px] font-medium text-success">
+                          Accepted{row.accepted_by_name ? ` by ${row.accepted_by_name}` : ""}
+                          {row.accepted_at
+                            ? ` on ${new Date(row.accepted_at).toLocaleDateString()} at ${new Date(row.accepted_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                            : ""}
+                        </p>
+                      )}
                       <p className="text-[11px] text-muted-foreground">
                         {reading.detail}
                         {row.resend_count > 0 && ` · sent ${row.resend_count + 1} times`}
@@ -864,6 +1088,20 @@ export function ReliancePassportSection({
                             ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                             : <Send className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
                           Re-send agreement
+                        </Button>
+                      )}
+                      {/* The act the acceptance unlocked, offered on the row
+                          that reports it. An accepted agreement with no
+                          Passport is the one state here that owes somebody
+                          something, so it gets the primary button. */}
+                      {isMlro && awaitingIssueById.has(row.id) && (
+                        <Button size="sm" className="h-8"
+                          onClick={() => issuePassportTo(awaitingIssueById.get(row.id)!)}
+                          disabled={busy !== null}>
+                          {busy === "handover"
+                            ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                            : <KeyRound className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+                          Issue the Passport
                         </Button>
                       )}
                       {/* Only an accepted acknowledgement is an executed
