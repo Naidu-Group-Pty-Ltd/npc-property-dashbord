@@ -1,7 +1,13 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  AlertTriangle, CheckCircle2, Loader2, MailWarning, Send, UserPlus, Users,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  ChevronDown, ChevronRight, Copy, Loader2, MailWarning, MoreHorizontal,
+  Send, ShieldOff, UserPlus, Users,
 } from "lucide-react";
 
 import {
@@ -9,159 +15,242 @@ import {
 } from "@/lib/aml/passport/passportRecipients.pure";
 
 /**
- * Who holds this Passport — and the one click that sends it to somebody else.
+ * Who holds this Passport — one line each, one act each.
  *
- * ── The defect this exists for ────────────────────────────────────────
- * Distribution to several partners is the entire point of a Compliance
- * Passport, and it had no surface. The workspace offered "Grant to existing
- * partner", which opened a free-text box that had to match an agreement's
- * organisation name exactly, and "Onboard partner & grant", which is a
- * five-step wizard for a partner who already exists. Everything else about
- * distribution was a three-line summary column reading "live" beside a
- * partner who had, in fact, been sent nothing.
+ * ── The two things this had to fix ────────────────────────────────────
+ * **It was unreadable.** Every partner drew a three-line block inside a
+ * bordered box inside a bordered card, and the same grants were then listed
+ * a second time further down the page as "Link history". A compliance
+ * operator scanning for "who has this, and what do I owe them" had to read
+ * nine lines to learn three facts.
  *
- * ── What this renders ─────────────────────────────────────────────────
- * One row per ACTIVE written arrangement, worst standing first, each with
- * exactly one act. It decides nothing: every state, every label and every
- * blocker comes from `passportRecipients`, and the act itself is
- * `grant_access`, which re-checks the arrangement, the review date, the
- * client's sharing consent and the attestation and refuses in its own words.
+ * **There was no way to stop.** `revoke_grant` has existed since the first
+ * version of this feature and no surface ever called it, so a Passport could
+ * be given and never taken back — on the one screen whose entire subject is
+ * who may read a client's completed due diligence.
  *
- * The two things it is careful to say out loud, because both were silently
- * untrue on screen: a grant nobody emailed is not a partner who holds a
- * Passport, and on a deployment with the partner workspace switched off the
- * emailed link is the ONLY way a partner ever reaches this record.
+ * ── How it reads now ──────────────────────────────────────────────────
+ * One row per partner: name, standing, and the single act on offer. What
+ * that act will do sits under it in one line and only when it is not
+ * obvious. Everything else — withdrawing access, copying the last address —
+ * is in the row's own menu, because a destructive act should be deliberate
+ * and a rarely-used one should not compete with the common one.
+ *
+ * Lapsed and withdrawn access collapses into "Ended access". It is kept, not
+ * hidden: "did we ever share this, and did we stop?" is an audit question
+ * and the answer has to be one click away.
+ *
+ * ── Withdrawal is not deletion ────────────────────────────────────────
+ * A grant records that a disclosure was authorised. Deleting it would
+ * destroy that record; revoking it stops the access and keeps the history,
+ * which is the only version of "remove this partner" a compliance register
+ * may offer. The panel says so once, where the act is.
  */
 
 const STATE_STYLE: Record<RecipientState, { label: string; className: string }> = {
-  holds: { label: "holds", className: "text-success" },
-  expiring: { label: "expiring", className: "text-warning" },
-  undelivered: { label: "never emailed", className: "text-destructive" },
-  lapsed: { label: "expired", className: "text-muted-foreground" },
-  revoked: { label: "withdrawn", className: "text-destructive" },
-  never: { label: "not sent", className: "text-muted-foreground" },
+  holds: { label: "live", className: "border-success/40 text-success" },
+  expiring: { label: "expiring", className: "border-warning/40 text-warning" },
+  undelivered: { label: "never emailed", className: "border-destructive/40 text-destructive" },
+  lapsed: { label: "expired", className: "border-border text-muted-foreground" },
+  revoked: { label: "withdrawn", className: "border-border text-muted-foreground" },
+  never: { label: "not sent", className: "border-border text-muted-foreground" },
 };
 
+function RecipientLine({
+  row, busy, spinning, onSend, onRevoke, onCopyEmail,
+}: {
+  row: RecipientRow;
+  busy: boolean;
+  spinning: boolean;
+  onSend: (row: RecipientRow) => void;
+  onRevoke: (row: RecipientRow) => void;
+  onCopyEmail: (email: string) => void;
+}) {
+  const style = STATE_STYLE[row.state];
+  const hasMenu = row.canRevoke || Boolean(row.lastDeliveredTo);
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="truncate text-sm font-medium">{row.partnerName}</span>
+          <Badge variant="outline" className={`h-5 px-1.5 text-[10px] ${style.className}`}>
+            {style.label}
+          </Badge>
+          <span className="text-[11px] text-muted-foreground">
+            {row.partnerType.replace(/_/g, " ")}
+          </span>
+        </div>
+        <p className="truncate text-xs text-muted-foreground" title={row.detail}>
+          {row.detail}
+        </p>
+        {/* The warning earns a line; the ordinary explanation does not. */}
+        {row.blockedBy && (
+          <p className="text-[11px] text-warning">{row.blockedBy}.</p>
+        )}
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          size="sm"
+          variant={row.state === "undelivered" || row.state === "never" ? "default" : "outline"}
+          className="h-7 px-2.5 text-xs"
+          onClick={() => onSend(row)}
+          disabled={busy || row.blockedBy !== null}
+          title={row.actionMeaning}
+        >
+          {spinning
+            ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" aria-hidden />
+            : <Send className="mr-1.5 h-3 w-3" aria-hidden />}
+          {row.actionLabel}
+        </Button>
+
+        {hasMenu && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm" variant="ghost" className="h-7 w-7 p-0"
+                disabled={busy}
+                aria-label={`More actions for ${row.partnerName}`}
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              {row.lastDeliveredTo && (
+                <DropdownMenuItem onSelect={() => onCopyEmail(row.lastDeliveredTo!)}>
+                  <Copy className="mr-2 h-3.5 w-3.5" aria-hidden />
+                  <span className="truncate">Copy {row.lastDeliveredTo}</span>
+                </DropdownMenuItem>
+              )}
+              {row.canRevoke && (
+                <>
+                  {row.lastDeliveredTo && <DropdownMenuSeparator />}
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => onRevoke(row)}
+                  >
+                    <ShieldOff className="mr-2 h-3.5 w-3.5" aria-hidden />
+                    Withdraw access
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+    </li>
+  );
+}
+
 export function PassportRecipientsPanel({
-  facts, busyAgreementId, onSend, onOnboard, workspaceEnabled,
+  facts, busyAgreementId, onSend, onRevoke, onCopyEmail, onOnboard, workspaceEnabled,
 }: {
   facts: RecipientFacts;
-  /** The row currently mid-send, so only its own button spins. */
+  /** The row currently mid-act, so only its own button spins. */
   busyAgreementId: string | null;
   onSend: (row: RecipientRow) => void;
+  onRevoke: (row: RecipientRow) => void;
+  onCopyEmail: (email: string) => void;
   onOnboard: () => void;
   /** null while unread — never rendered as "off" on a failed read. */
   workspaceEnabled: boolean | null;
 }) {
   const reading = passportRecipients(facts);
   const busy = busyAgreementId !== null;
+  const [showEnded, setShowEnded] = useState(false);
+
+  const line = (row: RecipientRow) => (
+    <RecipientLine
+      key={row.agreementId}
+      row={row}
+      busy={busy}
+      spinning={busyAgreementId === row.agreementId}
+      onSend={onSend}
+      onRevoke={onRevoke}
+      onCopyEmail={onCopyEmail}
+    />
+  );
 
   return (
-    <section className="rounded-md border border-border/60 p-3" aria-label="Passport recipients">
-      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
-        <div className="min-w-0 flex-1 space-y-0.5">
-          <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-            <span className="text-sm font-medium">Who holds this Passport</span>
-          </div>
-          <p className="text-xs text-muted-foreground">{reading.headline}</p>
+    <section className="rounded-lg border border-border/60" aria-label="Passport recipients">
+      <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border/60 px-3 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <Users className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+          <span className="text-sm font-medium">Who holds this Passport</span>
+          <span className="truncate text-xs text-muted-foreground">{reading.headline}</span>
         </div>
-        <Button size="sm" variant="outline" onClick={onOnboard} disabled={busy}>
-          <UserPlus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+        <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs"
+          onClick={onOnboard} disabled={busy}>
+          <UserPlus className="mr-1.5 h-3 w-3" aria-hidden />
           Send to another partner
         </Button>
-      </div>
+      </header>
 
-      {/* The symptom, named once at the top rather than inferred from a row.
-          A grant with no delivery is the state that reads as healthy in every
-          register and is invisible to the partner. */}
+      {/* The symptom, named once. A grant with no delivery reads as healthy in
+          every register and is invisible to the partner. */}
       {reading.undelivered > 0 && (
-        <div className="mt-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-2.5">
-          <MailWarning className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-          <p className="text-xs">
+        <p className="flex items-start gap-2 border-b border-border/60 bg-destructive/5 px-3 py-2 text-xs">
+          <MailWarning className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" aria-hidden />
+          <span>
             {reading.undelivered === 1 ? "One partner has" : `${reading.undelivered} partners have`}{" "}
-            access that was never emailed to anyone. The link is the credential and it is shown
-            once, so it cannot be recovered — sending replaces the grant with one that is
-            actually delivered.
-          </p>
-        </div>
-      )}
-
-      {/* Where a Passport actually appears, stated rather than assumed.
-          Both readings are facts about this deployment, not about the
-          partner — an operator who believes a Passport is waiting in a
-          portal that has no such page waits forever, which is half of the
-          defect this panel exists for. */}
-      {workspaceEnabled === false && (
-        <p className="mt-2 text-[11px] text-muted-foreground">
-          The in-portal Compliance Passport is switched off on this deployment, so the emailed
-          link is the only way a partner reaches this record — nothing will appear inside their
-          portal.
-        </p>
-      )}
-      {workspaceEnabled === true && (
-        <p className="mt-2 text-[11px] text-muted-foreground">
-          Partners enrolled for their portal can also open this Passport signed in, from their
-          own <span className="text-foreground">AML/CTF Compliance</span> page — the same record,
-          with no link to keep.
+            access that was never emailed to anyone. The link is shown once and cannot be
+            recovered — sending replaces the grant with one that is actually delivered.
+          </span>
         </p>
       )}
 
       {reading.rows.length === 0 ? (
-        <p className="mt-2 text-xs text-muted-foreground">
+        <p className="px-3 py-3 text-xs text-muted-foreground">
           A Passport goes to an organisation with a written CDD arrangement (AML/CTF Act Pt 2
           Div 7). Onboard the partner and the arrangement is recorded on the way through.
         </p>
       ) : (
-        <ul className="mt-2 space-y-1.5">
-          {reading.rows.map((row) => {
-            const style = STATE_STYLE[row.state];
-            return (
-              <li
-                key={row.agreementId}
-                className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5 rounded-md border border-border/50 p-2.5"
-              >
-                <div className="min-w-0 flex-1 space-y-0.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium">{row.partnerName}</span>
-                    <Badge variant="outline" className={style.className}>{style.label}</Badge>
-                    <span className="text-[11px] text-muted-foreground">
-                      {row.partnerType.replace(/_/g, " ")}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{row.detail}</p>
-                  {row.blockedBy ? (
-                    <p className="flex items-center gap-1 text-[11px] text-warning">
-                      <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />
-                      {row.blockedBy}.
-                    </p>
-                  ) : (
-                    <p className="text-[11px] text-muted-foreground/90">{row.actionMeaning}</p>
-                  )}
-                </div>
-                <Button
-                  size="sm"
-                  variant={row.state === "undelivered" || row.state === "never" ? "default" : "outline"}
-                  onClick={() => onSend(row)}
-                  disabled={busy || row.blockedBy !== null}
-                >
-                  {busyAgreementId === row.agreementId
-                    ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
-                    : <Send className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
-                  {row.actionLabel}
-                </Button>
-              </li>
-            );
-          })}
+        <ul className="divide-y divide-border/50">
+          {reading.active.map(line)}
         </ul>
       )}
 
-      {reading.rows.length > 0 && reading.undelivered === 0 && reading.holding === reading.rows.length && (
-        <p className="mt-2 flex items-center gap-1.5 text-[11px] text-success">
-          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          Every partner with an arrangement on this matter has been sent the Passport.
-        </p>
+      {/* Ended access — kept, collapsed. "Did we share this, and did we
+          stop?" is an audit question, so the answer stays one click away. */}
+      {reading.ended.length > 0 && (
+        <div className="border-t border-border/60">
+          <button
+            type="button"
+            onClick={() => setShowEnded((open) => !open)}
+            aria-expanded={showEnded}
+            className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {showEnded
+              ? <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+              : <ChevronRight className="h-3.5 w-3.5" aria-hidden />}
+            Ended access ({reading.ended.length})
+          </button>
+          {showEnded && <ul className="divide-y divide-border/50">{reading.ended.map(line)}</ul>}
+        </div>
       )}
+
+      <footer className="border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
+        {workspaceEnabled === true ? (
+          <>
+            Partners enrolled for their portal can also open this Passport signed in, from their
+            own <span className="text-foreground">AML/CTF Compliance</span> page.
+          </>
+        ) : workspaceEnabled === false ? (
+          <>
+            The in-portal Compliance Passport is switched off on this deployment, so the emailed
+            link is the only way a partner reaches this record.
+          </>
+        ) : null}
+        {/* Said where the act is, once: a register records what happened, so
+            the only "remove" it can offer is to stop the access. */}
+        {reading.rows.some((r) => r.canRevoke) && (
+          <>
+            {workspaceEnabled !== null ? " " : ""}
+            Withdrawing access stops a partner&apos;s link immediately; the grant is kept as the
+            record that it was issued.
+          </>
+        )}
+      </footer>
     </section>
   );
 }

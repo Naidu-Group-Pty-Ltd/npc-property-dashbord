@@ -1,4 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+
+/**
+ * Radix menus open on `pointerdown`, and jsdom implements neither pointer
+ * capture nor `scrollIntoView` — so a plain `click` never reaches the
+ * trigger's handler and the menu silently stays shut. This opens one the way
+ * a mouse does.
+ */
+const openRowMenu = async (name: RegExp) => {
+  const trigger = await screen.findByRole("button", { name });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: "mouse" });
+  return trigger;
+};
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -26,6 +38,7 @@ const listPartnerAcknowledgements = vi.fn();
 const getPassportDistributionStatus = vi.fn();
 const getPartnerEventsHealth = vi.fn();
 const grantAccess = vi.fn();
+const revokeGrant = vi.fn();
 
 vi.mock("@/lib/aml/amlRelianceApi", () => ({
   amlRelianceApi: {
@@ -40,6 +53,7 @@ vi.mock("@/lib/aml/amlRelianceApi", () => ({
     getPassportDistributionStatus: (...a: unknown[]) => getPassportDistributionStatus(...a),
     getPartnerEventsHealth: (...a: unknown[]) => getPartnerEventsHealth(...a),
     grantAccess: (...a: unknown[]) => grantAccess(...a),
+    revokeGrant: (...a: unknown[]) => revokeGrant(...a),
   },
 }));
 
@@ -241,6 +255,102 @@ describe("where the Passport actually appears", () => {
   it("says the emailed link is the only channel when no portal surface exists", async () => {
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
     const panel = await screen.findByRole("region", { name: /passport recipients/i });
-    expect(panel).toHaveTextContent(/nothing will appear inside their portal/i);
+    expect(panel).toHaveTextContent(
+      /the emailed link is the only way a partner reaches this record/i);
+  });
+});
+
+describe("access can be withdrawn — and withdrawing is not deleting", () => {
+  const live = () => grant({
+    delivered_to_email: "ops@meridian.example", delivered_at: "2026-08-20T00:00:00.000Z",
+  });
+
+  it("a live grant offers a withdrawal, behind the row's own menu", async () => {
+    /* `revoke_grant` has existed since the first version of this feature and
+       no surface ever called it — so a Passport could be given and never
+       taken back, on the one screen whose subject is who may read a client's
+       completed due diligence. It sits in the menu rather than beside the
+       everyday act: a destructive act should be deliberate. */
+    listGrants.mockResolvedValue({ grants: [live()] });
+    render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
+    await openRowMenu(/More actions for Meridian/i);
+    expect(await screen.findByText(/Withdraw access/i)).toBeInTheDocument();
+  });
+
+  it("withdrawing asks WHY, and sends the reason the server requires", async () => {
+    listGrants.mockResolvedValue({ grants: [live()] });
+    prompt.mockResolvedValue({ reason: "the arrangement has been terminated" });
+    revokeGrant.mockResolvedValue({ grant: { id: "gr-1" } });
+    render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
+    await openRowMenu(/More actions for Meridian/i);
+    fireEvent.click(await screen.findByText(/Withdraw access/i));
+
+    await waitFor(() => expect(revokeGrant).toHaveBeenCalled());
+    expect(revokeGrant.mock.calls[0][0]).toBe("gr-1");
+    expect(revokeGrant.mock.calls[0][1]).toBe("the arrangement has been terminated");
+    // A revocation with no reason is a fact nobody can act on later.
+    const field = prompt.mock.calls[0][0].fields[0];
+    expect(field.required).toBe(true);
+    expect(field.minLength).toBeGreaterThanOrEqual(10);
+    expect(prompt.mock.calls[0][0].destructive).toBe(true);
+  });
+
+  it("says plainly that the grant is KEPT — a register records what happened", async () => {
+    listGrants.mockResolvedValue({ grants: [live()] });
+    render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
+    const panel = await screen.findByRole("region", { name: /passport recipients/i });
+    expect(panel).toHaveTextContent(/the grant is kept as the record that it was issued/i);
+  });
+
+  it("nothing live means nothing to withdraw — no dead menu item", async () => {
+    listGrants.mockResolvedValue({
+      grants: [grant({ expires_at: "2020-01-01T00:00:00.000Z", delivered_to_email: "x@y.example" })],
+    });
+    render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
+    // The lapsed row is in Ended access; open it and check the menu.
+    fireEvent.click(await screen.findByRole("button", { name: /Ended access/i }));
+    await openRowMenu(/More actions for Meridian/i);
+    expect(screen.queryByText(/Withdraw access/i)).toBeNull();
+  });
+
+  it("an analyst is never offered it — stopping access is still an MLRO act", async () => {
+    listGrants.mockResolvedValue({ grants: [live()] });
+    render(<ReliancePassportSection caseId={CASE_ID} isMlro={false} />);
+    await screen.findByRole("region", { name: /passport recipients/i });
+    await openRowMenu(/More actions for Meridian/i);
+    expect(screen.queryByText(/Withdraw access/i)).toBeNull();
+  });
+});
+
+describe("the card reads as one list, not nine stacked blocks", () => {
+  it("ended access is collapsed, and counted, rather than removed", async () => {
+    listGrants.mockResolvedValue({
+      grants: [grant({ revoked_at: "2026-08-25T00:00:00.000Z", revoke_reason: "partner terminated" })],
+    });
+    render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
+    const toggle = await screen.findByRole("button", { name: /Ended access \(1\)/i });
+    // Collapsed by default; one click reveals it. "Did we share this, and did
+    // we stop?" is an audit question, so the answer stays reachable.
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("the same grants are not listed a second time as Link history", async () => {
+    listGrants.mockResolvedValue({
+      grants: [grant({ delivered_to_email: "ops@meridian.example" })],
+    });
+    render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
+    await screen.findByRole("region", { name: /passport recipients/i });
+    expect(screen.queryByText(/^Link history$/)).toBeNull();
+  });
+
+  it("ONE act is open — the rest are a disclosure, not a wall", async () => {
+    render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
+    await screen.findByRole("region", { name: /passport recipients/i });
+    const list = screen.getByRole("list", { name: /Passport actions, in order/i });
+    // The list exists and is inside a closed <details>, so its contents are
+    // present for a screen reader and absent from the first glance.
+    expect(list.closest("details")?.hasAttribute("open")).toBe(false);
   });
 });

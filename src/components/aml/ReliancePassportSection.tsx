@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Loader2, Share2, FileSignature, ShieldCheck, Link2, Eye, CheckCircle2, CircleDot, Lock,
-  Send, Download, KeyRound, RefreshCw,
+  Send, Download, KeyRound, RefreshCw, ChevronRight,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
@@ -28,7 +28,7 @@ import {
   type PartnerRecordsRequest, type RelianceAgreement, type RelianceGrant,
 } from "@/lib/aml/amlRelianceApi";
 import {
-  describeAcknowledgement, grantStanding, isValidEmail,
+  describeAcknowledgement, isValidEmail,
 } from "@/lib/aml/partnerOnboarding.pure";
 import {
   newlyAccepted, readHandover, shouldWatchForAcceptance,
@@ -409,6 +409,64 @@ export function ReliancePassportSection({
      survived here, because there were two paths. */
 
   /**
+   * Withdraw a partner's access.
+   *
+   * `revoke_grant` has existed since the first version of this feature and
+   * no surface ever called it, so a Passport could be given and never taken
+   * back — on the one screen whose whole subject is who may read a client's
+   * completed due diligence.
+   *
+   * It is a WITHDRAWAL, not a deletion. The grant records that a disclosure
+   * was authorised; revoking stops the access and keeps that record, which
+   * is the only version of "remove this partner" a compliance register may
+   * offer. The reason is required by the server (ten characters) because a
+   * revocation without one is a fact nobody can act on later.
+   *
+   * Deliberately not gated by the issuing flag, the arrangement's review or
+   * the attestation: those stop new disclosure, and stopping disclosure is
+   * exactly what this does.
+   */
+  const revokeAccess = async (row: RecipientRow) => {
+    if (!row.revokeGrantId) return;
+    const values = await prompt({
+      title: `Withdraw ${row.partnerName}'s access?`,
+      description:
+        "Their link stops working immediately. The grant is kept as the record that it was " +
+        "issued — nothing is deleted. Issuing again later is a fresh decision and re-runs every check.",
+      confirmLabel: "Withdraw access",
+      destructive: true,
+      fields: [{
+        name: "reason", label: "Why is it being withdrawn?", type: "textarea",
+        required: true, minLength: 10,
+        placeholder: "e.g. the arrangement has been terminated…",
+        helpText: "Recorded on the grant and in the case history. The partner is never shown it.",
+      }],
+    });
+    if (!values) return;
+    setSending(row.agreementId);
+    try {
+      await amlRelianceApi.revokeGrant(row.revokeGrantId, values.reason.trim());
+      toast({
+        title: `${row.partnerName}'s access withdrawn`,
+        description: "Their link no longer works. The grant is retained in the register.",
+      });
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Could not withdraw access", description: e?.message, variant: "destructive" });
+    } finally { setSending(null); }
+  };
+
+  /** The address a partner was last written to, for an operator's own email. */
+  const copyRecipientEmail = async (email: string) => {
+    try {
+      await navigator.clipboard.writeText(email);
+      toast({ title: "Address copied", description: email });
+    } catch {
+      toast({ title: "Copy failed", description: email, variant: "destructive" });
+    }
+  };
+
+  /**
    * The executed agreement as a document. Rendered on first request and
    * stored, so every later request serves the same bytes — the copy the
    * partner holds and the copy on file are one object.
@@ -696,6 +754,12 @@ export function ReliancePassportSection({
       : null,
   });
 
+  /* One act is open; the rest are a disclosure. `ready` is the server's own
+     reading of what is next — this does not decide it, it renders it, and it
+     falls back to nothing open rather than picking one arbitrarily. */
+  const nextAction = actionRows.find((r) => r.state === "ready") ?? null;
+  const otherActions = actionRows.filter((r) => r !== nextAction);
+
   /* Each explained row carries its own act — the same handlers the old
    * header buttons invoked, minus the guessing about what they do. */
   const actionButton = (row: PassportActionRow) => {
@@ -774,23 +838,26 @@ export function ReliancePassportSection({
             offers exactly that act — so the answer to "the partner has
             signed, now what?" is the first thing on the card rather than
             something to be inferred from a badge four blocks down. */}
-        {handover.state !== "none" && (
+        {/* Only when it says something the recipients list does not. The
+            `issued` reading duplicated the row directly beneath it — the
+            same partner, the same standing, twice — which is how a card
+            grows to nine blocks that mostly agree with each other. */}
+        {handover.state !== "none" && handover.state !== "issued" && (
           <div
-            className={`rounded-md border p-3 ${
+            className={`rounded-lg border p-3 ${
               handover.state === "ready_to_issue"
                 ? "border-primary/40 bg-primary/5"
-                : handover.state === "issued"
-                  ? "border-success/40 bg-success/5"
-                  : "border-border/60"
+                : "border-border/60"
             }`}
             aria-live="polite"
           >
             <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
               <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex items-center gap-2">
-                  {handover.state === "issued" ? (
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-success" aria-hidden />
-                  ) : handover.state === "awaiting" ? (
+                  {/* `issued` never reaches here — the recipients list above
+                      already says who holds it, and TypeScript proves the
+                      branch is dead rather than leaving it to rot. */}
+                  {handover.state === "awaiting" ? (
                     <CircleDot className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   ) : (
                     <KeyRound className="h-4 w-4 shrink-0 text-primary" aria-hidden />
@@ -854,47 +921,92 @@ export function ReliancePassportSection({
           }}
           busyAgreementId={sending}
           onSend={sendPassport}
+          onRevoke={revokeAccess}
+          onCopyEmail={copyRecipientEmail}
           onOnboard={() => setWizardOpen(true)}
           workspaceEnabled={partnerWorkspace.enabled}
         />
 
-        {/*
-          The acts, in order and in words. What each button DOES sits
-          beside it, a blocked act names its enabler before the click, and
-          nothing here is a compliance claim — availability only.
-        */}
-        <ol className="space-y-2" aria-label="Passport actions, in order">
-          {actionRows.map((row) => (
-            <li key={row.key}
-              className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-border/60 p-2.5">
-              <div className="min-w-0 flex-1 space-y-0.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium">{row.label}</span>
-                  {stateChip(row)}
-                </div>
-                <p className="text-xs text-muted-foreground">{row.meaning}</p>
-                <p className="text-[11px] text-muted-foreground/90">{row.detail}</p>
-                {row.blockedBy && (
-                  <p className="text-[11px] text-warning">{row.blockedBy}.</p>
-                )}
+        {/* ── the acts ────────────────────────────────────────────────
+            Five rows, each three lines of prose, all permanently open: the
+            explanation that made a blocked button legible had become the
+            wall it was meant to prevent. Every word is still here and none
+            of the reasoning changed — but ONE act is open at a time (the one
+            the server says is next), and the rest are one line each behind a
+            disclosure. An operator who wants the full account clicks once;
+            an operator who wants to get on with it never has to. */}
+        {nextAction && (
+          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-lg border border-primary/40 bg-primary/5 p-3">
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">{nextAction.label}</span>
+                {stateChip(nextAction)}
               </div>
-              <div className="shrink-0">{actionButton(row)}</div>
-            </li>
-          ))}
-        </ol>
+              <p className="text-xs text-muted-foreground">{nextAction.meaning}</p>
+              <p className="text-[11px] text-muted-foreground/90">{nextAction.detail}</p>
+              {nextAction.blockedBy && (
+                <p className="text-[11px] text-warning">{nextAction.blockedBy}.</p>
+              )}
+            </div>
+            <div className="shrink-0">{actionButton(nextAction)}</div>
+          </div>
+        )}
 
-        <Alert>
-          <ShieldCheck className="h-4 w-4" />
-          <AlertTitle className="text-sm">One process, every portal</AlertTitle>
-          <AlertDescription className="text-xs">
+        {otherActions.length > 0 && (
+          <details className="rounded-lg border border-border/60">
+            <summary className="cursor-pointer list-none px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground">
+              <span className="inline-flex items-center gap-1.5">
+                <ChevronRight className="h-3.5 w-3.5 transition-transform [details[open]_&]:rotate-90" aria-hidden />
+                {nextAction ? "Everything else you can do here" : "What you can do here"}
+                {" "}({otherActions.length})
+              </span>
+            </summary>
+            <ul className="divide-y divide-border/50 border-t border-border/60"
+              aria-label="Passport actions, in order">
+              {otherActions.map((row) => (
+                <li key={row.key}
+                  className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 px-3 py-2.5">
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium">{row.label}</span>
+                      {stateChip(row)}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{row.meaning}</p>
+                    <p className="text-[11px] text-muted-foreground/90">{row.detail}</p>
+                    {row.blockedBy && (
+                      <p className="text-[11px] text-warning">{row.blockedBy}.</p>
+                    )}
+                  </div>
+                  <div className="shrink-0">{actionButton(row)}</div>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+
+        {/* The statutory position. Permanent and unchanged in substance —
+            but it is a standing explanation rather than news, so it stops
+            occupying four lines above the work. */}
+        <details className="rounded-lg border border-border/60">
+          <summary className="cursor-pointer list-none px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
+              One process, every portal — what a partner may do with this
+            </span>
+          </summary>
+          <p className="border-t border-border/60 px-3 py-2.5 text-xs text-muted-foreground">
             Partners with a written CDD arrangement (AML/CTF Act Pt 2 Div 7) rely on the procedures
             attested here, or record their own independent assessment against the same records —
             without re-approaching the client. They see what was <em>performed</em>, never our risk
             assessment; their determinations never move this case.
-          </AlertDescription>
-        </Alert>
+          </p>
+        </details>
 
-        <div className="grid gap-3 sm:grid-cols-3 text-xs">
+        {/* Two facts, not three: "Link history" listed the very grants the
+            recipients panel above already shows, and its lapsed and withdrawn
+            rows are that panel's "Ended access" group now. One register,
+            rendered once. */}
+        <div className="grid gap-3 sm:grid-cols-2 text-xs">
           <div>
             <div className="font-medium">Attestation</div>
             {current ? (
@@ -905,46 +1017,6 @@ export function ReliancePassportSection({
                 </div>
               </div>
             ) : <div className="text-muted-foreground">Not issued</div>}
-          </div>
-          <div>
-            {/* The register, kept as HISTORY. Sending is the recipients
-                panel's act — two buttons that mint the same credential from
-                two places is how one of them ends up out of date. */}
-            <div className="font-medium">Link history</div>
-            {grants.length === 0 ? (
-              <div className="text-muted-foreground">None</div>
-            ) : grants
-              // A grant replaced by a re-issue is history, not a live row.
-              .filter((g) => g.revoke_reason !== "superseded_by_reissue")
-              .map((g) => {
-                const standing = grantStanding({
-                  expiresAt: g.expires_at,
-                  revokedAt: g.revoked_at,
-                  revokeReason: g.revoke_reason,
-                  linkRequestedAt: g.link_requested_at ?? null,
-                });
-                return (
-                  <div key={g.id} className="mt-1 space-y-0.5">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-medium text-foreground">
-                        {g.reliance_agreements?.partner_org_name ?? "Partner"}
-                      </span>
-                      <Badge variant="outline" className={
-                        standing.state === "live" ? "text-success"
-                          : standing.state === "expiring" ? "text-warning"
-                            : standing.state === "revoked" ? "text-destructive"
-                              : "text-muted-foreground"
-                      }>
-                        {standing.state}
-                      </Badge>
-                    </div>
-                    <div className="text-muted-foreground">{standing.detail}</div>
-                    {g.delivered_to_email && (
-                      <div className="text-muted-foreground/80">Sent to {g.delivered_to_email}</div>
-                    )}
-                  </div>
-                );
-              })}
           </div>
           <div>
             <div className="font-medium">Partner assessments</div>
