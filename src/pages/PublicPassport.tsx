@@ -1,15 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
-  Loader2, ShieldCheck, XCircle, Clock, CheckCircle2, AlertTriangle, ScrollText,
+  Loader2, ShieldCheck, XCircle, Clock, CheckCircle2, AlertTriangle, ScrollText, Code2,
 } from "lucide-react";
 import { BrandLockup } from "@/components/branding/BrandAssets";
+import { PassportBook } from "@/components/aml/passport/design/PassportBook";
+import { buildPartnerBooklet } from "@/lib/aml/passport/partnerBooklet.pure";
 import {
   passportPublicApi, type PassportRedemption,
 } from "@/lib/aml/partnerAcknowledgementPublic";
@@ -77,6 +78,15 @@ export default function PublicPassport() {
 
   useEffect(() => { void load(); }, [load]);
 
+  /* The document's pages, composed from the disclosure alone.
+     Kept with the other hooks so it precedes every early return — the loading
+     and error branches below return before this point in the JSX, and a hook
+     after them would run on some renders and not others. */
+  const bookletPages = useMemo(
+    () => (data ? buildPartnerBooklet(data) : []),
+    [data],
+  );
+
   const requestNewLink = async () => {
     if (!token) return;
     setBusy(true);
@@ -120,7 +130,9 @@ export default function PublicPassport() {
 
   const shell = (children: React.ReactNode) => (
     <div className="min-h-screen bg-background px-4 py-10">
-      <div className="mx-auto w-full max-w-3xl space-y-4">
+      {/* Wider than a reading column, because the artefact on this page is a
+          two-up booklet spread rather than prose. */}
+      <div className="mx-auto w-full max-w-5xl space-y-4">
         <div className="flex justify-center">
           <BrandLockup slot="auth" meta="Compliance Passport" />
         </div>
@@ -182,35 +194,59 @@ export default function PublicPassport() {
         <AlertDescription className="text-xs">{data.notice}</AlertDescription>
       </Alert>
 
-      <Card className="glass-panel">
-        <CardContent className="space-y-3 py-5 text-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <ScrollText className="h-4 w-4 text-primary" aria-hidden />
-              <h2 className="text-sm font-semibold">Customer identification procedures performed</h2>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="text-[11px]">
-                Issued {new Date(data.issued_at).toLocaleDateString()}
-              </Badge>
-              <Badge variant="outline" className="font-mono text-[11px]">
+      {/* The document itself.
+          This used to be `JSON.stringify` in a `<pre>` — the literal payload,
+          braces and quoted keys and all. Everyone inside the issuing business
+          sees this record as a bound navy-and-gold booklet; the one audience
+          the document exists FOR was handed source code.
+          It is the SAME viewer the Command Centre and the Client Portal use,
+          drawing pages composed from this disclosure alone. Nothing is added
+          to what the server sent — the manifest already decided that. */}
+      <Card className="glass-panel overflow-hidden p-0">
+        <CardContent className="p-0">
+          <div className="passport-scope flex h-[min(78vh,860px)] flex-col">
+            <div className="passport-bookbar flex flex-none flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0">
+                <div className="passport-display text-sm font-semibold uppercase tracking-[0.12em]">
+                  AML/CTF Compliance Passport
+                </div>
+                <div className="passport-mono passport-faint mt-0.5 truncate text-[10px]">
+                  {[
+                    data.agreement.agreement_reference,
+                    `Issued ${new Date(data.issued_at).toLocaleDateString()}`,
+                  ].filter(Boolean).join("  ·  ")}
+                </div>
+              </div>
+              <span className="passport-mono passport-faint text-[10px]">
                 sha {data.attestation_sha256.slice(0, 12)}…
-              </Badge>
+              </span>
             </div>
+            <PassportBook pages={bookletPages} className="min-h-0 flex-1" />
           </div>
-          <p className="text-xs text-muted-foreground">
-            Under arrangement {data.agreement.agreement_reference}. This record states what was
-            performed — it does not contain the issuing organisation&apos;s risk assessment, screening
-            match content or internal notes, and it never will.
-          </p>
-          {/* The disclosed payload, exactly as the server built it. The
-              server intersects it with this grant's manifest first; nothing
-              is filtered, expanded or relabelled here. */}
-          <pre className="max-h-[26rem] overflow-auto rounded-md border border-border/60 bg-muted/40 p-3 text-[11px] leading-relaxed">
-            {JSON.stringify(data.attestation, null, 2)}
-          </pre>
         </CardContent>
       </Card>
+
+      {/* The payload, still available and no longer the only thing offered.
+          A relying entity may want to check the exact object the fingerprint
+          is taken over, and taking that away to make the page prettier would
+          remove the one artefact an integration verifies against. */}
+      <details className="rounded-md border border-border/60 bg-muted/20">
+        <summary className="flex cursor-pointer items-center gap-2 p-3 text-xs text-muted-foreground">
+          <Code2 className="h-3.5 w-3.5" aria-hidden />
+          View the underlying record (JSON) — what the fingerprint is taken over
+        </summary>
+        <div className="border-t border-border/60 px-3 pb-3 pt-2">
+          <div className="flex items-center gap-2 pb-2 text-[11px] text-muted-foreground">
+            <ScrollText className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Under arrangement {data.agreement.agreement_reference}. It states what was performed —
+            it does not contain the issuing organisation&apos;s risk assessment, screening match
+            content or internal notes, and it never will.
+          </div>
+          <pre className="max-h-[22rem] overflow-auto rounded-md border border-border/60 bg-background/60 p-3 text-[11px] leading-relaxed">
+            {JSON.stringify(data.attestation, null, 2)}
+          </pre>
+        </div>
+      </details>
 
       {/* 2 · Their own determination — always available, at their prerogative. */}
       <Card className="glass-panel">

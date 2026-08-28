@@ -15,6 +15,9 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import { PartnerOnboardingWizard } from "@/components/aml/PartnerOnboardingWizard";
+import {
+  PassportIssuedDialog, type PassportIssueResult,
+} from "@/components/aml/PassportIssuedDialog";
 import { passportActions, type PassportActionRow } from "@/lib/aml/passportActions.pure";
 import {
   amlRelianceApi, type ComplianceAttestation, type DirectPartnerAcknowledgement,
@@ -64,6 +67,8 @@ export function ReliancePassportSection({
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmIssue, setConfirmIssue] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
+  /** The one moment the credential exists — see `PassportIssuedDialog`. */
+  const [issued, setIssued] = useState<PassportIssueResult | null>(null);
   const { prompt, dialog } = usePromptDialog();
 
   const refresh = useCallback(async () => {
@@ -299,31 +304,20 @@ export function ReliancePassportSection({
         deliver_to: partner.recipientEmail,
       });
       /* The raw link exists in this moment and never again — it is stored
-         only as a hash. So it is shown here whatever happened to the email,
-         and the dialog says which of the two occurred: reporting "emailed"
-         when Resend refused would leave an operator waiting on a message
-         that is never coming, holding the only copy of the credential
-         behind a button they have already dismissed. */
-      const delivered = res.link_email_sent === true;
-      await prompt({
-        title: `Passport issued to ${partner.partnerName}`,
-        description: delivered
-          ? `Emailed to ${partner.recipientEmail}. The link opens without a portal login and expires `
-            + `${new Date(res.grant.expires_at).toLocaleDateString()}. It is shown here once and cannot be read again.`
-          : `The Passport is issued and expires ${new Date(res.grant.expires_at).toLocaleDateString()}, but the `
-            + `email to ${partner.recipientEmail} did not send${res.link_email_error ? ` (${res.link_email_error})` : ""}. `
-            + "Copy the link below and send it yourself — it is shown once and cannot be read again.",
-        confirmLabel: delivered ? "Done" : "I have copied the link",
-        fields: [{
-          name: "token",
-          label: delivered ? "One-time link (copy now if you need it)" : "One-time link — copy it now",
-          type: "textarea",
-          required: false,
-          placeholder: res.passport_link ?? res.access_token,
-          helpText: res.passport_link ?? res.access_token,
-        }],
+         only as a hash — so it is handed to a dialog that can actually be
+         copied FROM. The prompt this replaces carried the link as a field
+         PLACEHOLDER, which is not a value: the box a reader saw as "the link"
+         held nothing, could not be selected and could not be copied, at the
+         one moment the credential existed. */
+      setIssued({
+        partnerName: partner.partnerName,
+        recipientEmail: partner.recipientEmail,
+        passportLink: res.passport_link ?? res.access_token,
+        expiresAt: res.grant.expires_at,
+        emailSent: res.link_email_sent,
+        emailError: res.link_email_error,
       });
-      if (!delivered) {
+      if (res.link_email_sent === false) {
         toast({
           title: "The Passport was issued, but the email did not send",
           description: `Send the link to ${partner.recipientEmail} yourself, or re-issue once mail is working.`,
@@ -1274,6 +1268,7 @@ export function ReliancePassportSection({
         </AlertDialogContent>
       </AlertDialog>
       {dialog}
+      <PassportIssuedDialog result={issued} onClose={() => setIssued(null)} />
     </Card>
   );
 }

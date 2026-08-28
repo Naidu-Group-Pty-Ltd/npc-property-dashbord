@@ -187,10 +187,16 @@ describe("the act the acceptance unlocked", () => {
     await waitFor(() => expect(grantAccess).toHaveBeenCalledWith(
       CASE_ID, AGREEMENT_ID, { deliver_to: "partner@example.com" },
     ));
-    // The token exists in this moment and never again — it is stored hashed.
-    await waitFor(() => expect(prompt).toHaveBeenCalledWith(expect.objectContaining({
-      title: expect.stringContaining("Passport issued to Testing Pty Ltd"),
-    })));
+
+    // The credential exists in this moment and never again — it is stored
+    // hashed — so it must be present as a VALUE that can be selected and
+    // copied. It used to be passed as a field placeholder, which is not a
+    // value: the box read as empty and could not be copied at all.
+    const field = await screen.findByLabelText(/One-time Passport link/i);
+    expect(field).toHaveValue("https://command-centre.example/passport/one-time-token");
+    expect(field).toHaveAttribute("readonly");
+    expect(screen.getByRole("button", { name: /^Copy$/i })).toBeInTheDocument();
+    expect(screen.getByText(/Emailed to/i)).toBeInTheDocument();
   });
 
   it("says the email did not send rather than reporting a delivery that failed", async () => {
@@ -212,9 +218,9 @@ describe("the act the acceptance unlocked", () => {
     // The credential is shown once. Claiming it was emailed when it was not
     // leaves the operator waiting on a message that is never coming, holding
     // the only copy behind a button they have already dismissed.
-    await waitFor(() => expect(prompt).toHaveBeenCalledWith(expect.objectContaining({
-      description: expect.stringContaining("did not send"),
-    })));
+    expect(await screen.findByText(/did not send/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/One-time Passport link/i))
+      .toHaveValue("https://command-centre.example/passport/one-time-token");
     await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.objectContaining({
       variant: "destructive",
     })));
