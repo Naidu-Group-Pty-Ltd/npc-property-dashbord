@@ -49,8 +49,10 @@ export {
 
 export {
   assertClientSafe,
+  assertPartnerSafe,
   buildPassportView,
   findClientRestrictedKeys,
+  findPartnerRestrictedKeys,
   type PassportAudience,
   type PassportCaseFact,
   type PassportClientRequestFact,
