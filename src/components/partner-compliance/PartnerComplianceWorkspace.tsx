@@ -12,6 +12,7 @@ import type {
 import type { PassportView } from "@/lib/aml/passport";
 import { partnerWorkspacePanels } from "@/lib/aml/partnerSurface";
 import { PartnerPassportPanel } from "./PartnerPassportPanel";
+import { PartnerMatterList } from "./PartnerMatterList";
 import { ResponsibilityNotice } from "./ResponsibilityNotice";
 import { RefreshBanner } from "./RefreshBanner";
 import { ComplianceSummaryCard } from "./ComplianceSummaryCard";
@@ -150,38 +151,31 @@ export function PartnerComplianceWorkspace({
   }
 
   return (
-    <div className="space-y-3 max-w-3xl" data-testid="partner-compliance-workspace">
+    /* ── centred, and wide enough for the artefact on it ───────────────
+       The page was a 3xl column pinned to the left of a 1900px viewport,
+       with a booklet inside it. The document is the subject of this page, so
+       the container is centred and sized for a two-up spread, and the matter
+       list sits beside it on a wide screen rather than above it. */
+    <div className="mx-auto w-full max-w-6xl space-y-4" data-testid="partner-compliance-workspace">
       <h1 className="text-lg font-semibold">{adapter.workspaceTitle}</h1>
       <ResponsibilityNotice intro={adapter.responsibilityIntro} />
 
-      {directory && directory.links.length === 0 && (
-        <Card>
-          <CardContent className="py-6 text-sm text-muted-foreground">
-            No matters are linked to {directory.organisation.legal_name} yet. When the issuing
-            organisation links a matter to your organisation it appears here — until then there
-            is nothing to review, and your organisation's own processes are unaffected.
-          </CardContent>
-        </Card>
-      )}
+      <div className="grid gap-4 lg:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)] lg:items-start">
+        {/* The filing cabinet. One row per matter, searchable, ordered by
+            what can actually be opened — replacing a row of chips labelled
+            with the last six characters of a database id. */}
+        {directory && (
+          <div className="lg:sticky lg:top-4">
+            <PartnerMatterList
+              links={directory.links as PartnerLinkSummary[]}
+              ownReferenceLabel={adapter.ownReferenceLabel ?? adapter.matterLabel}
+              selectedId={selectedLink}
+              onSelect={setSelectedLink}
+            />
+          </div>
+        )}
 
-      {directory && directory.links.length > 0 && (
-        <nav aria-label={`${adapter.matterLabel} list`} className="flex flex-wrap gap-2">
-          {directory.links.map((l: PartnerLinkSummary) => (
-            <Button
-              key={l.id}
-              size="sm"
-              variant={selectedLink === l.id ? "default" : "outline"}
-              aria-current={selectedLink === l.id ? "true" : undefined}
-              onClick={() => setSelectedLink(l.id)}
-            >
-              {adapter.formatReference(l)}
-              {l.state !== "active" && (
-                <Badge variant="outline" className="ml-1.5 text-muted-foreground">{l.state}</Badge>
-              )}
-            </Button>
-          ))}
-        </nav>
-      )}
+        <div className="min-w-0 space-y-3">
 
       {loading && directory && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
@@ -226,6 +220,18 @@ export function PartnerComplianceWorkspace({
           {panels.support && <SupportEscalationPanel adapter={adapter} />}
         </>
       )}
+
+        {/* Nothing selected, and something selectable: say which, rather
+            than leaving the larger half of the page blank. */}
+        {!workspace && !loading && directory && directory.links.length > 0 && !selectedLink && (
+          <Card>
+            <CardContent className="py-8 text-center text-sm text-muted-foreground">
+              Choose a matter to open its Compliance Passport.
+            </CardContent>
+          </Card>
+        )}
+        </div>
+      </div>
     </div>
   );
 }

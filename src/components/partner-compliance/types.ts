@@ -25,9 +25,10 @@ export {
 } from "../../../supabase/functions/_shared/aml/partnerWorkspace";
 import type { PartnerWorkspaceDto } from "../../../supabase/functions/_shared/aml/partnerWorkspace";
 import type { PartnerSurfaceMode } from "@/lib/aml/partnerSurface";
+import type { MatterPassportState } from "@/lib/aml/partnerMatterIndex";
 import type { PassportView } from "@/lib/aml/passport";
 
-export type { PartnerSurfaceMode };
+export type { PartnerSurfaceMode, MatterPassportState };
 
 export interface PartnerLinkSummary {
   id: string;
@@ -40,6 +41,20 @@ export interface PartnerLinkSummary {
   end_reason_code: string | null;
   purchase_file_id: string | null;
   legal_matter_id: string | null;
+  /**
+   * The matter's standing and, where the record may be READ, whose it is.
+   *
+   * `subject_label` and `case_reference` are sent by the server ONLY when
+   * that matter's Passport is disclosable to this organisation — they are
+   * printed on page one of the document itself, so naming them there
+   * discloses nothing new, and naming them on a withheld matter would be a
+   * disclosure made by a list rather than by a decision. Absent on a
+   * deployment serving a build that predates this.
+   */
+  passport_state?: MatterPassportState | null;
+  subject_label?: string | null;
+  case_reference?: string | null;
+  expires_at?: string | null;
 }
 
 export interface PartnerWorkspaceDirectory {
@@ -142,6 +157,13 @@ export interface PartnerPortalAdapter {
   workspaceTitle: string;
   /** e.g. "Purchase file", "Project sale", "Matter". */
   matterLabel: string;
+  /**
+   * The short noun this portal files a matter under — "File", "Contract",
+   * "Matter". Used where the partner's OWN reference leads, because their
+   * file number is what they filed it under and the issuing organisation's
+   * case reference is a foreign key to them.
+   */
+  ownReferenceLabel?: string;
   /** e.g. "Lender / broker", "Builder", "Acting solicitor". */
   roleLabel: string;
   formatReference: (link: {

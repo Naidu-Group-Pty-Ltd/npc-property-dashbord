@@ -175,10 +175,14 @@ describe("shared partner compliance workspace", () => {
     }
   });
 
-  it("supports keyboard interaction: matter tabs are real buttons with aria-current", async () => {
+  it("supports keyboard interaction: matters are real buttons with aria-current", async () => {
+    /* The chip row became a searchable filing list — a partner accumulates
+       Passports, and "Matter …6a5a49" does not survive ten of them. The
+       property is unchanged: each matter is a real button, and the selected
+       one is marked for assistive technology. */
     mount(adapter(), client());
     await waitFor(() => expect(screen.getByTestId("partner-compliance-summary")).toBeTruthy());
-    const nav = screen.getByRole("navigation", { name: /purchase file list/i });
+    const nav = screen.getByRole("navigation", { name: /matters shared with your organisation/i });
     const buttons = nav.querySelectorAll("button");
     expect(buttons.length).toBe(1);
     expect(buttons[0].getAttribute("aria-current")).toBe("true");

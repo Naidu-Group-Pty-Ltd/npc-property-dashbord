@@ -54,8 +54,8 @@ describe("portal adapters drive one shared implementation", () => {
 
   it("adapters carry presentation and context only — no authority-shaped fields", () => {
     const allowedKeys = new Set([
-      "portalType", "workspaceTitle", "matterLabel", "roleLabel", "formatReference",
-      "responsibilityIntro", "panels", "support", "deadlineLabels",
+      "portalType", "workspaceTitle", "matterLabel", "ownReferenceLabel", "roleLabel",
+      "formatReference", "responsibilityIntro", "panels", "support", "deadlineLabels",
     ]);
     for (const a of ADAPTERS) {
       for (const key of Object.keys(a)) {
