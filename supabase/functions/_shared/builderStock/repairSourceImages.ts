@@ -45,6 +45,10 @@ import {
   negativeProvenanceStillStands, recordNoDeterministicImage,
 } from './negativeProvenance.pure.ts';
 import {
+  attemptsSoFar, packageAttemptsExhausted, recordPackageAttempt,
+  recordPackageUnprocessable,
+} from './packageAttempt.pure.ts';
+import {
   demoteUnprovenSourceImage, hasReadySourceImage, readPrimaryImageStanding,
   storeSourceImageBytes, storeSourceImages, PROVENANCE_VERSION, type SourceImageFetcher,
 } from './sourceImages.ts';
@@ -813,6 +817,43 @@ export async function repairSourceImagesForUpload(
       continue;
     }
 
+    /**
+     * A PACKAGE THAT HAS ALREADY KILLED THE WORKER TWICE IS NOT ASKED A THIRD
+     * TIME.
+     *
+     * The attempt written below survives only when the recovery never returned
+     * — a `CPU Time exceeded` or `Memory limit exceeded` kill, which throws
+     * nothing and runs no `finally`. Seeing one here is therefore evidence that
+     * this exact question destroyed a previous invocation, and starting it
+     * again would destroy this one, and the one after that, for ever: upload
+     * `eccc9840` stopped dead on Lot 104 Finch Road and pinned twenty-three
+     * properties behind it.
+     *
+     * So it is retired with an honest verdict and the sweep advances. The
+     * property loses its builder image, which is a real loss — and it GAINS the
+     * fallback ladder, which it could not reach at all while the upload could
+     * never settle.
+     */
+    const priorAttempts = attemptsSoFar(negativeBefore.get(itemId), question);
+    if (packageAttemptsExhausted(negativeBefore.get(itemId), question)) {
+      const { error: giveUpError } = await db
+        .from('builder_stock_items')
+        .update({ source_provenance_result: recordPackageUnprocessable(question) })
+        .eq('id', itemId)
+        .eq('organisation_id', input.organisationId);
+      if (giveUpError) {
+        // Unrecorded means unadvanced; say so rather than settle on it.
+        outcome.incomplete = true;
+      } else {
+        outcome.packageNotIdentified += 1;
+      }
+      outcome.problems.push({
+        reference: packageUrl.slice(0, 400),
+        reason: `package retired after ${priorAttempts} resource-limit failures`,
+      });
+      continue;
+    }
+
     if (restored >= MAX_ITEMS_RESTORED_PER_RUN) { outcome.incomplete = true; break; }
     if (recoveries >= MAX_PACKAGE_RECOVERIES_PER_RUN) { outcome.incomplete = true; break; }
     /**
@@ -841,6 +882,44 @@ export async function repairSourceImagesForUpload(
     recoveries += 1;
 
     /**
+     * Undo the claim below. The attempt must survive ONLY a kill, so every path
+     * on which `recoverPackageImage` actually RETURNED restores the column to
+     * exactly what it held before — which for an unreadable package is nothing
+     * at all, keeping it retryable for ever as it always was. Counting a
+     * sign-in wall towards exhaustion would retire a document that reads
+     * perfectly well tomorrow.
+     */
+    const clearAttempt = async () => {
+      await db
+        .from('builder_stock_items')
+        .update({ source_provenance_result: negativeBefore.get(itemId) ?? null })
+        .eq('id', itemId)
+        .eq('organisation_id', input.organisationId);
+    };
+
+    /**
+     * THE CLAIM, WRITTEN BEFORE THE SPEND.
+     *
+     * Everything below this line is uninterruptible and can end the process
+     * without raising anything. Recording the attempt first is what makes a
+     * kill leave evidence instead of silence — the same reason the sanitizer
+     * compares-and-sets its repair claim before it calls the model. The verdict
+     * paths below overwrite this, so it survives only when the step did not.
+     *
+     * A write that fails is not fatal: the recovery still runs and may well
+     * succeed. It only means a kill this time would go unrecorded, which is
+     * exactly the behaviour this replaces.
+     */
+    await db
+      .from('builder_stock_items')
+      .update({
+        source_provenance_result: recordPackageAttempt(
+          negativeBefore.get(itemId), question),
+      })
+      .eq('id', itemId)
+      .eq('organisation_id', input.organisationId);
+
+    /**
      * THREE OUTCOMES, AND ONLY ONE OF THEM IS KNOWLEDGE.
      *
      * A throw is an operational fault like any other — `readPageTexts` and the
@@ -856,6 +935,7 @@ export async function repairSourceImagesForUpload(
         { fetchPackage: deps.fetchPackage, cache, readPageTexts: deps.readPageTexts },
       );
     } catch (error) {
+      await clearAttempt();
       outcome.packageUnreachable += 1;
       outcome.incomplete = true;
       outcome.problems.push({
@@ -873,6 +953,7 @@ export async function repairSourceImagesForUpload(
      * suppress a package that may be perfectly readable tomorrow.
      */
     if (recovered.status === 'unreachable') {
+      await clearAttempt();
       outcome.packageUnreachable += 1;
       outcome.incomplete = true;
       continue;
@@ -905,6 +986,11 @@ export async function repairSourceImagesForUpload(
       }
       continue;
     }
+
+    // RECOVERED. The step returned, so the claim is spent: clear it, or a
+    // future question about this property would inherit a failure that never
+    // happened.
+    await clearAttempt();
 
     // A row that fell through with convicted assets was already counted once.
     if (!all.length) {
