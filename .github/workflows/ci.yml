@@ -113,8 +113,12 @@ jobs:
 
       # Scoped to the Template Builder test surface (all editor logic). The wider
       # repo has pre-existing failing/flaky suites (e.g. src/utils finance scenario
-      # tests) unrelated to this rehaul; `npm run build` below still type-checks the
-      # entire app, including the editor edits.
+      # tests) unrelated to this rehaul.
+      #
+      # `npm run build` below does NOT type-check the app, whatever this comment
+      # used to say: Vite strips types rather than checking them, which is how an
+      # identifier that does not exist reached production through a green build.
+      # The undefined-identifier gate further down is what covers that.
       - name: Unit tests (Template Builder surface)
         run: npx vitest run src/lib/reportTemplate
 
@@ -243,6 +247,17 @@ jobs:
         run: |
           npx eslint cloudflare
           npx tsc --noEmit -p tsconfig.worker.json
+
+      # An identifier that does not exist is not type debt, and `npm run build`
+      # cannot see it — Vite strips types instead of checking them, and the
+      # obvious `tsc -p tsconfig.json` compiles nothing because that file
+      # declares `"files": []` and delegates to project references. So the app
+      # project is type-checked here, and exactly one class is fatal: a name
+      # that does not exist throws a ReferenceError the moment it renders, and
+      # a React component that throws on render takes its whole page with it.
+      # That shipped once, to a public page reached from an emailed link.
+      - name: Undefined identifiers in src/ (never type debt)
+        run: node scripts/security/check-src-missing-names.mjs
 
       - name: Build
         run: npm run build

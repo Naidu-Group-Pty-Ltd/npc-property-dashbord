@@ -52,6 +52,7 @@ export function PortalAgreementConsent({
   acknowledgements = PORTAL_TERMS_ACKNOWLEDGEMENTS,
   acceptanceNotice = PORTAL_AGREEMENT_ACCEPTANCE_NOTICE,
   fallbackTitle = PORTAL_AGREEMENT_TITLE,
+  beforeAccept,
 }: {
   terms: PortalTermsVersion | null;
   loading: boolean;
