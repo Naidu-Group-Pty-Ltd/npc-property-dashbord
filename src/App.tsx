@@ -25,6 +25,7 @@ import { TokenEventsListener } from "@/components/billing/TokenEventsListener";
 import { PricingMockBanner } from "@/components/billing/PricingMockBanner";
 import { PushNotificationPrompt } from "./components/PushNotificationPrompt";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
+import { PublicLinkErrorFallback } from "@/components/portal/PublicLinkErrorFallback";
 import { DashboardErrorFallback } from "@/components/layout/DashboardErrorFallback";
 import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import { HarveyCountdown } from "@/components/HarveyCountdown";
@@ -391,11 +392,31 @@ const App = () => (
                         <Route path="/partner-consent/:token" element={<PublicPartnerConsent />} />
                         {/* AML/CTF Compliance Passport Agreement for a partner
                             outside the portals. Public and token-addressed:
-                            the link is the whole credential. */}
-                        <Route path="/partner-acknowledgement/:token" element={<PartnerAcknowledgement />} />
+                            the link is the whole credential.
+
+                            Both link pages carry their OWN boundary. The
+                            recipient has no account and no support channel, so
+                            the application's generic "Something went wrong"
+                            reads to them as a broken link and leaves them with
+                            no step; this one names the re-send. */}
+                        <Route
+                          path="/partner-acknowledgement/:token"
+                          element={(
+                            <ErrorBoundary fallback={<PublicLinkErrorFallback />}>
+                              <PartnerAcknowledgement />
+                            </ErrorBoundary>
+                          )}
+                        />
                         {/* The Compliance Passport itself, opened from a
                             link. The grant token is the whole credential. */}
-                        <Route path="/passport/:token" element={<PublicPassport />} />
+                        <Route
+                          path="/passport/:token"
+                          element={(
+                            <ErrorBoundary fallback={<PublicLinkErrorFallback />}>
+                              <PublicPassport />
+                            </ErrorBoundary>
+                          )}
+                        />
 
                         {/* Client Portal Routes */}
                         <Route path="/client/login" element={
