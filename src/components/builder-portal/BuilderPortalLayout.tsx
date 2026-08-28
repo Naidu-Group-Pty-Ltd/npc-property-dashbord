@@ -75,7 +75,7 @@ const NAV: BuilderNavItem[] = [
   // Feature-flagged (aml_partner_compliance_workspace + builder surface
   // flag); filtered out of the nav until enabled. Presentation gating only —
   // the server enforces the same flags on every workspace operation.
-  { to: '/builder/compliance', label: 'Compliance', icon: ShieldCheck, available: true, complianceGated: true },
+  { to: '/builder/compliance', label: 'AML/CTF Compliance', icon: ShieldCheck, available: true, complianceGated: true },
   { to: '/builder/settings', label: 'Settings', icon: SettingsIcon, available: true },
 ];
 

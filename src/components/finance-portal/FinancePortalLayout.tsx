@@ -39,7 +39,7 @@ const NAV_ITEMS = [
   // Feature-flagged (aml_partner_compliance_workspace + finance surface
   // flag); filtered out of the nav until enabled. Presentation gating only —
   // the server enforces the same flags on every workspace operation.
-  { to: '/finance/compliance', label: 'Client Compliance', icon: ShieldCheck, end: false, partnerWorkspace: true },
+  { to: '/finance/compliance', label: 'AML/CTF Compliance', icon: ShieldCheck, end: false, partnerWorkspace: true },
   
 ];
 

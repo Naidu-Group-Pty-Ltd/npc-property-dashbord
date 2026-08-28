@@ -103,6 +103,9 @@ import {
   partnerSurfaceMode, passportDisclosure,
   type PartnerSurfaceMode,
 } from "../_shared/aml/partnerSurface.pure.ts";
+import {
+  PORTAL_ROUTES, portalHandoff,
+} from "../_shared/aml/partnerPortalHandoff.pure.ts";
 import { extractFinanceToken, resolveFinancePartner } from "../_shared/finance-portal-session.ts";
 import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
@@ -861,14 +864,130 @@ async function loadScopedPartnerLink(admin: any, linkId: string, partnerOrgId: s
 
 /** Latest grant/attestation pair for a case × canonical organisation. Only
  * canonically-stamped grants participate — the workspace is the new path. */
+/**
+ * This organisation's most recent grant on this matter.
+ *
+ * ── Why there are two routes and not one ──────────────────────────────
+ * A grant carries `partner_org_id` only when its ARRANGEMENT carried one,
+ * and until `create_agreement` accepted an organisation, none of them did:
+ * every grant the onboarding wizard produced had NULL there. Looking up by
+ * that column alone therefore answered "no grant" for a partner who plainly
+ * held one, and the portal reported the Passport as never shared.
+ *
+ * The second route is the arrangement's own pointer, which is the same fact
+ * by a second explicit path — not an inference. Both are recorded decisions;
+ * neither is a name match, and nothing here falls back to guessing which
+ * organisation an arrangement "probably" meant.
+ *
+ * Deliberately two queries rather than one `.or()`: a PostgREST filter
+ * composed as a string is the defect class this codebase has a contract test
+ * for, and it would have to interpolate a UUID list here.
+ */
 async function loadOrgGrantAndAttestation(admin: any, caseId: string, partnerOrgId: string) {
-  const { data: grant } = await admin.schema("aml").from("reliance_grants")
-    .select("*, compliance_attestations:attestation_id(*)")
+  const select = "*, compliance_attestations:attestation_id(*)";
+  const { data: direct } = await admin.schema("aml").from("reliance_grants")
+    .select(select)
     .eq("case_id", caseId).eq("partner_org_id", partnerOrgId)
     .order("granted_at", { ascending: false }).limit(1).maybeSingle();
+  let grant = direct ?? null;
+
+  if (!grant) {
+    const { data: agreements } = await admin.schema("aml").from("reliance_agreements")
+      .select("id").eq("partner_org_id", partnerOrgId);
+    const agreementIds = (agreements ?? []).map((a: any) => String(a.id));
+    if (agreementIds.length > 0) {
+      const { data: viaAgreement } = await admin.schema("aml").from("reliance_grants")
+        .select(select)
+        .eq("case_id", caseId).in("agreement_id", agreementIds)
+        .order("granted_at", { ascending: false }).limit(1).maybeSingle();
+      grant = viaAgreement ?? null;
+    }
+  }
   if (!grant) return { grant: null, attestation: null };
   return { grant, attestation: (grant as any).compliance_attestations ?? null };
 }
+
+
+/**
+ * "Open it in your portal", resolved for one grant.
+ *
+ * Every input is a fact the server holds: the arrangement's organisation
+ * type decides WHICH portal, the surface flags decide whether that page
+ * exists, and an active membership decides whether anybody could sign in and
+ * reach it. The rule itself is `portalHandoff` — shared with the browser, so
+ * the destination advertised and the route served cannot drift.
+ *
+ * It never widens access. The path carries a matter identifier, which grants
+ * nothing: the portal session re-derives the organisation and re-checks every
+ * rule on arrival, and a matter belonging to somebody else is simply not
+ * found. The bearer token never appears in it — a credential in a browser
+ * address bar survives in history, referrers and screenshots.
+ */
+async function resolvePortalHandoff(
+  admin: any,
+  grant: any,
+  agreement: any,
+  origin: string | null,
+) {
+  const orgType = String(agreement?.partner_org_type ?? "");
+  const route = PORTAL_ROUTES[orgType as keyof typeof PORTAL_ROUTES];
+  if (!route) {
+    return portalHandoff(
+      { partnerOrgType: orgType, surfaceEnabled: false, hasActiveMembership: false },
+      origin,
+    );
+  }
+
+  /* The organisation, by either explicit route — the grant's own column, or
+     its arrangement's. See `loadOrgGrantAndAttestation` for why both exist. */
+  const orgId = grant?.partner_org_id
+    ? String(grant.partner_org_id)
+    : (agreement?.partner_org_id ? String(agreement.partner_org_id) : null);
+
+  const surfaceEnabled = orgId
+    ? (await flagEnabled(admin, "aml_partner_compliance_workspace"))
+      && (await flagEnabled(admin, SURFACE_FLAG_BY_SURFACE[route.surface]))
+      && (await partnerPassportViewEnabled(admin))
+    : false;
+
+  let hasActiveMembership = false;
+  let linkId: string | null = grant?.partner_case_link_id
+    ? String(grant.partner_case_link_id) : null;
+
+  if (orgId) {
+    const { count } = await admin.schema("aml").from("partner_portal_memberships")
+      .select("id", { count: "exact", head: true })
+      .eq("partner_org_id", orgId).eq("status", "active");
+    hasActiveMembership = (count ?? 0) > 0;
+
+    if (!linkId) {
+      /* The grant predates partner links, or was minted before its
+         arrangement named an organisation. The matter is still knowable
+         exactly — one ACTIVE link for this organisation on this case — and
+         is left absent rather than guessed when it is not. */
+      const { data: links } = await admin.schema("aml").from("partner_case_links")
+        .select("id, portal_type")
+        .eq("case_id", grant.case_id).eq("partner_org_id", orgId).eq("state", "active");
+      const candidates = (links ?? []).filter(
+        (l: any) => SURFACE_PORTAL_TYPES[route.surface].includes(String(l.portal_type)));
+      if (candidates.length === 1) linkId = String(candidates[0].id);
+    }
+  }
+
+  return portalHandoff({
+    partnerOrgType: orgType,
+    partnerCaseLinkId: linkId,
+    surfaceEnabled,
+    hasActiveMembership,
+  }, origin);
+}
+
+/** Surface → its own feature flag, mirroring WORKSPACE_PORTAL_FLAGS. */
+const SURFACE_FLAG_BY_SURFACE: Record<string, string> = {
+  finance: "aml_partner_workspace_finance",
+  builder: "aml_partner_workspace_builder",
+  solicitor_conveyancer: "aml_partner_workspace_solicitor",
+};
 
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -1853,6 +1972,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             // carries the due-diligence outcomes and none of the reasoning —
             // `assertPartnerSafe` throws rather than serve a widened one.
             passport: await buildCasePassportView(admin, grant.case_id, "partner"),
+            /* Where else this record lives. A link is a delivery; a portal is
+               a place you go back to — and a partner who holds a portal
+               account should not have to keep an email to re-read a record
+               they may rely on. Offered only when the page exists AND
+               somebody could sign in and reach it. */
+            portal_handoff: await resolvePortalHandoff(
+              admin, grant, agreement, req.headers.get("origin")),
             attestation_sha256: attestation.payload_sha256,
             schema_version: 2,
             // The version this grant is bound to. The Command Centre prints
@@ -1878,6 +2004,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jr({
           attestation: attestation.payload,
           passport: await buildCasePassportView(admin, grant.case_id, "partner"),
+          portal_handoff: await resolvePortalHandoff(
+            admin, grant, agreement, req.headers.get("origin")),
           attestation_sha256: attestation.payload_sha256,
           attestation_version: attestation.version ?? null,
           issued_at: attestation.issued_at,
@@ -1978,15 +2106,100 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (!ref) return jr({ error: "agreement_reference is required — reliance without a written CDD arrangement is not available under Pt 2 Div 7" }, 400);
         if (!/^\d{4}-\d{2}-\d{2}$/.test(executed)) return jr({ error: "executed_on must be YYYY-MM-DD" }, 400);
         if (!/^\d{4}-\d{2}-\d{2}$/.test(review)) return jr({ error: "next_review_due must be YYYY-MM-DD — the arrangement must be reviewed regularly" }, 400);
-        const { data, error } = await admin.schema("aml").from("reliance_agreements").insert({
+        /* ── the pointer that was never written ────────────────────────
+           An arrangement recorded only a free-text `partner_org_name`, so
+           the written arrangement and the canonical organisation were two
+           records that never pointed at each other. `grant_access` stamps
+           `partner_org_id` on a grant only `if (agreement.partner_org_id)`,
+           so every grant the onboarding wizard produced carried NULL — and
+           the partner's own portal looks its grant up BY organisation. The
+           Passport was correct, current and unreachable from the portal it
+           was issued for.
+
+           It is validated, never trusted: the organisation must exist and
+           be active, and its type must match the arrangement's, because an
+           arrangement that names one kind of partner and points at another
+           is a mapping error that would surface as a disclosure. */
+        const orgId = String(body.partner_org_id ?? "").trim();
+        let boundOrgId: string | null = null;
+        if (orgId) {
+          const { data: org } = await admin.schema("aml").from("partner_organisations")
+            .select("id, status, organisation_type, legal_name").eq("id", orgId).maybeSingle();
+          if (!org) return jr({ error: "Partner organisation not found", code: "organisation_missing" }, 404);
+          if (org.status !== "active") {
+            return jr({ error: `Partner organisation is ${org.status}`, code: "organisation_not_active" }, 409);
+          }
+          if (org.organisation_type !== type) {
+            return jr({
+              error: `Type mismatch: the arrangement records "${type}" but ${org.legal_name} is "${org.organisation_type}". Correct whichever record is wrong.`,
+              code: "organisation_type_mismatch",
+            }, 409);
+          }
+          boundOrgId = org.id;
+        }
+        const insertRow: Record<string, unknown> = {
           partner_org_name: name.slice(0, 200), partner_org_type: type,
           partner_abn: String(body.partner_abn ?? "").slice(0, 20) || null,
           agreement_reference: ref.slice(0, 200), executed_on: executed,
           next_review_due: review, notes: String(body.notes ?? "").slice(0, 2000) || null,
           created_by: userId,
-        }).select("*").single();
+        };
+        if (boundOrgId) insertRow.partner_org_id = boundOrgId;
+        const { data, error } = await admin.schema("aml").from("reliance_agreements")
+          .insert(insertRow).select("*").single();
         if (error) throw error;
         return jr({ agreement: data });
+      }
+
+      /* ── binding an existing arrangement to its organisation ──────────
+         The repair for arrangements written before `create_agreement`
+         accepted an organisation. It is an EXPLICIT act by the MLRO — the
+         operator selected both records — and never a name match: two
+         organisations may lawfully share a name, and the mapping review
+         exists precisely because guessing between them is not allowed.
+
+         Bind once, never re-point, exactly as the portal binding does. An
+         arrangement that already names a different organisation is a
+         mapping error to be corrected at the source, not overwritten here:
+         re-pointing it silently moves every grant it has ever issued. */
+      case "bind_agreement_organisation": {
+        if (!isMlro) return jr({ error: "MLRO role required — partner identity is outward-facing configuration" }, 403);
+        const agreementId = String(body.agreement_id ?? "");
+        const orgId = String(body.partner_org_id ?? "");
+        if (!agreementId || !orgId) {
+          return jr({ error: "agreement_id and partner_org_id are required" }, 400);
+        }
+        const { data: agreementRow } = await admin.schema("aml").from("reliance_agreements")
+          .select("id, partner_org_id, partner_org_type, partner_org_name")
+          .eq("id", agreementId).maybeSingle();
+        if (!agreementRow) return jr({ error: "Agreement not found" }, 404);
+        const { data: orgRow } = await admin.schema("aml").from("partner_organisations")
+          .select("id, status, organisation_type, legal_name").eq("id", orgId).maybeSingle();
+        if (!orgRow) return jr({ error: "Partner organisation not found", code: "organisation_missing" }, 404);
+        if (orgRow.status !== "active") {
+          return jr({ error: `Partner organisation is ${orgRow.status}`, code: "organisation_not_active" }, 409);
+        }
+        if (orgRow.organisation_type !== agreementRow.partner_org_type) {
+          return jr({
+            error: `Type mismatch: the arrangement records "${agreementRow.partner_org_type}" but ${orgRow.legal_name} is "${orgRow.organisation_type}". Correct whichever record is wrong.`,
+            code: "organisation_type_mismatch",
+          }, 409);
+        }
+        if (agreementRow.partner_org_id && String(agreementRow.partner_org_id) !== orgId) {
+          return jr({
+            error: `${agreementRow.partner_org_name} is already bound to a different partner organisation. Re-pointing it would move every grant this arrangement has issued — correct the records rather than re-binding.`,
+            code: "agreement_org_conflict",
+          }, 409);
+        }
+        if (agreementRow.partner_org_id) {
+          return jr({ agreement: agreementRow, bound: "already" });
+        }
+        const { data: updated, error: bindErr } = await admin.schema("aml")
+          .from("reliance_agreements")
+          .update({ partner_org_id: orgId, updated_at: new Date().toISOString() })
+          .eq("id", agreementId).select("*").single();
+        if (bindErr) throw bindErr;
+        return jr({ agreement: updated, bound: "set" });
       }
 
       case "review_agreement": {
@@ -2672,6 +2885,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           const brandCfg = await getBrandConfig();
           const orgLabel = String(agreement.partner_org_name).replace(/[<>]/g, "");
           const expiryLabel = new Date(grant.expires_at).toLocaleDateString("en-AU");
+          /* The second route to the same record, in the email itself — this
+             is the moment a recipient decides whether to keep the message.
+             `resolvePortalHandoff` returns `available: false` unless the page
+             exists and somebody could sign in and reach it, so this never
+             advertises a door that refuses. The absolute URL is built from
+             the same origin the Passport link uses rather than the request's,
+             because the request here is the Command Centre's. */
+          const handoff = await resolvePortalHandoff(
+            admin, grant, agreement, passportLink.replace(/\/passport\/.*$/, ""));
           const subject = `${brandCfg.companyName} — Compliance Passport access for ${orgLabel}`;
           const textBody = [
             `Your organisation has been given access to a Compliance Passport issued by ${brandCfg.companyName}.`,
@@ -2679,6 +2901,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             "No account or password is needed — open the link below:",
             passportLink,
             "",
+            ...(handoff.available && handoff.url
+              ? [
+                `You can also read it in your ${handoff.label}, on your AML/CTF Compliance page, whenever you need it:`,
+                handoff.url,
+                "",
+              ]
+              : []),
             `This access expires on ${expiryLabel}. If the link stops working, you can request a new one from the page itself.`,
             "",
             `— ${brandCfg.companyName}`,
@@ -2698,6 +2927,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
                   Open the Compliance Passport
                 </a>
               </p>
+              ${handoff.available && handoff.url ? `
+              <p style="color:#475569;font-size:14px;line-height:1.6;border-top:1px solid #e2e8f0;padding-top:16px;">
+                You also hold a <strong>${handoff.label}</strong> account. The same Passport is on your
+                <strong>AML/CTF Compliance</strong> page there — signed in, with no link to keep.
+                <br/>
+                <a href="${handoff.url}" style="color:#1d4ed8;">Open it in your ${handoff.label}</a>
+              </p>` : ""}
               <p style="color:#64748b;font-size:13px;line-height:1.6;">
                 This access expires on ${expiryLabel}. If the link stops working, you can request a new
                 one from the page itself.

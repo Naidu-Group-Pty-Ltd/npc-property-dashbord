@@ -152,9 +152,11 @@ const client = (over: Partial<Record<string, unknown>> = {}): PartnerWorkspaceCl
   getAuditReceipt: vi.fn(async () => ({ data: { receipt: {} }, error: null })),
 } as never);
 
-const mount = (adapter: PartnerPortalAdapter, c: PartnerWorkspaceClient) =>
+const mount = (
+  adapter: PartnerPortalAdapter, c: PartnerWorkspaceClient, entry = "/builder/compliance",
+) =>
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[entry]}>
       <PartnerComplianceWorkspace adapter={adapter} client={c} />
     </MemoryRouter>,
   );
@@ -240,5 +242,62 @@ describe("a withheld Passport says why — an empty page is never the answer", (
     });
     expect(screen.queryByText(/not available/i)).toBeNull();
     expect(screen.queryByText(/enabled/i)).toBeNull();
+  });
+});
+
+describe("the deep link from the emailed Passport lands on the right matter", () => {
+  /** Two live matters, so "it picked one" is not the same as "it picked THIS one". */
+  const twoMatters = (): PartnerWorkspaceDirectory => ({
+    organisation: { legal_name: "Ridgeline Builders Pty Ltd", classification_status: "classified" },
+    surface_mode: "passport_only" as never,
+    links: [
+      {
+        id: "link-0001", relationship_role: "builder", legal_route: "reliance",
+        state: "active", portal_type: "builder", linked_at: "2026-08-01T00:00:00Z",
+        ended_at: null, end_reason_code: null, purchase_file_id: "pf-000001", legal_matter_id: null,
+      },
+      {
+        id: "link-0002", relationship_role: "builder", legal_route: "reliance",
+        state: "active", portal_type: "builder", linked_at: "2026-08-02T00:00:00Z",
+        ended_at: null, end_reason_code: null, purchase_file_id: "pf-000002", legal_matter_id: null,
+      },
+    ],
+  });
+
+  const clientWithTwo = () => {
+    const c = client();
+    (c.getDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: twoMatters(), error: null,
+    });
+    return c;
+  };
+
+  it("?matter= opens THAT matter, not merely the first one", async () => {
+    const c = clientWithTwo();
+    mount(PORTALS[1].adapter, c, "/builder/compliance?matter=link-0002");
+    await waitFor(() => expect(c.getWorkspace).toHaveBeenCalled());
+    expect((c.getWorkspace as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe("link-0002");
+  });
+
+  it("two matters and NO parameter asks rather than guessing", async () => {
+    const c = clientWithTwo();
+    mount(PORTALS[1].adapter, c, "/builder/compliance");
+    await waitFor(() => {
+      expect(screen.getByRole("navigation", { name: /list/i })).toBeTruthy();
+    });
+    expect(c.getWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("a stale matter falls through to the page rather than to a failure", async () => {
+    /* An old email may name a matter this partner no longer holds. The
+       server's directory is the authority; an unrecognised value is simply
+       not selected, and the compliance page still opens. */
+    const c = clientWithTwo();
+    mount(PORTALS[1].adapter, c, "/builder/compliance?matter=link-does-not-exist");
+    await waitFor(() => {
+      expect(screen.getByTestId("partner-responsibility-notice")).toBeTruthy();
+    });
+    expect(c.getWorkspace).not.toHaveBeenCalled();
+    expect(screen.queryByText(/not available/i)).toBeNull();
   });
 });

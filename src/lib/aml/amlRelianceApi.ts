@@ -254,10 +254,24 @@ export const amlRelianceApi = {
   listAgreements: () =>
     invoke<{ agreements: RelianceAgreement[] }>({ op: "list_agreements" }),
   createAgreement: (params: {
+    /** The canonical organisation this arrangement is WITH. */
+    partner_org_id?: string;
     partner_org_name: string; partner_org_type: RelianceAgreement["partner_org_type"];
     partner_abn?: string; agreement_reference: string;
     executed_on: string; next_review_due: string; notes?: string;
   }) => invoke<{ agreement: RelianceAgreement }>({ op: "create_agreement", ...params }),
+  /**
+   * Point an existing arrangement at its canonical organisation.
+   *
+   * The repair for arrangements written before `create_agreement` accepted
+   * one. Without it a grant carries no `partner_org_id`, and the partner's
+   * own portal — which looks a grant up BY organisation — reports a Passport
+   * it holds as never shared. Binds once and refuses to re-point.
+   */
+  bindAgreementOrganisation: (agreement_id: string, partner_org_id: string) =>
+    invoke<{ agreement: RelianceAgreement; bound: "already" | "set" }>({
+      op: "bind_agreement_organisation", agreement_id, partner_org_id,
+    }),
   reviewAgreement: (agreement_id: string, next_review_due: string, outcome: "continue" | "suspend" | "terminate") =>
     invoke<{ agreement: RelianceAgreement }>({ op: "review_agreement", agreement_id, next_review_due, outcome }),
 
