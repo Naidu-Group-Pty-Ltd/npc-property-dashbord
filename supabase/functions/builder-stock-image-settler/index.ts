@@ -76,6 +76,9 @@ import {
   type SettlementCandidate,
 } from '../_shared/builderStock/settleSourceImages.ts';
 import { newRepairBudget } from '../_shared/builderStock/settleImageSanitization.ts';
+import {
+  settleFallbackImages, MAX_FALLBACK_ITEMS_PER_TICK,
+} from '../_shared/builderStock/settleFallbackImages.ts';
 import { previewSanitization } from '../_shared/builderStock/previewSanitization.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
@@ -279,9 +282,75 @@ Deno.serve(async (req: Request) => {
     const outstanding = queue.rows;
 
     if (!outstanding.length) {
-      // Quiet path. The migration's job unschedules itself on this.
+      /**
+       * SETTLEMENT IS DONE. THE WORK IS NOT NECESSARILY DONE.
+       *
+       * This used to answer `complete: true` here, and the migration's job
+       * unschedules itself on that — so the sweep went permanently quiet the
+       * moment the last upload's provenance, eligibility and sanitization
+       * markers were current. `readOutstandingUploads` reads
+       * `builder_stock_uploads` and nothing else; it has never known that a
+       * PROPERTY can still be owed the fallback ladder.
+       *
+       * That is how three properties came to sit blank for ever with a
+       * terminal `no_deterministic_image` and not one image row: their builder
+       * supplied no usable photograph, stage A said so honestly, and the only
+       * thing that would have looked anywhere else was `enrich_images` in the
+       * Builder Portal — a loop that runs while somebody has the page open.
+       * Close the browser after an import and the ladder never ran.
+       *
+       * So the empty settlement queue is where the fallback phase belongs, and
+       * it is also the one place it is unconditionally SAFE: no upload is
+       * still being read, so no property is about to gain the builder's own
+       * render, and stage B or C cannot be bought against a card that is about
+       * to have the real picture. That is #2305's rule, kept rather than
+       * traded for speed.
+       */
+      const fallback = await settleFallbackImages(supabase, {
+        limit: MAX_FALLBACK_ITEMS_PER_TICK,
+        deadlineAt,
+      });
+
+      if (fallback.problems.length) {
+        console.warn('[builder-stock-image-settler] fallback problems', {
+          phase: 'fallback_enrichment', problems: fallback.problems.slice(0, 3),
+        });
+      }
+
+      /*
+       * An unreadable queue is not an empty one. Answering `complete` on a
+       * failed read would unschedule the cron on a database fault — the same
+       * shape as the missing-column bug above, and just as silent.
+       */
+      if (fallback.unavailable) {
+        console.error('[builder-stock-image-settler] fallback queue unreadable', {
+          phase: 'fallback_enrichment',
+        });
+        return json({
+          success: false, error: 'fallback_queue_unreadable', deploymentReady: true,
+        }, 503);
+      }
+
+      console.log('[builder-stock-image-settler] fallback tick', {
+        phase: 'fallback_enrichment',
+        attempted: fallback.attempted,
+        resolved: fallback.resolved,
+        remaining: fallback.remaining,
+      });
+
+      /*
+       * THE COMPLETION RULE. Quiet requires BOTH queues empty. A settlement
+       * queue at zero with fallback work outstanding keeps the cron alive.
+       */
       return json({
-        success: true, settled: 0, remaining: 0, complete: true,
+        success: true,
+        phase: 'fallback_enrichment',
+        settled: 0,
+        remaining: 0,
+        fallbackAttempted: fallback.attempted,
+        fallbackResolved: fallback.resolved,
+        fallbackRemaining: fallback.remaining,
+        complete: fallback.remaining === 0,
         deploymentReady: true, eligibilityTarget, sanitizationTarget,
       });
     }
