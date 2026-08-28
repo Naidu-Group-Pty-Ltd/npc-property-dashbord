@@ -16,6 +16,8 @@ export interface PublicAcknowledgementView {
   recipient_email: string;
   expires_at: string;
   accepted_at: string | null;
+  /** Who accepted, as they typed it. Present once the status is accepted. */
+  accepted_by_name?: string | null;
   declined_at: string | null;
   issuer_name: string;
   /** The instrument itself, exactly as published. */

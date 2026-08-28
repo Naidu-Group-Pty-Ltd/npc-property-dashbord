@@ -155,6 +155,10 @@ export default function PartnerAcknowledgement() {
   /* ── terminal states: a link is answered once ──────────────────────── */
 
   if (view.status === "accepted") {
+    /* "Nothing further is needed from you" was true and useless: it told a
+       signatory that something had been recorded and left them with no idea
+       what arrives next, from whom, at which address, or when to chase it.
+       The three facts they need are the ones this page can state exactly. */
     return shell(
       <StatusCard
         icon={CheckCircle2}
@@ -162,7 +166,35 @@ export default function PartnerAcknowledgement() {
         title="Agreement accepted"
         body={`Thank you. ${view.issuer_name} has recorded your organisation's acceptance${
           view.accepted_at ? ` on ${new Date(view.accepted_at).toLocaleDateString()}` : ""
-        }. Nothing further is needed from you — they will be in touch about the compliance record itself.`}
+        }${view.accepted_by_name ? `, signed by ${view.accepted_by_name}` : ""}.`}
+        after={(
+          <div className="mx-auto max-w-prose space-y-3 pt-1 text-left">
+            <p className="text-sm text-muted-foreground">
+              Nothing further is needed from you now. {view.issuer_name} has been notified and will
+              send the AML/CTF Compliance Passport itself.
+            </p>
+            <dl className="grid gap-2 rounded-md border border-border/60 p-3 text-xs sm:grid-cols-3">
+              <div>
+                <dt className="text-muted-foreground">It arrives</dt>
+                <dd className="font-medium">By email, as a link</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Sent to</dt>
+                <dd className="break-all font-medium">{view.recipient_email}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Open for</dt>
+                <dd className="font-medium">90 days, re-issuable</dd>
+              </div>
+            </dl>
+            <p className="text-xs text-muted-foreground">
+              The link is the credential — no account and no password — so keep it within authorised
+              personnel. If it does not arrive, or you would prefer a different address, contact{" "}
+              {view.issuer_name} and they can issue a new one. Completing your own independent
+              customer due diligence remains available to you at any time.
+            </p>
+          </div>
+        )}
       />,
     );
   }
@@ -319,8 +351,10 @@ export default function PartnerAcknowledgement() {
   );
 }
 
-function StatusCard({ icon: Icon, tone, title, body }: {
+function StatusCard({ icon: Icon, tone, title, body, after }: {
   icon: typeof ShieldCheck; tone: string; title: string; body: string;
+  /** What happens next, for the readings that have a next. */
+  after?: React.ReactNode;
 }) {
   return (
     <Card className="glass-panel">
@@ -328,6 +362,7 @@ function StatusCard({ icon: Icon, tone, title, body }: {
         <Icon className={`mx-auto h-8 w-8 ${tone}`} aria-hidden />
         <h1 className="text-base font-semibold">{title}</h1>
         <p className="mx-auto max-w-prose text-sm text-muted-foreground">{body}</p>
+        {after}
       </CardContent>
     </Card>
   );
