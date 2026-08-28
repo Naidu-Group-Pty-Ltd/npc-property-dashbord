@@ -90,10 +90,19 @@ describe('StampsPage', () => {
     // The layer the approved design is built around, and the one the previous
     // face omitted entirely: an impression carries the mark of the system that
     // struck it. An unstruck die does not — nothing pressed it.
+    //
+    // The emblem is the MASK now and the impression's ink is the fill, so the
+    // assertion is on the mask source rather than on an `<img src>`. That is
+    // the change that made the layer visible at all: as an image under
+    // `mix-blend-mode: screen` it was erased by the cream leaf and lost in the
+    // dark register.
     const { container } = pageFor();
     const struck = container.querySelector('.passport-stamp:not(.passport-stamp--pending)')!;
-    expect(struck.querySelector('.passport-stamp__watermark'))
-      .toHaveAttribute('src', '/brand/aurixa-emblem.png');
+    const watermark = struck.querySelector('.passport-stamp__watermark') as HTMLElement;
+    expect(watermark).not.toBeNull();
+    expect(watermark.getAttribute('data-emblem')).toBe('/brand/aurixa-emblem-240.png');
+    expect(watermark.style.getPropertyValue('--stamp-watermark-src'))
+      .toContain('/brand/aurixa-emblem-240.png');
     expect(struck.querySelector('.passport-stamp__grain')).not.toBeNull();
     expect(struck.querySelector('.passport-stamp__inner')).not.toBeNull();
 

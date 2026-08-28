@@ -349,6 +349,23 @@
   mask: radial-gradient(circle, transparent 0 78%, hsl(0 0% 0%) 78% 88%, transparent 88%);
 }
 
+/* The same mark the struck die carries, drawn the same way: the emblem as a
+   mask, the seal's own ink as the fill. A seal on this document that is not
+   marked reads as belonging to something else. */
+.passport-wax__watermark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 74%;
+  height: 74%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: var(--seal-watermark-opacity, 0.16);
+  background-color: var(--seal-ink);
+  -webkit-mask: var(--stamp-watermark-src, url("/brand/aurixa-emblem-240.png")) center / contain no-repeat;
+  mask: var(--stamp-watermark-src, url("/brand/aurixa-emblem-240.png")) center / contain no-repeat;
+}
+
 .passport-wax__org {
   font-size: 0.3125rem;
   letter-spacing: 0.15em;
@@ -1280,21 +1297,61 @@
 .passport-stamp--rect .passport-stamp__tick { top: 9px; }
 .passport-stamp--rect .passport-stamp__inner { bottom: 9px; }
 
-/* ── the watermark ── */
+/* ── the burnish ──
+   A die pressed into a surface is never evenly inked: it takes more at the
+   shoulder the hand leaned on and less where it lifted. One off-centre
+   highlight and one opposing shade is the whole trick, and it is what stops
+   the impression reading as a flat coloured shape with type on it. Drawn in
+   the impression's own ink so it inherits every tone, and set BELOW the ticks
+   and the inner rule so those stay crisp over it. */
+.passport-stamp__burnish {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--stamp-burnish-opacity, 0.5);
+  background:
+    radial-gradient(60% 52% at 34% 26%, var(--stamp-relief, hsl(0 0% 100% / 0.09)), transparent 70%),
+    radial-gradient(64% 56% at 72% 82%, var(--stamp-depth, hsl(0 0% 0% / 0.4)), transparent 72%);
+}
+.passport-stamp--circle .passport-stamp__burnish { border-radius: 50%; }
+.passport-stamp--seal .passport-stamp__burnish {
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+}
+.passport-stamp--rect .passport-stamp__burnish { border-radius: 2px; }
+
+/* ── the watermark ──
+   The emblem is the MASK and the impression's ink is the fill, so the mark is
+   the same colour as the lettering it sits behind. It was an image under
+   `mix-blend-mode: screen`, which lightens: on the cream leaf that pushed a
+   near-white surface to white and erased it, and on the dark register it
+   screened dark artwork over a dark field and lifted almost nothing. The
+   layer the whole design is built around was never actually on screen.
+
+   Inking it removes the blend mode from the problem entirely — there is no
+   surface on which "the stamp's own ink" disappears — and it is also the
+   truer drawing: a stamp is one ink, not artwork with a picture behind it. */
 .passport-stamp__watermark {
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  height: auto;
   pointer-events: none;
-  opacity: 0.26;
-  mix-blend-mode: screen;
-  filter: brightness(1.5) saturate(1.15) drop-shadow(0 0 6px var(--stamp-glow));
+  opacity: var(--stamp-watermark-opacity, 0.3);
+  background-color: var(--stamp-ink);
+  /* The fallback is not decoration. An unset custom property inside a
+     shorthand makes the whole declaration invalid at computed-value time, so
+     `mask` would resolve to none and the ink would paint as a solid disc over
+     the inscription. Naming the emblem here as well means the worst case is
+     the right mark rather than a blot. */
+  -webkit-mask: var(--stamp-watermark-src, url("/brand/aurixa-emblem-240.png")) center / contain no-repeat;
+  mask: var(--stamp-watermark-src, url("/brand/aurixa-emblem-240.png")) center / contain no-repeat;
 }
+/* It fills the die rather than sitting in the middle of it: a watermark is the
+   GROUND an impression is struck over, and at 63% it read as a small logo
+   somebody had placed there. */
 .passport-stamp--circle .passport-stamp__watermark,
-.passport-stamp--seal .passport-stamp__watermark { width: 104px; }
-.passport-stamp--rect .passport-stamp__watermark { width: 84px; }
+.passport-stamp--seal .passport-stamp__watermark { width: 122px; height: 122px; }
+.passport-stamp--rect .passport-stamp__watermark { width: 98px; height: 98px; }
 
 /* ── the inscription ── */
 .passport-stamp__body {
@@ -1503,18 +1560,22 @@
   --stamp-relief: hsl(42 62% 96% / 0.6);
 }
 
-/* `screen` LIGHTENS, which on cream erases the mark entirely — the watermark
-   is the layer the whole design is built around, so it must survive the change
-   of surface. Paper takes ink out of the sheet: both screened layers multiply
-   into it instead. */
+/* The watermark needs no blend mode on either surface now — it is the die's
+   own ink through a mask — so the leaf sets only how much of it the paper
+   takes. Cream shows a dark ink at a lower opacity than a dark field shows a
+   light one, which is why this is a number rather than nothing.
+
+   The grain still multiplies: it is a texture rather than an ink, and on
+   paper a screened texture is the same erasure the watermark used to suffer. */
 .passport-leaf .passport-stamp__watermark {
-  mix-blend-mode: multiply;
-  filter: none;
-  opacity: 0.15;
+  --stamp-watermark-opacity: 0.2;
 }
 .passport-leaf .passport-stamp__grain {
   mix-blend-mode: multiply;
   opacity: 0.14;
+}
+.passport-leaf .passport-stamp__burnish {
+  --stamp-burnish-opacity: 0.7;
 }
 
 /* An unstruck die on paper: the register's greys are drawn for near-black. */
