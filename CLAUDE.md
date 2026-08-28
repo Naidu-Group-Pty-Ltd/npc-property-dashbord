@@ -293,8 +293,35 @@ flag): those stop new disclosure, and stopping disclosure is what this does.
 The explained action list that made blocked buttons legible had itself become
 a wall — five rows of three lines, always open, beside the same grants listed
 twice — so **one act is open (the server's `ready`) and the rest are a
-disclosure**, and "Link history" is gone because its rows are the recipients
-list and its collapsed `Ended access` group.
+disclosure**. And the four lists of the same partners (the grant, the written
+arrangement, the emailed agreement, the case link) are now **one roster**,
+`partnerRoster.pure.ts`: one row per organisation with ONE next step, chosen
+by what actually blocks. Two rules there — **a badge must mean something is
+unmet** (`active`, `reliance` and `builder_developer` are how a healthy record
+looks, and colouring them like problems is what made eleven chips unreadable),
+and **database vocabulary never reaches the operator**, asserted by a test that
+refuses any underscore-cased identifier in a rendered field.
+
+## One living record — the attestation everyone reads
+Read [`docs/aml/ATTESTATION_CURRENCY.md`](./docs/aml/ATTESTATION_CURRENCY.md)
+before touching `attestationCurrency.pure.ts`, `attestationForGrantRead` or the
+manifest carry-forward in `issue_attestation`. A grant pinned `attestation_id`
+and every read resolved through that pin, so **issuing v2 silently revoked
+every partner who already held the Passport** — their next read answered 409
+`attestation_superseded` and the only repair was to re-send it to each of them
+by hand. Under schema v2 there was a second, independent cause of the same
+outcome: the new version had no disclosure manifest, so every read would have
+failed `manifest_missing` anyway.
+
+The rule: **a grant authorises a PARTNER to read a CASE's attested record, not
+one frozen version of it.** Reads resolve the case's current attestation and
+the version served is recorded on the access log. Three rules carry it. **The
+pin is history, never the reading** — `attestation_id` is never rewritten.
+**Current means CURRENT, not merely newer**: a version flagged for refresh is
+still withheld, because "we know this one is wrong" is not "there is a better
+one" — and the refusal now promises no new link is needed. And **a widening is
+never implicit**: the carry-forward copies the previous manifest's scope, and a
+grant whose predecessor had no manifest gets none and fails closed.
 
 ## The Passport inside a partner's own portal
 Read [`docs/aml/PASSPORT_IN_PORTAL.md`](./docs/aml/PASSPORT_IN_PORTAL.md)

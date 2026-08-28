@@ -106,6 +106,9 @@ import {
 import {
   PORTAL_ROUTES, portalHandoff,
 } from "../_shared/aml/partnerPortalHandoff.pure.ts";
+import {
+  grantsNeedingForwardManifest, resolveAttestationForRead,
+} from "../_shared/aml/passport/attestationCurrency.pure.ts";
 import { extractFinanceToken, resolveFinancePartner } from "../_shared/finance-portal-session.ts";
 import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
@@ -989,6 +992,33 @@ const SURFACE_FLAG_BY_SURFACE: Record<string, string> = {
   solicitor_conveyancer: "aml_partner_workspace_solicitor",
 };
 
+
+/**
+ * The attestation a grant's holder actually reads.
+ *
+ * A grant authorises a PARTNER to read a CASE's attested record; it does not
+ * freeze which version of that record they see. The pin on the grant stays
+ * exactly as it is — it records what the access was issued against, which is
+ * the audit fact — and the reading follows the case's current version.
+ *
+ * Before this, issuing v2 answered every existing partner 409
+ * `attestation_superseded` and told them to ask for new access. Nothing was
+ * broken; it worked as written. But a routine re-issue silently revoked every
+ * partner's access and the only repair was to re-send the Passport to each of
+ * them by hand.
+ */
+async function attestationForGrantRead(admin: any, grant: any) {
+  const pinned = (grant as any).compliance_attestations ?? null;
+  const { data: current } = await admin.schema("aml").from("compliance_attestations")
+    .select("*").eq("case_id", grant.case_id).is("superseded_at", null)
+    .order("version", { ascending: false }).limit(1).maybeSingle();
+  return {
+    reading: resolveAttestationForRead({ current: current ?? null, pinned }),
+    current: current ?? null,
+    pinned,
+  };
+}
+
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const __csrf = enforceCsrf(req);
@@ -1049,7 +1079,17 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const link = await loadScopedPartnerLink(admin, linkId, partnerOrg.id, surface);
         if (!link) return jr({ error: "Not found" }, 404);
 
-        const { grant, attestation } = await loadOrgGrantAndAttestation(admin, link.case_id, partnerOrg.id);
+        const { grant, attestation: pinnedAttestation } =
+          await loadOrgGrantAndAttestation(admin, link.case_id, partnerOrg.id);
+        /* The SAME currency rule the emailed link uses. Without it a partner
+           reading in their portal would be pinned to the version their grant
+           was minted against while the link showed the current one — two
+           surfaces disagreeing about one record, which is the failure this
+           whole architecture exists to prevent. */
+        const portalCurrency = grant
+          ? await attestationForGrantRead(admin, { ...grant, compliance_attestations: pinnedAttestation })
+          : null;
+        const attestation = portalCurrency?.reading.serve ?? pinnedAttestation;
         let procedures: Record<string, unknown> | null = null;
         let recordAvailability: string[] = [];
         let limitations: string[] = [];
@@ -1167,6 +1207,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           passport_availability: passportEnabled
             ? { code: disclosure.code, message: disclosure.message }
             : { code: "not_enabled", message: "" },
+          record_currency: portalCurrency
+            ? {
+              code: portalCurrency.reading.code,
+              moved_forward: portalCurrency.reading.movedForward,
+              issued_against_version: portalCurrency.reading.issuedAgainstVersion,
+              message: portalCurrency.reading.message,
+            }
+            : null,
         });
       }
 
@@ -1903,9 +1951,32 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       }
       const grant = resolved.grant;
       const agreement = (grant as any).reliance_agreements;
-      const attestation = (grant as any).compliance_attestations;
+
+      /* ── one living record ────────────────────────────────────────────
+         The version the holder reads is the case's CURRENT one, not the one
+         their grant was minted against. `currency` carries what changed so
+         the page can say it: a partner who relied on v1 and is now reading
+         v2 has to be able to see that, because what they may rely on is the
+         record in front of them and not the one they remember. */
+      const currency = await attestationForGrantRead(admin, grant);
+      const attestation = currency.reading.serve ?? (grant as any).compliance_attestations;
 
       if (op === "redeem_attestation") {
+        if (!currency.reading.serve) {
+          // Known-wrong beats known-old: a refresh in flight has nothing
+          // correct to serve, and that is not the same as supersession.
+          await admin.schema("aml").from("reliance_access_log").insert({
+            grant_id: grant.id, case_id: grant.case_id, action: "view_attestation",
+            actor_label: agreement.partner_org_name, ip_address: ip,
+            detail: { denied: currency.reading.code },
+          });
+          return jr({
+            error: currency.reading.message,
+            code: currency.reading.code === "refresh_required"
+              ? "attestation_refresh_required" : "attestation_unavailable",
+            refresh_required: currency.reading.code === "refresh_required",
+          }, 409);
+        }
         const schemaVersion = attestation.schema_version ?? 1;
 
         // Schema-aware reading. v1 historical grants behave exactly as
@@ -1921,27 +1992,26 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
               detail: { attestation_version: attestation.version, denied: code },
             });
           };
-          if (attestation.superseded_at) {
-            await logDenied("attestation_superseded");
+          /* Supersession and refresh are settled BEFORE this branch by
+             `resolveAttestationForRead`: what reaches here is the case's
+             current, unflagged version or nothing at all. The belt stays on
+             — a superseded document must never be served, and asserting it
+             here costs nothing and would catch a future resolver that
+             regressed. */
+          if (attestation.superseded_at || attestation.refresh_required_at) {
+            await logDenied("attestation_not_current");
             return jr({
-              error: "This attestation has been superseded. Ask the issuing organisation for current access.",
-              code: "attestation_superseded",
-              refresh_required: true,
+              error: "This record is being updated. It will be available here without a new link.",
+              code: "attestation_refresh_required", refresh_required: true,
             }, 409);
           }
-          // Phase 6: a material change flags the attestation for refresh
-          // without superseding it — flagged content stops being served the
-          // same way. Safe wording only; the trigger detail stays internal.
-          if (attestation.refresh_required_at) {
-            await logDenied("attestation_refresh_required");
-            return jr({
-              error: "The information behind this attestation has been updated. Ask the issuing organisation for refreshed access.",
-              code: "attestation_refresh_required",
-              refresh_required: true,
-            }, 409);
-          }
+          /* The manifest for THIS version. A grant now accumulates one per
+             attestation it has been carried forward onto, so the lookup is
+             scoped by both — an unscoped `.maybeSingle()` would fail outright
+             on the second version. */
           const { data: manifest } = await admin.schema("aml").from("disclosure_manifests")
-            .select("*").eq("grant_id", grant.id).maybeSingle();
+            .select("*").eq("grant_id", grant.id).eq("attestation_id", attestation.id)
+            .order("created_at", { ascending: false }).limit(1).maybeSingle();
           const manifestDecision = evaluateManifestForRead(manifest ?? null, new Date());
           if (!manifestDecision.ok) {
             await logDenied(manifestDecision.code);
@@ -1979,6 +2049,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
                somebody could sign in and reach it. */
             portal_handoff: await resolvePortalHandoff(
               admin, grant, agreement, req.headers.get("origin")),
+            /* One living record: which version this is, and whether it moved
+               since the access was issued. Stated rather than hidden. */
+            record_currency: {
+              code: currency.reading.code,
+              moved_forward: currency.reading.movedForward,
+              issued_against_version: currency.reading.issuedAgainstVersion,
+              message: currency.reading.message,
+            },
             attestation_sha256: attestation.payload_sha256,
             schema_version: 2,
             // The version this grant is bound to. The Command Centre prints
@@ -2006,6 +2084,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           passport: await buildCasePassportView(admin, grant.case_id, "partner"),
           portal_handoff: await resolvePortalHandoff(
             admin, grant, agreement, req.headers.get("origin")),
+          /* One living record: which version this is, and whether it moved
+               since the access was issued. Stated rather than hidden. */
+          record_currency: {
+            code: currency.reading.code,
+            moved_forward: currency.reading.movedForward,
+            issued_against_version: currency.reading.issuedAgainstVersion,
+            message: currency.reading.message,
+          },
           attestation_sha256: attestation.payload_sha256,
           attestation_version: attestation.version ?? null,
           issued_at: attestation.issued_at,
@@ -2328,6 +2414,69 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             .update({ superseded_by_id: att.id }).eq("id", last.id);
         }
 
+        /* ── carry every live authorisation onto the new version ───────
+           This is what made re-issuing revoke everybody. A v2 grant reads
+           through a disclosure manifest scoped to ONE attestation, and
+           issuing a new version wrote the version and nothing else — so
+           every partner's next read failed `manifest_missing`, or (before
+           the currency resolver) `attestation_superseded`. Either way a
+           routine re-issue silently cut off every partner who already held
+           the Passport, and the only repair was to re-send it to each of
+           them by hand.
+
+           It is ADDITIVE and it widens nothing: one new manifest row per
+           live grant, with the record classes, denied classes and expiry
+           copied from the manifest it succeeds. A partner's authorisation
+           after a re-issue is exactly what it was before it. A grant whose
+           predecessor had no manifest gets none — absence of evidence is
+           not authority, and it will fail closed on read as it should. */
+        let carriedForward = 0;
+        if (v2 && (att.schema_version ?? 1) === 2) {
+          const { data: liveGrants } = await admin.schema("aml").from("reliance_grants")
+            .select("id, revoked_at, expires_at, partner_org_id, partner_case_link_id, consent_id")
+            .eq("case_id", caseId).is("revoked_at", null);
+          const carry = grantsNeedingForwardManifest(liveGrants ?? [], {
+            schemaVersion: att.schema_version ?? 1,
+          });
+          for (const g of carry) {
+            const { data: previous } = await admin.schema("aml").from("disclosure_manifests")
+              .select("*").eq("grant_id", g.id)
+              .order("created_at", { ascending: false }).limit(1).maybeSingle();
+            if (!previous) continue;
+            const { data: already } = await admin.schema("aml").from("disclosure_manifests")
+              .select("id").eq("grant_id", g.id).eq("attestation_id", att.id).maybeSingle();
+            if (already) continue;
+            const manifestScope = {
+              allowed_attribute_codes: previous.allowed_attribute_codes ?? [],
+              allowed_record_classes: previous.allowed_record_classes ?? [],
+              denied_classes: previous.denied_classes ?? [],
+            };
+            const manifestSha = await sha256HexCanonical({
+              ...manifestScope, attestation_id: att.id, grant_id: g.id, version: 1,
+            });
+            const { error: carryError } = await admin.schema("aml")
+              .from("disclosure_manifests").insert({
+                attestation_id: att.id, grant_id: g.id,
+                partner_org_id: g.partner_org_id ?? null,
+                partner_case_link_id: g.partner_case_link_id ?? null,
+                purpose: previous.purpose,
+                consent_id: previous.consent_id ?? g.consent_id ?? null,
+                ...manifestScope,
+                manifest_sha256: manifestSha,
+                expires_at: previous.expires_at,
+                created_by: userId,
+              });
+            if (carryError) {
+              // Never fatal to the issue itself — the version is the
+              // compliance act. A grant that could not be carried forward
+              // fails CLOSED on read, which is the safe direction.
+              console.warn("[aml-reliance] manifest carry-forward skipped:", carryError.message);
+            } else {
+              carriedForward += 1;
+            }
+          }
+        }
+
         await appendCaseEvent(admin, caseId, "mlro_decision",
           `Compliance attestation v${version} issued (sha ${payloadSha.slice(0, 12)})`,
           {
@@ -2335,8 +2484,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             schema_version: v2 ? 2 : 1,
             material_input_hash: materialHash,
             issued_reason_code: (insertExtra.issued_reason_code as string | undefined) ?? null,
+            grants_carried_forward: carriedForward,
           }, userId, userEmail);
-        return jr({ attestation: att });
+        /* Reported, because it is the answer to "what did issuing just do to
+           the partners who already hold this?" — which used to be "cut them
+           off" and was said nowhere. */
+        return jr({ attestation: att, grants_carried_forward: carriedForward });
       }
 
       case "list_attestations": {
