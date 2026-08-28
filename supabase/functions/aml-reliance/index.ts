@@ -1108,13 +1108,95 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (!linkId) {
           // Link directory: the organisation's own links only, safe fields only.
           const { data: links } = await admin.schema("aml").from("partner_case_links")
-            .select("id, relationship_role, legal_route, state, portal_type, linked_at, ended_at, end_reason_code, purchase_file_id, legal_matter_id")
+            .select("id, case_id, relationship_role, legal_route, state, portal_type, linked_at, ended_at, end_reason_code, purchase_file_id, legal_matter_id")
             .eq("partner_org_id", partnerOrg.id)
             .in("portal_type", SURFACE_PORTAL_TYPES[surface])
             .order("linked_at", { ascending: false }).limit(100);
+          const linkRows: any[] = links ?? [];
+
+          /* ── what each matter may be CALLED ────────────────────────────
+             The list used to label every matter with the last six characters
+             of its own row id — "Matter …6a5a49" — which names nothing a
+             partner recognises and does not scale past a handful.
+
+             The customer's name and the case reference are printed on page
+             one of the Passport, so naming them on a matter whose Passport is
+             DISCLOSABLE tells the partner nothing they cannot already read.
+             Naming them on a withheld matter would be a new disclosure made
+             by a list rather than by a decision — so the enrichment is
+             attached per link, only where `passportDisclosure` allows it, and
+             the browser is never trusted to make that call.
+
+             Three batched reads rather than one per link: a partner with
+             fifty matters must not cost a hundred and fifty queries. */
+          const caseIds = [...new Set(linkRows.map((l) => String(l.case_id)).filter(Boolean))];
+          if (caseIds.length > 0) {
+            const [{ data: caseRows }, { data: grantRows }, { data: attRows }] = await Promise.all([
+              admin.schema("aml").from("cases")
+                .select("id, case_reference, subject_display_name").in("id", caseIds),
+              admin.schema("aml").from("reliance_grants")
+                .select("id, case_id, agreement_id, partner_org_id, granted_at, expires_at, revoked_at, revoke_reason")
+                .in("case_id", caseIds),
+              admin.schema("aml").from("compliance_attestations")
+                .select("id, case_id, version, superseded_at, refresh_required_at")
+                .in("case_id", caseIds).is("superseded_at", null),
+            ]);
+            /* A grant reaches this organisation by either explicit route —
+               its own column, or its arrangement's. Same rule as
+               `loadOrgGrantAndAttestation`; never a name match. */
+            const { data: orgAgreements } = await admin.schema("aml").from("reliance_agreements")
+              .select("id").eq("partner_org_id", partnerOrg.id);
+            const agreementIds = new Set((orgAgreements ?? []).map((a: any) => String(a.id)));
+            const caseById = new Map((caseRows ?? []).map((c: any) => [String(c.id), c]));
+            const attByCase = new Map((attRows ?? []).map((a: any) => [String(a.case_id), a]));
+            const grantByCase = new Map<string, any>();
+            for (const g of (grantRows ?? [])) {
+              const mine = (g.partner_org_id && String(g.partner_org_id) === String(partnerOrg.id))
+                || agreementIds.has(String(g.agreement_id));
+              if (!mine) continue;
+              if (String(g.revoke_reason ?? "") === "superseded_by_reissue") continue;
+              const key = String(g.case_id);
+              const held = grantByCase.get(key);
+              if (!held || String(g.granted_at) > String(held.granted_at)) grantByCase.set(key, g);
+            }
+
+            for (const link of linkRows) {
+              const key = String(link.case_id);
+              const grant = grantByCase.get(key) ?? null;
+              const attestation = attByCase.get(key) ?? null;
+              const decision = passportDisclosure({
+                grant: grant
+                  ? { revoked_at: grant.revoked_at ?? null, expires_at: grant.expires_at }
+                  : null,
+                attestation: attestation
+                  ? {
+                    superseded_at: attestation.superseded_at ?? null,
+                    refresh_required_at: attestation.refresh_required_at ?? null,
+                  }
+                  : null,
+              });
+              const expiring = decision.disclosable && grant
+                && new Date(grant.expires_at).getTime() - Date.now() <= 14 * 864e5;
+              link.expires_at = grant?.expires_at ?? null;
+              link.passport_state = decision.disclosable
+                ? (expiring ? "expiring" : "available")
+                : decision.code === "revoked" ? "withdrawn"
+                  : decision.code === "expired" ? "expired"
+                    : decision.code === "refresh_required" ? "updating"
+                      : "not_shared";
+              // Named ONLY where the record may be read.
+              if (decision.disclosable) {
+                const row = caseById.get(key);
+                link.subject_label = row?.subject_display_name ?? null;
+                link.case_reference = row?.case_reference ?? null;
+              }
+              delete link.case_id;
+            }
+          }
+
           return jr({
             organisation: { legal_name: partnerOrg.legal_name, classification_status: partnerOrg.classification_status },
-            links: links ?? [],
+            links: linkRows,
             surface_mode: surfaceMode,
           });
         }

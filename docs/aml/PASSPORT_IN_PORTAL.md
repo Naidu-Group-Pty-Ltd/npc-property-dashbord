@@ -242,3 +242,53 @@ emailed link still works and their own obligations are unaffected.
 discloses nothing — whether a page exists is what the navigation shows anyway
 — and it reports the page and the document **separately**, because a page
 with a withheld Passport is a real state and must not read as no page at all.
+
+## The filing cabinet
+
+A partner accumulates Passports. A broker acts on many purchases, a builder
+sells many lots, a conveyancer runs many matters, and every one of them can
+carry a Compliance Passport. The page showed them as a row of chips labelled
+**"Matter …6a5a49"** — the last six characters of a `partner_case_links` row
+id, rendered as a lone blue tag that reads as a stray label rather than a
+control. It names nothing a partner recognises and it does not survive ten
+matters, let alone fifty.
+
+It is a searchable list now: one row per matter, ordered by usefulness —
+readable Passports first, then the ones waiting on the issuing organisation,
+then the ones that have ended. The search box appears only once there is
+enough to search.
+
+**The rule underneath it is a disclosure rule.** A partner is told whose
+record a matter is ONLY where they may read that record. The customer's name
+and the case reference are printed on page one of the Passport, so naming
+them on a disclosable matter tells the partner nothing they cannot already
+read; naming them on a withheld one — never shared, withdrawn, lapsed — would
+be a **new disclosure made by a list rather than by a decision**.
+
+That is enforced server-side: `subject_label` and `case_reference` are simply
+not sent for a matter whose Passport is not disclosable, decided by the same
+`passportDisclosure` the document itself goes through. The browser cannot leak
+it by rendering the wrong field, and — the part worth stating — **the search
+box cannot be used to probe for a name that is not on screen**, because the
+haystack is built from what was rendered.
+
+Three smaller rules travel with it. The **partner's own reference leads**:
+their purchase file or legal matter number is what they filed the matter
+under, and the issuing organisation's case reference is a foreign key to
+them. A **status chip appears only when the state is not the ordinary one** —
+"Passport available" on every row is the same noise the operator-facing lists
+were criticised for. And the directory is enriched in **three batched
+queries**, not one per matter: fifty matters must not cost a hundred and fifty
+reads.
+
+## The page is centred
+
+It was a `max-w-3xl` column pinned to the left of a 1900px viewport with a
+two-up booklet inside it. The document is the subject of the page, so the
+container is centred and sized for that spread (`max-w-6xl`), and on a wide
+screen the matter list sits beside it — sticky — rather than above it. Below
+`lg` the two stack, list first.
+
+All three portals get this from the one shared workspace; the only per-portal
+difference is what each calls a matter (`ownReferenceLabel`: File, Contract,
+Matter).

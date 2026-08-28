@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { PartnerComplianceWorkspace } from "../PartnerComplianceWorkspace";
 import type {
@@ -38,7 +38,7 @@ const PORTALS: Array<{ name: string; adapter: PartnerPortalAdapter }> = [
     name: "Finance",
     adapter: {
       portalType: "finance", workspaceTitle: "Client compliance",
-      matterLabel: "Purchase file", roleLabel: "Lender / broker",
+      matterLabel: "Purchase file", ownReferenceLabel: "File", roleLabel: "Lender / broker",
       formatReference: (l) => `File ${String(l.purchase_file_id ?? l.id).slice(0, 8)}`,
       panels: ALL_PANELS,
       support: { operationalLabel: "Message the team", operationalHref: "/finance/messages", complianceLabel: "your compliance officer" },
@@ -48,7 +48,7 @@ const PORTALS: Array<{ name: string; adapter: PartnerPortalAdapter }> = [
     name: "Builder / Developer",
     adapter: {
       portalType: "builder", workspaceTitle: "Client compliance",
-      matterLabel: "Project sale", roleLabel: "Builder",
+      matterLabel: "Lot / contract", ownReferenceLabel: "Contract", roleLabel: "Builder",
       formatReference: (l) => `Matter ${String(l.id).slice(0, 8)}`,
       panels: ALL_PANELS,
       support: { operationalLabel: "Message the team", operationalHref: "/builder/messages", complianceLabel: "your compliance officer" },
@@ -58,7 +58,7 @@ const PORTALS: Array<{ name: string; adapter: PartnerPortalAdapter }> = [
     name: "Solicitor / Conveyancer",
     adapter: {
       portalType: "solicitor_conveyancer", workspaceTitle: "Client compliance",
-      matterLabel: "Matter", roleLabel: "Acting solicitor",
+      matterLabel: "Matter", ownReferenceLabel: "Matter", roleLabel: "Acting solicitor",
       formatReference: (l) => `Matter ${String(l.legal_matter_id ?? l.id).slice(0, 8)}`,
       panels: ALL_PANELS,
       support: { operationalLabel: "Message the team", operationalHref: "/solicitor/messages", complianceLabel: "your compliance officer" },
@@ -283,7 +283,7 @@ describe("the deep link from the emailed Passport lands on the right matter", ()
     const c = clientWithTwo();
     mount(PORTALS[1].adapter, c, "/builder/compliance");
     await waitFor(() => {
-      expect(screen.getByRole("navigation", { name: /list/i })).toBeTruthy();
+      expect(screen.getByRole("navigation", { name: /matters shared/i })).toBeTruthy();
     });
     expect(c.getWorkspace).not.toHaveBeenCalled();
   });
@@ -299,5 +299,84 @@ describe("the deep link from the emailed Passport lands on the right matter", ()
     });
     expect(c.getWorkspace).not.toHaveBeenCalled();
     expect(screen.queryByText(/not available/i)).toBeNull();
+  });
+});
+
+describe("the filing cabinet — a partner holds many Passports", () => {
+  const many = (count: number): PartnerWorkspaceDirectory => ({
+    organisation: { legal_name: "Ridgeline Builders Pty Ltd", classification_status: "classified" },
+    surface_mode: "passport_only" as never,
+    links: Array.from({ length: count }, (_, i) => ({
+      id: `link-${String(i).padStart(4, "0")}`,
+      relationship_role: "builder_developer", legal_route: "reliance",
+      state: "active", portal_type: "builder",
+      linked_at: `2026-08-${String(10 + i).padStart(2, "0")}T00:00:00Z`,
+      ended_at: null, end_reason_code: null,
+      purchase_file_id: `pf-${String(i).padStart(6, "0")}`, legal_matter_id: null,
+      passport_state: i % 2 === 0 ? "available" : "not_shared",
+      subject_label: i % 2 === 0 ? `Client Number ${i}` : null,
+      case_reference: i % 2 === 0 ? `AML-2026-${String(i).padStart(5, "0")}` : null,
+    })) as never,
+  });
+
+  const clientWithDirectory = (dir: PartnerWorkspaceDirectory) => {
+    const c = client();
+    (c.getDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ data: dir, error: null });
+    return c;
+  };
+
+  it("names the client on a readable matter — never a truncated row id", async () => {
+    /* "Matter …6a5a49" was the reported defect: six characters of a UUID
+       rendered as the only control on the page. */
+    mount(PORTALS[1].adapter, clientWithDirectory(many(4)));
+    expect(await screen.findByText("Client Number 0")).toBeInTheDocument();
+    const list = screen.getByRole("navigation", { name: /matters shared/i });
+    expect(list.textContent ?? "").not.toMatch(/Matter …[0-9a-f]{6}/);
+  });
+
+  it("a WITHHELD matter is listed without naming whose it is", async () => {
+    mount(PORTALS[1].adapter, clientWithDirectory(many(4)));
+    await screen.findByText("Client Number 0");
+    const list = screen.getByRole("navigation", { name: /matters shared/i });
+    // The odd-numbered ones are not shared and carry no subject.
+    expect(list).toHaveTextContent(/Nothing shared yet/);
+    /* The withheld rows carry the partner's OWN reference and no customer:
+       naming them there would be a disclosure made by a list. */
+    expect(list).toHaveTextContent(/Contract …0000/);
+    expect(list).not.toHaveTextContent("Client Number 1");
+  });
+
+  it("a search box appears once there is enough to search", async () => {
+    mount(PORTALS[1].adapter, clientWithDirectory(many(3)));
+    await screen.findByText("Client Number 0");
+    expect(screen.queryByRole("textbox", { name: /search your matters/i })).toBeNull();
+
+    mount(PORTALS[1].adapter, clientWithDirectory(many(8)));
+    expect(await screen.findByRole("textbox", { name: /search your matters/i }))
+      .toBeInTheDocument();
+  });
+
+  it("searching narrows the list to what matches", async () => {
+    mount(PORTALS[1].adapter, clientWithDirectory(many(8)));
+    const search = await screen.findByRole("textbox", { name: /search your matters/i });
+    fireEvent.change(search, { target: { value: "Client Number 4" } });
+    const list = screen.getByRole("navigation", { name: /matters shared/i });
+    expect(list).toHaveTextContent("Client Number 4");
+    expect(list).not.toHaveTextContent("Client Number 0");
+  });
+
+  it("choosing a matter opens THAT matter", async () => {
+    const c = clientWithDirectory(many(4));
+    mount(PORTALS[1].adapter, c);
+    fireEvent.click(await screen.findByText("Client Number 2"));
+    await waitFor(() => expect(c.getWorkspace).toHaveBeenCalled());
+    expect((c.getWorkspace as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0])
+      .toBe("link-0002");
+  });
+
+  it("with several matters and none chosen, it says to choose one", async () => {
+    mount(PORTALS[1].adapter, clientWithDirectory(many(4)));
+    expect(await screen.findByText(/Choose a matter to open its Compliance Passport/i))
+      .toBeInTheDocument();
   });
 });

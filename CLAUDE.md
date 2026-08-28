@@ -347,6 +347,15 @@ would change which partner every existing portal account speaks for. And
 **a withheld Passport renders its reason** — enrolled, linked and nothing to
 read is a real state, and a blank area reads as a broken page.
 
+A partner accumulates Passports, so the page is a **filing cabinet** now, not
+a row of chips labelled `Matter …6a5a49` (the last six characters of a row
+id). `partnerMatterIndex.pure.ts` orders matters by what can be opened and the
+page is centred with the list beside the document. Its rule is a disclosure
+rule: **a partner is told whose record a matter is only where they may READ
+it** — `subject_label` is not sent for a withheld matter, decided by the same
+`passportDisclosure` the document goes through, so neither the list nor the
+search box can name a customer the partner may not see.
+
 An eighth fault sat in front of all of it: the page and the nav entry gated on
 `supabase.from("feature_flags")` **from the browser**, and that read can never
 work for a partner — the table grants SELECT `TO authenticated`, a portal
