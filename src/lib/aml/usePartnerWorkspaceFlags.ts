@@ -70,9 +70,41 @@ export function useAnyPartnerWorkspaceEnabled(): { loading: boolean; enabled: bo
   const finance = usePartnerWorkspaceEnabled("finance");
   const builder = usePartnerWorkspaceEnabled("builder");
   const solicitor = usePartnerWorkspaceEnabled("solicitor");
-  const loading = finance.loading || builder.loading || solicitor.loading;
+  const passport = usePassportViewInPortalEnabled();
+  const loading = finance.loading || builder.loading || solicitor.loading || passport.loading;
   return {
     loading,
-    enabled: loading ? null : (finance.enabled || builder.enabled || solicitor.enabled),
+    /* A surface with no Passport on it is not a place a partner can read
+       this record, so the Command Centre must not offer it as one. Both
+       halves are required: the page has to exist, AND the document has to be
+       served into it. */
+    enabled: loading
+      ? null
+      : ((finance.enabled || builder.enabled || solicitor.enabled) && passport.enabled),
   };
+}
+
+/** `aml_partner_passport_view` on its own. Fails closed like the others. */
+export function usePassportViewInPortalEnabled(): { loading: boolean; enabled: boolean } {
+  const [state, setState] = useState<{ loading: boolean; enabled: boolean }>({
+    loading: true, enabled: false,
+  });
+  useEffect(() => {
+    let alive = true;
+    const key = "flag:aml_partner_passport_view";
+    if (!cache.has(key as WorkspaceSurfaceKey)) {
+      cache.set(key as WorkspaceSurfaceKey, (async () => {
+        const { data, error } = await supabase
+          .from("feature_flags").select("key, value")
+          .eq("key", "aml_partner_passport_view").maybeSingle();
+        if (error || !data) return false;
+        return coerce((data as any).value);
+      })().catch(() => false));
+    }
+    cache.get(key as WorkspaceSurfaceKey)!.then((enabled) => {
+      if (alive) setState({ loading: false, enabled });
+    });
+    return () => { alive = false; };
+  }, []);
+  return state;
 }

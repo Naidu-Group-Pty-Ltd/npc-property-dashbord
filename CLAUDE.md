@@ -283,6 +283,34 @@ credential**; the link is what a person opens and the token is for a partner
 system with no browser, so it sits behind a disclosure rather than being
 presented as the deliverable.
 
+## The Passport inside a partner's own portal
+Read [`docs/aml/PASSPORT_IN_PORTAL.md`](./docs/aml/PASSPORT_IN_PORTAL.md)
+before touching `_shared/aml/partnerSurface.pure.ts`, `PartnerPassportPanel`,
+`enrol_partner_portal_access` or the `passport` field on
+`get_partner_compliance_workspace`. The machinery existed and had never served
+a partner, for **four independent reasons each fatal on its own**: the surface
+flags were off; `partner_portal_memberships` held zero rows and its upsert op
+had no caller anywhere; the organisation cross-reference columns were declared
+by the Phase 1 migration and written by **nothing, ever**; and the page drew a
+one-line identity strip rather than the booklet.
+
+Four rules carry it. **The in-portal document is the SAME document** —
+`buildCasePassportView(…, "partner")`, the assembler the emailed link uses, so
+"identical" is a property of one implementation rather than two agreeing.
+**Turning the Passport on NARROWS the page**: `aml_partner_passport_view`
+resolves the surface to `passport_only` unless `aml_partner_workspace_full` is
+also on, so showing a document cannot expose eight unreviewed panels — and the
+mode is a mask over the per-portal adapter (`full && adapter`), never a
+replacement for it. **Enrolment maps a real portal identity read from the
+portal's own records, and never re-points an existing binding**, because that
+would change which partner every existing portal account speaks for. And
+**a withheld Passport renders its reason** — enrolled, linked and nothing to
+read is a real state, and a blank area reads as a broken page.
+
+The raw bearer token is **gone from the Command Centre**: it and the
+`/passport/<token>` link are one credential, and showing it twice invited an
+operator to send "the code" instead of the link.
+
 ## Stage 5 — the screening resolution centre
 Read [`docs/aml/STAGE_5_SCREENING_RESOLUTION.md`](./docs/aml/STAGE_5_SCREENING_RESOLUTION.md)
 before touching `ScreeningStageCard`, `screeningResolution.pure.ts`,

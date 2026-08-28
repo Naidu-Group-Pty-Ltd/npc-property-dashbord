@@ -24,6 +24,10 @@ export {
   RESPONSIBILITY_NOTICE,
 } from "../../../supabase/functions/_shared/aml/partnerWorkspace";
 import type { PartnerWorkspaceDto } from "../../../supabase/functions/_shared/aml/partnerWorkspace";
+import type { PartnerSurfaceMode } from "@/lib/aml/partnerSurface";
+import type { PassportView } from "@/lib/aml/passport";
+
+export type { PartnerSurfaceMode };
 
 export interface PartnerLinkSummary {
   id: string;
@@ -41,6 +45,30 @@ export interface PartnerLinkSummary {
 export interface PartnerWorkspaceDirectory {
   organisation: { legal_name: string; classification_status: string };
   links: PartnerLinkSummary[];
+  /**
+   * What this partner's compliance page IS, decided server-side.
+   *
+   * Absent on a deployment serving a build that predates it, which reads as
+   * `full` — today's behaviour — rather than as a narrower page the operator
+   * never asked for.
+   */
+  surface_mode?: PartnerSurfaceMode;
+}
+
+/**
+ * The Compliance Passport as the partner's own portal receives it.
+ *
+ * `passport` is the SAME `PassportView` the Command Centre renders and the
+ * emailed link serves, built for the partner audience by the one assembler.
+ * It is `null` whenever the record is not disclosable, and
+ * `passport_availability` says which of those reasons applies — a blank area
+ * with no explanation is the failure mode this programme keeps finding.
+ */
+export interface PartnerWorkspaceResponse {
+  workspace: PartnerWorkspaceDto;
+  surface_mode?: PartnerSurfaceMode;
+  passport?: PassportView | null;
+  passport_availability?: { code: string; message: string };
 }
 
 /** Result envelope every client method resolves to. `error` carries the
@@ -58,7 +86,7 @@ export interface PartnerClientResult<T> {
  */
 export interface PartnerWorkspaceClient {
   getDirectory(): Promise<PartnerClientResult<PartnerWorkspaceDirectory>>;
-  getWorkspace(linkId: string): Promise<PartnerClientResult<{ workspace: PartnerWorkspaceDto }>>;
+  getWorkspace(linkId: string): Promise<PartnerClientResult<PartnerWorkspaceResponse>>;
   requestRecords(input: {
     linkId: string; recordCodes: string[]; rationale: string; dueAt?: string;
   }): Promise<PartnerClientResult<{ request: unknown }>>;

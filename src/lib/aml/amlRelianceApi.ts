@@ -287,6 +287,37 @@ export const amlRelianceApi = {
       link_email_sent: boolean | null;
       link_email_error: string | null;
     }>({ op: "grant_access", case_id, agreement_id, ...options }),
+  /**
+   * Map a REAL portal identity to this canonical partner organisation, and
+   * bind the organisation to the portal organisation that identity belongs
+   * to — in one act, because a membership without the binding is still a
+   * locked door and a binding without a membership is a mapping nobody can
+   * use.
+   *
+   * Without this the partner compliance page refuses a partner who has a
+   * working portal login, an active arrangement and a live grant, because
+   * `partner_portal_memberships` is empty and the organisation
+   * cross-reference columns were declared by a migration and written by
+   * nothing. The server mints no identity and never re-points an existing
+   * binding.
+   */
+  enrolPartnerPortalAccess: (params: {
+    partner_org_id: string;
+    portal_user_source: "finance_portal_users" | "builder_portal_users" | "solicitor_portal_users";
+    portal_user_id: string;
+    portal_type: "finance" | "builder" | "developer" | "solicitor_conveyancer";
+    builder_organisation_id?: string;
+    organisation_role?: string;
+    compliance_role?: "compliance_officer" | "operations" | "read_only";
+    status?: "invited" | "active" | "suspended" | "ended";
+  }) =>
+    invoke<{
+      membership: { id: string; status: string; portal_type: string };
+      organisation_binding: { column: string; portal_organisation_id: string; bound: "already" | "set" };
+      /** Enrolment is necessary, not sufficient — the surface flags decide. */
+      surface_enabled: boolean;
+      passport_view_enabled: boolean;
+    }>({ op: "enrol_partner_portal_access", ...params }),
   revokeGrant: (grant_id: string, reason: string) =>
     invoke<{ grant: RelianceGrant }>({ op: "revoke_grant", grant_id, reason }),
   listGrants: (case_id: string) =>
