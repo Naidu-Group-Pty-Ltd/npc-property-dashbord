@@ -16,6 +16,9 @@
  * names (`Deal`, `Estate Tag`, `Package Status`).
  */
 import { describe, expect, it } from 'vitest';
+import {
+  negativeProvenanceStillStands,
+} from '../../../supabase/functions/_shared/builderStock/negativeProvenance.pure';
 
 import {
   ANNOTATED_VERDICT, CLEAN_VERDICT, cleanPicture, jpegOf, pngOf,
@@ -1465,8 +1468,23 @@ describe('a package that named no image is not read again', () => {
     });
 
     expect(outcome.packageUnreachable).toBe(1);
-    // "We could not look" is not "there is nothing to find".
-    expect(db.tables.builder_stock_items[0].source_provenance_result).toBeUndefined();
+    /*
+     * "We could not look" is not "there is nothing to find".
+     *
+     * Asserted as retryability rather than as `undefined`: the recovery now
+     * writes an attempt claim before it starts, so that a worker KILL leaves
+     * evidence, and clears it again on every path where the step returned. A
+     * cleared claim is NULL, which is the same thing as absent to Postgres —
+     * what matters, and what is checked, is that nothing here stands as an
+     * answer, so the package is asked again next tick.
+     */
+    const afterUnreachable = db.tables.builder_stock_items[0].source_provenance_result;
+    expect(afterUnreachable ?? null).toBeNull();
+    expect(negativeProvenanceStillStands(afterUnreachable, {
+      provenanceVersion: PROVENANCE_VERSION,
+      packageReference: FOLDER_A,
+      sourceAnchor: null,
+    })).toBe(false);
     expect(outcome.incomplete).toBe(true);
   });
 
@@ -1485,7 +1503,15 @@ describe('a package that named no image is not read again', () => {
       fetchPackage: async () => { throw new Error('parser exploded'); },
     });
 
-    expect(db.tables.builder_stock_items[0].source_provenance_result).toBeUndefined();
+    // Same rule as F: a claim written before an uninterruptible step is cleared
+    // when that step returns, however it returned.
+    const afterThrow = db.tables.builder_stock_items[0].source_provenance_result;
+    expect(afterThrow ?? null).toBeNull();
+    expect(negativeProvenanceStillStands(afterThrow, {
+      provenanceVersion: PROVENANCE_VERSION,
+      packageReference: FOLDER_A,
+      sourceAnchor: null,
+    })).toBe(false);
     expect(outcome.incomplete).toBe(true);
   });
 
