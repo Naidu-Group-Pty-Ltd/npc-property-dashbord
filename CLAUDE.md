@@ -283,6 +283,19 @@ credential**; the link is what a person opens and the token is for a partner
 system with no browser, so it sits behind a disclosure rather than being
 presented as the deliverable.
 
+**Access can be withdrawn, and withdrawal is not deletion.** `revoke_grant`
+existed from the first version and no surface ever called it. A grant records
+that a disclosure was authorised, so revoking stops the access and KEEPS the
+history — the only "remove this partner" a register may offer. It needs a
+reason, it is offered only on a LIVE grant, and it is deliberately not gated
+by what gates issuing (an overdue review, a missing attestation, the write
+flag): those stop new disclosure, and stopping disclosure is what this does.
+The explained action list that made blocked buttons legible had itself become
+a wall — five rows of three lines, always open, beside the same grants listed
+twice — so **one act is open (the server's `ready`) and the rest are a
+disclosure**, and "Link history" is gone because its rows are the recipients
+list and its collapsed `Ended access` group.
+
 ## The Passport inside a partner's own portal
 Read [`docs/aml/PASSPORT_IN_PORTAL.md`](./docs/aml/PASSPORT_IN_PORTAL.md)
 before touching `_shared/aml/partnerSurface.pure.ts`, `PartnerPassportPanel`,

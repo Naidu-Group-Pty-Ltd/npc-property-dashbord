@@ -258,7 +258,15 @@ describe("the act the acceptance unlocked", () => {
     });
 
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    expect(await screen.findByText(/holds a live Compliance Passport/i)).toBeInTheDocument();
+    /* The property is that the workspace stops ASKING for something already
+       done. It used to say so in a banner that repeated the recipients row
+       directly beneath it — same partner, same standing, twice — so the
+       banner is gone and the row is where a live Passport is reported. */
+    const panel = await screen.findByRole("region", { name: /passport recipients/i });
+    expect(panel).toHaveTextContent(/Testing Pty Ltd/);
+    expect(panel).toHaveTextContent(/live/);
     expect(screen.queryByRole("button", { name: /Issue the Passport/i })).not.toBeInTheDocument();
+    // And the acceptance banner does not re-announce it.
+    expect(screen.queryByText(/holds a live Compliance Passport/i)).toBeNull();
   });
 });
