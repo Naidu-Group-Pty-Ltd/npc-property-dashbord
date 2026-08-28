@@ -18,9 +18,9 @@
  *
  * The geometry lives in `passport-tokens.css`; nothing here carries a colour.
  * The two things this component decides are per-stamp and derived: which of
- * the three inks the impression takes (`stampFaceTone` — by what the stamp
- * speaks for, never by a per-code palette) and its angle (`stampRotation` —
- * fixed by position, because a random one would move on every render).
+ * the seven inks the impression takes (`stampInk` — authority first, then
+ * what the certification is ABOUT) and its angle (`stampRotation` — fixed by
+ * position, because a random one would move on every render).
  *
  * `StampSeal` is deliberately NOT replaced. It still draws the partner
  * compliance strip, which is a different, already-shipped surface with no
@@ -29,7 +29,7 @@
  */
 import type { CSSProperties } from "react";
 import {
-  stampFaceTone,
+  stampInk,
   stampRotation,
   type PassportStamp,
   type PendingStamp,
@@ -168,7 +168,7 @@ export function StampFace({
   upright?: boolean;
   className?: string;
 }) {
-  const tone = stampFaceTone(stamp, issuerOrg);
+  const ink = stampInk(stamp, issuerOrg);
   const sub = [stamp.version ? `v${stamp.version}` : null, stamp.actor]
     .filter(Boolean)
     .join(" · ");
@@ -176,7 +176,7 @@ export function StampFace({
     <div
       className={cn(
         "passport-stamp",
-        `passport-stamp--${tone}`,
+        `passport-stamp--${ink}`,
         `passport-stamp--${stamp.shape}`,
         className,
       )}
