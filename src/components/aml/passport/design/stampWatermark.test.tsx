@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { StampFace, PendingStampFace } from "./StampFace";
 import { StampRecordDialog } from "./PassportPortals";
 import { Wax } from "./primitives";
+import { stampFaceTone, stampInk } from "@/lib/aml/passport";
 import type { PassportStamp, PendingStamp } from "@/lib/aml/passport";
 
 /**
@@ -208,6 +209,80 @@ describe("the mark cannot degrade into a blot", () => {
     // mark, not a blot.
     for (const selector of [".passport-stamp__watermark", ".passport-wax__watermark"]) {
       expect(ruleFor(selector)).toContain('url("/brand/aurixa-emblem-240.png")');
+    }
+  });
+});
+
+/**
+ * The ink, and the two axes it is decided on.
+ *
+ * The register was reported as bland, and it was: `STAMP_VOCABULARY` has
+ * carried a per-code tone since it was written, and the die collapsed
+ * twenty-two certifications into three inks. Because the issuer strikes
+ * nearly all of them, a real page rendered as five gold rectangles and one
+ * green circle. The colour was in the data; nothing asked for it.
+ */
+describe("the ink says what the certification is", () => {
+  const ISSUER = "Naidu Property Consulting Services";
+
+  it.each([
+    ["client_consent_recorded", "violet"],
+    ["identity_verified", "gold"],
+    ["documents_verified", "gold"],
+    ["screening_completed", "azure"],
+    ["source_of_funds_reviewed", "emerald"],
+    ["edd_completed", "emerald"],
+    ["passport_issued", "final"],
+    ["transaction_completed", "final"],
+    ["access_revoked", "alert"],
+    ["passport_superseded", "alert"],
+    ["reliance_accepted_finance", "partner"],
+  ] as const)("inks %s as %s", (code, ink) => {
+    expect(stampInk({ code, org: ISSUER }, ISSUER)).toBe(ink);
+  });
+
+  it("keeps funding APART from the terminal certification", () => {
+    // The vocabulary inks `source_of_funds_reviewed` the same green as
+    // `passport_issued`, and a funding review that looks identical to the
+    // issuance is exactly the confusion a colour system removes. That is why
+    // the die reads its own map rather than the vocabulary's coarser tone.
+    expect(stampInk({ code: "source_of_funds_reviewed", org: ISSUER }, ISSUER))
+      .not.toBe(stampInk({ code: "passport_issued", org: ISSUER }, ISSUER));
+  });
+
+  it("AUTHORITY still comes first, whatever the subject", () => {
+    // The security property: a reader must be able to see at a glance which
+    // impressions are ours. A stamp struck by somebody else is partner-inked
+    // even where its subject would say otherwise.
+    for (const code of ["identity_verified", "screening_completed", "passport_issued"] as const) {
+      expect(stampInk({ code, org: "Someone Else Pty Ltd" }, ISSUER)).toBe("partner");
+    }
+    // And that decision is still made in one place.
+    expect(stampFaceTone({ code: "identity_verified", org: "Someone Else Pty Ltd" }, ISSUER))
+      .toBe("partner");
+  });
+
+  it("every ink it can return has a face to render it with", () => {
+    // A code mapped to an ink with no `.passport-stamp--<ink>` class renders
+    // as an unstyled die: no edge, no wash, no glow, and a watermark with no
+    // colour to take. Both surfaces have to carry every family.
+    for (const ink of ["gold", "azure", "violet", "emerald", "final", "partner", "alert"]) {
+      expect(CSS).toContain(`.passport-stamp--${ink} {`);
+      expect(CSS).toContain(`--stamp-${ink}-ink`);
+    }
+  });
+
+  it("the leaf re-mixes every family rather than inheriting the dark one", () => {
+    // A hue that reads as a bright ink on a near-black field is a wash on
+    // cream. The leaf block has to redefine each family or the booklet
+    // renders four of the seven in the register's lightness.
+    // `.passport-leaf` appears more than once — geometry, then the paper's
+    // own ink block. The one that matters is whichever declares the die.
+    const at = CSS.indexOf("--stamp-gold-ink", CSS.indexOf("--stamp-alert-glow"));
+    expect(at).toBeGreaterThan(-1);
+    const leaf = CSS.slice(at, at + 4_000);
+    for (const ink of ["gold", "partner", "final", "azure", "violet", "emerald", "alert"]) {
+      expect(leaf).toContain(`--stamp-${ink}-ink`);
     }
   });
 });
