@@ -352,6 +352,26 @@ export async function repairSourceImagesForUpload(
      * running this again continues where it left off.
      */
     deadlineAt?: number;
+    /**
+     * DO THE WORK FOR EXACTLY ONE PROPERTY, and leave every other property in
+     * this upload alone.
+     *
+     * The caller has CLAIMED that property — nobody else holds it, and nobody
+     * else is waiting behind it. Without this the run walks the whole upload
+     * `created_at` ascending and ends on the first cap it hits, so a property
+     * that is expensive, or one that kills the worker, stops every property
+     * after it: on 29 August the walk reached item 13 of 23 in twenty-six
+     * hours and items 14 to 23 were never read once.
+     *
+     * WHAT IT DOES NOT NARROW is how a source row is matched to a property.
+     * The loop still resolves every row in the document, in order, consuming
+     * the fingerprint queue exactly as it always has — because the reference,
+     * development/unit and fingerprint keys are POSITIONAL against a document
+     * that can list one lot twice, and resolving a subset would hand the
+     * second row's picture to the first row's property. Only the work is
+     * skipped, never the identity.
+     */
+    onlyItemId?: string | null;
   },
   deps: {
     fetchPackage?: PackageFetcher;
@@ -533,6 +553,7 @@ export async function repairSourceImagesForUpload(
       pageTexts,
       pageOrderAuthoritative,
       deadlineAt: input.deadlineAt,
+      onlyItemId: input.onlyItemId ?? null,
     }, outcome);
   }
 
@@ -662,6 +683,10 @@ export async function repairSourceImagesForUpload(
     if (all.length) outcome.rowsWithImagery += 1;
 
     if (!itemId) continue;
+    // Identity was resolved above for EVERY row, so the fingerprint queue and
+    // the anchor map are byte-identical to an unscoped run. Only the work below
+    // belongs to one property.
+    if (input.onlyItemId && itemId !== input.onlyItemId) continue;
     itemIdsInOrder.push(itemId);
     if (anchor) {
       if (!itemIdByAnchor.has(anchor)) itemIdByAnchor.set(anchor, itemId);
@@ -940,7 +965,13 @@ export async function repairSourceImagesForUpload(
     let recovered: PackageOutcome;
     try {
       recovered = await recoverPackageImage(
-        { packageUrl, label: stockRecordLabel(record) },
+        {
+          packageUrl,
+          label: stockRecordLabel(record),
+          // Tells "(178 SqM)" from "(207 SqM)" where a lot has two packages.
+          buildingSqm: Number((record as { building_size_sqm?: unknown })?.building_size_sqm)
+            || null,
+        },
         { fetchPackage: deps.fetchPackage, cache, readPageTexts: deps.readPageTexts },
       );
     } catch (error) {
@@ -979,6 +1010,62 @@ export async function repairSourceImagesForUpload(
      * upload settled on the strength of an answer that was never persisted, so
      * the run reports itself incomplete.
      */
+    /*
+     * A PHOTOGRAPH THE BUILDER FILED, STORED AS IT STANDS.
+     *
+     * The same store, the same convicting, the same clearing of a stale
+     * negative — what differs is only that there is no page to cite, because
+     * the source is a file rather than a document. Recorded as
+     * `linked_package_photo` so the row says which of the two it was.
+     */
+    if (recovered.status === 'recovered_photograph') {
+      await clearAttempt();
+      const photo = recovered.photograph;
+      if (!all.length) {
+        outcome.rowsWithImagery += 1;
+        outcome.matched += 1;
+      }
+      const storedPhoto = await storeSourceImageBytes(db, {
+        organisationId: input.organisationId,
+        uploadId: upload.id,
+        stockItemId: itemId,
+        bytes: photo.bytes,
+        contentType: photo.contentType,
+        reference: photo.reference,
+        provider: 'linked_package',
+        origin: 'linked_package_photo',
+        pageUrl: packageUrl,
+        position: 0,
+        detail: {
+          ...roleDetail(photo.role),
+          document: photo.fileName,
+          document_url: photo.fileUrl,
+          source_row_anchor: anchor,
+          folder_path: photo.folderPath,
+          extraction_method: 'filed_as_is',
+        },
+      });
+      if (storedPhoto) {
+        outcome.imagesStored += 1;
+        outcome.fromPackage += 1;
+        prove(itemId, photo.reference);
+        touched.add(itemId);
+        if (negativeBefore.has(itemId)) {
+          await db.from('builder_stock_items')
+            .update({ source_provenance_result: null })
+            .eq('id', itemId)
+            .eq('organisation_id', input.organisationId);
+          negativeBefore.delete(itemId);
+        }
+      } else {
+        outcome.problems.push({
+          reference: photo.reference,
+          reason: 'The recovered photograph could not be stored.',
+        });
+      }
+      continue;
+    }
+
     if (recovered.status !== 'recovered') {
       outcome.packageNotIdentified += 1;
       const { error: writeError } = await db
@@ -1147,7 +1234,14 @@ export async function repairSourceImagesForUpload(
    * already has, and the package recovery this upload has been waiting on gets
    * a whole budget to itself.
    */
-  if (notionAssetsRead && !assetRowsDeferred && !rowAssetsEnumerated) {
+  /*
+   * NEVER ON A SCOPED RUN. The stamp says "the live source has nothing left to
+   * say about row assets", which is a statement about the whole upload — and a
+   * run that deliberately looked at one property has established nothing of the
+   * kind. Writing it here would strand every other property's cover behind a
+   * marker saying there was none.
+   */
+  if (!input.onlyItemId && notionAssetsRead && !assetRowsDeferred && !rowAssetsEnumerated) {
     const { error } = await db.from('builder_stock_uploads').update({
       image_stage_summary: {
         ...stageSummary,
@@ -1197,6 +1291,8 @@ async function repairPdfUpload(
     pageTexts: string[];
     pageOrderAuthoritative: boolean;
     deadlineAt?: number;
+    /** Work for one claimed property only. See `repairSourceImagesForUpload`. */
+    onlyItemId?: string | null;
   },
   outcome: RepairOutcome,
 ): Promise<RepairOutcome> {
@@ -1238,6 +1334,22 @@ async function repairPdfUpload(
     if (itemIdByAnchor.get(anchor) !== itemId) itemIdByAnchor.set(anchor, null);
   });
 
+  /*
+   * NARROWED AFTER RESOLUTION, NEVER BEFORE IT.
+   *
+   * `anchorPdfRowsToPages` is positional over the whole document and the
+   * two-properties-claim-one-page rule above needs to SEE both of them to
+   * refuse. Resolving a subset would let a page the document declines to
+   * attribute be handed to the one property we happened to claim. So every
+   * anchor is decided exactly as in an unscoped run, and only then are the
+   * ones belonging to other properties dropped.
+   */
+  if (input.onlyItemId) {
+    for (const [anchor, itemId] of [...itemIdByAnchor]) {
+      if (itemId !== input.onlyItemId) itemIdByAnchor.delete(anchor);
+    }
+  }
+
   const attached = await attachDocumentMedia(
     db,
     {
@@ -1276,6 +1388,7 @@ async function repairPdfUpload(
   const stage1ByItem = await readStage1Images(db, existing.map((item) => item.id));
 
   for (const item of existing) {
+    if (input.onlyItemId && item.id !== input.onlyItemId) continue;
     /**
      * Stopping here is SAFE TO RESUME because it is safe to repeat: the media
      * were attributed above from the document itself, the demotion below is

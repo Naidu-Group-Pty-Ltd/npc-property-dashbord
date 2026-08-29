@@ -20,7 +20,10 @@ export {
 
 export {
   derivePassportState,
+  refreshRemedy,
   versionRegisterState,
+  PASSPORT_STATE_REASONS,
+  type PassportRefreshRemedy,
   type PassportAttestationFact,
   type PassportStateCode,
   type PassportStateInput,
@@ -36,8 +39,10 @@ export {
   derivePassportStamps,
   derivePendingStamps,
   stampFaceTone,
+  stampInk,
   stampRotation,
   type StampFaceTone,
+  type StampInk,
   type PassportStamp,
   type PassportStampCode,
   type PassportStampInput,
