@@ -73,6 +73,12 @@ export interface NotionRecoveryDiagnostics {
   row_pages_fetched: number;
   /** Set only when Notion itself refused us. */
   access_denied_status: number | null;
+  /**
+   * The link named a view (`?v=`) the page does not have. The read is refused
+   * rather than served another view, so this is the one diagnostic that says
+   * the source was rejected for naming a stock list nobody could find.
+   */
+  requested_view_missing: boolean;
 }
 
 export type NotionRecovery =
@@ -265,6 +271,7 @@ function blankDiagnostics(): NotionRecoveryDiagnostics {
     has_collection: false, query_status: null, query_bytes: 0, row_count: 0,
     column_count: 0, simple_tables: 0, text_length: 0, access_denied_status: null,
     rows_with_source_images: 0, source_image_assets: 0, row_pages_fetched: 0,
+    requested_view_missing: false,
   };
 }
 

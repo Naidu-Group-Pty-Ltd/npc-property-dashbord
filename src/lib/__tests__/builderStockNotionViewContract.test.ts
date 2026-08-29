@@ -156,6 +156,20 @@ describe('the view\'s own query', () => {
     expect(portal).toContain("recovery.reason === 'requested_view_missing'");
     expect(portal).toContain('notion_view_not_found');
   });
+
+  it('the refusal is a DECLARED diagnostic, not a field invented at the call site', () => {
+    /*
+     * A refusal nobody can see afterwards is the same operator conversation
+     * over again. The field is on `NotionRecoveryDiagnostics` and defaulted in
+     * `blankDiagnostics`, so every recovery answers the question — and the
+     * edge type-check enforces it rather than a stray property assignment
+     * silently doing nothing.
+     */
+    const source = readSource();
+    expect(source).toContain('requested_view_missing: boolean;');
+    expect(source).toContain('requested_view_missing: false,');
+    expect(source).toContain('diagnostics.requested_view_missing = true;');
+  });
 });
 
 function readSource(): string {
