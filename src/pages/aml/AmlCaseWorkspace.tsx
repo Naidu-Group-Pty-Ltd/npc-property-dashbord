@@ -85,7 +85,7 @@ import { SanctionsPerimeterControl } from "@/components/aml/SanctionsPerimeterCo
 import { useScreeningStage } from "@/lib/aml/useScreeningStage";
 import { deriveScreeningPath, type ScreeningStepKey } from "@/lib/aml/screeningSteps.pure";
 import {
-  ADMIN_AML_CONFIGURATION_PATH, ADMIN_AML_VERIFICATION_PATH,
+  ADMIN_AML_CONFIGURATION_PATH, ADMIN_AML_LIST_HEALTH_PATH,
 } from "@/lib/aml/amlRoutes";
 import { useLiveCaseRefresh } from "@/lib/aml/useLiveCaseRefresh";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
@@ -605,29 +605,6 @@ export default function AmlCaseWorkspace() {
           block: "start", behavior: "smooth",
         });
         return;
-      case "complete_assessment":
-        /*
-         * Stage 8's primary act: land on the decision work, not merely the
-         * section the operator is already viewing. The guided path at the
-         * top of the risk panel then names the open step.
-         */
-        window.setTimeout(() => {
-          document.getElementById("aml-risk-decision")
-            ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
-        }, 0);
-        return;
-      case "record_gate":
-        /* The gate is no longer a second decision on Stage 9. A cleared
-         * decision carries it, so the only gate a cleared case can still be
-         * holding is one an MLRO deliberately stopped, or a legacy row — and
-         * both are recorded on the Decision stage's full gate card, which is
-         * where every non-approval status has always lived. */
-        setSection("risk");
-        window.setTimeout(() => {
-          document.getElementById("decision-step-gate")
-            ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
-        }, 0);
-        return;
       case "adjudicate_match":
       case "escalate":
       default:
@@ -990,7 +967,7 @@ export default function AmlCaseWorkspace() {
                 onAct={runScreeningAction}
                 onContinue={nextStage ? () => goToStage(nextStage.id) : undefined}
                 onReviewPerimeter={() => setPerimeterDialogOpen(true)}
-                onOpenListHealth={() => navigate(ADMIN_AML_VERIFICATION_PATH)}
+                onOpenListHealth={() => navigate(ADMIN_AML_LIST_HEALTH_PATH)}
                 actor={{
                   canWrite,
                   isReviewer: access.roles.has("reviewer"),
