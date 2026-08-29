@@ -1654,12 +1654,17 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
         /* `actionType` matters — without one this button fell to the
          * workspace switch's default, a scroll to a screening anchor that
          * does not exist, and changed nothing visible. Same class as the
-         * Stage 6/7/8 buttons before it. The section is THIS stage: the
-         * gate card is mounted on Gate & Passport now, so the button no
-         * longer bounces the operator back to the Decision stage. */
+         * Stage 6/7/8 buttons before it.
+         *
+         * It lands on the DECISION stage now. The gate is granted by the
+         * cleared decision itself, so a cleared case still holding an open
+         * gate is either one an MLRO stopped or one decided before that
+         * change — and both are recorded on the Decision stage's full gate
+         * card. Sending the operator to a card Stage 9 no longer mounts is
+         * the dead-button class this label was written to escape. */
         ? {
-            key: "gate", label: "Record the service-gate decision", section: "passport",
-            actionType: "record_gate",
+            key: "gate", label: "Open the gate controls on the Decision stage",
+            section: "risk", actionType: "record_gate",
           }
         : { key: "passport", label: "Open the Compliance Passport", section: "passport" },
     secondaryActions: [{ key: "passport_open", label: "Passport & reliance", section: "passport" }],

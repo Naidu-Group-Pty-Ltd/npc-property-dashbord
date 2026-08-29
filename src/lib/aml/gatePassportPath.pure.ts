@@ -84,7 +84,17 @@ export function gatePassportPath(f: GatePassportFacts): GatePassportStep[] {
     blockedBy: f.decisionOutcome === "blocked" ? "The case is blocked" : null,
   });
 
-  /* 2 · The gate — the explicit entitlement act. */
+  /* 2 · The gate — granted BY the cleared decision, not asked for again.
+   *
+   *     Stage 9 used to carry its own approval card, so a reviewer who had
+   *     just cleared the case was asked to decide the same thing a second
+   *     time, with a second reason. `decide` records the gate itself now.
+   *     A cleared case whose gate is still open is therefore one of two
+   *     things — a gate an MLRO deliberately stopped, or a row decided
+   *     before that change — and both are recorded on the Decision stage's
+   *     full gate card, which is the only place every status has ever
+   *     lived. */
+  const gateStopped = f.gateStatus === "locked" || f.gateStatus === "terminated";
   steps.push({
     key: "gate",
     label: "Service gate approved",
@@ -95,9 +105,11 @@ export function gatePassportPath(f: GatePassportFacts): GatePassportStep[] {
         : "outstanding",
     detail: gateApproved
       ? `${f.gateStatus.replace(/_/g, " ")} — the designated service may proceed.`
-      : f.decisionOutcome === "cleared"
-        ? "The case is cleared — approve the gate on the card below (the recorded decision suggests the status)."
-        : `Currently ${f.gateStatus.replace(/_/g, " ")}. Approval happens on this stage once the case is cleared; every other gate status is recorded on the Decision stage.`,
+      : gateStopped
+        ? `The gate is ${f.gateStatus.replace(/_/g, " ")} — a standing restriction recorded by the MLRO. Lifting it is a decision on the Decision stage.`
+        : f.decisionOutcome === "cleared"
+          ? "Recording the cleared decision grants this. This case was decided before that, so record the gate on the Decision stage's gate card."
+          : `Currently ${f.gateStatus.replace(/_/g, " ")}. It is granted by the cleared decision on the Decision stage, where every other gate status is recorded too.`,
     blockedBy: !gateApproved && f.decisionOutcome === "cleared" && !f.canReview
       ? REVIEWER_NEEDED
       : null,
