@@ -569,6 +569,18 @@ without a burst of spending. `pending_retrieval` and `unavailable` are
 separate readings on the page, because "on its way" and "the document carried
 none" are not the same thing to a reader.
 
+**The object list was written twice, and every reader took the stale copy.**
+That is the fault that survived three otherwise-correct attempts: the
+portrait was uploaded, named by the capture plan and on the retention job's
+list, while `sa.capture_objects ?? plan.objects` — four hand-written copies of
+one expression across two edge functions — read the evidence block's copy,
+which is composed once at the end of a run and never updated.
+`captureObjectsFor` is the one reader now and **merges rather than choosing**
+(the plan wins key by key, the legacy copy is a floor), the run no longer
+writes the duplicate, and a test forbids naming `standalone.capture_objects`
+in code. `attachPortraitUrls` is likewise one shared module rather than
+twenty duplicated lines in each portal.
+
 Nothing new is fetched — the portrait is already extracted as the Face Match
 reference and was simply discarded. Three rules make storing a face safe. **It
 is deleted on the same clock as the captures**: `aml-idv-retention` enumerates

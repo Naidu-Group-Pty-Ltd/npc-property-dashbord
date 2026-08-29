@@ -146,8 +146,9 @@ import {
   applicableQuestionnaireSections,
 } from "../_shared/aml/questionnaireSections.pure.ts";
 import {
-  identityPortraitObject,
+  backfillStampFor, captureObjectsFor,
 } from "../_shared/aml/passport/identityPortrait.pure.ts";
+import { attachPortraitUrls } from "../_shared/aml/passport/attachPortraitUrls.ts";
 
 const QUESTIONNAIRE_VERSION = '2';
 
@@ -1075,12 +1076,15 @@ const __corsWrappedHandler = async (req: Request) => {
               return {
                 id: vc.id, party_label: vc.party_label, check_type: vc.check_type,
                 status: vc.status, completed_at: vc.completed_at,
-                capture_objects: sa.capture_objects
-                  ?? vc.outcome_detail?.standalone_capture?.objects ?? null,
+                /* ONE reader, shared with the Command Centre — see
+                   `captureObjectsFor`. This used to prefer the evidence
+                   block's copy of the object list, which is written once and
+                   never updated. */
+                capture_objects: captureObjectsFor(vc.outcome_detail),
                 document_choice: sa.document_choice
                   ?? vc.outcome_detail?.standalone_capture?.document_choice ?? null,
                 issuing_state: sa.id_verification?.id_verification?.issuing_state ?? null,
-                portrait_backfill: vc.outcome_detail?.standalone_capture?.portrait_backfill ?? null,
+                portrait_backfill: backfillStampFor(vc.outcome_detail),
               };
             }),
             documents: (docs ?? []).map((d: any) => ({
@@ -1114,41 +1118,12 @@ const __corsWrappedHandler = async (req: Request) => {
         });
 
         /* The photograph is signed for THIS reader, at the moment of
-           service, and never put in the projection: a signed storage URL is
-           a bearer credential with a lifetime, and a credential inside a
-           projection can be persisted, cached or handed on. Fail-soft — a
-           portrait that cannot be signed leaves `url` null and the booklet
-           draws its empty frame, which is what every Passport issued before
-           portraits were stored already does. */
-        for (const party of view.verification?.parties ?? []) {
-          if (!party.portrait) continue;
-          const match = (checks ?? []).find((vc: any) =>
-            (vc.party_label ?? c.subject_display_name ?? 'Subject') === party.party
-            && vc.status === 'passed');
-          const ref = identityPortraitObject(
-            match?.outcome_detail?.standalone?.capture_objects
-            ?? match?.outcome_detail?.standalone_capture?.objects ?? null,
-          );
-          if (!ref) continue;
-          try {
-            const { data: signed } = await admin.storage.from(ref.bucket)
-              .createSignedUrl(ref.path, 300);
-            if (!signed?.signedUrl) continue;
-            party.portrait = { ...party.portrait, url: signed.signedUrl };
-            /* The Client Identity page shows the same photograph, and the
-               same credential serves it: the slot carries no bucket and no
-               path, so the object can only be found from the rows the view
-               was built from. */
-            const slot: any = (view as any).identity?.portrait;
-            const subject = view.verification?.parties?.some((p: any) =>
-              p.party === (c.subject_display_name ?? 'Subject'))
-              ? (c.subject_display_name ?? 'Subject')
-              : (view.verification?.parties?.[0]?.party ?? null);
-            if (slot?.available && !slot.url && party.party === subject) {
-              (view as any).identity.portrait = { ...slot, url: signed.signedUrl };
-            }
-          } catch { /* leave null */ }
-        }
+           service, by the SAME function the Command Centre and the partners
+           use. This was twenty inline lines that had to be corrected in step
+           with their twin in `aml-reliance`; the client's Passport and the
+           issuer's are the same document, and that has to be a property of
+           one implementation. */
+        await attachPortraitUrls(admin, view, checks ?? []);
 
         return jsonResponse({ passport: view });
       }
