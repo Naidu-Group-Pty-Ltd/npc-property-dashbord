@@ -114,6 +114,9 @@ import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import {
+  identityPortraitObject,
+} from "../_shared/aml/passport/identityPortrait.pure.ts";
+import {
   addMonthsUtc, resolveReviewInterval,
 } from "../_shared/aml/reviewSchedule.pure.ts";
 import {
@@ -337,7 +340,10 @@ async function buildCasePassportView(
     admin.schema("aml").from("consents")
       .select("id, kind, accepted_at, actor_label").eq("case_id", caseId),
     admin.schema("aml").from("verification_checks")
-      .select("id, party_label, check_type, status, completed_at").eq("case_id", caseId),
+      /* `outcome_detail` for the ONE image the Passport may show — the face
+         the provider extracted from the identity document. Read only through
+         `identityPortrait.pure.ts`, which is an allow-list of one key. */
+      .select("id, party_label, check_type, status, completed_at, outcome_detail").eq("case_id", caseId),
     admin.schema("aml").from("documents")
       .select("id, requirement_id, status, created_at, reviewed_at, version_number")
       .eq("case_id", caseId).neq("status", "deleted"),
@@ -585,7 +591,22 @@ async function buildCasePassportView(
         version: a.version, issued_at: a.issued_at, superseded_at: a.superseded_at,
       })),
       consents: consents ?? [],
-      verification_checks: checks ?? [],
+      verification_checks: (checks ?? []).map((c: any) => {
+        /* Named fields only. `outcome_detail` is a provider payload and must
+           never travel into the projection whole — the three facts the
+           portrait needs are lifted out and the rest is left behind. */
+        const sa = c.outcome_detail?.standalone ?? {};
+        const idv = sa.id_verification?.id_verification ?? {};
+        return {
+          id: c.id, party_label: c.party_label, check_type: c.check_type,
+          status: c.status, completed_at: c.completed_at,
+          capture_objects: sa.capture_objects
+            ?? c.outcome_detail?.standalone_capture?.objects ?? null,
+          document_choice: sa.document_choice
+            ?? c.outcome_detail?.standalone_capture?.document_choice ?? null,
+          issuing_state: idv.issuing_state ?? null,
+        };
+      }),
       documents: (docs ?? []).map((d: any) => ({
         status: d.status, reviewed_at: d.reviewed_at, created_at: d.created_at,
       })),
@@ -628,7 +649,60 @@ async function buildCasePassportView(
       })),
     },
   });
+  /* The photograph is signed HERE, for this reader, and never in the
+     projection — see `attachPortraitUrls`. */
+  await attachPortraitUrls(admin, view, checks ?? []);
   return view;
+}
+
+/**
+ * Give the holder's portrait a short-lived URL, for one reader.
+ *
+ * ── Why the URL is attached here and not built into the view ──────────
+ * `passportView.pure.ts` is pure and does no I/O, which is what makes it
+ * testable and what makes one assembler serve four audiences. More
+ * importantly, a signed storage URL is a BEARER CREDENTIAL with a lifetime:
+ * a URL inside a projection can be persisted, cached, embedded in an
+ * attestation payload or handed on after it stops being the reader's to
+ * hold. So the projection carries a descriptor and the URL is minted at the
+ * moment of service, for the request that asked.
+ *
+ * ── Fail-soft, always ─────────────────────────────────────────────────
+ * A portrait that cannot be signed leaves `url` null, and the leaf draws its
+ * empty frame and caption. A missing photograph must never fail a Passport:
+ * every document issued before portraits were stored has none, and they all
+ * still render.
+ *
+ * The five-minute lifetime is the shortest that survives a slow first paint
+ * on a partner's connection while being far too short to be worth passing on.
+ */
+const PORTRAIT_URL_TTL_SECONDS = 300;
+
+async function attachPortraitUrls(admin: any, view: any, checks: any[]): Promise<void> {
+  const parties = view?.verification?.parties;
+  if (!Array.isArray(parties) || parties.length === 0) return;
+  for (const party of parties) {
+    const descriptor = party?.portrait;
+    if (!descriptor) continue;
+    /* The stored object is found from the SAME rows the view was built from,
+       by the SAME allow-list — the view never carries a bucket or a path, and
+       `PARTNER_RESTRICTED_KEYS` would refuse it if it tried. */
+    const match = checks.find((c: any) =>
+      (c.party_label ?? view?.header?.subject ?? "Subject") === party.party
+      && c.status === "passed");
+    const objects = match?.outcome_detail?.standalone?.capture_objects
+      ?? match?.outcome_detail?.standalone_capture?.objects
+      ?? null;
+    const ref = identityPortraitObject(objects);
+    if (!ref) continue;
+    try {
+      const { data } = await admin.storage.from(ref.bucket)
+        .createSignedUrl(ref.path, PORTRAIT_URL_TTL_SECONDS);
+      if (data?.signedUrl) party.portrait = { ...descriptor, url: data.signedUrl };
+    } catch {
+      // Leave `url` null. The leaf draws the frame and says so.
+    }
+  }
 }
 
 /**

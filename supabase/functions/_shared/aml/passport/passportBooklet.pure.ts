@@ -24,6 +24,7 @@
  * "screening is not part of this record".
  */
 
+import { portraitCaption } from "./identityPortrait.pure.ts";
 import type { PassportView } from "./passportView.pure.ts";
 import type { PassportStamp, PendingStamp } from "./passportStamps.pure.ts";
 
@@ -51,6 +52,29 @@ export type BookletBlock =
         tone: BookletTone;
         cells: Array<{ t: string; tone: BookletTone }>;
       }>;
+    }
+  /**
+   * The holder's portrait, as printed on their identity document.
+   *
+   * A passport that shows no face is a certificate. This is the ONE image
+   * the booklet carries, and it is the face the provider extracted from the
+   * document — never the document page (which carries the number, the MRZ,
+   * the date of birth and the signature) and never the live capture taken
+   * during verification. The rule is an allow-list of one key in
+   * `identityPortrait.pure.ts`.
+   *
+   * `src` is a short-lived signed URL, attached for one reader by the edge
+   * function serving the view. Absent or expired, the leaf draws the empty
+   * frame and its caption, which is what every Passport issued before this
+   * existed will do — a missing photograph must never blank the page.
+   */
+  | {
+      kind: "portrait";
+      /** Whose face it is, as the document names them. */
+      holder: string;
+      /** "Australian passport" — what it was taken from. */
+      caption: string;
+      src: string | null;
     }
   /** Key/value rows with an optional note under the key. */
   | { kind: "rows"; title: string; items: Array<{ k: string; note?: string; v: string }> }
@@ -353,6 +377,19 @@ export function buildBooklet(view: PassportView): BookletPage[] {
       title: "Identity Verification",
       sub: "How each party was proven.",
       blocks: [
+        /* The holder's own photograph leads the page, where a passport puts
+           it. Only for a party whose verification PASSED and whose portrait
+           was stored; a case with none renders exactly as it did before this
+           existed. */
+        ...view.verification.parties
+          .filter((p) => p.portrait)
+          .slice(0, 1)
+          .map((p): BookletBlock => ({
+            kind: "portrait",
+            holder: p.party,
+            caption: portraitCaption(p.portrait!),
+            src: p.portrait!.url,
+          })),
         {
           kind: "rows",
           title: "Parties",
@@ -365,7 +402,11 @@ export function buildBooklet(view: PassportView): BookletPage[] {
         {
           kind: "note",
           title: "Not part of this record",
-          text: "Match scores, liveness measurements and captured biometric media stay inside the verification record.",
+          /* Still true, and it has to be: the portrait is the face PRINTED ON
+             THE DOCUMENT, which is why it may appear here. The photograph of
+             the document itself, and the live capture taken during
+             verification, stay where they were. */
+          text: "The portrait above is the photograph on the identity document. The document image itself, the live capture taken during verification, match scores and liveness measurements stay inside the verification record.",
         },
       ],
     });

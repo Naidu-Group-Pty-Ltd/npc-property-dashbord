@@ -524,6 +524,35 @@ grant had nowhere to appear), and **a live Passport reads green** like the
 Client portal's own completion — worded as a fact about access, never as a
 claim about the partner, and a revoked grant takes the colour back.
 
+## The photograph on the Compliance Passport
+Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
+before touching `_shared/aml/passport/identityPortrait.pure.ts`,
+`storeIdentityPortrait`, `attachPortraitUrls` or the object list in
+`aml-idv-retention`. A Passport that proves an identity was verified and shows
+no face is a certificate, so the booklet carries one image — and **which one is
+the whole question**. Three exist and this deployment holds all three
+(`didit_standalone` uploads the customer's capture to our own buckets): the
+**`id_portrait`** the provider extracted from the document, the document page
+itself, and the selfie. Only the first may travel, because a face crop carries
+**no document number, no MRZ, no date of birth, no address and no signature**;
+the page carries all of them and stays staff-only. The rule is an **allow-list
+of exactly one key**, and `WITHHELD_CAPTURE_KEYS` names the other two rather
+than leaving them absent.
+
+Nothing new is fetched — the portrait is already extracted as the Face Match
+reference and was simply discarded. Three rules make storing a face safe. **It
+is deleted on the same clock as the captures**: `aml-idv-retention` enumerates
+FIXED keys, so a new object is invisible until named, and the capture plan is
+re-persisted during processing because the job reads `standalone_capture`
+rather than the evidence block. **Storing it can never fail a verification** —
+null means "no portrait", which is the ordinary state for every case recorded
+before this, and every surface renders unchanged on null. And **the URL is
+minted for one reader at the moment of service**: a signed storage URL is a
+bearer credential with a lifetime, so the projection carries a descriptor
+(`url: null`) and the edge function signs five minutes for the request that
+asked. It cascades to the client, the emailed link and the partners because
+`buildCasePassportView` is one assembler with an audience parameter.
+
 ## Stage 10 — ongoing CDD, and the reminders it raises
 Read [`docs/aml/ONGOING_CDD_AND_REMINDERS.md`](./docs/aml/ONGOING_CDD_AND_REMINDERS.md)
 before touching `_shared/aml/reviewSchedule.pure.ts`,
