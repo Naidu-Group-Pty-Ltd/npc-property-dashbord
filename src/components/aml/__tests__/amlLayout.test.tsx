@@ -112,14 +112,20 @@ describe("AmlLayout — legacy (V2) navigation", () => {
 describe("AmlLayout — V3 navigation (aml_v3_nav)", () => {
   beforeEach(() => { mockV3Nav = true; });
 
-  it("limits Customer Compliance to Cases + My Queue", () => {
+  it("limits Customer Compliance to Cases and the Compliance Passport", () => {
+    /* The rule, not the roster: the workspace offers only the two CROSS-CASE
+       entry points, and every per-case topic is reached by opening a named
+       customer. The Intake Queue that used to sit here was a placeholder page
+       and is gone entirely. */
     renderShell("/admin/aml/cases");
     const secondary = screen.getByRole("navigation", { name: /Customer Compliance sections/ });
     expect(within(secondary).getByText("Cases")).toBeInTheDocument();
-    expect(within(secondary).getByText("My Queue")).toBeInTheDocument();
-    expect(within(secondary).queryByText("Verification")).not.toBeInTheDocument();
-    expect(within(secondary).queryByText("Screening")).not.toBeInTheDocument();
+    expect(within(secondary).getByText("Compliance Passport")).toBeInTheDocument();
+    for (const gone of ["My Queue", "Intake Queue", "Verification", "Screening", "Risk"]) {
+      expect(within(secondary).queryByText(gone)).not.toBeInTheDocument();
+    }
   });
+
 
   it("keeps legacy alias URLs inside the customer workspace for matching", () => {
     // /admin/aml/counterparty belongs to Transaction Compliance in V3.

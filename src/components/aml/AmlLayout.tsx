@@ -30,7 +30,8 @@ import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
  *    byte-identical for tenants who have not yet enabled the V3 nav flag.
  *  - **V3** — activated by `feature_flags.aml_v3_nav = true`. Applies
  *    Directives 2, 3, 4, 7 and 8 from the Version 3 report:
- *      · Directive 2 — Customer Compliance is limited to Cases + My Queue.
+ *      · Directive 2 — Customer Compliance is limited to Cases and the
+ *        Compliance Passport.
  *        Verification, Screening, Risk, Structures and Finance handoff move
  *        inside the case workspace (built in Phase 4/6). Legacy URLs remain
  *        live via aliases in `src/App.tsx`.
@@ -102,7 +103,6 @@ const LEGACY_WORKSPACES: Workspace[] = [
       // secondary nav at all and highlights Compliance Home instead. That is
       // how the Passport shipped reachable and still looked absent.
       "/admin/aml/passport",
-      "/admin/aml/intake",
       "/admin/aml/verification",
       "/admin/aml/screening",
       "/admin/aml/risk",
@@ -114,7 +114,6 @@ const LEGACY_WORKSPACES: Workspace[] = [
     secondary: [
       { label: "Register", to: "/admin/aml/cases", capability: "aml.view" },
       { label: "Compliance Passport", to: "/admin/aml/passport", capability: "aml.view" },
-      { label: "Intake Queue", to: "/admin/aml/intake", capability: "aml.view" },
       { label: "Verification", to: "/admin/aml/verification", capability: "aml.view" },
       { label: "Screening", to: "/admin/aml/screening", capability: "aml.view" },
       { label: "Risk", to: "/admin/aml/risk", capability: "aml.view" },
@@ -173,7 +172,7 @@ const LEGACY_WORKSPACES: Workspace[] = [
  * V3 nav (Directives 2, 3, 4, 7, 8).
  *
  * Structural changes vs legacy:
- *  - Customer Compliance: only Cases + My Queue. Verification / Screening /
+ *  - Customer Compliance: Cases and the Compliance Passport. Verification / Screening /
  *    Risk / Ownership & Control / Funding & Finance are surfaced inside the
  *    case workspace (Phase 4/6) — their legacy routes remain reachable.
  *  - Transaction Compliance: gains Counterparty Due (formerly "Structures").
@@ -199,7 +198,6 @@ const V3_WORKSPACES: Workspace[] = [
       // Listed for the same reason as the legacy shell: `secondary` links must
       // appear in `paths` or the page they reach loses its secondary nav.
       "/admin/aml/passport",
-      "/admin/aml/intake",
       // Legacy aliases stay part of this workspace for URL matching only.
       "/admin/aml/verification",
       "/admin/aml/screening",
@@ -211,7 +209,6 @@ const V3_WORKSPACES: Workspace[] = [
     secondary: [
       { label: "Cases", to: "/admin/aml/cases", capability: "aml.view" },
       { label: "Compliance Passport", to: "/admin/aml/passport", capability: "aml.view" },
-      { label: "My Queue", to: "/admin/aml/intake", capability: "aml.view" },
     ],
   },
   {
@@ -304,9 +301,9 @@ export function AmlLayout() {
   // If a user lands on a legacy URL they cannot access (permissions changed),
   // AmlGuard will already show the denial page — nothing to do here.
 
-  // Route legacy `/admin/aml/intake` onward remains untouched. All legacy URLs
-  // continue to resolve because the underlying routes in `src/App.tsx` are
-  // preserved. This shell only changes the visual navigation grouping.
+  // Every legacy URL continues to resolve, because the routes in
+  // `src/App.tsx` are preserved. This shell only changes which of them the
+  // navigation offers — hiding a tab never takes a page away.
 
   // Auto-redirect: if the user lands on the module root but their default
   // landing role is not Compliance Home (Phase 2 will refine this per-role),
