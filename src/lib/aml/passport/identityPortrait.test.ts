@@ -173,15 +173,26 @@ describe("wired end to end, and additive throughout", () => {
     expect(fn).not.toMatch(/\bthrow\b/);
   });
 
-  it("the URL is signed per reader, in the edge function, not in the projection", () => {
-    const pure = read(
-      "supabase/functions/_shared/aml/passport/passportView.pure.ts");
-    expect(pure).not.toContain("createSignedUrl");
+  it("the URL is signed at the moment of service, never in the projection", () => {
+    /* The rule, not the location: a signed storage URL is a bearer
+       credential with a lifetime, so no pure projection may mint one. The
+       signing itself has moved into ONE shared module — it was twenty
+       duplicated lines in each of two edge functions, which is how the
+       client's Passport and the issuer's came to be corrected separately. */
+    for (const pure of [
+      "supabase/functions/_shared/aml/passport/passportView.pure.ts",
+      "supabase/functions/_shared/aml/passport/passportBooklet.pure.ts",
+      "supabase/functions/_shared/aml/passport/identityPortrait.pure.ts",
+    ]) {
+      expect(read(pure), pure).not.toContain("createSignedUrl");
+    }
+    const signer = read("supabase/functions/_shared/aml/passport/attachPortraitUrls.ts");
+    expect(signer).toContain("createSignedUrl(ref.path");
     for (const fn of [
       "supabase/functions/aml-reliance/index.ts",
       "supabase/functions/aml-client-portal/index.ts",
     ]) {
-      expect(read(fn), fn).toContain("createSignedUrl(ref.path");
+      expect(read(fn), fn).toContain("attachPortraitUrls(admin, view, checks ?? []);");
     }
   });
 

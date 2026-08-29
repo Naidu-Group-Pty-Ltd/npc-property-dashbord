@@ -129,6 +129,8 @@ export {
   describeIdentityPortraitSlot,
   identityPortraitObject,
   backfillPending,
+  backfillStampFor,
+  captureObjectsFor,
   parseBackfillStamp,
   portraitAbsenceNote,
   portraitBackfillCandidate,

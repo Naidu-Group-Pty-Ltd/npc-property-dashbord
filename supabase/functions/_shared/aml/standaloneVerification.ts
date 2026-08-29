@@ -77,7 +77,8 @@ import { canonicalOutcome } from './verificationOutcome.pure.ts';
 import { stripImagePayloads } from './verificationEvidence.pure.ts';
 import { buildVendorData } from './providers/didit.pure.ts';
 import {
-  backfillPending, readBackfillStamp,
+  backfillPending, backfillStampFor, captureObjectsFor, identityPortraitObject,
+  readBackfillStamp,
 } from './passport/identityPortrait.pure.ts';
 import {
   parseDocumentChoice, identityDocumentCapturePlan,
@@ -576,7 +577,15 @@ export async function runStandaloneVerification(
         passive_liveness: liveness?.requestId ?? null,
         face_match: faceMatch?.requestId ?? null,
       },
-      capture_objects: plan.objects,
+      /* `capture_objects` is deliberately NOT written here.
+         It was a second copy of `standalone_capture.objects`, composed once
+         at the end of a run and never updated — and every reader preferred
+         it. So an object added to the plan afterwards (the extracted
+         portrait) was in storage, named by the plan, and on the retention
+         job's list, while every Passport drew an empty frame because it was
+         reading the older of two lists. One list, in one place: the plan.
+         `captureObjectsFor` still merges the legacy copy for rows written
+         before this. */
     },
   });
 
@@ -773,7 +782,13 @@ export async function backfillIdentityPortrait(
 
   const plan = readCapturePlan(check);
   if (!plan) return { checkId, outcome: 'not_applicable', detail: 'no_capture_plan' };
-  if (plan.objects.id_portrait) return { checkId, outcome: 'already_present' };
+  /* Checked against the MERGED view of the object lists, not the plan alone.
+     A portrait recorded in either place is a portrait we hold, and paying to
+     fetch one we already have is the mistake this whole area exists to stop.
+     `captureObjectsFor` is the same reader every Passport surface uses. */
+  if (identityPortraitObject(captureObjectsFor(check.outcome_detail))) {
+    return { checkId, outcome: 'already_present' };
+  }
 
   let provider: StandaloneIdvProvider;
   let resolved: Awaited<ReturnType<typeof resolveTenantProvider>> = null;
@@ -907,8 +922,9 @@ export async function findPortraitBackfillCandidates(
   for (const row of data) {
     if (ids.length >= limit) break;
     if (!isStandaloneIdvProvider(row.provider)) continue;
-    const store = row.outcome_detail?.standalone_capture ?? null;
-    if (!backfillPending(store?.portrait_backfill, store?.objects)) continue;
+    if (!backfillPending(
+      backfillStampFor(row.outcome_detail), captureObjectsFor(row.outcome_detail),
+    )) continue;
     ids.push(String(row.id));
   }
   return ids;

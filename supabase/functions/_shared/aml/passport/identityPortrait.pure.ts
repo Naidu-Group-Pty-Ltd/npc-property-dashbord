@@ -48,6 +48,59 @@ export const WITHHELD_CAPTURE_KEYS: readonly string[] = [
   "document_front", "document_back", "selfie",
 ];
 
+/* ── Where the stored objects actually live ────────────────────────────
+ *
+ * A standalone verification's object list was written in TWO places:
+ *
+ *   · `outcome_detail.standalone_capture.objects` — the capture PLAN. It is
+ *     what `readCapturePlan` reads, what `persistProgress` re-writes during
+ *     processing, and what `aml-idv-retention` enumerates when it deletes.
+ *     It is the authority.
+ *   · `outcome_detail.standalone.capture_objects` — a copy folded into the
+ *     evidence block at the end of a run.
+ *
+ * Every reader preferred the COPY (`sa.capture_objects ?? plan.objects`), and
+ * the copy is written once and never updated. So a portrait added to the plan
+ * after that block was composed was invisible to every surface: the object
+ * was in storage, the plan named it, the retention job would have deleted it
+ * on time — and the Passport still drew an empty frame, because it was
+ * reading the older of two lists.
+ *
+ * Two rules follow, and they are the point of this function existing.
+ *
+ * **There is ONE reader.** `aml-reliance` and `aml-client-portal` each had
+ * their own copy of the expression, in two places apiece, so "fix the order"
+ * meant getting four edits right and staying right.
+ *
+ * **It MERGES rather than choosing.** The plan wins key by key, and the
+ * legacy copy is a floor beneath it. Picking one list means a shape nobody
+ * anticipated loses an object that exists; a union cannot.
+ */
+export function captureObjectsFor(outcomeDetail: unknown): Record<string, unknown> | null {
+  if (!outcomeDetail || typeof outcomeDetail !== "object") return null;
+  const detail = outcomeDetail as Record<string, unknown>;
+
+  const asObject = (v: unknown): Record<string, unknown> | null =>
+    v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : null;
+
+  const legacy = asObject(asObject(detail["standalone"])?.["capture_objects"]);
+  const plan = asObject(asObject(detail["standalone_capture"])?.["objects"]);
+  if (!legacy && !plan) return null;
+
+  /* The plan last, so it wins. A null in the plan is a real answer — a
+     document with no back — and must overwrite, which is why this is a
+     spread rather than a "keep the first truthy value" merge. */
+  return { ...(legacy ?? {}), ...(plan ?? {}) };
+}
+
+/** The backfill stamp, from the check's `outcome_detail`. */
+export function backfillStampFor(outcomeDetail: unknown): unknown {
+  if (!outcomeDetail || typeof outcomeDetail !== "object") return null;
+  const store = (outcomeDetail as Record<string, unknown>)["standalone_capture"];
+  if (!store || typeof store !== "object") return null;
+  return (store as Record<string, unknown>)["portrait_backfill"] ?? null;
+}
+
 export interface CaptureObjectRef {
   bucket: string;
   path: string;
