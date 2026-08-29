@@ -539,6 +539,26 @@ the page carries all of them and stays staff-only. The rule is an **allow-list
 of exactly one key**, and `WITHHELD_CAPTURE_KEYS` names the other two rather
 than leaving them absent.
 
+**It sits on the Client Identity page, and the mount always draws.** It was
+first put on the Identity Verification leaf behind
+`.filter((p) => p.portrait)`, which meant two things and both reported as "I
+cannot see the photo of the client anywhere": it was not on the page that
+names the holder, and the block DISAPPEARED whenever no image was stored —
+which is every Passport issued before this — so the page could not be told
+apart from one that carries no photograph at all. `identity.portrait` is a
+**slot**, never null, and names which of three absences it is; the wording is
+about the RECORD and never about the customer, asserted by a test.
+
+**A portrait that was never stored can be recovered, once, by an MLRO.** The
+document page is still in NPC's bucket, so `recoverIdentityPortrait`
+re-derives the crop from it. It **re-derives an image and never re-decides an
+identity** — no status, verdict, score or timing is written, and a re-read
+that disagrees with the recorded verdict goes on the case event for a human
+rather than being adopted. It is one billed call, so it is an act somebody
+asks for: never swept, never retried, never fired by a page load, and offered
+only where `portraitRecoverable` is true (a stored document page and no
+portrait) — expressed over what we HOLD, never over which vendor was used.
+
 Nothing new is fetched — the portrait is already extracted as the Face Match
 reference and was simply discarded. Three rules make storing a face safe. **It
 is deleted on the same clock as the captures**: `aml-idv-retention` enumerates

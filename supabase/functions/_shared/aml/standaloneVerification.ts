@@ -51,6 +51,7 @@
 
 import {
   getStandaloneIdvProvider,
+  isStandaloneIdvProvider,
   resolveTenantProvider,
   runWithMetrics,
   currentEnvironment,
@@ -669,4 +670,183 @@ export async function processStandaloneCheck(
   const claimed = await claimCheck(db, checkId);
   if (!claimed) return { checkId, outcome: 'not_claimed' };
   return await runStandaloneVerification(db, claimed);
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * Recovering the document portrait for a verification that predates it
+ * ──────────────────────────────────────────────────────────────────────── */
+
+export type PortraitRecoveryOutcome =
+  | 'recovered'
+  | 'already_present'
+  | 'not_recoverable'
+  | 'provider_unavailable'
+  | 'portrait_unavailable'
+  | 'storage_failed';
+
+export interface PortraitRecoveryResult {
+  checkId: string;
+  outcome: PortraitRecoveryOutcome;
+  /** The provider's verdict on the re-read, recorded but never acted on. */
+  providerVerdict?: string | null;
+  detail?: string;
+}
+
+/**
+ * Re-derive the portrait for a verification that completed before portraits
+ * were stored.
+ *
+ * ── Why this exists ───────────────────────────────────────────────────
+ * `resolveReferenceImage` extracted the document portrait on every run and
+ * deliberately discarded it — it lived in one local variable and was never
+ * persisted. So every verification completed before that changed has a
+ * Compliance Passport with no face on it, permanently, even though the
+ * document page it was cropped from is still in NPC's own bucket. The
+ * Passport is a document a partner relies on for years; leaving the ones
+ * already issued without a holder is not a gap that closes by itself.
+ *
+ * ── What it is, precisely ─────────────────────────────────────────────
+ * **It re-derives an IMAGE. It never re-decides an identity.** The check's
+ * status, verdict, thresholds, scores and `completed_at` are not read here
+ * and not written: the verification stands exactly as it was recorded, and
+ * the only thing this adds to the row is `standalone_capture.objects
+ * .id_portrait`. If the provider's re-read disagrees with the original
+ * verdict, that is recorded on the result for a human to see and acted on by
+ * nobody here — silently adopting a second opinion nobody asked for would be
+ * far worse than the missing photograph.
+ *
+ * ── It is a paid call, and that is why it is not automatic ─────────────
+ * This function makes one ID-verification call, billed like any other. It is
+ * therefore never swept, never retried and never triggered by a page load:
+ * the only caller is an operator asking for it, once, on a case they have
+ * open. `runWithMetrics` bills it at the same per-step price as the original,
+ * so the spend appears where every other provider call appears.
+ *
+ * The rule this function honours from the processor above it is unchanged: a
+ * call that was sent and whose response never arrived is NOT re-sent. This
+ * function makes a single attempt and reports what happened.
+ */
+export async function recoverIdentityPortrait(
+  db: any, checkId: string,
+): Promise<PortraitRecoveryResult> {
+  const { data: check, error } = await db.schema('aml').from('verification_checks')
+    .select('id, case_id, party_id, party_label, status, provider, check_type, '
+      + 'capture_sequence, attempt_number, outcome_detail')
+    .eq('id', checkId).maybeSingle();
+  /* A read that FAILED is not a row that is ABSENT — the distinction this
+     codebase pays for elsewhere. Both stop here, but they are not the same
+     answer and the operator is told which. */
+  if (error) {
+    return { checkId, outcome: 'not_recoverable', detail: `check_unreadable: ${error.message}` };
+  }
+  if (!check) return { checkId, outcome: 'not_recoverable', detail: 'check_not_found' };
+
+  // Only a verification that PASSED. A portrait taken off a failed or
+  // superseded attempt is not the evidence this party was verified on, and
+  // putting it on the Passport would say that it was.
+  if (check.status !== 'passed') {
+    return { checkId, outcome: 'not_recoverable', detail: 'check_not_passed' };
+  }
+  if (!isStandaloneIdvProvider(check.provider)) {
+    return { checkId, outcome: 'not_recoverable', detail: 'not_a_standalone_check' };
+  }
+
+  const plan = readCapturePlan(check);
+  if (!plan) return { checkId, outcome: 'not_recoverable', detail: 'no_capture_plan' };
+  if (plan.objects.id_portrait) return { checkId, outcome: 'already_present' };
+
+  let provider: StandaloneIdvProvider;
+  let resolved: Awaited<ReturnType<typeof resolveTenantProvider>> = null;
+  try {
+    resolved = await resolveTenantProvider(db, 'default', 'idv');
+    provider = getStandaloneIdvProvider({ resolved, admin: db });
+  } catch (err: any) {
+    return {
+      checkId, outcome: 'provider_unavailable',
+      detail: String(err?.message ?? err),
+    };
+  }
+
+  // The source image, read before anything is spent. A document page the
+  // retention job has already deleted costs nothing to discover.
+  let frontBytes: Uint8Array;
+  try {
+    frontBytes = await download(
+      db, plan.objects.document_front.bucket, plan.objects.document_front.path);
+  } catch (err: any) {
+    return { checkId, outcome: 'not_recoverable', detail: String(err?.message ?? err) };
+  }
+
+  const unitCosts = (resolved?.config?.['standalone_unit_costs_cents'] ?? {}) as
+    Record<string, unknown>;
+  const rawCost = unitCosts['id_verification'];
+  const costCents = typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0
+    ? rawCost
+    : (resolved?.costCents ?? 0);
+
+  let reading: IdVerificationReading;
+  try {
+    const body = await runWithMetrics(db, {
+      tenantId: 'default', capability: 'idv', providerKey: provider.name,
+      costCents, configId: resolved?.configId ?? null,
+    }, () => provider.verifyIdentityDocument({
+      frontImage: frontBytes,
+      backImage: null,
+      vendorData: buildVendorData(check.case_id, check.party_id ?? null),
+      metadata: {
+        npc_verification_check_id: checkId,
+        npc_capture_sequence: check.capture_sequence ?? check.attempt_number ?? 1,
+        npc_purpose: 'portrait_recovery',
+      },
+    }));
+    reading = readIdVerification(body);
+  } catch (err: any) {
+    return {
+      checkId, outcome: 'provider_unavailable',
+      detail: err instanceof DiditStandaloneError ? err.category : String(err?.message ?? err),
+    };
+  }
+
+  const bytes = await resolveReferenceImage(reading.portraitBase64);
+  if (!bytes) {
+    return {
+      checkId, outcome: 'portrait_unavailable', providerVerdict: reading.verdict,
+      detail: 'the provider returned no portrait for this document',
+    };
+  }
+
+  const stored = await storeIdentityPortrait(db, plan, check.case_id, checkId, bytes);
+  if (!stored) {
+    return { checkId, outcome: 'storage_failed', providerVerdict: reading.verdict };
+  }
+
+  /* The ONLY write. `standalone_capture.objects` is where `aml-idv-retention`
+     enumerates from, so writing it here is also what puts the new image on
+     the same deletion clock as the captures it was derived from. Nothing
+     under `standalone` is touched: that block is the recorded verification,
+     and this call did not perform one. */
+  const detail = check.outcome_detail ?? {};
+  const { error: writeError } = await db.schema('aml').from('verification_checks')
+    .update({
+      outcome_detail: {
+        ...detail,
+        standalone_capture: {
+          ...(detail.standalone_capture ?? {}),
+          objects: { ...plan.objects, id_portrait: stored },
+        },
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', checkId)
+    // Re-checked in the UPDATE. A check that stopped being `passed` between
+    // the read and here must not gain a portrait for the Passport.
+    .eq('status', 'passed');
+  if (writeError) {
+    return {
+      checkId, outcome: 'storage_failed', providerVerdict: reading.verdict,
+      detail: writeError.message,
+    };
+  }
+
+  return { checkId, outcome: 'recovered', providerVerdict: reading.verdict };
 }

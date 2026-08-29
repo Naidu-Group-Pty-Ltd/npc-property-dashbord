@@ -697,7 +697,19 @@ describe('the draft transition', () => {
 describe('the processor', () => {
   it('accepts signed internal callers only', () => {
     expect(PROCESSOR).toContain('verifySignedInternal');
-    expect(PROCESSOR).toContain("['pg_cron', 'aml-client-portal', 'aml-verification']");
+    /* The rule, not the roster: every caller is a named internal one, and
+       there is no human path in. The list grew when portrait recovery was
+       added (`aml-reliance` dispatches it), so pinning the exact array would
+       have forbidden a legitimate caller while permitting a bad one. */
+    const from = PROCESSOR.indexOf('verifySignedInternal');
+    const arrayStart = PROCESSOR.indexOf('[', from);
+    const allowList = PROCESSOR.slice(arrayStart, PROCESSOR.indexOf(']', arrayStart));
+    const callers = [...allowList.matchAll(/'([a-z0-9_-]+)'/g)].map((m) => m[1]);
+    expect(callers).toContain('pg_cron');
+    expect(callers.length).toBeGreaterThan(0);
+    for (const caller of callers) {
+      expect(caller === 'pg_cron' || caller.startsWith('aml-')).toBe(true);
+    }
     expect(PROCESSOR).not.toContain('x-portal-session-token');
   });
 

@@ -113,6 +113,88 @@ it. It now reads:
 > image itself, the live capture taken during verification, match scores and
 > liveness measurements stay inside the verification record.
 
+## It is on the CLIENT IDENTITY page, and the mount always draws
+
+The portrait was first placed on the **Identity Verification** leaf, behind
+`.filter((p) => p.portrait).slice(0, 1)`. Two things followed from that, and
+both were reported as "there is no photo of the client anywhere in the
+passport":
+
+- **It was on the wrong page.** An identity document puts the holder's face
+  beside the fields that name them. The Client Identity leaf is that page —
+  it is the one a reader opens to find out *whose document this is* — and it
+  was the only leaf in the booklet that did not show its own subject.
+- **The block DISAPPEARED whenever there was no image.** `null` is the
+  ordinary state, and the booklet's only way to render it was to omit the
+  block, so the page said nothing at all: no frame, no caption, and no way to
+  tell "we hold no photograph" from "this document does not carry one".
+
+So the leaf carries a `bio` block — the photograph mounted at the left, the
+four fields that name the holder set beside it — and **the mount is drawn
+whether or not there is an image**. Where there is none it prints the frame,
+the hatched field, the document ("Australian passport", which is known even
+when the image is not) and one sentence saying which absence this is.
+
+`identity.portrait` is therefore a **slot** rather than a descriptor, and it
+is never null. Three absences, named rather than left as a gap:
+
+| reason | what it means |
+|---|---|
+| `not_verified` | no verification has passed for this party yet |
+| `predates_portrait_capture` | verified, NPC holds the document page, the portrait was never stored — **the one that can be repaired** |
+| `provider_retains_media` | verified through a provider that keeps the media; there is nothing on our side to show or re-read |
+
+The wording says nothing about the customer, only about the record, and a
+test asserts it: nobody's identity is in question because a photograph was
+not retained.
+
+The Identity Verification leaf keeps its standing disclaimer and no longer
+carries the face — printing it twice in one booklet is repetition. The
+sentence now names the one image that travels and where it went, so it cannot
+be read as saying the booklet carries no photograph at all.
+
+## Recovering a portrait that was never stored
+
+Every verification completed before portraits were stored has a Passport with
+no face on it, permanently — even though the document page it was cropped
+from is still in NPC's own bucket. A Passport is relied on for years, and the
+ones already issued do not repair themselves.
+
+`recoverIdentityPortrait` re-derives it: it reads the stored `document_front`,
+makes one ID-verification call, takes `portrait_image` and writes
+`standalone_capture.objects.id_portrait`. Four rules make that safe.
+
+**It re-derives an IMAGE and never re-decides an identity.** No status, no
+verdict, no score and no timing is written — the verification stands exactly
+as it was recorded. Where the provider's re-read disagrees with the original
+verdict, that is put on the case event for a human and acted on by nobody
+here: silently adopting a second opinion nobody asked for would be far worse
+than the missing photograph.
+
+**It spends money, so a person asks for it.** One billed call, metered
+through `runWithMetrics` at the same per-step price as the original. It is
+never swept, never retried and never triggered by a page load — a test
+asserts the sweep cannot reach it. That is why it does not bend
+`aml-verification-processor`'s standing rule about paid calls: the rule is
+about a call whose billing state is *unknown*, and this one is deliberate,
+single and known.
+
+**It is recorded.** A case event names the act, the check and the outcome. A
+new image on a disclosure document that nothing accounts for is worse than no
+image.
+
+**It is only offered where it can work.** `recoverable` is set by the server,
+for the Command Centre audience alone, and only where `portraitRecoverable`
+is true — a stored document page and no portrait. The condition is expressed
+over *what we hold*, never over which vendor was used: holding the source
+image is what makes recovery possible, and a provider rule goes stale the
+moment another one is added. `PortraitRecoveryNotice` renders nothing
+otherwise, because a control that cannot work is worse than none, and it
+states the cost before the click.
+
+MLRO-only, enforced at the server: the Passport is the outward-facing
+document and its contents are the MLRO's to change.
+
 ## How it is drawn
 
 As a photograph **mounted on the leaf**, not an avatar dropped onto it: a
@@ -124,5 +206,9 @@ Every value is in leaf pixels. The leaf is authored at 470×648 and scaled by
 transform, so a portrait sized in viewport units would be the one element on
 the page that ignored the fit.
 
-An absent or expired `src` draws the frame, a hatched field and *"Portrait not
-available"*. **A missing photograph must never blank the page.**
+An absent or expired `src` draws the frame, a hatched field and the reason.
+**A missing photograph must never blank the page.**
+
+On the Client Identity leaf the mount is 96x123 rather than the marginal
+84x108, because there the photograph is the subject of the page rather than
+an ornament beside it.

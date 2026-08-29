@@ -1132,7 +1132,20 @@ const __corsWrappedHandler = async (req: Request) => {
           try {
             const { data: signed } = await admin.storage.from(ref.bucket)
               .createSignedUrl(ref.path, 300);
-            if (signed?.signedUrl) party.portrait = { ...party.portrait, url: signed.signedUrl };
+            if (!signed?.signedUrl) continue;
+            party.portrait = { ...party.portrait, url: signed.signedUrl };
+            /* The Client Identity page shows the same photograph, and the
+               same credential serves it: the slot carries no bucket and no
+               path, so the object can only be found from the rows the view
+               was built from. */
+            const slot: any = (view as any).identity?.portrait;
+            const subject = view.verification?.parties?.some((p: any) =>
+              p.party === (c.subject_display_name ?? 'Subject'))
+              ? (c.subject_display_name ?? 'Subject')
+              : (view.verification?.parties?.[0]?.party ?? null);
+            if (slot?.available && !slot.url && party.party === subject) {
+              (view as any).identity.portrait = { ...slot, url: signed.signedUrl };
+            }
           } catch { /* leave null */ }
         }
 

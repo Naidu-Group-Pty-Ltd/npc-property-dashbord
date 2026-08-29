@@ -24,7 +24,7 @@
  * "screening is not part of this record".
  */
 
-import { portraitCaption } from "./identityPortrait.pure.ts";
+import { portraitAbsenceNote, slotCaption } from "./identityPortrait.pure.ts";
 import type { PassportView } from "./passportView.pure.ts";
 import type { PassportStamp, PendingStamp } from "./passportStamps.pure.ts";
 
@@ -54,27 +54,32 @@ export type BookletBlock =
       }>;
     }
   /**
-   * The holder's portrait, as printed on their identity document.
+   * The bio panel — the holder's photograph beside the fields that identify
+   * them, exactly as an identity document is laid out.
    *
-   * A passport that shows no face is a certificate. This is the ONE image
-   * the booklet carries, and it is the face the provider extracted from the
-   * document — never the document page (which carries the number, the MRZ,
-   * the date of birth and the signature) and never the live capture taken
-   * during verification. The rule is an allow-list of one key in
-   * `identityPortrait.pure.ts`.
+   * This is the one image the booklet carries, and it is the face the
+   * provider extracted from the DOCUMENT: never the document page (which
+   * carries the number, the MRZ, the date of birth and the signature) and
+   * never the live capture taken during verification. The rule is an
+   * allow-list of one key in `identityPortrait.pure.ts`.
    *
-   * `src` is a short-lived signed URL, attached for one reader by the edge
-   * function serving the view. Absent or expired, the leaf draws the empty
-   * frame and its caption, which is what every Passport issued before this
-   * existed will do — a missing photograph must never blank the page.
+   * **The mount always draws.** `src` is a short-lived signed URL attached
+   * for one reader by the edge function serving the view; when there is no
+   * image, `absence` says which of the four states this record is in. A block
+   * that disappeared on a missing photograph is what left the Client Identity
+   * page with no holder on it and no way to tell why.
    */
   | {
-      kind: "portrait";
+      kind: "bio";
       /** Whose face it is, as the document names them. */
       holder: string;
-      /** "Australian passport" — what it was taken from. */
+      /** "Australian passport" — what the photograph was taken from. */
       caption: string;
       src: string | null;
+      /** Set exactly when `src` is null: why the mount is empty. */
+      absence: string | null;
+      /** The identifying fields printed beside the photograph. */
+      items: Array<{ k: string; v: string; mono?: boolean }>;
     }
   /** Key/value rows with an optional note under the key. */
   | { kind: "rows"; title: string; items: Array<{ k: string; note?: string; v: string }> }
@@ -230,6 +235,13 @@ export function bookletCover(view: PassportView): BookletPage {
 export function buildBooklet(view: PassportView): BookletPage[] {
   const h = view.header;
   const pages: BookletPage[] = [];
+  /* Tolerated as absent so a projection built by an older assembler — a
+     cached response, a partner deployment mid-rollout — still composes. The
+     slot is not optional on the view; this is belt and braces at the one
+     boundary where two versions can meet. */
+  const portrait = view.identity.portrait
+    ?? { available: false, reason: "not_verified" as const, document: null,
+         issuing_state: null, captured_at: null, url: null, recoverable: false };
 
   // The cover is page 1 and is NOT numbered: numbering starts on the first
   // leaf, exactly as a physical passport does. `leafIndex` therefore counts
@@ -253,13 +265,35 @@ export function buildBooklet(view: PassportView): BookletPage[] {
     title: "Client Identity",
     sub: "Issued by the originating reporting entity",
     blocks: [
+      /* The bio panel: the holder's photograph beside the four fields that
+         name them, which is how an identity document is laid out and what
+         makes this leaf the Client Identity page rather than a table of
+         eight strings. The remaining four — the credential's own facts —
+         follow underneath, because they describe the DOCUMENT rather than
+         the person. */
+      {
+        kind: "bio",
+        holder: dash(h.subject),
+        caption: slotCaption(portrait),
+        src: portrait.available ? portrait.url : null,
+        absence: portrait.available && portrait.url
+          ? null
+          : portrait.reason
+            ? portraitAbsenceNote(portrait.reason)
+            /* Available, but this reader's URL could not be minted. Saying so
+               is better than an unexplained empty frame, and it is the one
+               absence that resolves itself on a reload. */
+            : "Photograph could not be loaded",
+        items: [
+          { k: "Client name", v: dash(h.subject) },
+          { k: "Customer type", v: dash(h.subject_type) },
+          { k: "AML case", v: dash(h.case_reference), mono: true },
+          { k: "Credential ID", v: dash(h.credential), mono: true },
+        ],
+      },
       {
         kind: "fields",
         items: [
-          { k: "Client name", v: dash(h.subject) },
-          { k: "Credential ID", v: dash(h.credential), mono: true },
-          { k: "Customer type", v: dash(h.subject_type) },
-          { k: "AML case", v: dash(h.case_reference), mono: true },
           { k: "Issue date", v: fmtDate(h.first_issued_at) },
           { k: "Version", v: dash(h.current_version_label), mono: true },
           { k: "Status", v: h.state.label },
@@ -377,19 +411,11 @@ export function buildBooklet(view: PassportView): BookletPage[] {
       title: "Identity Verification",
       sub: "How each party was proven.",
       blocks: [
-        /* The holder's own photograph leads the page, where a passport puts
-           it. Only for a party whose verification PASSED and whose portrait
-           was stored; a case with none renders exactly as it did before this
-           existed. */
-        ...view.verification.parties
-          .filter((p) => p.portrait)
-          .slice(0, 1)
-          .map((p): BookletBlock => ({
-            kind: "portrait",
-            holder: p.party,
-            caption: portraitCaption(p.portrait!),
-            src: p.portrait!.url,
-          })),
+        /* No photograph here. The holder's portrait belongs on the Client
+           Identity page, where an identity document puts it — printing the
+           same face twice in one booklet is repetition, and it made the bio
+           page the only leaf in the document that did not show its own
+           subject. This leaf says how the identity was PROVEN. */
         {
           kind: "rows",
           title: "Parties",
@@ -402,11 +428,10 @@ export function buildBooklet(view: PassportView): BookletPage[] {
         {
           kind: "note",
           title: "Not part of this record",
-          /* Still true, and it has to be: the portrait is the face PRINTED ON
-             THE DOCUMENT, which is why it may appear here. The photograph of
-             the document itself, and the live capture taken during
-             verification, stay where they were. */
-          text: "The portrait above is the photograph on the identity document. The document image itself, the live capture taken during verification, match scores and liveness measurements stay inside the verification record.",
+          /* Names the one image that DOES travel, and where it travels to, so
+             the sentence cannot be read as saying the booklet carries no
+             photograph at all. The rest stay where they were. */
+          text: "The photograph on the Client Identity page is the portrait printed on the identity document. The document image itself, the live capture taken during verification, match scores and liveness measurements stay inside the verification record.",
         },
       ],
     });

@@ -353,6 +353,21 @@ export const amlRelianceApi = {
    */
   getPassportView: (case_id: string) =>
     invoke<{ passport: import("./passport").PassportView }>({ op: "get_passport_view", case_id }),
+  /**
+   * Recover the holder's photograph for a verification that predates portrait
+   * storage. MLRO-only, server-enforced.
+   *
+   * It re-derives ONE image from the document page NPC already holds — it
+   * does not re-decide the identity, and it changes no status, verdict or
+   * score. It makes one billed provider call, which is why it is an act
+   * somebody asks for rather than something a page does on load. The server
+   * decides which check (if any) can be repaired; the browser sends a case id
+   * and renders the answer.
+   */
+  recoverDocumentPortrait: (case_id: string) =>
+    invoke<{ recovered: boolean; code?: string; message: string }>(
+      { op: "recover_document_portrait", case_id },
+    ),
   listAccessLog: (case_id: string) =>
     invoke<{ access_log: any[] }>({ op: "list_access_log", case_id }),
 
