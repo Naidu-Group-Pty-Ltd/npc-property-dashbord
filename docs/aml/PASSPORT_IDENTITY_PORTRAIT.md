@@ -72,6 +72,40 @@ hosted-provider verification, and any attempt whose upload failed. **Every
 surface renders unchanged on null** — a Passport with no portrait is the
 Passport this product has always produced.
 
+## One list of objects, one reader — the fault that survived everything else
+
+Every part of this could be correct and the page still show an empty frame,
+and for three attempts it did. The object list was written in **two** places:
+
+| where | what it is |
+|---|---|
+| `outcome_detail.standalone_capture.objects` | the capture **plan** — read by `readCapturePlan`, re-written by `persistProgress` during processing, and the list `aml-idv-retention` enumerates when it deletes. **The authority.** |
+| `outcome_detail.standalone.capture_objects` | a copy folded into the evidence block once, at the end of a run, and never updated again |
+
+Every reader preferred the **copy** — `sa.capture_objects ?? plan.objects`, in
+four hand-written places across two edge functions. So the portrait was
+uploaded to storage, named by the plan, and correctly on the retention job's
+list, while every Passport drew an empty frame, because it was reading the
+older of two lists. Measured on production: both passed verifications held
+`id_portrait` in the plan, and the old expression found it on **neither**.
+
+`captureObjectsFor` is now the only reader, and two rules make it one:
+
+- **It MERGES rather than choosing.** The plan wins key by key and the legacy
+  copy is a floor beneath it, so a record written under either shape resolves.
+  Picking one list means a shape nobody anticipated loses an object that
+  exists; a union cannot. A `null` in the plan overwrites, because a document
+  with no back is a real answer rather than an absent opinion.
+- **The run no longer writes the second copy.** One list, in one place. A
+  test forbids any module from naming `standalone.capture_objects` in code.
+
+The same disease had a second head: `attachPortraitUrls` was twenty
+duplicated lines in each of two edge functions, so the client's Passport and
+the issuer's had to be corrected separately and in step. It is one shared
+module now — the Command Centre's document and the client's are the same
+document, and "identical" has to be a property of one implementation rather
+than of two that agree today.
+
 ## The URL is minted for one reader, at the moment of service
 
 `passportView.pure.ts` is pure and does no I/O. More importantly, **a signed

@@ -114,8 +114,9 @@ import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import {
-  identityPortraitObject,
+  backfillStampFor, captureObjectsFor,
 } from "../_shared/aml/passport/identityPortrait.pure.ts";
+import { attachPortraitUrls } from "../_shared/aml/passport/attachPortraitUrls.ts";
 import {
   addMonthsUtc, resolveReviewInterval,
 } from "../_shared/aml/reviewSchedule.pure.ts";
@@ -600,12 +601,15 @@ async function buildCasePassportView(
         return {
           id: c.id, party_label: c.party_label, check_type: c.check_type,
           status: c.status, completed_at: c.completed_at,
-          capture_objects: sa.capture_objects
-            ?? c.outcome_detail?.standalone_capture?.objects ?? null,
+          /* ONE reader — see `captureObjectsFor`. This expression used to
+             prefer `standalone.capture_objects`, a copy written once when the
+             evidence block was composed and never updated, so a portrait
+             added to the plan afterwards was invisible here. */
+          capture_objects: captureObjectsFor(c.outcome_detail),
           document_choice: sa.document_choice
             ?? c.outcome_detail?.standalone_capture?.document_choice ?? null,
           issuing_state: idv.issuing_state ?? null,
-          portrait_backfill: c.outcome_detail?.standalone_capture?.portrait_backfill ?? null,
+          portrait_backfill: backfillStampFor(c.outcome_detail),
         };
       }),
       documents: (docs ?? []).map((d: any) => ({
@@ -654,91 +658,6 @@ async function buildCasePassportView(
      projection — see `attachPortraitUrls`. */
   await attachPortraitUrls(admin, view, checks ?? []);
   return view;
-}
-
-/**
- * Give the holder's portrait a short-lived URL, for one reader.
- *
- * ── Why the URL is attached here and not built into the view ──────────
- * `passportView.pure.ts` is pure and does no I/O, which is what makes it
- * testable and what makes one assembler serve four audiences. More
- * importantly, a signed storage URL is a BEARER CREDENTIAL with a lifetime:
- * a URL inside a projection can be persisted, cached, embedded in an
- * attestation payload or handed on after it stops being the reader's to
- * hold. So the projection carries a descriptor and the URL is minted at the
- * moment of service, for the request that asked.
- *
- * ── Fail-soft, always ─────────────────────────────────────────────────
- * A portrait that cannot be signed leaves `url` null, and the leaf draws its
- * empty frame and caption. A missing photograph must never fail a Passport:
- * every document issued before portraits were stored has none, and they all
- * still render.
- *
- * The five-minute lifetime is the shortest that survives a slow first paint
- * on a partner's connection while being far too short to be worth passing on.
- */
-const PORTRAIT_URL_TTL_SECONDS = 300;
-
-async function attachPortraitUrls(admin: any, view: any, checks: any[]): Promise<void> {
-  const parties = view?.verification?.parties;
-  if (!Array.isArray(parties) || parties.length === 0) return;
-
-  /* One signing per stored object, shared by every slot that points at it.
-     The Client Identity page and the party row are the SAME photograph, and
-     minting two credentials for one image is two things to expire. */
-  const signed = new Map<string, string>();
-  const sign = async (ref: { bucket: string; path: string }): Promise<string | null> => {
-    const key = `${ref.bucket}/${ref.path}`;
-    if (signed.has(key)) return signed.get(key)!;
-    try {
-      const { data } = await admin.storage.from(ref.bucket)
-        .createSignedUrl(ref.path, PORTRAIT_URL_TTL_SECONDS);
-      if (!data?.signedUrl) return null;
-      signed.set(key, data.signedUrl);
-      return data.signedUrl;
-    } catch {
-      // Leave `url` null. The mount draws its frame and says so.
-      return null;
-    }
-  };
-
-  for (const party of parties) {
-    const descriptor = party?.portrait;
-    if (!descriptor) continue;
-    /* The stored object is found from the SAME rows the view was built from,
-       by the SAME allow-list — the view never carries a bucket or a path, and
-       `PARTNER_RESTRICTED_KEYS` would refuse it if it tried. */
-    const match = checks.find((c: any) =>
-      (c.party_label ?? view?.header?.subject ?? "Subject") === party.party
-      && c.status === "passed");
-    const objects = match?.outcome_detail?.standalone?.capture_objects
-      ?? match?.outcome_detail?.standalone_capture?.objects
-      ?? null;
-    const ref = identityPortraitObject(objects);
-    if (!ref) continue;
-    const url = await sign(ref);
-    if (!url) continue;
-    party.portrait = { ...descriptor, url };
-
-    /* The Client Identity page carries the same image. It is signed here
-       rather than in a second pass because the slot holds no bucket and no
-       path — the view never carries either, and `PARTNER_RESTRICTED_KEYS`
-       would refuse it if it tried — so the object can only be found from the
-       rows the view was built from. */
-    const slot = view?.identity?.portrait;
-    if (slot?.available && !slot.url && party.party === subjectPartyLabel(view)) {
-      view.identity.portrait = { ...slot, url };
-    }
-  }
-}
-
-/** Whose photograph the Client Identity page shows — the assembler's rule. */
-function subjectPartyLabel(view: any): string {
-  const parties = view?.verification?.parties ?? [];
-  const subject = view?.header?.subject ?? "Subject";
-  return parties.some((p: any) => p.party === subject)
-    ? subject
-    : (parties[0]?.party ?? subject);
 }
 
 /**
