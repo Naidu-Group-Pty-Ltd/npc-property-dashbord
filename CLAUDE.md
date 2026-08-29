@@ -628,11 +628,27 @@ looking, from the function, exactly like a write nobody attempted. And
 **issuing the Passport arms ongoing CDD**: `armOngoingCdd` books the first
 review, never moves one that exists, and never fails the issuance.
 
-The rail's "Advance status" card is gone from those two stages: on a cleared
+The rail's "Advance status" card is **gone from every stage**. On a cleared
 case it offered "Under review" behind an OPTIONAL reason, and one click
 regressed the stage, the client portal and the service gate — flipping a live
-Passport to "Refresh required". Re-deciding a case is the Decision stage's own
-control; hiding a button was never authorisation and the server is unchanged.
+Passport to "Refresh required". It was suppressed on the two post-decision
+stages first, but the reason was never local to them: **a case's lifecycle is
+the consequence of decisions that carry their own recorded reasons**, so a
+rail control restating them as one-click buttons was a second way to do
+something the product already had a place for.
+
+**Removing a ceremony must never remove a control**, so every state it could
+reach still has one, and a test checks rather than trusts that: `cleared` /
+`blocked` / `escalated_mlro` are the Decision stage's, `kyc_*` are moved by
+the client's own submission, `under_review` is deliberately not offered, and
+**`closed` moved to the case header** — which is where the panel's own comment
+had always claimed it lived while nothing there did it. Closing asks for a
+reason it will not proceed without, is offered only to a writer, and never on
+an already-closed record. `AmlContextActionPanel` is now the closed-case
+notice and the authorised reopen, nothing else. Hiding a button was never
+authorisation: `transition` is untouched and the server enforces exactly as
+before, and the legacy case dialog — the rollback path when the workspace flag
+is off — still carries the panel it always had.
 
 ## Stage 5 — the guided path
 Read [`docs/aml/STAGE_5_GUIDED_PATH.md`](./docs/aml/STAGE_5_GUIDED_PATH.md)
