@@ -306,3 +306,89 @@ GRANT EXECUTE ON FUNCTION public.builder_stock_image_work_pending()
 -- it currently serves, and that is correct. The per-item stage is authoritative
 -- only once the edge code reads it, which is a later change; until then these
 -- columns are inert and the upload-level markers still decide everything.
+
+
+-- ── The scheduler must not retire while a property still owes work ──────────
+--
+-- THE ONE PLACE THIS MIGRATION IS NOT INERT, AND IT MOVES IN EXACTLY ONE
+-- DIRECTION: it can only keep the sweep ALIVE longer, never retire it earlier.
+--
+-- `settle_builder_stock_marketplace_eligibility_tick` decides in SQL whether
+-- there is anything left, and unschedules the job when there is not. It counts
+-- two queues today — uploads below a settlement marker, and active properties
+-- whose `enrichment_status` is `pending` or `enriching`. Neither can see a
+-- property that still owes per-item image work, so once the edge code claims
+-- items the job could retire with properties mid-ladder and nothing would ever
+-- wake it again. That is the same shape as the defect 20261005000000 was
+-- written to fix, one queue later.
+--
+-- A third count, ORed in. The re-arm on INSERT (20261012000000) is untouched
+-- and still what wakes a new import; this only governs when the engine is
+-- allowed to sleep.
+CREATE OR REPLACE FUNCTION public.settle_builder_stock_marketplace_eligibility_tick()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $tick$
+DECLARE
+  v_outstanding integer := 0;
+  v_fallback integer := 0;
+  v_item_work integer := 0;
+  v_target integer;
+  v_sanitization integer;
+BEGIN
+  SELECT marketplace_eligibility_version, image_sanitization_version
+    INTO v_target, v_sanitization
+    FROM public.builder_stock_settlement_target
+   LIMIT 1;
+  v_target := coalesce(v_target, 0);
+  v_sanitization := coalesce(v_sanitization, 0);
+
+  SELECT count(*) INTO v_outstanding
+    FROM public.builder_stock_uploads
+   WHERE deleted_at IS NULL
+     AND (coalesce(marketplace_eligibility_settled_version, -1) < v_target
+          OR coalesce(image_sanitization_settled_version, -1) < v_sanitization
+          OR source_images_settled_version IS NULL);
+
+  SELECT count(*) INTO v_fallback
+    FROM public.builder_stock_items
+   WHERE lifecycle_status = 'active'
+     AND enrichment_status IN ('pending', 'enriching');
+
+  /*
+   * THE THIRD QUEUE. A property that has not reached `settled` still owes work,
+   * whatever its `enrichment_status` says — the two answer different questions,
+   * and a property can complete the fallback ladder while its source or
+   * eligibility stage is still outstanding.
+   *
+   * OUTSTANDING, NOT CLAIMABLE. A property leased by a live invocation, or
+   * backing off after one was killed, is not claimable this minute and is
+   * absolutely not finished. Sleeping on `claimable = 0` would retire the
+   * engine at precisely the moment a worker died.
+   */
+  SELECT count(*) INTO v_item_work
+    FROM public.builder_stock_items
+   WHERE lifecycle_status = 'active'
+     AND image_work_stage <> 'settled';
+
+  IF v_outstanding + v_fallback + v_item_work = 0 THEN
+    IF EXISTS (
+      SELECT 1 FROM cron.job
+       WHERE jobname = 'settle-builder-stock-marketplace-eligibility'
+    ) THEN
+      PERFORM cron.unschedule('settle-builder-stock-marketplace-eligibility');
+    END IF;
+    RETURN;
+  END IF;
+
+  PERFORM public.cron_invoke_signed_function(
+    'builder-stock-image-settler', '{}'::jsonb, 'pg_cron');
+END;
+$tick$;
+
+REVOKE ALL ON FUNCTION public.settle_builder_stock_marketplace_eligibility_tick()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.settle_builder_stock_marketplace_eligibility_tick()
+  TO postgres, service_role;

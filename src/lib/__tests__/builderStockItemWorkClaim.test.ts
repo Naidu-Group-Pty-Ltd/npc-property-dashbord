@@ -172,7 +172,7 @@ describe('the generic attempt count is NOT a package retirement counter', () => 
     // edge code's, unchanged, and this must never become a second opinion
     // about when a package has had its chances.
     for (const untouched of [
-      'source_provenance_result', 'package_recovery_attempt', 'enrichment_status',
+      'source_provenance_result', 'package_recovery_attempt',
     ]) {
       expect(executable).not.toContain(untouched);
     }
@@ -197,6 +197,40 @@ describe('the scheduler can tell "nothing due" from "nothing left"', () => {
   });
 });
 
+describe('the scheduler may not retire while a property still owes work', () => {
+  it('counts a third queue: active properties not yet settled', () => {
+    /*
+     * The tick decides in SQL whether anything is left and unschedules the job
+     * when nothing is. Its two existing queues — uploads below a marker, and
+     * properties whose `enrichment_status` is pending/enriching — cannot see a
+     * property that still owes per-item image work, so once the edge code
+     * claims items the job could retire mid-ladder with nothing left to wake
+     * it. Same shape as the defect 20261005000000 was written to fix, one
+     * queue later.
+     */
+    const tick = sql.slice(sql.indexOf('FUNCTION public.settle_builder_stock_marketplace_eligibility_tick'));
+    expect(tick).toMatch(/image_work_stage <> 'settled'/);
+    expect(tick).toMatch(/v_outstanding \+ v_fallback \+ v_item_work = 0/);
+  });
+
+  it('sleeps on OUTSTANDING, never on CLAIMABLE', () => {
+    // A property leased by a live invocation, or backing off after one was
+    // killed, is not claimable this minute and is absolutely not finished.
+    // Retiring on `claimable = 0` would kill the engine at precisely the
+    // moment a worker died.
+    const tick = sql.slice(sql.indexOf('FUNCTION public.settle_builder_stock_marketplace_eligibility_tick'));
+    expect(tick).not.toMatch(/image_work_claim_until/);
+    expect(tick).not.toMatch(/image_work_next_attempt_at/);
+  });
+
+  it('leaves the re-arm on INSERT alone', () => {
+    // 20261012000000 is what wakes a NEW import. This migration governs only
+    // when the engine may sleep.
+    expect(executable).not.toContain('builder_stock_items_rearm_settlement');
+    expect(executable).not.toContain('cron.schedule');
+  });
+});
+
 describe('the schema is hardened and inert', () => {
   it('revokes every function from PUBLIC first, then anon and authenticated', () => {
     /*
@@ -209,6 +243,7 @@ describe('the schema is hardened and inert', () => {
       'claim_builder_stock_image_work',
       'complete_builder_stock_image_work',
       'builder_stock_image_work_pending',
+      'settle_builder_stock_marketplace_eligibility_tick',
     ]) {
       const revoke = new RegExp(
         `REVOKE ALL ON FUNCTION public\\.${fn}\\([^)]*\\)\\s*\\n?\\s*FROM PUBLIC, anon, authenticated`);
@@ -221,7 +256,7 @@ describe('the schema is hardened and inert', () => {
   it('pins search_path on every SECURITY DEFINER function', () => {
     const definers = sql.match(/SECURITY DEFINER/g) ?? [];
     const pinned = sql.match(/SET search_path = public, pg_temp/g) ?? [];
-    expect(definers.length).toBe(3);
+    expect(definers.length).toBe(4);
     expect(pinned.length).toBe(definers.length);
   });
 
@@ -233,6 +268,9 @@ describe('the schema is hardened and inert', () => {
     expect(executable).not.toMatch(/\bTRUNCATE\b/i);
     // The only UPDATEs are the ones inside the two claim functions.
     expect((executable.match(/\bUPDATE public\.builder_stock_items\b/g) ?? []).length).toBe(2);
+    // The one function this migration REPLACES rather than creates moves in a
+    // single direction: it can only keep the sweep alive longer.
+    expect(executable).toContain('CREATE OR REPLACE FUNCTION public.settle_builder_stock_marketplace_eligibility_tick');
   });
 
   it('adds every column IF NOT EXISTS, so re-applying is safe', () => {
@@ -240,21 +278,33 @@ describe('the schema is hardened and inert', () => {
     expect(added.length).toBe(7);
   });
 
-  it('is not referenced by any edge function yet', () => {
+  it('is never called by edge code that cannot survive its absence', () => {
     /*
-     * THE DEPLOYMENT RULE, ASSERTED. Edge functions ship automatically when
-     * `main` moves; migrations here are dispatched by hand. A PR that adds the
-     * schema and the code that needs it in one step is a PR that can deploy
-     * the code first — which is exactly what answered 503 on every settler
-     * tick and blanked the marketplace on 29 August. This test fails the
-     * moment somebody wires the two together in this migration's own PR.
+     * THE DEPLOYMENT RULE, ASSERTED PERMANENTLY.
+     *
+     * Edge functions ship automatically when `main` moves; migrations here are
+     * dispatched by hand. So edge code WILL run against a database that does
+     * not have these functions yet — that is not hypothetical, it is what
+     * answered 503 on every settler tick and blanked the whole marketplace on
+     * 29 August.
+     *
+     * Vacuous while this migration ships alone, and load-bearing the moment
+     * anything calls it: a caller must route through `itemWorkClaim.ts`, whose
+     * `isMissingCapability` turns "not deployed" into a named degradation
+     * rather than an outage. A hand-rolled `db.rpc(...)` on one of these names,
+     * anywhere else, fails here.
      */
     const { execSync } = require('node:child_process') as typeof import('node:child_process');
-    const hits = execSync(
+    const callers = execSync(
       'grep -rl "claim_builder_stock_image_work\\|complete_builder_stock_image_work\\|'
-      + 'builder_stock_image_work_pending\\|image_work_stage" supabase/functions/ || true',
+      + 'builder_stock_image_work_pending" supabase/functions/ || true',
       { cwd: REPO_ROOT, encoding: 'utf8' },
-    ).trim();
-    expect(hits).toBe('');
+    ).split('\n').map((line) => line.trim()).filter(Boolean);
+
+    for (const caller of callers) {
+      const source = readFileSync(join(REPO_ROOT, caller), 'utf8');
+      expect(source, `${caller} must handle an undeployed migration`)
+        .toMatch(/isMissingCapability/);
+    }
   });
 });
