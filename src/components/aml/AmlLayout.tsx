@@ -109,6 +109,10 @@ const LEGACY_WORKSPACES: Workspace[] = [
       "/admin/aml/risk",
       "/admin/aml/counterparty",
       "/admin/aml/finance",
+      // Folded in from the retired Transaction Compliance workspace. It has to
+      // be here or the page loses its secondary strip entirely — see the note
+      // at the top of this list.
+      "/admin/aml/transactions",
     ],
     defaultPath: "/admin/aml/cases",
     minCapability: "aml.view",
@@ -131,21 +135,16 @@ const LEGACY_WORKSPACES: Workspace[] = [
 
       Ownership & Control leaves the strip for a different reason, and comes
       back on its own terms — see the entry appended below.
+
+      Transactions is folded in here from a top-level workspace of its own.
+      That workspace held ONE tab, which is not a workspace; and the tab is
+      per-case with the same newest-case default as the four above. Its URL is
+      in `paths` so the page keeps its chrome, and its write operations —
+      which exist nowhere else — are untouched.
     */
     secondary: [
       { label: "Register", to: "/admin/aml/cases", capability: "aml.view" },
       { label: "Compliance Passport", to: "/admin/aml/passport", capability: "aml.view" },
-    ],
-  },
-  {
-    key: "transactions",
-    label: "Transaction Compliance",
-    icon: Coins,
-    paths: ["/admin/aml/transactions"],
-    defaultPath: "/admin/aml/transactions",
-    minCapability: "aml.investigate",
-    secondary: [
-      { label: "Transactions", to: "/admin/aml/transactions", capability: "aml.investigate" },
     ],
   },
   {
