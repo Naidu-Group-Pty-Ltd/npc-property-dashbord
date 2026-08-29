@@ -1,4 +1,4 @@
-# Stage 9 — Service gate & Passport
+# Stage 9 — Passport & Partners (and Stage 10 — Ongoing CDD)
 
 Read this before touching `_shared/aml/passport/passportState.pure.ts`'s reason
 codes, `refreshRemedy`, `gatePassportPath.pure.ts`, `GatePassportPathCard`,
@@ -198,3 +198,67 @@ A revoked grant is not live, so **withdrawing access takes the colour back**.
 Finance keeps its own middle state — the case row records that the portal was
 *requested*, which the partner tiles have no equivalent of — and a live
 Passport outranks it.
+
+## Where partners live, and what the rail calls each stage
+
+The reported confusion: *"I'm not sure if we are going to be doubling up on
+the partners in the Gate and Passports section 9."*
+
+That was right, and it was a naming problem on top of a duplication problem.
+
+**Partners were on two stages.** The roster — every organisation on the
+matter, and every act on it: send, re-issue, withdraw, onboard — has always
+lived on the Passport stage. The stage after it carried
+`PartnerDistributionCard`: the same organisations, read-only, no act
+attached. Neither stage was clearly the partner surface.
+
+**And the duplicate contradicted the real one.** That card read
+`get_passport_distribution_readiness`, which is gated by
+`aml_passport_partner_distribution`. Where partners are onboarded one at a
+time through `grant_access` — as they are here — that flag is off, so the
+card announced **"Passport distribution is not enabled for this
+deployment"** on the stage immediately after six partners had been given the
+Passport successfully. Two readings about different things, and only one of
+them was about the case.
+
+### The cut follows the work
+
+Issuing a credential and handing it to the partners entitled to rely on it
+are **one piece of work**: you cannot share what has not been issued, and the
+roster is where sharing happens. What keeps the case current afterwards is a
+different question on a different horizon — years, not days.
+
+| | was | is |
+|---|---|---|
+| Stage 9 | Service gate & Passport | **Passport & Partners** |
+| Stage 10 | Partners & ongoing CDD | **Ongoing CDD** |
+
+"Service gate" left the name for a second reason: the gate is granted by the
+cleared decision now, so it is *reported* on Stage 9 rather than decided
+there.
+
+`PartnerDistributionCard` is **deleted rather than unmounted** — a dormant
+component is one import away from putting a second partner register back on
+the wrong stage — and `distributionStage` no longer reads `facts.passport`
+at all. It still **names** where the partners are, as a secondary action:
+removing a duplicate must not remove the route.
+
+### The rail says what the page says
+
+The tile read **"Partners"** while the heading read **"Partners & ongoing
+CDD"** — two names for one stage, and the tile named the half that was about
+to move away. `stageNamesAndPartnerSurface.test.ts` pins the rule rather
+than the strings: a `shortLabel` must be *part of* its `label`. An
+abbreviation is fine ("Identity verification" → "Identity" is the same name,
+shorter); a tile that names something the heading does not is what sends an
+operator looking for partners on the wrong screen.
+
+### Stage 9 is phased end to end
+
+The guided path is five steps now: **decision → gate → preview → issue →
+share**. The fifth is `anytime` and is deliberately never owed — a case may
+legitimately have no partner, and a stage that would not complete until
+somebody is given a Passport invents an obligation nobody has. It states no
+numbers either: the roster below is the one place that says who holds this
+Passport, and two counts of one fact is a defect this stage has already had
+once.

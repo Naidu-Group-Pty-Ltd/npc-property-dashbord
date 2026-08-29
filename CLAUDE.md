@@ -460,7 +460,7 @@ them too — and still never touches `service_gate_status`, because
 `STATUS_TO_SERVICE_GATE[resumeStatus]` would revive a terminated gate.
 
 ## Stage 9 — the service gate and the credential
-Read [`docs/aml/STAGE_9_GATE_AND_PASSPORT.md`](./docs/aml/STAGE_9_GATE_AND_PASSPORT.md)
+Read [`docs/aml/STAGE_9_PASSPORT_AND_PARTNERS.md`](./docs/aml/STAGE_9_PASSPORT_AND_PARTNERS.md)
 before touching `refreshRemedy`, the reason codes in
 `_shared/aml/passport/passportState.pure.ts`, `gatePassportPath.pure.ts` or
 `passportActions.pure.ts`. **`refresh_required` is one code covering two
@@ -501,6 +501,22 @@ is DONE rather than a second copy of the same fact. And **the finishing line is
 named before the click**: approving the gate on that case completes the stage
 outright, so the card says so — exactly when one owed step remains and this
 operator can perform it, never when the last step is blocked.
+
+**Partners are on ONE stage, and the rail says what the page says.** The
+roster and every act on it have always been on the Passport stage; the stage
+after it carried a read-only echo of the same organisations, read through
+`aml_passport_partner_distribution` — a flag that is OFF wherever partners are
+onboarded one at a time, so it announced "Passport distribution is not enabled
+for this deployment" right after six partners had been given the Passport. The
+cut follows the work: **Stage 9 is "Passport & Partners"** (you cannot share
+what has not been issued) and **Stage 10 is "Ongoing CDD"**.
+`PartnerDistributionCard` is DELETED, `distributionStage` no longer reads
+`facts.passport` at all but still NAMES where the partners are, and Stage 9's
+path gains a fifth `anytime` step — sharing is never owed, because a case may
+legitimately have no partner. A `shortLabel` must be **part of** its `label`
+(a test pins the rule, not the strings): the rail read "Partners" while the
+heading read "Partners & ongoing CDD", which is how an operator comes to look
+for partners on the wrong screen.
 
 On the journey map, **Builder and Developer are one portal** (the wizard
 already knew; the map's second tile could never connect, and a `developer`
