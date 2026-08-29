@@ -39,6 +39,28 @@ export interface NotionPageShape {
   collectionViewId: string | null;
   spaceId: string | null;
   title: string | null;
+  /**
+   * The link named a view with `?v=` and this page does not have it.
+   *
+   * SAID RATHER THAN SUBSTITUTED. This used to fall through to `viewIds[0]`,
+   * so a builder who linked one view could be served a different one — a
+   * different set of properties — with nothing anywhere reporting it. Which
+   * rows belong to a stock list is the one question an importer may never
+   * guess at, so the caller fails the source read on this.
+   */
+  requestedViewMissing: boolean;
+  /**
+   * The view's OWN query — its filter, its sort, its grouping.
+   *
+   * A Notion view is a query over a collection, not a slice of it, and the
+   * rows a reader sees are the rows that query returns. Querying the
+   * collection with an empty query therefore reads the whole database
+   * whenever the view filters, which is a different stock list from the one
+   * the builder linked. Passed through verbatim: Notion already supplies the
+   * canonical structure and re-deriving it would be a second, disagreeing
+   * implementation of somebody else's filter language.
+   */
+  viewQuery: Record<string, unknown> | null;
 }
 
 /**
@@ -214,9 +236,26 @@ export function describeNotionPage(
   const viewIds = Array.isArray(block.view_ids)
     ? block.view_ids.filter((id): id is string => typeof id === 'string')
     : [];
-  const collectionViewId = (preferredViewId && viewIds.includes(preferredViewId))
-    ? preferredViewId
-    : (viewIds[0] ?? preferredViewId ?? null);
+  /*
+   * AN EXPLICIT VIEW IS HONOURED OR THE READ FAILS — never quietly swapped.
+   *
+   * `?v=` on the link is the builder saying WHICH view is the stock list. A
+   * fallback to `viewIds[0]` answers a question nobody asked and imports a
+   * different set of properties; with no `?v=` there is no such instruction,
+   * so the page's own first view is the documented default.
+   */
+  const requestedViewMissing = !!preferredViewId && !viewIds.includes(preferredViewId);
+  const collectionViewId = preferredViewId
+    ? (viewIds.includes(preferredViewId) ? preferredViewId : null)
+    : (viewIds[0] ?? null);
+
+  const viewRecord = collectionViewId
+    ? unwrapNotionRecord(tableOf(recordMap, 'collection_view')[collectionViewId])
+    : null;
+  const rawViewQuery = viewRecord?.query2 ?? viewRecord?.query ?? null;
+  const viewQuery = (rawViewQuery && typeof rawViewQuery === 'object')
+    ? rawViewQuery as Record<string, unknown>
+    : null;
 
   const spaceId = typeof block.space_id === 'string' ? block.space_id
     : notionEntrySpaceId(entry)
@@ -236,6 +275,8 @@ export function describeNotionPage(
     collectionViewId,
     spaceId,
     title: (collectionTitle || blockTitle || null),
+    requestedViewMissing,
+    viewQuery,
   };
 }
 
@@ -243,6 +284,7 @@ function blank(): NotionPageShape {
   return {
     pageBlockId: null, blockType: null, collectionId: null,
     collectionViewId: null, spaceId: null, title: null,
+    requestedViewMissing: false, viewQuery: null,
   };
 }
 

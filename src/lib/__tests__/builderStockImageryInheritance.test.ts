@@ -291,3 +291,104 @@ describe('what the inheritance may never do', () => {
     expect((await runImport(db, rows)).inheritedImagery).toBe(0);
   });
 });
+
+describe('membership is the current source, and imagery can never create it', () => {
+  it('an archived property ABSENT from the new source is not recreated', async () => {
+    /*
+     * The rule imagery inheritance must never break. The donor is a complete,
+     * photographed property; the current source simply does not mention it.
+     * Historical imagery may FOLLOW a property; it may never resurrect one.
+     */
+    const db = fakeDb({ items: [archived()], images: DONOR_IMAGES });
+
+    const outcome = await runImport(db, [sameRow({
+      Property: 'Lot 5 - 12 Someone Else Street Craigieburn VIC 3064',
+      Development: 'Another Estate',
+      'Building Size': '150',
+      npc_source_anchor: 'notion:another-row',
+    })]);
+
+    // One property in, one property out. The absent one stays absent.
+    expect(outcome.imported).toBe(1);
+    expect(db.tables.builder_stock_items.filter((r) => r.lifecycle_status !== 'archived'))
+      .toHaveLength(1);
+    const donor = db.tables.builder_stock_items.find((r) => r.id === 'old-209')!;
+    expect(donor.lifecycle_status).toBe('archived');
+    expect(outcome.inheritedImagery).toBe(0);
+  });
+
+  it('an empty source inserts nothing, however many photographed archives exist', async () => {
+    const db = fakeDb({ items: [archived()], images: DONOR_IMAGES });
+
+    const outcome = await runImport(db, []);
+
+    expect(outcome.imported).toBe(0);
+    expect(db.tables.builder_stock_items).toHaveLength(1);
+    expect(db.tables.builder_stock_items[0].lifecycle_status).toBe('archived');
+  });
+
+  it('a failure while carrying imagery does not fail the import', async () => {
+    const db = fakeDb({ items: [archived()], images: DONOR_IMAGES });
+    const realFrom = db.from;
+    // The copy write refuses; everything else behaves.
+    (db as { from: unknown }).from = (table: string) => {
+      const api = realFrom(table) as Record<string, unknown>;
+      if (table !== 'builder_stock_item_images') return api;
+      return { ...api, insert: () => { throw new Error('storage refused the copy'); } };
+    };
+
+    const outcome = await runImport(db, [sameRow()]);
+
+    expect(outcome.imported).toBe(1);
+    expect(outcome.inheritedImagery).toBe(0);
+    expect(outcome.failed).toBe(0);
+  });
+});
+
+describe('a NORMAL re-import — the list is replaced without being deleted first', () => {
+  const live = (over: Row = {}) => archived({ id: 'live-209', lifecycle_status: 'active', ...over });
+
+  it('matches the LIVE property on its anchor instead of inserting a duplicate', async () => {
+    /*
+     * The anchor key is active-only and identity-guarded, so a re-import over a
+     * list still standing matches. This is why deleting first is a different
+     * case, and why nothing about the builder's source has to change for a
+     * routine re-import to behave: the anchor and the identity are enough.
+     */
+    const db = fakeDb({ items: [live()], images: DONOR_IMAGES });
+
+    const outcome = await runImport(db, [sameRow({ Price: '795000' })]);
+
+    expect(outcome.updated).toBe(1);
+    expect(outcome.imported).toBe(0);
+    expect(db.tables.builder_stock_items).toHaveLength(1);
+  });
+
+  it('keeps the imagery attached to that row — nothing to carry, nothing lost', async () => {
+    const db = fakeDb({
+      items: [live()],
+      images: DONOR_IMAGES.map((row) => ({ ...row, stock_item_id: 'live-209' })),
+    });
+
+    const outcome = await runImport(db, [sameRow({ Price: '795000' })]);
+
+    // The row was never replaced, so its images were never orphaned and the
+    // inheritance path is not even reached.
+    expect(outcome.inheritedImagery).toBe(0);
+    expect(db.tables.builder_stock_item_images
+      .filter((r) => r.stock_item_id === 'live-209')).toHaveLength(2);
+  });
+
+  it('still refuses to match when the anchor is re-used for a different property', async () => {
+    const db = fakeDb({ items: [live()], images: DONOR_IMAGES });
+
+    const outcome = await runImport(db, [sameRow({
+      Property: 'Lot 88 - 2 Different Road Tarneit VIC 3029',
+      Development: 'Different Estate',
+      'Building Size': '190',
+    })]);
+
+    expect(outcome.imported).toBe(1);
+    expect(outcome.replacedProperties.length).toBeGreaterThan(0);
+  });
+});
