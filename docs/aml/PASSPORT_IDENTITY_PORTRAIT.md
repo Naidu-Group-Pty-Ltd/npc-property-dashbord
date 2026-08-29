@@ -136,13 +136,20 @@ the hatched field, the document ("Australian passport", which is known even
 when the image is not) and one sentence saying which absence this is.
 
 `identity.portrait` is therefore a **slot** rather than a descriptor, and it
-is never null. Three absences, named rather than left as a gap:
+is never null. Four absences, named rather than left as a gap:
 
 | reason | what it means |
 |---|---|
 | `not_verified` | no verification has passed for this party yet |
-| `predates_portrait_capture` | verified, NPC holds the document page, the portrait was never stored — **the one that can be repaired** |
-| `provider_retains_media` | verified through a provider that keeps the media; there is nothing on our side to show or re-read |
+| `pending_retrieval` | verified, NPC holds the document page, the sweep has not fetched the portrait yet — **transient** |
+| `provider_retains_media` | verified through a provider that keeps the media; nothing on our side to show |
+| `unavailable` | the document page was read and carried no portrait — **final** |
+
+`pending_retrieval` and `unavailable` are separated deliberately. Both are
+"no image" and they are not the same thing to a reader: a page that goes on
+promising a photograph the document does not carry is wrong one way, and one
+that says "unavailable" while the sweep is about to fetch it is wrong the
+other. A test asserts the two are worded so they cannot be confused.
 
 The wording says nothing about the customer, only about the record, and a
 test asserts it: nobody's identity is in question because a photograph was
@@ -153,47 +160,57 @@ carries the face — printing it twice in one booklet is repetition. The
 sentence now names the one image that travels and where it went, so it cannot
 be read as saying the booklet carries no photograph at all.
 
-## Recovering a portrait that was never stored
+## The backfill is automatic, and that is the point
 
 Every verification completed before portraits were stored has a Passport with
-no face on it, permanently — even though the document page it was cropped
-from is still in NPC's own bucket. A Passport is relied on for years, and the
-ones already issued do not repair themselves.
+no face on it — even though the document page it was cropped from is still in
+NPC's own bucket. That is a defect in **this product's own record-keeping**,
+and repairing it is this product's job.
 
-`recoverIdentityPortrait` re-derives it: it reads the stored `document_front`,
-makes one ID-verification call, takes `portrait_image` and writes
-`standalone_capture.objects.id_portrait`. Four rules make that safe.
+The first attempt at this put a "Recover the holder's photograph" button on
+the Passport. That was wrong, and it was wrong in a way worth recording:
+**asking an operator to click once per case is asking them to fix our bug by
+hand, for ever** — and it makes a Passport's completeness depend on whether
+anybody happened to open it. A partner reading a Passport nobody opened would
+see no holder, indefinitely, with no signal to anyone that anything was owed.
 
-**It re-derives an IMAGE and never re-decides an identity.** No status, no
-verdict, no score and no timing is written — the verification stands exactly
-as it was recorded. Where the provider's re-read disagrees with the original
-verdict, that is put on the case event for a human and acted on by nobody
-here: silently adopting a second opinion nobody asked for would be far worse
-than the missing photograph.
+So `backfillIdentityPortrait` runs on the **one-minute sweep that already
+exists** in `aml-verification-processor`. Five rules carry it.
 
-**It spends money, so a person asks for it.** One billed call, metered
-through `runWithMetrics` at the same per-step price as the original. It is
-never swept, never retried and never triggered by a page load — a test
-asserts the sweep cannot reach it. That is why it does not bend
-`aml-verification-processor`'s standing rule about paid calls: the rule is
-about a call whose billing state is *unknown*, and this one is deliberate,
-single and known.
+**It re-derives an IMAGE and never re-decides an identity.** No status,
+verdict, score or timing is written — the verification stands exactly as
+recorded. Where the provider's re-read disagrees with the original verdict,
+that is logged for a human and acted on by nobody: silently adopting a second
+opinion nobody asked for would be far worse than the missing photograph.
 
-**It is recorded.** A case event names the act, the check and the outcome. A
-new image on a disclosure document that nothing accounts for is worse than no
-image.
+**Exactly one attempt, ever.** It makes one billed ID-verification call, and
+the stamp it leaves (`standalone_capture.portrait_backfill`) is written
+whether the call succeeded, failed or produced nothing. The stamp's
+**presence** is the guard, never its outcome — retrying a paid call against
+the same unreadable document would spend every minute for ever, which is the
+unattended spending the processor refuses by design. That is also why it does
+not bend that function's standing rule: there is no path that re-sends.
 
-**It is only offered where it can work.** `recoverable` is set by the server,
-for the Command Centre audience alone, and only where `portraitRecoverable`
-is true — a stored document page and no portrait. The condition is expressed
-over *what we hold*, never over which vendor was used: holding the source
-image is what makes recovery possible, and a provider rule goes stale the
-moment another one is added. `PortraitRecoveryNotice` renders nothing
-otherwise, because a control that cannot work is worse than none, and it
-states the cost before the click.
+**Nothing is stamped where nothing was spent.** A database fault, an
+unresolved provider or a document page the retention job already deleted all
+answer `not_applicable` and leave no stamp, so a check that becomes eligible
+later is still a candidate.
 
-MLRO-only, enforced at the server: the Passport is the outward-facing
-document and its contents are the MLRO's to change.
+**A live customer always outranks an old record.** The pass runs only when the
+verification queue took nothing this tick and the wall-clock budget is intact.
+Somebody waiting on "Checking your identity" is never delayed by the repair of
+a Passport issued months ago.
+
+**It is bounded — two checks a tick.** Every minute, so a backlog of any size
+drains within hours without a burst of spending nobody chose. It is fail-soft
+throughout: a repair that could take the verification sweep down with it would
+be worse than the defect it fixes.
+
+`findPortraitBackfillCandidates` narrows the scan with two JSON filters and
+then re-applies `backfillPending` in code. The predicate is checked twice on
+purpose: a filter that silently stopped matching would turn a bounded repair
+into repeated spending, and this is the one place where being wrong costs
+money.
 
 ## How it is drawn
 
