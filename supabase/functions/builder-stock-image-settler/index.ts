@@ -215,6 +215,51 @@ Deno.serve(async (req: Request) => {
   const startedAt = Date.now();
   const deadlineAt = startedAt + BUDGET_MS;
 
+  /*
+   * ONE SETTLER AT A TIME.
+   *
+   * The cron offers this function a turn every minute while work is
+   * outstanding, and `BUDGET_MS` permits a single tick to run for a hundred
+   * seconds. Production has never come near that — 16.9s is the worst completed
+   * tick across 101 of them — but two settlers reading the same queue would
+   * start the same package twice, and "has not happened yet" is not a guard.
+   *
+   * The lease is a compare-and-set row rather than an advisory lock because
+   * this function holds no persistent database session: it speaks PostgREST,
+   * over HTTP, and a lock taken on one connection would not span the run. It
+   * EXPIRES rather than being released, so a worker killed on a resource limit
+   * — no `finally`, no response, as this repository has already paid to learn —
+   * costs one skipped minute instead of wedging the queue shut.
+   *
+   * Declining is a normal outcome and not a failure: the previous turn is still
+   * working, and the next minute will offer another.
+   */
+  const lease = await supabase.rpc('claim_builder_stock_settlement_lease', {
+    p_seconds: Math.ceil(BUDGET_MS / 1000) + 20,
+    p_holder: 'builder-stock-image-settler',
+  });
+  if (lease.error) {
+    // A lease that cannot be read is a deployment fault, not an empty queue.
+    console.error('[builder-stock-image-settler] settlement lease unavailable', {
+      phase: 'settlement_lease',
+      reason: String(lease.error?.message ?? lease.error).slice(0, 200),
+    });
+    return json({ success: false, error: 'Settlement lease unavailable' }, 503);
+  }
+  if (lease.data !== true) {
+    console.log('[builder-stock-image-settler] tick skipped — previous run still holds the lease');
+    return json({ success: true, skipped: 'lease_held' });
+  }
+
+  const releaseLease = async () => {
+    try {
+      await supabase.rpc('release_builder_stock_settlement_lease');
+    } catch {
+      // The lease expires on its own; failing to hand it back early is not
+      // worth failing a tick that otherwise did its work.
+    }
+  };
+
   try {
     /**
      * The uploads with work outstanding, oldest source first.
@@ -499,5 +544,13 @@ Deno.serve(async (req: Request) => {
     // were transposed besides, so the headers were being logged as the
     // context and the context discarded as a correlation id.
     return internalErrorResponse(error, '[builder-stock-image-settler]', corsHeaders);
+  } finally {
+    /*
+     * Hand the turn back as soon as the work is done, on every path this
+     * function can return by. A tick that took seven seconds must not hold the
+     * next two minutes; the expiry above is the backstop for the one path that
+     * runs no code at all — a resource-limit kill.
+     */
+    await releaseLease();
   }
 });
