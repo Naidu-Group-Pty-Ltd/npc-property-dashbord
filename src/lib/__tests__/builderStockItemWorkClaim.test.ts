@@ -234,22 +234,35 @@ describe('the schema is hardened and inert', () => {
     expect(added.length).toBe(7);
   });
 
-  it('is not referenced by any edge function yet', () => {
+  it('is never called by edge code that cannot survive its absence', () => {
     /*
-     * THE DEPLOYMENT RULE, ASSERTED. Edge functions ship automatically when
-     * `main` moves; migrations here are dispatched by hand. A PR that adds the
-     * schema and the code that needs it in one step is a PR that can deploy
-     * the code first — which is exactly what answered 503 on every settler
-     * tick and blanked the marketplace on 29 August. This test fails the
-     * moment somebody wires the two together in this migration's own PR.
+     * THE DEPLOYMENT RULE, ASSERTED PERMANENTLY.
+     *
+     * It used to demand that NOTHING referenced these functions, which was
+     * true only until the settler landed — a test with an expiry date, and it
+     * expired. What actually matters outlives that: edge functions ship
+     * automatically when `main` moves while migrations here are dispatched by
+     * hand, so edge code WILL run against a database that does not have these
+     * functions yet. That is not hypothetical — it answered 503 on every
+     * settler tick and blanked the whole marketplace on 29 August.
+     *
+     * So a caller must route through `itemWorkClaim.ts`, whose
+     * `isMissingCapability` turns "not deployed" into a named degradation
+     * rather than an outage. A hand-rolled `db.rpc(...)` on one of these
+     * names, anywhere else, fails here.
      */
     const { execSync } = require('node:child_process') as typeof import('node:child_process');
-    const hits = execSync(
+    const callers = execSync(
       'grep -rl "claim_builder_stock_image_work\\|complete_builder_stock_image_work\\|'
-      + 'builder_stock_image_work_pending\\|image_work_stage" supabase/functions/ || true',
+      + 'builder_stock_image_work_pending" supabase/functions/ || true',
       { cwd: REPO_ROOT, encoding: 'utf8' },
-    ).trim();
-    expect(hits).toBe('');
+    ).split('\n').map((line) => line.trim()).filter(Boolean);
+
+    for (const caller of callers) {
+      const source = readFileSync(join(REPO_ROOT, caller), 'utf8');
+      expect(source, `${caller} must handle an undeployed migration`)
+        .toMatch(/isMissingCapability/);
+    }
   });
 });
 
