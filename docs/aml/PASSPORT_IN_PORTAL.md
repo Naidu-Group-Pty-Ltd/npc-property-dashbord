@@ -360,3 +360,58 @@ portal's organisations). It moved into an "About this page" disclosure in the
 header — closed it costs no vertical space, and the old rule holds more
 strictly than before: an adapter *adds* context and can never supply the
 statutory wording, which now belongs to a component no adapter can reach.
+
+## The viewer's chrome — one CSS declaration, nineteen buttons
+
+Two things were reported on the booklet: the turn bar's page title truncated
+to **"Identity Ver…"** with its page count wrapped onto three lines and running
+under the Next button, and a zoom control nobody could find.
+
+The first has a single cause, and it is not in `PassportBook`.
+`.passport-action` declared `width: 100%`. `.w-auto` — the Tailwind utility
+**every one of the nineteen call sites pairs it with** — is also a single-class
+selector, so specificity ties, source order decides, and `passport-tokens.css`
+is imported last. The utility lost, everywhere, silently. There is not one
+`passport-action` in the product that omits `w-auto`, which is what makes the
+declaration wrong by unanimity rather than by judgement.
+
+Measured in Chromium against the built stylesheet, at a 1200px board:
+
+| | before | after |
+|---|---|---|
+| ← Previous / Next → | 535px each | 116px each |
+| page-title column | 74px, 165px of text clipped | 173px, complete |
+| turn bar's centre block | 50px tall (wrapped) | 35px |
+| a Command Centre action row | 3 stacked lines, 124px | 1 line, 36px |
+
+That last row is the part worth noticing: **every** `flex flex-wrap` action row
+in the Passport surface — the Command Centre's "Open digital passport / Open
+case", the share dialog's buttons, the request-information chooser — was one
+full-width button per line. Removing the declaration is the whole fix, in every
+portal and the Command Centre at once.
+
+Dropping it does not unstretch anything that wanted to stretch:
+`.passport-action` is a flex container, so a button inside a `flex-col` still
+fills the column under the default `align-items: stretch`. What changed is
+exactly the case that was broken — a button in a ROW.
+
+The turn bar is now a **grid** rather than three flex items. `justify-between`
+centres nothing, it only pushes; three columns with equal outer fractions put
+the title on the true centre line whatever the two labels measure. The title is
+sized to its content and **never truncated** — naming the pages a reader is
+looking at is worth nothing if the name does not fit.
+
+The magnification cluster was four chips in the page-number row, in the
+page-number style, at the same weight, so it read as four more pages. It now
+has a hairline, a `ZOOM` label and a gold well of its own. Same four buttons,
+same accessible names, same behaviour: this is emphasis, not a new control —
+and the reset chip keeps full opacity when disabled, because at the fit `100%`
+is a **reading**, and the shared 0.45 dimming made the one number in the
+cluster the hardest thing in it to see.
+
+One more thing that fix exposed: the one-page/two-page toggle drew a **tofu
+box** in both states. U+2750 and U+25AF are outside every font this product
+ships. It is a lucide icon now, and a test forbids either literal returning —
+a control nobody can identify is a control nobody uses, which is half of why
+the magnification was never found.
+

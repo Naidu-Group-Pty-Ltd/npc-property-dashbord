@@ -400,6 +400,17 @@ control. The space that frees is not cosmetic: `bookletGeometry` fits the
 spread to the box it is given, so container width and board height convert
 directly into legible document.
 
+The booklet's own chrome answers to one more: **`.passport-action` must not
+declare a width.** It declared `width: 100%`, and `.w-auto` — which every one
+of its nineteen call sites pairs it with — is also a single-class selector, so
+source order decided and the utility lost everywhere. The visible defect was
+the turn bar (both buttons 535px of a 1200px row, the page title clipped to
+"Identity Ver…"), but the same rule stacked every `flex flex-wrap` action row
+in the Command Centre one button per line. The turn bar is a grid now, because
+`justify-between` centres nothing, and the magnification cluster has a body of
+its own — it was four chips in the page-number row, in the page-number style,
+so nobody found it.
+
 The raw bearer token is **gone from the Command Centre**: it and the
 `/passport/<token>` link are one credential, and showing it twice invited an
 operator to send "the code" instead of the link.
