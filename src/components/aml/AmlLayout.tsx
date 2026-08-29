@@ -111,14 +111,29 @@ const LEGACY_WORKSPACES: Workspace[] = [
     ],
     defaultPath: "/admin/aml/cases",
     minCapability: "aml.view",
+    /*
+      ── Why this is two entries and not seven ──────────────────────────
+      Both of these are CROSS-CASE: the register is the only list of every
+      case, and the Compliance Passport page is the only place to browse
+      every issued credential. Everything else that used to sit here was a
+      per-case topic — Verification, Screening, Risk, Funding & Finance —
+      and each of them is now a stage inside the case workspace, reached by
+      opening a named customer.
+
+      Those four pages are not deleted. Their URLs are still in `paths`
+      above, so they keep the workspace header and the correct highlight,
+      and the case workspace still links to Funding & Finance where the
+      writing happens. What they lose is a permanent seat in the navigation
+      that invited an operator to work on a case they had not chosen: each
+      one loads with `cases[0]` selected, which is the most recently created
+      case, and on the Risk page "Record decision" is live in that state.
+
+      Ownership & Control leaves the strip for a different reason, and comes
+      back on its own terms — see the entry appended below.
+    */
     secondary: [
       { label: "Register", to: "/admin/aml/cases", capability: "aml.view" },
       { label: "Compliance Passport", to: "/admin/aml/passport", capability: "aml.view" },
-      { label: "Verification", to: "/admin/aml/verification", capability: "aml.view" },
-      { label: "Screening", to: "/admin/aml/screening", capability: "aml.view" },
-      { label: "Risk", to: "/admin/aml/risk", capability: "aml.view" },
-      { label: "Ownership & Control", to: "/admin/aml/counterparty", capability: "aml.view" },
-      { label: "Funding & Finance", to: "/admin/aml/finance", capability: "aml.investigate" },
     ],
   },
   {

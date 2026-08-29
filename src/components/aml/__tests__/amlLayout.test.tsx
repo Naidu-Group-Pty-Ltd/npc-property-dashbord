@@ -70,8 +70,15 @@ describe("AmlLayout — legacy (V2) navigation", () => {
     const register = within(secondary).getByText("Register").closest("a")!;
     expect(register).toHaveAttribute("aria-current", "page");
     // Legacy customer workspace still publishes the per-discipline pages.
-    expect(within(secondary).getByText("Verification")).toBeInTheDocument();
-    expect(within(secondary).getByText("Funding & Finance")).toBeInTheDocument();
+    /* The strip carries the two CROSS-CASE entry points and no per-case
+       topic. Asserting the absence as well as the presence is the point:
+       Verification, Screening, Risk and Funding & Finance are stages inside
+       a named customer's case now, and a seat here is what let an operator
+       act on whichever case happened to be created last. */
+    expect(within(secondary).getByText("Compliance Passport")).toBeInTheDocument();
+    for (const gone of ["Verification", "Screening", "Risk", "Funding & Finance"]) {
+      expect(within(secondary).queryByText(gone)).not.toBeInTheDocument();
+    }
   });
 
   it("shows the workspace › section context trail off the home page", () => {
