@@ -247,6 +247,14 @@ export type StampCheckFact = {
   document_choice?: string | null;
   /** ISO 3166-1 alpha-3, as the provider read it off the document. */
   issuing_state?: string | null;
+  /**
+   * The stamp left by a completed portrait backfill attempt, where one ran.
+   *
+   * It is what separates "the photograph is on its way" from "the document
+   * was read and carried none" on the Client Identity page — an absence that
+   * will resolve itself from one that will not.
+   */
+  portrait_backfill?: unknown;
 };
 export type StampDocumentFact = { status: string; reviewed_at?: string | null; created_at?: string | null };
 export type StampScreeningFact = { state: string; completed_at?: string | null };

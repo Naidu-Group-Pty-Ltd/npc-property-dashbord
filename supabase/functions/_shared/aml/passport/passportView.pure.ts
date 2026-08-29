@@ -219,8 +219,9 @@ export type PassportView = {
      * portrait block simply disappears when there is no image reads as a
      * broken page, and gives the reader no way to tell "we hold no
      * photograph" from "this document does not carry one". The slot names
-     * which of those it is. `url` is minted for one reader at the moment of
-     * service — see `identityPortrait.pure.ts`.
+     * which absence it is, including the transient one while the sweep is
+     * fetching it. `url` is minted for one reader at the moment of service —
+     * see `identityPortrait.pure.ts`.
      */
     portrait: IdentityPortraitSlot;
   };
@@ -520,7 +521,7 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
      objects rather than in the (null) descriptor they produce. */
   const portraitFacts = new Map<string, {
     captureObjects: unknown; documentChoice: unknown; issuingState: unknown;
-    completedAt: string | null;
+    completedAt: string | null; backfillStamp: unknown;
   }>();
   for (const c of input.stamp_input.verification_checks ?? []) {
     const key = c.party_label ?? input.case.subject_display_name ?? "Subject";
@@ -545,6 +546,7 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
         documentChoice: c.document_choice,
         issuingState: c.issuing_state,
         completedAt: c.completed_at,
+        backfillStamp: c.portrait_backfill,
       });
     }
     partyMap.set(key, entry);
@@ -564,10 +566,11 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
     issuingState: subjectFacts?.issuingState as string | null | undefined,
     completedAt: subjectFacts?.completedAt ?? null,
     verified: Boolean(subjectParty?.verified),
-    /* A repair staff can perform. A relying partner has neither the standing
-       nor the means, and telling them a photograph is "recoverable" invites a
-       request nobody in their organisation can action. */
-    mayRecover: audience === "command",
+    /* Distinguishes "on its way" from "read and there was none". Every
+       audience gets the same reading: the Command Centre's document and the
+       partner's are the same document, and a photograph that is arriving is
+       not a staff-only fact. */
+    backfillStamp: subjectFacts?.backfillStamp ?? null,
   });
 
   const versions: PassportVersionRow[] = attestations.map((a) => ({

@@ -549,15 +549,25 @@ apart from one that carries no photograph at all. `identity.portrait` is a
 **slot**, never null, and names which of three absences it is; the wording is
 about the RECORD and never about the customer, asserted by a test.
 
-**A portrait that was never stored can be recovered, once, by an MLRO.** The
-document page is still in NPC's bucket, so `recoverIdentityPortrait`
-re-derives the crop from it. It **re-derives an image and never re-decides an
+**A portrait that was never stored is fetched automatically, exactly once.**
+The document page is still in NPC's bucket, so `backfillIdentityPortrait`
+re-derives the crop from it — on the one-minute sweep that already exists,
+never from a button. A first attempt put "Recover the holder's photograph" on
+the page and that was wrong: **asking an operator to click once per case is
+asking them to fix this product's own record-keeping bug by hand, for ever**,
+and it makes a Passport's completeness depend on whether anybody opened it.
+Five rules carry it. It **re-derives an image and never re-decides an
 identity** — no status, verdict, score or timing is written, and a re-read
-that disagrees with the recorded verdict goes on the case event for a human
-rather than being adopted. It is one billed call, so it is an act somebody
-asks for: never swept, never retried, never fired by a page load, and offered
-only where `portraitRecoverable` is true (a stored document page and no
-portrait) — expressed over what we HOLD, never over which vendor was used.
+that disagrees with the recorded verdict is logged for a human rather than
+adopted. **One attempt, ever**: the `portrait_backfill` stamp is written
+whether the call succeeded, failed or produced nothing, and its PRESENCE is
+the guard, never its outcome. **Nothing is stamped where nothing was spent**,
+so a database fault or an unconfigured provider does not disqualify a check
+permanently. The pass runs only when **the live verification queue took
+nothing this tick**, and it is **bounded at two a tick** so a backlog drains
+without a burst of spending. `pending_retrieval` and `unavailable` are
+separate readings on the page, because "on its way" and "the document carried
+none" are not the same thing to a reader.
 
 Nothing new is fetched — the portrait is already extracted as the Face Match
 reference and was simply discarded. Three rules make storing a face safe. **It

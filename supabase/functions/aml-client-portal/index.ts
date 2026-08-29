@@ -1080,6 +1080,7 @@ const __corsWrappedHandler = async (req: Request) => {
                 document_choice: sa.document_choice
                   ?? vc.outcome_detail?.standalone_capture?.document_choice ?? null,
                 issuing_state: sa.id_verification?.id_verification?.issuing_state ?? null,
+                portrait_backfill: vc.outcome_detail?.standalone_capture?.portrait_backfill ?? null,
               };
             }),
             documents: (docs ?? []).map((d: any) => ({

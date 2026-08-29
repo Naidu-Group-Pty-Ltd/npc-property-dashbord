@@ -42,21 +42,28 @@
  * the customer's next submission is a fresh, deliberate attempt that consumes
  * nothing from the failed one.
  *
- * ## The third mode: recovering a document portrait
+ * ## The portrait backfill, on the same tick
  *
- * `recover_portrait_check_id` re-derives the one image a Compliance Passport
- * may show — the face printed on the identity document — for a verification
- * that completed before portraits were stored. It is NOT a retry and does not
- * bend the rule above: it is a single, deliberate call an operator asked for,
- * whose billing state is therefore known, and it re-derives an image rather
- * than re-deciding an identity. It never touches a status, a verdict or a
- * score, it is never swept, and it is never triggered by a page load.
+ * The document portrait was extracted on every run and discarded until
+ * recently, so every verification completed before that has a Compliance
+ * Passport with no face on it — while the document page it was cropped from
+ * is still in NPC's own bucket. That is a defect in this product's own
+ * record-keeping, and the sweep repairs it rather than asking an operator to
+ * fix it by hand, once per customer, for ever.
+ *
+ * It does not bend the rule above. A backfill is ONE call per check, ever:
+ * the attempt stamp is written whether the call succeeded, failed or produced
+ * nothing, and its presence — never its outcome — is what stops a second.
+ * There is no path that re-sends. The pass is small and runs only when the
+ * verification queue is clear, so a customer's live submission is never
+ * delayed by the repair of an old one.
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { enforceJsonBodyLimit, verifySignedInternal } from '../_shared/requestSecurity.ts';
 import {
-  processStandaloneCheck, recoverIdentityPortrait, type StandaloneRunResult,
+  backfillIdentityPortrait, findPortraitBackfillCandidates,
+  processStandaloneCheck, type StandaloneRunResult,
 } from '../_shared/aml/standaloneVerification.ts';
 import { isStandaloneIdvProvider } from '../_shared/aml/providers/index.ts';
 
@@ -109,12 +116,7 @@ Deno.serve(async (req: Request) => {
   // spends money, so the only things allowed to reach it are the scheduler and
   // the portal function that already authenticated the customer.
   const auth = await verifySignedInternal(
-    admin, req, parsed.raw,
-    // `aml-reliance` is here for one operation only — recovering the document
-    // portrait for a verification that predates portrait storage. It cannot
-    // reach the sweep or start a verification: the mode below is selected by
-    // the body, and every other path ignores that field.
-    ['pg_cron', 'aml-client-portal', 'aml-verification', 'aml-reliance'],
+    admin, req, parsed.raw, ['pg_cron', 'aml-client-portal', 'aml-verification'],
   );
   if (!auth.ok) return json({ error: 'Unauthorized' }, 401);
 
@@ -122,19 +124,6 @@ Deno.serve(async (req: Request) => {
   const body = parsed.value ?? {};
 
   try {
-    /* ── Portrait recovery: an operator repairing an old record ─────────
-       Not a verification, and deliberately not part of the sweep. It
-       re-derives the ONE image a Compliance Passport may show from the
-       document page already in NPC's bucket, and it changes no status, no
-       verdict and no score. One billed call, made because a person asked for
-       it on a case they have open. See `recoverIdentityPortrait`. */
-    if (typeof body.recover_portrait_check_id === 'string' && body.recover_portrait_check_id) {
-      const result = await recoverIdentityPortrait(
-        admin, body.recover_portrait_check_id,
-      );
-      return json({ portrait_recovery: result });
-    }
-
     /* ── Targeted: one check, dispatched by the portal on submission ────── */
     if (typeof body.check_id === 'string' && body.check_id) {
       const result = await processStandaloneCheck(admin, body.check_id);
@@ -166,9 +155,20 @@ Deno.serve(async (req: Request) => {
       results.push(await processStandaloneCheck(admin, String(row.id)));
     }
 
+    /* ── The portrait backfill ──────────────────────────────────────────
+       Last, and only when nothing live was taken this tick. A customer
+       waiting on "Checking your identity" outranks a photograph missing from
+       a Passport issued months ago, and the budget check keeps the repair out
+       of the way of the guarantee. */
+    const portraits = results.length === 0 && Date.now() - startedAt < BUDGET_MS
+      ? await runPortraitBackfill(admin, startedAt)
+      : [];
+
     return json({
       processed: results.length,
       results,
+      portraits_backfilled: portraits.filter((p) => p.outcome === 'stored').length,
+      portraits,
       duration_ms: Date.now() - startedAt,
     });
   } catch (err) {
@@ -217,5 +217,45 @@ async function releaseStaleClaims(admin: any): Promise<void> {
       // be far worse than missing a stale claim.
       .eq('processing_status', 'processing')
       .eq('status', 'pending');
+  }
+}
+
+/**
+ * How many old Passports are repaired per tick.
+ *
+ * Two. Each is one billed provider call, and this runs every minute: a
+ * backlog of any size drains within hours without a burst of spending that
+ * nobody chose, and a tick that tried to drain it all is a tick that gets
+ * killed part-way through. Leaving work for the next minute is always better.
+ */
+const PORTRAIT_BACKFILL_LIMIT = 2;
+
+/**
+ * Fill in the photographs the product failed to keep.
+ *
+ * Fail-soft throughout: this is a repair, and a repair that could take the
+ * verification sweep down with it would be worse than the defect it fixes.
+ */
+async function runPortraitBackfill(admin: any, startedAt: number) {
+  try {
+    const ids = await findPortraitBackfillCandidates(admin, PORTRAIT_BACKFILL_LIMIT);
+    const out = [];
+    for (const id of ids) {
+      if (Date.now() - startedAt > BUDGET_MS) break;
+      const result = await backfillIdentityPortrait(admin, id);
+      out.push(result);
+      /* Recorded and acted on by nobody: this re-derived an IMAGE, it did not
+         re-decide an identity. A disagreement with the recorded verdict is
+         for a human to notice, never for this to adopt. */
+      if (result.outcome === 'stored') {
+        console.info('[aml-verification] portrait backfilled', JSON.stringify({
+          check_id: result.checkId, provider_verdict_on_reread: result.providerVerdict,
+        }));
+      }
+    }
+    return out;
+  } catch (err) {
+    console.warn('[aml-verification] portrait backfill failed', (err as Error)?.message);
+    return [];
   }
 }
