@@ -20,6 +20,7 @@ import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { hasAmlCapability, type AmlCapability } from "@/lib/aml/permissions";
 import { useAmlTerminology } from "@/lib/aml/useAmlTerminology";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
+import { useHasEntityCases } from "@/lib/aml/useHasEntityCases";
 
 /**
  * AML shell navigation.
@@ -278,6 +279,17 @@ const V3_WORKSPACES: Workspace[] = [
   },
 ];
 
+/**
+ * The Ownership & Control entry, kept out of the static tables because
+ * whether it appears is a fact about the tenant's customers rather than about
+ * the navigation. See `useHasEntityCases`.
+ */
+const OWNERSHIP_ENTRY: SecondaryEntry = {
+  label: "Ownership & Control",
+  to: "/admin/aml/counterparty",
+  capability: "aml.view",
+};
+
 function pathMatchesWorkspace(pathname: string, workspace: Workspace): boolean {
   // Compliance Home matches only the exact root — every other path belongs to
   // the workspace whose `paths` list contains a matching prefix.
@@ -291,6 +303,7 @@ export function AmlLayout() {
   const { roles, loading } = useAmlAccess();
   const { t } = useAmlTerminology();
   const { v3Nav } = useAmlV3Flags();
+  const entityCases = useHasEntityCases();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -327,9 +340,33 @@ export function AmlLayout() {
     // Reserved for Phase 2 role-based default landing.
   }, [navigate]);
 
-  const secondary = activeWorkspace?.secondary?.filter((s) =>
-    hasAmlCapability(roles, s.capability),
-  );
+  /**
+   * Ownership & Control, offered only where it applies.
+   *
+   * Beneficial ownership is a question about companies, trusts and SMSFs; an
+   * individual purchaser carries no ownership structure, and the case
+   * workspace's own card says so. On a tenant whose customers are all
+   * individuals the tab is inapplicable to every case they hold — and it is
+   * mandatory the day the first entity is onboarded. So it asks the data
+   * rather than asking anybody to remember: absent while there is no such
+   * case, back on its own when there is.
+   *
+   * It is appended rather than filtered out of the list above so the ordinary
+   * strip stays a plain statement of what Customer Compliance always offers.
+   * The page itself is unaffected either way — the route is live and the case
+   * workspace's "Full register" link reaches it regardless.
+   */
+  const secondary = useMemo(() => {
+    const base = activeWorkspace?.secondary?.filter((s) =>
+      hasAmlCapability(roles, s.capability),
+    );
+    if (!base) return base;
+    if (activeWorkspace?.key !== "customer" || !entityCases.present) return base;
+    if (base.some((s) => s.to === OWNERSHIP_ENTRY.to)) return base;
+    return hasAmlCapability(roles, OWNERSHIP_ENTRY.capability)
+      ? [...base, OWNERSHIP_ENTRY]
+      : base;
+  }, [activeWorkspace, roles, entityCases.present]);
 
   const activeSecondary = secondary?.find(
     (s) =>
