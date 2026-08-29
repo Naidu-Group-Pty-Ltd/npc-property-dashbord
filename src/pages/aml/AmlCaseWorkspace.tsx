@@ -57,6 +57,7 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
+import { reviewCycleLabel } from "../../../supabase/functions/_shared/aml/reviewSchedule.pure";
 import { displayDate, displayDateTime } from "@/lib/aml/displayDate";
 import {
   readCaseAttribution,
@@ -1281,6 +1282,15 @@ export default function AmlCaseWorkspace() {
             isMlro={access.isMlro}
             onReopen={() => void reopenCase()}
             onChanged={load}
+            /*
+             * Not on the two stages that exist BECAUSE the decision was
+             * made. There, the rail's optional-reason shortcut could send a
+             * cleared case back to "Under review" in one click — regressing
+             * the stage, the client portal and the service gate, which flips
+             * a live Passport to "Refresh required". Re-deciding a case is
+             * the Decision stage's own control, with its rationale.
+             */
+            allowStatusTransitions={section !== "passport" && section !== "monitoring"}
           />
         </aside>
       </div>
@@ -2025,7 +2035,18 @@ function MonitoringReviewsSection({
             </>
           ) : (
             <>
-              <Row k="Review cycle" v={`Every ${monitoring.review_interval_months} months${monitoring.risk_rating ? ` (${monitoring.risk_rating} risk)` : ""}`} />
+              {/* One implementation of the cycle's wording, shared with the
+                  server that schedules it — so the card and the audit event
+                  cannot describe the same cycle differently. */}
+              <Row
+                k="Review cycle"
+                v={reviewCycleLabel({
+                  months: monitoring.review_interval_months,
+                  rating: monitoring.risk_rating ?? "unrated",
+                  clamped: false,
+                  configuredMonths: null,
+                })}
+              />
               <Row
                 k="Next periodic review"
                 v={
