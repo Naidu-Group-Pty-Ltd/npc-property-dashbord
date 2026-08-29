@@ -60,7 +60,15 @@ export function PartnerPassportPanel({
 
   return (
     <div className="space-y-3">
-      <Alert>
+      {/* ── where the statutory statement lives now ──────────────────────
+          Every partner portal used to open with a standing "Your organisation
+          remains responsible" banner, on every state of the page. It was
+          removed as unnecessary repetition — a partner reaches this page only
+          after signing the written arrangement and giving its acknowledgements
+          — so this is the sentence's home: attached to the document it
+          qualifies, where a person reading the record reads it too, rather
+          than restated as page furniture. */}
+      <Alert data-testid="partner-reliance-notice">
         <ShieldCheck className="h-4 w-4" />
         <AlertTitle className="text-sm">
           The issuing organisation&apos;s completed customer due diligence
@@ -78,7 +86,15 @@ export function PartnerPassportPanel({
           recognises the other immediately. */}
       <Card className="glass-panel overflow-hidden p-0">
         <CardContent className="p-0">
-          <div className="passport-scope flex h-[min(78vh,860px)] flex-col">
+          {/* ── how tall the board is, and why it matters ────────────────
+              `bookletGeometry` fits the spread to this box: two leaves side
+              by side once there is room, and one pixel more of height is one
+              pixel more of legible document, up to the 1.15 cap. 78vh was
+              chosen when a standing banner sat above it. That banner is gone,
+              so the space it held goes here — to the artefact this page
+              exists to show, which had twice been reported as too small to
+              read. */}
+          <div className="passport-scope flex h-[min(84vh,1180px)] min-h-[28rem] flex-col">
             <div className="passport-bookbar flex flex-none flex-wrap items-center justify-between gap-3 px-4 py-3">
               <div className="min-w-0">
                 <div className="passport-display text-sm font-semibold uppercase tracking-[0.12em]">

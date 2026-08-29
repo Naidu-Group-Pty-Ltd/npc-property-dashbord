@@ -281,14 +281,82 @@ were criticised for. And the directory is enriched in **three batched
 queries**, not one per matter: fifty matters must not cost a hundred and fifty
 reads.
 
-## The page is centred
+## The page is centred — and width is readability, not decoration
 
 It was a `max-w-3xl` column pinned to the left of a 1900px viewport with a
 two-up booklet inside it. The document is the subject of the page, so the
-container is centred and sized for that spread (`max-w-6xl`), and on a wide
-screen the matter list sits beside it — sticky — rather than above it. Below
-`lg` the two stack, list first.
+container is centred and sized for that spread, and on a wide screen the
+matter list sits beside it — sticky — rather than above it. Below `lg` the two
+stack, list first.
+
+`max-w-6xl` fixed the pinning and left the second half of the complaint
+standing: a third of a wide screen unused, and the booklet still drawn small.
+The container is `max-w-[92rem]` now and the board `h-[min(84vh,1180px)]`, and
+those two numbers are not styling. `bookletGeometry` **fits the spread to the
+box it is given** — two leaves side by side once the board is about 605px
+wide, and larger with every pixel after that up to its 1.15 cap — so container
+width and board height convert directly into legible document. The same
+booklet had twice been reported as too small to read.
 
 All three portals get this from the one shared workspace; the only per-portal
 difference is what each calls a matter (`ownReferenceLabel`: File, Contract,
 Matter).
+
+## The nav entry sits under the Dashboard
+
+In all four portals — Finance, Builder/Developer, Solicitor and the Client
+Portal — the compliance entry is the **second** item, directly under the
+Dashboard. It was last in every one of them, below Earnings and Reports & KPIs
+in Finance and below Settings in Solicitor.
+
+Position is the point: a partner arrives here from an email about a live
+purchase and has to find the page again a week later without that email. At
+the foot of a twelve-entry sidebar it reads as an appendix; it is the record a
+settlement now depends on.
+
+`portalNavPlacement.test.ts` pins the **position and nothing else** — Dashboard
+first, compliance second, exactly once. Asserting the whole array would make
+that test about navigation in general, and it would be rewritten rather than
+consulted the next time an entry is added.
+
+The Client Portal's entry is deliberately still called **"Identity &
+Compliance"**, not "AML/CTF Compliance": that portal's reader is the customer
+proving who they are, not a partner relying on somebody else's diligence, and
+putting a reporting entity's vocabulary in front of the person being verified
+is a different defect. Moving a tab is not the moment to introduce it.
+
+## The standing responsibility banner is gone
+
+Every partner portal used to open with a shield-iconed alert titled **"Your
+organisation remains responsible"**, carrying `RESPONSIBILITY_NOTICE` on every
+state of the page including the denial. It has been removed, and the reason it
+is safe to remove is the reason it was redundant: **a partner reaches this
+page only through a signed written CDD arrangement carrying exactly those
+acknowledgements.** The banner restated something already agreed, to the same
+organisation, on every visit.
+
+Three things make this a chrome change rather than the removal of a notice.
+
+**The statement survives on the document.** `PartnerPassportPanel` says it
+directly above the booklet (`data-testid="partner-reliance-notice"`), the
+Passport's own reliance page carries it, and it is asserted there — including
+in `passport_only` mode, so narrowing the page can never take it off the
+screen. Attached to the record it qualifies it is read; repeated as page
+furniture it was not.
+
+**The control it is not is untouched.** `IndependentAssessmentForm` still
+requires the acknowledgement to be ticked before a partner's own CDD
+determination is written down. Removing a notice must never remove a control.
+
+**`ResponsibilityNotice.tsx` is deleted, not unmounted.** A dormant component
+is one import away from putting the banner back. `RESPONSIBILITY_NOTICE`
+itself stays exactly where it was — in `_shared/aml/partnerWorkspace.ts`, sent
+on every workspace DTO — because the wording is the server's and nothing about
+what the server asserts has changed.
+
+What an adapter may still contribute is its **portal's own context**
+(`responsibilityIntro`: what this workspace does and does not claim about that
+portal's organisations). It moved into an "About this page" disclosure in the
+header — closed it costs no vertical space, and the old rule holds more
+strictly than before: an adapter *adds* context and can never supply the
+statutory wording, which now belongs to a component no adapter can reach.

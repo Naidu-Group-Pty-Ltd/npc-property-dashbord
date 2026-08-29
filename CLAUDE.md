@@ -384,6 +384,22 @@ because a door that refuses is worse than no door. The deep link carries a
 matter id and never the token, and `returnToPath`/`safeReturnTo` are one rule
 for all three logins — two of which used to discard the destination entirely.
 
+The page's chrome answers to two more rules. **The compliance entry is second
+in every portal**, directly under the Dashboard — Finance, Builder/Developer,
+Solicitor and the Client Portal — and `portalNavPlacement.test.ts` pins the
+position and nothing else; the Client Portal's is still called "Identity &
+Compliance", because that reader is the customer proving who they are. And
+**the standing "Your organisation remains responsible" banner is gone**: a
+partner reaches the page only through a signed arrangement carrying those
+acknowledgements, so it restated an agreement on every visit.
+`ResponsibilityNotice.tsx` is DELETED rather than unmounted (a dormant
+component is one import away from putting it back), while the statement itself
+survives attached to the document it qualifies and the assessment form's
+acknowledgement control is untouched — removing a notice must never remove a
+control. The space that frees is not cosmetic: `bookletGeometry` fits the
+spread to the box it is given, so container width and board height convert
+directly into legible document.
+
 The raw bearer token is **gone from the Command Centre**: it and the
 `/passport/<token>` link are one credential, and showing it twice invited an
 operator to send "the code" instead of the link.
