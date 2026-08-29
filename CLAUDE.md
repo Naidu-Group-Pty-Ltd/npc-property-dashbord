@@ -129,6 +129,25 @@ Management API instead. And **a config-only edit used to deploy nothing**,
 because the changed-function list was built from `supabase/functions/**` paths
 alone — which is how a declaration and production came to disagree at all.
 
+## The login CAPTCHA is a per-deployment credential
+`src/lib/turnstileSiteKey.ts` is the one place that decides which Turnstile
+widget a build renders. A widget IS a **(site key, secret) pair** — the site key
+is public and drawn by the browser, `TURNSTILE_SECRET_KEY` is its twin in the
+backend — and `siteverify` reports the hostname a token was solved on, which no
+login handler here reads. So a shared widget means a token farmed from ANY
+tenant's login page satisfies the CAPTCHA on every other one.
+
+The site key used to be a literal in `components/auth/TurnstileWidget.tsx`, and
+`npc-client-dashboard` inherited it verbatim when this repo was mirrored. Two
+rules now hold it. **The built-in key is used only while the build talks to the
+Supabase project its secret lives in** — the same pairing rule
+`integrations/supabase/env.ts` applies to the URL and anon key, and what makes a
+built-in safe to inherit: a fork pointed elsewhere resolves to no key and says
+so, rather than rendering this deployment's widget on another tenant's page. And
+**the key is named in exactly one module**, asserted by
+`turnstileIdentity.spec.ts`. Aurixa Mission Control mints each clone its own
+widget and publishes `VITE_TURNSTILE_SITE_KEY`.
+
 ## Workflow Playground (the automation canvas)
 Read [`docs/workflows/DISPATCH.md`](./docs/workflows/DISPATCH.md) before touching
 the run engine, the trigger-capture triggers or the dispatcher. One engine serves
