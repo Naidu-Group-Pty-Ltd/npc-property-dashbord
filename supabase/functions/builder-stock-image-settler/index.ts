@@ -238,20 +238,46 @@ Deno.serve(async (req: Request) => {
     p_seconds: Math.ceil(BUDGET_MS / 1000) + 20,
     p_holder: 'builder-stock-image-settler',
   });
-  if (lease.error) {
-    // A lease that cannot be read is a deployment fault, not an empty queue.
+  /*
+   * A MISSING LEASE MUST NOT STOP THE WORK.
+   *
+   * PRODUCTION, 29 AUGUST 2026. Edge functions ship automatically when `main`
+   * moves; the migrations here are dispatched by hand, one file at a time. This
+   * function shipped calling `claim_builder_stock_settlement_lease` before that
+   * function existed, and refusing 503 on a missing lease turned a THROUGHPUT
+   * improvement into a total stop: every tick died instantly, the queue never
+   * moved, and the trigger that would have re-armed the cron was in the very
+   * same undeployed file. Twenty-three properties sat blank on the live
+   * Marketplace with an engine that answered 503 to itself.
+   *
+   * The lease is a guard against a rare overlap, not a precondition for doing
+   * any work at all. Where it cannot be reached the tick proceeds exactly as it
+   * did before the lease existed — the behaviour that ran safely for months —
+   * and says so loudly. `42883` is "function does not exist": the schema has
+   * not caught up yet, which is an operational note, not a reason to stop.
+   */
+  const leaseMissing = lease.error
+    && /42883|does not exist|schema cache/i.test(
+      String((lease.error as { code?: string })?.code ?? '')
+      + String(lease.error?.message ?? ''));
+  if (lease.error && !leaseMissing) {
     console.error('[builder-stock-image-settler] settlement lease unavailable', {
       phase: 'settlement_lease',
       reason: String(lease.error?.message ?? lease.error).slice(0, 200),
     });
     return json({ success: false, error: 'Settlement lease unavailable' }, 503);
   }
-  if (lease.data !== true) {
+  if (leaseMissing) {
+    console.warn('[builder-stock-image-settler] settlement lease not deployed — '
+      + 'proceeding without it', { phase: 'settlement_lease' });
+  }
+  if (!lease.error && lease.data !== true) {
     console.log('[builder-stock-image-settler] tick skipped — previous run still holds the lease');
     return json({ success: true, skipped: 'lease_held' });
   }
 
   const releaseLease = async () => {
+    if (leaseMissing) return;
     try {
       await supabase.rpc('release_builder_stock_settlement_lease');
     } catch {

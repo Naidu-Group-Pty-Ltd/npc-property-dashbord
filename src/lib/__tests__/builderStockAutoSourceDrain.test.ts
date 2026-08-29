@@ -194,3 +194,42 @@ describe('the lease and the re-arm are not reachable by a browser', () => {
     expect(sql).toContain('REVOKE ALL ON TABLE public.builder_stock_settlement_lease FROM PUBLIC, anon, authenticated');
   });
 });
+
+/**
+ * A MISSING MIGRATION MUST NOT STOP THE WORK.
+ *
+ * PRODUCTION, 29 AUGUST 2026. Edge functions ship automatically when `main`
+ * moves; the migrations here are dispatched by hand, one file at a time. The
+ * settler shipped calling `claim_builder_stock_settlement_lease` before that
+ * function existed, and answering 503 on a missing lease turned a THROUGHPUT
+ * improvement into a total stop: every tick died instantly, the queue never
+ * moved, and the trigger that would have re-armed the cron was in the very same
+ * undeployed file. Twenty-three properties sat blank on the live Marketplace
+ * behind an engine answering 503 to itself.
+ *
+ * The lease guards a rare overlap. It is not a precondition for doing any work.
+ */
+describe('a half-deployed lease degrades instead of stopping', () => {
+  const SETTLER_NOW = readFileSync(join(REPO_ROOT,
+    'supabase/functions/builder-stock-image-settler/index.ts'), 'utf8');
+
+  it('treats "function does not exist" as not-yet-deployed, not as a fault', () => {
+    expect(SETTLER_NOW).toContain('42883');
+    expect(SETTLER_NOW).toContain('leaseMissing');
+  });
+
+  it('still refuses on a real lease fault', () => {
+    // A lease that exists and errors is a genuine problem and still 503s.
+    expect(SETTLER_NOW).toContain('if (lease.error && !leaseMissing)');
+    expect(SETTLER_NOW).toContain("json({ success: false, error: 'Settlement lease unavailable' }, 503)");
+  });
+
+  it('only skips a turn when the lease actually said no', () => {
+    // `lease.data !== true` must not fire when the call itself errored.
+    expect(SETTLER_NOW).toContain('if (!lease.error && lease.data !== true)');
+  });
+
+  it('does not try to release a lease it never took', () => {
+    expect(SETTLER_NOW).toContain('if (leaseMissing) return;');
+  });
+});
