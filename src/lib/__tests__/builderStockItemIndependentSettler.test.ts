@@ -212,6 +212,25 @@ describe('the claim is NOT deployed yet', () => {
     expect(skew).toMatch(/ONE SETTLER AT A TIME/);
   });
 
+  it('REFUSES loudly when the claim works but the completion does not', () => {
+    /*
+     * The worst half of a half-deployed migration, and it existed in
+     * production: 20261019000000 shipped `complete_builder_stock_image_work`
+     * with five arguments while this code calls it with six, and PostgREST
+     * resolves by argument NAMES — so the claim succeeds, the work is done,
+     * and nothing records it. The property stays leased until expiry and is
+     * then re-done, for ever.
+     *
+     * Silence is the one unacceptable answer. There is no repair from inside
+     * the function, so it names the migration and refuses, rather than
+     * reporting a successful tick that settled nothing.
+     */
+    expect(SETTLER).toMatch(/if \(!completion\.available\)/);
+    expect(SETTLER).toMatch(/work was claimed but could not be recorded/);
+    expect(SETTLER).toMatch(/20261021000000_builder_stock_item_work_claim_amendments\.sql/);
+    expect(SETTLER).toMatch(/item_completion_unavailable/);
+  });
+
   it('does not 503 the OLD path either when ITS lease is undeployed', () => {
     /*
      * The fallback must not reintroduce the failure it exists to survive. A
@@ -235,13 +254,18 @@ describe('the global settlement lease is bypassed on the new path', () => {
   });
 
   it('returns from the per-item path without ever reaching the lease', () => {
-    // Both per-item outcomes — nothing due, and one property settled — answer
-    // and return above the lease.
+    /*
+     * All THREE per-item outcomes answer and return above the lease: nothing
+     * due, a completion the database cannot record, and one property settled.
+     * The block itself names the global lease nowhere at all.
+     */
     const perItem = SETTLER.slice(
       SETTLER.indexOf('THE PER-ITEM PATH'),
       SETTLER.indexOf('DEPLOYMENT SKEW'));
     expect(perItem).not.toMatch(/claim_builder_stock_settlement_lease/);
-    expect((perItem.match(/path: 'item_work'/g) ?? []).length).toBe(2);
+    expect((perItem.match(/path: 'item_work'/g) ?? []).length).toBe(3);
+    expect(perItem).toMatch(/complete: pending\.outstanding === 0/);
+    expect(perItem).toMatch(/item_completion_unavailable/);
   });
 });
 

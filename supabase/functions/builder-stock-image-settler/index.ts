@@ -280,13 +280,42 @@ Deno.serve(async (req: Request) => {
       repairBudget: newRepairBudget(),
     });
 
-    await completeItemWork(supabase, claimed.id, {
+    /*
+     * A CLAIM THAT SUCCEEDS AND A COMPLETION THAT DOES NOT IS THE WORST HALF
+     * OF A HALF-DEPLOYED MIGRATION, so it is named rather than swallowed.
+     *
+     * PostgREST resolves a function by the argument NAMES in the request body,
+     * so a completion whose signature has moved on answers PGRST202 — the same
+     * "not deployed" this file already handles for the claim. Reaching here
+     * with `available: false` therefore means the two halves disagree: the
+     * property was claimed, the work was done, and nothing recorded it. It
+     * stays leased until expiry and is then re-done, for ever.
+     *
+     * That exact state existed in production: 20261019000000 shipped
+     * `complete_builder_stock_image_work` with five arguments while this code
+     * calls it with six. There is no repair from in here — the migration has
+     * to land — so the job is to make it unmissable rather than to guess.
+     */
+    const completion = await completeItemWork(supabase, claimed.id, {
       nextStage: settlement.nextStage,
       result: settlement.result,
       error: settlement.error ?? null,
       retryAfterSeconds: 0,
       progressed: settlement.progressed,
     });
+    if (!completion.available) {
+      console.error('[builder-stock-image-settler] work was claimed but could not be recorded', {
+        phase: 'deployment_skew',
+        stock_item_id: claimed.id,
+        missing: 'public.complete_builder_stock_image_work(uuid,text,text,text,integer,boolean)',
+        remedy: 'apply supabase/migrations/'
+          + '20261021000000_builder_stock_item_work_claim_amendments.sql',
+      });
+      return json({
+        success: false, path: 'item_work', error: 'item_completion_unavailable',
+        deploymentReady: false, stage: settlement.stage,
+      }, 503);
+    }
 
     const pending = await readItemWorkPending(supabase);
     console.log('[builder-stock-image-settler] item tick', {
