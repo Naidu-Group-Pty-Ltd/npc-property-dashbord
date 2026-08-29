@@ -30,7 +30,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  describeNotionPage, preferredNotionViewId,
+  describeNotionPage, preferredNotionViewId, viewMembershipQuery,
 } from '../../../supabase/functions/_shared/builderStock/notionRecordMap.pure';
 
 const PAGE = 'aaaaaaaa-0000-4000-8000-000000000001';
@@ -184,4 +184,200 @@ function readPortalSource(): string {
   const { resolve } = require('node:path') as typeof import('node:path');
   return readFileSync(resolve(
     __dirname, '../../../supabase/functions/builder-portal-stock/index.ts'), 'utf8');
+}
+
+/* ==========================================================================
+ * THE VIEW'S FILTER LIVES IN TWO PLACES, AND WE READ ONE OF THEM.
+ *
+ * PRODUCTION, 29 AUGUST 2026. A builder's page showed eighteen properties and
+ * the importer took twenty-three. The five extra were the five their view
+ * withholds. `query2` was innocent — it held a sort and no filter at all — and
+ * the filtering was entirely in `collection_view.format.property_filters`, the
+ * CHIPS above the table. Both narrow what a reader sees; Notion applies them
+ * together; we sent one.
+ *
+ * The chips are one click in Notion's toolbar, on any column, at any time. So
+ * this is not a story about one page: any builder can silently redefine their
+ * stock list and, until this, we would have gone on importing the database
+ * underneath it.
+ *
+ * Written with invented columns and invented status words. If any value below
+ * appeared in the implementation, that would be the hard-coded status rule
+ * this must never become.
+ * ======================================================================== */
+
+const P_STATE = 'qq01';   // an arbitrary select column
+const P_STAGE = 'zz99';   // another
+const VIEW_C = 'dddddddd-0000-4000-8000-00000000000c';
+
+/** 23 rows: 18 carrying one status, 5 carrying another. */
+const UNDERLYING = [
+  ...Array.from({ length: 18 }, (_, i) => ({ id: `row-a-${i}`, [P_STAGE]: 'Listed', [P_STATE]: 'North' })),
+  ...Array.from({ length: 5 }, (_, i) => ({ id: `row-b-${i}`, [P_STAGE]: 'Withheld', [P_STATE]: 'North' })),
+];
+
+/** The chip shape Notion stores, verbatim. `value` is an ARRAY of accepted values. */
+const chip = (id: string, property: string, values: string[]) => ({
+  id,
+  filter: {
+    filter: { value: values.map((value) => ({ type: 'exact', value })), operator: 'enum_is' },
+    property,
+  },
+});
+
+function viewPage(view: Record<string, unknown>) {
+  return {
+    block: {
+      [PAGE]: { value: { value: {
+        id: PAGE, type: 'collection_view_page', collection_id: COLLECTION,
+        space_id: SPACE, view_ids: [VIEW_C], properties: { title: [['Stock']] },
+      } } },
+    },
+    collection_view: { [VIEW_C]: { value: { value: { id: VIEW_C, type: 'table', ...view } } } },
+    collection: { [COLLECTION]: { value: { value: { id: COLLECTION, name: [['Stock']] } } } },
+  } as never;
+}
+
+/**
+ * Apply a produced filter to the fixture.
+ *
+ * It reads the filter it is GIVEN — it knows no column and no status word — so
+ * what it measures is whether the query we send expresses the view's own
+ * membership, which is the only thing a unit test here can honestly measure.
+ * That the shape is one Notion accepts was established against the live
+ * endpoint: the same structure returned 18 of 23 while an empty filter
+ * returned all 23.
+ */
+function membersOf(filter: unknown, rows: Record<string, string>[]): Record<string, string>[] {
+  const passes = (node: unknown, row: Record<string, string>): boolean => {
+    if (!node || typeof node !== 'object') return true;
+    const n = node as Record<string, unknown>;
+    if (Array.isArray(n.filters)) {
+      const kids = n.filters.map((child) => passes(child, row));
+      return n.operator === 'or' ? kids.some(Boolean) : kids.every(Boolean);
+    }
+    const property = n.property as string;
+    const clause = n.filter as { operator?: string; value?: unknown } | undefined;
+    if (!property || !clause) return true;
+    const accepted = Array.isArray(clause.value)
+      ? (clause.value as { value: string }[]).map((v) => v.value)
+      : [(clause.value as { value: string } | undefined)?.value as string];
+    return clause.operator === 'enum_is' ? accepted.includes(row[property]) : true;
+  };
+  if (!filter) return rows;
+  return rows.filter((row) => passes(filter, row));
+}
+
+describe('membership is whatever the view says, and the view says it twice', () => {
+  it('a filtered view imports its 18 — never the 23 underneath it', () => {
+    const shape = describeNotionPage(viewPage({
+      name: 'Live list',
+      query2: { sort: [{ property: P_STAGE, direction: 'ascending' }] },
+      format: { property_filters: [chip('c1', P_STAGE, ['Listed'])] },
+    }), PAGE, VIEW_C);
+
+    // The chip reached the query, and the sort it sat beside is still there.
+    expect(shape.viewQuery?.sort).toEqual([{ property: P_STAGE, direction: 'ascending' }]);
+    expect(membersOf(shape.viewQuery?.filter, UNDERLYING)).toHaveLength(18);
+  });
+
+  it('a view that admits BOTH statuses imports all 23', () => {
+    const shape = describeNotionPage(viewPage({
+      name: 'Everything',
+      query2: { sort: [] },
+      format: { property_filters: [chip('c1', P_STAGE, ['Listed', 'Withheld'])] },
+    }), PAGE, VIEW_C);
+
+    expect(membersOf(shape.viewQuery?.filter, UNDERLYING)).toHaveLength(23);
+  });
+
+  it('a view with no filter of any kind still imports all 23', () => {
+    const shape = describeNotionPage(viewPage({
+      name: 'Unfiltered', query2: { sort: [] }, format: {},
+    }), PAGE, VIEW_C);
+
+    expect(shape.viewQuery).toEqual({ sort: [] });
+    expect(membersOf(shape.viewQuery?.filter, UNDERLYING)).toHaveLength(23);
+  });
+
+  it('several chips narrow together, the way the page does', () => {
+    const rows = [
+      ...UNDERLYING,
+      { id: 'elsewhere', [P_STAGE]: 'Listed', [P_STATE]: 'South' },
+    ];
+    const shape = describeNotionPage(viewPage({
+      query2: {},
+      format: {
+        property_filters: [chip('c1', P_STAGE, ['Listed']), chip('c2', P_STATE, ['North'])],
+      },
+    }), PAGE, VIEW_C);
+
+    const members = membersOf(shape.viewQuery?.filter, rows);
+    expect(members).toHaveLength(18);
+    expect(members.some((row) => row.id === 'elsewhere')).toBe(false);
+  });
+
+  it('a chip narrows the view\'s OWN filter — it never replaces or widens it', () => {
+    const menuFilter = {
+      operator: 'and',
+      filters: [{ property: P_STATE, filter: { operator: 'enum_is', value: { type: 'exact', value: 'North' } } }],
+    };
+    const shape = describeNotionPage(viewPage({
+      query2: { filter: menuFilter },
+      format: { property_filters: [chip('c1', P_STAGE, ['Listed'])] },
+    }), PAGE, VIEW_C);
+
+    const filter = shape.viewQuery?.filter as { operator: string; filters: unknown[] };
+    expect(filter.operator).toBe('and');
+    // The Filter menu's own group survives whole, beside the chip.
+    expect(filter.filters).toContainEqual(menuFilter);
+    expect(filter.filters).toHaveLength(2);
+  });
+
+  it('the chip clause travels VERBATIM, array value and all', () => {
+    /*
+     * Re-deriving this was tried against the live endpoint and returned zero
+     * rows: a chip accepting several values is one `enum_is` whose `value` is
+     * an ARRAY, which no hand-written equivalent guessed. Notion supplies the
+     * canonical structure; we lift it.
+     */
+    const only = chip('c1', P_STAGE, ['Listed', 'Pending']);
+    const shape = describeNotionPage(viewPage({
+      query2: {}, format: { property_filters: [only] },
+    }), PAGE, VIEW_C);
+
+    const filter = shape.viewQuery?.filter as { filters: unknown[] };
+    expect(filter.filters[0]).toEqual(only.filter);
+  });
+
+  it('no status word and no column id is written into the reader', () => {
+    // The rule is "import the membership the view defines", never
+    // "import the ones that say Available".
+    const source = readRecordMapSource();
+    for (const forbidden of ['Available', 'Coming Soon', 'Reserved', 'EOI', 'Sold', 'mlCu', 'Lsfu']) {
+      expect(source).not.toContain(`'${forbidden}'`);
+      expect(source).not.toContain(`"${forbidden}"`);
+    }
+  });
+
+  it('a malformed chip is skipped rather than guessed at', () => {
+    const shape = describeNotionPage(viewPage({
+      query2: { sort: [] },
+      format: { property_filters: [{ id: 'c1' }, { id: 'c2', filter: {} }, null, 'nonsense'] },
+    }), PAGE, VIEW_C);
+    // Nothing recognisable, so the query is exactly what it was.
+    expect(shape.viewQuery).toEqual({ sort: [] });
+  });
+
+  it('reads a view record directly, for a caller that already has one', () => {
+    expect(viewMembershipQuery(null)).toBeNull();
+    expect(viewMembershipQuery({ query2: { sort: [] } })).toEqual({ sort: [] });
+  });
+});
+
+function readRecordMapSource(): string {
+  const { readFileSync } = require('node:fs') as typeof import('node:fs');
+  const { resolve } = require('node:path') as typeof import('node:path');
+  return readFileSync(resolve(
+    __dirname, '../../../supabase/functions/_shared/builderStock/notionRecordMap.pure.ts'), 'utf8');
 }
