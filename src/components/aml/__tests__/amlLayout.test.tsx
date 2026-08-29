@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,6 +40,9 @@ function renderShell(path: string) {
           <Route path="configuration" element={<div data-testid="page-configuration" />} />
           <Route path="counterparty" element={<div data-testid="page-counterparty" />} />
           <Route path="transactions" element={<div data-testid="page-transactions" />} />
+          <Route path="governance" element={<div data-testid="page-governance" />} />
+          <Route path="launch-ops" element={<div data-testid="page-launch-ops" />} />
+          <Route path="partner-operations" element={<div data-testid="page-partner-ops" />} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -97,6 +101,59 @@ describe("AmlLayout — legacy (V2) navigation", () => {
     expect(within(secondary).getByText("Compliance Passport")).toBeInTheDocument();
     for (const gone of ["Verification", "Screening", "Risk", "Funding & Finance"]) {
       expect(within(secondary).queryByText(gone)).not.toBeInTheDocument();
+    }
+  });
+
+  it("offers no build or platform tooling in the navigation", () => {
+    /* The rule, not the roster: an operator running AML/CTF is offered
+       compliance surfaces. Launch Operations is rollout stages, acceptance
+       scenarios and release certification; Partner Operations renders a
+       deployment preflight table; and Governance, on a deployment where
+       `aml_v3_org_settings` is off, renders five platform tabs and no AML
+       content at all. All three keep their routes. */
+    renderShell("/admin/aml");
+    const nav = screen.getByRole("navigation", { name: "AML workspaces" });
+    for (const gone of ["Launch Operations", "Partner Operations", "Governance"]) {
+      expect(within(nav).queryByText(gone)).not.toBeInTheDocument();
+    }
+  });
+
+  it("keeps every compliance surface in Regulatory & Assurance", () => {
+    renderShell("/admin/aml/monitoring");
+    const secondary = screen.getByRole("navigation", { name: /Regulatory & Assurance sections/ });
+    for (const kept of ["Monitoring", "Investigations & EDD", "AUSTRAC Hub", "Records & Privacy"]) {
+      expect(within(secondary).getByText(kept)).toBeInTheDocument();
+    }
+    expect(within(secondary).queryByText("Governance")).not.toBeInTheDocument();
+  });
+
+  it("keeps Configuration, which holds credentials and the sanctions register", () => {
+    /* It is the one Organisation Settings surface that is the tenant's own,
+       and Stage 5 navigates to it when screening cannot run. Hiding it would
+       strand the sanctions register's health behind a blocked case again. */
+    renderShell("/admin/aml/configuration");
+    const secondary = screen.getByRole("navigation", { name: /Organisation Settings sections/ });
+    expect(within(secondary).getByText("Configuration")).toBeInTheDocument();
+    expect(
+      readFileSync("src/pages/aml/AmlConfiguration.tsx", "utf8"),
+    ).toContain("<SanctionsListHealth />");
+  });
+
+  it("a hidden page still lands inside ONE workspace, with its chrome", () => {
+    /* The failure this guards is the one the file's own comment records: a
+       destination missing from `paths` renders with no secondary strip and
+       Compliance Home highlighted — reachable, and looking broken. A path in
+       TWO workspaces is the same defect wearing the other hat. */
+    for (const [path, workspace] of [
+      ["/admin/aml/governance", "Organisation Settings"],
+      ["/admin/aml/launch-ops", "Organisation Settings"],
+      ["/admin/aml/partner-operations", "Organisation Settings"],
+    ] as const) {
+      const { unmount } = renderShell(path);
+      const nav = screen.getByRole("navigation", { name: "AML workspaces" });
+      expect(within(nav).getByText(workspace).closest("a"))
+        .toHaveAttribute("aria-current", "page");
+      unmount();
     }
   });
 

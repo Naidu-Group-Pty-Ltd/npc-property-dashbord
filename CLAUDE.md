@@ -524,6 +524,46 @@ grant had nowhere to appear), and **a live Passport reads green** like the
 Client portal's own completion — worded as a fact about access, never as a
 claim about the partner, and a revoked grant takes the colour back.
 
+## What the AML navigation offers, and what it does not
+
+The Command Centre's nav is **compliance surfaces only**. Everything about
+shipping this software, verifying a deployment or administering the platform
+keeps its route and leaves the strip — the treatment `aml-v3-cutover` and
+`aml-integration-health` already had. **Hiding is never deleting**: every AML
+route in `App.tsx` is declared unconditionally and a standing test asserts it,
+so a bookmark, a deep link and the case workspace's own buttons all still land.
+
+Customer Compliance is **Register + Compliance Passport** — the two cross-case
+entry points. Every per-case topic (Verification, Screening, Risk, Funding &
+Finance, Transactions) is a stage inside a named customer's case; the
+standalone pages exist but each loads with `cases[0]` selected, which is the
+most recently created case, and on the Risk page "Record decision" was live in
+that state. Ownership & Control is **conditional** — `useHasEntityCases` asks
+the server whether the tenant holds a non-individual case, because beneficial
+ownership is a company/trust/SMSF question, and it **fails open** so a failed
+read never hides a compliance surface.
+
+Three surfaces left because they are build or platform tooling rather than
+AML/CTF work, and the evidence is on the tenant rather than in an opinion:
+**Launch Operations** (rollout stages, 13 acceptance scenarios none ever run,
+0 certifications, a risk register of 8 seeded rows never edited, categories
+including "Engineering"), **Partner Operations** (renders only a deployment
+preflight table; its operational half is behind a disabled flag with four
+empty tables, and partners are managed on the Passport & Partners stage), and
+**Governance** (five tabs of Release Gate, AI Approvals, Step-Up Sessions,
+Resilience Drills and Runbooks — its one compliance tab, Contacts, is gated on
+`aml_v3_org_settings`, which is off, which is also why
+`senior_manager_designations` is empty).
+
+Two rules bite. **A path belongs to exactly ONE workspace** — missing from
+`paths` a page draws no secondary strip and highlights Compliance Home, and
+listed in TWO it resolves to whichever comes first and draws the wrong strip;
+both are reachable-but-broken, and the Passport shipped that way once.
+And **Configuration is not platform tooling** — it holds the verification
+provider's credentials, the risk factors every assessment is scored against,
+and the sanctions register's health, which Stage 5 navigates to when screening
+cannot run. Hiding it would strand that behind a blocked case again.
+
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
 before touching `_shared/aml/passport/identityPortrait.pure.ts`,

@@ -65,9 +65,16 @@ describe("feature flags stay default-off and both navs ship together", () => {
   });
 
   it("the shell never surfaces flag names or role chips", () => {
-    // Flag identifiers may appear in comments; assert none are in JSX text
-    // by checking the known offender patterns.
-    expect(layoutSource).not.toMatch(/\{[^}]*aml_v3[^}]*\}/);
+    /* A flag identifier is a fact about our deployment pipeline, not about
+       the operator's work, and it must never reach the screen. Comments are
+       stripped first: naming the flag that gates a surface is exactly how a
+       reader of this file learns why an entry is missing, and the previous
+       form of this test could not tell an explanation from a render. */
+    const code = layoutSource
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+    expect(code).not.toMatch(/\{[^}]*aml_v3[^}]*\}/);
+    expect(code).not.toMatch(/\{[^}]*aml_partner_[^}]*\}/);
     expect(layoutSource).toContain("Role chips + module status intentionally removed");
   });
 });
