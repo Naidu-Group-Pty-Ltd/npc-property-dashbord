@@ -151,6 +151,22 @@ describe('the generic attempt count is NOT a package retirement counter', () => 
       /WHEN p_next_stage IS NOT NULL AND p_next_stage IS DISTINCT FROM i\.image_work_stage\s*\n?\s*THEN 0/);
   });
 
+  it('lets a resumable step that PROGRESSED clear the count without changing stage', () => {
+    /*
+     * Some stages are legitimately resumable. A source read that stored what it
+     * could and will store the rest next tick has made progress, and counting
+     * it as a failed attempt would push a HEALTHY property's backoff towards
+     * the hour cap for doing exactly what it is supposed to do.
+     *
+     * The asymmetry is the design: a worker that returns and says it
+     * progressed clears the count; a worker that is KILLED returns nothing,
+     * clears nothing, and the count it raised in the claim stands. The counter
+     * measures silence, not work.
+     */
+    expect(bodyOf('complete_builder_stock_image_work'))
+      .toMatch(/WHEN coalesce\(p_reset_attempts, false\) THEN 0/);
+  });
+
   it('leaves the package attempt machinery completely alone', () => {
     // Not one of these appears in this migration. The package counter is the
     // edge code's, unchanged, and this must never become a second opinion

@@ -213,13 +213,23 @@ GRANT EXECUTE ON FUNCTION public.claim_builder_stock_image_work(integer, integer
  * `p_retry_after_seconds` lets a worker say "not yet" without spending an
  * attempt's worth of backoff — a property waiting on evidence another property
  * is about to supply, rather than one that failed.
+ *
+ * AND `p_reset_attempts` IS FOR THE STEP THAT SUCCEEDED WITHOUT FINISHING.
+ * Some stages are legitimately resumable: a source read that stored what it
+ * could and will store the rest next time has made progress, and counting it
+ * as a failed attempt would push a HEALTHY property's backoff towards the hour
+ * cap for doing exactly what it is supposed to do. A worker that returns and
+ * says it progressed clears the count; a worker that is killed returns nothing,
+ * clears nothing, and the count it raised in the claim stands. That asymmetry
+ * is the whole design: the counter measures silence, not work.
  */
 CREATE OR REPLACE FUNCTION public.complete_builder_stock_image_work(
   p_item_id uuid,
   p_next_stage text DEFAULT NULL,
   p_result text DEFAULT NULL,
   p_error text DEFAULT NULL,
-  p_retry_after_seconds integer DEFAULT 0
+  p_retry_after_seconds integer DEFAULT 0,
+  p_reset_attempts boolean DEFAULT false
 ) RETURNS boolean
 LANGUAGE sql
 SECURITY DEFINER
@@ -228,6 +238,7 @@ AS $$
   UPDATE public.builder_stock_items AS i
      SET image_work_stage = coalesce(p_next_stage, i.image_work_stage),
          image_work_attempts = CASE
+           WHEN coalesce(p_reset_attempts, false) THEN 0
            WHEN p_next_stage IS NOT NULL AND p_next_stage IS DISTINCT FROM i.image_work_stage
              THEN 0
            ELSE i.image_work_attempts
@@ -242,9 +253,9 @@ AS $$
   RETURNING true;
 $$;
 
-REVOKE ALL ON FUNCTION public.complete_builder_stock_image_work(uuid, text, text, text, integer)
+REVOKE ALL ON FUNCTION public.complete_builder_stock_image_work(uuid, text, text, text, integer, boolean)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.complete_builder_stock_image_work(uuid, text, text, text, integer)
+GRANT EXECUTE ON FUNCTION public.complete_builder_stock_image_work(uuid, text, text, text, integer, boolean)
   TO postgres, service_role;
 
 
