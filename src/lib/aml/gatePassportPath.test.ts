@@ -49,12 +49,24 @@ describe("the Stage 8 outcome pulls through", () => {
 
 describe("the gate step directs", () => {
   it("cleared + unapproved gate: current for a reviewer, with the route named", () => {
+    /* The gate travels WITH the cleared decision now, so a cleared case
+       still holding an open gate is a row decided before that change. The
+       route is the Decision stage's full gate card, which is the only place
+       every gate status has ever been recorded. */
     const s = byKey(gatePassportPath(facts()), "gate");
     expect(s.state).toBe("current");
-    // The act is ON this stage now — the detail must not send the operator
-    // back to the Decision stage.
-    expect(s.detail).toMatch(/approve the gate on the card below/);
-    expect(s.detail).not.toMatch(/Decision stage/);
+    expect(s.detail).toMatch(/Recording the cleared decision grants this/);
+    expect(s.detail).toMatch(/Decision stage/);
+  });
+
+  it("a STOPPED gate is named as the MLRO's standing restriction", () => {
+    /* Locked and terminated are how a live Passport is suspended or
+       revoked. They must never read as an approval somebody forgot. */
+    for (const status of ["locked", "terminated"]) {
+      const s = byKey(gatePassportPath(facts({ gateStatus: status })), "gate");
+      expect(s.detail, status).toMatch(/standing restriction recorded by the MLRO/);
+      expect(s.detail, status).not.toMatch(/Recording the cleared decision grants/);
+    }
   });
 
   it("blocked-with-blocker for an operator who cannot review", () => {
@@ -228,32 +240,34 @@ describe("the path counts itself, and says what finishes the stage", () => {
 });
 
 describe("wired at the source", () => {
+  const read = (p: string) => readFileSync(p, "utf8");
   const journey = readFileSync("src/lib/aml/journeyModel.ts", "utf8");
   const workspace = readFileSync("src/pages/aml/AmlCaseWorkspace.tsx", "utf8");
   const passports = readFileSync("src/pages/aml/AmlPassports.tsx", "utf8");
 
-  it("the stage's primary button carries a type the workspace handles — and stays on Stage 9", () => {
+  it("the stage's primary button carries a type the workspace handles — and lands where the act is", () => {
     expect(journey).toContain('actionType: "record_gate"');
     expect(workspace).toContain('case "record_gate":');
-    // "Record the service-gate decision" used to bounce the operator back
-    // to the Decision stage. The gate card is mounted on Gate & Passport
-    // now, so the button lands on it in place.
-    expect(workspace).toContain('"aml-passport-gate"');
-    expect(journey).toMatch(/section: "passport",\s*\n\s*actionType: "record_gate"/);
+    /* It goes to the DECISION stage now. The gate is granted by the cleared
+       decision, so a cleared case still holding an open gate is one an MLRO
+       stopped or one decided before that change — and both are recorded on
+       the Decision stage's full gate card. Landing on a card Stage 9 no
+       longer mounts is the dead-button class this label escaped once. */
+    expect(journey).toMatch(/section: "risk", actionType: "record_gate"/);
+    expect(workspace).toContain('document.getElementById("decision-step-gate")');
   });
 
-  it("Stage 9 carries ONLY the approval act — never the Decision stage's full gate card", () => {
-    // The full eight-status gate card on Stage 9 read as a duplicate of the
-    // Decision stage and was removed at the user's direction. What remains
-    // is the one act the stage owes: approving a cleared case's gate.
-    expect(workspace).toContain("GateApprovalCard");
-    expect(workspace).toContain('anchorId="aml-passport-gate"');
+  it("Stage 9 owes no gate act at all — and the approval card is DELETED", () => {
+    /* It asked a reviewer to decide again what they had just decided, with
+       a second reason, behind a button that was disabled while it still
+       read "Approve the gate — Approved". A dormant component is one import
+       away from putting it back. */
+    expect(workspace).not.toContain("GateApprovalCard");
+    expect(workspace).not.toContain('anchorId="aml-passport-gate"');
+    expect(() => read("src/components/aml/GateApprovalCard.tsx")).toThrow();
+    // Nor may the Decision stage's full card be duplicated onto Stage 9.
     expect(workspace).not.toContain("ServiceGateCardStandalone");
-    // Neither the readiness ledger nor the full card may return.
     expect(workspace).not.toContain("AmlServiceReadinessCard");
-    // When nothing is owed the card is absent, and the button falls back to
-    // the guided path instead of a dead scroll.
-    expect(workspace).toContain('"aml-passport-path"');
   });
 
   it("preview deep-links the passport hub to THIS case, and the hub honours it", () => {

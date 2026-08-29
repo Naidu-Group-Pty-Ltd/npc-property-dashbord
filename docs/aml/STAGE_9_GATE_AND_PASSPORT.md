@@ -97,6 +97,76 @@ is not a debt**.
 owed, the Passport is a *completed* item rather than a second outstanding one,
 and the summary says the approval "is all that is left on this stage".
 
+## The gate was a second decision nobody ever made
+
+`aml.service_gate_decisions` held **zero rows across the entire database**.
+Stage 9 carried an approval card — two choices, a ten-character reason, one
+button — and it had never once been used.
+
+Two things made that inevitable.
+
+**The button did nothing.** It was disabled until the reason reached ten
+characters, with the enabling condition in 11px grey below the textarea, while
+the button itself still read *"Approve the gate — Approved"*. A disabled
+shadcn button has `pointer-events-none`: no toast, no request, no change. Which
+is exactly the report — *"this is continuing to reflect under review once the
+Approved button is clicked."*
+
+**The platform disagreed with itself about the gate.** `aml-cases`'
+`transition` has always mapped `cleared → approved` through
+`STATUS_TO_SERVICE_GATE`. `aml-risk`'s `decide` wrote `status`, `case_stage`
+and `client_portal_status` and *deliberately* left the gate alone. Which one a
+case got depended on which button moved it — which is how `AML-2026-00005`
+came to sit `status = cleared` with `service_gate_status = under_review`.
+
+**And the second act asked no new question.** `set_service_gate`'s approval
+preconditions and `decide`'s clearance preconditions are the *same function* —
+`clearanceBlockReasons` — over the same inputs, and `decide` runs it stricter
+(it passes the open conditions in rather than checking them separately).
+Nothing between the two acts could change the answer. It was ceremony, not a
+control.
+
+So **the cleared decision carries the gate**. One act, at the place the
+reviewer already makes it.
+
+Three rules keep it a record rather than a shortcut.
+
+- **Only `cleared` grants.** A blocked or escalated outcome never moves the
+  gate: a restriction stays an explicit, deliberate act, and locking or
+  terminating still requires the MLRO.
+- **A stopped gate is never revived.** `locked` and `terminated` are the
+  MLRO's standing restriction and the only way a live Passport is suspended or
+  revoked. Re-recording a decision must not undo one — the same rule
+  `reopen_case` follows.
+- **Open conditions mean `approved_with_controls`**, never plain `approved`,
+  exactly as `set_service_gate` requires.
+
+The row is still written in full — approver, reason, decision id, policy
+version, conditions, audit event — through `recordGateDecision`, which is now
+the one implementation both paths use. **The ceremony goes; the record does
+not.** And `set_service_gate` is untouched: the Decision stage's full
+eight-status card is still there, and is still how a live Passport is
+suspended or revoked. Removing a ceremony must never remove a control.
+
+`GateApprovalCard.tsx` is **deleted rather than unmounted** — a dormant
+component is one import away from asking for the second decision again.
+
+### The backfill records a consequence, not an approval
+
+`20261015000000_service_gate_from_cleared_decision.sql` repairs the cases
+decided before this. It writes nothing it cannot point at: every row is
+derived from a real `aml.decisions` row with `outcome = 'cleared'` — a
+decision a real reviewer recorded, at a recorded time, which
+`clearanceBlockReasons` had to pass for the decision to exist at all — and
+carries that decision's id, its author as `approved_by`, its timestamp as
+`effective_at`, and a reason naming its source.
+
+It skips a gate already approved, **never revives one that is locked or
+terminated**, follows the *current* decision rather than a superseded one, and
+touches no case that already has a gate decision row. Applied to production it
+repaired exactly one case, `AML-2026-00005`, and left the `closed`/`terminated`
+one alone.
+
 ## The portal tiles on the Compliance Journey Map
 
 Two defects of the same kind: the map showed a door that does not exist and
