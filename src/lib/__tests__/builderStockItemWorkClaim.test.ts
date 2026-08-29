@@ -55,6 +55,16 @@ const MIGRATION =
 const sql = readFileSync(join(REPO_ROOT, MIGRATION), 'utf8');
 
 /**
+ * The two halves that were pushed after #2348 was merged and so never reached
+ * `main`. They ship as their own file because a migration already applied to
+ * production is never dispatched again — editing the first one would leave
+ * production on the version it has, for ever.
+ */
+const AMENDMENTS =
+  'supabase/migrations/20261021000000_builder_stock_item_work_claim_amendments.sql';
+const amendments = readFileSync(join(REPO_ROOT, AMENDMENTS), 'utf8');
+
+/**
  * The migration with its prose removed.
  *
  * The comments deliberately NAME the package machinery, to explain why the
@@ -240,5 +250,87 @@ describe('the schema is hardened and inert', () => {
       { cwd: REPO_ROOT, encoding: 'utf8' },
     ).trim();
     expect(hits).toBe('');
+  });
+});
+
+describe('the amendments that #2348 merged without', () => {
+  const bodyOfAmendment = (name: string) => {
+    const at = amendments.indexOf(`FUNCTION public.${name}`);
+    expect(at).toBeGreaterThan(-1);
+    const start = amendments.indexOf('AS $', at);
+    const end = amendments.indexOf('$;', amendments.indexOf('\n', start));
+    expect(end).toBeGreaterThan(start);
+    return amendments.slice(start, end);
+  };
+
+  it('gives the completion its sixth argument', () => {
+    /*
+     * PRODUCTION AFTER #2348 WAS APPLIED: the function has FIVE arguments and
+     * the settler calls it with SIX. PostgREST resolves by the names in the
+     * request body, so that answers PGRST202 — which `isMissingCapability`
+     * correctly reads as an undeployed migration. The claim would SUCCEED and
+     * the completion would silently report "not deployed": every property
+     * claimed, worked, never advanced, left leased until expiry. Worse than
+     * the blocking it removes.
+     */
+    expect(amendments).toMatch(/p_reset_attempts boolean DEFAULT false/);
+    expect(bodyOfAmendment('complete_builder_stock_image_work'))
+      .toMatch(/WHEN coalesce\(p_reset_attempts, false\) THEN 0/);
+  });
+
+  it('leaves exactly ONE overload, because two would be ambiguous', () => {
+    /*
+     * With both present a five-argument call matches BOTH candidates — the
+     * sixth parameter has a default — and PostgREST answers 300 Multiple
+     * Choices rather than picking one. The new one is created BEFORE the old
+     * one is dropped, so there is no window in which neither exists.
+     */
+    const createAt = amendments.indexOf('CREATE OR REPLACE FUNCTION public.complete_builder_stock_image_work');
+    const dropAt = amendments.indexOf('DROP FUNCTION IF EXISTS public.complete_builder_stock_image_work');
+    expect(createAt).toBeGreaterThan(-1);
+    expect(dropAt).toBeGreaterThan(createAt);
+    expect(amendments).toMatch(
+      /DROP FUNCTION IF EXISTS public\.complete_builder_stock_image_work\(uuid, text, text, text, integer\)/);
+  });
+
+  it('gives the cron gate its third queue', () => {
+    const tick = bodyOfAmendment('settle_builder_stock_marketplace_eligibility_tick');
+    expect(tick).toMatch(/image_work_stage <> 'settled'/);
+    expect(tick).toMatch(/v_outstanding \+ v_fallback \+ v_item_work = 0/);
+  });
+
+  it('sleeps on OUTSTANDING, never on CLAIMABLE', () => {
+    // A property leased by a live invocation, or backing off after one was
+    // killed, is not claimable this minute and is absolutely not finished.
+    const tick = bodyOfAmendment('settle_builder_stock_marketplace_eligibility_tick');
+    expect(tick).not.toMatch(/image_work_claim_until/);
+    expect(tick).not.toMatch(/image_work_next_attempt_at/);
+  });
+
+  it('re-arms the job, which production has none of right now', () => {
+    /*
+     * MEASURED, NOT ASSUMED. When 20261019000000 was applied, `cron.job` held
+     * no builder-stock entry at all — both of the gate's old queues had
+     * reached zero and it had correctly retired itself — while
+     * `builder_stock_image_work_pending()` reported 23 outstanding properties.
+     * Without this the per-item engine would ship with nothing to wake it.
+     *
+     * Through `ensure_builder_stock_settlement_scheduled`, which owns the
+     * schedule, rather than a third `cron.schedule` in a third file.
+     */
+    expect(amendments).toMatch(/PERFORM public\.ensure_builder_stock_settlement_scheduled\(\)/);
+    expect(amendments).not.toMatch(/PERFORM cron\.schedule\(/);
+  });
+
+  it('hardens both functions the same way the first file did', () => {
+    for (const fn of [
+      'complete_builder_stock_image_work\\(uuid, text, text, text, integer, boolean\\)',
+      'settle_builder_stock_marketplace_eligibility_tick\\(\\)',
+    ]) {
+      expect(amendments).toMatch(new RegExp(
+        `REVOKE ALL ON FUNCTION public\\.${fn}\\s*\\n?\\s*FROM PUBLIC, anon, authenticated`));
+      expect(amendments).toMatch(new RegExp(
+        `GRANT EXECUTE ON FUNCTION public\\.${fn}\\s*\\n?\\s*TO postgres, service_role`));
+    }
   });
 });
