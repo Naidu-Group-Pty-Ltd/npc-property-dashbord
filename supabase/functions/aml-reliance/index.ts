@@ -114,8 +114,9 @@ import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import {
-  identityPortraitObject,
+  identityPortraitObject, portraitRecoverable,
 } from "../_shared/aml/passport/identityPortrait.pure.ts";
+import { callInternalFunction } from "../_shared/internalCall.ts";
 import {
   addMonthsUtc, resolveReviewInterval,
 } from "../_shared/aml/reviewSchedule.pure.ts";
@@ -681,6 +682,26 @@ const PORTRAIT_URL_TTL_SECONDS = 300;
 async function attachPortraitUrls(admin: any, view: any, checks: any[]): Promise<void> {
   const parties = view?.verification?.parties;
   if (!Array.isArray(parties) || parties.length === 0) return;
+
+  /* One signing per stored object, shared by every slot that points at it.
+     The Client Identity page and the party row are the SAME photograph, and
+     minting two credentials for one image is two things to expire. */
+  const signed = new Map<string, string>();
+  const sign = async (ref: { bucket: string; path: string }): Promise<string | null> => {
+    const key = `${ref.bucket}/${ref.path}`;
+    if (signed.has(key)) return signed.get(key)!;
+    try {
+      const { data } = await admin.storage.from(ref.bucket)
+        .createSignedUrl(ref.path, PORTRAIT_URL_TTL_SECONDS);
+      if (!data?.signedUrl) return null;
+      signed.set(key, data.signedUrl);
+      return data.signedUrl;
+    } catch {
+      // Leave `url` null. The mount draws its frame and says so.
+      return null;
+    }
+  };
+
   for (const party of parties) {
     const descriptor = party?.portrait;
     if (!descriptor) continue;
@@ -695,14 +716,29 @@ async function attachPortraitUrls(admin: any, view: any, checks: any[]): Promise
       ?? null;
     const ref = identityPortraitObject(objects);
     if (!ref) continue;
-    try {
-      const { data } = await admin.storage.from(ref.bucket)
-        .createSignedUrl(ref.path, PORTRAIT_URL_TTL_SECONDS);
-      if (data?.signedUrl) party.portrait = { ...descriptor, url: data.signedUrl };
-    } catch {
-      // Leave `url` null. The leaf draws the frame and says so.
+    const url = await sign(ref);
+    if (!url) continue;
+    party.portrait = { ...descriptor, url };
+
+    /* The Client Identity page carries the same image. It is signed here
+       rather than in a second pass because the slot holds no bucket and no
+       path — the view never carries either, and `PARTNER_RESTRICTED_KEYS`
+       would refuse it if it tried — so the object can only be found from the
+       rows the view was built from. */
+    const slot = view?.identity?.portrait;
+    if (slot?.available && !slot.url && party.party === subjectPartyLabel(view)) {
+      view.identity.portrait = { ...slot, url };
     }
   }
+}
+
+/** Whose photograph the Client Identity page shows — the assembler's rule. */
+function subjectPartyLabel(view: any): string {
+  const parties = view?.verification?.parties ?? [];
+  const subject = view?.header?.subject ?? "Subject";
+  return parties.some((p: any) => p.party === subject)
+    ? subject
+    : (parties[0]?.party ?? subject);
 }
 
 /**
@@ -3171,6 +3207,121 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             blocked: outcomes.filter((o) => !o.shared && o.state !== "ALREADY_CURRENT").length,
           },
         });
+      }
+
+      /* ── Recover the holder's photograph ─────────────────────────────
+         The document portrait was extracted on every verification and
+         deliberately discarded, so every Passport issued before that changed
+         has no face on it — permanently, even though the document page it was
+         cropped from is still in NPC's own bucket. A Passport is relied on for
+         years; the ones already issued do not repair themselves.
+
+         Three properties make this safe to offer:
+
+          · **It re-derives an image and never re-decides an identity.** The
+            check's status, verdict, scores and timing are not written. If the
+            provider's re-read disagrees with the recorded verdict, that is
+            returned for a human to see and acted on by nobody.
+          · **It spends money, so a person asks for it.** One ID-verification
+            call, metered like any other, never swept and never triggered by a
+            page load.
+          · **It is recorded.** A case event names the act, the check and the
+            outcome, because a new image on a disclosure document that nothing
+            accounts for is worse than no image.
+
+         MLRO-only: the Passport is the outward-facing document and its
+         contents are the MLRO's to change. */
+      case "recover_document_portrait": {
+        if (!isMlro) {
+          return jr({ error: "MLRO role required — this changes what an issued Passport shows" }, 403);
+        }
+        const caseId = String(body.case_id ?? "");
+        if (!caseId) return jr({ error: "case_id is required" }, 400);
+
+        const { data: caseRow, error: caseErr } = await admin.schema("aml").from("cases")
+          .select("id, case_reference, subject_display_name").eq("id", caseId).maybeSingle();
+        /* A read that FAILED is not a row that is ABSENT — 503 and worth
+           retrying, rather than a 404 about a case the operator has open. */
+        if (caseErr) return jr({ error: "The case could not be read just now.", code: "case_unreadable" }, 503);
+        if (!caseRow) return jr({ error: "Case not found" }, 404);
+
+        const { data: checks, error: checkErr } = await admin.schema("aml")
+          .from("verification_checks")
+          .select("id, party_label, status, provider, completed_at, outcome_detail")
+          .eq("case_id", caseId).eq("check_type", "electronic_idv").eq("status", "passed")
+          .is("superseded_at", null)
+          .order("completed_at", { ascending: false });
+        if (checkErr) return jr({ error: "The verification record could not be read just now.", code: "checks_unreadable" }, 503);
+
+        /* The first passed check that HOLDS its document page and lacks a
+           portrait. Expressed over what we hold rather than over which vendor
+           was used — holding the source image is what makes recovery
+           possible, and a rule about the provider goes stale the moment
+           another one is added. */
+        const target = (checks ?? []).find((c: any) => portraitRecoverable(
+          c.outcome_detail?.standalone?.capture_objects
+          ?? c.outcome_detail?.standalone_capture?.objects ?? null,
+        ));
+        if (!target) {
+          const already = (checks ?? []).some((c: any) => identityPortraitObject(
+            c.outcome_detail?.standalone?.capture_objects
+            ?? c.outcome_detail?.standalone_capture?.objects ?? null,
+          ));
+          return jr({
+            recovered: false,
+            code: already ? "already_present" : "not_recoverable",
+            message: already
+              ? "This Passport already carries the holder's photograph."
+              : "There is no document image held for this case to take a photograph from. "
+                + "Where the verification provider keeps the media, nothing on our side can be re-read.",
+          }, already ? 200 : 409);
+        }
+
+        const call = await callInternalFunction<{ portrait_recovery?: any }>(
+          "aml-verification-processor",
+          { recover_portrait_check_id: String(target.id) },
+          "aml-reliance",
+          { timeoutMs: 60_000 },
+        );
+        const result = call.data?.portrait_recovery ?? null;
+        const outcome = String(result?.outcome ?? (call.ok ? "unknown" : "dispatch_failed"));
+
+        await appendCaseEvent(
+          admin, caseId, "verification",
+          outcome === "recovered"
+            ? "Holder's document portrait recovered for the Compliance Passport"
+            : `Holder's document portrait could not be recovered (${outcome})`,
+          {
+            verification_check_id: String(target.id),
+            outcome,
+            /* Recorded and acted on by nobody: this call re-derived an image,
+               it did not re-decide an identity. A disagreement with the
+               recorded verdict is for a human. */
+            provider_verdict_on_reread: result?.providerVerdict ?? null,
+            detail: result?.detail ?? call.error ?? null,
+          },
+          userId, userEmail,
+        );
+
+        if (outcome === "recovered") {
+          return jr({
+            recovered: true,
+            message: `The photograph printed on ${caseRow.subject_display_name ?? "the customer"}'s `
+              + "identity document is now on the Client Identity page of their Compliance Passport, "
+              + "and on every copy a partner holds.",
+          });
+        }
+        return jr({
+          recovered: false,
+          code: outcome,
+          message: outcome === "already_present"
+            ? "This Passport already carries the holder's photograph."
+            : outcome === "portrait_unavailable"
+              ? "The provider could not read a photograph from the stored document image. "
+                + "Nothing has been changed and nothing was recorded against the verification."
+              : "The photograph could not be recovered just now. Nothing has been changed — "
+                + "the verification, the Passport and every grant stand exactly as they were.",
+        }, outcome === "already_present" ? 200 : 502);
       }
 
       case "get_passport_view": {

@@ -54,7 +54,8 @@ import {
 } from "./passportStamps.pure.ts";
 import { passportCredential, passportVersionLabel, shortFingerprint } from "./passportCredential.pure.ts";
 import {
-  describeIdentityPortrait, type IdentityPortraitDescriptor,
+  describeIdentityPortrait, describeIdentityPortraitSlot,
+  type IdentityPortraitDescriptor, type IdentityPortraitSlot,
 } from "./identityPortrait.pure.ts";
 import { derivePassportJourney, type PassportJourney } from "./passportJourney.pure.ts";
 
@@ -209,7 +210,20 @@ export type PassportView = {
     opened_at: string | null;
   };
   versions: PassportVersionRow[];
-  identity: { fields: Array<{ key: string; label: string; value: string }> };
+  identity: {
+    fields: Array<{ key: string; label: string; value: string }>;
+    /**
+     * The holder's photograph, on the page that bears their identity.
+     *
+     * A SLOT rather than a descriptor, and always present: a bio page whose
+     * portrait block simply disappears when there is no image reads as a
+     * broken page, and gives the reader no way to tell "we hold no
+     * photograph" from "this document does not carry one". The slot names
+     * which of those it is. `url` is minted for one reader at the moment of
+     * service — see `identityPortrait.pure.ts`.
+     */
+    portrait: IdentityPortraitSlot;
+  };
   verification: {
     parties: Array<{
       party: string;
@@ -500,6 +514,14 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
   // Verification parties: collapse checks per party label; no provider, no
   // scores — component status and timing only.
   const partyMap = new Map<string, PassportView["verification"]["parties"][number]>();
+  /* The facts behind the PASSED check, kept per party.
+     The Client Identity page needs more than the descriptor: where there is
+     no portrait it has to say WHY, and that answer lives in the capture
+     objects rather than in the (null) descriptor they produce. */
+  const portraitFacts = new Map<string, {
+    captureObjects: unknown; documentChoice: unknown; issuingState: unknown;
+    completedAt: string | null;
+  }>();
   for (const c of input.stamp_input.verification_checks ?? []) {
     const key = c.party_label ?? input.case.subject_display_name ?? "Subject";
     const entry = partyMap.get(key)
@@ -518,9 +540,35 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
         issuingState: c.issuing_state,
         completedAt: c.completed_at,
       }) ?? entry.portrait;
+      portraitFacts.set(key, {
+        captureObjects: c.capture_objects,
+        documentChoice: c.document_choice,
+        issuingState: c.issuing_state,
+        completedAt: c.completed_at,
+      });
     }
     partyMap.set(key, entry);
   }
+
+  /* ── The holder's photograph, for the Client Identity page ───────────
+     The bio page is about the SUBJECT, so the slot follows the subject's own
+     party where there is one and the first party otherwise — a sole trader's
+     case labels the party with their name, an entity's with the individual
+     who was verified, and neither should leave the page blank. */
+  const subjectPartyKey = input.case.subject_display_name ?? "Subject";
+  const subjectParty = partyMap.get(subjectPartyKey) ?? [...partyMap.values()][0] ?? null;
+  const subjectFacts = subjectParty ? portraitFacts.get(subjectParty.party) : undefined;
+  const identityPortrait = describeIdentityPortraitSlot({
+    captureObjects: subjectFacts?.captureObjects ?? null,
+    documentChoice: subjectFacts?.documentChoice as string | null | undefined,
+    issuingState: subjectFacts?.issuingState as string | null | undefined,
+    completedAt: subjectFacts?.completedAt ?? null,
+    verified: Boolean(subjectParty?.verified),
+    /* A repair staff can perform. A relying partner has neither the standing
+       nor the means, and telling them a photograph is "recoverable" invites a
+       request nobody in their organisation can action. */
+    mayRecover: audience === "command",
+  });
 
   const versions: PassportVersionRow[] = attestations.map((a) => ({
     version: a.version,
@@ -555,6 +603,7 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
     },
     versions,
     identity: {
+      portrait: identityPortrait,
       fields: [
         ...allowListedFields(input.personal_details, PERSONAL_FIELDS),
         ...allowListedFields(input.entity_details, ENTITY_FIELDS),

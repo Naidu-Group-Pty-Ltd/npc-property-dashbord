@@ -27,6 +27,7 @@ import { PassportCoverThumb } from "./PassportBook";
 import { PassportPortalStrip, StampRecordDialog } from "./PassportPortals";
 import { RequestClientInformationDialog } from "./RequestClientInformationDialog";
 import { ComplianceActionSummary } from "./ComplianceActionSummary";
+import { PortraitRecoveryNotice } from "./PortraitRecoveryNotice";
 import { PASSPORT_PAGES } from "./pageRegister";
 
 
@@ -213,6 +214,15 @@ export function PassportWorkspace({
           </div>
         </div>
       )}
+
+      {/* Offered only where the server says there is something to repair, and
+          only to the MLRO. See `PortraitRecoveryNotice`. */}
+      <PortraitRecoveryNotice
+        view={view}
+        caseId={caseId}
+        canRecover={access.isMlro}
+        onRecovered={() => { void load(); }}
+      />
 
       <PassportPortalStrip view={view} />
 
