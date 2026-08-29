@@ -86,9 +86,26 @@ export function resolveTurnstileSiteKey(input: {
   return { siteKey: builtIn, source: 'built-in', warning: null };
 }
 
-function readEnv(key: string): string | undefined {
+/**
+ * Read the configured site key.
+ *
+ * STATIC on purpose. Vite replaces the exact expression
+ * `import.meta.env.VITE_TURNSTILE_SITE_KEY` with the value at BUILD time. A
+ * dynamic lookup — `import.meta.env[name]`, which is what this used to do — is
+ * not an expression the bundler can see through, so it is never replaced and
+ * reads `undefined` in a production bundle however the environment is set.
+ *
+ * It cost the mirror repository a silent failure: Mission Control minted that
+ * deployment's own widget, published `VITE_TURNSTILE_SITE_KEY` to its hosting
+ * project and rebuilt, and the bundle came out BYTE-IDENTICAL. Nothing about
+ * the deployment was wrong; the read was.
+ *
+ * Do not refactor this back into a helper that takes the name as an argument.
+ * `TURNSTILE_SITE_KEY_ENV` below is the name for MESSAGES; this is the read.
+ */
+function readConfiguredSiteKey(): string | undefined {
   try {
-    const value = (import.meta as { env?: Record<string, string | undefined> })?.env?.[key];
+    const value = import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined;
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
   } catch {
     return undefined;
@@ -101,7 +118,7 @@ let resolved: TurnstileSiteKeyResolution | null = null;
 export function turnstileSiteKey(): TurnstileSiteKeyResolution {
   if (!resolved) {
     resolved = resolveTurnstileSiteKey({
-      configured: readEnv(TURNSTILE_SITE_KEY_ENV),
+      configured: readConfiguredSiteKey(),
       backendRef: SUPABASE_PROJECT_REF,
     });
     if (resolved.warning) {
