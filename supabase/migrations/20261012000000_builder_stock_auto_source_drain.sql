@@ -180,6 +180,21 @@ BEGIN
 END;
 $$;
 
+/*
+ * A TRIGGER FUNCTION IS STILL A FUNCTION.
+ *
+ * `CREATE FUNCTION` grants EXECUTE to PUBLIC by default and `anon` inherits it,
+ * so a SECURITY DEFINER trigger body ships reachable by the publishable key in
+ * the browser bundle — and this one reaches `cron.schedule`. The trigger itself
+ * fires as the table owner and needs no grant at all; revoking costs nothing
+ * and closes a path a page could otherwise call directly. Revoking from `anon`
+ * alone is a no-op while PUBLIC holds it, which is why PUBLIC is named first.
+ */
+REVOKE ALL ON FUNCTION public.builder_stock_items_rearm_settlement()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.builder_stock_items_rearm_settlement()
+  TO postgres, service_role;
+
 DROP TRIGGER IF EXISTS builder_stock_items_rearm_settlement ON public.builder_stock_items;
 CREATE TRIGGER builder_stock_items_rearm_settlement
   AFTER INSERT ON public.builder_stock_items

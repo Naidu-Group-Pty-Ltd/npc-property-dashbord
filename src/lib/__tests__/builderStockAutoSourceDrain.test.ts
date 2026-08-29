@@ -168,10 +168,19 @@ describe('two settlers can never run at once', () => {
 
 describe('the lease and the re-arm are not reachable by a browser', () => {
   it('every new function is revoked from anon and authenticated', () => {
+    /*
+     * THE TRIGGER FUNCTION IS IN THIS LIST BECAUSE IT WAS MISSING FROM IT.
+     *
+     * CI caught it: `CREATE FUNCTION` grants EXECUTE to PUBLIC by default and
+     * `anon` inherits it, so a SECURITY DEFINER trigger body — this one reaches
+     * `cron.schedule` — shipped callable by the publishable key in the browser
+     * bundle. The trigger fires as the table owner and needs no grant at all.
+     */
     for (const fn of [
       'claim_builder_stock_settlement_lease',
       'release_builder_stock_settlement_lease',
       'ensure_builder_stock_settlement_scheduled',
+      'builder_stock_items_rearm_settlement',
     ]) {
       expect(sql).toMatch(
         new RegExp(`REVOKE ALL ON FUNCTION public\\.${fn}[\\s\\S]*?FROM PUBLIC, anon, authenticated`));
