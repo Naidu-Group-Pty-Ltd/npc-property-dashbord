@@ -100,6 +100,19 @@ export interface StandaloneCapturePlan {
     document_front: { bucket: string; path: string };
     document_back: { bucket: string; path: string } | null;
     selfie: { bucket: string; path: string };
+    /**
+     * The face the provider extracted from the DOCUMENT.
+     *
+     * Not a capture: the customer never takes this one. It is derived during
+     * processing from the document they photographed, and it is the only one
+     * of the four images that may appear on a Compliance Passport — a face
+     * crop carries no document number, no MRZ, no date of birth and no
+     * signature. See `passport/identityPortrait.pure.ts`.
+     *
+     * Optional throughout: every verification recorded before this existed
+     * has none, and every surface renders exactly as it did.
+     */
+    id_portrait?: { bucket: string; path: string } | null;
   };
 }
 
@@ -124,8 +137,49 @@ export function readCapturePlan(check: any): StandaloneCapturePlan | null {
       document_front: front,
       document_back: object(objects.document_back),
       selfie,
+      id_portrait: object(objects.id_portrait),
     },
   };
+}
+
+/**
+ * Store the extracted document portrait beside the captures it came from.
+ *
+ * ── Where, and why it matters ──────────────────────────────────────────
+ * `aml-biometrics`, under the same case/attempt prefix as the selfie. Two
+ * reasons, and the second is the important one: the bucket is private, and it
+ * is one of the two buckets `aml-idv-retention` may delete from — so the
+ * portrait is destroyed on the same clock as everything else about the
+ * attempt, by the job that already exists, with `id_portrait` added to the
+ * objects it enumerates. An image this product stores and never deletes would
+ * be a worse defect than not storing it at all.
+ *
+ * Returns null on any failure. The caller treats null as "no portrait", which
+ * is the ordinary state for every verification recorded before this existed.
+ */
+async function storeIdentityPortrait(
+  db: any,
+  plan: StandaloneCapturePlan,
+  caseId: string,
+  checkId: string,
+  bytes: Uint8Array,
+): Promise<{ bucket: string; path: string } | null> {
+  try {
+    /* Beside the selfie, in the selfie's bucket — derived from the plan
+       rather than rebuilt, so the prefix can never drift from the attempt's
+       own. */
+    const bucket = plan.objects.selfie.bucket;
+    const prefix = plan.objects.selfie.path.replace(/\/[^/]*$/, '');
+    if (!bucket || !prefix) return null;
+    const path = `${prefix}/id-portrait.jpg`;
+    const { error } = await db.storage.from(bucket).upload(path, bytes, {
+      contentType: 'image/jpeg', upsert: true,
+    });
+    if (error) return null;
+    return { bucket, path };
+  } catch {
+    return null;
+  }
 }
 
 async function download(db: any, bucket: string, path: string): Promise<Uint8Array> {
@@ -337,6 +391,17 @@ export async function runStandaloneVerification(
     await db.schema('aml').from('verification_checks').update({
       outcome_detail: stripImagePayloads({
         ...(check.outcome_detail ?? {}),
+        /* The PLAN, re-persisted from the in-memory copy.
+           `aml-idv-retention` reads its object list from
+           `standalone_capture` — not from `standalone.capture_objects` — so
+           an object added during processing (the extracted portrait) has to
+           be written back here or the retention job would never enumerate
+           it, and the one image this product derives would be the one it
+           never deletes. */
+        standalone_capture: {
+          ...((check.outcome_detail ?? {}).standalone_capture ?? {}),
+          objects: plan.objects,
+        },
         standalone: { ...evidenceBase, ...extra },
       }),
       updated_at: new Date().toISOString(),
@@ -403,6 +468,27 @@ export async function runStandaloneVerification(
    * the database) has the field removed by name, whether it held bytes or a URL.
    */
   const portraitBytes = await resolveReferenceImage(id.portraitBase64);
+
+  /* ── The one image a Compliance Passport may show ───────────────────
+     The portrait is the face the provider extracted from the DOCUMENT, and
+     until now it existed in this variable and nowhere else. A Passport that
+     proves an identity was verified and shows no face is a certificate; the
+     artefact this product is modelled on shows the holder.
+
+     It is the only one of the four images that may travel, and the reason is
+     what it does NOT contain: no document number, no MRZ, no date of birth,
+     no address, no signature. The document page itself (`document_front`)
+     carries every one of those and stays staff-only, and the selfie stays out
+     by the rule that has always kept liveness media out of this document.
+
+     Everything about this is additive and fail-soft. A storage failure
+     records nothing and changes nothing — the verification proceeds exactly
+     as it did, and a case with no portrait renders the Passport this product
+     has always produced. */
+  const portraitObject = portraitBytes
+    ? await storeIdentityPortrait(db, plan, check.case_id, checkId, portraitBytes)
+    : null;
+  if (portraitObject) plan.objects.id_portrait = portraitObject;
 
   await persistProgress({ id_verification: id.sanitised, id_verdict: id.verdict });
 

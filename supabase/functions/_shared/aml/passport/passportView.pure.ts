@@ -53,6 +53,9 @@ import {
   type PendingStamp,
 } from "./passportStamps.pure.ts";
 import { passportCredential, passportVersionLabel, shortFingerprint } from "./passportCredential.pure.ts";
+import {
+  describeIdentityPortrait, type IdentityPortraitDescriptor,
+} from "./identityPortrait.pure.ts";
 import { derivePassportJourney, type PassportJourney } from "./passportJourney.pure.ts";
 
 export type PassportAudience = "command" | "client" | "partner";
@@ -214,6 +217,18 @@ export type PassportView = {
       method: string | null;
       completed_at: string | null;
       components: Array<{ check_type: string; status: string; completed_at: string | null }>;
+      /**
+       * The face printed on the identity document, where one is stored.
+       *
+       * A DESCRIPTOR, never bytes and never a URL: `url` is filled in by the
+       * edge function serving this view, for that reader, with a short
+       * lifetime. A signed storage URL is a bearer credential, and a
+       * credential inside a projection can be persisted, cached or embedded
+       * in an attestation payload. See `identityPortrait.pure.ts`.
+       *
+       * Null is the ordinary case and every surface renders unchanged on it.
+       */
+      portrait: IdentityPortraitDescriptor | null;
     }>;
   };
   documents: Array<{
@@ -487,12 +502,22 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
   const partyMap = new Map<string, PassportView["verification"]["parties"][number]>();
   for (const c of input.stamp_input.verification_checks ?? []) {
     const key = c.party_label ?? input.case.subject_display_name ?? "Subject";
-    const entry = partyMap.get(key) ?? { party: key, verified: false, method: null, completed_at: null, components: [] };
+    const entry = partyMap.get(key)
+      ?? { party: key, verified: false, method: null, completed_at: null, components: [], portrait: null };
     entry.components.push({ check_type: c.check_type, status: c.status, completed_at: c.completed_at });
     if (c.status === "passed" && METHOD_ACCEPTED.has(c.check_type)) {
       entry.verified = true;
       entry.method = c.check_type;
       entry.completed_at = c.completed_at;
+      /* Only from the check that PASSED. A portrait extracted during a failed
+         or superseded attempt is not the evidence this party was verified
+         on, and putting it on the document would say it was. */
+      entry.portrait = describeIdentityPortrait({
+        captureObjects: c.capture_objects,
+        documentChoice: c.document_choice,
+        issuingState: c.issuing_state,
+        completedAt: c.completed_at,
+      }) ?? entry.portrait;
     }
     partyMap.set(key, entry);
   }

@@ -145,6 +145,9 @@ function portalStatusFor(caseRow: any): string {
 import {
   applicableQuestionnaireSections,
 } from "../_shared/aml/questionnaireSections.pure.ts";
+import {
+  identityPortraitObject,
+} from "../_shared/aml/passport/identityPortrait.pure.ts";
 
 const QUESTIONNAIRE_VERSION = '2';
 
@@ -976,7 +979,11 @@ const __corsWrappedHandler = async (req: Request) => {
           admin.schema('aml').from('consents')
             .select('id, kind, accepted_at').eq('case_id', c.id),
           admin.schema('aml').from('verification_checks')
-            .select('id, party_label, check_type, status, completed_at').eq('case_id', c.id),
+            /* `outcome_detail` for the one image the Passport may show — the
+               face the provider extracted from the identity document. Read
+               only through `identityPortrait.pure.ts`, an allow-list of one
+               key: the document page and the selfie are never published. */
+            .select('id, party_label, check_type, status, completed_at, outcome_detail').eq('case_id', c.id),
           admin.schema('aml').from('documents')
             .select('id, requirement_id, status, created_at, reviewed_at, version_number')
             .eq('case_id', c.id).neq('status', 'deleted'),
@@ -1061,7 +1068,20 @@ const __corsWrappedHandler = async (req: Request) => {
               version: a.version, issued_at: a.issued_at, superseded_at: a.superseded_at,
             })),
             consents: consents ?? [],
-            verification_checks: checks ?? [],
+            verification_checks: (checks ?? []).map((vc: any) => {
+              /* Named fields only — `outcome_detail` is a provider payload
+                 and never travels into the projection whole. */
+              const sa = vc.outcome_detail?.standalone ?? {};
+              return {
+                id: vc.id, party_label: vc.party_label, check_type: vc.check_type,
+                status: vc.status, completed_at: vc.completed_at,
+                capture_objects: sa.capture_objects
+                  ?? vc.outcome_detail?.standalone_capture?.objects ?? null,
+                document_choice: sa.document_choice
+                  ?? vc.outcome_detail?.standalone_capture?.document_choice ?? null,
+                issuing_state: sa.id_verification?.id_verification?.issuing_state ?? null,
+              };
+            }),
             documents: (docs ?? []).map((d: any) => ({
               status: d.status, reviewed_at: d.reviewed_at, created_at: d.created_at,
             })),
@@ -1091,6 +1111,31 @@ const __corsWrappedHandler = async (req: Request) => {
             attestation_payload: currentAtt?.payload ?? null,
           }),
         });
+
+        /* The photograph is signed for THIS reader, at the moment of
+           service, and never put in the projection: a signed storage URL is
+           a bearer credential with a lifetime, and a credential inside a
+           projection can be persisted, cached or handed on. Fail-soft — a
+           portrait that cannot be signed leaves `url` null and the booklet
+           draws its empty frame, which is what every Passport issued before
+           portraits were stored already does. */
+        for (const party of view.verification?.parties ?? []) {
+          if (!party.portrait) continue;
+          const match = (checks ?? []).find((vc: any) =>
+            (vc.party_label ?? c.subject_display_name ?? 'Subject') === party.party
+            && vc.status === 'passed');
+          const ref = identityPortraitObject(
+            match?.outcome_detail?.standalone?.capture_objects
+            ?? match?.outcome_detail?.standalone_capture?.objects ?? null,
+          );
+          if (!ref) continue;
+          try {
+            const { data: signed } = await admin.storage.from(ref.bucket)
+              .createSignedUrl(ref.path, 300);
+            if (signed?.signedUrl) party.portrait = { ...party.portrait, url: signed.signedUrl };
+          } catch { /* leave null */ }
+        }
+
         return jsonResponse({ passport: view });
       }
 

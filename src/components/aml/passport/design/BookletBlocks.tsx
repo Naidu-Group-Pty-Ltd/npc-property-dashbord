@@ -109,6 +109,43 @@ export function BookletBlockView({ block }: { block: BookletBlock }) {
         </div>
       );
 
+    /* ── The holder's portrait ────────────────────────────────────────
+       A passport that shows no face is a certificate. This is the face
+       printed on the identity document — never the document page, never the
+       live capture. It is drawn as a photograph MOUNTED on the leaf: an
+       inset border, a hairline rule and a caption, so it reads as part of
+       the printed document rather than as a web avatar dropped onto it.
+
+       An absent or expired `src` draws the frame and the caption and says
+       so. A missing photograph must never blank the page — every Passport
+       issued before portraits were stored renders exactly this. */
+    case "portrait":
+      return (
+        <div className="passport-portrait">
+          <div className="passport-portrait__mount">
+            {block.src ? (
+              <img
+                src={block.src}
+                alt={`Portrait of ${block.holder} from their ${block.caption}`}
+                className="passport-portrait__img"
+                loading="lazy"
+                decoding="async"
+              />
+            ) : (
+              <div className="passport-portrait__empty" aria-hidden>
+                <span className="passport-portrait__empty-mark">◈</span>
+              </div>
+            )}
+          </div>
+          <div className="passport-portrait__legend">
+            <div className="passport-portrait__holder">{block.holder}</div>
+            <div className="passport-portrait__caption">
+              {block.src ? `Portrait — ${block.caption}` : `Portrait not available — ${block.caption}`}
+            </div>
+          </div>
+        </div>
+      );
+
     case "rows":
       return (
         <div>
