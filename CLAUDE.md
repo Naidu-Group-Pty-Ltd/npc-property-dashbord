@@ -524,6 +524,45 @@ grant had nowhere to appear), and **a live Passport reads green** like the
 Client portal's own completion — worded as a fact about access, never as a
 claim about the partner, and a revoked grant takes the colour back.
 
+## Stage 10 — ongoing CDD, and the reminders it raises
+Read [`docs/aml/ONGOING_CDD_AND_REMINDERS.md`](./docs/aml/ONGOING_CDD_AND_REMINDERS.md)
+before touching `_shared/aml/reviewSchedule.pure.ts`,
+`_shared/aml/complianceReminders.ts`, `armOngoingCdd` in `aml-reliance` or
+`src/lib/aml/displayDate.ts`. Three things, and each was invisible.
+
+**Dates took the reader's machine.** `toLocaleDateString()` with no locale
+printed `8/29/2029` for an Australian reporting entity — 779 call sites across
+230 files, now on the `en-AU` the rest of the product already used explicitly,
+with `AU_LOCALE` the one place it is named and a test that fails any
+un-localed formatting in AML.
+
+**The review cycle was written twice and defaulted to three years.**
+`DEFAULT_REVIEW_INTERVALS` served scheduling and the sweep; an inline copy
+thirty lines away served `complete_review`, so completing a review booked the
+next one on a cycle the rest of the product had stopped believing in. One
+module now, and the programme's policy is **at least annually** — AUSTRAC
+fixes no interval, so it is a parameter and this is where it is stated. Two
+rules: a rating may make the cycle TIGHTER and never longer (`prohibited`
+stays at 3 months), and **the ceiling binds a configured interval too**, with
+the clamp recorded rather than silently applied.
+
+**A scheduled review reached no reminder list in the product.** It lived in
+`existing_customer_reviews` and on one card; the Reminders hub reads
+`client_reminders` and knew nothing of it. `complianceReminders.ts` writes
+there — a second reminder system is how two reminder systems disagree —
+idempotent by `source_ref`, never the record, and it **never fails the act it
+accompanies**. `reminder_type` is CHECK-constrained, so the AML kinds had to
+be added to the column or every write would have been rejected there while
+looking, from the function, exactly like a write nobody attempted. And
+**issuing the Passport arms ongoing CDD**: `armOngoingCdd` books the first
+review, never moves one that exists, and never fails the issuance.
+
+The rail's "Advance status" card is gone from those two stages: on a cleared
+case it offered "Under review" behind an OPTIONAL reason, and one click
+regressed the stage, the client portal and the service gate — flipping a live
+Passport to "Refresh required". Re-deciding a case is the Decision stage's own
+control; hiding a button was never authorisation and the server is unchanged.
+
 ## Stage 5 — the guided path
 Read [`docs/aml/STAGE_5_GUIDED_PATH.md`](./docs/aml/STAGE_5_GUIDED_PATH.md)
 before touching `screeningSteps.pure.ts`, `ScreeningPathCard`,

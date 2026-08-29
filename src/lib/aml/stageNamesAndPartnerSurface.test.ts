@@ -125,3 +125,46 @@ describe("partners are on exactly one stage", () => {
     expect(stage).toContain('label: "Passport & partners", section: "passport"');
   });
 });
+
+describe("the post-decision stages do not offer to undo the decision", () => {
+  /**
+   * The rail's "Advance status" card offered a cleared case "Under review"
+   * behind an OPTIONAL reason and no confirmation. One click there regresses
+   * four things at once — `status`, `case_stage`, `client_portal_status`
+   * and, through `STATUS_TO_SERVICE_GATE`, `service_gate_status`, which
+   * flips a live Passport to "Refresh required".
+   *
+   * On Passport & Partners and Ongoing CDD — the two stages that exist
+   * BECAUSE the decision was recorded — that is a reason-optional undo of a
+   * reason-bearing act. The act is not removed: re-deciding a case is the
+   * Decision stage's own control.
+   */
+  const workspace = readFileSync("src/pages/aml/AmlCaseWorkspace.tsx", "utf8");
+  const panel = readFileSync(
+    "src/components/aml/workspace/AmlContextActionPanel.tsx", "utf8");
+
+  it("the card is suppressed on both of them, and nowhere else", () => {
+    expect(workspace).toContain(
+      'allowStatusTransitions={section !== "passport" && section !== "monitoring"}');
+    expect(panel).toContain("allowStatusTransitions = true");
+  });
+
+  it("hiding it is presentation — the server still decides", () => {
+    /* The standing rule on this panel, and it must survive the change:
+       every transition is mirrored and enforced server-side. */
+    expect(panel).toContain("Hiding a button was never authorisation");
+    expect(panel).toContain("amlCasesApi.transition");
+  });
+
+  it("nothing else the panel does was removed", () => {
+    // A closed case still gets its one action, and destructive transitions
+    // still carry a required, confirmed reason.
+    expect(panel).toContain("Reopen case to resume AML/CTF");
+    expect(panel).toContain("Reason (required)");
+    expect(panel).toContain("PANEL_DESTRUCTIVE_COPY");
+    // The closed card is outside the gate, so a closed case can still be
+    // reopened from either stage.
+    const closedCard = panel.slice(panel.indexOf("{closed && ("), panel.indexOf("{/* ── Case status transitions"));
+    expect(closedCard).not.toContain("allowStatusTransitions");
+  });
+});

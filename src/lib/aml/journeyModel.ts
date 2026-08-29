@@ -1766,7 +1766,7 @@ function distributionStage(facts: AmlWorkspaceFacts): StageReading {
         .filter((d): d is string => Boolean(d))
         .sort()[0];
       summary = nextDue
-        ? `Monitoring is active. The next review is due ${new Date(nextDue).toLocaleDateString()}.`
+        ? `Monitoring is active. The next review is due ${new Date(nextDue).toLocaleDateString('en-AU')}.`
         : "Monitoring is active and nothing is overdue.";
       completed.push(note("monitoring", "Monitoring active, nothing overdue", "steady"));
     }
