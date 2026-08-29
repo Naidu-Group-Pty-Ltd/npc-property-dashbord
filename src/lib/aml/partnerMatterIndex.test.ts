@@ -204,9 +204,17 @@ describe("wired at the source", () => {
 
   it("the page is centred and sized for the document on it", () => {
     const workspace = read("src/components/partner-compliance/PartnerComplianceWorkspace.tsx");
-    expect(workspace).toContain("mx-auto w-full max-w-6xl");
+    /* Centred, and WIDE. The width is not decoration: `bookletGeometry`
+       fits the spread to the board it is given, so every pixel of container
+       is a larger, more legible document — which is the thing this page
+       exists to show, and the thing that was reported as too small to read.
+       The exact clamp may be re-tuned; being centred and being wider than
+       the old 3xl/6xl column may not. */
+    expect(workspace).toMatch(/mx-auto w-full max-w-\[(\d+)rem\]/);
+    const rem = Number(workspace.match(/mx-auto w-full max-w-\[(\d+)rem\]/)![1]);
+    expect(rem).toBeGreaterThanOrEqual(80);
     // Two panes on a wide screen, stacked below it.
-    expect(workspace).toContain("lg:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)]");
+    expect(workspace).toMatch(/lg:grid-cols-\[minmax\(\d+rem,\d+rem\)_minmax\(0,1fr\)\]/);
   });
 
   it("all three portals get it, because there is one workspace", () => {

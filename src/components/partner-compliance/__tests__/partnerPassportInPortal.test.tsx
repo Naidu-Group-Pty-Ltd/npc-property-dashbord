@@ -191,8 +191,15 @@ describe("the Passport reaches every portal, because there is one workspace", ()
       ]) {
         expect(screen.queryByTestId(testId), testId).toBeNull();
       }
-      // What is never withheld: the statutory notice and a way to ask.
-      expect(screen.getByTestId("partner-responsibility-notice")).toBeTruthy();
+      /* What is never withheld: the statutory statement and a way to ask.
+         The standing page banner that used to carry the statement is gone
+         from every portal — it restated an acknowledgement already given in
+         the written arrangement, on every state, on every visit. So the
+         statement is asserted where it now lives, which is where it is worth
+         more: attached to the document it qualifies. Narrowing the page must
+         never be able to take it off the screen. */
+      expect(screen.getByTestId("partner-reliance-notice")).toBeTruthy();
+      expect(screen.getByText(/remains responsible for its own AML\/CTF compliance/i)).toBeTruthy();
       expect(screen.getByTestId("partner-support")).toBeTruthy();
     });
   }
@@ -238,7 +245,7 @@ describe("a withheld Passport says why — an empty page is never the answer", (
     });
     mount(PORTALS[2].adapter, off);
     await waitFor(() => {
-      expect(screen.getByTestId("partner-responsibility-notice")).toBeTruthy();
+      expect(screen.getByTestId("partner-compliance-workspace")).toBeTruthy();
     });
     expect(screen.queryByText(/not available/i)).toBeNull();
     expect(screen.queryByText(/enabled/i)).toBeNull();
@@ -295,7 +302,7 @@ describe("the deep link from the emailed Passport lands on the right matter", ()
     const c = clientWithTwo();
     mount(PORTALS[1].adapter, c, "/builder/compliance?matter=link-does-not-exist");
     await waitFor(() => {
-      expect(screen.getByTestId("partner-responsibility-notice")).toBeTruthy();
+      expect(screen.getByTestId("partner-compliance-workspace")).toBeTruthy();
     });
     expect(c.getWorkspace).not.toHaveBeenCalled();
     expect(screen.queryByText(/not available/i)).toBeNull();

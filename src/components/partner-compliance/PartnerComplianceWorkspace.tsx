@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useSearchParams } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { FolderOpen, Info, Loader2 } from "lucide-react";
 import type {
   PartnerLinkSummary, PartnerPortalAdapter, PartnerRecordsRequestView,
   PartnerSurfaceMode, PartnerWorkspaceClient, PartnerWorkspaceDirectory,
@@ -13,7 +13,6 @@ import type { PassportView } from "@/lib/aml/passport";
 import { partnerWorkspacePanels } from "@/lib/aml/partnerSurface";
 import { PartnerPassportPanel } from "./PartnerPassportPanel";
 import { PartnerMatterList } from "./PartnerMatterList";
-import { ResponsibilityNotice } from "./ResponsibilityNotice";
 import { RefreshBanner } from "./RefreshBanner";
 import { ComplianceSummaryCard } from "./ComplianceSummaryCard";
 import { PartnerPassportStrip } from "./PartnerPassportStrip";
@@ -132,9 +131,8 @@ export function PartnerComplianceWorkspace({
        sentence has no idea whether the product is broken, whether they are
        in the wrong place, or what to do next. */
     return (
-      <div className="space-y-3 max-w-3xl">
-        <h1 className="text-lg font-semibold">{adapter.workspaceTitle}</h1>
-        <ResponsibilityNotice intro={adapter.responsibilityIntro} />
+      <div className="mx-auto w-full max-w-3xl space-y-3" data-testid="partner-compliance-workspace">
+        <WorkspaceHeader adapter={adapter} />
         <Card>
           <CardContent className="space-y-2 py-6 text-sm">
             <p className="font-medium">This page is not available to your account yet</p>
@@ -151,16 +149,23 @@ export function PartnerComplianceWorkspace({
   }
 
   return (
-    /* ── centred, and wide enough for the artefact on it ───────────────
+    /* ── centred, and sized for the artefact on it ─────────────────────
        The page was a 3xl column pinned to the left of a 1900px viewport,
-       with a booklet inside it. The document is the subject of this page, so
-       the container is centred and sized for a two-up spread, and the matter
-       list sits beside it on a wide screen rather than above it. */
-    <div className="mx-auto w-full max-w-6xl space-y-4" data-testid="partner-compliance-workspace">
-      <h1 className="text-lg font-semibold">{adapter.workspaceTitle}</h1>
-      <ResponsibilityNotice intro={adapter.responsibilityIntro} />
+       with a booklet inside it — and then a 6xl one, which still left a
+       third of a wide screen unused while the document it exists to show
+       was drawn small enough that the reported complaint about this
+       booklet, twice, was that the wording could not be read.
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)] lg:items-start">
+       Width here is READABILITY, not decoration. `bookletGeometry` fits the
+       spread to the space it is given: two leaves side by side once the
+       board is about 605px wide, and larger with every pixel after that, up
+       to its 1.15 cap. Widening the container and lifting the standing
+       banner off the top of the page are the same change — both hand space
+       straight to the document. */
+    <div className="mx-auto w-full max-w-[92rem] space-y-3" data-testid="partner-compliance-workspace">
+      <WorkspaceHeader adapter={adapter} />
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(14rem,17rem)_minmax(0,1fr)] lg:items-start">
         {/* The filing cabinet. One row per matter, searchable, ordered by
             what can actually be opened — replacing a row of chips labelled
             with the last six characters of a database id. */}
@@ -224,14 +229,64 @@ export function PartnerComplianceWorkspace({
         {/* Nothing selected, and something selectable: say which, rather
             than leaving the larger half of the page blank. */}
         {!workspace && !loading && directory && directory.links.length > 0 && !selectedLink && (
-          <Card>
-            <CardContent className="py-8 text-center text-sm text-muted-foreground">
-              Choose a matter to open its Compliance Passport.
+          <Card className="border-dashed">
+            <CardContent className="flex min-h-[22rem] flex-col items-center justify-center gap-2 py-12 text-center">
+              <FolderOpen className="h-8 w-8 text-muted-foreground/50" aria-hidden />
+              <p className="text-sm font-medium">Choose a matter to open its Compliance Passport</p>
+              <p className="max-w-sm text-xs text-muted-foreground">
+                {directory.links.length === 1
+                  ? "One matter is shared with your organisation."
+                  : `${directory.links.length} matters are shared with your organisation.`}{" "}
+                Opening one shows the issuing organisation&apos;s completed customer due
+                diligence for that customer.
+              </p>
             </CardContent>
           </Card>
         )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The page's own heading.
+ *
+ * ── Why there is no standing notice above it any more ─────────────────
+ * Every portal used to open with a shield-iconed alert titled "Your
+ * organisation remains responsible", carrying the fixed statutory wording
+ * on every state of the page including the denial. It was reported as not
+ * needed, and that reading is right for a reason worth writing down: a
+ * partner reaches this page only after signing the written CDD arrangement
+ * and giving the acknowledgements in it, so the banner restated something
+ * already agreed, to the same organisation, on every visit.
+ *
+ * The statement itself is NOT gone, and could not be — it is on the
+ * document. `PartnerPassportPanel` says it directly above the booklet, the
+ * Passport's own reliance page carries it, and the independent-assessment
+ * form still requires it to be acknowledged before a determination is
+ * recorded. What has gone is the standing repetition, and with it about a
+ * hundred pixels at the top of every partner's screen — which go to the
+ * document, where they are worth something.
+ *
+ * The portal's own context (what this workspace does and does not claim
+ * about that portal's organisations) is kept, behind a disclosure: closed
+ * it costs nothing, and a partner who wants to know what the page is can
+ * still find out without being told twice a day.
+ */
+function WorkspaceHeader({ adapter }: { adapter: PartnerPortalAdapter }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+      <h1 className="text-lg font-semibold">{adapter.workspaceTitle}</h1>
+      {adapter.responsibilityIntro && (
+        <details className="group max-w-2xl text-xs" data-testid="partner-page-context">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-muted-foreground hover:text-foreground">
+            <Info className="h-3.5 w-3.5" aria-hidden />
+            About this page
+          </summary>
+          <p className="mt-1.5 text-muted-foreground">{adapter.responsibilityIntro}</p>
+        </details>
+      )}
     </div>
   );
 }
