@@ -440,6 +440,55 @@ and `closed_at`, while `transition` had always synced all three. It now syncs
 them too — and still never touches `service_gate_status`, because
 `STATUS_TO_SERVICE_GATE[resumeStatus]` would revive a terminated gate.
 
+## Stage 9 — the service gate and the credential
+Read [`docs/aml/STAGE_9_GATE_AND_PASSPORT.md`](./docs/aml/STAGE_9_GATE_AND_PASSPORT.md)
+before touching `refreshRemedy`, the reason codes in
+`_shared/aml/passport/passportState.pure.ts`, `gatePassportPath.pure.ts` or
+`passportActions.pure.ts`. **`refresh_required` is one code covering two
+different owed acts**, and the product rendered both as "issue a new version":
+on the reported case the attestation was v1, issued, unsuperseded, with zero
+open refresh obligations, and the state was flagged for the single reason
+`service_gate_regressed` — the gate was under review. Stage 9 said "a newer
+version is needed" and the reliance panel offered "Reissue as v2", which
+supersedes a good v1 and changes nothing, because v2 carries the same reason
+while the gate is unapproved. **A remedy that cannot discharge the reason is
+never offered as the next step**; `refreshRemedy` is the one place that
+classifies them, an unrecognised reason counts towards the reissue (the
+conservative side), and a spec test fails on any reason the classifier does not
+name.
+
+**The gate is granted by the cleared decision, not asked for twice.**
+`aml.service_gate_decisions` held ZERO rows across the whole database: Stage 9
+carried an approval card whose button was disabled until a ten-character reason
+was typed while still reading "Approve the gate — Approved", so clicking it did
+nothing at all. And the platform disagreed with itself — `aml-cases`'
+`transition` maps `cleared → approved` while `decide` deliberately left the gate
+alone, so which one a case got depended on which button moved it. The second act
+asked no new question either: `set_service_gate`'s approval preconditions and
+`decide`'s clearance preconditions are the SAME `clearanceBlockReasons` over the
+same inputs. `decide` records the gate itself now, through the one
+`recordGateDecision` both paths use, and `GateApprovalCard` is DELETED. Three
+rules hold: **only `cleared` grants**, **a `locked`/`terminated` gate is never
+revived** (the MLRO's standing restriction is the only way a live Passport is
+suspended or revoked), and **open conditions mean `approved_with_controls`**.
+`set_service_gate` and the Decision stage's full eight-status card are
+untouched — removing a ceremony must never remove a control.
+
+Two more rules. **Completion is counted once, in the units of the steps** —
+the header said "0 of 3 items on this stage complete", the rail said the same,
+and the card listed four steps; Stage 9 defers both, `anytime` is excluded
+because a look is not a debt, and where only the gate is owed the issuance step
+is DONE rather than a second copy of the same fact. And **the finishing line is
+named before the click**: approving the gate on that case completes the stage
+outright, so the card says so — exactly when one owed step remains and this
+operator can perform it, never when the last step is blocked.
+
+On the journey map, **Builder and Developer are one portal** (the wizard
+already knew; the map's second tile could never connect, and a `developer`
+grant had nowhere to appear), and **a live Passport reads green** like the
+Client portal's own completion — worded as a fact about access, never as a
+claim about the partner, and a revoked grant takes the colour back.
+
 ## Stage 5 — the guided path
 Read [`docs/aml/STAGE_5_GUIDED_PATH.md`](./docs/aml/STAGE_5_GUIDED_PATH.md)
 before touching `screeningSteps.pure.ts`, `ScreeningPathCard`,

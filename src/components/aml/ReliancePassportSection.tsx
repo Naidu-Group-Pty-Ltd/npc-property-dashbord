@@ -68,6 +68,10 @@ export function ReliancePassportSection({
   const [acknowledgements, setAcknowledgements] = useState<DirectPartnerAcknowledgement[]>([]);
   /** SERVER-derived passport state code; null when the reading failed. */
   const [passportStateCode, setPassportStateCode] = useState<string | null>(null);
+  /* The server's reason codes for that state. `refresh_required` covers two
+     different owed acts — a version that is out of date, and a gate that has
+     not been approved — and only these tell them apart. */
+  const [passportStateReasons, setPassportStateReasons] = useState<string[] | null>(null);
   /** Whether the deployment can run material-change invalidation; null = unknown. */
   const [outboxEnabled, setOutboxEnabled] = useState<boolean | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -129,8 +133,10 @@ export function ReliancePassportSection({
       // a failed read stays null and is never treated as "not issued".
       const status = await amlRelianceApi.getPassportDistributionStatus(caseId);
       setPassportStateCode(status.passport?.state?.code ?? null);
+      setPassportStateReasons(status.passport?.state?.reasons ?? null);
     } catch {
       setPassportStateCode(null);
+      setPassportStateReasons(null);
     }
     try {
       // Whether material-change invalidation can run here at all — the
@@ -772,6 +778,7 @@ export function ReliancePassportSection({
     attestationVersion: current?.version ?? null,
     issuedAt: current?.issued_at ?? null,
     passportStateCode,
+    passportStateReasons,
     activeAgreements: activeAgreementCount,
     activeGrants: grants.filter((g) => !g.revoked_at).length,
     isMlro,

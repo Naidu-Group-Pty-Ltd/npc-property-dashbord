@@ -220,7 +220,13 @@ export interface PassportDistributionReadinessResponse {
     version: number | null;
     payload_sha256: string | null;
     issued_at: string | null;
-    state: { code: string; label: string; tone: string } & Record<string, unknown>;
+    /* `reasons` is not decoration: `refresh_required` covers two different
+       owed acts — a version that is out of date and a gate that has not
+       been approved — and only the reason codes tell them apart. See
+       `refreshRemedy` in `passportState.pure.ts`. */
+    state: {
+      code: string; label: string; tone: string; reasons?: string[];
+    } & Record<string, unknown>;
   };
   partners: import("./passport/distributionPresentation.pure").ReadinessView[];
   summary: { total: number; ready: number; already_current: number; blocked: number };
