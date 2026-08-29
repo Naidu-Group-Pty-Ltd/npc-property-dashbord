@@ -38,6 +38,7 @@ function renderShell(path: string) {
           <Route path="monitoring" element={<div data-testid="page-monitoring" />} />
           <Route path="configuration" element={<div data-testid="page-configuration" />} />
           <Route path="counterparty" element={<div data-testid="page-counterparty" />} />
+          <Route path="transactions" element={<div data-testid="page-transactions" />} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -50,15 +51,33 @@ beforeEach(() => {
 });
 
 describe("AmlLayout — legacy (V2) navigation", () => {
-  it("renders all five workspaces for a fully-capable user", () => {
+  it("renders the four workspaces for a fully-capable user", () => {
+    /* Transaction Compliance was retired: it was a top-level workspace
+       holding ONE tab, which is not a workspace. Transactions moved into
+       Customer Compliance and the page is untouched. */
     renderShell("/admin/aml");
     const nav = screen.getByRole("navigation", { name: "AML workspaces" });
     for (const label of [
-      "Compliance Home", "Customer Compliance", "Transaction Compliance",
+      "Compliance Home", "Customer Compliance",
       "Regulatory & Assurance", "Organisation Settings",
     ]) {
       expect(within(nav).getByText(label)).toBeInTheDocument();
     }
+    /* Transaction Compliance no longer exists for anyone — the capability
+       rule this asserts is carried by Configuration below. */
+  });
+
+  it("keeps the Transactions page inside a workspace after the fold", () => {
+    /* The rule the file's own comment records: a destination missing from
+       `paths` renders with no secondary strip and Compliance Home
+       highlighted — reachable, and looking broken. */
+    renderShell("/admin/aml/transactions");
+    const nav = screen.getByRole("navigation", { name: "AML workspaces" });
+    const customer = within(nav).getByText("Customer Compliance").closest("a")!;
+    expect(customer).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.getByRole("navigation", { name: /Customer Compliance sections/ }),
+    ).toBeInTheDocument();
   });
 
   it("marks the active workspace and secondary entry with aria-current", () => {
@@ -70,8 +89,15 @@ describe("AmlLayout — legacy (V2) navigation", () => {
     const register = within(secondary).getByText("Register").closest("a")!;
     expect(register).toHaveAttribute("aria-current", "page");
     // Legacy customer workspace still publishes the per-discipline pages.
-    expect(within(secondary).getByText("Verification")).toBeInTheDocument();
-    expect(within(secondary).getByText("Funding & Finance")).toBeInTheDocument();
+    /* The strip carries the two CROSS-CASE entry points and no per-case
+       topic. Asserting the absence as well as the presence is the point:
+       Verification, Screening, Risk and Funding & Finance are stages inside
+       a named customer's case now, and a seat here is what let an operator
+       act on whichever case happened to be created last. */
+    expect(within(secondary).getByText("Compliance Passport")).toBeInTheDocument();
+    for (const gone of ["Verification", "Screening", "Risk", "Funding & Finance"]) {
+      expect(within(secondary).queryByText(gone)).not.toBeInTheDocument();
+    }
   });
 
   it("shows the workspace › section context trail off the home page", () => {
@@ -81,7 +107,7 @@ describe("AmlLayout — legacy (V2) navigation", () => {
     expect(within(header).getAllByText("Monitoring").length).toBeGreaterThan(0);
   });
 
-  it("hides capability-restricted entries: auditor sees no Transaction Compliance or Configuration", () => {
+  it("hides capability-restricted entries: an auditor sees no Configuration", () => {
     mockRoles = new Set<AmlRole>(["auditor"]);
     renderShell("/admin/aml");
     const nav = screen.getByRole("navigation", { name: "AML workspaces" });
@@ -112,14 +138,20 @@ describe("AmlLayout — legacy (V2) navigation", () => {
 describe("AmlLayout — V3 navigation (aml_v3_nav)", () => {
   beforeEach(() => { mockV3Nav = true; });
 
-  it("limits Customer Compliance to Cases + My Queue", () => {
+  it("limits Customer Compliance to Cases and the Compliance Passport", () => {
+    /* The rule, not the roster: the workspace offers only the two CROSS-CASE
+       entry points, and every per-case topic is reached by opening a named
+       customer. The Intake Queue that used to sit here was a placeholder page
+       and is gone entirely. */
     renderShell("/admin/aml/cases");
     const secondary = screen.getByRole("navigation", { name: /Customer Compliance sections/ });
     expect(within(secondary).getByText("Cases")).toBeInTheDocument();
-    expect(within(secondary).getByText("My Queue")).toBeInTheDocument();
-    expect(within(secondary).queryByText("Verification")).not.toBeInTheDocument();
-    expect(within(secondary).queryByText("Screening")).not.toBeInTheDocument();
+    expect(within(secondary).getByText("Compliance Passport")).toBeInTheDocument();
+    for (const gone of ["My Queue", "Intake Queue", "Verification", "Screening", "Risk"]) {
+      expect(within(secondary).queryByText(gone)).not.toBeInTheDocument();
+    }
   });
+
 
   it("keeps legacy alias URLs inside the customer workspace for matching", () => {
     // /admin/aml/counterparty belongs to Transaction Compliance in V3.

@@ -20,6 +20,7 @@ import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { hasAmlCapability, type AmlCapability } from "@/lib/aml/permissions";
 import { useAmlTerminology } from "@/lib/aml/useAmlTerminology";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
+import { useHasEntityCases } from "@/lib/aml/useHasEntityCases";
 
 /**
  * AML shell navigation.
@@ -30,7 +31,8 @@ import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
  *    byte-identical for tenants who have not yet enabled the V3 nav flag.
  *  - **V3** — activated by `feature_flags.aml_v3_nav = true`. Applies
  *    Directives 2, 3, 4, 7 and 8 from the Version 3 report:
- *      · Directive 2 — Customer Compliance is limited to Cases + My Queue.
+ *      · Directive 2 — Customer Compliance is limited to Cases and the
+ *        Compliance Passport.
  *        Verification, Screening, Risk, Structures and Finance handoff move
  *        inside the case workspace (built in Phase 4/6). Legacy URLs remain
  *        live via aliases in `src/App.tsx`.
@@ -102,35 +104,47 @@ const LEGACY_WORKSPACES: Workspace[] = [
       // secondary nav at all and highlights Compliance Home instead. That is
       // how the Passport shipped reachable and still looked absent.
       "/admin/aml/passport",
-      "/admin/aml/intake",
       "/admin/aml/verification",
       "/admin/aml/screening",
       "/admin/aml/risk",
       "/admin/aml/counterparty",
       "/admin/aml/finance",
+      // Folded in from the retired Transaction Compliance workspace. It has to
+      // be here or the page loses its secondary strip entirely — see the note
+      // at the top of this list.
+      "/admin/aml/transactions",
     ],
     defaultPath: "/admin/aml/cases",
     minCapability: "aml.view",
+    /*
+      ── Why this is two entries and not seven ──────────────────────────
+      Both of these are CROSS-CASE: the register is the only list of every
+      case, and the Compliance Passport page is the only place to browse
+      every issued credential. Everything else that used to sit here was a
+      per-case topic — Verification, Screening, Risk, Funding & Finance —
+      and each of them is now a stage inside the case workspace, reached by
+      opening a named customer.
+
+      Those four pages are not deleted. Their URLs are still in `paths`
+      above, so they keep the workspace header and the correct highlight,
+      and the case workspace still links to Funding & Finance where the
+      writing happens. What they lose is a permanent seat in the navigation
+      that invited an operator to work on a case they had not chosen: each
+      one loads with `cases[0]` selected, which is the most recently created
+      case, and on the Risk page "Record decision" is live in that state.
+
+      Ownership & Control leaves the strip for a different reason, and comes
+      back on its own terms — see the entry appended below.
+
+      Transactions is folded in here from a top-level workspace of its own.
+      That workspace held ONE tab, which is not a workspace; and the tab is
+      per-case with the same newest-case default as the four above. Its URL is
+      in `paths` so the page keeps its chrome, and its write operations —
+      which exist nowhere else — are untouched.
+    */
     secondary: [
       { label: "Register", to: "/admin/aml/cases", capability: "aml.view" },
       { label: "Compliance Passport", to: "/admin/aml/passport", capability: "aml.view" },
-      { label: "Intake Queue", to: "/admin/aml/intake", capability: "aml.view" },
-      { label: "Verification", to: "/admin/aml/verification", capability: "aml.view" },
-      { label: "Screening", to: "/admin/aml/screening", capability: "aml.view" },
-      { label: "Risk", to: "/admin/aml/risk", capability: "aml.view" },
-      { label: "Ownership & Control", to: "/admin/aml/counterparty", capability: "aml.view" },
-      { label: "Funding & Finance", to: "/admin/aml/finance", capability: "aml.investigate" },
-    ],
-  },
-  {
-    key: "transactions",
-    label: "Transaction Compliance",
-    icon: Coins,
-    paths: ["/admin/aml/transactions"],
-    defaultPath: "/admin/aml/transactions",
-    minCapability: "aml.investigate",
-    secondary: [
-      { label: "Transactions", to: "/admin/aml/transactions", capability: "aml.investigate" },
     ],
   },
   {
@@ -173,7 +187,7 @@ const LEGACY_WORKSPACES: Workspace[] = [
  * V3 nav (Directives 2, 3, 4, 7, 8).
  *
  * Structural changes vs legacy:
- *  - Customer Compliance: only Cases + My Queue. Verification / Screening /
+ *  - Customer Compliance: Cases and the Compliance Passport. Verification / Screening /
  *    Risk / Ownership & Control / Funding & Finance are surfaced inside the
  *    case workspace (Phase 4/6) — their legacy routes remain reachable.
  *  - Transaction Compliance: gains Counterparty Due (formerly "Structures").
@@ -199,7 +213,6 @@ const V3_WORKSPACES: Workspace[] = [
       // Listed for the same reason as the legacy shell: `secondary` links must
       // appear in `paths` or the page they reach loses its secondary nav.
       "/admin/aml/passport",
-      "/admin/aml/intake",
       // Legacy aliases stay part of this workspace for URL matching only.
       "/admin/aml/verification",
       "/admin/aml/screening",
@@ -211,7 +224,6 @@ const V3_WORKSPACES: Workspace[] = [
     secondary: [
       { label: "Cases", to: "/admin/aml/cases", capability: "aml.view" },
       { label: "Compliance Passport", to: "/admin/aml/passport", capability: "aml.view" },
-      { label: "My Queue", to: "/admin/aml/intake", capability: "aml.view" },
     ],
   },
   {
@@ -266,6 +278,17 @@ const V3_WORKSPACES: Workspace[] = [
   },
 ];
 
+/**
+ * The Ownership & Control entry, kept out of the static tables because
+ * whether it appears is a fact about the tenant's customers rather than about
+ * the navigation. See `useHasEntityCases`.
+ */
+const OWNERSHIP_ENTRY: SecondaryEntry = {
+  label: "Ownership & Control",
+  to: "/admin/aml/counterparty",
+  capability: "aml.view",
+};
+
 function pathMatchesWorkspace(pathname: string, workspace: Workspace): boolean {
   // Compliance Home matches only the exact root — every other path belongs to
   // the workspace whose `paths` list contains a matching prefix.
@@ -279,6 +302,7 @@ export function AmlLayout() {
   const { roles, loading } = useAmlAccess();
   const { t } = useAmlTerminology();
   const { v3Nav } = useAmlV3Flags();
+  const entityCases = useHasEntityCases();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -304,9 +328,9 @@ export function AmlLayout() {
   // If a user lands on a legacy URL they cannot access (permissions changed),
   // AmlGuard will already show the denial page — nothing to do here.
 
-  // Route legacy `/admin/aml/intake` onward remains untouched. All legacy URLs
-  // continue to resolve because the underlying routes in `src/App.tsx` are
-  // preserved. This shell only changes the visual navigation grouping.
+  // Every legacy URL continues to resolve, because the routes in
+  // `src/App.tsx` are preserved. This shell only changes which of them the
+  // navigation offers — hiding a tab never takes a page away.
 
   // Auto-redirect: if the user lands on the module root but their default
   // landing role is not Compliance Home (Phase 2 will refine this per-role),
@@ -315,9 +339,33 @@ export function AmlLayout() {
     // Reserved for Phase 2 role-based default landing.
   }, [navigate]);
 
-  const secondary = activeWorkspace?.secondary?.filter((s) =>
-    hasAmlCapability(roles, s.capability),
-  );
+  /**
+   * Ownership & Control, offered only where it applies.
+   *
+   * Beneficial ownership is a question about companies, trusts and SMSFs; an
+   * individual purchaser carries no ownership structure, and the case
+   * workspace's own card says so. On a tenant whose customers are all
+   * individuals the tab is inapplicable to every case they hold — and it is
+   * mandatory the day the first entity is onboarded. So it asks the data
+   * rather than asking anybody to remember: absent while there is no such
+   * case, back on its own when there is.
+   *
+   * It is appended rather than filtered out of the list above so the ordinary
+   * strip stays a plain statement of what Customer Compliance always offers.
+   * The page itself is unaffected either way — the route is live and the case
+   * workspace's "Full register" link reaches it regardless.
+   */
+  const secondary = useMemo(() => {
+    const base = activeWorkspace?.secondary?.filter((s) =>
+      hasAmlCapability(roles, s.capability),
+    );
+    if (!base) return base;
+    if (activeWorkspace?.key !== "customer" || !entityCases.present) return base;
+    if (base.some((s) => s.to === OWNERSHIP_ENTRY.to)) return base;
+    return hasAmlCapability(roles, OWNERSHIP_ENTRY.capability)
+      ? [...base, OWNERSHIP_ENTRY]
+      : base;
+  }, [activeWorkspace, roles, entityCases.present]);
 
   const activeSecondary = secondary?.find(
     (s) =>
