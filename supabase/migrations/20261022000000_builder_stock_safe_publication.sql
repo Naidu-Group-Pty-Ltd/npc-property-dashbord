@@ -47,6 +47,26 @@
 -- Those two lines are the whole mechanism.
 
 
+-- STAGING FIXES MEMBERSHIP. IT DOES NOTHING ABOUT VALUES, and that is the
+-- second half.
+--
+-- #2347 updates a matched property IN PLACE — which is exactly what preserves
+-- its earned imagery — and `writablePatch` writes price, availability,
+-- description, land and building size onto a row whose `lifecycle_status` is
+-- `active`. The Marketplace serves that row. So the instant a replacement list
+-- is imported a client sees A's NEW price beside B's OLD membership: a hybrid
+-- dataset, published, while the replacement is still processing and might never
+-- finish. Proved behaviourally before this was written — the Marketplace read
+-- returned 850000/reserved with C invisible and B still standing.
+--
+-- So a matched row's new values go to `pending_patch`, a column nothing serves,
+-- and the row's own columns are left exactly as they are. A PATCH RATHER THAN A
+-- REPLACEMENT ROW, because the row id must not change: it is what
+-- `builder_stock_item_images.stock_item_id` and `primary_image_id` point at, so
+-- a swap would strand the property's imagery on the old id and it would have to
+-- be rebuilt.
+
+
 -- ── The third value ─────────────────────────────────────────────────────────
 ALTER TABLE public.builder_stock_items
   DROP CONSTRAINT IF EXISTS builder_stock_items_lifecycle_status_check;
@@ -73,6 +93,19 @@ ALTER TABLE public.builder_stock_uploads
   ADD COLUMN IF NOT EXISTS replaces_upload_ids uuid[] NOT NULL DEFAULT '{}',
   /* When the cutover happened. NULL means this upload has never published. */
   ADD COLUMN IF NOT EXISTS published_at timestamptz;
+
+/*
+ * A MATCHED PROPERTY'S REPLACEMENT VALUES, HELD BACK.
+ *
+ * `pending_patch` is the writable subset of one import's normalised record;
+ * `pending_upload_id` says which upload is waiting to apply it. Nothing serves
+ * either, so the published row goes on reading exactly as it did while the
+ * replacement is processed — and if the replacement never becomes ready, the
+ * patch is simply never applied.
+ */
+ALTER TABLE public.builder_stock_items
+  ADD COLUMN IF NOT EXISTS pending_patch jsonb,
+  ADD COLUMN IF NOT EXISTS pending_upload_id uuid;
 
 /*
  * The claim's index, re-stated for the widened predicate.
@@ -184,11 +217,20 @@ SET search_path = public, pg_temp
 AS $$
   SELECT
     count(*) AS staged,
-    count(*) FILTER (WHERE i.image_work_stage = 'source') AS source_outstanding,
-    count(*) > 0 AND count(*) FILTER (WHERE i.image_work_stage = 'source') = 0 AS ready
+    count(*) FILTER (
+      WHERE i.lifecycle_status = 'staged' AND i.image_work_stage = 'source'
+    ) AS source_outstanding,
+    count(*) > 0 AND count(*) FILTER (
+      WHERE i.lifecycle_status = 'staged' AND i.image_work_stage = 'source'
+    ) = 0 AS ready
   FROM public.builder_stock_items AS i
-  WHERE i.upload_id = p_upload_id
-    AND i.lifecycle_status = 'staged';
+  WHERE (i.upload_id = p_upload_id AND i.lifecycle_status = 'staged')
+     -- A MATCHED PROPERTY WAITING ONLY ON ITS PATCH COUNTS TOO. An import whose
+     -- rows ALL matched stages nothing at all, and a readiness rule that looked
+     -- only at staged rows would answer "nothing here" for ever — so the new
+     -- prices would never publish. It owes no source work: its imagery is
+     -- already earned and its row is already serving.
+     OR (i.pending_upload_id = p_upload_id);
 $$;
 
 REVOKE ALL ON FUNCTION public.builder_stock_publication_readiness(uuid)
@@ -235,6 +277,7 @@ DECLARE
   v_replaces uuid[];
   v_published integer := 0;
   v_archived integer := 0;
+  v_patched integer := 0;
 BEGIN
   SELECT staged, source_outstanding, ready
     INTO v_staged, v_outstanding, v_ready
@@ -249,11 +292,59 @@ BEGIN
   SELECT coalesce(replaces_upload_ids, '{}') INTO v_replaces
     FROM public.builder_stock_uploads WHERE id = p_upload_id;
 
+  /*
+   * 1. APPLY EVERY HELD-BACK PATCH — FIRST, and the order is load-bearing.
+   *
+   * This is what re-points a matched row's `upload_id` to this upload, and step
+   * 3 archives by `upload_id`. Do it after, and every kept property would look
+   * like a removed one.
+   *
+   * EVERY COLUMN IS NAMED. A `jsonb_populate_record` over the whole row would
+   * let whatever ended up in that column write any field of the table, which is
+   * mass assignment through a jsonb door. This list is exactly `writablePatch`
+   * plus the three the import controls, and a key that is not here cannot be
+   * written however it got into the patch.
+   */
+  UPDATE public.builder_stock_items AS i
+     SET external_reference = coalesce(i.pending_patch->>'external_reference', i.external_reference),
+         development_name   = coalesce(i.pending_patch->>'development_name', i.development_name),
+         project_name       = coalesce(i.pending_patch->>'project_name', i.project_name),
+         address_line       = coalesce(i.pending_patch->>'address_line', i.address_line),
+         suburb             = coalesce(i.pending_patch->>'suburb', i.suburb),
+         state              = coalesce(i.pending_patch->>'state', i.state),
+         postcode           = coalesce(i.pending_patch->>'postcode', i.postcode),
+         lot_number         = coalesce(i.pending_patch->>'lot_number', i.lot_number),
+         unit_number        = coalesce(i.pending_patch->>'unit_number', i.unit_number),
+         bedrooms           = coalesce((i.pending_patch->>'bedrooms')::numeric, i.bedrooms),
+         bathrooms          = coalesce((i.pending_patch->>'bathrooms')::numeric, i.bathrooms),
+         car_spaces         = coalesce((i.pending_patch->>'car_spaces')::numeric, i.car_spaces),
+         property_type      = coalesce(i.pending_patch->>'property_type', i.property_type),
+         land_size_sqm      = coalesce((i.pending_patch->>'land_size_sqm')::numeric, i.land_size_sqm),
+         building_size_sqm  = coalesce((i.pending_patch->>'building_size_sqm')::numeric, i.building_size_sqm),
+         price              = coalesce((i.pending_patch->>'price')::numeric, i.price),
+         price_display      = coalesce(i.pending_patch->>'price_display', i.price_display),
+         expected_completion= coalesce(i.pending_patch->>'expected_completion', i.expected_completion),
+         description        = coalesce(i.pending_patch->>'description', i.description),
+         availability_status= coalesce(i.pending_patch->>'availability_status', i.availability_status),
+         builder_project_id = coalesce((i.pending_patch->>'builder_project_id')::uuid, i.builder_project_id),
+         builder_unit_id    = coalesce((i.pending_patch->>'builder_unit_id')::uuid, i.builder_unit_id),
+         source_row         = coalesce(i.pending_patch->'source_row', i.source_row),
+         upload_id          = p_upload_id,
+         last_seen_at       = now(),
+         pending_patch      = NULL,
+         pending_upload_id  = NULL,
+         updated_at         = now()
+   WHERE i.pending_upload_id = p_upload_id;
+  GET DIAGNOSTICS v_patched = ROW_COUNT;
+
+  -- 2. Promote this upload's staged rows.
   UPDATE public.builder_stock_items
      SET lifecycle_status = 'active', updated_at = now()
    WHERE upload_id = p_upload_id AND lifecycle_status = 'staged';
   GET DIAGNOSTICS v_published = ROW_COUNT;
 
+  -- 3. Archive what the superseded uploads still supply. Anything still
+  --    carrying one of their ids is a property the new list did not contain.
   IF array_length(v_replaces, 1) IS NOT NULL THEN
     UPDATE public.builder_stock_items
        SET lifecycle_status = 'archived', updated_at = now()
@@ -268,7 +359,8 @@ BEGIN
    WHERE id = p_upload_id AND published_at IS NULL;
 
   RETURN jsonb_build_object(
-    'published', true, 'promoted', v_published, 'archived', v_archived);
+    'published', true, 'promoted', v_published,
+    'patched', v_patched, 'archived', v_archived);
 END;
 $$;
 

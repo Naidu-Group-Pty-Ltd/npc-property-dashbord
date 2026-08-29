@@ -133,7 +133,18 @@ describe('every processing path was widened, and no serving path was', () => {
 
 describe('readiness is one question, asked of the rows themselves', () => {
   it('is "has every staged row had its own source work run"', () => {
-    expect(sql).toMatch(/count\(\*\) FILTER \(WHERE i\.image_work_stage = 'source'\) = 0 AS ready/);
+    expect(sql).toMatch(
+      /WHERE i\.lifecycle_status = 'staged' AND i\.image_work_stage = 'source'\s*\n?\s*\) = 0 AS ready/);
+  });
+
+  it('counts a matched property that is waiting only on its patch', () => {
+    /*
+     * An import whose rows ALL matched stages nothing at all. A readiness rule
+     * that looked only at staged rows would answer "nothing here" for ever, and
+     * the new prices would never publish. Such a property owes no source work —
+     * its imagery is already earned and its row is already serving.
+     */
+    expect(sql).toMatch(/OR \(i\.pending_upload_id = p_upload_id\)/);
   });
 
   it('does not require a picture, because blank is a valid terminal outcome', () => {
@@ -327,8 +338,16 @@ describe('importing a replacement list', () => {
     const db = dbHolding([HELD]);
     await runImport(db, [ROW({ Price: '999000' })]);
     expect(db.updated).toHaveLength(1);
-    expect(db.updated[0].payload.lifecycle_status).toBe('active');
-    expect(db.updated[0].payload.upload_id).toBe('upload-2');
+    // Not one served value is written. The price, the availability and the
+    // membership all wait in the patch; only the imagery levers apply now.
+    const payload = db.updated[0].payload as Record<string, unknown>;
+    expect(payload.pending_upload_id).toBe('upload-2');
+    expect((payload.pending_patch as Record<string, unknown>).price).toBe(999000);
+    expect(payload.price).toBeUndefined();
+    expect(payload.lifecycle_status).toBeUndefined();
+    expect(payload.upload_id).toBeUndefined();
+    // …and `source_row` does, because it is what finds the photographs.
+    expect(payload.source_row).toBeTruthy();
   });
 
   it('5, 14. records the upload it replaces, so removal waits for the cutover', async () => {

@@ -97,6 +97,15 @@ export interface ImportOutcome {
    */
   staged: number;
   /**
+   * Published properties this import MATCHED whose new values are held back
+   * until the cutover.
+   *
+   * Their rows are untouched and go on serving exactly what they served
+   * before — the replacement's price, availability and description sit in
+   * `pending_patch` until `publish_builder_stock_upload` applies them.
+   */
+  deferred: number;
+  /**
    * The uploads this one supersedes: those that were supplying the rows it
    * matched, captured before their `upload_id` was re-pointed. The cutover
    * archives what they still supply and nothing else.
@@ -328,6 +337,7 @@ export async function importStockRecords(
     imageryOutstanding: false,
     replacedProperties: [],
     staged: 0,
+    deferred: 0,
     replacesUploadIds: [],
   };
 
@@ -558,9 +568,54 @@ export async function importStockRecords(
         if (previous && previous !== input.uploadId) supersededUploads.add(previous);
       }
       if (existingId) {
+        /**
+         * A PUBLISHED PROPERTY'S NEW VALUES ARE HELD BACK, NOT APPLIED.
+         *
+         * Staging fixes MEMBERSHIP and does nothing about VALUES. `patch`
+         * carries price, availability, description, land and building size, and
+         * writing it to a row the Marketplace is serving publishes half a
+         * dataset the moment the file is imported: A's new price beside B's old
+         * membership, while the replacement is still processing and might never
+         * finish. Proved before this was written — the Marketplace read
+         * returned 850000/reserved with C invisible and B still standing.
+         *
+         * So the whole patch, and the membership change with it, goes into a
+         * column nothing serves. `publish_builder_stock_upload` applies it,
+         * names every column it may write, and does so in the same statement
+         * that promotes the staged rows and archives the removed ones.
+         *
+         * A PATCH RATHER THAN A REPLACEMENT ROW, because the row id must not
+         * change: it is what `stock_item_id` and `primary_image_id` point at, so
+         * a swap would strand this property's earned imagery on the old id.
+         *
+         * Only where there is something to protect, and only for a row that is
+         * actually PUBLISHED. A first-ever upload, and a still-staged row from
+         * an unfinished replacement, are applied directly as they always were —
+         * neither is on anybody's screen.
+         */
+        const defer = newPropertyLifecycle === 'staged'
+          && lifecycleBefore.get(existingId) === 'active';
+
         const { data, error } = await db
           .from('builder_stock_items')
-          .update({
+          .update(defer ? {
+            /*
+             * ONLY THE SERVED VALUES AND THE MEMBERSHIP ARE HELD BACK.
+             *
+             * `source_row` is applied immediately because it serves nothing and
+             * drives everything: it is what `repairSourceImages` reads to find
+             * this property's photographs. Holding it back would mean the
+             * builder's new imagery could not be looked for until the cutover —
+             * and a builder photograph arriving before the cutover SHOULD
+             * become the card's picture. An image that appears on a card which
+             * had none is not a replacement value leaking; it is the ladder
+             * doing exactly what it is for, and `chooseCardImage` guarantees it
+             * can only ever be an improvement.
+             */
+            pending_upload_id: input.uploadId,
+            pending_patch: patch,
+            source_row: record as unknown as Record<string, unknown>,
+          } : {
             ...patch,
             upload_id: input.uploadId,
             source_row: record as unknown as Record<string, unknown>,
@@ -581,6 +636,7 @@ export async function importStockRecords(
         if (error) throw error;
         itemId = data.id;
         outcome.updated += 1;
+        if (defer) outcome.deferred += 1;
       } else {
         const { data, error } = await db
           .from('builder_stock_items')
