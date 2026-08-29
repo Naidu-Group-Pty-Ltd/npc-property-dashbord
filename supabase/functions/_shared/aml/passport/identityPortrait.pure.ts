@@ -146,3 +146,212 @@ export function portraitCaption(d: IdentityPortraitDescriptor): string {
     : d.issuing_state ? d.issuing_state : null;
   return state ? `${state} ${document}` : document;
 }
+
+/* ── The slot on the Client Identity page ──────────────────────────────
+ *
+ * A descriptor answers "is there a portrait?", and for the leaf that CARRIES
+ * the photograph that is not enough. `describeIdentityPortrait` returns null
+ * for several different situations, and the booklet's only way to render null
+ * is to omit the block — so the bio page silently lost its holder and the
+ * reader was left to guess whether the document simply has no face on it.
+ *
+ * That is the defect this closes. **The Client Identity page always shows the
+ * mount**, and where there is no image it says which absence it is. An
+ * absence with a reason is a document; an absence with no reason is a page
+ * that looks broken.
+ *
+ * The reasons are deliberately about the RECORD and never about the customer:
+ * nobody's identity is in question because a photograph was not retained.  */
+
+export type PortraitAbsenceReason =
+  /** No verification has passed for this party yet. */
+  | "not_verified"
+  /**
+   * Verified, NPC holds the document page, and the portrait is on its way.
+   *
+   * Every verification completed before portraits were stored lands here for
+   * one sweep. It is a TRANSIENT state, not a defect — the backfill below
+   * fetches it without anybody asking.
+   */
+  | "pending_retrieval"
+  /**
+   * Verified through a provider that keeps the media. There is nothing of the
+   * document on our side to show or to re-read, which is a deliberate
+   * property of that integration rather than a fault.
+   */
+  | "provider_retains_media"
+  /**
+   * The document page was read and yielded no portrait.
+   *
+   * Distinct from `pending_retrieval` because it is FINAL, and a page that
+   * goes on promising an image that will never arrive is worse than one that
+   * says so. Nothing is retried: the read was paid for and made.
+   */
+  | "unavailable";
+
+export interface IdentityPortraitSlot {
+  /** True when an image exists and this reader may see it. */
+  available: boolean;
+  /** Why there is no image. Null exactly when `available` is true. */
+  reason: PortraitAbsenceReason | null;
+  document: IdentityDocumentKind | null;
+  issuing_state: string | null;
+  captured_at: string | null;
+  /** Minted for one reader at the moment of service. See the header. */
+  url: string | null;
+}
+
+/**
+ * The stamp a completed backfill attempt leaves behind.
+ *
+ * Its presence — not its outcome — is what stops a second attempt. The read
+ * is a PAID call, and this codebase's standing rule is that a paid call whose
+ * outcome is known is never repeated: retrying on failure would spend against
+ * the same unreadable document every minute, for ever.
+ */
+export interface PortraitBackfillStamp {
+  attempted_at: string;
+  outcome: string;
+}
+
+/** The stamp itself, from wherever the caller already holds it. */
+export function parseBackfillStamp(raw: unknown): PortraitBackfillStamp | null {
+  if (!raw || typeof raw !== "object") return null;
+  const attemptedAt = String((raw as Record<string, unknown>).attempted_at ?? "");
+  if (!attemptedAt) return null;
+  return {
+    attempted_at: attemptedAt,
+    outcome: String((raw as Record<string, unknown>).outcome ?? "unknown"),
+  };
+}
+
+/** The stamp, from the `standalone_capture` block it lives in. */
+export function readBackfillStamp(captureStore: unknown): PortraitBackfillStamp | null {
+  if (!captureStore || typeof captureStore !== "object") return null;
+  return parseBackfillStamp((captureStore as Record<string, unknown>)["portrait_backfill"]);
+}
+
+/**
+ * Is the document page this portrait was extracted from still ours to read?
+ *
+ * The single condition: a stored `document_front` and no `id_portrait`. It is
+ * deliberately not expressed in terms of the provider — what makes the
+ * re-read possible is holding the source image, and a rule about which vendor
+ * was used would go stale the moment another one is added.
+ */
+export function portraitRecoverable(captureObjects: unknown): boolean {
+  if (identityPortraitObject(captureObjects)) return false;
+  if (!captureObjects || typeof captureObjects !== "object") return false;
+  const front = (captureObjects as Record<string, unknown>)["document_front"];
+  if (!front || typeof front !== "object") return false;
+  const bucket = String((front as Record<string, unknown>).bucket ?? "");
+  const path = String((front as Record<string, unknown>).path ?? "");
+  return Boolean(bucket && path);
+}
+
+/**
+ * Should the sweep read this check's document page?
+ *
+ * ONE attempt, ever. The stamp's presence is the whole guard — see
+ * `PortraitBackfillStamp`.
+ */
+export function portraitBackfillCandidate(
+  captureStore: unknown,
+  captureObjects: unknown,
+): boolean {
+  if (readBackfillStamp(captureStore)) return false;
+  return portraitRecoverable(captureObjects);
+}
+
+/** Whether a check whose stamp the caller already holds is still a candidate. */
+export function backfillPending(
+  backfillStamp: unknown,
+  captureObjects: unknown,
+): boolean {
+  if (parseBackfillStamp(backfillStamp)) return false;
+  return portraitRecoverable(captureObjects);
+}
+
+export interface PortraitSlotFacts extends PortraitFacts {
+  /** False when no verification has passed for this party. */
+  verified: boolean;
+  /**
+   * The backfill stamp, where one exists.
+   *
+   * Carried as a NAMED field rather than by handing the projection the whole
+   * `outcome_detail` block: that is a provider payload, and this module's
+   * rule throughout is that only the facts the portrait needs are lifted out
+   * of it. Absent is the ordinary reading — "not attempted yet".
+   */
+  backfillStamp?: unknown;
+}
+
+/** The slot for the Client Identity page. Never null: the mount always draws. */
+export function describeIdentityPortraitSlot(
+  facts: PortraitSlotFacts,
+): IdentityPortraitSlot {
+  const present = describeIdentityPortrait(facts);
+  if (present) return { ...present, reason: null };
+
+  const choice = String(facts.documentChoice ?? "").trim().toLowerCase();
+  const recoverable = portraitRecoverable(facts.captureObjects);
+  const attempted = parseBackfillStamp(facts.backfillStamp);
+
+  const reason: PortraitAbsenceReason = !facts.verified
+    ? "not_verified"
+    : !recoverable
+      ? "provider_retains_media"
+      /* Held the document, read it, got nothing. Final — and said as such,
+         because a page that goes on promising an image that will never
+         arrive is worse than one that admits there is none. */
+      : attempted
+        ? "unavailable"
+        : "pending_retrieval";
+
+  return {
+    available: false,
+    reason,
+    document: DOCUMENT_KINDS.has(choice) ? choice as IdentityDocumentKind : null,
+    issuing_state: facts.issuingState ? String(facts.issuingState).toUpperCase() : null,
+    captured_at: facts.verified ? facts.completedAt ?? null : null,
+    url: null,
+  };
+}
+
+/**
+ * What the mount says when it holds no photograph.
+ *
+ * One implementation, because the booklet, the client's copy and the
+ * partner's are the same document and must not explain the same gap in three
+ * different ways. Every line is about the RECORD — a photograph that was not
+ * retained says nothing about the holder.
+ */
+export function portraitAbsenceNote(reason: PortraitAbsenceReason): string {
+  switch (reason) {
+    case "not_verified":
+      return "Awaiting identity verification";
+    case "pending_retrieval":
+      return "Photograph is being retrieved from the identity document";
+    case "provider_retains_media":
+      return "Photograph held by the verification provider";
+    case "unavailable":
+      return "No photograph could be read from the identity document";
+  }
+}
+
+/**
+ * The caption under the mount, whether or not there is an image.
+ *
+ * `portraitCaption` needs a descriptor; a slot with no image still knows
+ * which document was verified, and saying "Australian passport" under an
+ * empty frame is more use to a reader than saying nothing.
+ */
+export function slotCaption(slot: IdentityPortraitSlot): string {
+  return portraitCaption({
+    available: true,
+    document: slot.document,
+    issuing_state: slot.issuing_state,
+    captured_at: slot.captured_at,
+    url: null,
+  });
+}

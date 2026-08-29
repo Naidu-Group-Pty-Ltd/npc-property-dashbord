@@ -194,26 +194,39 @@ describe("wired end to end, and additive throughout", () => {
     expect(reliance).toContain("await attachPortraitUrls(admin, view, checks ?? []);");
   });
 
-  it("the booklet draws it, and an absent one never blanks the page", () => {
+  it("the booklet draws it on the CLIENT IDENTITY leaf, unconditionally", () => {
+    /* The rule, not the wording: the holder's photograph belongs on the page
+       that bears their identity, and the mount is drawn whether or not there
+       is an image. A block that disappeared on a missing photograph is what
+       left the bio page with no holder on it and no way to tell why. */
     const booklet = read(
       "supabase/functions/_shared/aml/passport/passportBooklet.pure.ts");
-    expect(booklet).toContain('kind: "portrait"');
-    // Only a party whose verification PASSED, and only one.
-    expect(booklet).toContain(".filter((p) => p.portrait)");
-    expect(booklet).toContain(".slice(0, 1)");
+    const identityLeaf = booklet.slice(
+      booklet.indexOf('id: "identity",'),
+      booklet.indexOf('id: "summary",'),
+    );
+    expect(identityLeaf).toContain('kind: "bio"');
+    // Not behind a filter, a length check or a ternary that can omit it.
+    expect(identityLeaf).not.toMatch(/\.filter\([^)]*portrait/);
+    // And it carries the reason when it carries no image.
+    expect(identityLeaf).toContain("absence:");
+
     const blocks = read("src/components/aml/passport/design/BookletBlocks.tsx");
-    expect(blocks).toContain('case "portrait":');
+    expect(blocks).toContain('case "bio":');
     expect(blocks).toContain("passport-portrait__empty");
+    /* The empty frame is a branch of the SAME block, never a second block:
+       one implementation cannot render the two states differently. */
+    expect(blocks).not.toContain('case "portrait":');
   });
 
-  it("the leaf's standing disclaimer stays TRUE", () => {
+  it("the verification leaf's standing disclaimer stays TRUE", () => {
     /* It said captured biometric media stays inside the verification record.
-       The portrait is the face PRINTED ON THE DOCUMENT, which is why it may
-       appear — and the sentence has to say so rather than quietly contradict
-       the image above it. */
+       One image now leaves it — the face PRINTED ON THE DOCUMENT — so the
+       sentence has to name that image and where it went, rather than being
+       read as a claim that the booklet carries no photograph at all. */
     const booklet = read(
       "supabase/functions/_shared/aml/passport/passportBooklet.pure.ts");
-    expect(booklet).toContain("The portrait above is the photograph on the identity document.");
+    expect(booklet).toMatch(/Client Identity page is the portrait printed on the identity document/);
     expect(booklet).toMatch(/document image itself, the live capture taken during\s*\n?\s*verification/);
   });
 

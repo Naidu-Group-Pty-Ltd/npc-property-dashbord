@@ -605,6 +605,7 @@ async function buildCasePassportView(
           document_choice: sa.document_choice
             ?? c.outcome_detail?.standalone_capture?.document_choice ?? null,
           issuing_state: idv.issuing_state ?? null,
+          portrait_backfill: c.outcome_detail?.standalone_capture?.portrait_backfill ?? null,
         };
       }),
       documents: (docs ?? []).map((d: any) => ({
@@ -681,6 +682,26 @@ const PORTRAIT_URL_TTL_SECONDS = 300;
 async function attachPortraitUrls(admin: any, view: any, checks: any[]): Promise<void> {
   const parties = view?.verification?.parties;
   if (!Array.isArray(parties) || parties.length === 0) return;
+
+  /* One signing per stored object, shared by every slot that points at it.
+     The Client Identity page and the party row are the SAME photograph, and
+     minting two credentials for one image is two things to expire. */
+  const signed = new Map<string, string>();
+  const sign = async (ref: { bucket: string; path: string }): Promise<string | null> => {
+    const key = `${ref.bucket}/${ref.path}`;
+    if (signed.has(key)) return signed.get(key)!;
+    try {
+      const { data } = await admin.storage.from(ref.bucket)
+        .createSignedUrl(ref.path, PORTRAIT_URL_TTL_SECONDS);
+      if (!data?.signedUrl) return null;
+      signed.set(key, data.signedUrl);
+      return data.signedUrl;
+    } catch {
+      // Leave `url` null. The mount draws its frame and says so.
+      return null;
+    }
+  };
+
   for (const party of parties) {
     const descriptor = party?.portrait;
     if (!descriptor) continue;
@@ -695,14 +716,29 @@ async function attachPortraitUrls(admin: any, view: any, checks: any[]): Promise
       ?? null;
     const ref = identityPortraitObject(objects);
     if (!ref) continue;
-    try {
-      const { data } = await admin.storage.from(ref.bucket)
-        .createSignedUrl(ref.path, PORTRAIT_URL_TTL_SECONDS);
-      if (data?.signedUrl) party.portrait = { ...descriptor, url: data.signedUrl };
-    } catch {
-      // Leave `url` null. The leaf draws the frame and says so.
+    const url = await sign(ref);
+    if (!url) continue;
+    party.portrait = { ...descriptor, url };
+
+    /* The Client Identity page carries the same image. It is signed here
+       rather than in a second pass because the slot holds no bucket and no
+       path — the view never carries either, and `PARTNER_RESTRICTED_KEYS`
+       would refuse it if it tried — so the object can only be found from the
+       rows the view was built from. */
+    const slot = view?.identity?.portrait;
+    if (slot?.available && !slot.url && party.party === subjectPartyLabel(view)) {
+      view.identity.portrait = { ...slot, url };
     }
   }
+}
+
+/** Whose photograph the Client Identity page shows — the assembler's rule. */
+function subjectPartyLabel(view: any): string {
+  const parties = view?.verification?.parties ?? [];
+  const subject = view?.header?.subject ?? "Subject";
+  return parties.some((p: any) => p.party === subject)
+    ? subject
+    : (parties[0]?.party ?? subject);
 }
 
 /**

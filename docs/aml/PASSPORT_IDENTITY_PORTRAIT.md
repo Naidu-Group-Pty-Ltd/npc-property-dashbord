@@ -113,6 +113,105 @@ it. It now reads:
 > image itself, the live capture taken during verification, match scores and
 > liveness measurements stay inside the verification record.
 
+## It is on the CLIENT IDENTITY page, and the mount always draws
+
+The portrait was first placed on the **Identity Verification** leaf, behind
+`.filter((p) => p.portrait).slice(0, 1)`. Two things followed from that, and
+both were reported as "there is no photo of the client anywhere in the
+passport":
+
+- **It was on the wrong page.** An identity document puts the holder's face
+  beside the fields that name them. The Client Identity leaf is that page —
+  it is the one a reader opens to find out *whose document this is* — and it
+  was the only leaf in the booklet that did not show its own subject.
+- **The block DISAPPEARED whenever there was no image.** `null` is the
+  ordinary state, and the booklet's only way to render it was to omit the
+  block, so the page said nothing at all: no frame, no caption, and no way to
+  tell "we hold no photograph" from "this document does not carry one".
+
+So the leaf carries a `bio` block — the photograph mounted at the left, the
+four fields that name the holder set beside it — and **the mount is drawn
+whether or not there is an image**. Where there is none it prints the frame,
+the hatched field, the document ("Australian passport", which is known even
+when the image is not) and one sentence saying which absence this is.
+
+`identity.portrait` is therefore a **slot** rather than a descriptor, and it
+is never null. Four absences, named rather than left as a gap:
+
+| reason | what it means |
+|---|---|
+| `not_verified` | no verification has passed for this party yet |
+| `pending_retrieval` | verified, NPC holds the document page, the sweep has not fetched the portrait yet — **transient** |
+| `provider_retains_media` | verified through a provider that keeps the media; nothing on our side to show |
+| `unavailable` | the document page was read and carried no portrait — **final** |
+
+`pending_retrieval` and `unavailable` are separated deliberately. Both are
+"no image" and they are not the same thing to a reader: a page that goes on
+promising a photograph the document does not carry is wrong one way, and one
+that says "unavailable" while the sweep is about to fetch it is wrong the
+other. A test asserts the two are worded so they cannot be confused.
+
+The wording says nothing about the customer, only about the record, and a
+test asserts it: nobody's identity is in question because a photograph was
+not retained.
+
+The Identity Verification leaf keeps its standing disclaimer and no longer
+carries the face — printing it twice in one booklet is repetition. The
+sentence now names the one image that travels and where it went, so it cannot
+be read as saying the booklet carries no photograph at all.
+
+## The backfill is automatic, and that is the point
+
+Every verification completed before portraits were stored has a Passport with
+no face on it — even though the document page it was cropped from is still in
+NPC's own bucket. That is a defect in **this product's own record-keeping**,
+and repairing it is this product's job.
+
+The first attempt at this put a "Recover the holder's photograph" button on
+the Passport. That was wrong, and it was wrong in a way worth recording:
+**asking an operator to click once per case is asking them to fix our bug by
+hand, for ever** — and it makes a Passport's completeness depend on whether
+anybody happened to open it. A partner reading a Passport nobody opened would
+see no holder, indefinitely, with no signal to anyone that anything was owed.
+
+So `backfillIdentityPortrait` runs on the **one-minute sweep that already
+exists** in `aml-verification-processor`. Five rules carry it.
+
+**It re-derives an IMAGE and never re-decides an identity.** No status,
+verdict, score or timing is written — the verification stands exactly as
+recorded. Where the provider's re-read disagrees with the original verdict,
+that is logged for a human and acted on by nobody: silently adopting a second
+opinion nobody asked for would be far worse than the missing photograph.
+
+**Exactly one attempt, ever.** It makes one billed ID-verification call, and
+the stamp it leaves (`standalone_capture.portrait_backfill`) is written
+whether the call succeeded, failed or produced nothing. The stamp's
+**presence** is the guard, never its outcome — retrying a paid call against
+the same unreadable document would spend every minute for ever, which is the
+unattended spending the processor refuses by design. That is also why it does
+not bend that function's standing rule: there is no path that re-sends.
+
+**Nothing is stamped where nothing was spent.** A database fault, an
+unresolved provider or a document page the retention job already deleted all
+answer `not_applicable` and leave no stamp, so a check that becomes eligible
+later is still a candidate.
+
+**A live customer always outranks an old record.** The pass runs only when the
+verification queue took nothing this tick and the wall-clock budget is intact.
+Somebody waiting on "Checking your identity" is never delayed by the repair of
+a Passport issued months ago.
+
+**It is bounded — two checks a tick.** Every minute, so a backlog of any size
+drains within hours without a burst of spending nobody chose. It is fail-soft
+throughout: a repair that could take the verification sweep down with it would
+be worse than the defect it fixes.
+
+`findPortraitBackfillCandidates` narrows the scan with two JSON filters and
+then re-applies `backfillPending` in code. The predicate is checked twice on
+purpose: a filter that silently stopped matching would turn a bounded repair
+into repeated spending, and this is the one place where being wrong costs
+money.
+
 ## How it is drawn
 
 As a photograph **mounted on the leaf**, not an avatar dropped onto it: a
@@ -124,5 +223,9 @@ Every value is in leaf pixels. The leaf is authored at 470×648 and scaled by
 transform, so a portrait sized in viewport units would be the one element on
 the page that ignored the fit.
 
-An absent or expired `src` draws the frame, a hatched field and *"Portrait not
-available"*. **A missing photograph must never blank the page.**
+An absent or expired `src` draws the frame, a hatched field and the reason.
+**A missing photograph must never blank the page.**
+
+On the Client Identity leaf the mount is 96x123 rather than the marginal
+84x108, because there the photograph is the subject of the page rather than
+an ornament beside it.
