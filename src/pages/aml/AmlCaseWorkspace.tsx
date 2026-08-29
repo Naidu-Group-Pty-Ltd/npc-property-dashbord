@@ -762,12 +762,20 @@ export default function AmlCaseWorkspace() {
               onOpenSection={setSection}
               onPerform={performStageAction}
               /*
-               * Stage 5's numbered path carries the same action and its own
-               * progress. Repeating both here put one act on the screen three
-               * times, in three sets of words, above two progress readings
-               * that counted different things.
+               * A stage whose surface below carries the same act and its own
+               * progress states it once. Repeating both here put one act on
+               * the screen three times, in three sets of words, above two
+               * progress readings that counted different things.
+               *
+               * Stage 5 (its screening path) and Stage 9 (Gate & Passport,
+               * in order) both do. Stage 9's header said "0 of 3 items on
+               * this stage complete" beside a four-step list — two true
+               * numbers, neither about the list underneath them.
                */
-              deferToSurfaceBelow={section === "ownership" && Boolean(screeningStage.sync)}
+              deferToSurfaceBelow={
+                (section === "ownership" && Boolean(screeningStage.sync))
+                || section === "passport"
+              }
             />
           )}
 
@@ -1120,6 +1128,12 @@ export default function AmlCaseWorkspace() {
                           : null,
                     gateStatus: serviceGateStatus(caseRow),
                     passportState: facts.passport?.state?.code ?? null,
+                    /* The reasons, not only the code: `refresh_required`
+                       covers two different owed acts and only these tell
+                       them apart. Without them the step told a cleared case
+                       with a perfectly good v1 to issue a v2 that could not
+                       have changed anything. */
+                    passportReasons: facts.passport?.state?.reasons ?? null,
                     passportVersion: facts.passport?.version ?? null,
                     canReview: access.isMlro || access.roles.has("reviewer"),
                   })}
@@ -1232,12 +1246,14 @@ export default function AmlCaseWorkspace() {
             /* So it never offers to take the operator where they already are. */
             currentSection={section}
             /*
-             * Stage 5's path keeps its own count, in its own units. Two
-             * meters on one screen counting different things is worse than
-             * either alone.
+             * A path below keeps its own count, in its own units. Two meters
+             * on one screen counting different things is worse than either
+             * alone — Stage 5's screening path and Stage 9's gate path both
+             * own theirs.
              */
             deferReadinessToSurfaceBelow={
-              section === "ownership" && Boolean(screeningStage.sync)
+              (section === "ownership" && Boolean(screeningStage.sync))
+              || section === "passport"
             }
             onOpenSection={setSection}
           />

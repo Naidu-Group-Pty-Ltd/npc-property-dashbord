@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
-  gatePassportComplete, gatePassportPath, type GatePassportFacts,
+  gatePassportComplete, gatePassportPath, gatePassportProgress,
+  type GatePassportFacts,
 } from "./gatePassportPath.pure";
 
 /**
@@ -96,12 +97,133 @@ describe("preview never gates; issuance follows the server's code", () => {
     expect(s.detail).toMatch(/could not be read/);
   });
 
-  it("refresh_required and superseded call for a reissue", () => {
-    for (const code of ["refresh_required", "superseded"]) {
-      const s = byKey(gatePassportPath(facts({ passportState: code })), "issue");
-      expect(s.state).toBe("current");
-      expect(s.detail).toMatch(/newer version is needed/);
+  it("a caution a NEW VERSION would clear calls for a reissue", () => {
+    for (const [code, reason] of [
+      ["refresh_required", "material_inputs_changed"],
+      ["superseded", "all_versions_superseded"],
+    ] as const) {
+      const s = byKey(gatePassportPath(facts({
+        passportState: code, passportReasons: [reason],
+      })), "issue");
+      expect(s.state, code).toBe("current");
+      expect(s.detail, code).toMatch(/newer version is needed/);
     }
+  });
+
+  it("with no reasons at all it behaves exactly as it did", () => {
+    /* An older deployment sends the code and not the reasons. Reading
+       silence as "the gate is the only problem" would suppress a reissue
+       that IS owed, so absence falls back to the previous wording. */
+    const s = byKey(gatePassportPath(facts({ passportState: "refresh_required" })), "issue");
+    expect(s.state).toBe("current");
+    expect(s.detail).toMatch(/newer version is needed/);
+  });
+});
+
+describe("a remedy that cannot discharge the reason is never offered", () => {
+  /**
+   * The reported case, from production: attestation v1, issued, not
+   * superseded, `refresh_required_at` NULL, zero open refresh obligations —
+   * and the Passport read "Refresh required · v1" for exactly one reason,
+   * `service_gate_regressed`, because the gate was `under_review`.
+   *
+   * Stage 9 said "a newer version is needed" and the reliance panel offered
+   * "Reissue as v2". Issuing it would have superseded a perfectly good v1
+   * and changed nothing, because v2 is flagged for the same reason while
+   * the gate is unapproved. A loop, with an audit trail.
+   */
+  const gateOnly = facts({
+    passportState: "refresh_required",
+    passportReasons: ["service_gate_regressed"],
+    passportVersion: 1,
+  });
+
+  it("never tells the operator a newer version is needed", () => {
+    const s = byKey(gatePassportPath(gateOnly), "issue");
+    expect(s.detail).not.toMatch(/newer version is needed/);
+    expect(s.detail).toMatch(/no new version is needed/i);
+    expect(s.detail).toMatch(/v1 is issued/);
+  });
+
+  it("the issuance debt is DISCHARGED — a version exists", () => {
+    /* Leaving it outstanding counts one fact twice: the gate step already
+       carries "the gate is not approved". That double count is why "one
+       step left" could never fire, which is the missing distinction that
+       was reported. */
+    const s = byKey(gatePassportPath(gateOnly), "issue");
+    expect(s.state).toBe("done");
+    expect(s.label).toBe("Passport issued");
+  });
+
+  it("but the STAGE is not complete — the gate is still owed", () => {
+    const steps = gatePassportPath(gateOnly);
+    expect(gatePassportComplete(steps)).toBe(false);
+    expect(byKey(steps, "gate").state).toBe("current");
+  });
+
+  it("and approving the gate completes it outright", () => {
+    /* The server re-derives `issued_current` the moment the gate is
+       approved — `service_gate_regressed` was the only reason. So the
+       promise the card makes ("completing it finishes this stage") is one
+       the product actually keeps. */
+    const steps = gatePassportPath(facts({
+      gateStatus: "approved", passportState: "issued_current",
+      passportReasons: ["current_attestation_gate_approved"], passportVersion: 1,
+    }));
+    expect(gatePassportComplete(steps)).toBe(true);
+  });
+
+  it("a gate reason ALONGSIDE a document reason still calls for the reissue", () => {
+    const s = byKey(gatePassportPath(facts({
+      passportState: "refresh_required",
+      passportReasons: ["service_gate_regressed", "open_refresh_obligation"],
+    })), "issue");
+    expect(s.state).toBe("current");
+    expect(s.detail).toMatch(/newer version is needed/);
+  });
+});
+
+describe("the path counts itself, and says what finishes the stage", () => {
+  it("`anytime` is excluded — a look is not a debt", () => {
+    const p = gatePassportProgress(gatePassportPath(facts({
+      gateStatus: "approved", passportState: "issued_current",
+    })));
+    // decision + gate + issue. Preview is not counted.
+    expect(p.total).toBe(3);
+    expect(p.done).toBe(3);
+    expect(p.complete).toBe(true);
+    expect(p.remaining).toBe(0);
+  });
+
+  it("one owed step left, and it is the gate — so it finishes the stage", () => {
+    const p = gatePassportProgress(gatePassportPath(facts({
+      passportState: "refresh_required",
+      passportReasons: ["service_gate_regressed"],
+      passportVersion: 1,
+    })));
+    expect(p.remaining).toBe(1);
+    expect(p.next?.key).toBe("gate");
+    expect(p.finishesStage).toBe(true);
+  });
+
+  it("a BLOCKED last step never promises a completion this operator cannot deliver", () => {
+    const p = gatePassportProgress(gatePassportPath(facts({
+      passportState: "refresh_required",
+      passportReasons: ["service_gate_regressed"],
+      canReview: false,
+    })));
+    expect(p.remaining).toBe(1);
+    expect(p.next?.state).toBe("blocked");
+    expect(p.finishesStage).toBe(false);
+  });
+
+  it("two owed steps is not one — the promise is exact or absent", () => {
+    const p = gatePassportProgress(gatePassportPath(facts({
+      passportState: "refresh_required",
+      passportReasons: ["material_inputs_changed"],
+    })));
+    expect(p.remaining).toBe(2);
+    expect(p.finishesStage).toBe(false);
   });
 });
 
@@ -139,6 +261,19 @@ describe("wired at the source", () => {
     expect(passports).toContain('searchParams.get("case")');
     // An unknown id falls back to the first row, never a blank selection.
     expect(passports).toMatch(/some\(\(r\) => r\.id === requestedCaseId\)/);
+  });
+
+  it("Stage 9's count is said ONCE, by the path", () => {
+    /* The header rendered "0 of 3 items on this stage complete" and the rail
+       rendered "0 of 3 items complete" beside a four-step list. Both were
+       true and neither was about the list underneath them — the same defect
+       Stage 5 already fixed. */
+    expect(workspace).toMatch(/deferToSurfaceBelow=\{[\s\S]{0,200}section === "passport"/);
+    expect(workspace).toMatch(/deferReadinessToSurfaceBelow=\{[\s\S]{0,200}section === "passport"/);
+  });
+
+  it("the SERVER's reasons reach the path — the code alone cannot tell them apart", () => {
+    expect(workspace).toContain("passportReasons: facts.passport?.state?.reasons ?? null");
   });
 
   it("the issue step lands on the reliance panel where issuance lives", () => {
