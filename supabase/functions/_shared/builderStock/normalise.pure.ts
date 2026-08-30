@@ -591,6 +591,36 @@ export function stockRecordLabel(record: StockLabelFields): string {
  * there is not enough to geocode — an enrichment run against "Suburb" alone
  * would return a picture of somewhere else.
  */
+/**
+ * IS THERE A BUILDING AT THIS ADDRESS TO PHOTOGRAPH?
+ *
+ * A Street View still is a picture of whatever stands at a point on the
+ * ground. For a completed dwelling that is the house. For a lot in a new
+ * estate it is dirt, a road, or the paddock the estate has not been built on
+ * yet — and that is not "no picture available", it is a picture of the wrong
+ * thing, presented to a client as their property.
+ *
+ * PRODUCTION, 30 AUGUST 2026: a house-and-land package whose brochure shows a
+ * finished render was served a Street View of an empty rural road outside the
+ * estate. 58 cards were in that state.
+ *
+ * The signal is already here and needs no new field: a property the source
+ * gave a REAL STREET ADDRESS is an addressed, built or building dwelling; one
+ * whose line had to be COMPOSED from a lot number and an estate name is, by
+ * construction, a lot in an estate. `composeAddressLine` returns non-null
+ * only in the second case, which is exactly the test.
+ *
+ * It does not touch stage 2. A web search identifies a property by name, and
+ * the builder's own render of the design on this lot is a legitimate and
+ * useful reference picture — it is what the brochure itself shows. This
+ * governs stage 3 alone, where the camera photographs the ground.
+ */
+export function hasPhotographableStreetAddress(record: {
+  address_line: string | null;
+}): boolean {
+  return !!record.address_line?.trim();
+}
+
 export function geocodableAddress(record: {
   address_line: string | null; suburb: string | null;
   state: string | null; postcode: string | null;
