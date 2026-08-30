@@ -543,7 +543,31 @@ the server whether the tenant holds a non-individual case, because beneficial
 ownership is a company/trust/SMSF question, and it **fails open** so a failed
 read never hides a compliance surface.
 
-Compliance Home's **"Your queues" is four entries**, because a queue is work
+**The primary strip is three tabs: Compliance Home, Customer Compliance and
+AUSTRAC Hub.** Regulatory & Assurance is retired, and it went by being
+REDISTRIBUTED rather than hidden — lodging a report is the daily job and it was
+two clicks down, so the AUSTRAC Hub is a workspace of its own (its drafting
+routes resolve by prefix, so writing a report never loses the strip), and
+monitoring, EDD and records sit under Compliance Home beside the queues that
+count them. **No path lost a workspace**, which is the rule that makes a
+retirement safe. Compliance Home therefore owns real paths now, and
+`pathMatchesWorkspace` matches the module ROOT exactly and never as a prefix —
+`/admin/aml` is every AML URL's ancestor, and prefix-matching it would make
+Home the active workspace on the case register and every other tab dead.
+
+That redistribution is what let **"Your queues" go entirely**: every
+destination it listed is in the navigation, so the card was a third launcher
+after the primary strip and the role-adaptive "jump back" card above it. The
+page's own header went with it — a second title, strapline and Refresh drawn
+directly under the command centre's — which exposed that **the shell's Refresh
+was a placebo**: it dispatched `aml-command-refresh` and nothing in the product
+had ever listened, so the button moved a clock. Compliance Home answers it now,
+and `AML_COMMAND_REFRESH_EVENT` is named in one module because a literal at
+each end is how two ends drift. Configuration's one capability-gated door moved
+with the header into the command centre's action row, where it is one click
+from wherever an administrator is rather than only from Home.
+
+Compliance Home's queue directory was, before it went, **four entries**, because a queue is work
 waiting for somebody. **Transactions** left: `aml.transactions` and
 `aml.transaction_parties` hold zero rows and the page is a PER-CASE surface
 loading `cases[0]`, which is exactly why the nav audit already folded it into
