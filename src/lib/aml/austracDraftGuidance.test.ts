@@ -4,8 +4,9 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  KIND_GUIDANCE, draftClock, draftSections, draftSummary, isCustomerReport,
-  narrativeSkeleton, toObligationKind, type DraftFacts,
+  AUSTRAC_KIND_LABEL, KIND_GUIDANCE, draftClock, draftSections,
+  draftSectionsForReport, draftSummary, isCustomerReport, narrativeSkeleton,
+  toObligationKind, type DraftFacts,
 } from "./austracDraftGuidance.pure";
 import {
   AUSTRAC_OBLIGATIONS, austracReadiness, deriveAustracPath,
@@ -165,5 +166,29 @@ describe("an annual report is not a customer report", () => {
     expect(smr?.state).toBe("blocked");
     expect(isCustomerReport("smr")).toBe(true);
     expect(isCustomerReport("compliance_report")).toBe(false);
+  });
+});
+
+describe("one label map, and one section model", () => {
+  it("names every kind the column accepts", () => {
+    /* There were two copies — the hub's table and the draft form each
+       carried their own — and a report is one thing whichever screen names
+       it. */
+    for (const wire of WIRE_KINDS) {
+      expect(AUSTRAC_KIND_LABEL[wire]).toBeTruthy();
+    }
+  });
+
+  it("reads a stored report row without the caller restating the mapping", () => {
+    /* The form and the page both ask "what is still owed" about the same
+       draft. Two mappings from a row to `DraftFacts` is how they come to
+       disagree. */
+    const owed = draftSectionsForReport({
+      kind: "smr", case_id: null, title: "t", narrative: "x".repeat(200),
+      metadata: { obligation_at: "2026-08-27T09:00:00Z" },
+    });
+    expect(owed[0].state).toBe("complete");
+    expect(owed[1].state).toBe("outstanding");
+    expect(owed[2].state).toBe("complete");
   });
 });

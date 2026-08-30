@@ -42,6 +42,22 @@ export { isCustomerReport };
 export type AustracWireKind = "smr" | "ttr" | "ifti" | "compliance" | "annual";
 
 /**
+ * How each stored kind is named to an operator.
+ *
+ * One map, because there were two — the hub's table and the draft form each
+ * carried their own copy, and a report is one thing whichever screen names
+ * it. It is keyed by the WIRE kind rather than the obligation, because this
+ * is what the column holds and what the picker writes.
+ */
+export const AUSTRAC_KIND_LABEL: Readonly<Record<AustracWireKind, string>> = Object.freeze({
+  smr: "Suspicious Matter Report",
+  ttr: "Threshold Transaction Report",
+  ifti: "International Funds Transfer Instruction",
+  compliance: "Compliance Report",
+  annual: "Annual Compliance Report",
+});
+
+/**
  * The obligation a stored kind belongs to, or null.
  *
  * `compliance` and `annual` are one obligation under two spellings — the
@@ -312,4 +328,33 @@ export function draftClock(f: DraftFacts): LodgementClock | null {
  */
 export function narrativeSkeleton(kind: AustracReportKind): string {
   return KIND_GUIDANCE[kind].narrativeAsks.map((q) => `${q}\n\n`).join("");
+}
+
+/**
+ * `draftSections` over a stored report row.
+ *
+ * The row's own field names rather than `DraftFacts`, so a caller holding an
+ * `aml.reports` shape does not have to restate the mapping — which is how
+ * the form and the page would come to disagree about the same draft.
+ */
+export function draftSectionsForReport(row: {
+  kind?: string | null;
+  case_id?: string | null;
+  title?: string | null;
+  narrative?: string | null;
+  reporting_period_start?: string | null;
+  reporting_period_end?: string | null;
+  metadata?: unknown;
+}): DraftSection[] {
+  const meta = (row.metadata as Record<string, unknown> | undefined) ?? {};
+  return draftSections({
+    kind: row.kind ?? null,
+    caseId: row.case_id ?? null,
+    title: row.title ?? null,
+    narrative: row.narrative ?? null,
+    obligationAt: meta.obligation_at ? String(meta.obligation_at) : null,
+    terrorismFinancing: meta.terrorism_financing === true,
+    periodStart: row.reporting_period_start ?? null,
+    periodEnd: row.reporting_period_end ?? null,
+  });
 }

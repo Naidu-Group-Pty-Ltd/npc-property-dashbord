@@ -8,8 +8,8 @@
  * has existed since the first migration, was never set and every report was
  * filed against nobody.
  */
-import { render, screen, waitFor, fireEvent, within, cleanup } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -65,8 +65,54 @@ beforeEach(() => {
   });
 });
 
-const renderPage = () =>
-  render(<MemoryRouter><AmlAustracReporting /></MemoryRouter>);
+/** Shows where the router ended up, so a navigation can be asserted. */
+function Where() {
+  return <span data-testid="where">{useLocation().pathname + useLocation().search}</span>;
+}
+
+const renderPage = (entry = "/admin/aml/austrac") =>
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <AmlAustracReporting />
+      <Where />
+    </MemoryRouter>,
+  );
+
+describe("drafting is a page, not a dialog", () => {
+  /*
+    A report to a regulator is the longest single piece of writing anyone
+    does in this product, written against a statutory deadline and usually
+    over more than one sitting. A modal could not be linked to, returned to
+    with the back button, or reopened where it was left, and it closed on an
+    outside click with whatever was in it.
+  */
+  it("names the act rather than the record it would add", async () => {
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Start AUSTRAC Report" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /New Draft/i })).not.toBeInTheDocument();
+  });
+
+  it("opens no dialog at all — it navigates", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Start AUSTRAC Report" }));
+    expect(screen.getByTestId("where")).toHaveTextContent("/admin/aml/austrac/new");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("edits an existing report at its own address", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /^Edit$/ }));
+    expect(screen.getByTestId("where")).toHaveTextContent("/admin/aml/austrac/r1/edit");
+  });
+
+  it("selects the report the draft page hands back", async () => {
+    /* The dialog closed onto the report it had just written. Losing that on
+       the move to a page is the one thing it could have cost, so the page
+       returns with `?report=` and the hub opens it. */
+    renderPage("/admin/aml/austrac?report=r1");
+    await waitFor(() => expect(getReport).toHaveBeenCalledWith("r1"));
+  });
+});
 
 describe("the guided path", () => {
   it("renders, and leads with what to do next", async () => {
@@ -94,133 +140,6 @@ describe("the guided path", () => {
     await waitFor(() =>
       expect(screen.getByText(/holds no AUSTRAC credentials and submits nothing on your behalf/i))
         .toBeInTheDocument());
-  });
-});
-
-describe("a report is filed against a customer", () => {
-  it("asks which customer, in the draft dialog", async () => {
-    renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /New Draft/i }));
-    expect(await screen.findByText("Customer")).toBeInTheDocument();
-    /* Re-pinned to the RULE rather than the sentence: the dialog must say
-       the report reaches the customer's own compliance file, which is what
-       makes linking it worth doing. The wording moved into the section's
-       stated purpose when the dialog was numbered; the promise did not. */
-    expect(screen.getAllByText(/compliance file/i).length).toBeGreaterThan(0);
-  });
-
-  it("asks what starts the clock, separately from the reporting period", async () => {
-    /* An SMR is due from the day the suspicion was FORMED, which is not the
-       reporting period. A deadline derived from the wrong date is worse
-       than none. */
-    renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /New Draft/i }));
-    expect(await screen.findByText("Obligation arose")).toBeInTheDocument();
-    expect(screen.getByText("Period start")).toBeInTheDocument();
-  });
-});
-
-describe("the draft dialog says why the report is being made", () => {
-  const openDraft = async () => {
-    renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /New Draft/i }));
-    return screen.findByRole("dialog");
-  };
-
-  it("states that the platform never lodges, before anything is typed", async () => {
-    /* AUSTRAC Online is the entity's own account. An operator who thinks
-       saving a draft lodges it will wait out a statutory deadline. */
-    await openDraft();
-    expect(screen.getByText(/Nothing here is sent to AUSTRAC/i)).toBeInTheDocument();
-  });
-
-  it("explains the obligation and when AUSTRAC must be informed", async () => {
-    await openDraft();
-    expect(screen.getByText(/AUSTRAC must be informed when/i)).toBeInTheDocument();
-    expect(screen.getByText(/attempted — a customer who walked away/i)).toBeInTheDocument();
-  });
-
-  /** Open the draft dialog on an existing report of a given kind. */
-  const openExisting = async (kind: string) => {
-    listReports.mockResolvedValue([{ ...REPORT, kind }]);
-    renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /^Edit$/ }));
-    return screen.findByRole("dialog");
-  };
-
-  it("warns about tipping off on a suspicious matter, and not on a threshold transaction", async () => {
-    /* s.123 attaches to the SMR alone. Showing the warning everywhere is
-       how an operator learns to read past it. */
-    const smr = await openExisting("smr");
-    const warning = within(smr).getByText(/offence under s.123/i);
-    expect(warning).toBeInTheDocument();
-    /* And in the main column, not in the reference panel: below `lg` the
-       panel drops underneath the entire form, and a prohibition on what the
-       operator may say is the one thing that cannot be below the fold. */
-    const panel = within(smr).getByRole("complementary", { name: /Why this report is being made/i });
-    expect(panel.contains(warning)).toBe(false);
-    cleanup();
-
-    const ttr = await openExisting("ttr");
-    expect(within(ttr).queryByText(/offence under s.123/i)).not.toBeInTheDocument();
-    expect(within(ttr).getByText(/You receive physical currency of A\$10,000 or more/i))
-      .toBeInTheDocument();
-  });
-
-  it("numbers what is being asked, and says what is still outstanding", async () => {
-    await openDraft();
-    expect(screen.getByText("Which report, and what obliges it")).toBeInTheDocument();
-    expect(screen.getByText("Who it is about")).toBeInTheDocument();
-    expect(screen.getByText("What happened")).toBeInTheDocument();
-    expect(screen.getByText(/things outstanding before this is ready for the MLRO/i)).toBeInTheDocument();
-  });
-
-  it("shows where drafting sits in the whole lodgement", async () => {
-    /* The step-by-step. Saving a draft is the beginning of six steps, and
-       the two that happen on this screen are marked as such. */
-    const dialog = await openDraft();
-    expect(within(dialog).getByText(/The whole path/i)).toBeInTheDocument();
-    expect(within(dialog).getAllByText(/on this screen/i).length).toBe(2);
-    expect(within(dialog).getByText("MLRO approves it")).toBeInTheDocument();
-  });
-
-  it("shows the deadline the answers produce, counted in business days", async () => {
-    /* A clock nobody can see is a clock nobody meets. A suspicion formed on
-       Thursday 27 August 2026 is due Tuesday 1 September, not Sunday. */
-    const dialog = await openDraft();
-    fireEvent.change(within(dialog).getByLabelText(/Obligation arose/i), {
-      target: { value: "2026-08-27T09:00" },
-    });
-    const due = await within(dialog).findByText(/3 business days from the day the suspicion was formed/i);
-    expect(due).toBeInTheDocument();
-    expect(due.textContent).toContain("01/09/2026");
-    expect(due.textContent).toContain("s.41");
-  });
-
-  it("offers the questions a narrative must answer, and only into an empty one", async () => {
-    const dialog = await openDraft();
-    const seed = within(dialog).getByRole("button", { name: /Start from the questions to answer/i });
-    fireEvent.click(seed);
-    await waitFor(() =>
-      expect(within(dialog).queryByRole("button", { name: /Start from the questions to answer/i }))
-        .not.toBeInTheDocument());
-    const narrative = within(dialog).getByLabelText(/Narrative/i) as HTMLTextAreaElement;
-    /* Questions only — never an answer. Whatever this writes could be
-       lodged verbatim if nobody edited it. */
-    for (const line of narrative.value.split("\n").filter((l) => l.trim())) {
-      expect(line.trim().endsWith("?")).toBe(true);
-    }
-  });
-
-  it("does not ask an annual compliance report to name a customer", async () => {
-    /* And it must not throw drawing one: `reports.kind` accepts five values
-       and the obligation table is keyed by four, so an unmapped read is
-       `undefined` and the next property access is a crash. */
-    const dialog = await openExisting("annual");
-    expect(within(dialog).getByText(/accounts for the reporting entity's own programme/i))
-      .toBeInTheDocument();
-    expect(within(dialog).queryByLabelText("Customer")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("AML/CTF Compliance Report")).toBeInTheDocument();
   });
 });
 
