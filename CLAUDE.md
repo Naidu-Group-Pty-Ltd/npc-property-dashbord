@@ -555,6 +555,23 @@ retirement safe. Compliance Home therefore owns real paths now, and
 `/admin/aml` is every AML URL's ancestor, and prefix-matching it would make
 Home the active workspace on the case register and every other tab dead.
 
+The chrome is now **one Refresh and nothing else**. "Open queue" linked to the
+active workspace's `defaultPath` — the page an operator is already looking at,
+because they arrive at a workspace BY its default path, so on Compliance Home
+it was a no-op every time. Configuration went with it, and Compliance Home's
+secondary strip went too. What holds it all together is that **`paths` and
+`secondary` answer different questions**: `paths` is OWNERSHIP (a URL belonging
+to nothing draws no chrome and highlights Home — reachable and looking broken),
+`secondary` is what is OFFERED. Monitoring, Investigations & EDD, Records &
+Privacy and Configuration keep the first and lose the second, so every route
+resolves and every page keeps its trail while no tab is drawn. Configuration
+also left Organisation Settings' `paths` — **a path belongs to exactly ONE
+workspace**, and listed in two it resolves to whichever comes first while the
+other silently loses it. Three of the four keep **one quiet, capability-gated
+line at the foot of Compliance Home** ("Also in this workspace"), because
+Monitoring is already deep-linked from three readings in the strip while the
+others had no route at all — and two of them are statutory.
+
 That redistribution is what let **"Your queues" go entirely**: every
 destination it listed is in the navigation, so the card was a third launcher
 after the primary strip and the role-adaptive "jump back" card above it. The
@@ -758,7 +775,13 @@ the function): hiding an approved-but-unlodged SMR loses a statutory deadline
 rather than tidying a list. Three things follow — a lodged report with no
 receipt archives but the confirmation SAYS so; `upsert_report` must strip the
 stamp or a client archives by saving; and the tiles count the working
-register, because a number beside a row nobody can see is worse than none.
+register, because a number beside a row nobody can see is worse than none. Choosing
+is explicit — a checkbox per archivable row and a select-all that reads the
+same `archiveBlockReason` the server enforces, so a checkbox can never pick a
+report the archive would refuse — and **undo is part of the act**: the inverse
+call is offered on the toast, on exactly the rows that succeeded and with no
+second confirmation, because undoing is not a new decision and a bulk archive
+is where a mis-click costs most.
 
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)

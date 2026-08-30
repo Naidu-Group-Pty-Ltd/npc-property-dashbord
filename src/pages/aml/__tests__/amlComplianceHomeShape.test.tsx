@@ -128,6 +128,39 @@ describe("the page is worked, not read", () => {
   });
 });
 
+describe("what left the navigation still has a route", () => {
+  it("offers one quiet, gated line to the surfaces with no tab", async () => {
+    /* Monitoring, Investigations & EDD, Records & Privacy and Configuration
+       all left the strip. Monitoring did not need a door here — the three
+       monitoring readings above already deep-link to it — but the other
+       three had none left at all, and two of them are statutory: retention
+       schedules under s.107, and the sanctions register's health, which is
+       what a screening refuses against. */
+    renderHome();
+    expect(await screen.findByRole("link", { name: "Investigations & EDD" }))
+      .toHaveAttribute("href", "/admin/aml/investigations");
+    expect(screen.getByRole("link", { name: "Records & Privacy" }))
+      .toHaveAttribute("href", "/admin/aml/records");
+    expect(screen.getByRole("link", { name: "Configuration" }))
+      .toHaveAttribute("href", "/admin/aml/configuration");
+  });
+
+  it("is one line and not a card, a tile or a strip", async () => {
+    /* The page has had three launchers removed from it. This is a sentence
+       at the foot: no heading, no borders, no calls to action. */
+    renderHome();
+    const line = (await screen.findByText("Also in this workspace")).parentElement!;
+    expect(line.tagName).toBe("P");
+    expect(line.className).toContain("text-xs");
+  });
+
+  it("still deep-links Monitoring from the readings above", async () => {
+    renderHome();
+    expect((await screen.findAllByRole("link", { name: /Open alerts/i }))[0])
+      .toHaveAttribute("href", "/admin/aml/monitoring");
+  });
+});
+
 describe("nothing was stranded on the way", () => {
   it("every surface the retired workspace held still belongs to one", () => {
     /* The rule this repository records twice: a path belonging to no
