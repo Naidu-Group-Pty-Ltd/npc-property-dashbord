@@ -501,3 +501,77 @@ describe('a property that has finished its ladder does not wait on the others', 
     expect(after.slice(0, 200)).toContain('?? null');
   });
 });
+
+// ── SETTLED HAS EXACTLY ONE MEANING ─────────────────────────────────────────
+/*
+ * A property may be settled only where it holds a valid primary image, or
+ * where every permitted stage is genuinely exhausted. Never because a provider
+ * was down, a stage was skipped, or a bounded retry was still owed.
+ *
+ * The path that broke it: `enrichStockItem` consulted `ladderHasMore` only on
+ * the `!anyReady` arm. `anyReady` means "a stage stored an image", which is a
+ * different question from "this property has a picture" — a web result that
+ * stores cleanly and then fails the identity check is a `ready` OUTCOME and a
+ * non-displayable IMAGE. So stage 2 storing an unverified photo, plus stage 3
+ * blocked by an outage in the same claim, marked the property `partial`, which
+ * is terminal: `readFallbackQueue` selects `pending`/`enriching` only.
+ */
+describe('a property is never terminal while the ladder still owes it a rung', () => {
+  const SOURCE = readFileSync(
+    'supabase/functions/_shared/builderStock/images.ts', 'utf8');
+
+  it('the ladder is asked FIRST, before anything about stored bytes', () => {
+    const expr = SOURCE.slice(SOURCE.indexOf('const enrichmentStatus'));
+    expect(expr.slice(0, 200)).toMatch(/const enrichmentStatus = ladderHasMore\s*\n?\s*\?\s*'pending'/);
+  });
+
+  it('`anyReady` can no longer overrule an owed stage', () => {
+    // The defect in one line: `anyReady ? … : (ladderHasMore ? …)` consults the
+    // ladder only when nothing was stored.
+    const expr = SOURCE.slice(SOURCE.indexOf('const enrichmentStatus'), SOURCE.indexOf('const enrichmentStatus') + 200);
+    expect(expr).not.toMatch(/anyReady\s*\n?\s*\?\s*\(anyProblem[\s\S]{0,60}ladderHasMore/);
+  });
+
+  it('and the terminal vocabulary is unchanged — only its timing', () => {
+    const expr = SOURCE.slice(SOURCE.indexOf('const enrichmentStatus'), SOURCE.indexOf('const enrichmentStatus') + 220);
+    for (const status of ['pending', 'partial', 'complete', 'failed']) {
+      expect(expr).toContain(`'${status}'`);
+    }
+  });
+
+  it('the ladder verdict is re-read from the rows, not planned in advance', () => {
+    // What makes asking it first honest at all.
+    const before = SOURCE.indexOf("from('builder_stock_item_images')\n    .select('id, source_stage");
+    const decide = SOURCE.indexOf('const enrichmentStatus');
+    expect(before).toBeGreaterThan(-1);
+    expect(before).toBeLessThan(decide);
+  });
+
+  it('a blocked stage under the ceiling is an owed rung, so it cannot settle', () => {
+    // The unit-level statement of the same invariant, through the ladder.
+    const blocked = statusRow(STREET, {
+      processing_status: 'unavailable', verification_status: 'location_derived',
+      source_detail: { stage_ran: false, blocked_passes: 1 },
+    });
+    const storedButUnverified = {
+      id: 'web-x', source_stage: WEB, source_reference: 'https://example.invalid/x.jpg',
+      processing_status: 'ready', verification_status: 'unverified',
+      storage_path: 'web-x.jpg', external_url: null, position: 0, source_detail: {},
+    };
+    // Stage 2 stored something; stage 3 is still owed.
+    expect(nextImageStage([storedButUnverified, blocked] as never, settled)).toBe('street_view');
+  });
+
+  it('and once the ceiling is reached, the same shape IS terminal', () => {
+    const spent = statusRow(STREET, {
+      processing_status: 'unavailable', verification_status: 'location_derived',
+      source_detail: { stage_ran: false, blocked_passes: MAX_BLOCKED_PASSES },
+    });
+    const storedButUnverified = {
+      id: 'web-x', source_stage: WEB, source_reference: 'https://example.invalid/x.jpg',
+      processing_status: 'ready', verification_status: 'unverified',
+      storage_path: 'web-x.jpg', external_url: null, position: 0, source_detail: {},
+    };
+    expect(nextImageStage([storedButUnverified, spent] as never, settled)).toBe('none');
+  });
+});
