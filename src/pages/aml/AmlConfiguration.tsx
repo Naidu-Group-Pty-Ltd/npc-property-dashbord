@@ -79,6 +79,45 @@ export default function AmlConfiguration() {
   };
   useEffect(() => { reload(); }, []);
 
+  /*
+    ── Landing on the tab you were sent for ──────────────────────────────
+    Configuration is a tabbed page, and a link into it is worthless if it
+    opens on Branding. Stage 5 sends an administrator here to check whether
+    the sanctions register loaded (`ADMIN_AML_LIST_HEALTH_PATH`), so the tab
+    is read from the URL. An unrecognised or absent value falls back to the
+    default: a bad link must land somewhere sensible rather than nowhere.
+
+    ── These hooks are ABOVE the early returns, and must stay there ───────
+    This component returns early while it is loading and again when the
+    summary cannot be read. Hooks placed after those returns are not called
+    on the first render and ARE called on the second, which is a different
+    hook count between renders — React throws, the error boundary catches
+    it, and the page reads "Something went wrong" with no clue why. That is
+    exactly what shipped here: the tab-from-URL support was appended at the
+    point it was used rather than at the top, and Configuration crashed on
+    every visit the moment its data arrived. Nothing about the feature was
+    wrong; the placement was.
+  */
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab") ?? "";
+  const initialTab = TAB_VALUES.has(requestedTab) ? requestedTab : "branding";
+
+  /*
+    The anchored panel is scrolled to once the page HAS one. The browser's
+    own hash handling runs before React renders anything, and this component
+    renders a skeleton first — so the effect waits for the content rather
+    than firing on mount and finding nothing.
+  */
+  useEffect(() => {
+    if (loading || !summary || !window.location.hash) return;
+    const id = window.location.hash.slice(1);
+    const t = window.setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [loading, summary]);
+
+
   if (loading) {
     return (
       <div className="space-y-4">
@@ -98,32 +137,6 @@ export default function AmlConfiguration() {
       />
     );
   }
-
-  const [searchParams] = useSearchParams();
-  const requestedTab = searchParams.get("tab") ?? "";
-
-  /*
-    ── Landing on the tab you were sent for ──────────────────────────────
-    Configuration is a tabbed page, and a link into it is worthless if it
-    opens on Branding. Stage 5 sends an administrator here to check whether
-    the sanctions register loaded (`ADMIN_AML_LIST_HEALTH_PATH`), so the tab
-    is read from the URL and the anchored panel is scrolled to once it has
-    mounted — the browser's own hash handling runs before React renders the
-    tab's content, so it never finds the element on its own.
-
-    An unrecognised or absent value falls back to the default: a bad link
-    must land somewhere sensible rather than nowhere.
-  */
-  const initialTab = TAB_VALUES.has(requestedTab) ? requestedTab : "branding";
-
-  useEffect(() => {
-    if (!window.location.hash) return;
-    const id = window.location.hash.slice(1);
-    const t = window.setTimeout(() => {
-      document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, []);
 
   return (
     <div className="space-y-6">

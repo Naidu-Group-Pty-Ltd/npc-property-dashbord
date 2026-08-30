@@ -80,6 +80,16 @@ interface Workspace {
   minCapability: AmlCapability;
   /** Workspace-local secondary navigation (case tabs / sub-sections). */
   secondary?: SecondaryEntry[];
+  /**
+   * Owns its URLs, but is not offered in the primary strip.
+   *
+   * A workspace with no navigation entry is NOT the same as no workspace. A
+   * path that belongs to nothing renders with no secondary strip and
+   * Compliance Home highlighted — reachable, and looking broken — so a
+   * surface that leaves the navigation still needs somewhere to belong. This
+   * is what "hidden, not deleted" means at the workspace level.
+   */
+  hidden?: boolean;
 }
 
 const LEGACY_WORKSPACES: Workspace[] = [
@@ -197,45 +207,43 @@ const LEGACY_WORKSPACES: Workspace[] = [
     key: "admin",
     label: "Organisation Settings",
     icon: Settings2,
-    paths: ["/admin/aml/configuration", "/admin/aml/launch-ops", "/admin/aml/partner-operations", "/admin/aml/governance"],
+    /*
+      ── A workspace with no tab, and why it still exists ───────────────
+      Nothing here is an operator's daily work, so nothing here is offered
+      in the navigation. But every one of these pages is real and every URL
+      still resolves, and a path belonging to no workspace draws no
+      secondary strip and highlights Compliance Home — reachable, and
+      looking broken. So the workspace stays, owning its URLs, and simply
+      is not drawn.
+
+      · Configuration — the tenant's own settings: provider credentials,
+        the risk factors assessments are scored against, branding, the
+        activation programme, and the sanctions register's health. Set once
+        and revisited rarely, which is what makes it an administrator's
+        destination rather than a tab. It is reached deliberately: from
+        Compliance Home, where it is gated on `aml.configure` so an ordinary
+        operator never sees it, and from Stage 5's "open list health" when
+        screening cannot run. It is also step-up protected, which is the
+        right control for a page holding live credentials — and the reason
+        it should never have been one click from every screen.
+      · Launch Operations, Partner Operations, Governance — build and
+        platform tooling; see the commit that hid them.
+
+      This is the treatment `aml-v3-cutover` and `aml-integration-health`
+      already had. The primary strip is now Compliance Home, Customer
+      Compliance and Regulatory & Assurance: the three places compliance
+      work actually happens.
+    */
+    hidden: true,
+    paths: [
+      "/admin/aml/configuration",
+      "/admin/aml/launch-ops",
+      "/admin/aml/partner-operations",
+      "/admin/aml/governance",
+    ],
     defaultPath: "/admin/aml/configuration",
     minCapability: "aml.view",
-    /*
-      ── Settings an organisation has, not a project it is running ──────
-      Configuration is the tenant's own: the verification provider's
-      credentials, the risk factors every assessment is scored against,
-      branding, the activation programme, and the sanctions register's
-      health — which Stage 5 sends an administrator to when screening
-      cannot run. It is step-up protected, which is the right control for a
-      page holding live credentials.
-
-      Two entries left the strip because they are about shipping this
-      software rather than running a compliance programme:
-
-        · Launch Operations — rollout stages, acceptance scenarios traced
-          to report requirements, release gates and launch certification.
-          On this tenant: 13 scenarios, none ever run; 0 certifications;
-          and a risk register of 8 seeded rows never once edited, with
-          categories including "Engineering" and "Non-AML regression".
-        · Partner Operations — renders a readiness and preflight table of
-          migration phases, feature-flag values and rows that say outright
-          "verify in the deployment pipeline". Its operational half
-          (queues, register, management report) is behind
-          `aml_partner_operations_reporting`, which is off, and all four
-          tables behind it are empty. Partners themselves are managed on
-          the Passport & Partners stage, where the roster and every act on
-          it live.
-
-      Both routes stay live and both pages are unchanged — this is the
-      treatment `aml-v3-cutover` and `aml-integration-health` already get:
-      real surfaces that exist at a URL and do not sit in an operator's
-      navigation. Their paths remain in `paths` above so that opening one
-      directly still shows the workspace header rather than a page that
-      looks broken.
-    */
-    secondary: [
-      { label: "Configuration", to: "/admin/aml/configuration", capability: "aml.configure" },
-    ],
+    secondary: [],
   },
 ];
 
@@ -367,7 +375,17 @@ export function AmlLayout() {
   // Only show workspaces the user has *any* legitimate reason to enter.
   // Server-side permission enforcement continues to happen inside each route
   // via `AmlGuard`; this filter simply hides unreachable entries.
-  const visibleWorkspaces = useMemo(() => {
+  /**
+   * Workspaces this user may enter — INCLUDING the ones that own URLs
+   * without being offered in the strip.
+   *
+   * This is the set the active workspace is resolved from, and it has to
+   * contain the hidden ones: a page whose workspace is not in the
+   * resolution set falls through to Compliance Home and renders with the
+   * wrong header and no section strip, which is the reachable-but-broken
+   * state this file has recorded twice already.
+   */
+  const permittedWorkspaces = useMemo(() => {
     if (loading) return WORKSPACES;
     return WORKSPACES.filter((w) => {
       if (!hasAmlCapability(roles, w.minCapability)) return false;
@@ -377,8 +395,14 @@ export function AmlLayout() {
     });
   }, [roles, loading, WORKSPACES]);
 
+  /** What the primary strip actually draws. */
+  const visibleWorkspaces = useMemo(
+    () => permittedWorkspaces.filter((w) => !w.hidden),
+    [permittedWorkspaces],
+  );
+
   const activeWorkspace =
-    visibleWorkspaces.find((w) => pathMatchesWorkspace(location.pathname, w)) ??
+    permittedWorkspaces.find((w) => pathMatchesWorkspace(location.pathname, w)) ??
     visibleWorkspaces[0];
 
   // If a user lands on a legacy URL they cannot access (permissions changed),

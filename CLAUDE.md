@@ -555,14 +555,32 @@ Resilience Drills and Runbooks — its one compliance tab, Contacts, is gated on
 `aml_v3_org_settings`, which is off, which is also why
 `senior_manager_designations` is empty).
 
-Two rules bite. **A path belongs to exactly ONE workspace** — missing from
+**Configuration left the strip too**, and it is the case that shows what
+"hidden" has to mean. It is not platform tooling — it holds the verification
+provider's credentials, the risk factors every assessment is scored against,
+and the sanctions register's health — but it is set once and revisited
+rarely, and it is step-up protected, which is what an administrator's
+destination looks like rather than a tab. It is reached from exactly two
+places now: one capability-gated tile on Compliance Home (a second button
+beneath it went, having sat directly under a comment saying restricted
+affordances live in the tiles), and Stage 5's "open list health" when
+screening cannot run. **Hiding the PAGE would strand the register behind a
+blocked case again**, which is the defect that put it there.
+
+Three rules bite. **A path belongs to exactly ONE workspace** — missing from
 `paths` a page draws no secondary strip and highlights Compliance Home, and
 listed in TWO it resolves to whichever comes first and draws the wrong strip;
-both are reachable-but-broken, and the Passport shipped that way once.
-And **Configuration is not platform tooling** — it holds the verification
-provider's credentials, the risk factors every assessment is scored against,
-and the sanctions register's health, which Stage 5 navigates to when screening
-cannot run. Hiding it would strand that behind a blocked case again.
+both are reachable-but-broken, and the Passport shipped that way once. **A
+workspace with no tab is not the same as no workspace**: `hidden` keeps
+Organisation Settings owning its four URLs while the strip stops drawing it,
+so those pages keep their header — resolution reads the permitted set,
+rendering reads the visible one. And **every hook goes above the early
+returns**: `AmlConfiguration` returns early while loading and again when the
+summary cannot be read, `?tab=` support was appended where it was USED, and
+the second render called two more hooks than the first — React threw, the
+boundary caught it, and the page read "Something went wrong" on every visit.
+A source-level test now fails on any hook below the first early return,
+because the page's own test file had only ever exercised a sub-component.
 
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
