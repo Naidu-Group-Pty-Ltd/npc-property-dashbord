@@ -131,16 +131,26 @@ describe("AmlLayout — legacy (V2) navigation", () => {
     }
   });
 
-  it("keeps every compliance surface, under Compliance Home", () => {
-    /* The workspace went; the surfaces did not. Monitoring, EDD and records
-       are the work that surrounds a case rather than a separate department,
-       so they sit beside the queues that count them. */
-    renderShell("/admin/aml/monitoring");
-    const secondary = screen.getByRole("navigation", { name: /Compliance Home sections/ });
-    for (const kept of ["Overview", "Monitoring", "Investigations & EDD", "Records & Privacy"]) {
-      expect(within(secondary).getByText(kept)).toBeInTheDocument();
+  it("owns every surface it stopped offering", () => {
+    /* `paths` and `secondary` answer two different questions. `paths` is
+       OWNERSHIP — a URL belonging to nothing draws no chrome and highlights
+       Compliance Home, reachable and looking broken. `secondary` is what is
+       OFFERED. Monitoring, EDD, records and Configuration keep the first and
+       lose the second: every route resolves and every page keeps its trail,
+       and no strip is drawn for any of them. */
+    for (const path of [
+      "/admin/aml/monitoring",
+      "/admin/aml/investigations",
+      "/admin/aml/records",
+      "/admin/aml/configuration",
+    ]) {
+      const { unmount } = renderShell(path);
+      const header = screen.getByRole("banner");
+      expect(within(header).getAllByText("Compliance Home").length).toBeGreaterThan(0);
+      expect(screen.queryByRole("navigation", { name: /Compliance Home sections/ }))
+        .not.toBeInTheDocument();
+      unmount();
     }
-    expect(within(secondary).queryByText("Governance")).not.toBeInTheDocument();
   });
 
   it("gives the AUSTRAC Hub a workspace of its own, and its drafts with it", () => {
@@ -184,37 +194,32 @@ describe("AmlLayout — legacy (V2) navigation", () => {
       .toContain("ADMIN_AML_LIST_HEALTH_PATH");
   });
 
-  it("offers exactly ONE door to Configuration, and it is capability-gated", () => {
-    /* Compliance Home once carried two — a tile, and a button sitting
-       directly under a comment saying restricted affordances live in the
-       tiles. One door survives, gated on `aml.configure`, so an operator
-       holding only `aml.view` sees Configuration nowhere at all.
-
-       Re-pinned to the RULE rather than to where the door is drawn. It has
-       moved twice: out of the "Your queues" list (nothing waits in
-       Configuration — it is settings, not a queue) into that page's header,
-       and now into the command centre's own action row, because the page's
-       header was a second title and a second Refresh over the shell's. One
-       door, still gated, is what this test is for — and it is now one click
-       from wherever an administrator is rather than only from Home. */
+  it("offers no Configuration or Open queue button in the chrome", () => {
+    /* "Open queue" linked to the active workspace's `defaultPath` — the page
+       an operator is already looking at, because they arrive at a workspace
+       BY its default path. On Compliance Home it was a no-op every time.
+       Configuration went with it: nothing in it is ever the next thing to
+       do, so it does not belong in the chrome of every screen. */
     renderShell("/admin/aml");
-    expect(screen.getByRole("link", { name: "Configuration" }))
-      .toHaveAttribute("href", "/admin/aml/configuration");
-
-    const shell = readFileSync("src/components/aml/AmlLayout.tsx", "utf8");
-    const code = shell.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(code).toContain("canConfigure && (");
-    expect(code).toContain('hasAmlCapability(roles, "aml.configure")');
-    /* And nowhere else: the page it came from must not grow a second one. */
-    const home = readFileSync("src/pages/aml/AmlOverview.tsx", "utf8")
-      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(home.match(/\/admin\/aml\/configuration/g) ?? []).toHaveLength(0);
+    const header = screen.getByRole("banner");
+    expect(within(header).queryByRole("link", { name: /Open queue/i })).not.toBeInTheDocument();
+    expect(within(header).queryByRole("link", { name: "Configuration" })).not.toBeInTheDocument();
   });
 
-  it("does not offer Configuration to somebody who cannot configure it", () => {
-    mockRoles = new Set<AmlRole>(["analyst"]);
-    renderShell("/admin/aml");
-    expect(screen.queryByRole("link", { name: "Configuration" })).not.toBeInTheDocument();
+  it("keeps Configuration reachable, owned, and out of the navigation", () => {
+    /* Hiding the PAGE is what once stranded the sanctions register's health
+       behind a blocked case. The route resolves, the page belongs to a
+       workspace so it keeps its chrome, and no tab is drawn for it. */
+    renderShell("/admin/aml/configuration");
+    expect(screen.getByTestId("page-configuration")).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "AML workspaces" });
+    expect(within(nav).queryByText("Configuration")).not.toBeInTheDocument();
+    expect(readFileSync("src/lib/aml/amlRoutes.ts", "utf8"))
+      .toContain("ADMIN_AML_LIST_HEALTH_PATH");
+    /* And Compliance Home still carries one quiet, gated route to it, so an
+       administrator is not left with a bookmark and a blocked case. */
+    expect(readFileSync("src/pages/aml/AmlOverview.tsx", "utf8"))
+      .toContain('to: "/admin/aml/configuration", show: canConfigure');
   });
 
   it("the command centre's Refresh is answered by a page", () => {
@@ -237,8 +242,10 @@ describe("AmlLayout — legacy (V2) navigation", () => {
        highlighted — reachable, and looking broken. A hidden workspace still
        owns its URLs, so the trail names where the page lives even though no
        tab is drawn for it. */
+    /* Configuration is not in this list any more: it belongs to Compliance
+       Home now, and a path belongs to exactly ONE workspace — listed in two
+       it resolves to whichever comes first and the other silently loses it. */
     for (const path of [
-      "/admin/aml/configuration",
       "/admin/aml/governance",
       "/admin/aml/launch-ops",
       "/admin/aml/partner-operations",
@@ -255,7 +262,6 @@ describe("AmlLayout — legacy (V2) navigation", () => {
     renderShell("/admin/aml/monitoring");
     const header = screen.getByRole("banner");
     expect(within(header).getAllByText("Compliance Home").length).toBeGreaterThan(0);
-    expect(within(header).getAllByText("Monitoring").length).toBeGreaterThan(0);
   });
 
   it("hides capability-restricted entries: an auditor sees no Configuration", () => {
@@ -316,10 +322,12 @@ describe("AmlLayout — V3 navigation (aml_v3_nav)", () => {
   });
 
   it("puts Governance & Contacts first in Organisation Settings", () => {
-    renderShell("/admin/aml/configuration");
+    /* Configuration left this workspace for Compliance Home's `paths`; the
+       ordering rule this pins is about the entries that remain. */
+    renderShell("/admin/aml/governance");
     const secondary = screen.getByRole("navigation", { name: /Organisation Settings sections/ });
     const labels = within(secondary).getAllByRole("link").map((a) => a.textContent);
     expect(labels[0]).toBe("Governance & Contacts");
-    expect(labels).toContain("Configuration");
+    expect(labels).toContain("Launch Operations");
   });
 });

@@ -119,15 +119,24 @@ const LEGACY_WORKSPACES: Workspace[] = [
       "/admin/aml/monitoring",
       "/admin/aml/investigations",
       "/admin/aml/records",
+      "/admin/aml/configuration",
     ],
     defaultPath: "/admin/aml",
     minCapability: "aml.view",
-    secondary: [
-      { label: "Overview", to: "/admin/aml", end: true, capability: "aml.view" },
-      { label: "Monitoring", to: "/admin/aml/monitoring", capability: "aml.view" },
-      { label: "Investigations & EDD", to: "/admin/aml/investigations", capability: "aml.investigate" },
-      { label: "Records & Privacy", to: "/admin/aml/records", capability: "aml.view" },
-    ],
+    /*
+      ── Owned, and not offered ────────────────────────────────────────
+      `paths` and `secondary` answer two different questions. `paths` is
+      OWNERSHIP: it decides which workspace a URL belongs to, and a URL
+      belonging to nothing draws no chrome at all and highlights Compliance
+      Home — reachable, and looking broken. `secondary` is what is OFFERED.
+
+      Monitoring, Investigations & EDD, Records & Privacy and Configuration
+      keep the first and lose the second: every route resolves, every page
+      keeps its header and its trail, and nothing is drawn for them. A strip
+      holding one entry is not a tab bar, so Compliance Home draws none —
+      which is the shape it had before these arrived.
+    */
+    secondary: [],
   },
   {
     key: "customer",
@@ -238,13 +247,19 @@ const LEGACY_WORKSPACES: Workspace[] = [
       work actually happens.
     */
     hidden: true,
+    /*
+      Configuration is NOT here any more. A path belongs to exactly one
+      workspace — listed in two it resolves to whichever comes first and the
+      other silently loses it — and it is an entry in Compliance Home's strip
+      now, so it belongs to Home. What is left is the build and platform
+      tooling that keeps its routes and its chrome without being offered.
+    */
     paths: [
-      "/admin/aml/configuration",
       "/admin/aml/launch-ops",
       "/admin/aml/partner-operations",
       "/admin/aml/governance",
     ],
-    defaultPath: "/admin/aml/configuration",
+    defaultPath: "/admin/aml/launch-ops",
     minCapability: "aml.view",
     secondary: [],
   },
@@ -274,15 +289,24 @@ const V3_WORKSPACES: Workspace[] = [
       "/admin/aml/monitoring",
       "/admin/aml/investigations",
       "/admin/aml/records",
+      "/admin/aml/configuration",
     ],
     defaultPath: "/admin/aml",
     minCapability: "aml.view",
-    secondary: [
-      { label: "Overview", to: "/admin/aml", end: true, capability: "aml.view" },
-      { label: "Monitoring", to: "/admin/aml/monitoring", capability: "aml.view" },
-      { label: "Investigations & EDD", to: "/admin/aml/investigations", capability: "aml.investigate" },
-      { label: "Records & Privacy", to: "/admin/aml/records", capability: "aml.view" },
-    ],
+    /*
+      ── Owned, and not offered ────────────────────────────────────────
+      `paths` and `secondary` answer two different questions. `paths` is
+      OWNERSHIP: it decides which workspace a URL belongs to, and a URL
+      belonging to nothing draws no chrome at all and highlights Compliance
+      Home — reachable, and looking broken. `secondary` is what is OFFERED.
+
+      Monitoring, Investigations & EDD, Records & Privacy and Configuration
+      keep the first and lose the second: every route resolves, every page
+      keeps its header and its trail, and nothing is drawn for them. A strip
+      holding one entry is not a tab bar, so Compliance Home draws none —
+      which is the shape it had before these arrived.
+    */
+    secondary: [],
   },
   {
     key: "customer",
@@ -343,9 +367,11 @@ const V3_WORKSPACES: Workspace[] = [
     key: "admin",
     label: "Organisation Settings",
     icon: Settings2,
+    // Configuration belongs to Compliance Home's strip now — a path belongs
+    // to exactly one workspace, or it resolves to whichever comes first and
+    // the other silently loses it.
     paths: [
       "/admin/aml/governance",
-      "/admin/aml/configuration",
       "/admin/aml/launch-ops",
       "/admin/aml/partner-operations",
     ],
@@ -353,7 +379,6 @@ const V3_WORKSPACES: Workspace[] = [
     minCapability: "aml.view",
     secondary: [
       { label: "Governance & Contacts", to: "/admin/aml/governance", capability: "aml.view" },
-      { label: "Configuration", to: "/admin/aml/configuration", capability: "aml.configure" },
       { label: "Launch Operations", to: "/admin/aml/launch-ops", capability: "aml.view" },
       { label: "Partner Operations", to: "/admin/aml/partner-operations", capability: "aml.view" },
     ],
@@ -520,32 +545,23 @@ export function AmlLayout() {
                 Refresh
               </Button>
               {/*
-                ── The one door to Configuration ────────────────────────
-                It used to be a tile on Compliance Home, and that page's own
-                header — a second title and a second Refresh over the
-                command centre's — has gone. So the door moved here: still
-                exactly one, still gated on `aml.configure` so an operator
-                holding `aml.view` never sees it, and now one click away
-                from wherever an administrator happens to be rather than
-                only from Home.
+                ── Two buttons that had no work to do ───────────────────
+                "Open queue" linked to the active workspace's `defaultPath`,
+                which is the page an operator is already looking at: they
+                arrive at a workspace BY its default path, so the button
+                navigated to where they already were. On Compliance Home it
+                was a no-op every single time.
 
-                Hiding the PAGE is what once stranded the sanctions
-                register's health behind a blocked case, which is why it has
-                a door at all.
+                Configuration went with it. It is not gone — it is an entry
+                in Compliance Home's own strip now, gated on `aml.configure`
+                so an ordinary operator never sees it, and sitting beside
+                Records & Privacy, the other surface that is set up once and
+                revisited rarely. It keeps a door because hiding the PAGE is
+                what once stranded the sanctions register's health behind a
+                blocked case; it does not keep a button in the chrome of
+                every screen, because nothing in it is ever the next thing
+                to do.
               */}
-              {canConfigure && (
-                <Button asChild size="sm" variant="ghost" className="h-8">
-                  <Link to={ADMIN_AML_CONFIGURATION_PATH} aria-label="Configuration">
-                    <Settings2 aria-hidden="true" className="mr-2 h-3.5 w-3.5" />
-                    Configuration
-                  </Link>
-                </Button>
-              )}
-              {activeWorkspace && (
-                <Button asChild size="sm" className="h-8">
-                  <Link to={activeWorkspace.defaultPath}>{activeWorkspace.key === "home" ? "Open queue" : `Open ${t(activeWorkspace.label)}`}</Link>
-                </Button>
-              )}
             </div>
           </div>
 

@@ -399,6 +399,42 @@ function AmlOverviewV2() {
         </CardContent>
       </Card>
 
+      {/*
+        ── The surfaces that would otherwise have no route ──────────────
+        Monitoring, Investigations & EDD, Records & Privacy and
+        Configuration all left the navigation. Monitoring did not need a
+        door here — the three monitoring readings in the strip above already
+        deep-link to it — but the other three had none left at all, and two
+        of them are statutory: retention schedules under s.107, and the
+        sanctions register's health, which is what a screening refuses
+        against. Hiding a PAGE is what once stranded that behind a blocked
+        case.
+
+        So this is one quiet line at the foot of the page rather than a
+        card, a tile or a strip: no heading, no borders, no calls to action,
+        and each entry gated on the capability that surface actually needs.
+      */}
+      {(canInvestigate || canView || canConfigure) && (
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 pt-1 text-xs text-muted-foreground">
+          <span className="text-muted-foreground/70">Also in this workspace</span>
+          {[
+            { label: "Investigations & EDD", to: "/admin/aml/investigations", show: canInvestigate },
+            { label: "Records & Privacy", to: "/admin/aml/records", show: canView },
+            { label: "Configuration", to: "/admin/aml/configuration", show: canConfigure },
+          ].filter((e) => e.show).map((e, i, all) => (
+            <span key={e.to} className="flex items-center gap-1.5">
+              <Link
+                to={e.to}
+                className="rounded-sm underline-offset-4 transition-colors hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
+                {e.label}
+              </Link>
+              {i < all.length - 1 && <span aria-hidden className="text-muted-foreground/40">·</span>}
+            </span>
+          ))}
+        </p>
+      )}
+
       {/* Restricted-capability affordances are gated where they are drawn;
           nothing more leaks into the home for users without the permission. */}
       {!canReport && !canConfigure && (
