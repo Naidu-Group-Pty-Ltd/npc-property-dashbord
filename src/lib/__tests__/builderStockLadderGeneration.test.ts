@@ -473,3 +473,31 @@ describe('a geocode of a suburb is not a geocode of a property', () => {
     expect(source).toMatch(/precision\.usable[\s\S]{0,220}'unavailable', precision\.reason/);
   });
 });
+
+// ── AND THE COHORT MUST NOT SPIN ────────────────────────────────────────────
+
+describe('a property that has finished its ladder does not wait on the others', () => {
+  const SOURCE = readFileSync(
+    'supabase/functions/_shared/builderStock/settleFallbackImages.ts', 'utf8');
+
+  it('measures what is REMAINING over the scope the work was done in', () => {
+    /*
+     * `settleClaimedItem` decides one property's next stage from this number —
+     * `remaining > 0 ? 'fallback' : settled` — and the read used to be global
+     * whatever the caller asked for. So a property that had finished its own
+     * ladder was held at `fallback` while ANY other property in the deployment
+     * was still owed one: re-claimed, finding its own queue empty, doing
+     * nothing, re-claimed again. Quadratic invocations against a per-item claim.
+     */
+    const after = SOURCE.slice(SOURCE.indexOf('const after = await readFallbackQueue'));
+    expect(after.slice(0, 200)).toContain('stockItemId: input.stockItemId');
+  });
+
+  it('and is still global when the caller asked for the whole deployment', () => {
+    // `?? null` rather than a required argument: the cron's own sweep passes
+    // no item and must keep counting everything, which is what its completion
+    // rule is built on.
+    const after = SOURCE.slice(SOURCE.indexOf('const after = await readFallbackQueue'));
+    expect(after.slice(0, 200)).toContain('?? null');
+  });
+});
