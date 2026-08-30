@@ -156,28 +156,84 @@ const LEGACY_WORKSPACES: Workspace[] = [
       "/admin/aml/investigations",
       "/admin/aml/austrac",
       "/admin/aml/records",
-      "/admin/aml/governance",
+      // `/admin/aml/governance` is NOT here: it belongs to Organisation
+      // Settings now, which is where the V3 navigation always put it. A path
+      // listed in two workspaces resolves to whichever appears first, so the
+      // page would have drawn the Regulatory strip with nothing active in it.
     ],
     defaultPath: "/admin/aml/monitoring",
     minCapability: "aml.view",
+    /*
+      ── Four surfaces, and why Governance is not one of them ───────────
+      These four are the regulator's business or the customer's: ongoing
+      monitoring and the reviews it raises, enhanced due diligence, the
+      AUSTRAC reporting channel, and records, privacy and retention. Three
+      of them are empty on a young tenant and that is the correct state —
+      an SMR channel and a privacy-request queue exist before they are
+      needed, not after.
+
+      Governance renders FIVE tabs in this deployment — Release Gate, AI
+      Approvals, Step-Up Sessions, Resilience Drills, Runbooks — and every
+      one of them is platform or IT operations rather than AML/CTF work.
+      Its one compliance tab, Contacts (the designated compliance officer
+      and senior manager), is gated on `aml_v3_org_settings`, which is off:
+      so on this deployment the page carries no AML content at all, and
+      `senior_manager_designations` is empty because there is no switched-on
+      surface that writes it.
+
+      The route is untouched. If that flag is turned on, Governance earns a
+      place back — and the V3 navigation already anticipates it, renaming it
+      "Governance & Contacts" and putting it FIRST in Organisation Settings,
+      which is where a designation belongs.
+    */
     secondary: [
       { label: "Monitoring", to: "/admin/aml/monitoring", capability: "aml.view" },
       { label: "Investigations & EDD", to: "/admin/aml/investigations", capability: "aml.investigate" },
       { label: "AUSTRAC Hub", to: "/admin/aml/austrac", capability: "aml.report" },
       { label: "Records & Privacy", to: "/admin/aml/records", capability: "aml.view" },
-      { label: "Governance", to: "/admin/aml/governance", capability: "aml.view" },
     ],
   },
   {
     key: "admin",
     label: "Organisation Settings",
     icon: Settings2,
-    paths: ["/admin/aml/launch-ops", "/admin/aml/partner-operations", "/admin/aml/configuration"],
-    defaultPath: "/admin/aml/launch-ops",
+    paths: ["/admin/aml/configuration", "/admin/aml/launch-ops", "/admin/aml/partner-operations", "/admin/aml/governance"],
+    defaultPath: "/admin/aml/configuration",
     minCapability: "aml.view",
+    /*
+      ── Settings an organisation has, not a project it is running ──────
+      Configuration is the tenant's own: the verification provider's
+      credentials, the risk factors every assessment is scored against,
+      branding, the activation programme, and the sanctions register's
+      health — which Stage 5 sends an administrator to when screening
+      cannot run. It is step-up protected, which is the right control for a
+      page holding live credentials.
+
+      Two entries left the strip because they are about shipping this
+      software rather than running a compliance programme:
+
+        · Launch Operations — rollout stages, acceptance scenarios traced
+          to report requirements, release gates and launch certification.
+          On this tenant: 13 scenarios, none ever run; 0 certifications;
+          and a risk register of 8 seeded rows never once edited, with
+          categories including "Engineering" and "Non-AML regression".
+        · Partner Operations — renders a readiness and preflight table of
+          migration phases, feature-flag values and rows that say outright
+          "verify in the deployment pipeline". Its operational half
+          (queues, register, management report) is behind
+          `aml_partner_operations_reporting`, which is off, and all four
+          tables behind it are empty. Partners themselves are managed on
+          the Passport & Partners stage, where the roster and every act on
+          it live.
+
+      Both routes stay live and both pages are unchanged — this is the
+      treatment `aml-v3-cutover` and `aml-integration-health` already get:
+      real surfaces that exist at a URL and do not sit in an operator's
+      navigation. Their paths remain in `paths` above so that opening one
+      directly still shows the workspace header rather than a page that
+      looks broken.
+    */
     secondary: [
-      { label: "Launch Operations", to: "/admin/aml/launch-ops", capability: "aml.view" },
-      { label: "Partner Operations", to: "/admin/aml/partner-operations", capability: "aml.view" },
       { label: "Configuration", to: "/admin/aml/configuration", capability: "aml.configure" },
     ],
   },
