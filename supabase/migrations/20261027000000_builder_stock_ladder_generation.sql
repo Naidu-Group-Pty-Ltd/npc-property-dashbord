@@ -40,6 +40,23 @@
 -- ONLY BLANK ONES, unchanged. A property showing a picture has nothing to gain
 -- and would pay for a stage to be told so.
 
+--
+-- ── THE ORDER THIS SHIPS IN IS NOT INTERCHANGEABLE ──────────────────────────
+--
+--     the Edge Functions first, verified live, and THEN this migration.
+--
+-- Migrations and functions deploy from separate workflows here, so the order
+-- is a decision rather than a consequence. Applied FIRST, this re-arms the
+-- scheduler and re-opens 87 properties into the ladder that is still running
+-- the OLD code: it composes no address, finds nothing, and settles each one
+-- again — stamping `image_work_updated_at` PAST the generation, which is the
+-- one thing that makes a property invisible to this function for ever. The
+-- fix would then land correct and permanently inert, with no error anywhere.
+--
+-- Re-opening is cheap and repeatable; being stamped past a generation is not.
+-- So the migration goes last, and `settle_builder_stock_marketplace_eligibility_tick`
+-- is the thing to watch afterwards.
+
 ALTER TABLE public.builder_stock_settlement_target
   ADD COLUMN IF NOT EXISTS image_ladder_generation_at timestamptz;
 
