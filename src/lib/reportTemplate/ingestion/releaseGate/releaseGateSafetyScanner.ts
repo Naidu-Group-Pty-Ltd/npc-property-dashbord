@@ -124,6 +124,36 @@ function shouldScanSourceFile(rel: string): boolean {
   return rel.startsWith('src/') || rel.startsWith('supabase/functions/');
 }
 
+/**
+ * Trees whose whole purpose is to hold committed assets.
+ *
+ * A raster inside one of these is part of the application — bundled by Vite or
+ * served from `public/` to every visitor — and is reviewed as such. A raster
+ * anywhere else is a candidate artifact: something a PDF-import run rendered
+ * and somebody committed by accident, which is what this scan exists to catch.
+ *
+ * The classification used to be the extension alone, and that made a brand
+ * asset unlandable. `public/brand/aurixa-emblem-240.png` had been corrupted on
+ * a downstream clone and the repair could not merge, because the pull request
+ * carrying it failed `[critical] no_generated_images_staged` — naming a file
+ * that is *supposed* to be in the repository. Prime carries 33 committed
+ * rasters across these two trees; under the old rule, touching any one of them
+ * failed the gate.
+ *
+ * This is a real narrowing and worth stating plainly: a rendered page from a
+ * client's document, placed deliberately in the shipped asset tree, is no
+ * longer caught here. What still catches it is that `.pdf` remains critical
+ * EVERYWHERE including these trees, the log/env and signed-URL rules are
+ * untouched, and putting a customer artifact into the publicly served bundle
+ * is a conspicuous act in review rather than the quiet slip this rule is aimed
+ * at — a scratch file left behind in `reports/`, `tmp/` or the repository root.
+ */
+const COMMITTED_ASSET_TREES = [/^public\//, /^src\/assets\//];
+
+function isCommittedAsset(path: string): boolean {
+  return COMMITTED_ASSET_TREES.some((rx) => rx.test(path));
+}
+
 export function scanPdfImportPrivateArtifacts(
   filePaths: string[],
 ): ReleaseGateSafetyFinding[] {
@@ -134,8 +164,10 @@ export function scanPdfImportPrivateArtifacts(
     const path = String(raw);
     const lower = path.toLowerCase();
     if (lower.endsWith('.pdf')) {
+      // Deliberately BEFORE the asset-tree exemption: a PDF under `public/` is
+      // not a brand asset, it is a document published to the internet.
       findings.push({ code: 'private_pdf', path, severity: 'critical', message: 'PDF file staged.' });
-    } else if (/\.(png|jpe?g|webp)$/.test(lower)) {
+    } else if (/\.(png|jpe?g|webp)$/.test(lower) && !isCommittedAsset(path)) {
       findings.push({ code: 'private_image', path, severity: 'critical', message: 'Raster image staged.' });
     } else if (lower.endsWith('.log') || lower.endsWith('.env') || lower.includes('/.env')) {
       findings.push({ code: 'private_log_or_env', path, severity: 'critical', message: 'Log or .env file staged.' });
