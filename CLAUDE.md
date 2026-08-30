@@ -543,6 +543,23 @@ the server whether the tenant holds a non-individual case, because beneficial
 ownership is a company/trust/SMSF question, and it **fails open** so a failed
 read never hides a compliance surface.
 
+Compliance Home's **"Your queues" is four entries**, because a queue is work
+waiting for somebody. **Transactions** left: `aml.transactions` and
+`aml.transaction_parties` hold zero rows and the page is a PER-CASE surface
+loading `cases[0]`, which is exactly why the nav audit already folded it into
+Customer Compliance as a stage — leaving it in the queue list contradicted a
+decision the product had made. **Configuration** left the list too but NOT the
+page: nothing waits there, so it is not a queue, but it is the only
+discoverable route to the sanctions register's health and hiding the page is
+what once stranded that behind a blocked case; it moved to the page header,
+still gated on `aml.configure`, and `amlLayout.test.tsx` still pins **one
+door, capability-gated**. The six case/monitoring metrics are **one strip, not
+six cards** — six borders around six single-digit numbers took more height
+than the case list under them — via a `dense` variant on `AmlMetricCard` that
+keeps the deep link, the skeleton and the "Not available" reading that is
+never a fabricated zero, with the label's line RESERVED so every value sits on
+one baseline.
+
 Three surfaces left because they are build or platform tooling rather than
 AML/CTF work, and the evidence is on the tenant rather than in an opinion:
 **Launch Operations** (rollout stages, 13 acceptance scenarios none ever run,
