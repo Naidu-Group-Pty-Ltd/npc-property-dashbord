@@ -48,6 +48,9 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/imagePriority.pure';
 import { geocodableAddress, normaliseStockRow } from '../../../supabase/functions/_shared/builderStock/normalise.pure';
 import { repairStoredIdentity } from '../../../supabase/functions/_shared/builderStock/storedIdentityRepair.pure';
+import {
+  assessGeocodePrecision, assessPanoramaUsefulness,
+} from '../../../supabase/functions/_shared/builderStock/streetViewHeading.pure';
 
 const WEB = 'internet_search';
 const STREET = 'google_maps';
@@ -354,5 +357,71 @@ describe('nothing in this fix is specific to anything', () => {
         expect(source.toLowerCase()).not.toContain(word);
       }
     }
+  });
+});
+
+// ── THE HAZARD THE COMPOSITION CREATES, AND ITS GUARD ───────────────────────
+/*
+ * Composing an address makes stage 3 reachable for properties that could never
+ * reach it, which is the point. It also makes a new way of being WRONG
+ * reachable: Google answers an estate name it has never heard of by falling
+ * back to the locality, and the panorama guard cannot catch that — it measures
+ * the panorama against the geocode, and the nearest panorama to the middle of
+ * a suburb is a street in that suburb. Every distance check passes on a
+ * photograph of somewhere else.
+ */
+describe('a geocode of a suburb is not a geocode of a property', () => {
+  it('refuses a match that resolved only as far as the locality', () => {
+    const verdict = assessGeocodePrecision({ types: ['locality', 'political'] });
+    expect(verdict.usable).toBe(false);
+    expect(verdict.coarsestType).toBe('locality');
+    // And it says so in words a builder can act on, not a type name.
+    expect(verdict.reason).not.toContain('locality');
+  });
+
+  it('refuses a postcode and an administrative area too', () => {
+    for (const type of ['postal_code', 'postal_town',
+      'administrative_area_level_1', 'administrative_area_level_2', 'country']) {
+      expect(assessGeocodePrecision({ types: [type, 'political'] }).usable).toBe(false);
+    }
+  });
+
+  it('accepts every precision a NAMED ESTATE legitimately resolves to', () => {
+    // This is the whole point of composing — an estate is not a street number,
+    // and refusing everything short of a rooftop would refuse the feature.
+    for (const type of ['street_address', 'premise', 'subpremise', 'route',
+      'neighborhood', 'establishment', 'point_of_interest', 'sublocality']) {
+      expect(assessGeocodePrecision({ types: [type] }).usable).toBe(true);
+    }
+  });
+
+  it('a match that states no precision is accepted, never refused', () => {
+    // Same rule the panorama guard follows: a missing optional field must not
+    // turn a working card blank.
+    for (const shape of [{}, { types: [] }, { types: null }, null, undefined]) {
+      expect(assessGeocodePrecision(shape).usable).toBe(true);
+    }
+  });
+
+  it('the panorama distance guard is untouched and still binds', () => {
+    // The two guards answer different questions and both have to hold: this
+    // one asks whether the POINT is the property, that one whether the CAMERA
+    // was near the point.
+    const near = assessPanoramaUsefulness(
+      { lat: -37.8, lng: 144.9 }, { lat: -37.8, lng: 144.9 });
+    expect(near.usable).toBe(true);
+    const far = assessPanoramaUsefulness(
+      { lat: -37.81, lng: 144.9 }, { lat: -37.8, lng: 144.9 });
+    expect(far.usable).toBe(false);
+  });
+
+  it('a refused geocode is a FINDING, so the ladder is not asked for it again', () => {
+    // It is recorded `unavailable` rather than `failed`: the lookup ran and
+    // answered, and the answer is that this property cannot be photographed
+    // from a location. Retrying it would buy the same answer.
+    const source = readFileSync(
+      'supabase/functions/_shared/builderStock/images.ts', 'utf8');
+    expect(source).toMatch(/assessGeocodePrecision\(match\)/);
+    expect(source).toMatch(/precision\.usable[\s\S]{0,220}'unavailable', precision\.reason/);
   });
 });

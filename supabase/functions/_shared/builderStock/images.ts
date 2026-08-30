@@ -33,7 +33,7 @@ import {
 } from './imagePriority.pure.ts';
 import { verifyWebImageIdentity } from './webImageIdentity.pure.ts';
 import {
-  assessPanoramaUsefulness, headingToProperty, readLatLng,
+  assessGeocodePrecision, assessPanoramaUsefulness, headingToProperty, readLatLng,
 } from './streetViewHeading.pure.ts';
 
 /**
@@ -306,11 +306,29 @@ export async function enrichFromGoogle(
       { feature: 'builder-stock/geocode' },
     );
     const geo = await geocoded.json().catch(() => null);
-    const location = geo?.results?.[0]?.geometry?.location;
+    const match = geo?.results?.[0];
+    const location = match?.geometry?.location;
     if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
         'That address could not be located.', 'google');
+    }
+
+    /*
+     * AND IT HAS TO BE A GEOCODE OF A PROPERTY, NOT OF A SUBURB.
+     *
+     * The panorama guard below measures the panorama against THIS point, so it
+     * cannot catch a point that is itself wrong: the nearest panorama to the
+     * middle of a suburb is a street in that suburb, and every distance check
+     * passes on a photograph of somewhere else. That became reachable when
+     * `geocodableAddress` learned to compose a line from the lot and the
+     * estate — Google answers a name it does not know by falling back to the
+     * locality.
+     */
+    const precision = assessGeocodePrecision(match);
+    if (!precision.usable) {
+      return await recordStageUnavailable(
+        db, item, 'google_maps', 'unavailable', precision.reason, 'google');
     }
 
     const point = `${location.lat},${location.lng}`;
