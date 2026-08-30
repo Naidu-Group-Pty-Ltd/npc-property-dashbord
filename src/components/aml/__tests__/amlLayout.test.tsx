@@ -55,20 +55,21 @@ beforeEach(() => {
 });
 
 describe("AmlLayout — legacy (V2) navigation", () => {
-  it("renders the four workspaces for a fully-capable user", () => {
-    /* Transaction Compliance was retired: it was a top-level workspace
-       holding ONE tab, which is not a workspace. Transactions moved into
-       Customer Compliance and the page is untouched. */
+  it("renders the three workspaces compliance work happens in", () => {
+    /* Transaction Compliance was retired (a workspace holding one tab is not
+       a workspace) and Organisation Settings followed once nothing in it was
+       an operator's daily work. Organisation Settings still EXISTS — it owns
+       its URLs so those pages keep their chrome — it is simply not drawn. */
     renderShell("/admin/aml");
     const nav = screen.getByRole("navigation", { name: "AML workspaces" });
     for (const label of [
-      "Compliance Home", "Customer Compliance",
-      "Regulatory & Assurance", "Organisation Settings",
+      "Compliance Home", "Customer Compliance", "Regulatory & Assurance",
     ]) {
       expect(within(nav).getByText(label)).toBeInTheDocument();
     }
-    /* Transaction Compliance no longer exists for anyone — the capability
-       rule this asserts is carried by Configuration below. */
+    for (const gone of ["Transaction Compliance", "Organisation Settings"]) {
+      expect(within(nav).queryByText(gone)).not.toBeInTheDocument();
+    }
   });
 
   it("keeps the Transactions page inside a workspace after the fold", () => {
@@ -127,32 +128,48 @@ describe("AmlLayout — legacy (V2) navigation", () => {
     expect(within(secondary).queryByText("Governance")).not.toBeInTheDocument();
   });
 
-  it("keeps Configuration, which holds credentials and the sanctions register", () => {
-    /* It is the one Organisation Settings surface that is the tenant's own,
-       and Stage 5 navigates to it when screening cannot run. Hiding it would
-       strand the sanctions register's health behind a blocked case again. */
+  it("Configuration is reachable, and no longer offered in the navigation", () => {
+    /* It leaves the strip but not the product: step-up protected, set once
+       and revisited rarely, and the place Stage 5 sends an administrator
+       when screening cannot run. Hiding the PAGE would strand the sanctions
+       register's health behind a blocked case again. */
     renderShell("/admin/aml/configuration");
-    const secondary = screen.getByRole("navigation", { name: /Organisation Settings sections/ });
-    expect(within(secondary).getByText("Configuration")).toBeInTheDocument();
-    expect(
-      readFileSync("src/pages/aml/AmlConfiguration.tsx", "utf8"),
-    ).toContain("<SanctionsListHealth />");
+    const nav = screen.getByRole("navigation", { name: "AML workspaces" });
+    expect(within(nav).queryByText("Organisation Settings")).not.toBeInTheDocument();
+    expect(screen.getByTestId("page-configuration")).toBeInTheDocument();
+    expect(readFileSync("src/pages/aml/AmlConfiguration.tsx", "utf8"))
+      .toContain("<SanctionsListHealth />");
+    expect(readFileSync("src/lib/aml/amlRoutes.ts", "utf8"))
+      .toContain("ADMIN_AML_LIST_HEALTH_PATH");
   });
 
-  it("a hidden page still lands inside ONE workspace, with its chrome", () => {
-    /* The failure this guards is the one the file's own comment records: a
-       destination missing from `paths` renders with no secondary strip and
-       Compliance Home highlighted — reachable, and looking broken. A path in
-       TWO workspaces is the same defect wearing the other hat. */
-    for (const [path, workspace] of [
-      ["/admin/aml/governance", "Organisation Settings"],
-      ["/admin/aml/launch-ops", "Organisation Settings"],
-      ["/admin/aml/partner-operations", "Organisation Settings"],
-    ] as const) {
+  it("offers exactly ONE door to Configuration, and it is capability-gated", () => {
+    /* Compliance Home carried two — a tile, and a button sitting directly
+       under a comment saying restricted affordances live in the tiles. The
+       tile survives, gated on `aml.configure`, so an operator holding only
+       `aml.view` sees Configuration nowhere at all. */
+    const home = readFileSync("src/pages/aml/AmlOverview.tsx", "utf8");
+    const code = home.replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    expect(code.match(/\/admin\/aml\/configuration/g) ?? []).toHaveLength(1);
+    expect(home).toContain('capability: "aml.configure"');
+  });
+
+  it("a page with no tab still BELONGS to one workspace", () => {
+    /* The failure this guards is the one the file records twice: a path
+       belonging to nothing renders with no section strip and Compliance Home
+       highlighted — reachable, and looking broken. A hidden workspace still
+       owns its URLs, so the trail names where the page lives even though no
+       tab is drawn for it. */
+    for (const path of [
+      "/admin/aml/configuration",
+      "/admin/aml/governance",
+      "/admin/aml/launch-ops",
+      "/admin/aml/partner-operations",
+    ]) {
       const { unmount } = renderShell(path);
-      const nav = screen.getByRole("navigation", { name: "AML workspaces" });
-      expect(within(nav).getByText(workspace).closest("a"))
-        .toHaveAttribute("aria-current", "page");
+      const header = screen.getByRole("banner");
+      expect(within(header).getAllByText("Organisation Settings").length)
+        .toBeGreaterThan(0);
       unmount();
     }
   });
