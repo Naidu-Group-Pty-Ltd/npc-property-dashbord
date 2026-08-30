@@ -45,10 +45,28 @@
 -- property is handed back to the ladder, which — with faults 1 and 2 fixed —
 -- can now promote the builder's own image it had already found and discarded.
 --
--- SCOPED BY THE RULE ITSELF, never by an id: Street View rows belonging to a
+-- SCOPED BY THE RULE ITSELF, never by an id: STREET VIEW STILLS belonging to a
 -- property with no street address. A property the source addressed keeps every
 -- Street View it has. Nothing else in the table is reachable from here — no
 -- builder document, no web result, no source photograph.
+--
+--
+-- AND THE STAGE IS NOT THE PRODUCT. `source_stage = 'google_maps'` alone was
+-- the first predicate written, and a production dry-run before merge showed it
+-- selecting 145 rows rather than 58:
+--
+--     streetview      58   the stills this exists to remove
+--     staticmap        7   satellite tiles, DELIBERATELY RETAINED — the stage
+--                          keeps them as honest location imagery and
+--                          `imagePriority` ranks only `streetview`, so a tile
+--                          can never become a card image in the first place
+--     stage-status    47   the ladder's own bookkeeping, which the generation
+--     stage-skipped   33   re-open already clears for the rows it re-opens
+--
+-- Only the first group is a wrong picture on a card. The other three are
+-- records that are either useful or somebody else's to manage, and removing
+-- them would be destroying data to no purpose. `product` is the discriminator
+-- the stage itself writes, and both it and the reference are required.
 
 BEGIN;
 
@@ -62,6 +80,8 @@ UPDATE public.builder_stock_items AS i
      SELECT 1 FROM public.builder_stock_item_images AS x
       WHERE x.id = i.primary_image_id
         AND x.source_stage = 'google_maps'
+        AND x.source_reference = 'streetview'
+        AND x.source_detail->>'product' = 'streetview'
    );
 
 -- 2. Remove the location imagery taken of a property that is not built.
@@ -69,6 +89,8 @@ DELETE FROM public.builder_stock_item_images AS x
  USING public.builder_stock_items AS i
  WHERE x.stock_item_id = i.id
    AND x.source_stage = 'google_maps'
+   AND x.source_reference = 'streetview'
+   AND x.source_detail->>'product' = 'streetview'
    AND coalesce(btrim(i.address_line), '') = '';
 
 -- 3. And raise the generation, so every property this affects is looked at

@@ -217,6 +217,24 @@ describe('the migration retires the pictures taken under the old rule', () => {
     }
   });
 
+  it('takes the PRODUCT, not the whole stage — tiles and bookkeeping survive', () => {
+    /*
+     * A dry-run against production before merge showed `source_stage =
+     * 'google_maps'` alone selecting 145 rows rather than 58: 7 satellite
+     * tiles the stage deliberately retains (and which `imagePriority` can
+     * never rank as a card image anyway), plus 80 `stage-status` /
+     * `stage-skipped` bookkeeping rows the generation re-open already handles.
+     * Only the stills are a wrong picture on a card.
+     */
+    expect(migration).toMatch(/x\.source_reference = 'streetview'/);
+    expect(migration).toMatch(/x\.source_detail->>'product' = 'streetview'/);
+    // Both halves of the statement, so the pointer clear cannot be broader
+    // than the delete it precedes.
+    expect(migration.match(/source_detail->>'product' = 'streetview'/g) ?? [])
+      .toHaveLength(2);
+    expect(migration).not.toContain("'staticmap'");
+  });
+
   it('raises the generation so the ladder looks again, and wakes the scheduler', () => {
     expect(migration).toContain('image_ladder_generation_at = now()');
     expect(migration).toContain('ensure_builder_stock_settlement_scheduled');
