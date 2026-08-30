@@ -703,6 +703,22 @@ own account and this product holds no credentials. And **the path is drawn once
 per screen**: the draft rail's orientation list is suppressed exactly when the
 live card is mounted.
 
+Two more from the register. **The title opens the report** — "Edit" was
+offered on a draft alone, so a submitted report could be selected and never
+read; it is safe on every status because the page renders read-only where the
+server would refuse a write (and stops calling itself "Edit"). And
+**archiving is putting away, never throwing away**: `delete_report` refuses
+anything past a draft because a lodged report is a retained record, so
+`archived_at`/`archived_by` hide a row and keep every byte — row, versions,
+submissions, receipts, case events — reversibly. The rule it turns on is that
+**a report may be archived only once nothing is owed to AUSTRAC**
+(`archiveBlockReason`, in `_shared`, rendered by the register and enforced by
+the function): hiding an approved-but-unlodged SMR loses a statutory deadline
+rather than tidying a list. Three things follow — a lodged report with no
+receipt archives but the confirmation SAYS so; `upsert_report` must strip the
+stamp or a client archives by saving; and the tiles count the working
+register, because a number beside a row nobody can see is worse than none.
+
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
 before touching `_shared/aml/passport/identityPortrait.pure.ts`,
