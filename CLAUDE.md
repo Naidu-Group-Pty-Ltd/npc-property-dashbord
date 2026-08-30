@@ -582,6 +582,29 @@ boundary caught it, and the page read "Something went wrong" on every visit.
 A source-level test now fails on any hook below the first early return,
 because the page's own test file had only ever exercised a sub-component.
 
+## Lodging a report with AUSTRAC
+Read [`docs/aml/AUSTRAC_LODGEMENT_PATH.md`](./docs/aml/AUSTRAC_LODGEMENT_PATH.md)
+before touching `austracReportPath.pure.ts`, `AustracReportPathCard` or the
+`submit_record` / `record_receipt` operations. The server was already rigorous
+— MLRO approval, step-up MFA, lodgement evidence, the AUSTRAC reference for an
+SMR, an explicit no-tipping-off attestation — and the surface in front of it
+was five boxes and a status table. The defect: **`reports.case_id` has existed
+since the first migration and the draft dialog never set it**, so every report
+was filed against nobody and reached no customer's file.
+
+Four rules. **The clock is in BUSINESS days** (SMR 3 from the day the suspicion
+was formed, TTR/IFTI 10; a suspicion about terrorism financing is 24 HOURS and
+is the same report under a tighter clock, never a different kind) and it runs
+from the OBLIGATION rather than the reporting period — a separate field, kept
+in `metadata`, because a deadline derived from the wrong date is worse than
+none. **The checks disclose and the server refuses** — two gates is how one of
+them becomes wrong, so only "filed against nobody" and "past the window" read
+as blocked. **The platform never lodges**: AUSTRAC Online is the entity's own
+account and this holds no credentials, said on the page rather than in a
+tooltip. And **tipping off is guarded at the projection** — both
+`CLIENT_RESTRICTED_KEYS` and `PARTNER_RESTRICTED_KEYS` already carry `smr`,
+`austrac` and `suspic`, and a test pins them rather than trusting them.
+
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
 before touching `_shared/aml/passport/identityPortrait.pure.ts`,
