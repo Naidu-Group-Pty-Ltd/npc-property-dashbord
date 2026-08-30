@@ -154,6 +154,28 @@ function isCommittedAsset(path: string): boolean {
   return COMMITTED_ASSET_TREES.some((rx) => rx.test(path));
 }
 
+/** The dotenv names that are templates rather than secrets. */
+const DOTENV_TEMPLATES = ['.env.example', '.env.sample', '.env.template'];
+
+/**
+ * Whether a path is a dotenv file holding secrets.
+ *
+ * The rule was `endsWith('.env') || includes('/.env')`, which catches `.env`
+ * and `dir/.env` and misses **`.env.local`** — the file this project's own
+ * `.gitignore` names as where secrets live. A check called "No logs or .env
+ * staged" that cannot see `.env.local` at the repository root is not doing the
+ * one job its name claims, and the contract spec against the `.mjs` copy found
+ * it the first time both were asked the same question.
+ *
+ * `.env.example` is committed on purpose and is the single `!` exception in
+ * `.gitignore`, so it and its two conventional siblings are excluded by name.
+ */
+function isSecretDotenv(lowerPath: string): boolean {
+  const base = lowerPath.slice(lowerPath.lastIndexOf('/') + 1);
+  if (!base.startsWith('.env')) return false;
+  return !DOTENV_TEMPLATES.includes(base);
+}
+
 export function scanPdfImportPrivateArtifacts(
   filePaths: string[],
 ): ReleaseGateSafetyFinding[] {
@@ -169,7 +191,7 @@ export function scanPdfImportPrivateArtifacts(
       findings.push({ code: 'private_pdf', path, severity: 'critical', message: 'PDF file staged.' });
     } else if (/\.(png|jpe?g|webp)$/.test(lower) && !isCommittedAsset(path)) {
       findings.push({ code: 'private_image', path, severity: 'critical', message: 'Raster image staged.' });
-    } else if (lower.endsWith('.log') || lower.endsWith('.env') || lower.includes('/.env')) {
+    } else if (lower.endsWith('.log') || isSecretDotenv(lower)) {
       findings.push({ code: 'private_log_or_env', path, severity: 'critical', message: 'Log or .env file staged.' });
     } else if (
       lower.includes('signed-url') ||
