@@ -28,8 +28,8 @@ import { geocodableAddress } from './normalise.pure.ts';
 import { hasReadySourceImage } from './sourceImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import {
-  MAX_STAGE_FAILURES, STAGE_SKIPPED_MESSAGE, STAGE_SKIPPED_REFERENCE,
-  nextImageStage, stageFailureCount, WEB_VERIFIED_VERIFICATION,
+  MAX_BLOCKED_PASSES, STAGE_SKIPPED_MESSAGE, STAGE_SKIPPED_REFERENCE,
+  blockedPassCount, nextImageStage, WEB_VERIFIED_VERIFICATION,
 } from './imagePriority.pure.ts';
 import { verifyWebImageIdentity } from './webImageIdentity.pure.ts';
 import {
@@ -107,7 +107,7 @@ async function withTimeout<T>(work: (signal: AbortSignal) => Promise<T>): Promis
 }
 
 /**
- * How many times this stage has already failed operationally on this property.
+ * How many passes this stage has already been blocked on for this property.
  *
  * Read rather than assumed, because the row is UPSERTED: one `stage-status`
  * row per (property, stage) is overwritten on each pass, so the count has
@@ -115,7 +115,7 @@ async function withTimeout<T>(work: (signal: AbortSignal) => Promise<T>): Promis
  * — the ceiling — because a counter we cannot read must never license an
  * unbounded retry loop against a provider.
  */
-async function priorStageFailures(
+async function priorBlockedPasses(
   db: any,
   item: EnrichableStockItem,
   stage: 'google_maps' | 'internet_search',
@@ -128,18 +128,29 @@ async function priorStageFailures(
       .eq('source_stage', stage)
       .eq('source_reference', 'stage-status')
       .maybeSingle();
-    if (error) return MAX_STAGE_FAILURES;
+    if (error) return MAX_BLOCKED_PASSES;
     const row = (data ?? null) as
       { source_detail?: unknown; processing_status?: unknown } | null;
     if (!row) return 0;
-    if (row.processing_status !== 'failed') return 0;
-    return stageFailureCount(row as never);
+    const detail = (row.source_detail ?? {}) as Record<string, unknown>;
+    // A row that recorded an ANSWER starts the count again: the property has
+    // moved on since, and the next block is the first of a new run.
+    const wasBlocked = detail.stage_ran === false || row.processing_status === 'failed';
+    return wasBlocked ? blockedPassCount(row as never) : 0;
   } catch {
-    return MAX_STAGE_FAILURES;
+    return MAX_BLOCKED_PASSES;
   }
 }
 
-/** Record a stage that produced nothing, so the UI can say why. */
+/**
+ * Record a stage that produced nothing, so the UI can say why.
+ *
+ * `ran` IS NOT OPTIONAL, and that is deliberate. It says whether the provider
+ * was asked and answered about this property, which is the only thing that
+ * decides whether the ladder may move on — see `stageWasAttempted`. Making it
+ * a required argument means a refusal cannot be added without someone deciding
+ * which kind it is, and the two kinds read almost identically at the call site.
+ */
 async function recordStageUnavailable(
   db: any,
   item: EnrichableStockItem,
@@ -147,21 +158,18 @@ async function recordStageUnavailable(
   status: 'unavailable' | 'failed',
   message: string,
   provider: string,
+  ran: boolean,
 ): Promise<StageOutcome> {
   /*
-   * A FAILURE IS COUNTED; A FINDING IS NOT.
+   * A BLOCKED PASS IS COUNTED; AN ANSWER IS NOT.
    *
-   * `unavailable` is the stage answering — nothing published, no address to
-   * look up — and the ladder moves on from an answer. `failed` is the provider
-   * not responding, which is not an answer about this property, so it carries
-   * a count and `stageWasAttempted` withholds the rung until the count reaches
-   * `MAX_STAGE_FAILURES`. Storing it here is what makes the retry BOUNDED: an
-   * outage costs a property two passes rather than a permanently retired stage
-   * or an unbounded loop.
+   * Storing the count here is what makes the retry BOUNDED: an outage, or a
+   * provider nobody has configured, costs a property two passes rather than a
+   * permanently retired stage or an unbounded paid loop.
    */
-  const failures = status === 'failed'
-    ? Math.min(MAX_STAGE_FAILURES, (await priorStageFailures(db, item, stage)) + 1)
-    : 0;
+  const blocked = ran
+    ? 0
+    : Math.min(MAX_BLOCKED_PASSES, (await priorBlockedPasses(db, item, stage)) + 1);
 
   await db.from('builder_stock_item_images').upsert({
     stock_item_id: item.id,
@@ -172,7 +180,7 @@ async function recordStageUnavailable(
     processing_status: status,
     verification_status: stage === 'google_maps' ? 'location_derived' : 'unverified',
     error_message: message,
-    source_detail: status === 'failed' ? { stage_failures: failures } : null,
+    source_detail: ran ? { stage_ran: true } : { stage_ran: false, blocked_passes: blocked },
     position: 0,
   }, { onConflict: 'stock_item_id,source_stage,source_reference' });
   return { stage, status, detail: message };
@@ -253,21 +261,21 @@ export async function enrichFromGoogle(
   if (!apiKey) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'Location imagery is not configured for this workspace.', 'google');
+      'Location imagery is not configured for this workspace.', 'google', false);
   }
 
   const address = geocodableAddress(item);
   if (!address) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'This property has no street address to look up.', 'google');
+      'This property has no street address to look up.', 'google', false);
   }
 
   // The operator's off switch, shared with `street-view`.
   if (killSwitchActive('GOOGLE_STREET_VIEW_KILL_SWITCH')) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'Location imagery is temporarily switched off.', 'google');
+      'Location imagery is temporarily switched off.', 'google', false);
   }
 
   /**
@@ -285,7 +293,7 @@ export async function enrichFromGoogle(
   } else if (circuitOpen === true) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'Location imagery is temporarily unavailable.', 'google');
+      'Location imagery is temporarily unavailable.', 'google', false);
   }
 
   // The same daily ceiling and the same env var as `street-view`, because it
@@ -298,7 +306,7 @@ export async function enrichFromGoogle(
     if (!await spend()) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'The daily limit for location imagery has been reached.', 'google');
+        'The daily limit for location imagery has been reached.', 'google', false);
     }
     const geocoded = await meteredFetch(
       `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&region=au&key=${apiKey}`,
@@ -311,7 +319,7 @@ export async function enrichFromGoogle(
     if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'That address could not be located.', 'google');
+        'That address could not be located.', 'google', true);
     }
 
     /*
@@ -328,7 +336,7 @@ export async function enrichFromGoogle(
     const precision = assessGeocodePrecision(match);
     if (!precision.usable) {
       return await recordStageUnavailable(
-        db, item, 'google_maps', 'unavailable', precision.reason, 'google');
+        db, item, 'google_maps', 'unavailable', precision.reason, 'google', true);
     }
 
     const point = `${location.lat},${location.lng}`;
@@ -338,7 +346,7 @@ export async function enrichFromGoogle(
     if (!await spend()) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'The daily limit for location imagery has been reached.', 'google');
+        'The daily limit for location imagery has been reached.', 'google', false);
     }
     const metadata = await meteredFetch(
       `https://maps.googleapis.com/maps/api/streetview/metadata?location=${encodeURIComponent(point)}&key=${apiKey}`,
@@ -373,7 +381,7 @@ export async function enrichFromGoogle(
       panorama, { lat: location.lat, lng: location.lng });
     if (meta?.status === 'OK' && !usefulness.usable) {
       return await recordStageUnavailable(
-        db, item, 'google_maps', 'unavailable', usefulness.reason, 'google');
+        db, item, 'google_maps', 'unavailable', usefulness.reason, 'google', true);
     }
 
     if (meta?.status === 'OK' && await spend()) {
@@ -440,7 +448,7 @@ export async function enrichFromGoogle(
     if (!bytes || bytes.length < 1024) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'No location imagery is available for this address.', 'google');
+        'No location imagery is available for this address.', 'google', true);
     }
 
     const path = `${item.organisation_id}/items/${item.id}/google-${product}.jpg`;
@@ -490,7 +498,7 @@ export async function enrichFromGoogle(
     });
     return await recordStageUnavailable(
       db, item, 'google_maps', 'failed',
-      'Location imagery could not be retrieved.', 'google');
+      'Location imagery could not be retrieved.', 'google', false);
   }
 }
 
@@ -542,14 +550,14 @@ export async function enrichFromInternetSearch(
   if (!apiKey) {
     return await recordStageUnavailable(
       db, item, 'internet_search', 'unavailable',
-      'Internet property search is not configured for this workspace.', 'perplexity');
+      'Internet property search is not configured for this workspace.', 'perplexity', false);
   }
 
   const query = stockSearchQuery(item, builderName);
   if (!query) {
     return await recordStageUnavailable(
       db, item, 'internet_search', 'unavailable',
-      'This property does not name enough to search for.', 'perplexity');
+      'This property does not name enough to search for.', 'perplexity', false);
   }
 
   try {
@@ -587,7 +595,7 @@ export async function enrichFromInternetSearch(
     if (!response.ok) {
       return await recordStageUnavailable(
         db, item, 'internet_search', 'failed',
-        'The property search service did not respond.', 'perplexity');
+        'The property search service did not respond.', 'perplexity', false);
     }
 
     const payload = await response.json().catch(() => null);
@@ -597,7 +605,7 @@ export async function enrichFromInternetSearch(
     if (!candidates.length) {
       return await recordStageUnavailable(
         db, item, 'internet_search', 'unavailable',
-        'No published imagery was found for this property.', 'perplexity');
+        'No published imagery was found for this property.', 'perplexity', true);
     }
 
     /**
@@ -672,7 +680,7 @@ export async function enrichFromInternetSearch(
     });
     return await recordStageUnavailable(
       db, item, 'internet_search', 'failed',
-      'The property search could not be completed.', 'perplexity');
+      'The property search could not be completed.', 'perplexity', false);
   }
 }
 

@@ -43,7 +43,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 import {
-  MAX_STAGE_FAILURES, nextImageStage, stageFailureCount, stageWasAttempted,
+  MAX_BLOCKED_PASSES, blockedPassCount, nextImageStage, stageWasAttempted,
   STAGE_SKIPPED_MESSAGE, STAGE_SKIPPED_REFERENCE,
 } from '../../../supabase/functions/_shared/builderStock/imagePriority.pure';
 import { geocodableAddress, normaliseStockRow } from '../../../supabase/functions/_shared/builderStock/normalise.pure';
@@ -67,75 +67,122 @@ const settled = { sourceSettlementComplete: true };
 
 // ── TWO ─────────────────────────────────────────────────────────────────────
 
-describe('a stage that FAILED is not a stage that answered', () => {
+describe('a stage that did not RUN is not a stage that answered', () => {
+  /*
+   * The line is not `unavailable` versus `failed`. It is whether the provider
+   * was asked and replied ABOUT THIS PROPERTY. Both kinds are written to the
+   * same column with the same status, which is why the row carries the answer
+   * explicitly rather than being classified from its text.
+   */
+  const answered = (stage: string, over: Record<string, unknown> = {}) =>
+    statusRow(stage, { source_detail: { stage_ran: true }, ...over });
+  const blocked = (stage: string, passes = 1, over: Record<string, unknown> = {}) =>
+    statusRow(stage, { source_detail: { stage_ran: false, blocked_passes: passes }, ...over });
+
   it('an outage does not retire the rung it interrupted', () => {
-    const outage = statusRow(WEB, {
+    const outage = blocked(WEB, 1, {
       processing_status: 'failed',
       error_message: 'The property search service did not respond.',
-      source_detail: { stage_failures: 1 },
     });
     expect(stageWasAttempted(outage as never, WEB)).toBe(false);
-    // And the ladder therefore still owes the property its web search.
     expect(nextImageStage([outage] as never, settled)).toBe('web_search');
+  });
+
+  it('a MISSING INPUT does not retire it either — and that is the 86', () => {
+    /*
+     * "This property has no street address to look up" is not a finding about
+     * the property. It is this product saying it could not ask the question,
+     * and the identity it needed was in the row the whole time. Crediting it
+     * as a completed stage is what left 86 properties permanently blank.
+     */
+    const starved = blocked(STREET, 1, {
+      verification_status: 'location_derived',
+      error_message: 'This property has no street address to look up.',
+    });
+    expect(stageWasAttempted(starved as never, STREET)).toBe(false);
+    expect(nextImageStage([answered(WEB), starved] as never, settled)).toBe('street_view');
+  });
+
+  it('an unconfigured provider is the same class, not a verdict', () => {
+    for (const message of [
+      'Location imagery is not configured for this workspace.',
+      'Location imagery is temporarily switched off.',
+      'The daily limit for location imagery has been reached.',
+    ]) {
+      const row = blocked(STREET, 1, { error_message: message });
+      expect(stageWasAttempted(row as never, STREET)).toBe(false);
+    }
   });
 
   it('a FINDING is an answer, and the ladder moves on from it', () => {
     // "No published imagery was found" is the search having run and returned
-    // nothing. That is knowledge about the property, not about the provider.
-    const empty = statusRow(WEB, {
-      processing_status: 'unavailable',
+    // nothing. That is knowledge about the property, not about us.
+    const empty = answered(WEB, {
       error_message: 'No published imagery was found for this property.',
     });
     expect(stageWasAttempted(empty as never, WEB)).toBe(true);
     expect(nextImageStage([empty] as never, settled)).toBe('street_view');
   });
 
-  it('"no address to look up" is likewise an answer, not a failure', () => {
-    const refused = statusRow(STREET, {
-      processing_status: 'unavailable', verification_status: 'location_derived',
-      error_message: 'This property has no street address to look up.',
-    });
-    expect(stageWasAttempted(refused as never, STREET)).toBe(true);
+  it('"could not be located" and "the panorama is too far" are answers too', () => {
+    // Google WAS asked, about this property, and replied.
+    for (const message of [
+      'That address could not be located.',
+      'The nearest Street View panorama is 300 m from this property, too far to be a photograph of it.',
+    ]) {
+      const row = answered(STREET, {
+        verification_status: 'location_derived', error_message: message,
+      });
+      expect(stageWasAttempted(row as never, STREET)).toBe(true);
+    }
   });
 
   it('the retry is BOUNDED — a provider that stays down stops being asked', () => {
-    const spent = statusRow(WEB, {
-      processing_status: 'failed', source_detail: { stage_failures: MAX_STAGE_FAILURES },
-    });
+    const spent = blocked(WEB, MAX_BLOCKED_PASSES, { processing_status: 'failed' });
     expect(stageWasAttempted(spent as never, WEB)).toBe(true);
-    // Which is the whole point: the correction must not become an unbounded
-    // paid loop against a broken provider.
     expect(nextImageStage([spent] as never, settled)).toBe('street_view');
   });
 
   it('the ceiling is small enough to be an outage and not a budget', () => {
-    expect(MAX_STAGE_FAILURES).toBeGreaterThanOrEqual(2);
-    expect(MAX_STAGE_FAILURES).toBeLessThanOrEqual(3);
+    expect(MAX_BLOCKED_PASSES).toBeGreaterThanOrEqual(2);
+    expect(MAX_BLOCKED_PASSES).toBeLessThanOrEqual(3);
   });
 
-  it('a row written before the counter existed carries one failure, not none', () => {
-    // Otherwise every historical `failed` row would read as zero attempts and
-    // the whole estate would re-enter the ladder unbounded on deploy.
-    const legacy = statusRow(WEB, { processing_status: 'failed', source_detail: null });
-    expect(stageFailureCount(legacy as never)).toBe(1);
-    expect(stageWasAttempted(legacy as never, WEB)).toBe(false);
-    const legacyTwice = statusRow(WEB, {
-      processing_status: 'failed', source_detail: { stage_failures: 2 },
+  it('a `failed` row is blocked whatever its detail says', () => {
+    // Belt and braces: an operational failure never ran to an answer, so a
+    // row that claims otherwise is still read as blocked.
+    const lying = statusRow(WEB, {
+      processing_status: 'failed', source_detail: { stage_ran: true },
     });
-    expect(stageWasAttempted(legacyTwice as never, WEB)).toBe(true);
+    expect(stageWasAttempted(lying as never, WEB)).toBe(false);
+  });
+
+  it('a row written before the flag existed still reads as ANSWERED', () => {
+    /*
+     * Undecided means answered, which is the behaviour that shipped. A
+     * historical row cannot be classified from its text, and guessing would
+     * either strand a property or re-buy a stage against every such row in the
+     * deployment. The one-time recovery is the ladder generation, which CLEARS
+     * this bookkeeping rather than reinterpreting it.
+     */
+    const legacy = statusRow(WEB, { source_detail: null });
+    expect(stageWasAttempted(legacy as never, WEB)).toBe(true);
+    // …except a legacy row that FAILED, which is unambiguous on its face.
+    const legacyFailed = statusRow(WEB, {
+      processing_status: 'failed', source_detail: null,
+    });
+    expect(blockedPassCount(legacyFailed as never)).toBe(1);
+    expect(stageWasAttempted(legacyFailed as never, WEB)).toBe(false);
   });
 
   it('a nonsense counter is read conservatively rather than trusted', () => {
     for (const bad of [null, undefined, 'many', {}, -4, Number.NaN]) {
-      const row = statusRow(WEB, {
-        processing_status: 'failed', source_detail: { stage_failures: bad },
-      });
-      expect(stageFailureCount(row as never)).toBeGreaterThanOrEqual(1);
+      const row = blocked(WEB, 1, { source_detail: { stage_ran: false, blocked_passes: bad } });
+      expect(blockedPassCount(row as never)).toBeGreaterThanOrEqual(1);
     }
   });
 
   it('a SKIP is still not an attempt, whatever its status', () => {
-    // The rule 20261026000000 shipped is untouched by this one.
     const skip = statusRow(WEB, {
       source_reference: STAGE_SKIPPED_REFERENCE, error_message: STAGE_SKIPPED_MESSAGE,
     });
@@ -144,10 +191,8 @@ describe('a stage that FAILED is not a stage that answered', () => {
     expect(stageWasAttempted(legacySkip as never, WEB)).toBe(false);
   });
 
-  it('a stage that produced a PICTURE is never re-asked on a failure elsewhere', () => {
-    const outage = statusRow(WEB, {
-      processing_status: 'failed', source_detail: { stage_failures: 1 },
-    });
+  it('a stage that produced a PICTURE is never re-asked on a block elsewhere', () => {
+    const outage = blocked(WEB, 1, { processing_status: 'failed' });
     const photo = {
       id: 'web-1', source_stage: WEB, source_reference: 'ref-a',
       processing_status: 'ready', verification_status: 'property_identity_verified',
@@ -159,36 +204,25 @@ describe('a stage that FAILED is not a stage that answered', () => {
     expect(nextImageStage([outage, photo] as never, settled)).toBe('none');
   });
 
-  it('both paid stages down leaves the property owed both, not settled', () => {
-    const rows = [
-      statusRow(WEB, { processing_status: 'failed', source_detail: { stage_failures: 1 } }),
-      statusRow(STREET, {
-        processing_status: 'failed', verification_status: 'location_derived',
-        source_detail: { stage_failures: 1 },
-      }),
-    ];
-    expect(nextImageStage(rows as never, settled)).toBe('web_search');
-    // …and after the web rung is spent, the other one is still owed.
-    const spentWeb = [
-      statusRow(WEB, {
-        processing_status: 'failed', source_detail: { stage_failures: MAX_STAGE_FAILURES },
-      }),
-      rows[1],
-    ];
-    expect(nextImageStage(spentWeb as never, settled)).toBe('street_view');
-  });
-
   it('and when every stage really is spent, the answer is still `none`', () => {
     // ZERO BUILDER BRANCHES AND TWO EXHAUSTED STAGES IS A LEGITIMATE BLANK.
     const rows = [
-      statusRow(WEB, {
-        processing_status: 'failed', source_detail: { stage_failures: MAX_STAGE_FAILURES },
-      }),
-      statusRow(STREET, {
-        processing_status: 'unavailable', verification_status: 'location_derived',
-      }),
+      blocked(WEB, MAX_BLOCKED_PASSES, { processing_status: 'failed' }),
+      answered(STREET, { verification_status: 'location_derived' }),
     ];
     expect(nextImageStage(rows as never, settled)).toBe('none');
+  });
+
+  it('every refusal in the ladder declares which kind it is', () => {
+    // `ran` is a required argument precisely so a new refusal cannot be added
+    // without someone deciding, and the two kinds read alike at the call site.
+    const source = readFileSync(
+      'supabase/functions/_shared/builderStock/images.ts', 'utf8');
+    const calls = source.split('recordStageUnavailable(').slice(2);
+    expect(calls.length).toBeGreaterThanOrEqual(10);
+    for (const call of calls) {
+      expect(call.slice(0, 400)).toMatch(/,\s*(true|false)\);/);
+    }
   });
 });
 
@@ -288,7 +322,7 @@ describe('a record stored in the older shape recovers without being re-uploaded'
 
 describe('the ladder generation reaches properties that already settled', () => {
   const migration = readFileSync(
-    'supabase/migrations/20261027000000_builder_stock_ladder_generation.sql', 'utf8');
+    'supabase/migrations/20261027010000_builder_stock_ladder_generation.sql', 'utf8');
 
   it('re-opens on the ENGINE changing, not only on evidence changing', () => {
     // The sibling rule (an image re-judged after the property settled) cannot
@@ -305,6 +339,20 @@ describe('the ladder generation reaches properties that already settled', () => 
 
   it('is self-limiting — re-opening stamps the timestamp it is compared against', () => {
     expect(migration).toMatch(/image_work_updated_at = now\(\)/);
+  });
+
+  it('clears the bookkeeping the old ladder left, or nothing changes', () => {
+    /*
+     * Re-opening alone is not enough: `nextImageStage` reads `stage-status`
+     * rows to decide which rungs are owed, and the previous generation's rows
+     * say they were climbed. Leave them and every property re-opens, finds
+     * both stages recorded as done, and settles blank again immediately.
+     */
+    expect(migration).toMatch(/DELETE FROM public\.builder_stock_item_images/);
+    expect(migration).toMatch(/source_reference = 'stage-status'/);
+    // Scoped to the two paid stages, so no builder row or stored photograph
+    // is reachable from here.
+    expect(migration).toMatch(/source_stage IN \('internet_search', 'google_maps'\)/);
   });
 
   it('clears the terminal enrichment verdict, or the fallback queue never sees it', () => {

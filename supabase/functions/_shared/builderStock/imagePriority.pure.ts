@@ -83,38 +83,67 @@ export const STAGE_SKIPPED_MESSAGE =
  * which is why it is a constant rather than a literal at the call site.
  */
 /**
- * How many operational failures of one stage stand as that stage having run.
+ * How many passes on which a stage COULD NOT RUN stand as that stage having run.
  *
- * A STAGE THAT FAILED IS NOT A STAGE THAT ANSWERED. `unavailable` is a
- * finding — the search ran and published imagery does not exist, the property
- * has no address to look up — and a finding is an answer the ladder may move
- * on from. `failed` is the provider not responding, which says nothing at all
- * about the property, and treating it as an answer retires a rung this
- * property was never actually offered.
+ * A STAGE THAT DID NOT RUN IS NOT A STAGE THAT ANSWERED, and the distinction
+ * is not `unavailable` versus `failed` — it is whether the provider was asked
+ * and replied about THIS property.
  *
- * Measured: 58 properties of one upload hold `internet_search` rows reading
- * "The property search service did not respond." Every one of them was
- * credited with a completed stage 2 and moved down the ladder on the strength
- * of an outage.
+ *   answered   "No published imagery was found for this property."
+ *              "That address could not be located."
+ *              "The nearest panorama is 300 m away."
+ *   never ran  "The property search service did not respond."   (an outage)
+ *              "This property has no street address to look up." (a missing input)
+ *              "Location imagery is not configured for this workspace."
+ *              "The daily limit has been reached."
+ *
+ * An answer is knowledge about the property and the ladder moves on from it. A
+ * pass that never ran is knowledge about US, and crediting it retires a rung
+ * the property was never actually offered. Measured on one import: 58
+ * properties had stage 2 retired by a provider being down, and 86 had stage 3
+ * retired for want of an address that was in the row the whole time, split
+ * across three columns.
  *
  * The ceiling is what keeps the correction from becoming the defect it
- * replaces. Counting a failure as "never attempted" without a bound asks a
- * broken provider for the same stage on every claim, for ever, and pays for it
- * — which is the loop `stageWasAttempted` was widened to close in the first
- * place. Two attempts is the same ceiling `MAX_PACKAGE_ATTEMPTS` sets on a
- * builder package, for the same reason: enough to ride out an outage, not
+ * replaces. Withholding the rung without a bound asks a broken — or an
+ * unconfigured — provider for the same stage on every claim, for ever, and
+ * pays for it; that is the loop `stageWasAttempted` was widened to close in
+ * the first place. Two passes is the same ceiling `MAX_PACKAGE_ATTEMPTS` sets
+ * on a builder package, for the same reason: enough to ride out an outage, not
  * enough to fund one.
  */
-export const MAX_STAGE_FAILURES = 2;
+export const MAX_BLOCKED_PASSES = 2;
 
-/** How many times this stage has failed operationally. Absent reads as one. */
-export function stageFailureCount(image: DisplayableImage): number {
+/**
+ * How many passes this stage has been blocked on.
+ *
+ * A row written before the counter existed carries ONE — itself. Reading it as
+ * zero would let every historical row re-enter the ladder with a full budget,
+ * which on a deployment-wide re-open is a bill rather than a repair.
+ */
+export function blockedPassCount(image: DisplayableImage): number {
   const detail = (image as DisplayableImage & { source_detail?: unknown }).source_detail;
   const raw = (detail && typeof detail === 'object')
-    ? (detail as Record<string, unknown>).stage_failures : null;
+    ? (detail as Record<string, unknown>).blocked_passes : null;
   const n = typeof raw === 'number' ? raw : Number.parseInt(String(raw ?? ''), 10);
-  // A row written before the counter existed carries one known failure: itself.
   return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/** Did this row record a stage that RAN and answered about the property? */
+function stageRanToAnAnswer(image: DisplayableImage): boolean {
+  if (image.processing_status === 'failed') return false;
+  const detail = (image as DisplayableImage & { source_detail?: unknown }).source_detail;
+  const ran = (detail && typeof detail === 'object')
+    ? (detail as Record<string, unknown>).stage_ran : undefined;
+  /*
+   * UNDECIDED MEANS ANSWERED, which is the behaviour that shipped. A row
+   * written before this flag existed cannot be classified from its text, and
+   * guessing would either strand a property or buy a stage again on every
+   * historical row in the deployment. The one-time recovery for those is the
+   * ladder generation, which CLEARS this bookkeeping rather than reinterpreting
+   * it — see 20261027010000.
+   */
+  return ran !== false;
 }
 
 export function stageWasAttempted(image: DisplayableImage, stage: string): boolean {
@@ -124,9 +153,7 @@ export function stageWasAttempted(image: DisplayableImage, stage: string): boole
   };
   if (row.source_reference === STAGE_SKIPPED_REFERENCE) return false;
   if (row.error_message === STAGE_SKIPPED_MESSAGE) return false;
-  if (row.processing_status === 'failed' && stageFailureCount(image) < MAX_STAGE_FAILURES) {
-    return false;
-  }
+  if (!stageRanToAnAnswer(image)) return blockedPassCount(image) >= MAX_BLOCKED_PASSES;
   return true;
 }
 

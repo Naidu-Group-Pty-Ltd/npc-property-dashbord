@@ -103,32 +103,68 @@ BEGIN
     FROM public.builder_stock_settlement_target
    LIMIT 1;
 
-  UPDATE public.builder_stock_items AS i
-     SET image_work_stage = 'eligibility',
-         image_work_next_attempt_at = now(),
-         image_work_claim_until = NULL,
-         image_work_attempts = 0,
-         -- A property is being asked again, so the terminal enrichment verdict
-         -- from the previous generation must not keep it out of the fallback
-         -- queue `settleFallbackImages` reads.
-         enrichment_status = 'pending',
-         image_work_updated_at = now(),
-         updated_at = now()
-   WHERE i.lifecycle_status IN ('active', 'staged')
-     AND i.image_work_stage = 'settled'
-     AND i.primary_image_id IS NULL
-     AND (
-       -- Its own evidence was re-judged after it concluded. (20261026000000)
-       EXISTS (
-         SELECT 1
-           FROM public.builder_stock_item_images AS x
-          WHERE x.stock_item_id = i.id
-            AND x.updated_at > i.image_work_updated_at
+  WITH reopened AS (
+    UPDATE public.builder_stock_items AS i
+       SET image_work_stage = 'eligibility',
+           image_work_next_attempt_at = now(),
+           image_work_claim_until = NULL,
+           image_work_attempts = 0,
+           -- A property is being asked again, so the terminal enrichment
+           -- verdict from the previous generation must not keep it out of the
+           -- fallback queue `settleFallbackImages` reads.
+           enrichment_status = 'pending',
+           image_work_updated_at = now(),
+           updated_at = now()
+     WHERE i.lifecycle_status IN ('active', 'staged')
+       AND i.image_work_stage = 'settled'
+       AND i.primary_image_id IS NULL
+       AND (
+         -- Its own evidence was re-judged after it concluded. (20261026000000)
+         EXISTS (
+           SELECT 1
+             FROM public.builder_stock_item_images AS x
+            WHERE x.stock_item_id = i.id
+              AND x.updated_at > i.image_work_updated_at
+         )
+         -- Or the engine that drew the conclusion has since changed.
+         OR (v_generation IS NOT NULL AND i.image_work_updated_at < v_generation)
        )
-       -- Or the engine that drew the conclusion has since changed.
-       OR (v_generation IS NOT NULL AND i.image_work_updated_at < v_generation)
-     );
-  GET DIAGNOSTICS v_reopened = ROW_COUNT;
+    RETURNING i.id
+  )
+  /*
+   * AND THE BOOKKEEPING THE OLD LADDER LEFT BEHIND GOES WITH IT.
+   *
+   * Re-opening a property is not enough on its own. `nextImageStage` reads
+   * `stage-status` rows to decide which rungs are still owed, and the rows the
+   * previous generation wrote say the rungs were climbed. On the measured
+   * upload, 86 properties hold a `google_maps` row reading "This property has
+   * no street address to look up" — a refusal caused by a MISSING INPUT that
+   * this generation supplies. Leave those rows and every property re-opens,
+   * finds both stages recorded as done, and settles blank again immediately:
+   * the fix would run, cost a claim each, and change nothing.
+   *
+   * These rows are pure bookkeeping. A `stage-status` row never carries an
+   * image — a real Street View is `streetview`, a real search result is its own
+   * URL — so deleting them destroys no picture and no provenance. What it
+   * destroys is a conclusion that, by the definition of a new generation, no
+   * longer stands.
+   *
+   * SCOPED TO THE TWO PAID STAGES AND TO `stage-status` ALONE. Nothing here can
+   * touch a builder-supplied row, a stored photograph, or the package attempt
+   * counters that stage 1 keeps.
+   */
+  , cleared AS (
+    DELETE FROM public.builder_stock_item_images AS x
+     USING reopened AS r
+     WHERE x.stock_item_id = r.id
+       AND x.source_reference = 'stage-status'
+       AND x.source_stage IN ('internet_search', 'google_maps')
+    RETURNING x.id
+  )
+  -- A data-modifying CTE always runs to completion whether or not the primary
+  -- query reads it, so `cleared` is executed and the count is the PROPERTIES.
+  SELECT count(*) INTO v_reopened FROM reopened;
+
   RETURN v_reopened;
 END;
 $$;
