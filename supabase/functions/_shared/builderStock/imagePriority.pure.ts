@@ -82,6 +82,41 @@ export const STAGE_SKIPPED_MESSAGE =
  * Skips written before this reference existed are recognised by their message,
  * which is why it is a constant rather than a literal at the call site.
  */
+/**
+ * How many operational failures of one stage stand as that stage having run.
+ *
+ * A STAGE THAT FAILED IS NOT A STAGE THAT ANSWERED. `unavailable` is a
+ * finding — the search ran and published imagery does not exist, the property
+ * has no address to look up — and a finding is an answer the ladder may move
+ * on from. `failed` is the provider not responding, which says nothing at all
+ * about the property, and treating it as an answer retires a rung this
+ * property was never actually offered.
+ *
+ * Measured: 58 properties of one upload hold `internet_search` rows reading
+ * "The property search service did not respond." Every one of them was
+ * credited with a completed stage 2 and moved down the ladder on the strength
+ * of an outage.
+ *
+ * The ceiling is what keeps the correction from becoming the defect it
+ * replaces. Counting a failure as "never attempted" without a bound asks a
+ * broken provider for the same stage on every claim, for ever, and pays for it
+ * — which is the loop `stageWasAttempted` was widened to close in the first
+ * place. Two attempts is the same ceiling `MAX_PACKAGE_ATTEMPTS` sets on a
+ * builder package, for the same reason: enough to ride out an outage, not
+ * enough to fund one.
+ */
+export const MAX_STAGE_FAILURES = 2;
+
+/** How many times this stage has failed operationally. Absent reads as one. */
+export function stageFailureCount(image: DisplayableImage): number {
+  const detail = (image as DisplayableImage & { source_detail?: unknown }).source_detail;
+  const raw = (detail && typeof detail === 'object')
+    ? (detail as Record<string, unknown>).stage_failures : null;
+  const n = typeof raw === 'number' ? raw : Number.parseInt(String(raw ?? ''), 10);
+  // A row written before the counter existed carries one known failure: itself.
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
 export function stageWasAttempted(image: DisplayableImage, stage: string): boolean {
   if (image.source_stage !== stage) return false;
   const row = image as DisplayableImage & {
@@ -89,6 +124,9 @@ export function stageWasAttempted(image: DisplayableImage, stage: string): boole
   };
   if (row.source_reference === STAGE_SKIPPED_REFERENCE) return false;
   if (row.error_message === STAGE_SKIPPED_MESSAGE) return false;
+  if (row.processing_status === 'failed' && stageFailureCount(image) < MAX_STAGE_FAILURES) {
+    return false;
+  }
   return true;
 }
 

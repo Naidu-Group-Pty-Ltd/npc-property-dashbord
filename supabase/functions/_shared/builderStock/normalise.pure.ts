@@ -17,6 +17,7 @@
  * anywhere.
  */
 import { SOURCE_ANCHOR_HEADER } from './sourceAssets.pure.ts';
+import { composeAddressLine } from './canonicalIdentity.pure.ts';
 
 export type StockPropertyType =
   | 'house' | 'townhouse' | 'apartment' | 'duplex' | 'land' | 'terrace'
@@ -123,7 +124,12 @@ alias('address_line',
   // carries nothing identifying and `identifiesAProperty` drops all of them.
   'deal', 'listing', 'property');
 
-alias('suburb', 'suburb', 'city', 'town', 'locality', 'suburb town');
+alias('suburb',
+  'suburb', 'city', 'town', 'locality', 'suburb town',
+  // `location` is one of the commonest headings a builder gives the suburb
+  // column, and its absence here is why 86 of 89 properties on one import
+  // carried no locality at all — which starves the whole fallback ladder.
+  'location', 'suburb location', 'area');
 alias('state', 'state', 'st', 'state territory', 'region');
 alias('postcode', 'postcode', 'post code', 'postal code', 'zip', 'zip code');
 
@@ -588,10 +594,39 @@ export function stockRecordLabel(record: StockLabelFields): string {
 export function geocodableAddress(record: {
   address_line: string | null; suburb: string | null;
   state: string | null; postcode: string | null;
+  lot_number?: string | null; unit_number?: string | null;
+  development_name?: string | null; project_name?: string | null;
 }): string | null {
-  if (!record.address_line) return null;
-  const parts = [record.address_line, record.suburb, record.state, record.postcode]
+  /*
+   * A LINE THE SOURCE DID NOT GIVE US, BUILT FROM WHAT IT DID.
+   *
+   * This used to refuse outright without an `address_line`, and a great many
+   * stock lists do not have one: they carry the lot in one column, the estate
+   * in another and the suburb in a third, which is the ordinary shape of a
+   * builder's spreadsheet. Measured on one import — 89 properties, 89 lot
+   * numbers, 89 estates, THREE addresses — every property was claimed, every
+   * stage advanced, and stages 2 and 3 had nothing to identify or geocode. The
+   * ladder ran to the bottom and found it had no rungs.
+   *
+   * COMPOSED HERE AND NOWHERE ELSE, WHICH IS THE POINT. `address_line` stays
+   * exactly what the builder wrote — so property identity, duplicate matching
+   * and the label a package document is searched for are all untouched. This
+   * function is the one place that asks "can the fallback ladder name this
+   * property", so it is the one place that may answer from the parts.
+   *
+   * NOTHING IS INVENTED, and it stays conservative: a bare lot number names
+   * nothing a geocoder can find, so a composition needs a NAMED PLACE — an
+   * estate or a project — and a row with only a number still returns null.
+   */
+  const line = record.address_line?.trim()
+    || composeAddressLine(record as never)?.line
+    || null;
+  if (!line) return null;
+
+  const parts = [line, record.suburb, record.state, record.postcode]
     .filter((part): part is string => !!part && !!part.trim());
+  // Still two parts: a place on its own is a suburb, and a picture of "the
+  // suburb" is a picture of somewhere else.
   if (parts.length < 2) return null;
   return `${parts.join(', ')}, Australia`;
 }

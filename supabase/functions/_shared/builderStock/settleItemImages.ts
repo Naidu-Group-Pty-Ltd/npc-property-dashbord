@@ -47,6 +47,7 @@ import {
 } from './settleImageSanitization.ts';
 import { settleFallbackImages } from './settleFallbackImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
+import { repairStoredIdentity } from './storedIdentityRepair.pure.ts';
 import type { ClaimedItem, ItemWorkStage } from './itemWorkClaim.ts';
 
 export interface ItemSettlement {
@@ -120,6 +121,22 @@ export async function settleClaimedItem(
     itemId: item.id, stage, nextStage: stage, progressed: false,
     result: 'nothing to do', primarySet: false,
   };
+
+  /*
+   * NAME THE PROPERTY BEFORE ASKING ANYONE TO PHOTOGRAPH IT.
+   *
+   * Stage 2 identifies a property and stage 3 geocodes it, and both are
+   * refused outright without an `address_line` — so a property that was
+   * imported before its identity could be resolved reaches the bottom of the
+   * ladder and finds it has no rungs. Measured: 89 properties claimed, every
+   * stage advanced, 3 addresses between them and not one photograph.
+   *
+   * Fixing the normaliser fixes the NEXT import; this is what recovers the
+   * ones already written down, from the raw row every source stores on the
+   * property. It only ever fills an empty field, it is idempotent, and it runs
+   * inside the claim so it needs no scheduler of its own.
+   */
+  await ensureCanonicalIdentity(db, item.id);
 
   try {
     if (stage === 'source') {
@@ -218,4 +235,61 @@ export async function settleClaimedItem(
   }
 
   return settlement;
+}
+
+
+/**
+ * Fill a stored property's canonical identity from its own source row.
+ *
+ * Reads the record the import persisted, maps the columns it could not place
+ * through the CURRENT alias table, and writes back only what is still empty.
+ * A property whose identity is already complete costs one indexed read and
+ * writes nothing.
+ */
+async function ensureCanonicalIdentity(db: any, itemId: string): Promise<void> {
+  // BEST EFFORT, ALWAYS. This enriches the inputs a later stage uses; it is
+  // never the work itself, so anything it cannot do leaves the stage running
+  // exactly as it did before. A caller whose client cannot answer this read at
+  // all — a narrower double, a deployment mid-migration — simply skips it.
+  if (typeof db?.from !== 'function') return;
+  try {
+    await repairCanonicalIdentity(db, itemId);
+  } catch (error) {
+    console.warn('[builderStock] canonical identity could not be repaired', {
+      phase: 'identity_repair', stock_item_id: itemId,
+      detail: String((error as { message?: string })?.message ?? error).slice(0, 200),
+    });
+  }
+}
+
+async function repairCanonicalIdentity(db: any, itemId: string): Promise<void> {
+  const { data: row } = await db
+    .from('builder_stock_items')
+    .select('id, address_line, suburb, state, postcode, lot_number, unit_number, '
+      + 'development_name, project_name, source_row')
+    .eq('id', itemId)
+    .maybeSingle();
+  /*
+   * NO SHORT CIRCUIT ON `address_line`. A record that HAS a street address can
+   * still be missing the locality beside it, and `geocodableAddress` needs two
+   * parts — so an early return here would leave exactly the properties whose
+   * address is real but unqualified unfindable. `repairStoredIdentity` already
+   * refuses to write over any field the import resolved, which is the guard
+   * that actually matters.
+   */
+  if (!row) return;
+
+  const { patch, recovered } = repairStoredIdentity(
+    row as never, row.source_row as never);
+  if (!recovered.length) return;
+
+  const { error } = await db.from('builder_stock_items').update(patch).eq('id', itemId);
+  if (error) {
+    // Not fatal: the stage below simply runs with what the property already
+    // had, exactly as it did before. Saying so is what makes it findable.
+    console.warn('[builderStock] canonical identity could not be written', {
+      phase: 'identity_repair', stock_item_id: itemId, recovered,
+      detail: (error as { message?: string }).message ?? 'unknown',
+    });
+  }
 }

@@ -27,7 +27,10 @@ import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import { geocodableAddress } from './normalise.pure.ts';
 import { hasReadySourceImage } from './sourceImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
-import { STAGE_SKIPPED_MESSAGE, STAGE_SKIPPED_REFERENCE, nextImageStage, WEB_VERIFIED_VERIFICATION } from './imagePriority.pure.ts';
+import {
+  MAX_STAGE_FAILURES, STAGE_SKIPPED_MESSAGE, STAGE_SKIPPED_REFERENCE,
+  nextImageStage, stageFailureCount, WEB_VERIFIED_VERIFICATION,
+} from './imagePriority.pure.ts';
 import { verifyWebImageIdentity } from './webImageIdentity.pure.ts';
 import {
   assessPanoramaUsefulness, headingToProperty, readLatLng,
@@ -103,6 +106,39 @@ async function withTimeout<T>(work: (signal: AbortSignal) => Promise<T>): Promis
   }
 }
 
+/**
+ * How many times this stage has already failed operationally on this property.
+ *
+ * Read rather than assumed, because the row is UPSERTED: one `stage-status`
+ * row per (property, stage) is overwritten on each pass, so the count has
+ * nowhere else to live. A read that fails contributes the conservative answer
+ * — the ceiling — because a counter we cannot read must never license an
+ * unbounded retry loop against a provider.
+ */
+async function priorStageFailures(
+  db: any,
+  item: EnrichableStockItem,
+  stage: 'google_maps' | 'internet_search',
+): Promise<number> {
+  try {
+    const { data, error } = await db
+      .from('builder_stock_item_images')
+      .select('source_detail, processing_status')
+      .eq('stock_item_id', item.id)
+      .eq('source_stage', stage)
+      .eq('source_reference', 'stage-status')
+      .maybeSingle();
+    if (error) return MAX_STAGE_FAILURES;
+    const row = (data ?? null) as
+      { source_detail?: unknown; processing_status?: unknown } | null;
+    if (!row) return 0;
+    if (row.processing_status !== 'failed') return 0;
+    return stageFailureCount(row as never);
+  } catch {
+    return MAX_STAGE_FAILURES;
+  }
+}
+
 /** Record a stage that produced nothing, so the UI can say why. */
 async function recordStageUnavailable(
   db: any,
@@ -112,6 +148,21 @@ async function recordStageUnavailable(
   message: string,
   provider: string,
 ): Promise<StageOutcome> {
+  /*
+   * A FAILURE IS COUNTED; A FINDING IS NOT.
+   *
+   * `unavailable` is the stage answering — nothing published, no address to
+   * look up — and the ladder moves on from an answer. `failed` is the provider
+   * not responding, which is not an answer about this property, so it carries
+   * a count and `stageWasAttempted` withholds the rung until the count reaches
+   * `MAX_STAGE_FAILURES`. Storing it here is what makes the retry BOUNDED: an
+   * outage costs a property two passes rather than a permanently retired stage
+   * or an unbounded loop.
+   */
+  const failures = status === 'failed'
+    ? Math.min(MAX_STAGE_FAILURES, (await priorStageFailures(db, item, stage)) + 1)
+    : 0;
+
   await db.from('builder_stock_item_images').upsert({
     stock_item_id: item.id,
     organisation_id: item.organisation_id,
@@ -121,6 +172,7 @@ async function recordStageUnavailable(
     processing_status: status,
     verification_status: stage === 'google_maps' ? 'location_derived' : 'unverified',
     error_message: message,
+    source_detail: status === 'failed' ? { stage_failures: failures } : null,
     position: 0,
   }, { onConflict: 'stock_item_id,source_stage,source_reference' });
   return { stage, status, detail: message };
