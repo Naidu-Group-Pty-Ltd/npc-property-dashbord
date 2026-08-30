@@ -24,7 +24,7 @@
 import { meteredFetch } from '../meteredFetch.ts';
 import { enforceGlobalDailyQuota, killSwitchActive } from '../publicAbuseControls.ts';
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
-import { geocodableAddress } from './normalise.pure.ts';
+import { geocodableAddress, hasPhotographableStreetAddress } from './normalise.pure.ts';
 import { hasReadySourceImage } from './sourceImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import {
@@ -269,6 +269,27 @@ export async function enrichFromGoogle(
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
       'This property has no street address to look up.', 'google', false);
+  }
+
+  /*
+   * AND THERE HAS TO BE SOMETHING BUILT THERE TO PHOTOGRAPH.
+   *
+   * `geocodableAddress` will compose a findable line from a lot number and an
+   * estate, which is what lets stage 2 name the property. It does NOT mean a
+   * camera pointed at that point sees the property: on a lot in a new estate
+   * it sees dirt or the road, and that is worse than a blank card because it
+   * is presented to a client as their house.
+   *
+   * This is an ANSWER, not a block — the lookup was asked and this property
+   * cannot be photographed from the street until it exists, which no retry
+   * changes. `ran: true`, so the ladder settles instead of buying it again.
+   */
+  if (!hasPhotographableStreetAddress(item)) {
+    return await recordStageUnavailable(
+      db, item, 'google_maps', 'unavailable',
+      'This property is a lot in an estate with no street address yet, so a '
+      + 'street-level photograph would show the land rather than the property.',
+      'google', true);
   }
 
   // The operator's off switch, shared with `street-view`.

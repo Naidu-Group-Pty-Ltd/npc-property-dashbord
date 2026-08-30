@@ -48,6 +48,7 @@ import {
 import { settleFallbackImages } from './settleFallbackImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import { repairStoredIdentity } from './storedIdentityRepair.pure.ts';
+import { reverifyStoredWebImages } from './reverifyWebImages.ts';
 import type { ClaimedItem, ItemWorkStage } from './itemWorkClaim.ts';
 
 export interface ItemSettlement {
@@ -137,6 +138,19 @@ export async function settleClaimedItem(
    * inside the claim so it needs no scheduler of its own.
    */
   await ensureCanonicalIdentity(db, item.id);
+
+  /*
+   * AND THEN ASK AGAIN ABOUT THE PICTURES ALREADY FOUND FOR IT.
+   *
+   * In that order, and the order is the whole point: the step above may have
+   * just recovered the locality that a candidate was refused for lacking. A
+   * search result's verdict was written once, when it was found, against
+   * whatever the property knew about itself at that moment — so an identity
+   * that improves reaches every future search and none of the results already
+   * in the table. It spends nothing; the evidence was stored beside each
+   * candidate for exactly this.
+   */
+  await reverifyWebImagesFor(db, item.id);
 
   try {
     if (stage === 'source') {
@@ -290,6 +304,62 @@ async function repairCanonicalIdentity(db: any, itemId: string): Promise<void> {
     console.warn('[builderStock] canonical identity could not be written', {
       phase: 'identity_repair', stock_item_id: itemId, recovered,
       detail: (error as { message?: string }).message ?? 'unknown',
+    });
+  }
+}
+
+
+/**
+ * Re-ask the identity question for this property's stored web candidates.
+ *
+ * Reads the property's identity as it now stands and hands it to the one
+ * module that decides. Best effort throughout: this improves what a later step
+ * may rank and is never the stage's own work.
+ */
+async function reverifyWebImagesFor(db: any, itemId: string): Promise<void> {
+  if (typeof db?.from !== 'function') return;
+  try {
+    const { data: row } = await db
+      .from('builder_stock_items')
+      .select('id, organisation_id, address_line, suburb, state, postcode, '
+        + 'lot_number, unit_number, development_name, project_name')
+      .eq('id', itemId)
+      .maybeSingle();
+    if (!row) return;
+
+    /*
+     * The builder's trading name, read from the property's OWN organisation.
+     * A name supplied from anywhere else would verify one builder's picture
+     * against another's identity.
+     */
+    let builderName: string | null = null;
+    try {
+      const { data: org } = await db
+        .from('builder_organisations')
+        .select('trading_name, legal_name')
+        .eq('id', row.organisation_id)
+        .maybeSingle();
+      const named = (org ?? {}) as { trading_name?: string; legal_name?: string };
+      builderName = named.trading_name || named.legal_name || null;
+    } catch {
+      // A name we could not read is one the check does without.
+    }
+
+    await reverifyStoredWebImages(db, itemId, {
+      addressLine: row.address_line,
+      lotNumber: row.lot_number,
+      unitNumber: row.unit_number,
+      developmentName: row.development_name,
+      projectName: row.project_name,
+      suburb: row.suburb,
+      state: row.state,
+      postcode: row.postcode,
+      builderName,
+    });
+  } catch (error) {
+    console.warn('[builderStock] stored web candidates could not be re-judged', {
+      phase: 'web_identity_reverify', stock_item_id: itemId,
+      detail: String((error as { message?: string })?.message ?? error).slice(0, 200),
     });
   }
 }
