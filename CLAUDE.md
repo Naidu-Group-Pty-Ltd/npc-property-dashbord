@@ -623,6 +623,20 @@ report is not a customer report**: it accounts for the business's own
 programme, so demanding a case left the customer check permanently blocked
 and step 1 of the path unable ever to complete.
 
+**Drafting is a PAGE now** (`/admin/aml/austrac/new`,
+`/admin/aml/austrac/:reportId/edit`). A report to a regulator is the longest
+single piece of writing in this product, written against a statutory deadline
+over more than one sitting, and a modal cannot be deep-linked, reopened where
+it was left, sent to a colleague or reached with the back button — and closes
+on an outside click with whatever was typed in it. Four rules. **The path sits
+UNDER the hub's**, because `pathMatchesWorkspace` matches a prefix plus `/`
+and a page in no workspace draws no strip. **Saving hands the report back**
+via `?report=<id>`, which is what the dialog's close did implicitly. **An
+unsaved change guards leaving** — registered only while there is one. And the
+hub's action is **"Start AUSTRAC Report"**: "New Draft" named the row it would
+add to a table, not the act. `AUSTRAC_KIND_LABEL` and `draftSectionsForReport`
+are in the pure module because both were about to exist twice.
+
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
 before touching `_shared/aml/passport/identityPortrait.pure.ts`,

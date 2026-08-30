@@ -178,3 +178,65 @@ the footer before they leave rather than discovered by the MLRO afterwards.
 The panel also carries the six-step lodgement path with the two steps that
 happen on this screen marked as such, so it is visible that saving a draft is
 the beginning of the process and that lodgement is never made from here.
+
+---
+
+## Writing a report is a page, not a dialog
+
+The draft lived in a modal. Everything about a modal was wrong for what it
+held.
+
+A report to a regulator is the **longest single piece of writing anyone does
+in this product**. It is written against a statutory deadline, and it is
+routinely started when the suspicion forms, left, and returned to hours
+later. A dialog cannot be deep-linked, cannot be reopened where it was left,
+cannot be sent to a colleague, is not reached by the browser's back button,
+and closes on an outside click or the Escape key with whatever was typed in
+it. Widening it — which is what the previous change did — bought room and
+none of the rest.
+
+`/admin/aml/austrac/new` and `/admin/aml/austrac/:reportId/edit` are the
+draft now. Everything the dialog asked, the page asks; everything the server
+refuses, it still refuses; and what saves a draft is unchanged — a kind and a
+title, because a Suspicious Matter Report is often started the minute the
+suspicion forms.
+
+Four things follow from the move.
+
+**The path sits under the hub's own.** `pathMatchesWorkspace` matches a
+prefix followed by `/`, so `austrac/new` resolves to Regulatory & Assurance
+and draws its secondary strip. A page listed in no workspace draws no strip
+and highlights Compliance Home — reachable, and looking broken. That is how
+the Passport shipped once.
+
+**Saving hands the report back.** The dialog closed onto the report it had
+just written. A page has to do that deliberately or the operator returns to a
+list with nothing selected, so the draft page navigates to
+`?report=<id>` and the hub opens it. `amlAustracReportPath` is where that
+spelling lives.
+
+**Leaving is not losing.** A page gives up the modal's implicit "you are in
+the middle of something", so the page says it: an unsaved change guards the
+browser's own unload and the page's own Back and Cancel. The handler is
+registered only while there *is* an unsaved change — an always-on one makes
+every navigation away from a clean page ask a question nobody needs.
+
+**The action bar is fixed to the foot of the viewport**, not to the end of
+the form. On a page carrying an eighteen-row narrative, a Save button below
+it is a scroll away from wherever the operator is working, which is the one
+thing the modal's own footer got right.
+
+### The action is named for the act
+
+"New Draft" named the row it would add to a table. An operator who has been
+told they must inform AUSTRAC about something is looking for the report, not
+for a draft record, so the hub's action is **"Start AUSTRAC Report"**.
+
+### One label map
+
+`AUSTRAC_KIND_LABEL` moved into the pure module because there were two copies
+— the hub's table and the draft form each carried their own — and a report is
+one thing whichever screen names it. `draftSectionsForReport` is there for
+the same reason: the form and the page both ask "what is still owed" about
+the same draft, and two mappings from a stored row to `DraftFacts` is how
+they come to disagree.
