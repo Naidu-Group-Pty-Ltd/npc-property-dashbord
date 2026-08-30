@@ -519,19 +519,77 @@ export function AmlLayout() {
             )}
           </div>
 
-          <nav aria-label="AML workspaces" className="hidden min-w-0 grid-cols-5 gap-1 rounded-xl border border-border/60 bg-background/45 p-1 shadow-inner md:grid">
+          {/*
+            ── The strip is sized by what is IN it ────────────────────────
+            This was `grid-cols-5`, fixed, from when there were five
+            workspaces. Three of them have since left, so the remaining
+            three were drawn into three fifths of the row and the last two
+            fifths were empty — the tabs looked small and adrift because
+            they were being asked to fill a row built for a set that no
+            longer exists. The column count now follows the workspaces,
+            which is the only value that can never fall out of step.
+          */}
+          <nav
+            aria-label="AML workspaces"
+            className="hidden min-w-0 gap-1.5 rounded-xl border border-border/60 bg-background/45 p-1.5 shadow-inner md:grid"
+            style={{ gridTemplateColumns: `repeat(${Math.max(visibleWorkspaces.length, 1)}, minmax(0, 1fr))` }}
+          >
             {visibleWorkspaces.map((w) => { const active = activeWorkspace?.key === w.key; const Icon = w.icon; return (
-              <Link key={w.key} to={w.defaultPath} className={cn("group inline-flex min-w-0 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:text-sm", active ? "border-primary/30 bg-primary/10 text-primary shadow-sm" : "border-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/55 hover:text-foreground")} aria-current={active ? "page" : undefined}>
-                <Icon aria-hidden="true" className="h-4 w-4 shrink-0" />
+              <Link
+                key={w.key}
+                to={w.defaultPath}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "group relative inline-flex min-w-0 items-center justify-center gap-2.5 rounded-lg border px-4 py-2.5 text-sm font-medium",
+                  "transition-[background-color,border-color,color,box-shadow,transform] duration-150",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                  active
+                    ? "border-primary/40 bg-primary/10 text-primary shadow-sm"
+                    : "border-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/60 hover:text-foreground",
+                  // A pressed control should feel pressed. Suppressed for
+                  // anyone who has asked the system for less movement.
+                  "active:scale-[0.99] motion-reduce:transition-none motion-reduce:active:scale-100",
+                )}
+              >
+                <Icon
+                  aria-hidden="true"
+                  className={cn(
+                    "h-4 w-4 shrink-0 transition-colors",
+                    active ? "text-primary" : "text-muted-foreground/80 group-hover:text-foreground",
+                  )}
+                />
                 <span className="truncate">{t(w.label)}</span>
+                {/* The active tab is readable without relying on colour
+                    alone — a 2px rule under the label, which survives a
+                    high-contrast theme and a monochrome print. */}
+                {active && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-x-4 bottom-1 h-0.5 rounded-full bg-primary/70"
+                  />
+                )}
               </Link>
             );})}
           </nav>
 
           {secondary && secondary.length > 0 && (
-            <nav aria-label={`${activeWorkspace?.label} sections`} className="hidden flex-wrap gap-1 md:flex">
+            <nav aria-label={`${activeWorkspace?.label} sections`} className="hidden flex-wrap gap-1.5 md:flex">
               {secondary.map((s) => { const active = location.pathname === s.to || location.pathname.startsWith(s.to + "/"); return (
-                <Link key={s.to} to={s.to} className={cn("inline-flex shrink-0 items-center rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background", active ? "border-primary/30 bg-primary/10 text-primary" : "border-border/50 bg-background/35 text-muted-foreground hover:bg-muted/60 hover:text-foreground")} aria-current={active ? "page" : undefined}>{t(s.label)}</Link>
+                <Link
+                  key={s.to}
+                  to={s.to}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "inline-flex shrink-0 items-center rounded-full border px-4 py-2 text-[13px] font-medium",
+                    "transition-[background-color,border-color,color,box-shadow] duration-150",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                    active
+                      ? "border-primary/40 bg-primary/10 text-primary shadow-sm"
+                      : "border-border/50 bg-background/35 text-muted-foreground hover:border-border hover:bg-muted/60 hover:text-foreground",
+                  )}
+                >
+                  {t(s.label)}
+                </Link>
               );})}
             </nav>
           )}
