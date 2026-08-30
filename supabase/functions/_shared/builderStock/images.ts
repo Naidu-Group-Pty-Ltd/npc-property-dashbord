@@ -831,9 +831,33 @@ export async function enrichStockItem(
   });
   const ladderHasMore = remainingStage !== 'none';
 
-  const enrichmentStatus = anyReady
-    ? (anyProblem ? 'partial' : 'complete')
-    : (ladderHasMore ? 'pending' : 'failed');
+  /*
+   * THE LADDER DECIDES WHEN A PROPERTY IS FINISHED — NOT WHETHER BYTES LANDED.
+   *
+   * `ladderHasMore` used to be consulted ONLY on the `!anyReady` arm, and
+   * `anyReady` means "a stage stored an image", which is not the same question
+   * as "this property has a picture". A web result that stores cleanly and then
+   * fails the identity check is a `ready` OUTCOME and a non-displayable IMAGE.
+   *
+   * So a property could be marked `partial` — terminal, and `readFallbackQueue`
+   * selects `pending`/`enriching` only — while `nextImageStage` still owed it a
+   * rung. The shape that reaches it: stage 2 stores an unverified image
+   * (`ready`), stage 3 is BLOCKED in the same claim by an outage, an open
+   * circuit or the daily ceiling (`stage_ran: false`, one bounded pass spent),
+   * and the property settles blank with Street View never asked and a retry
+   * unspent. Exactly the state `settled` may not mean.
+   *
+   * `ladderHasMore` is already computed from a fresh re-read of the rows as
+   * they now stand, which is the honest source and the reason that re-read
+   * exists. Asking it FIRST changes no vocabulary — `complete`, `partial` and
+   * `failed` keep their meanings — it only stops any of them being written
+   * while a stage is still owed. It terminates for the same reason it always
+   * did: a blocked stage becomes attempted at `MAX_BLOCKED_PASSES`, and a
+   * property holding a displayable picture answers `none` before anything else.
+   */
+  const enrichmentStatus = ladderHasMore
+    ? 'pending'
+    : (anyReady ? (anyProblem ? 'partial' : 'complete') : 'failed');
 
   await db.from('builder_stock_items')
     .update({ enrichment_status: enrichmentStatus, enriched_at: new Date().toISOString() })
