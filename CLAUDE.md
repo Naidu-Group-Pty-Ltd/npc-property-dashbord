@@ -717,6 +717,30 @@ submission record (`austracBundleRecord.pure.ts` projects onto
 Systems** fallback; the tipping-off prohibition travels IN the document and
 on the SMR alone, and `RecordDocumentIdentity` became a defaulted parameter
 because the renderer wrote "Submission v1" across every page it drew.
+That record was correct and thin, and its first production render is the
+document this rework is measured against: it opened on a field list, said
+nothing about what OBLIGES the report, carried the MLRO decision only as a
+version-table note reading "MLRO sign-off", said nothing about what was still
+outstanding, and printed page two **blank apart from the colophon** — which
+pinned itself to the foot of a fresh page whenever the content overran. It is
+arranged as a story now (handling restriction, obligation, report, narrative,
+pre-lodgement checks, approval, lodgement, receipt, versions, integrity) and
+**nothing in it reads anything new**: the prose is `AUSTRAC_OBLIGATIONS` and
+`KIND_GUIDANCE`, the checks are `austracReadiness` — the module the register
+already renders — and the approver is read from the version row the sign-off
+writes, because `mlro_signed_by` is an id with no label. Five rules carry it.
+**The s.123 prohibition is met BEFORE the document is acted on and stated
+once** — it was 8.5pt grey at the foot of the last page, where a reader who
+has already forwarded it arrives; a test pins the rule (present, first,
+exactly once) and not the field. **A lodgement is never asserted to have met
+the deadline** — `submitted_at` says a report went, not that it went in time,
+so the Deadline line compares against the due date. **An empty field is
+omitted rather than printed as a dash** (two of eleven first-page rows carried
+no fact). **The uuid leaves the body and stays in the running foot** — it
+means nothing to any party the record is for, while the hash stays WHOLE
+because truncating it destroys the only thing it is for. And **a colophon pins
+to the foot only when it fits**, or an overrun buys a blank sheet with a
+footer on it.
 **A dead control is worse than no control** — the path card drew "Open" on
 the open step while the page handled three of six keys, so a saved draft's
 step 3 did nothing; it takes `stepActions` now, a step with no entry draws no
