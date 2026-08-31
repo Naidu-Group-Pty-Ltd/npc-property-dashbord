@@ -366,10 +366,7 @@ export function recoveredRowsFromGrid(
 
   const sheet = (wanted === null || !Number.isFinite(wanted))
     ? sheets[0]
-    : sheets.find((candidate) => {
-      const id = (candidate as { properties?: { sheetId?: unknown } })?.properties?.sheetId;
-      return Number(id) === wanted;
-    });
+    : sheets.find((candidate) => sheetIdOf(candidate) === wanted);
   if (!sheet) return [];
 
   const rowData = ((sheet as { data?: Array<{ rowData?: unknown }> }).data ?? [])
@@ -398,6 +395,28 @@ export function recoveredRowsFromGrid(
     if (sawAnything) rows.push({ values, links });
   }
   return rows;
+}
+
+/**
+ * A worksheet's own id, decoded the way Google actually sends it.
+ *
+ * THE SHEETS API OMITS `sheetId` WHEN IT IS ZERO. Its JSON is proto3, which
+ * leaves out scalar fields holding their default — so the first tab of very
+ * nearly every spreadsheet arrives carrying no `sheetId` at all, and `gid=0`
+ * is by far the commonest link anyone pastes.
+ *
+ * Read as `Number(undefined)` that is `NaN`, which equals nothing, so the tab
+ * was never found and the recovery returned zero rows while reporting itself
+ * fulfilled. Measured against the live document: an identical payload carrying
+ * `sheetId: 0` parsed a row, and the same payload without it parsed none.
+ *
+ * Absent therefore means zero. That is the wire format's own meaning rather
+ * than a guess, and it is emphatically NOT positional — a workbook whose first
+ * tab is 12345 and whose third is 0 still resolves `gid=0` to the third.
+ */
+function sheetIdOf(sheet: unknown): number {
+  const id = (sheet as { properties?: { sheetId?: unknown } })?.properties?.sheetId;
+  return Number(id ?? 0);
 }
 
 function cellsOf(row: unknown): Array<{ formattedValue?: unknown; hyperlink?: unknown }> {

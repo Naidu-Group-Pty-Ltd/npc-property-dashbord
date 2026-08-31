@@ -272,11 +272,11 @@ Deno.serve(async (req) => {
        * not be saved are the more serious of the two.
        */
       /**
-     * Ask for this sheet's link addresses, where all five conditions hold.
+     * Ask for this sheet's link addresses, where all four conditions hold.
      *
      * Every refusal is silent and operational: this is an auxiliary recovery,
-     * and a builder whose organisation is not on the internal allowlist should
-     * see no difference from one whose sheet exported cleanly.
+     * so a builder whose sheet is not a Google Sheet, or whose links were read
+     * cleanly, sees no difference from one whose recovery ran.
      */
     const maybeRequestLinkRecovery = async (
       recoveryUploadId: string,
