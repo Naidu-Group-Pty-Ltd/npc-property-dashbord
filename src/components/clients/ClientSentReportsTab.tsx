@@ -28,6 +28,7 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { secureStorageUpload, secureStorageDownload } from '@/hooks/useSecureStorage';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 interface ClientSentReportsTabProps {
   clientId: string;
@@ -36,7 +37,7 @@ interface ClientSentReportsTabProps {
 
 const reportTypeConfig: Record<string, { label: string; icon: typeof FileText; color: string }> = {
   investment: { label: 'Investment Report', icon: FileBarChart, color: 'bg-info/10 text-info' },
-  portfolio: { label: 'Portfolio Review', icon: BarChart3, color: 'bg-success/10 text-success' },
+  portfolio: { label: PORTFOLIO_REPORT_LABEL, icon: BarChart3, color: 'bg-success/10 text-success' },
   borrowing_capacity: { label: 'Borrowing Capacity', icon: PiggyBank, color: 'bg-brand-500/10 text-brand-600' },
   cash_flow: { label: 'Cash Flow Analysis', icon: TrendingUp, color: 'bg-accent/10 text-accent' },
   general: { label: 'General', icon: FileText, color: 'bg-muted text-muted-foreground' },
@@ -463,7 +464,7 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="investment">Investment Report</SelectItem>
-                  <SelectItem value="portfolio">Portfolio Review</SelectItem>
+                  <SelectItem value="portfolio">{PORTFOLIO_REPORT_LABEL}</SelectItem>
                   <SelectItem value="borrowing_capacity">Borrowing Capacity</SelectItem>
                   <SelectItem value="cash_flow">Cash Flow Analysis</SelectItem>
                   <SelectItem value="general">General Document</SelectItem>

@@ -41,6 +41,7 @@ import { MultiTeamUserSelect } from '@/components/ui/MultiTeamUserSelect';
 import { useTeamUsers } from '@/hooks/useTeamUsers';
 import { useNotifications } from '@/contexts/NotificationsContext';
 import { useAuth } from '@/hooks/useAuth';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 interface ClientRemindersProps {
   clientId: string;
@@ -49,7 +50,7 @@ interface ClientRemindersProps {
 
 const reminderTypes = [
   { value: 'follow_up', label: 'Follow Up', icon: Bell },
-  { value: 'review', label: 'Portfolio Review', icon: FileText },
+  { value: 'review', label: PORTFOLIO_REPORT_LABEL, icon: FileText },
   { value: 'call', label: 'Phone Call', icon: Phone },
   { value: 'meeting', label: 'Meeting', icon: Users },
   { value: 'document', label: 'Document', icon: FileText },

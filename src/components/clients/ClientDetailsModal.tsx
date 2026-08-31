@@ -150,6 +150,9 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
   const tabOrder = useMemo(() => visibleTabs.map((tab) => tab.value), [visibleTabs]);
   const [showEmailCompose, setShowEmailCompose] = useState(false);
   const [pdfAttachment, setPdfAttachment] = useState<{ blob: Blob; fileName: string } | null>(null);
+  // Who the composed email is addressed to, when that is not the client.
+  // Cleared when the dialog closes so the next send cannot inherit it.
+  const [emailRecipient, setEmailRecipient] = useState<{ name: string; email: string } | null>(null);
   const [isPreparingPortfolio, setIsPreparingPortfolio] = useState(false);
   const [isSendPortfolioModalOpen, setIsSendPortfolioModalOpen] = useState(false);
   const [portfolioAnalysisConfig, setPortfolioAnalysisConfig] = useState<PortfolioAnalysisSettings>(DEFAULT_SETTINGS);
@@ -220,8 +223,22 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
   );
 
   // Handle PDF email callback (for finance)
-  const handlePdfEmailClick = (pdfBlob: Blob, fileName: string) => {
+  /**
+   * Audit item 12 — a PDF, and who it is for.
+   *
+   * This used to take the document alone, so the compose window fell back to
+   * the client on every path. Two of them reach it: the client-details
+   * download (which passes no recipient and stays addressed to the client)
+   * and "Send to Finance → Compose Email with PDF" (which now asks who first,
+   * through the same picker "Quick Send" uses).
+   */
+  const handlePdfEmailClick = (
+    pdfBlob: Blob,
+    fileName: string,
+    recipient?: { name: string; email: string },
+  ) => {
     setPdfAttachment({ blob: pdfBlob, fileName });
+    setEmailRecipient(recipient ?? null);
     setShowEmailCompose(true);
     toast.success('PDF attached to email');
   };
@@ -1111,17 +1128,19 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
           if (!open) {
             setPortfolioEmailSubject('');
             setPortfolioEmailBody('');
+            setEmailRecipient(null);
           }
         }}
         clientId={client.id}
         clientEmail={client.primary_email}
+        recipient={emailRecipient}
         clientName={`${client.primary_first_name} ${client.primary_surname}`}
         defaultSubject={portfolioEmailSubject || undefined}
         defaultBody={portfolioEmailBody || undefined}
         inlineAttachment={pdfAttachment}
       />
 
-      {/* Portfolio Review Wizard */}
+      {/* Portfolio Analysis Wizard */}
       <ReviewWizard
         clientId={client.id}
         clientName={`${client.primary_first_name} ${client.primary_surname}`}

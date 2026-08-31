@@ -83,6 +83,15 @@ const __portfolioHandler = async (req: Request): Promise<Response> => {
     const body = await req.json();
     const { 
       clientId,
+      // Audit item 10 — the AI Insights card on a client's AI tab.
+      //
+      // `'insights'` asks for the five short fields that card renders rather
+      // than the fourteen-section review. It reuses everything below it:
+      // the same authentication, the same portfolio-analysis entitlement, the
+      // same server-side assembly of the client's properties and metrics, and
+      // the same metered router call under the same agent key. Default
+      // `'full'`, so every existing caller is untouched.
+      mode = 'full',
       investorProfile = 'general',
       analysisDepth = 'comprehensive',
       includeProjections = true,
@@ -471,6 +480,113 @@ const __portfolioHandler = async (req: Request): Promise<Response> => {
     }
 
     // Build AI analysis prompt
+    // ── Audit item 10: the AI Insights card ───────────────────────────────
+    //
+    // "Generate AI Insights" answered `Failed to generate insights: Not found`
+    // for everyone, every time, and had never once worked. The card composed
+    // its whole prompt in the browser and posted it to `report-qa` with
+    // `action: 'chat'` — an action whose policy is `access: 'write'`, meaning
+    // it authorises against a Report Q&A CONVERSATION. The card has no
+    // conversation, so `if (!conversationId) return denyResponse()` answered
+    // 404, and 404 is deliberate there: a caller must not be able to tell a
+    // conversation they cannot reach from one that does not exist. A correct
+    // refusal, to a question that should never have been asked of it.
+    //
+    // Two things were wrong beyond the 404. A card on the Clients page
+    // required the unrelated `report_qa` module permission and spent Report
+    // Q&A's shared paid quota (30/hour). And the prompt was assembled by the
+    // browser, so the endpoint was being used as a free-text model proxy.
+    //
+    // Both go away here: this function already authorises the CLIENT, already
+    // reads the portfolio from the database, and already meters under
+    // `portfolio_analysis`. The browser now sends a client id and nothing
+    // else.
+    if (mode === 'insights') {
+      const topProperties = ownedProperties.slice(0, 12).map((p) => ({
+        address: p.address,
+        value: Number(p.value) || 0,
+        loan: Number(p.loan_remaining) || 0,
+        monthlyRent: Number(p.monthly_rental_income) || 0,
+        netMonthlyCashflow: Number(p.net_monthly_cashflow) || 0,
+        type: p.property_type,
+      }));
+
+      const insightsPrompt = `Analyse this Australian property investment portfolio.
+
+Client: ${client.primary_first_name ?? ''} ${client.primary_surname ?? ''}
+Properties: ${portfolioMetrics.totalProperties} (${portfolioMetrics.investmentCount} investment, ${portfolioMetrics.ownerOccupiedCount} owner-occupied)
+Portfolio value: $${Math.round(portfolioMetrics.totalValue).toLocaleString('en-AU')}
+Total debt: $${Math.round(portfolioMetrics.totalDebt).toLocaleString('en-AU')}
+Equity: $${Math.round(portfolioMetrics.totalEquity).toLocaleString('en-AU')}
+Average LVR: ${portfolioMetrics.averageLVR.toFixed(1)}%
+Average gross yield: ${portfolioMetrics.averageYield.toFixed(2)}%
+Net monthly cash flow: $${Math.round(portfolioMetrics.netMonthlyCashflow).toLocaleString('en-AU')}
+
+Properties:
+${topProperties.map((p) => `- ${p.address} (${p.type}): value $${p.value.toLocaleString('en-AU')}, loan $${p.loan.toLocaleString('en-AU')}, rent $${p.monthlyRent.toLocaleString('en-AU')}/mo, net $${p.netMonthlyCashflow.toLocaleString('en-AU')}/mo`).join('\n') || '- none recorded'}
+
+Respond with ONLY this JSON:
+{
+  "summary": "2-3 sentence overall assessment",
+  "strengths": ["strength 1", "strength 2", "strength 3"],
+  "opportunities": ["opportunity 1", "opportunity 2"],
+  "risks": ["risk 1", "risk 2"],
+  "recommendations": ["recommendation 1", "recommendation 2", "recommendation 3"]
+}`;
+
+      const { callLLMRaw: callInsights } = await import('../_shared/llmRouter.ts');
+      const insightsResponse = await callInsights({
+        agentKey: 'portfolio_analysis',
+        messages: [
+          {
+            role: 'system',
+            content: (await (await import('../_shared/engine-prompts.ts')).resolvePrompt('portfolio_analysis.system')).text,
+          },
+          { role: 'user', content: insightsPrompt },
+        ],
+        temperature: 0.7,
+        // A fraction of the full review's 8,000. The card renders five short
+        // fields; asking for more spends a forwarded vendor key on tokens
+        // nothing will display.
+        maxTokens: 1200,
+      });
+
+      if (!insightsResponse.ok) {
+        const detail = await insightsResponse.text();
+        console.error('[generate-portfolio-analysis] insights model error:', insightsResponse.status, detail);
+        return new Response(
+          JSON.stringify(
+            insightsResponse.status === 429
+              ? { error: 'Rate limit exceeded', details: 'Please wait and try again.' }
+              : { error: 'AI analysis failed', details: detail },
+          ),
+          {
+            status: insightsResponse.status === 429 ? 429 : 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
+      const insightsData = await insightsResponse.json();
+      const insightsText = insightsData.choices?.[0]?.message?.content ?? '';
+      // The system prompt asks for bare JSON, but a fenced block is the
+      // failure mode every other caller here already guards against.
+      const fenced = insightsText.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+      const braced = (fenced ? fenced[1] : insightsText).match(/\{[\s\S]*\}/);
+      if (!braced) {
+        console.error('[generate-portfolio-analysis] insights response was not JSON:', insightsText.slice(0, 400));
+        return new Response(
+          JSON.stringify({ error: 'Failed to parse analysis results' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, insights: JSON.parse(braced[0]) }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
     const prompt = `You are an expert Australian property portfolio analyst and trusted advisor. Analyze this client's entire property portfolio and provide a comprehensive, consultative analysis that builds trust and demonstrates expertise.
 
 **CLIENT & HOUSEHOLD INFORMATION:**

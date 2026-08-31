@@ -59,6 +59,7 @@ import { PortfolioReportDownloadButton } from '@/components/clients/PortfolioRep
 import { snapshotBlob } from '@/lib/reports/borrowingCapacity/deliverSnapshot';
 import { fetchLatestBorrowingCapacity } from '@/lib/fetchLatestBorrowingCapacity';
 import { useAuth } from '@/hooks/useAuth';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 interface ClientReportsTabProps {
   clientId: string;
@@ -883,7 +884,7 @@ export function ClientReportsTab({
                 )}
 
                 {/*
-                  The typeset Portfolio Performance Review.
+                  The typeset {PORTFOLIO_REPORT_LABEL}.
 
                   Offered on every portfolio row, including the ones with no
                   `pdf_file_path` — 7 of the 21 stored reports are in that state
