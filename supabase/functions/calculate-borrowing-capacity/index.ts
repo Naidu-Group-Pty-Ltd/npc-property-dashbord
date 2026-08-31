@@ -1367,6 +1367,34 @@ Deno.serve(async (req) => {
   const __csrf = enforceCsrf(req);
   if (!__csrf.ok) return csrfDenied(corsHeaders, __csrf);
 
+  // ── Phase timing (audit item 4) ────────────────────────────────────────
+  //
+  // The reported symptom was "Calculation failed: Request timed out. Please
+  // try again." — the browser's own abort at 60s (`invokeSecureFunction`),
+  // which tells us only that the function did not answer. Nothing here
+  // recorded WHERE the time went, so a timeout left no evidence at all: the
+  // handler logs a result, a tax breakdown and a segment verdict, none of
+  // them timed, and a request that never reached those lines logged nothing.
+  //
+  // This costs one `Date.now()` per phase and changes no behaviour. It exists
+  // because the most probable cause is not in this file: `mcFetchRaw` was
+  // unbounded until 2026-08-29, so `requireWorkspaceCapability` below could
+  // spend the browser's entire budget waiting on Mission Control (the same
+  // stall measured at 83s on `compare-investment-reports`). That is now
+  // capped at 10s an attempt — but the next time this function is slow, the
+  // log should name the phase rather than leave it to be inferred.
+  const t0 = Date.now();
+  const phases: Record<string, number> = {};
+  let lastMark = t0;
+  const mark = (name: string) => {
+    const now = Date.now();
+    phases[name] = now - lastMark;
+    lastMark = now;
+  };
+  const timingLine = () =>
+    `total=${Date.now() - t0}ms ` +
+    Object.entries(phases).map(([k, v]) => `${k}=${v}ms`).join(' ');
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -1381,6 +1409,7 @@ Deno.serve(async (req) => {
       console.log(`[calculate-borrowing-capacity] Auth failed for client ${clientId}:`, authError);
       return createUnauthorizedResponse(authError, corsHeaders);
     }
+    mark('auth');
 
     // Named once, as in get-client-data and manage-bc-scenarios. The authz gate
     // (scripts/security/check-client-portfolio-authz.mjs) asserts on the exact
@@ -1392,6 +1421,7 @@ Deno.serve(async (req) => {
 
     // Borrowing Capacity is a Scale-or-add-on capability — enforced server-side.
     const entitlement = await requireWorkspaceCapability(supabase, actor, 'borrowing-capacity');
+    mark('entitlement');
     if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
     console.log(`[calculate-borrowing-capacity] Authenticated user: ${userId}`);
 
@@ -1461,6 +1491,8 @@ Deno.serve(async (req) => {
       supabase.from("client_properties").select("*").eq("client_id", clientId),
       supabase.from("client_expenses").select("*").eq("client_id", clientId),
     ]);
+
+    mark('reads');
 
     const incomeRecords = incomeResult.data || [];
     const incomeSources = incomeSourcesResult.data || [];
@@ -1625,6 +1657,7 @@ Deno.serve(async (req) => {
       policy: activePolicy,
     });
 
+    mark('compute');
     console.log(`[calculate-borrowing-capacity] Result: Capacity $${result.borrowingCapacity}, Band: ${result.serviceabilityBand}`);
 
     // ── Phase 2: Hybrid Segment Reconciliation (commercial/industrial) ──
@@ -1643,6 +1676,8 @@ Deno.serve(async (req) => {
       console.warn(`[calculate-borrowing-capacity] Segment reconciliation failed (non-fatal):`, segErr);
       segmentReconciliation = { enabled: false, triggered: false, segmentBreakdown: [], totals: { additionalAnnualNoi: 0, additionalAnnualDebtService: 0, additionalHeadroom: 0 }, overlays: { extraMonthlyCommitments: 0, extraShadedAnnualIncome: 0, extraDtiDenominator: 0, portfolioCapacityDelta: 0 }, warnings: [`segment engine error: ${(segErr as any)?.message || 'unknown'}`] };
     }
+
+    mark('segments');
 
     // Portfolio capacity (additive — never replaces residential `borrowingCapacity`).
     // When the segment engine is triggered, this surfaces the hybrid capacity for UI.
@@ -2046,6 +2081,9 @@ Deno.serve(async (req) => {
         .update({ borrowing_capacity: result.borrowingCapacity })
         .eq("id", clientId);
     }
+    mark('save');
+
+    console.log(`[calculate-borrowing-capacity] timing ${timingLine()}`);
 
     return new Response(
       JSON.stringify({
@@ -2055,14 +2093,32 @@ Deno.serve(async (req) => {
           ...responseData,
         },
       }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json",
+          // Already named in Access-Control-Expose-Headers above and never set
+          // by this function until now, so a caller that wants to know how long
+          // its own request took has had no way to ask.
+          "x-duration-ms": String(Date.now() - t0),
+        },
+      }
     );
 
   } catch (error) {
-    console.error("[calculate-borrowing-capacity] Error:", error);
+    // Timed as well as logged: a request that fails 55s in and one that fails
+    // in 200ms are different faults, and the message alone does not say which.
+    console.error(`[calculate-borrowing-capacity] Error after ${timingLine()}:`, error);
     return new Response(
       JSON.stringify({ ...internalError(error, 'calculate-borrowing-capacity'), success: false }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      {
+        status: 500,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json",
+          "x-duration-ms": String(Date.now() - t0),
+        },
+      }
     );
   }
 });

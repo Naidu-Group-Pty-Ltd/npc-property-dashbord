@@ -178,6 +178,9 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
       const uploadResult = await secureStorageUpload('client-files', storagePath, uploadedFile, {
         contentType: uploadedFile.type || 'application/octet-stream',
         upsert: true,
+        // The client this file belongs to. `secure-storage` derives the
+        // destination and the owner from it and refuses the upload without it.
+        resourceId: clientId,
       });
 
       if (!uploadResult.success) {
