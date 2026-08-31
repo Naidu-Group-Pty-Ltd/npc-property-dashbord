@@ -1,0 +1,119 @@
+-- Builder Stock — authority for the Google Sheets hyperlink recovery callback.
+--
+--
+-- WHY THIS TABLE EXISTS.
+--
+-- A Google Sheet whose owner has not enabled file export answers `/export`
+-- with a sign-in page, and `/export` is the ONLY public representation that
+-- carries a cell's link target. Measured against a live document: `/export`
+-- (xlsx and csv) and `/pubhtml` all 401, while `gviz` in every output mode
+-- returns the cell text with zero anchors and zero file ids. The brochure
+-- address never reaches this product.
+--
+-- The recovery is performed elsewhere, by a Make scenario holding its own
+-- authorised Google connection, which reads the same sheet and posts the
+-- targets back. That callback is an inbound write path that decides what a
+-- client sees on a property card, so the single most important property of
+-- this design is:
+--
+--     THE CALLBACK CANNOT NAME ITS OWN AUTHORITY.
+--
+-- The body carries a request id and grid data. Which organisation, which
+-- upload and therefore which properties may be touched are read from THIS
+-- ROW, written by this product at the moment it asked. A caller who forges an
+-- entire payload still cannot reach another organisation's stock, because
+-- nothing in the payload is consulted to decide whose stock is reachable.
+--
+-- The row is also the replay guard: `consumed_at` makes a request single-use,
+-- and `expires_at` makes a leaked id worthless after thirty minutes.
+
+CREATE TABLE IF NOT EXISTS public.builder_stock_link_recovery_requests (
+  -- The nonce. Unguessable, single-use, and the only thing the callback
+  -- presents that this product will look up.
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  -- The authority. Never accepted from a callback; only ever written here.
+  organisation_id uuid NOT NULL
+    REFERENCES public.builder_organisations(id) ON DELETE CASCADE,
+  upload_id uuid NOT NULL
+    REFERENCES public.builder_stock_uploads(id) ON DELETE CASCADE,
+
+  -- What was asked for, so what comes back can be checked against it.
+  spreadsheet_id text NOT NULL,
+  gid text,
+
+  status text NOT NULL DEFAULT 'requested'
+    CHECK (status = ANY (ARRAY[
+      'requested'::text,   -- created, Make not yet answered
+      'dispatched'::text,  -- Make accepted the webhook
+      'fulfilled'::text,   -- a callback was applied
+      'refused'::text,     -- a callback arrived and was rejected
+      'failed'::text,      -- Make could not be reached
+      'expired'::text      -- the window closed unanswered
+    ])),
+
+  -- Where the request came from. Diagnostics only; never authority.
+  origin text NOT NULL DEFAULT 'import'
+    CHECK (origin = ANY (ARRAY['import'::text, 'manual_refresh'::text])),
+
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  consumed_at timestamptz,
+
+  -- Minimal result metadata, for the portal and for verification.
+  rows_returned integer NOT NULL DEFAULT 0,
+  links_applied integer NOT NULL DEFAULT 0,
+  properties_reopened integer NOT NULL DEFAULT 0,
+  refusal_reason text
+);
+
+-- The callback looks a request up by id alone; the sweep reads by expiry.
+CREATE INDEX IF NOT EXISTS builder_stock_link_recovery_open_idx
+  ON public.builder_stock_link_recovery_requests (expires_at)
+  WHERE consumed_at IS NULL;
+
+-- The manual refresh rate limit reads the most recent request for an upload.
+CREATE INDEX IF NOT EXISTS builder_stock_link_recovery_upload_idx
+  ON public.builder_stock_link_recovery_requests (upload_id, created_at DESC);
+
+/*
+ * NOBODY BUT THE SERVER. This table is the authority the callback is checked
+ * against, so a client that could read it could forge a callback, and a client
+ * that could write it could grant itself authority over another organisation's
+ * stock. RLS is enabled with NO policy at all: that denies every anon and
+ * authenticated request outright, while the service role — which bypasses RLS
+ * — continues to work. There is deliberately no builder-facing read.
+ */
+ALTER TABLE public.builder_stock_link_recovery_requests ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.builder_stock_link_recovery_requests FROM PUBLIC, anon, authenticated;
+
+
+-- ── The internal allowlist ──────────────────────────────────────────────────
+/*
+ * WHICH ORGANISATIONS MAY SPEND THE SHARED BUDGET.
+ *
+ * The recovery runs on a metered third-party plan with a small monthly
+ * allowance shared across every builder. One organisation whose sheet can
+ * never export would otherwise consume it on every import, silently denying
+ * the others. So the path is opt-in per organisation.
+ *
+ * DELIBERATELY NOT A SETTING. There is no builder-facing toggle and no
+ * settings page: a builder cannot usefully answer "should this consume our
+ * automation budget", and a self-service switch on a metered shared resource
+ * is a support burden rather than a feature. It is an internal allowlist, set
+ * by whoever administers the integration, and nothing else.
+ */
+CREATE TABLE IF NOT EXISTS public.builder_stock_link_recovery_orgs (
+  organisation_id uuid PRIMARY KEY
+    REFERENCES public.builder_organisations(id) ON DELETE CASCADE,
+  enabled boolean NOT NULL DEFAULT true,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.builder_stock_link_recovery_orgs ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.builder_stock_link_recovery_orgs FROM PUBLIC, anon, authenticated;
+
+COMMENT ON TABLE public.builder_stock_link_recovery_orgs IS
+  'Internal allowlist for Google Sheets hyperlink recovery. Not builder-facing and deliberately not a setting: the path spends a shared metered third-party allowance, so it is opt-in per organisation and administered here.';
