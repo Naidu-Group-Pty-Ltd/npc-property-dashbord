@@ -52,6 +52,9 @@ import {
   MessageCircle,
   Bell,
   BellOff,
+  Volume2,
+  VolumeX,
+  Maximize2,
   Mic,
   MicOff,
   Loader2,
@@ -307,6 +310,16 @@ export default function EmailCopilot() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDraftModal, setShowDraftModal] = useState(false);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
+  /**
+   * Audit item 42 — the email body sat in a small box.
+   *
+   * The panel is capped at `min(62dvh, 44rem)`, but everything above it — the
+   * page header, the human-in-the-loop banner, the subject, From, To, Cc and
+   * the date — leaves only a few lines of that on a short window, which is
+   * what the report shows. This opens the SAME `EmailBodyView`, with the same
+   * prose styling, in a dialog that uses the whole screen.
+   */
+  const [showBodyModal, setShowBodyModal] = useState(false);
   const [showSendConfirmModal, setShowSendConfirmModal] = useState(false);
   const [showEditDraftModal, setShowEditDraftModal] = useState(false);
   const [editableDraft, setEditableDraft] = useState('');
@@ -1891,10 +1904,22 @@ export default function EmailCopilot() {
             aria-label={soundEnabled ? 'Disable sound notifications' : 'Enable sound notifications'}
             className="h-10 w-10 rounded-xl border border-border/70 bg-background/65 shadow-sm transition-all hover:-translate-y-px hover:border-primary/45 hover:bg-primary/10 hover:text-primary hover:shadow-[0_0_18px_hsl(var(--primary)/0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
           >
+            {/*
+              Audit item 41 — these two buttons drew the SAME icon. One mutes a
+              sound and one stops a browser notification, and a reader had only
+              position to tell them apart; the second's colour did not help
+              either, because `text-success-foreground0` is not a token and
+              compiled to nothing, so both bells inherited the same colour.
+
+              A speaker for the sound and a bell for the notification says
+              which is which without depending on colour at all — which is what
+              a reader needs when the two sit side by side, and what a
+              colour-blind reader needs regardless.
+            */}
             {soundEnabled ? (
-              <Bell className="h-4 w-4 text-primary" />
+              <Volume2 className="h-4 w-4 text-primary" />
             ) : (
-              <BellOff className="h-4 w-4 text-muted-foreground" />
+              <VolumeX className="h-4 w-4 text-muted-foreground" />
             )}
           </Button>
           <Button 
@@ -1906,7 +1931,7 @@ export default function EmailCopilot() {
             className="h-10 w-10 rounded-xl border border-border/70 bg-background/65 shadow-sm transition-all hover:-translate-y-px hover:border-success/45 hover:bg-success/10 hover:text-success hover:shadow-[0_0_18px_hsl(142_71%_45%/0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success/40"
           >
             {browserNotificationsEnabled ? (
-              <Bell className="h-4 w-4 text-success-foreground0" />
+              <Bell className="h-4 w-4 text-success" />
             ) : (
               <BellOff className="h-4 w-4 text-muted-foreground" />
             )}
@@ -2095,12 +2120,20 @@ export default function EmailCopilot() {
 
           {viewMode === 'inbox' ? (
             <>
-              {/* Search and Filter Bar */}
-              <div className="shrink-0 space-y-3 border-b border-border/70 bg-background/20 px-3 py-3">
-                {/* Filters */}
+              {/*
+                Audit item 39 — the inbox fitted one email.
+
+                Four stacked rows stood between the tabs and the first message:
+                search, the status filter with Show Archived, and a count row
+                of its own. On a laptop that is most of the column. The filters
+                and the count are one row now — the count is a reading OF the
+                filter, so it belongs beside it — which buys back a row and a
+                border without removing anything.
+              */}
+              <div className="shrink-0 border-b border-border/70 bg-background/20 px-3 py-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger aria-label="Filter emails by status" className="h-10 min-w-[150px] flex-1 rounded-xl border-primary/15 bg-background/75 text-xs shadow-sm transition-all hover:border-primary/55 hover:bg-primary/5 hover:shadow-[0_0_18px_hsl(var(--primary)/0.10)] focus:ring-2 focus:ring-primary/40">
+                    <SelectTrigger aria-label="Filter emails by status" className="h-9 min-w-[130px] flex-1 rounded-xl border-primary/15 bg-background/75 text-xs shadow-sm transition-all hover:border-primary/55 hover:bg-primary/5 hover:shadow-[0_0_18px_hsl(var(--primary)/0.10)] focus:ring-2 focus:ring-primary/40">
                       <Filter className="h-3 w-3 mr-1" />
                       <SelectValue placeholder="Filter by status" />
                     </SelectTrigger>
@@ -2114,10 +2147,10 @@ export default function EmailCopilot() {
                       <SelectItem value="archived">Archived</SelectItem>
                     </SelectContent>
                   </Select>
-                  
-                  <Badge 
-                    variant={showArchived ? "default" : "outline"} 
-                    className={`min-h-10 cursor-pointer rounded-xl px-3 text-xs font-semibold transition-all hover:-translate-y-px hover:border-primary/50 hover:bg-primary/10 hover:shadow-[0_0_18px_hsl(var(--primary)/0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 ${showArchived ? 'border-primary/35 bg-primary/15 text-primary shadow-sm shadow-primary/10' : 'border-border/70 bg-background/70 text-muted-foreground hover:text-foreground'}`}
+
+                  <Badge
+                    variant={showArchived ? "default" : "outline"}
+                    className={`min-h-9 cursor-pointer rounded-xl px-2.5 text-xs font-semibold transition-all hover:-translate-y-px hover:border-primary/50 hover:bg-primary/10 hover:shadow-[0_0_18px_hsl(var(--primary)/0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 ${showArchived ? 'border-primary/35 bg-primary/15 text-primary shadow-sm shadow-primary/10' : 'border-border/70 bg-background/70 text-muted-foreground hover:text-foreground'}`}
                     onClick={() => setShowArchived(!showArchived)}
                     role="button"
                     tabIndex={0}
@@ -2128,25 +2161,15 @@ export default function EmailCopilot() {
                     <Archive className="h-3 w-3 mr-1" />
                     {showArchived ? 'Showing' : 'Show'} Archived
                   </Badge>
-                </div>
-              </div>
-              
-              {/* Email List Header */}
-              <div className="shrink-0 border-b border-primary/10 bg-[linear-gradient(135deg,hsl(var(--muted)/0.28),hsl(var(--background)/0.22))] px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full border border-primary/15 bg-primary/10">
-                      <Inbox className="h-3.5 w-3.5 text-primary" />
-                    </span>
-                    <span className="text-sm font-semibold tabular-nums text-foreground">
-                      {filteredEmails.length} {filteredEmails.length === 1 ? 'email' : 'emails'}
-                    </span>
+
+                  <span className="ml-auto whitespace-nowrap text-xs font-semibold tabular-nums text-muted-foreground">
+                    {filteredEmails.length} {filteredEmails.length === 1 ? 'email' : 'emails'}
                     {sortedThreadKeys.length !== filteredEmails.length && (
-                      <span className="rounded-full border border-border/60 bg-background/55 px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
-                        {sortedThreadKeys.length} {sortedThreadKeys.length === 1 ? 'thread' : 'threads'}
+                      <span className="ml-1 font-medium text-muted-foreground/75">
+                        · {sortedThreadKeys.length} {sortedThreadKeys.length === 1 ? 'thread' : 'threads'}
                       </span>
                     )}
-                  </div>
+                  </span>
                 </div>
               </div>
             </>
@@ -2779,9 +2802,22 @@ export default function EmailCopilot() {
                   {/* Email Body */}
                   <div className="min-w-0 overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(135deg,hsl(var(--card)/0.96),hsl(var(--background)/0.88))] shadow-[0_18px_48px_hsl(var(--background)/0.18)]">
                     <div className="border-b border-border/55 bg-muted/20 px-5 py-3">
-                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        <Mail className="h-3.5 w-3.5 text-primary/70" />
-                        Email body
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          <Mail className="h-3.5 w-3.5 text-primary/70" />
+                          Email body
+                        </div>
+                        {/* Audit item 42 — read it in the whole window. */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowBodyModal(true)}
+                          aria-label="Expand email body"
+                          className="h-8 shrink-0 gap-1.5 rounded-full text-xs hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                        >
+                          <Maximize2 className="h-3.5 w-3.5" />
+                          Expand
+                        </Button>
                       </div>
                     </div>
                     <div className="max-h-[min(62dvh,44rem)] overflow-auto overscroll-contain px-5 py-5 [scrollbar-color:hsl(var(--primary)/0.35)_transparent] [scrollbar-width:thin] sm:px-7 sm:py-6">
@@ -4053,6 +4089,38 @@ export default function EmailCopilot() {
         snippets={snippets}
         onChanged={refreshSnippets}
       />
+      {/*
+        Audit item 42 — the email body, in the whole window.
+
+        The SAME `EmailBodyView` with the SAME prose classes as the panel, so
+        the expanded reading cannot become a second rendering of the message
+        that differs from the one beside it. A flex column with the scroll on
+        the body means a long email scrolls inside the dialog rather than
+        pushing its own header off the top.
+      */}
+      <Dialog open={showBodyModal} onOpenChange={setShowBodyModal}>
+        <DialogContent className="flex h-[92dvh] max-h-[92dvh] w-[calc(100vw-1.5rem)] max-w-5xl flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
+            <DialogTitle className="pr-8 text-left text-base leading-6">
+              {selectedEmail?.subject || '(No subject)'}
+            </DialogTitle>
+            <DialogDescription className="text-left">
+              {selectedEmail?.sender}
+              {selectedEmail?.received_at ? ` — ${formatEmailDate(selectedEmail.received_at)}` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-auto overscroll-contain px-1 py-2 [scrollbar-color:hsl(var(--primary)/0.35)_transparent] [scrollbar-width:thin]">
+            {selectedEmail && (
+              <EmailBodyView
+                content={selectedEmail.body}
+                html={selectedEmail.body_html}
+                className="prose prose-sm max-w-none leading-7 text-foreground/90 dark:prose-invert prose-a:font-medium prose-a:text-primary prose-a:underline-offset-4 prose-a:break-words prose-p:my-3 prose-blockquote:rounded-2xl prose-blockquote:border-l-primary/45 prose-blockquote:bg-muted/35 prose-blockquote:px-4 prose-blockquote:py-3 prose-blockquote:text-muted-foreground prose-pre:whitespace-pre-wrap prose-pre:break-words prose-code:break-words prose-table:block prose-table:max-w-full prose-table:overflow-x-auto [&_*]:max-w-full [&_*]:break-words"
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <ScheduledSendsDialog
         open={showScheduledList}
         onOpenChange={setShowScheduledList}
