@@ -9,6 +9,67 @@ at 390×844 and measuring the DOM — not by reading the classes. Several of
 them are invisible at 390 and only appear between 430 and 768, which is why
 "it looked fine on my phone" was not evidence either way.
 
+## The module had no door on a phone
+
+Reported from a phone as "the AML/CTF Compliance page is not populating". The
+page was fine. There was no way to reach it.
+
+`MobileSidebar` — the drawer behind the bottom bar's "More" — renders the
+shared navigation registry and nothing else. The AML entry is **not in the
+registry**, and correctly so: every other entry is gated by its `moduleKey`
+through the capability resolver, while this one is gated by the `aml_ctf`
+feature flag AND an assigned AML role, which is a different question answered
+by a different endpoint (`aml-access`).
+
+So the entry was bolted on at each surface that knew about it. The desktop
+sidebar built it inline. The command palette built a **second copy**, under a
+different title (`AML / CTF Compliance` against `AML/CTF Compliance`) and a
+different group (`Compliance`, which no other surface used). The two mobile
+surfaces were never told, so the whole module — the case register, screening,
+the AUSTRAC hub, the Compliance Passport — had no entry point on a phone at
+all. Typing `/admin/aml` worked; there was nothing to tap.
+
+`sidebarNavigation.spec.ts` already existed to prevent exactly this ("no
+surface may reintroduce a private navigation list") and could not see it,
+because the private list was not the registry's.
+
+**The rule: the AML entry is defined once, in `lib/navigation/amlEntry.ts`,
+and every navigation surface asks for it.** The suite now fails if a surface
+that renders navigation does not — and if any of them writes `/admin/aml`
+into a navigation item of its own. `MobileNav` is the one exception, and an
+explicit one: its bottom bar is a deliberate five-item shortlist, and
+everything else on it opens `MobileSidebar`, which does ask.
+
+It fails closed, including while the answer is loading: a navigation entry is
+a claim that a page will open, and drawing one the guard then refuses is
+worse than drawing none.
+
+## "We could not check" is not "you do not have it"
+
+The second half of the same report, and the reason a phone meets it first.
+
+`useAmlAccess` collapsed a **failed read** into the same values the server
+sends when the answer is genuinely no: `flagEnabled: false`, no roles. A
+dropped connection, a fifteen-second timeout or a 5xx therefore made
+`AmlGuard` announce "AML/CTF is not enabled — contact your administrator"
+about a module that is enabled, for a user who holds the `mlro` role. Nothing
+retried, and nothing distinguished the two.
+
+This is the rule the partner surface already carries — *a failure is never
+cached and never reported as "off"; `unknown` is a distinct answer* — applied
+here. `unavailable` is now its own value:
+
+- the guard says it is a connection problem, says nothing about permissions
+  having changed, and offers **Try again**, which is the only thing that
+  helps;
+- the transport failure gets **one** automatic retry, and only when the
+  transport marks it retryable — a 401 or a 403 is an answer and is never
+  retried, and one attempt rather than a loop, because a loop against an auth
+  endpoint hides an outage;
+- navigation still fails closed, because a door that cannot be verified
+  should not be drawn. `amlNavEntry` has no `unavailable` branch at all, and a
+  test asserts it never grows one.
+
 ## One bug, three times: `flex-1` does not make a row wrap
 
 A flex line wraps when the items' **hypothetical** main sizes overflow it.

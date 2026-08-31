@@ -579,6 +579,25 @@ found by rendering the real page into a real Chromium and measuring the DOM,
 and several are invisible at 390px and appear only between 430 and 768 — so
 "it looked fine on my phone" was never evidence either way.
 
+**The module had no door on a phone.** `MobileSidebar` renders the shared
+navigation registry and nothing else, and the AML entry is not in it — it is
+gated by the `aml_ctf` flag AND an assigned AML role rather than by a module
+entitlement — so the desktop sidebar built the entry inline, the command
+palette built a SECOND copy under a different title and group, and the two
+mobile surfaces never had it at all. The whole module was unreachable from a
+phone; typing the URL worked, there was nothing to tap. It is defined once in
+`lib/navigation/amlEntry.ts` now and every navigation surface asks for it,
+pinned by `sidebarNavigation.spec.ts` — which already existed to forbid a
+private navigation list and could not see this one, because it was not the
+registry's. It **fails closed, loading included**: an entry is a claim that a
+page will open. And **"we could not check" is not "you do not have it"** —
+`useAmlAccess` collapsed a failed read into the server's own "no", so a lost
+signal made the guard announce "AML/CTF is not enabled" to an MLRO; the
+reading now carries `unavailable`, the guard offers a retry and says nothing
+about permissions, one automatic retry is made when the transport marks the
+failure retryable, and navigation still fails closed because a door that
+cannot be verified is not drawn.
+
 **`flex-1` does not make a row wrap.** A line wraps when its items'
 HYPOTHETICAL sizes overflow it, and `flex: 1 1 0%` contributes zero — so a
 `flex-1 min-w-0` title beside a 330px action cluster is handed the leftovers
