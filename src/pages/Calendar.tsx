@@ -894,7 +894,7 @@ export default function Calendar() {
             data.newEndTime,
             data.originalStartTime,
             data.originalEndTime,
-            { overrideAvailability: data.overrideAvailability, assignedUserId }
+            { overrideAvailability: data.overrideAvailability, assignedUserId, notes: data.notes }
           );
 
           if (result.success) {
