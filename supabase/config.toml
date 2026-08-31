@@ -109,11 +109,11 @@ verify_jwt = true
 
 [functions.compare-investment-reports]
 verify_jwt = true
-request_timeout = 120
+request_timeout = 180
 
 [functions.compare-cash-flow-reports]
 verify_jwt = true
-request_timeout = 120
+request_timeout = 180
 
 [functions.generate-portfolio-analysis]
 verify_jwt = true
