@@ -52,7 +52,7 @@ const OK = {
 // ── Trigger ────────────────────────────────────────────────────────────────
 
 describe('the one condition worth asking about', () => {
-  it('asks when all five hold', () => {
+  it('asks when all four hold', () => {
     expect(shouldRequestLinkRecovery(OK)).toBe(true);
   });
 
