@@ -647,7 +647,7 @@ const CallLogs = () => {
           <CardContent className="p-4">
             <div className="mb-4 flex items-center justify-between gap-3">
               <span className={premiumMetricLabel}>Total</span>
-              <div className={cn(premiumMetricIcon, "border-border/25 bg-muted0/10 text-muted-foreground dark:text-foreground")}>
+              <div className={cn(premiumMetricIcon, "border-border/25 bg-muted/10 text-muted-foreground dark:text-foreground")}>
                 <Phone className="h-4 w-4" />
               </div>
             </div>

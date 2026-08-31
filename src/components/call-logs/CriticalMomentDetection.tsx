@@ -116,7 +116,7 @@ export const CriticalMomentDetection = ({ calls }: CriticalMomentDetectionProps)
   }, [callsWithCriticalMoments]);
 
   const getSeverityColor = (severity: number | null) => {
-    if (!severity) return 'bg-muted0';
+    if (!severity) return 'bg-muted';
     if (severity <= 2) return 'bg-brand-500';
     if (severity <= 3) return 'bg-warning';
     if (severity <= 4) return 'bg-destructive';

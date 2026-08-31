@@ -61,6 +61,7 @@ import {
   resolveYearDepreciation,
   hydrateYearlyOverrides,
 } from '@/utils/cashFlowDepreciation';
+import { comparisonCandidates } from '@/lib/cashFlow/comparisonCandidates.pure';
 
 interface InvestmentReport {
   id: string;
@@ -480,9 +481,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           });
 
           if (error) throw new Error(error.message);
-          // Filter out the current report
+          // Audit item 16 — the picker listed REPORTS and calls itself a
+          // property picker, so one address appeared once per report kind.
+          // `comparisonCandidates` keeps only reports that carry figures a
+          // comparison can draw, and one entry per property. Measured against
+          // production: 1,169 entries become 98, and 984 of the ones removed
+          // could not have been compared against at all.
           const allReports = (data?.reports || []) as InvestmentReport[];
-          setAvailableReports(allReports.filter(r => r.id !== report.id));
+          setAvailableReports(comparisonCandidates(allReports, report.id));
         } catch (error) {
           console.error('Error fetching reports for comparison:', error);
           toast({
@@ -3549,15 +3555,33 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   }, [report, baseFinancialData, projections, includeInputsSummaryInExport, includeConstructionScheduleInExport, constructionProgressSchedule, isNewBuild, chartExportToggles, excludeLandTaxFromCashFlow, toast]);
 
   // Generate PDF and upload to storage (for Send to Client)
+  /**
+   * Audit item 14 — "Export → Send to Client" reported
+   * `PDF generation failed. Please try again.`
+   *
+   * That message is `SendToClientModal`'s reading of a falsy return, and this
+   * function had FIVE ways to produce one: no report, no financial data, no
+   * blob, an upload that was refused, and anything thrown. Two of them logged
+   * nothing at all, and the refused upload discarded `uploadResult.error`
+   * entirely — which is where the reported failure almost certainly came from,
+   * because until the `resourceId` below was added, `secure-storage` answered
+   * `Invalid upload resource` to every human upload on this bucket (audit
+   * items 5, 7 and 8; `client_files` recorded no upload at all after July).
+   *
+   * So the cause is very probably already fixed. What was not fixed is that
+   * five different faults arrived as one sentence that names none of them.
+   * Each failure now throws its own reason, and the modal's catch renders it —
+   * `Failed to send: …` — so the next occurrence says what went wrong.
+   */
   const generateAndUploadCashFlowPDF = useCallback(async (chartOverrides?: { cashFlowTrends: boolean; yieldChart: boolean; comparisonChart: boolean }): Promise<string | null> => {
-    if (!report || !baseFinancialData) return null;
+    if (!report) throw new Error('This report could not be resolved. Close the analysis and reopen it.');
+    if (!baseFinancialData) throw new Error('This report has no financial figures to render.');
 
     try {
       // Use the full PDF generator in blob mode, with optional chart overrides from Send to Client
       const pdfBlob = await exportSingleReportPDF({ returnBlob: true, chartOverrides });
       if (!pdfBlob || !(pdfBlob instanceof Blob)) {
-        console.error('PDF generation returned no blob');
-        return null;
+        throw new Error('The PDF renderer produced no document.');
       }
 
       const cleanedAddress = report.property_address.replace(/[_\s]?Copy[_\s]?\d*$/i, '').trim();
@@ -3575,10 +3599,13 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         setCashFlowStoragePath(uploadResult.path);
         return uploadResult.path;
       }
-      return null;
+      // The refusal, said rather than swallowed. `secure-storage` answers with
+      // a reason and this threw it away, which is how "Invalid upload resource"
+      // reached an operator as "PDF generation failed".
+      throw new Error(uploadResult?.error || 'The document could not be stored.');
     } catch (error) {
       console.error('Error generating cash flow PDF for upload:', error);
-      return null;
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }, [report, baseFinancialData, exportSingleReportPDF]);
 
@@ -5998,7 +6025,18 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="sticky left-0 z-10 bg-primary/5 py-3 text-xs font-bold uppercase tracking-wide text-primary" colSpan={12}>Statistics</TableCell>
+                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
+                          {/* Audit item 2: the label is what sticks, not the cell.
+                              `position: sticky` never moves an element outside its
+                              containing block, and a `colSpan={12}` cell is exactly as
+                              wide as the row — so it had no room to move and every
+                              section heading scrolled away while the narrow metric
+                              cells beside it stayed put. An inline-block inside the
+                              cell has the whole row to move within. */}
+                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
+                            Statistics
+                          </span>
+                        </TableCell>
                       </TableRow>
                       
                       <TableRow className="transition-colors hover:bg-primary/5">
@@ -6045,7 +6083,18 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="sticky left-0 z-10 bg-primary/5 py-3 text-xs font-bold uppercase tracking-wide text-primary" colSpan={12}>Cash Deductions</TableCell>
+                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
+                          {/* Audit item 2: the label is what sticks, not the cell.
+                              `position: sticky` never moves an element outside its
+                              containing block, and a `colSpan={12}` cell is exactly as
+                              wide as the row — so it had no room to move and every
+                              section heading scrolled away while the narrow metric
+                              cells beside it stayed put. An inline-block inside the
+                              cell has the whole row to move within. */}
+                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
+                            Cash Deductions
+                          </span>
+                        </TableCell>
                       </TableRow>
                       
                       {/* Property Expenses - Editable */}
@@ -6144,7 +6193,18 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="sticky left-0 z-10 bg-primary/5 py-3 text-xs font-bold uppercase tracking-wide text-primary" colSpan={12}>Non-Cash Deductions</TableCell>
+                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
+                          {/* Audit item 2: the label is what sticks, not the cell.
+                              `position: sticky` never moves an element outside its
+                              containing block, and a `colSpan={12}` cell is exactly as
+                              wide as the row — so it had no room to move and every
+                              section heading scrolled away while the narrow metric
+                              cells beside it stayed put. An inline-block inside the
+                              cell has the whole row to move within. */}
+                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
+                            Non-Cash Deductions
+                          </span>
+                        </TableCell>
                       </TableRow>
                       
                       {/* Depreciation - Editable */}
@@ -6163,7 +6223,18 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="sticky left-0 z-10 bg-primary/5 py-3 text-xs font-bold uppercase tracking-wide text-primary" colSpan={12}>Summary</TableCell>
+                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
+                          {/* Audit item 2: the label is what sticks, not the cell.
+                              `position: sticky` never moves an element outside its
+                              containing block, and a `colSpan={12}` cell is exactly as
+                              wide as the row — so it had no room to move and every
+                              section heading scrolled away while the narrow metric
+                              cells beside it stayed put. An inline-block inside the
+                              cell has the whole row to move within. */}
+                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
+                            Summary
+                          </span>
+                        </TableCell>
                       </TableRow>
                       
                       <TableRow className="transition-colors hover:bg-primary/5">
