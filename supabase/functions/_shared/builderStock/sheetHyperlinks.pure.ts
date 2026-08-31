@@ -86,16 +86,62 @@ function rowAgreement(csvRow: string[], sheetRow: (string | null)[] | undefined)
 }
 
 /**
- * A row reduced to the one string two exports of it can agree on.
+ * HOW ALIKE TWO EXPORTS OF ONE ROW HAVE TO BE.
  *
- * Trailing empties carry nothing and are dropped, so a worksheet padded out to
- * its used range compares equal to a CSV that stops at its last value.
+ * Not identical. `gviz` and the grid render the same tab independently and
+ * disagree in the small: a trailing space, a date's month, a number's
+ * separators. Demanding a whole row match exactly made the live document fail
+ * to recognise ITSELF, which is why the original comparison was tolerant at
+ * CELL level. That tolerance was right; only its assumption that a CSV row and
+ * a worksheet row share an INDEX was wrong.
  */
-function rowKey(cells: (string | null)[] | undefined, width: number): string {
-  const out: string[] = [];
-  for (let c = 0; c < width; c += 1) out.push(normaliseCell(cells?.[c]));
-  while (out.length && !out[out.length - 1]) out.pop();
-  return out.join('\u0001');
+export const ROW_MATCH_FLOOR = 0.9;
+
+/**
+ * Where each cell value occurs in the worksheet body.
+ *
+ * `column \u0000 value` -> the rows carrying it. Built once, this answers
+ * "which rows look like this one" without comparing every CSV row against
+ * every worksheet row — which on a large builder list would be millions of
+ * comparisons inside an edge function.
+ */
+function cellIndex(
+  sheet: WorkbookSheet, headerRow: number, width: number,
+): Map<string, number[]> {
+  const index = new Map<string, number[]>();
+  for (let r = headerRow + 1; r < sheet.values.length; r += 1) {
+    const row = sheet.values[r];
+    if (!row) continue;
+    for (let c = 0; c < width; c += 1) {
+      const value = normaliseCell(row[c]);
+      if (!value) continue;
+      const key = `${c}\u0000${value}`;
+      const at = index.get(key);
+      if (at) at.push(r); else index.set(key, [r]);
+    }
+  }
+  return index;
+}
+
+/** The worksheet rows that best reproduce this CSV row, and how well. */
+function candidatesFor(
+  csvRow: string[], index: Map<string, number[]>, width: number,
+): { best: number; compared: number; winners: number[] } {
+  let compared = 0;
+  const tally = new Map<number, number>();
+  for (let c = 0; c < width; c += 1) {
+    const value = normaliseCell(csvRow[c]);
+    if (!value) continue;
+    compared += 1;
+    for (const r of index.get(`${c}\u0000${value}`) ?? []) {
+      tally.set(r, (tally.get(r) ?? 0) + 1);
+    }
+  }
+  let best = 0;
+  for (const n of tally.values()) if (n > best) best = n;
+  const winners: number[] = [];
+  for (const [r, n] of tally) if (n === best) winners.push(r);
+  return { best, compared, winners };
 }
 
 /** A worksheet row must reproduce this much of the CSV header to BE the header. */
@@ -157,21 +203,20 @@ export function alignWorksheetRows(csv: string[][], sheet: WorkbookSheet): numbe
   if (headerRow < 0) return aligned;
   aligned[0] = headerRow;
 
-  // Where each distinct row of the worksheet body sits, and how often it recurs.
-  const seen = new Map<string, number[]>();
-  for (let r = headerRow + 1; r < sheet.values.length; r += 1) {
-    const key = rowKey(sheet.values[r], width);
-    if (!key) continue;
-    const at = seen.get(key);
-    if (at) at.push(r); else seen.set(key, [r]);
-  }
-
+  const index = cellIndex(sheet, headerRow, width);
   for (let r = 1; r < csv.length; r += 1) {
-    const key = rowKey(csv[r], width);
-    if (!key) continue;
-    const at = seen.get(key);
-    // Exactly one, or nothing. Never the first of several.
-    if (at && at.length === 1) aligned[r] = at[0];
+    const { best, compared, winners } = candidatesFor(csv[r] ?? [], index, width);
+    if (!compared) continue;
+    /*
+     * ONE ROW, BEATING EVERY OTHER. Alike-enough is not sufficient: on a list
+     * of near-identical products a dozen rows clear any floor, so the winner
+     * has to be the STRICT maximum. A tie is two rows this data cannot tell
+     * apart — the same lot listed twice, as this builder's sheet does — and
+     * neither may lend its document to the other.
+     */
+    if (winners.length !== 1) continue;
+    if (best < Math.ceil(compared * ROW_MATCH_FLOOR)) continue;
+    aligned[r] = winners[0];
   }
   return aligned;
 }
@@ -181,31 +226,27 @@ export function alignWorksheetRows(csv: string[][], sheet: WorkbookSheet): numbe
  *
  * CONTAINMENT, NOT COINCIDENCE OF ROW NUMBER. The question here is only
  * "is this the same tab", so a CSV row counts as reproduced when the worksheet
- * says it SOMEWHERE below its header. Whether that row's link may be trusted
- * is a different and stricter question, answered by `alignWorksheetRows`, which
- * demands exactly one.
+ * says something close enough to it SOMEWHERE below its header. Whether that
+ * row's link may then be trusted is a different and stricter question,
+ * answered by `alignWorksheetRows`, which additionally demands a single
+ * unambiguous winner.
  *
  * Scoring by index was true of neither representation and made the live
- * document score 0.22 against itself.
+ * document reproduce 0.22 of itself.
  */
 export function worksheetScore(csv: string[][], sheet: WorkbookSheet): number {
   const width = (csv[0] ?? []).length;
   const headerRow = locateHeaderRow(csv, sheet);
   if (headerRow < 0) return 0;
 
-  const body = new Set<string>();
-  for (let r = headerRow + 1; r < sheet.values.length; r += 1) {
-    const key = rowKey(sheet.values[r], width);
-    if (key) body.add(key);
-  }
-
+  const index = cellIndex(sheet, headerRow, width);
   let compared = 0;
   let agreed = 0;
   for (let r = 1; r < csv.length; r += 1) {
-    const key = rowKey(csv[r], width);
-    if (!key) continue;
+    const found = candidatesFor(csv[r] ?? [], index, width);
+    if (!found.compared) continue;
     compared += 1;
-    if (body.has(key)) agreed += 1;
+    if (found.best >= Math.ceil(found.compared * ROW_MATCH_FLOOR)) agreed += 1;
   }
   // A tab that reproduces the header and has no data rows to check is not
   // evidence of anything; it scores on its header alone.
