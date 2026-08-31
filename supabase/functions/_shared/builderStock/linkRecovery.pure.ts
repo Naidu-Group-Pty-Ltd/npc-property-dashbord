@@ -419,21 +419,28 @@ export function decodeWorkbook(
  * a link is read at THIS row and THIS column. Nothing is looked up by lot, by
  * address or by anything two rows could share.
  *
+ * THE HEADING ROW IS GIVEN, NOT GUESSED. `matchWorksheet` located it by
+ * content and hands it over. Assuming row 0 was true of no real document: the
+ * live stocklist opens with a banner and spacers and names its columns on the
+ * eighth row, so taking `values[0]` produced empty headings, no headed rows,
+ * and a recovery that applied nothing while reporting success.
+ *
  * Only http(s) targets are kept. A cell may legitimately link within the
  * workbook, to a local file, or to a mail address, and none of those is a
  * document this pipeline can open.
  */
 export function recoveredRowsFromWorksheet(sheet: {
   values: (string | null)[][]; links: (string | null)[][];
-} | null | undefined): RecoveredRow[] {
+} | null | undefined, headerRow = 0): RecoveredRow[] {
   const values = sheet?.values ?? [];
   const links = sheet?.links ?? [];
-  if (values.length < 2) return [];
+  const head = Number.isInteger(headerRow) && headerRow >= 0 ? headerRow : 0;
+  if (values.length < head + 2) return [];
 
-  const headings = (values[0] ?? []).map((cell) => String(cell ?? '').trim());
+  const headings = (values[head] ?? []).map((cell) => String(cell ?? '').trim());
 
   const rows: RecoveredRow[] = [];
-  for (let index = 1; index < values.length; index += 1) {
+  for (let index = head + 1; index < values.length; index += 1) {
     const cells = values[index] ?? [];
     const linkCells = links[index] ?? [];
     const rowValues: Record<string, string> = {};

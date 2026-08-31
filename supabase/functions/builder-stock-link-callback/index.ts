@@ -208,7 +208,7 @@ Deno.serve(async (req) => {
     const match = matchWorksheet(matrix, sheets);
     if (match.ok) {
       worksheet = match.sheet.name;
-      rows = recoveredRowsFromWorksheet(match.sheet);
+      rows = recoveredRowsFromWorksheet(match.sheet, match.headerRow);
     } else {
       refusedFor = match.reason;
     }

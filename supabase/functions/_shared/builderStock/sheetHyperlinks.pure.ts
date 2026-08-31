@@ -46,7 +46,7 @@ export interface WorkbookSheet {
 }
 
 export type WorksheetMatch =
-  | { ok: true; sheet: WorkbookSheet; score: number }
+  | { ok: true; sheet: WorkbookSheet; score: number; headerRow: number }
   | { ok: false; reason: 'no_match' | 'ambiguous'; best: number; runnerUp: number };
 
 /**
@@ -68,23 +68,149 @@ export function normaliseCell(value: unknown): string {
     .toLowerCase();
 }
 
-/** How much of the CSV this worksheet reproduces, cell for cell. */
-export function worksheetScore(csv: string[][], sheet: WorkbookSheet): number {
+/**
+ * How much of one row of the CSV a worksheet row reproduces, cell for cell.
+ *
+ * Empty CSV cells agree with everything, so they measure nothing.
+ */
+function rowAgreement(csvRow: string[], sheetRow: (string | null)[] | undefined): number {
   let compared = 0;
   let agreed = 0;
-  const rows = Math.min(csv.length, 40);
-  for (let r = 0; r < rows; r += 1) {
-    const csvRow = csv[r] ?? [];
-    const sheetRow = sheet.values[r] ?? [];
-    for (let c = 0; c < csvRow.length; c += 1) {
-      const want = normaliseCell(csvRow[c]);
-      // Empty cells agree with everything, so they measure nothing.
-      if (!want) continue;
-      compared += 1;
-      if (normaliseCell(sheetRow[c]) === want) agreed += 1;
-    }
+  for (let c = 0; c < csvRow.length; c += 1) {
+    const want = normaliseCell(csvRow[c]);
+    if (!want) continue;
+    compared += 1;
+    if (normaliseCell(sheetRow?.[c]) === want) agreed += 1;
   }
   return compared === 0 ? 0 : agreed / compared;
+}
+
+/**
+ * A row reduced to the one string two exports of it can agree on.
+ *
+ * Trailing empties carry nothing and are dropped, so a worksheet padded out to
+ * its used range compares equal to a CSV that stops at its last value.
+ */
+function rowKey(cells: (string | null)[] | undefined, width: number): string {
+  const out: string[] = [];
+  for (let c = 0; c < width; c += 1) out.push(normaliseCell(cells?.[c]));
+  while (out.length && !out[out.length - 1]) out.pop();
+  return out.join('\u0001');
+}
+
+/** A worksheet row must reproduce this much of the CSV header to BE the header. */
+export const HEADER_MATCH_FLOOR = 0.7;
+
+/**
+ * WHERE THE HEADINGS ACTUALLY ARE — asked of content, never assumed.
+ *
+ * Row 0 is not the header, and on the document that proved this it is not even
+ * close: the live stocklist opens with a banner and spacer rows and puts
+ * `Lot #` on the EIGHTH row. Meanwhile `gviz` — the representation the import
+ * proved the CSV from — compacts all of that away and reports the header as
+ * its row 0. Two true readings of one tab, seven rows apart.
+ *
+ * Taking `values[0]` on faith produced empty headings, which produced no
+ * headed rows, which applied no links and said nothing about why. So the
+ * header is FOUND: the worksheet row that best reproduces the CSV's header
+ * row, and only if it reproduces most of it.
+ *
+ * A banner cell merged into the heading is tolerated, because that is exactly
+ * what `gviz` does to a two-row header — it reports
+ * `"[VG] MASTER STOCKLIST - V002 Contract Type"` where the sheet holds
+ * `"Contract Type"`. One disagreeing cell out of twenty-three must not lose
+ * the header; twenty disagreeing cells must.
+ */
+export function locateHeaderRow(csv: string[][], sheet: WorkbookSheet): number {
+  const header = csv[0] ?? [];
+  if (!header.length) return -1;
+
+  let bestRow = -1;
+  let bestScore = 0;
+  for (let r = 0; r < sheet.values.length; r += 1) {
+    const score = rowAgreement(header, sheet.values[r]);
+    if (score > bestScore) { bestScore = score; bestRow = r; }
+  }
+  return bestScore >= HEADER_MATCH_FLOOR ? bestRow : -1;
+}
+
+/**
+ * WHICH WORKSHEET ROW IS THIS CSV ROW — by what it says, never by where it sits.
+ *
+ * The two representations do not agree about row NUMBERS and never did. `gviz`
+ * drops blank rows; the sheet keeps them, and the live stocklist carries one
+ * between Lot 605 and Lot 606. Under an index-for-index reading every property
+ * below that blank row would take the NEXT one's brochure — which is the exact
+ * failure this whole module exists to prevent, arriving through the back door.
+ *
+ * So a CSV row is paired with the worksheet row that SAYS THE SAME THING, and
+ * only when exactly one does. Two identical rows — and this data has them, the
+ * same lot listed twice — pair with nothing at all rather than with the first
+ * or the nearest. A link that cannot be attributed beyond doubt is not applied.
+ *
+ * Returns, for each CSV row index, its worksheet row index or -1.
+ */
+export function alignWorksheetRows(csv: string[][], sheet: WorkbookSheet): number[] {
+  const width = (csv[0] ?? []).length;
+  const headerRow = locateHeaderRow(csv, sheet);
+  const aligned = new Array<number>(csv.length).fill(-1);
+  if (headerRow < 0) return aligned;
+  aligned[0] = headerRow;
+
+  // Where each distinct row of the worksheet body sits, and how often it recurs.
+  const seen = new Map<string, number[]>();
+  for (let r = headerRow + 1; r < sheet.values.length; r += 1) {
+    const key = rowKey(sheet.values[r], width);
+    if (!key) continue;
+    const at = seen.get(key);
+    if (at) at.push(r); else seen.set(key, [r]);
+  }
+
+  for (let r = 1; r < csv.length; r += 1) {
+    const key = rowKey(csv[r], width);
+    if (!key) continue;
+    const at = seen.get(key);
+    // Exactly one, or nothing. Never the first of several.
+    if (at && at.length === 1) aligned[r] = at[0];
+  }
+  return aligned;
+}
+
+/**
+ * How much of the CSV this worksheet reproduces.
+ *
+ * CONTAINMENT, NOT COINCIDENCE OF ROW NUMBER. The question here is only
+ * "is this the same tab", so a CSV row counts as reproduced when the worksheet
+ * says it SOMEWHERE below its header. Whether that row's link may be trusted
+ * is a different and stricter question, answered by `alignWorksheetRows`, which
+ * demands exactly one.
+ *
+ * Scoring by index was true of neither representation and made the live
+ * document score 0.22 against itself.
+ */
+export function worksheetScore(csv: string[][], sheet: WorkbookSheet): number {
+  const width = (csv[0] ?? []).length;
+  const headerRow = locateHeaderRow(csv, sheet);
+  if (headerRow < 0) return 0;
+
+  const body = new Set<string>();
+  for (let r = headerRow + 1; r < sheet.values.length; r += 1) {
+    const key = rowKey(sheet.values[r], width);
+    if (key) body.add(key);
+  }
+
+  let compared = 0;
+  let agreed = 0;
+  for (let r = 1; r < csv.length; r += 1) {
+    const key = rowKey(csv[r], width);
+    if (!key) continue;
+    compared += 1;
+    if (body.has(key)) agreed += 1;
+  }
+  // A tab that reproduces the header and has no data rows to check is not
+  // evidence of anything; it scores on its header alone.
+  if (compared === 0) return rowAgreement(csv[0] ?? [], sheet.values[headerRow]);
+  return agreed / compared;
 }
 
 /** A worksheet must reproduce almost all of the CSV to be the same tab. */
@@ -115,7 +241,16 @@ export function matchWorksheet(csv: string[][], sheets: WorkbookSheet[]): Worksh
   if (runnerUp && bestScore - nextScore < MATCH_MARGIN) {
     return { ok: false, reason: 'ambiguous', best: bestScore, runnerUp: nextScore };
   }
-  return { ok: true, sheet: best.sheet, score: bestScore };
+  /*
+   * The header travels with the match. Everything downstream needs to know
+   * where the headings are, and re-deriving that separately is how two callers
+   * come to disagree about which row names the columns.
+   */
+  const headerRow = locateHeaderRow(csv, best.sheet);
+  if (headerRow < 0) {
+    return { ok: false, reason: 'no_match', best: bestScore, runnerUp: nextScore };
+  }
+  return { ok: true, sheet: best.sheet, score: bestScore, headerRow };
 }
 
 /** The suffix a resolved link column carries. */
@@ -147,9 +282,22 @@ export function mergeHyperlinkColumns(
   const header = csv[0] ?? [];
   const body = csv.slice(1);
 
+  /*
+   * WHICH WORKSHEET ROW EACH CSV ROW IS, decided by content. `r + 1` was never
+   * that row: the two representations disagree about row numbers wherever the
+   * sheet carries a banner or a blank, and every property below such a row
+   * would otherwise be handed the NEXT one's document.
+   */
+  const aligned = alignWorksheetRows(csv, sheet);
+  const linkAt = (csvRow: number, column: number): string => {
+    const worksheetRow = aligned[csvRow] ?? -1;
+    if (worksheetRow < 0) return '';
+    return sheet.links[worksheetRow]?.[column] ?? '';
+  };
+
   const linkColumns: number[] = [];
   for (let c = 0; c < header.length; c += 1) {
-    const carries = body.some((_row, r) => !!sheet.links[r + 1]?.[c]);
+    const carries = body.some((_row, r) => !!linkAt(r + 1, c));
     if (carries) linkColumns.push(c);
   }
   if (!linkColumns.length) {
@@ -163,7 +311,7 @@ export function mergeHyperlinkColumns(
   for (let r = 0; r < body.length; r += 1) {
     const row = [...body[r]];
     for (const c of linkColumns) {
-      const target = sheet.links[r + 1]?.[c] ?? '';
+      const target = linkAt(r + 1, c);
       if (target) linksResolved += 1;
       row.push(target);
     }
