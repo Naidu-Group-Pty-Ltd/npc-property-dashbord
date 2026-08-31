@@ -547,6 +547,42 @@ grant had nowhere to appear), and **a live Passport reads green** like the
 Client portal's own completion — worded as a fact about access, never as a
 claim about the partner, and a revoked grant takes the colour back.
 
+## The Command Centre on a phone
+Read [`docs/aml/COMMAND_CENTRE_ON_A_PHONE.md`](./docs/aml/COMMAND_CENTRE_ON_A_PHONE.md)
+before changing a layout class on an AML surface, `AmlPageHeader`,
+`AmlWorkspaceHeader`, `AmlJourneyRail`, the AUSTRAC register or the
+touch-target rules in `src/styles/utilities.css`. Every defect there was
+found by rendering the real page into a real Chromium and measuring the DOM,
+and several are invisible at 390px and appear only between 430 and 768 — so
+"it looked fine on my phone" was never evidence either way.
+
+**`flex-1` does not make a row wrap.** A line wraps when its items'
+HYPOTHETICAL sizes overflow it, and `flex: 1 1 0%` contributes zero — so a
+`flex-1 min-w-0` title beside a 330px action cluster is handed the leftovers
+however small they are. On the AUSTRAC hub at 430px that was EIGHTEEN pixels
+and a heading 532px tall, one character per line, on all twenty pages that
+draw `AmlPageHeader`; 390 escaped only because the cluster alone overflows
+there and forces the wrap by itself. A column that must not be crushed
+declares a `basis`. The same bug was already fixed once on the case workspace
+header and existed a third time on the AUSTRAC draft page's action bar.
+
+Three more rules. **`shrink-0` protects a cluster's width, not its
+contents** — the workspace header's badge cluster kept its 418px max-content
+width on a 390px screen and hung off the edge while its own `flex-wrap` never
+engaged, and the badges inside it were `whitespace-nowrap` anyway. **One
+layout at a time**: the AUSTRAC register is cards under 768px, switched on
+`useIsMobile` (the hook `ResponsiveTable` uses) rather than drawn twice and
+hidden with `md:hidden`, because a CSS-hidden copy still carries every
+accessible name in the document — and its acts come from ONE `rowActions` so
+a phone cannot offer an Approve the desktop has taken away. And **a link in a
+sentence is not a control**: `utilities.css` gave every `<a>` a 44×44 box
+under 768px, which stops an inline link sharing a line box with the words
+around it — Compliance Home's one-line footer was 96px tall with its links
+14px off the baseline beside them. The floor stays for every anchor that IS a
+control; the considered version of that accommodation is the
+`@media (pointer: coarse)` block, which is keyed on the pointer rather than
+the width.
+
 ## What the AML navigation offers, and what it does not
 
 The Command Centre's nav is **compliance surfaces only**. Everything about
