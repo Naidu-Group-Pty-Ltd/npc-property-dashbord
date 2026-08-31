@@ -437,6 +437,29 @@ describe('the tab is chosen by its own id, never by position', () => {
     expect(rows).toHaveLength(2);
   });
 
+  it('finds gid 0 when Google OMITS sheetId, which is how it always arrives', () => {
+    /*
+     * The Sheets API is proto3 JSON and leaves out scalars holding their
+     * default, so the first tab of nearly every spreadsheet carries no
+     * `sheetId` at all — and `gid=0` is the commonest link anyone pastes.
+     * Read as `Number(undefined)`, that is NaN, which matches nothing: the
+     * recovery returned zero rows and reported itself fulfilled. Measured
+     * against the live document before this was fixed.
+     */
+    const noId = { properties: { title: 'Stock' }, data: grid(0).data };
+    expect(recoveredRowsFromGrid([noId], '0')).toHaveLength(2);
+  });
+
+  it('absent means zero, never "the first one"', () => {
+    // A workbook whose first tab is 12345 and whose second omits its id
+    // resolves gid 0 to the SECOND, not to whatever happens to be first.
+    const second = { properties: { title: 'Stock' }, data: grid(0).data };
+    const rows = recoveredRowsFromGrid([grid(12345), second], '0');
+    expect(rows).toHaveLength(2);
+    // And a gid that names the explicit tab still takes that one.
+    expect(recoveredRowsFromGrid([grid(12345), second], '12345')).toHaveLength(2);
+  });
+
   it('a gid no sheet carries recovers nothing rather than something', () => {
     expect(recoveredRowsFromGrid([grid(99)], '7')).toEqual([]);
   });
