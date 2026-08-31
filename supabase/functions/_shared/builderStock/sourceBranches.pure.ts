@@ -288,6 +288,37 @@ export function openBranches(
 }
 
 /**
+ * WHICH open branch this attempt takes.
+ *
+ * A run opens ONE branch: it downloads a multi-megabyte document and
+ * classifies its rasters, and that budget is what keeps a killed worker from
+ * pinning a whole upload. So the property comes back for the rest — and which
+ * one it takes next has to ADVANCE, or it never gets to the rest at all.
+ *
+ * Always taking the first open branch does not advance. An `unreachable`
+ * branch deliberately records nothing (a sign-in wall may open tomorrow, and
+ * banking "no image" for it would suppress a document that reads perfectly
+ * well), so it is open again on the next tick, and first again, for ever.
+ *
+ * PRODUCTION, 31 AUGUST 2026, upload `43ffa452`. Forty-nine properties sat on
+ * `source` across ten attempts each, answering in ~2.4 seconds with
+ * `progressed: false`. Each had answered its `Brochure V002` and `Estate
+ * Brochure` branches and had two more behind a `Siting  / Masterplan` link
+ * that could never answer — so those two were never asked once.
+ *
+ * Rotating on the property's own claim counter fixes it with no new state: the
+ * settler already increments it once per claim and resets it on a stage
+ * change, and every open branch therefore comes up within `open.length`
+ * attempts however any of them answers.
+ */
+export function branchForAttempt<T>(open: readonly T[], attempts: number): T | null {
+  if (!open.length) return null;
+  const n = Number(attempts);
+  const safe = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  return open[safe % open.length];
+}
+
+/**
  * May stage 1 answer "no deterministic builder image" for this property?
  *
  * ONLY WITH EVERY APPLICABLE BRANCH TERMINAL. A property with no traversable
