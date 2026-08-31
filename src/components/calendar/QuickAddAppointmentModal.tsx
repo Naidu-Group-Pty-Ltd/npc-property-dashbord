@@ -666,7 +666,7 @@ export function QuickAddAppointmentModal({
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
                   required
-                  className="cursor-pointer pr-12 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                  className="has-custom-picker cursor-pointer pr-12"
                 />
                 <Button
                   type="button"
@@ -690,7 +690,7 @@ export function QuickAddAppointmentModal({
                   value={time}
                   onChange={(e) => setTime(e.target.value)}
                   required
-                  className="cursor-pointer pr-12 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                  className="has-custom-picker cursor-pointer pr-12"
                 />
                 <Button
                   type="button"
