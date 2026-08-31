@@ -4,6 +4,16 @@ import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_share
 import { canAccessClient } from '../_shared/clientAccess.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { computeDtiDenominator } from '../_shared/dtiDenominator.ts';
+// Audit item 9 — the one place that decides whether a household is a couple.
+// This used to be an inline list here, a second copy in `policyEngine.ts`, a
+// third in `borrowingCapacityCalculations.ts` and a fourth, different, one in
+// `BorrowingCapacityModal.tsx`, which is why the card and the calculator
+// showed two capacities for the same client.
+import {
+  describeHousehold,
+  householdCategory,
+  type HouseholdComposition,
+} from '../_shared/householdComposition.pure.ts';
 // The same humanising the report normaliser applies on the way *out*, applied
 // here on the way in — so `vehicle_loan` never reaches a client's audit row.
 import { titleCase } from '../_shared/reports/borrowingCapacity/normalise.pure.ts';
@@ -713,12 +723,13 @@ function getHecsRepayment(annualIncome: number): number {
   return (annualIncome * 0.10) / 12;
 }
 
-function getHemBenchmark(maritalStatus: string | null, dependentsCount: number | null, grossAnnualIncome: number = 0, hemConfig: HemConfig = DEFAULT_POLICY.hem): number {
-  const status = maritalStatus?.toLowerCase() || 'single';
-  const isCouple = ['married', 'de facto', 'couple', 'partnered'].includes(status);
+function getHemBenchmark(household: HouseholdComposition, dependentsCount: number | null, grossAnnualIncome: number = 0, hemConfig: HemConfig = DEFAULT_POLICY.hem): number {
   const dependents = Math.min(dependentsCount || 0, 3);
-  
-  const category = isCouple ? 'couple' : 'single';
+
+  // Takes the whole household rather than the status string, so a second
+  // applicant cannot be left out of the classification by a call site that
+  // did not think to pass them. That omission is audit item 9.
+  const category = householdCategory(household);
   const baseHem = hemConfig.baseBenchmarks[category][dependents] || hemConfig.baseBenchmarks[category][0];
   
   let multiplier = 1.0;
@@ -1524,7 +1535,11 @@ Deno.serve(async (req) => {
       calculateNegativePropertyCashFlows(properties);
 
     // Calculate living expenses (HEM or override) - use income-scaled HEM
-    const hemBenchmark = getHemBenchmark(client.marital_status, client.dependents_count, effectiveGrossIncome, activePolicy.hem);
+    const household: HouseholdComposition = {
+      maritalStatus: client.marital_status,
+      secondaryApplicantName: client.secondary_first_name,
+    };
+    const hemBenchmark = getHemBenchmark(household, client.dependents_count, effectiveGrossIncome, activePolicy.hem);
 
     // CRITICAL: Use the HIGHER of HEM benchmark OR declared expenses from database
     // This is the "hybrid" approach that banks use - they take the greater value
@@ -1713,7 +1728,11 @@ Deno.serve(async (req) => {
 
     // Expense audit
     audit.add('expense', expenseMethodUsed === 'hem' ? 'hem_benchmark_applied' : expenseMethodUsed === 'declared_higher' ? 'declared_expenses_used' : 'override_applied',
-      'Living Expenses', totalDeclaredExpenses, livingExpenses, `Method: ${titleCase(expenseMethodUsed)}`, `HEM ${fmtCurrencyServer(hemBenchmark)}/mo vs Declared ${fmtCurrencyServer(totalDeclaredExpenses)}/mo`);
+      'Living Expenses', totalDeclaredExpenses, livingExpenses, `Method: ${titleCase(expenseMethodUsed)}`,
+      // The household classification is stated because it is what moves the
+      // HEM figure beside it, and audit item 9 was two screens disagreeing
+      // about it with nothing on either saying so.
+      `${describeHousehold(household)} — HEM ${fmtCurrencyServer(hemBenchmark)}/mo vs Declared ${fmtCurrencyServer(totalDeclaredExpenses)}/mo`);
     for (const ncf of negativeCashFlowBreakdown) {
       audit.add('property', 'negative_cf_layered', `Neg CF: ${ncf.address}`, 0, ncf.monthlyCashflow, 'Layered on expenses');
     }
@@ -2000,8 +2019,23 @@ Deno.serve(async (req) => {
     };
 
 
-    // Save to database if requested
+    // Save to database if requested.
+    //
+    // A failed save used to be logged here and nothing else: the function
+    // still answered `success: true` with a null `assessmentId`, and the
+    // browser still raised "Borrowing capacity calculated successfully".
+    // Nothing about that is harmless — the card reads the STORED assessment,
+    // so the operator is told the recalculation worked while the figure
+    // beside it stays whatever it was, which is the same symptom as audit
+    // item 9 arriving by a different route.
+    //
+    // The calculation genuinely did succeed and every figure in the response
+    // is good, so this stays a 200 with `success: true`. What changes is that
+    // the response now SAYS whether the figure was kept, and the browser
+    // repeats what it was told rather than assuming.
     let assessmentId: string | null = null;
+    let saved = false;
+    let saveFailure: string | null = null;
     if (saveResult) {
       const { data: savedAssessment, error: saveError } = await supabase
         .from("borrowing_capacity_assessments")
@@ -2045,8 +2079,10 @@ Deno.serve(async (req) => {
 
       if (saveError) {
         console.error("Failed to save assessment:", saveError);
+        saveFailure = saveError.message || 'the assessment could not be stored';
       } else {
         assessmentId = savedAssessment?.id || null;
+        saved = assessmentId !== null;
         console.log(`[calculate-borrowing-capacity] Saved assessment: ${assessmentId}`);
       }
 
@@ -2075,11 +2111,23 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Update client's borrowing_capacity field
-      await supabase
+      // Update client's borrowing_capacity field.
+      //
+      // Read the error for the same reason as above: this column is what the
+      // client list and several reports show, so a silent failure here leaves
+      // one figure on the card and a different one everywhere else. It does
+      // not overwrite a save failure already recorded — the first thing that
+      // went wrong is the one worth reporting.
+      const { error: clientUpdateError } = await supabase
         .from("clients")
         .update({ borrowing_capacity: result.borrowingCapacity })
         .eq("id", clientId);
+      if (clientUpdateError) {
+        console.error("Failed to update client borrowing_capacity:", clientUpdateError);
+        saved = false;
+        saveFailure = saveFailure
+          ?? (clientUpdateError.message || "the client record could not be updated");
+      }
     }
     mark('save');
 
@@ -2090,6 +2138,13 @@ Deno.serve(async (req) => {
         success: true,
         data: {
           assessmentId,
+          // Whether the figure was KEPT, which is a different question from
+          // whether it was calculated. `saveResult: false` callers never
+          // asked for it to be kept, so they read `saved: false` with no
+          // failure — hence `saveRequested` beside it.
+          saveRequested: saveResult === true,
+          saved,
+          saveError: saveFailure,
           ...responseData,
         },
       }),
