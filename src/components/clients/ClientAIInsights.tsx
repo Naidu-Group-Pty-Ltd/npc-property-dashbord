@@ -152,7 +152,7 @@ export function ClientAIInsights({ clientId }: ClientAIInsightsProps) {
               <ul className="space-y-1">
                 {insights.strengths.map((strength, i) => (
                   <li key={i} className="text-sm flex items-start gap-2">
-                    <span className="text-success-foreground0 mt-1">•</span>
+                    <span className="text-success mt-1">•</span>
                     {strength}
                   </li>
                 ))}
@@ -168,7 +168,7 @@ export function ClientAIInsights({ clientId }: ClientAIInsightsProps) {
               <ul className="space-y-1">
                 {insights.opportunities.map((opp, i) => (
                   <li key={i} className="text-sm flex items-start gap-2">
-                    <span className="text-info-foreground0 mt-1">•</span>
+                    <span className="text-info mt-1">•</span>
                     {opp}
                   </li>
                 ))}
@@ -184,7 +184,7 @@ export function ClientAIInsights({ clientId }: ClientAIInsightsProps) {
               <ul className="space-y-1">
                 {insights.risks.map((risk, i) => (
                   <li key={i} className="text-sm flex items-start gap-2">
-                    <span className="text-warning-foreground0 mt-1">•</span>
+                    <span className="text-warning mt-1">•</span>
                     {risk}
                   </li>
                 ))}

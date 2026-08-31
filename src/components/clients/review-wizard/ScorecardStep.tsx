@@ -73,11 +73,11 @@ export function ScorecardStep({
       case 'Star':
         return <Star className="h-4 w-4 text-brand-500 fill-brand-500" />;
       case 'Good':
-        return <ThumbsUp className="h-4 w-4 text-success-foreground0" />;
+        return <ThumbsUp className="h-4 w-4 text-success" />;
       case 'Average':
         return <Minus className="h-4 w-4 text-muted-foreground" />;
       case 'Underperformer':
-        return <ThumbsDown className="h-4 w-4 text-destructive-foreground0" />;
+        return <ThumbsDown className="h-4 w-4 text-destructive" />;
       default:
         return null;
     }

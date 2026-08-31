@@ -290,7 +290,7 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
                         <p className="text-sm font-medium text-foreground truncate">{report.report_title}</p>
                         {report.is_read ? (
                           <Badge variant="outline" className="text-[10px] gap-1">
-                            <CheckCircle2 className="h-2.5 w-2.5 text-success-foreground0" />
+                            <CheckCircle2 className="h-2.5 w-2.5 text-success" />
                             Read
                           </Badge>
                         ) : (
