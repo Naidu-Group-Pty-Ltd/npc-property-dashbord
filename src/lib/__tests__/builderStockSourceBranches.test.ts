@@ -26,7 +26,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   allBranchesTerminal, branchQuestion, branchRecord, branchTerminal, classifyBranch,
-  openBranches, readBranchState, rowSourceBranches, writeBranchState,
+  openBranches, readBranchState, rowSourceBranches, unmappedWithRecoveredLinks, writeBranchState,
 } from '../../../supabase/functions/_shared/builderStock/sourceBranches.pure';
 import {
   MAX_PACKAGE_ATTEMPTS, recordPackageAttempt, recordPackageUnprocessable,
@@ -350,3 +350,87 @@ function readSource(relative: string): string {
   const { resolve } = require('node:path') as typeof import('node:path');
   return readFileSync(resolve(__dirname, '../../../', relative), 'utf8');
 }
+
+// ---------------------------------------------------------------------------
+// A re-read must not lose what the re-read cannot contain
+// ---------------------------------------------------------------------------
+
+/**
+ * A Google Sheet whose owner has turned off "viewers can download, print,
+ * copy" publishes no representation carrying a link target — every CSV of it
+ * shows the word `Brochure` and no address. The recovery reads those cells
+ * through an authorised connection and writes each row's own targets onto that
+ * row, so for such a document the stored row is the ONLY place the address
+ * exists.
+ *
+ * Measured in production before this existed: 350 targets recovered onto 86
+ * properties, correctly attributed, and every one invisible to stage 1 — which
+ * re-read the sheet, saw five labels and no addresses, and reported
+ * `stored 0, matched 0` for all eighty properties.
+ */
+describe('the recovered link is laid over the row the document re-stated', () => {
+  const documentRow = { 'Brochure V002': 'BROCHURE', 'Estate Brochure': 'Release Brochure' };
+  const storedRow = {
+    unmapped: {
+      'Brochure V002': 'BROCHURE https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view',
+      'Estate Brochure': 'Release Brochure https://drive.google.com/file/d/1BBBBBBBBBBBBBBBBBBBBBBBBBBESTATE/view',
+    },
+    recovered_link_columns: ['Brochure V002', 'Estate Brochure'],
+  };
+
+  it('gives the branch derivation an address the document could not state', () => {
+    const merged = unmappedWithRecoveredLinks(documentRow, storedRow);
+    expect(merged['Brochure V002'])
+      .toBe('BROCHURE https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view');
+
+    const branches = rowSourceBranches(merged);
+    expect(branches.map((branch) => branch.url)).toEqual([
+      'https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view',
+      'https://drive.google.com/file/d/1BBBBBBBBBBBBBBBBBBBBBBBBBBESTATE/view',
+    ]);
+    // Without the overlay the same row yields nothing at all — the defect.
+    expect(rowSourceBranches(documentRow)).toEqual([]);
+  });
+
+  it('returns the row untouched where no recovery has run', () => {
+    expect(unmappedWithRecoveredLinks(documentRow, { unmapped: {}, recovered_link_columns: [] }))
+      .toEqual(documentRow);
+    expect(unmappedWithRecoveredLinks(documentRow, null)).toEqual(documentRow);
+    expect(unmappedWithRecoveredLinks(documentRow, {})).toEqual(documentRow);
+  });
+
+  it('never invents a source: a named column with no link is ignored', () => {
+    const merged = unmappedWithRecoveredLinks(documentRow, {
+      unmapped: { 'Brochure V002': 'BROCHURE' },
+      recovered_link_columns: ['Brochure V002', 'Not A Column'],
+    });
+    expect(merged).toEqual(documentRow);
+    expect(rowSourceBranches(merged)).toEqual([]);
+  });
+
+  it('overlays only the columns the recovery named', () => {
+    const merged = unmappedWithRecoveredLinks(documentRow, {
+      unmapped: {
+        'Brochure V002': 'BROCHURE https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view',
+        'Estate Brochure': 'Release Brochure https://drive.google.com/file/d/1BBBBBBBBBBBBBBBBBBBBBBBBBBESTATE/view',
+      },
+      // Only one is claimed, so only one may be trusted.
+      recovered_link_columns: ['Brochure V002'],
+    });
+    expect(merged['Estate Brochure']).toBe('Release Brochure');
+    expect(rowSourceBranches(merged).map((b) => b.url))
+      .toEqual(['https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view']);
+  });
+
+  it('keeps each property to its own recovered link', () => {
+    const forLot = (lot: string) => unmappedWithRecoveredLinks(documentRow, {
+      unmapped: { 'Brochure V002': `BROCHURE https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA${lot}/view` },
+      recovered_link_columns: ['Brochure V002'],
+    });
+    const a = rowSourceBranches(forLot('1002')).map((b) => b.url);
+    const b = rowSourceBranches(forLot('1003')).map((b) => b.url);
+    expect(a).toEqual(['https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view']);
+    expect(b).toEqual(['https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1003/view']);
+    expect(a[0]).not.toEqual(b[0]);
+  });
+});

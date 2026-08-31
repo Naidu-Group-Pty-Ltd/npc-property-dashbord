@@ -129,6 +129,51 @@ export function rowSourceBranches(
   return branches;
 }
 
+/**
+ * THE ROW AS THE DOCUMENT STATES IT, PLUS THE TARGETS ONLY RECOVERY COULD SEE.
+ *
+ * A Google Sheet carries its documents as HYPERLINKS, and a sheet whose owner
+ * has turned off "viewers can download, print, copy" publishes no
+ * representation carrying a link target at all — every CSV of it shows the
+ * word `Brochure` and no address. The recovery reads those cells through an
+ * authorised connection and writes each row's own targets onto that row, so
+ * for such a document the stored row is the ONLY place the address exists.
+ *
+ * Re-reading the source stays right — a builder edits their sheet and those
+ * edits must land. But a re-read must not LOSE what the re-read can never
+ * contain, so the recovered columns are laid over the freshly parsed row: the
+ * document remains the authority on everything it can express, and the row is
+ * the authority on the one thing it cannot.
+ *
+ * Only columns the recovery NAMED are overlaid, and only where what it stored
+ * actually carries a link — so this can never invent a source, and a row that
+ * has had no recovery is returned exactly as the document stated it.
+ *
+ * Measured in production before this existed: 350 targets recovered onto 86
+ * properties, correctly attributed, and every one invisible to stage 1, which
+ * re-read the sheet, saw five labels and no addresses, and reported
+ * `stored 0, matched 0` for all eighty properties.
+ */
+export function unmappedWithRecoveredLinks(
+  unmapped: Record<string, string> | null | undefined,
+  storedRow: Record<string, unknown> | null | undefined,
+): Record<string, string> {
+  const base = { ...(unmapped ?? {}) };
+  const row = (storedRow ?? {}) as Record<string, unknown>;
+  const columns = Array.isArray(row.recovered_link_columns)
+    ? row.recovered_link_columns as unknown[] : [];
+  if (!columns.length) return base;
+
+  const stored = (row.unmapped ?? {}) as Record<string, unknown>;
+  for (const column of columns) {
+    if (typeof column !== 'string') continue;
+    const value = stored[column];
+    if (typeof value !== 'string' || !/https?:\/\//i.test(value)) continue;
+    base[column] = value;
+  }
+  return base;
+}
+
 // ---------------------------------------------------------------------------
 // Per-branch state
 // ---------------------------------------------------------------------------
