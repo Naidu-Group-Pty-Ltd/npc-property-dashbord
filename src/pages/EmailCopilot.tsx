@@ -1755,7 +1755,7 @@ export default function EmailCopilot() {
       read: { label: 'Read', className: 'bg-muted text-muted-foreground' },
       summarized: { label: 'Summarized', className: 'bg-success/10 text-success border-success/20' },
       drafted: { label: 'Draft Ready', className: 'bg-accent/10 text-accent border-accent/20' },
-      archived: { label: 'Archived', className: 'bg-muted0/10 text-muted-foreground border-border/20' }
+      archived: { label: 'Archived', className: 'bg-muted/10 text-muted-foreground border-border/20' }
     };
     const { label, className } = config[status] || config.read;
     return <Badge variant="outline" className={className}>{label}</Badge>;
@@ -2232,7 +2232,7 @@ export default function EmailCopilot() {
                                     </Badge>
                                   )}
                                   {latestEmail.status === 'archived' && (
-                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground border-border/20 bg-muted0/10">
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground border-border/20 bg-muted/10">
                                       <Archive className="h-2.5 w-2.5 mr-0.5" /> Archived
                                     </Badge>
                                   )}

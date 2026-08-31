@@ -70,7 +70,7 @@ const STATUS_DOT_CLASSES: Record<string, string> = {
   Active: 'bg-success',
   Pending: 'bg-brand-500',
   Sold: 'bg-info',
-  Withdrawn: 'bg-muted0',
+  Withdrawn: 'bg-muted',
   Expired: 'bg-destructive',
 };
 
