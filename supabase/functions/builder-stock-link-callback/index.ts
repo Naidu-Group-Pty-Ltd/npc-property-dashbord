@@ -36,15 +36,28 @@
  *   timestamp, replay, expiry, a document that is not the one we asked about,
  *   an oversized body — each answers and stops.
  *
+ *   THE WORKBOOK IS THE REPRESENTATION, AND THE WORKSHEET IS CHOSEN BY WHAT
+ *   IT CONTAINS. Make exports the document as XLSX with its own authorised
+ *   Google connection — the one representation that carries link targets at
+ *   all — and an export is the WHOLE workbook, recording no gid anywhere. So
+ *   the tab is identified by scoring every worksheet against the CSV the
+ *   import already proved, and exactly one must win decisively. Zero matches
+ *   or two near-identical tabs both apply nothing, because borrowing another
+ *   tab's links is the failure this exists to prevent.
+ *
  * Nothing here decides anything about an image. A recovered URL is written
  * into the cell it came from and becomes an ordinary builder source; the
  * existing hierarchy, sanitisation, identity and role rules are untouched.
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import {
-  AUTHENTICATED_REFUSALS, MAX_CALLBACK_BYTES, callbackRefusal, mergeRecoveredLink,
-  recoveredRowsFromGrid, type RecoveryRequestRecord,
+  AUTHENTICATED_REFUSALS, MAX_CALLBACK_BYTES, callbackRefusal, decodeWorkbook,
+  mergeRecoveredLink, recoveredRowsFromWorksheet, type RecoveryRequestRecord,
 } from '../_shared/builderStock/linkRecovery.pure.ts';
+import { readWorkbookSheets } from '../_shared/builderStock/workbookSheets.ts';
+import { matchWorksheet } from '../_shared/builderStock/sheetHyperlinks.pure.ts';
+import { fetchStockSource } from '../_shared/builderStock/fetchSource.ts';
+import { parseDelimited } from '../_shared/builderStock/table.pure.ts';
 import { sha256Hex } from '../_shared/builderStock/requestLinkRecovery.ts';
 import {
   consumeRateLimit, enforceRawBodyLimit, securityJsonError,
@@ -131,6 +144,21 @@ Deno.serve(async (req) => {
   if (!limit.allowed) return securityJsonError(429, 'rate_limited');
 
   /*
+   * THE WORKBOOK IS DECODED BEFORE THE REQUEST IS CLAIMED.
+   *
+   * Decoding is validation rather than work: a payload that is oversized or
+   * not base64 tells us nothing about this builder's stock, and burning the
+   * one-shot request on it would leave Make unable to answer with a good one.
+   * The caller has already proven possession of the token by this point, and
+   * the organisation is already rate limited, so this cannot be used to probe.
+   */
+  const decoded = decodeWorkbook(String(body.workbook_base64 ?? ''));
+  if (!decoded.ok) {
+    return jsonError(decoded.reason === 'too_large' ? 413 : 400,
+      decoded.reason === 'too_large' ? 'workbook_too_large' : 'workbook_undecodable');
+  }
+
+  /*
    * SINGLE-USE, CLAIMED BEFORE THE WORK. The conditional update is the replay
    * guard: a second caller presenting the same id finds nothing to claim and
    * is refused, whatever it carries.
@@ -141,7 +169,39 @@ Deno.serve(async (req) => {
     .select('id').maybeSingle();
   if (!claimed) return jsonError(409, 'request_already_consumed');
 
-  const rows = recoveredRowsFromGrid(body.sheets, authority.gid ?? null);
+  /*
+   * WHICH WORKSHEET, THOUGH — asked of content, never of position.
+   *
+   * The workbook carries every tab and no gid. The CSV for the tab the upload
+   * was built from is re-read through the same retrieval the import uses, and
+   * `matchWorksheet` scores every worksheet against it under the floor and
+   * margin that rule already defines. Anything short of a decisive winner
+   * applies nothing at all.
+   */
+  let rows: ReturnType<typeof recoveredRowsFromWorksheet> = [];
+  let worksheet = '';
+  let refusedFor = '';
+  try {
+    const sheets = await readWorkbookSheets(decoded.bytes);
+    const proven = await fetchStockSource(
+      `https://docs.google.com/spreadsheets/d/${authority.spreadsheet_id}/edit`
+      + `?gid=${encodeURIComponent(authority.gid ?? '0')}`);
+    const matrix = parseDelimited(new TextDecoder('utf-8', { fatal: false })
+      .decode(proven.bytes));
+
+    const match = matchWorksheet(matrix, sheets);
+    if (match.ok) {
+      worksheet = match.sheet.name;
+      rows = recoveredRowsFromWorksheet(match.sheet);
+    } else {
+      refusedFor = match.reason;
+    }
+  } catch {
+    // A workbook we could not read, or a CSV we could not re-prove. Either way
+    // nothing is known about which tab these links belong to, so nothing is
+    // applied — the upload keeps the notice it already had.
+    refusedFor = 'workbook_unreadable';
+  }
 
   const { data: items } = await supabase.from('builder_stock_items')
     .select(ITEM_COLUMNS)
@@ -156,6 +216,14 @@ Deno.serve(async (req) => {
     rows_returned: rows.length,
     links_applied: applied.linksApplied,
     properties_reopened: applied.reopened,
+    /*
+     * WHY NOTHING CAME BACK, WHERE NOTHING DID. A recovery that reads no rows
+     * and records only a zero is indistinguishable from one that read the
+     * sheet and found no links — which is exactly how a broken worksheet match
+     * came to look like an empty spreadsheet. The reason is kept even on a
+     * fulfilled request, because that is the request it needs explaining on.
+     */
+    refusal_reason: refusedFor || null,
   }).eq('id', authority.id);
 
   console.info('[builder-stock] link recovery applied', {
@@ -166,6 +234,8 @@ Deno.serve(async (req) => {
     links_applied: applied.linksApplied,
     properties_reopened: applied.reopened,
     unmatched_rows: applied.unmatched,
+    worksheet_matched: !!worksheet,
+    worksheet_refused: refusedFor || null,
   });
 
   return new Response(JSON.stringify({
@@ -173,6 +243,8 @@ Deno.serve(async (req) => {
     rows_returned: rows.length,
     links_applied: applied.linksApplied,
     properties_reopened: applied.reopened,
+    worksheet_matched: !!worksheet,
+    worksheet_refused: refusedFor || null,
   }), { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 });
 
@@ -187,7 +259,7 @@ Deno.serve(async (req) => {
 async function applyRecoveredLinks(
   supabase: any,
   items: Array<Record<string, unknown>>,
-  rows: ReturnType<typeof recoveredRowsFromGrid>,
+  rows: ReturnType<typeof recoveredRowsFromWorksheet>,
 ): Promise<{ linksApplied: number; reopened: number; unmatched: number }> {
   const identities = items.map((item) => ({
     item, identity: stockPropertyIdentity(item as never),

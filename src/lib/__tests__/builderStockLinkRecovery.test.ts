@@ -29,11 +29,14 @@ import { createHash } from 'node:crypto';
 
 import {
   AUTHENTICATED_REFUSALS, CALLBACK_TOKEN_BYTES, MAX_CALLBACK_BYTES,
-  RECOVERABLE_AVAILABILITY, RECOVERABLE_AVAILABILITY_LEGACY,
-  RECOVERY_REQUEST_TTL_MINUTES, callbackRefusal, constantTimeEquals,
+  MAX_WORKBOOK_BYTES, RECOVERABLE_AVAILABILITY, RECOVERABLE_AVAILABILITY_LEGACY,
+  RECOVERY_REQUEST_TTL_MINUTES, callbackRefusal, constantTimeEquals, decodeWorkbook,
   isRecoverableStoredAvailability, mergeRecoveredLink,
-  outboundRecoveryPayload, recoveredRowsFromGrid, shouldRequestLinkRecovery,
+  outboundRecoveryPayload, recoveredRowsFromWorksheet, shouldRequestLinkRecovery,
 } from '../../../supabase/functions/_shared/builderStock/linkRecovery.pure';
+import {
+  hyperlinkTargetOf, matchWorksheet,
+} from '../../../supabase/functions/_shared/builderStock/sheetHyperlinks.pure';
 import { rowSourceBranches } from '../../../supabase/functions/_shared/builderStock/sourceBranches.pure';
 
 /** The same construction both sides of the token use. */
@@ -190,7 +193,8 @@ describe('the callback cannot name its own authority', () => {
     callback_token_hash: TOKEN_HASH,
   };
   const body = {
-    request_id: 'req-1', spreadsheet_id: 'sheet-abc', gid: '0', sheets: [],
+    request_id: 'req-1', spreadsheet_id: 'sheet-abc', gid: '0',
+    workbook_base64: 'UEsDBBQAAAAIAA==',
   };
 
   it('accepts a well-formed, bound, unconsumed, unexpired, authorised request', () => {
@@ -239,7 +243,8 @@ describe('the callback cannot name its own authority', () => {
   it('refuses a malformed payload before looking anything up', () => {
     for (const bad of [{}, { request_id: 'req-1' }, { spreadsheet_id: 'sheet-abc' },
       { request_id: 'req-1', spreadsheet_id: 'sheet-abc' },
-      { request_id: 'req-1', spreadsheet_id: 'sheet-abc', sheets: 'not-an-array' }]) {
+      { request_id: 'req-1', spreadsheet_id: 'sheet-abc', workbook_base64: '' },
+      { request_id: 'req-1', spreadsheet_id: 'sheet-abc', workbook_base64: 42 }]) {
       expect(callbackRefusal(request, bad as never, now, TOKEN_HASH)?.code)
         .toBe('malformed_payload');
     }
@@ -275,7 +280,8 @@ describe('authorisation is a per-request capability, not a shared secret', () =>
     callback_token_hash: TOKEN_HASH,
   };
   const body = {
-    request_id: 'req-1', spreadsheet_id: 'sheet-abc', gid: '0', sheets: [],
+    request_id: 'req-1', spreadsheet_id: 'sheet-abc', gid: '0',
+    workbook_base64: 'UEsDBBQAAAAIAA==',
   };
 
   it('accepts the token minted for this request', () => {
@@ -409,81 +415,157 @@ describe('authorisation is a per-request capability, not a shared secret', () =>
   });
 });
 
-// ── The grid ───────────────────────────────────────────────────────────────
+// ── The workbook ───────────────────────────────────────────────────────────
 
-const grid = (sheetId: number) => ({
-  properties: { sheetId, title: 'Stock' },
-  data: [{
-    rowData: [
-      { values: [{ formattedValue: 'Lot #' }, { formattedValue: 'Estate' },
-        { formattedValue: 'Brochure' }] },
-      { values: [{ formattedValue: '605' }, { formattedValue: 'Sample Rise' },
-        { formattedValue: 'Brochure', hyperlink: 'https://example.invalid/b-605.pdf' }] },
-      { values: [{ formattedValue: '606' }, { formattedValue: 'Sample Rise' },
-        { formattedValue: 'Brochure', hyperlink: 'https://example.invalid/b-606.pdf' }] },
-    ],
-  }],
+/** One worksheet as the shared reader hands it over. */
+const worksheet = (name: string, rows: Array<[string, string, string | null]>) => ({
+  name,
+  values: [
+    ['Lot #', 'Estate', 'Brochure V002'],
+    ...rows.map(([lot, estate]) => [lot, estate, 'Brochure']),
+  ] as (string | null)[][],
+  links: [
+    [null, null, null],
+    ...rows.map(([, , link]) => [null, null, link]),
+  ] as (string | null)[][],
 });
 
-describe('the tab is chosen by its own id, never by position', () => {
-  it('takes the sheet the gid names wherever it sits', () => {
-    const rows = recoveredRowsFromGrid([grid(99), grid(7)], '7');
+const STOCK = worksheet('Stock', [
+  ['605', 'Sample Rise', 'https://example.invalid/b-605.pdf'],
+  ['606', 'Sample Rise', 'https://example.invalid/b-606.pdf'],
+]);
+
+describe('the workbook is decoded before anything is believed', () => {
+  const b64 = (text: string) => Buffer.from(text, 'utf8').toString('base64');
+
+  it('decodes a workbook the callback can read', () => {
+    const out = decodeWorkbook(b64('PK\u0003\u0004 not really a zip'));
+    expect(out.ok).toBe(true);
+  });
+
+  it('refuses an oversized workbook by ARITHMETIC, before allocating it', () => {
+    // Four base64 characters per three bytes, so this describes a decoded
+    // length past the cap without ever building one.
+    const oversized = 'A'.repeat(Math.ceil(((MAX_WORKBOOK_BYTES + 1024) * 4) / 3));
+    const out = decodeWorkbook(oversized);
+    expect(out).toEqual({ ok: false, reason: 'too_large' });
+  });
+
+  it('refuses something that is not base64 at all', () => {
+    expect(decodeWorkbook('').ok).toBe(false);
+    expect(decodeWorkbook('%%%%').ok).toBe(false);
+  });
+
+  it('the decoded cap is well inside the body cap, because base64 inflates', () => {
+    expect(MAX_WORKBOOK_BYTES).toBeLessThan(MAX_CALLBACK_BYTES);
+  });
+});
+
+describe('the worksheet is chosen by content, never by position', () => {
+  const csv = [
+    ['Lot #', 'Estate', 'Brochure V002'],
+    ['605', 'Sample Rise', 'Brochure'],
+    ['606', 'Sample Rise', 'Brochure'],
+  ];
+
+  const decoy = worksheet('Summary', [
+    ['Status', 'Count', null],
+    ['Available', '12', null],
+  ]);
+
+  it('takes the matching tab wherever it sits in the workbook', () => {
+    const first = matchWorksheet(csv, [STOCK, decoy]);
+    const last = matchWorksheet(csv, [decoy, STOCK]);
+    expect(first.ok && first.sheet.name).toBe('Stock');
+    expect(last.ok && last.sheet.name).toBe('Stock');
+  });
+
+  it('refuses when NO worksheet is decisively this tab', () => {
+    const out = matchWorksheet(csv, [decoy]);
+    expect(out.ok).toBe(false);
+    expect(out.ok === false && out.reason).toBe('no_match');
+  });
+
+  it('refuses when two worksheets are equally like it', () => {
+    const twin = { ...STOCK, name: 'Stock (copy)' };
+    const out = matchWorksheet(csv, [STOCK, twin]);
+    expect(out.ok).toBe(false);
+    expect(out.ok === false && out.reason).toBe('ambiguous');
+  });
+
+  it('an empty workbook decides nothing rather than something', () => {
+    expect(matchWorksheet(csv, []).ok).toBe(false);
+  });
+});
+
+describe('a worksheet becomes headed rows, and a link stays on its own row', () => {
+  it('reads each row with its own heading and its own target', () => {
+    const rows = recoveredRowsFromWorksheet(STOCK);
     expect(rows).toHaveLength(2);
     expect(rows[0].values['Lot #']).toBe('605');
+    expect(rows[0].links['Brochure V002']).toBe('https://example.invalid/b-605.pdf');
+    expect(rows[1].values['Lot #']).toBe('606');
+    expect(rows[1].links['Brochure V002']).toBe('https://example.invalid/b-606.pdf');
   });
 
-  it('takes the first tab only where the link named none', () => {
-    const rows = recoveredRowsFromGrid([grid(99), grid(7)], null);
-    expect(rows).toHaveLength(2);
+  it('never lets one row\u2019s link reach another row', () => {
+    const rows = recoveredRowsFromWorksheet(STOCK);
+    expect(rows[0].links['Brochure V002']).not.toBe(rows[1].links['Brochure V002']);
   });
 
-  it('finds gid 0 when Google OMITS sheetId, which is how it always arrives', () => {
-    /*
-     * The Sheets API is proto3 JSON and leaves out scalars holding their
-     * default, so the first tab of nearly every spreadsheet carries no
-     * `sheetId` at all — and `gid=0` is the commonest link anyone pastes.
-     * Read as `Number(undefined)`, that is NaN, which matches nothing: the
-     * recovery returned zero rows and reported itself fulfilled. Measured
-     * against the live document before this was fixed.
-     */
-    const noId = { properties: { title: 'Stock' }, data: grid(0).data };
-    expect(recoveredRowsFromGrid([noId], '0')).toHaveLength(2);
-  });
-
-  it('absent means zero, never "the first one"', () => {
-    // A workbook whose first tab is 12345 and whose second omits its id
-    // resolves gid 0 to the SECOND, not to whatever happens to be first.
-    const second = { properties: { title: 'Stock' }, data: grid(0).data };
-    const rows = recoveredRowsFromGrid([grid(12345), second], '0');
-    expect(rows).toHaveLength(2);
-    // And a gid that names the explicit tab still takes that one.
-    expect(recoveredRowsFromGrid([grid(12345), second], '12345')).toHaveLength(2);
-  });
-
-  it('a gid no sheet carries recovers nothing rather than something', () => {
-    expect(recoveredRowsFromGrid([grid(99)], '7')).toEqual([]);
+  it('carries several document columns independently on one row', () => {
+    const many = {
+      name: 'Stock',
+      values: [
+        ['Lot #', 'Brochure V002', 'Siting / Masterplan', 'Rental Appraisal'],
+        ['605', 'Brochure', 'Masterplan', 'N/A'],
+      ] as (string | null)[][],
+      links: [
+        [null, null, null, null],
+        [null, 'https://example.invalid/b.pdf', 'https://example.invalid/m.pdf', null],
+      ] as (string | null)[][],
+    };
+    const rows = recoveredRowsFromWorksheet(many);
+    expect(Object.keys(rows[0].links).sort())
+      .toEqual(['Brochure V002', 'Siting / Masterplan']);
+    // A label with no link is not a link, and must not become one.
+    expect(rows[0].links['Rental Appraisal']).toBeUndefined();
+    expect(rows[0].values['Rental Appraisal']).toBe('N/A');
   });
 
   it('keeps only http(s) targets', () => {
-    const rows = recoveredRowsFromGrid([{
-      properties: { sheetId: 0 },
-      data: [{ rowData: [
-        { values: [{ formattedValue: 'Lot #' }, { formattedValue: 'Plan' }] },
-        { values: [{ formattedValue: '1' },
-          { formattedValue: 'Plan', hyperlink: '#Sheet1!A1' }] },
-      ] }],
-    }], '0');
-    expect(rows[0].links).toEqual({});
+    const odd = {
+      name: 'Stock',
+      values: [['Lot #', 'Brochure V002'], ['605', 'Brochure']] as (string | null)[][],
+      links: [[null, null], [null, 'mailto:sales@example.invalid']] as (string | null)[][],
+    };
+    expect(recoveredRowsFromWorksheet(odd)[0].links['Brochure V002']).toBeUndefined();
   });
 
-  it('an empty or headerless grid recovers nothing and does not throw', () => {
-    for (const bad of [null, undefined, [], [{}], [{ data: [] }]]) {
-      expect(recoveredRowsFromGrid(bad as never, '0')).toEqual([]);
-    }
+  it('an empty or headerless worksheet recovers nothing and does not throw', () => {
+    expect(recoveredRowsFromWorksheet(undefined)).toEqual([]);
+    expect(recoveredRowsFromWorksheet({ values: [], links: [] })).toEqual([]);
+    expect(recoveredRowsFromWorksheet({ values: [['Lot #']], links: [[null]] })).toEqual([]);
   });
 });
 
-// ── Storage ────────────────────────────────────────────────────────────────
+describe('both ways a builder can write a link survive', () => {
+  it('an ordinary Excel link relationship', () => {
+    expect(hyperlinkTargetOf({ link: 'https://example.invalid/b.pdf', formula: null }))
+      .toBe('https://example.invalid/b.pdf');
+  });
+
+  it('a HYPERLINK formula, which carries no relationship at all', () => {
+    expect(hyperlinkTargetOf({
+      link: null, formula: 'HYPERLINK("https://example.invalid/f.pdf","Brochure")',
+    })).toBe('https://example.invalid/f.pdf');
+  });
+
+  it('and plain text carries neither', () => {
+    expect(hyperlinkTargetOf({ link: null, formula: null })).toBeNull();
+    expect(hyperlinkTargetOf({ link: null, formula: 'CONCAT(A1," ")' })).toBeNull();
+  });
+});
 
 describe('a recovered link enters the row the existing pipeline already reads', () => {
   const URL_A = 'https://example.invalid/b-605.pdf';
@@ -590,7 +672,14 @@ describe('nothing here names a deployment', () => {
       const source = readFileSync(file, 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*(\/\/|--).*$/gm, ' ');
       expect(source).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i);
-      expect(source).not.toMatch(/docs\.google\.com/);
+      /*
+       * A LITERAL DOCUMENT, not the vendor's host. The callback builds a
+       * spreadsheet URL from the id on the stored request row, which is the
+       * whole point — the host has to appear somewhere. What must never appear
+       * is a document id written into the source, so this matches an id after
+       * `/d/` and lets an interpolated one through.
+       */
+      expect(source).not.toMatch(/spreadsheets\/d\/[A-Za-z0-9_-]{10,}/);
       expect(source).not.toMatch(/1bPh8W|npcservices/i);
     }
   });
