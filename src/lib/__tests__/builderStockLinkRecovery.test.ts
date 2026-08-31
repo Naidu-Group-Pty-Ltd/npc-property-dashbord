@@ -35,8 +35,12 @@ import {
   outboundRecoveryPayload, recoveredRowsFromWorksheet, shouldRequestLinkRecovery,
 } from '../../../supabase/functions/_shared/builderStock/linkRecovery.pure';
 import {
-  hyperlinkTargetOf, matchWorksheet,
+  alignWorksheetRows, hyperlinkTargetOf, locateHeaderRow, matchWorksheet,
+  mergeHyperlinkColumns, worksheetScore,
 } from '../../../supabase/functions/_shared/builderStock/sheetHyperlinks.pure';
+import {
+  GridTooLargeError, MAX_GRID_CELLS, gridToWorkbookSheets,
+} from '../../../supabase/functions/_shared/builderStock/sheetGrid.pure';
 import { rowSourceBranches } from '../../../supabase/functions/_shared/builderStock/sourceBranches.pure';
 
 /** The same construction both sides of the token use. */
@@ -792,5 +796,471 @@ describe('a stored row may carry either spelling of the same reading', () => {
     expect(server).toContain('isRecoverableStoredAvailability');
     // And the server is still the authority: it re-checks rather than trusting.
     expect(server).toMatch(/if \(!isRecoverableStoredAvailability\(availability\)\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The grid — the representation a builder does not have to enable
+// ---------------------------------------------------------------------------
+
+/**
+ * A BUILDER SHARES A SHEET AND NOTHING ELSE.
+ *
+ * Turning off "viewers can download, print, copy" is an ordinary thing to do
+ * with a price list, and Drive honours it: the workbook cannot be fetched at
+ * all. Reading CELLS is a different permission, so `spreadsheets.get` answers
+ * on the same document for the same reader. These tests pin that the grid
+ * becomes the SAME worksheet shape the workbook reader produces, so every rule
+ * that puts a brochure on the right lot is the one already proven.
+ */
+describe('a grid is adapted into the shape the workbook reader produces', () => {
+  const grid = {
+    sheets: [
+      {
+        properties: { title: 'STOCKLIST V002', sheetId: 0 },
+        data: [{
+          // startRow and startColumn omitted — proto3 leaves out a zero.
+          rowData: [
+            { values: [{ formattedValue: 'Lot #' }, { formattedValue: 'Brochure' }] },
+            {
+              values: [
+                { formattedValue: '1002' },
+                {
+                  formattedValue: 'BROCHURE',
+                  hyperlink: 'https://example.invalid/lot-1002.pdf',
+                },
+              ],
+            },
+            {}, // a genuinely empty row, exactly as the live sheet carries one
+            {
+              values: [
+                { formattedValue: '1003' },
+                {
+                  formattedValue: 'BROCHURE',
+                  hyperlink: 'https://example.invalid/lot-1003.pdf',
+                },
+              ],
+            },
+          ],
+        }],
+      },
+    ],
+  };
+
+  it('reads a zero offset that Google omitted rather than making it NaN', () => {
+    const [sheet] = gridToWorkbookSheets(grid);
+    expect(sheet.values[0]?.[0]).toBe('Lot #');
+    expect(sheet.values[1]?.[0]).toBe('1002');
+  });
+
+  it('keeps an empty row in its own slot, so no lot inherits the next one\'s link', () => {
+    const [sheet] = gridToWorkbookSheets(grid);
+    // Row 2 is the blank one; 1003 must stay at row 3, where the CSV has it.
+    expect(sheet.values[2]).toEqual([]);
+    expect(sheet.values[3]?.[0]).toBe('1003');
+    expect(sheet.links[3]?.[1]).toBe('https://example.invalid/lot-1003.pdf');
+  });
+
+  it('places a range at its own offset', () => {
+    const offset = gridToWorkbookSheets({
+      sheets: [{
+        properties: { title: 'Tab' },
+        data: [{ startRow: 2, startColumn: 1, rowData: [{ values: [{ formattedValue: 'x' }] }] }],
+      }],
+    });
+    expect(offset[0].values[2]?.[1]).toBe('x');
+    expect(offset[0].values[0]).toEqual([]);
+  });
+
+  it('carries a link written as a HYPERLINK formula, not only as a relationship', () => {
+    const [sheet] = gridToWorkbookSheets({
+      sheets: [{
+        properties: { title: 'Tab' },
+        data: [{
+          rowData: [{
+            values: [{
+              formattedValue: 'Brochure',
+              userEnteredValue: {
+                formulaValue: '=HYPERLINK("https://example.invalid/f.pdf","Brochure")',
+              },
+            }],
+          }],
+        }],
+      }],
+    });
+    expect(sheet.links[0]?.[0]).toBe('https://example.invalid/f.pdf');
+  });
+
+  it('keeps only http(s), so an internal or mail target never becomes a source', () => {
+    const [sheet] = gridToWorkbookSheets({
+      sheets: [{
+        properties: { title: 'Tab' },
+        data: [{
+          rowData: [{
+            values: [
+              { formattedValue: 'a', hyperlink: 'mailto:someone@example.invalid' },
+              { formattedValue: 'b', hyperlink: '#gid=0&range=A1' },
+              { formattedValue: 'c', hyperlink: 'https://example.invalid/ok.pdf' },
+            ],
+          }],
+        }],
+      }],
+    });
+    expect(sheet.links[0]?.[0]).toBeNull();
+    expect(sheet.links[0]?.[1]).toBeNull();
+    expect(sheet.links[0]?.[2]).toBe('https://example.invalid/ok.pdf');
+  });
+
+  it('feeds the SAME worksheet match and row rules the workbook path uses', () => {
+    const sheets = gridToWorkbookSheets(grid);
+    const csv = [['Lot #', 'Brochure'], ['1002', 'BROCHURE'], [], ['1003', 'BROCHURE']];
+    const match = matchWorksheet(csv, sheets);
+    expect(match.ok).toBe(true);
+
+    const rows = recoveredRowsFromWorksheet(match.ok ? match.sheet : null);
+    const byLot = new Map(rows.map((row) => [row.values['Lot #'], row.links.Brochure]));
+    expect(byLot.get('1002')).toBe('https://example.invalid/lot-1002.pdf');
+    expect(byLot.get('1003')).toBe('https://example.invalid/lot-1003.pdf');
+  });
+
+  it('refuses a pathological grid rather than expanding it into memory', () => {
+    const wide = Array.from({ length: 400 }, () => ({ formattedValue: 'x' }));
+    const huge = {
+      sheets: [{
+        properties: { title: 'Tab' },
+        data: [{ rowData: Array.from({ length: 1100 }, () => ({ values: wide })) }],
+      }],
+    };
+    expect(() => gridToWorkbookSheets(huge)).toThrow(GridTooLargeError);
+    expect(MAX_GRID_CELLS).toBeLessThan(1100 * 400);
+  });
+
+  it('answers with no worksheets rather than throwing on a shape it cannot read', () => {
+    expect(gridToWorkbookSheets(null)).toEqual([]);
+    expect(gridToWorkbookSheets({})).toEqual([]);
+    expect(gridToWorkbookSheets({ sheets: 'nonsense' })).toEqual([]);
+  });
+});
+
+describe('the contract takes either representation and never neither', () => {
+  const request = {
+    id: '11111111-2222-4333-8444-555555555555',
+    organisation_id: 'org', upload_id: 'up',
+    spreadsheet_id: 'SHEET_ID_FOR_TESTS_0001',
+    gid: '0',
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    consumed_at: null, status: 'dispatched',
+    callback_token_hash: 'a'.repeat(64),
+  };
+  const base = {
+    request_id: request.id,
+    spreadsheet_id: request.spreadsheet_id,
+    gid: '0',
+  };
+
+  it('accepts a grid with no workbook', () => {
+    expect(callbackRefusal(
+      request, { ...base, grid: { sheets: [] } }, Date.now(), 'a'.repeat(64),
+    )).toBeNull();
+  });
+
+  it('accepts a workbook with no grid', () => {
+    expect(callbackRefusal(
+      request, { ...base, workbook_base64: 'UEsDBAo=' }, Date.now(), 'a'.repeat(64),
+    )).toBeNull();
+  });
+
+  it('refuses a body carrying neither, on shape, before the row is consulted', () => {
+    expect(callbackRefusal(request, base, Date.now(), 'a'.repeat(64)))
+      .toEqual({ code: 'malformed_payload', status: 400 });
+    // …and with no request row at all, the same answer: shape comes first.
+    expect(callbackRefusal(null, base, Date.now(), null))
+      .toEqual({ code: 'malformed_payload', status: 400 });
+  });
+
+  it('still puts the token before the binding when a grid is what arrived', () => {
+    const wrongDocument = { ...base, spreadsheet_id: 'SOMETHING_ELSE_0001', grid: { sheets: [] } };
+    expect(callbackRefusal(request, wrongDocument, Date.now(), null))
+      .toEqual({ code: 'missing_token', status: 401 });
+    expect(callbackRefusal(request, wrongDocument, Date.now(), 'b'.repeat(64)))
+      .toEqual({ code: 'invalid_token', status: 401 });
+    expect(callbackRefusal(request, wrongDocument, Date.now(), 'a'.repeat(64)))
+      .toEqual({ code: 'spreadsheet_mismatch', status: 409 });
+  });
+
+  it('expires a grid callback exactly as it expires a workbook one', () => {
+    const stale = { ...request, expires_at: new Date(Date.now() - 1_000).toISOString() };
+    expect(callbackRefusal(stale, { ...base, grid: { sheets: [] } }, Date.now(), 'a'.repeat(64)))
+      .toEqual({ code: 'request_expired', status: 409 });
+  });
+
+  it('refuses a replay of a grid callback', () => {
+    const used = { ...request, consumed_at: new Date().toISOString() };
+    expect(callbackRefusal(used, { ...base, grid: { sheets: [] } }, Date.now(), 'a'.repeat(64)))
+      .toEqual({ code: 'request_already_consumed', status: 409 });
+  });
+});
+
+describe('the grid path is an adapter, not a second parser', () => {
+  const adapter = readFileSync(
+    'supabase/functions/_shared/builderStock/sheetGrid.pure.ts', 'utf8');
+
+  it('decides a link with the one rule that decides it everywhere', () => {
+    expect(adapter).toContain('hyperlinkTargetOf');
+    // No second opinion about what a link is.
+    expect(adapter).not.toMatch(/\/\^https\?:\\\/\\\//);
+  });
+
+  it('does not re-implement the worksheet match or the row identity', () => {
+    // Naming them in prose is the point of the header; CALLING them here, or
+    // importing anything but the shared cell rules, would be a second opinion.
+    expect(adapter).not.toMatch(/\bmatchWorksheet\s*\(/);
+    expect(adapter).not.toMatch(/\bstockPropertyIdentity\s*\(/);
+    expect(adapter).not.toMatch(/\bMATCH_FLOOR\b\s*=/);
+
+    const imports = [...adapter.matchAll(/from '([^']+)'/g)].map((m) => m[1]);
+    expect(imports).toEqual(['./sheetHyperlinks.pure.ts']);
+  });
+
+  it('names no deployment, builder or document', () => {
+    expect(adapter).not.toMatch(/spreadsheets\/d\/[A-Za-z0-9_-]{10,}/);
+    expect(adapter.toLowerCase()).not.toContain('kopi');
+    expect(adapter).not.toMatch(/\bsupabase\.co\b/);
+  });
+});
+
+describe('the callback reads whichever representation arrived', () => {
+  const callback = readFileSync(
+    'supabase/functions/builder-stock-link-callback/index.ts', 'utf8');
+
+  it('adapts a grid and parses a workbook, through the one shared reader', () => {
+    expect(callback).toContain('gridToWorkbookSheets');
+    expect(callback).toContain('readWorkbookSheets');
+  });
+
+  it('keeps the single-use claim ahead of the work, whichever arrived', () => {
+    const claim = callback.indexOf(".is('consumed_at', null)");
+    const match = callback.indexOf('matchWorksheet(');
+    expect(claim).toBeGreaterThan(0);
+    expect(match).toBeGreaterThan(claim);
+  });
+
+  it('does not raise the transport limit to make a large sheet fit', () => {
+    expect(MAX_CALLBACK_BYTES).toBe(5 * 1024 * 1024);
+    expect(MAX_WORKBOOK_BYTES).toBe(3 * 1024 * 1024);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The layout the production sheet actually has
+// ---------------------------------------------------------------------------
+
+/**
+ * THE ROW NUMBERS NEVER AGREED, AND NOTHING NOTICED.
+ *
+ * The live stocklist opens with a banner and spacer rows and names its columns
+ * on the EIGHTH row; between Lot 605 and Lot 606 it carries a blank row. The
+ * CSV the import proves the tab from comes from `gviz`, which compacts all of
+ * that away — merging the banner into the heading and dropping the blanks.
+ * Two true readings of one tab, seven rows apart and drifting further at every
+ * blank.
+ *
+ * Scored index-for-index the document reproduced 0.22 of itself, refused its
+ * own worksheet and applied nothing. Had the floor been lower it would have
+ * done something far worse: handed every property below the blank row the NEXT
+ * one's brochure. These reproduce that layout exactly.
+ */
+describe('the production layout: banners above the header, blanks between properties', () => {
+  const HEADINGS = ['Contract Type', 'Product Type', 'Lot #', 'Estate', 'Brochure'];
+
+  /** The tab as the SHEET holds it: banner, spacers, header at 7, a blank at 9. */
+  function productionSheet(overrides: { lot606Link?: string; extra?: unknown[] } = {}) {
+    const cell = (v: string | null, link?: string) => (
+      v === null ? {} : { formattedValue: v, ...(link ? { hyperlink: link } : {}) });
+    const rowData: unknown[] = [{}, {}, {}, {}, {}, {}, {}];
+    rowData[2] = { values: [cell('[VG] MASTER STOCKLIST - V002')] };
+    rowData.push({ values: HEADINGS.map((h) => cell(h)) });                    // 7
+    rowData.push({                                                             // 8
+      values: [cell('2-Part'), cell('Detached SS'), cell('605'), cell('Acclaim Estate'),
+        cell('Brochure', 'https://example.invalid/lot-605.pdf')],
+    });
+    rowData.push({});                                                          // 9 — blank
+    rowData.push({                                                             // 10
+      values: [cell('2-Part'), cell('Detached SS'), cell('606'), cell('Acclaim Estate'),
+        cell('Brochure', overrides.lot606Link ?? 'https://example.invalid/lot-606.pdf')],
+    });
+    for (const row of overrides.extra ?? []) rowData.push(row);
+    return gridToWorkbookSheets({
+      sheets: [{ properties: { title: 'STOCKLIST V002', sheetId: 0 }, data: [{ rowData }] }],
+    });
+  }
+
+  /** The tab as `gviz` reports it: compacted, banner merged, blanks gone. */
+  const provenCsv = [
+    ['[VG] MASTER STOCKLIST - V002 Contract Type', 'Product Type', 'Lot #', 'Estate', 'Brochure'],
+    ['2-Part', 'Detached SS', '605', 'Acclaim Estate', 'Brochure'],
+    ['2-Part', 'Detached SS', '606', 'Acclaim Estate', 'Brochure'],
+  ];
+
+  it('finds the header seven rows down, not at row 0', () => {
+    const [sheet] = productionSheet();
+    expect(locateHeaderRow(provenCsv, sheet)).toBe(7);
+  });
+
+  it('matches the tab it could not previously recognise as itself', () => {
+    const match = matchWorksheet(provenCsv, productionSheet());
+    expect(match.ok).toBe(true);
+    if (match.ok) {
+      expect(match.score).toBe(1);
+      expect(match.headerRow).toBe(7);
+    }
+  });
+
+  it('gives Lot 606 its OWN brochure across the blank row', () => {
+    const match = matchWorksheet(provenCsv, productionSheet());
+    expect(match.ok).toBe(true);
+    const rows = recoveredRowsFromWorksheet(
+      match.ok ? match.sheet : null, match.ok ? match.headerRow : 0);
+
+    const byLot = new Map(rows.map((row) => [row.values['Lot #'], row.links.Brochure]));
+    expect(byLot.get('605')).toBe('https://example.invalid/lot-605.pdf');
+    expect(byLot.get('606')).toBe('https://example.invalid/lot-606.pdf');
+    // The blank row contributed no row at all — it is not a property.
+    expect(rows).toHaveLength(2);
+  });
+
+  it('never lets 606 inherit 605\'s link, which is what index alignment did', () => {
+    const [sheet] = productionSheet();
+    const aligned = alignWorksheetRows(provenCsv, sheet);
+    // CSV row 1 is Lot 605 at worksheet row 8; CSV row 2 is Lot 606 at row 10.
+    expect(aligned[1]).toBe(8);
+    expect(aligned[2]).toBe(10);
+    // Under the old reading 606 sat at row 9 — the blank — and would have been
+    // handed whatever the row beneath it carried.
+    expect(aligned[2]).not.toBe(9);
+  });
+
+  it('puts each row\'s own link beside it when the columns are merged', () => {
+    const [sheet] = productionSheet();
+    const merged = mergeHyperlinkColumns(provenCsv, sheet);
+    expect(merged.columnsAdded).toEqual(['Brochure URL']);
+    expect(merged.linksResolved).toBe(2);
+    const urlAt = merged.matrix[0].indexOf('Brochure URL');
+    expect(merged.matrix[1][urlAt]).toBe('https://example.invalid/lot-605.pdf');
+    expect(merged.matrix[2][urlAt]).toBe('https://example.invalid/lot-606.pdf');
+    // Membership is untouched: no row added, removed or reordered.
+    expect(merged.matrix).toHaveLength(provenCsv.length);
+    expect(merged.matrix.map((r) => r[2])).toEqual(['Lot #', '605', '606']);
+  });
+
+  it('applies nothing to a row two worksheet rows both claim to be', () => {
+    // The same lot listed twice, as this builder's sheet genuinely does.
+    const cell = (v: string, link?: string) => ({
+      formattedValue: v, ...(link ? { hyperlink: link } : {}) });
+    const twin = {
+      values: [cell('2-Part'), cell('Detached SS'), cell('606'), cell('Acclaim Estate'),
+        cell('Brochure', 'https://example.invalid/SOMEONE-ELSES.pdf')],
+    };
+    const [sheet] = productionSheet({ extra: [twin] });
+
+    const aligned = alignWorksheetRows(provenCsv, sheet);
+    // Two rows say exactly what CSV row 2 says, so neither may lend its link.
+    expect(aligned[2]).toBe(-1);
+
+    const merged = mergeHyperlinkColumns(provenCsv, sheet);
+    const urlAt = merged.matrix[0].indexOf('Brochure URL');
+    expect(merged.matrix[1][urlAt]).toBe('https://example.invalid/lot-605.pdf');
+    expect(merged.matrix[2][urlAt]).toBe('');
+    expect(merged.matrix[2][urlAt]).not.toContain('SOMEONE-ELSES');
+  });
+
+  it('refuses a worksheet whose header it cannot find at all', () => {
+    const headerless = gridToWorkbookSheets({
+      sheets: [{
+        properties: { title: 'Notes' },
+        data: [{ rowData: [{ values: [{ formattedValue: 'just some prose' }] }] }],
+      }],
+    });
+    expect(locateHeaderRow(provenCsv, headerless[0])).toBe(-1);
+    expect(worksheetScore(provenCsv, headerless[0])).toBe(0);
+    const match = matchWorksheet(provenCsv, headerless);
+    expect(match.ok).toBe(false);
+    if (!match.ok) expect(match.reason).toBe('no_match');
+  });
+
+  it('applies zero links when two tabs are equally like the proven CSV', () => {
+    const twinTabs = [...productionSheet(), ...productionSheet()];
+    twinTabs[1] = { ...twinTabs[1], name: 'STOCKLIST V002 (copy)' };
+    const match = matchWorksheet(provenCsv, twinTabs);
+    expect(match.ok).toBe(false);
+    if (!match.ok) expect(match.reason).toBe('ambiguous');
+    // Nothing decisive means nothing applied — the caller gets no worksheet.
+    expect(recoveredRowsFromWorksheet(match.ok ? match.sheet : null)).toEqual([]);
+  });
+
+  it('reads the same links whether they arrived as a workbook or as a grid', () => {
+    // The adapter's output IS the workbook reader's output; one pipeline reads
+    // both, so a builder who may not be downloaded from is not a second case.
+    const [fromGrid] = productionSheet();
+    const asWorkbook: typeof fromGrid = {
+      name: fromGrid.name,
+      values: fromGrid.values.map((r) => [...r]),
+      links: fromGrid.links.map((r) => [...r]),
+    };
+    expect(matchWorksheet(provenCsv, [asWorkbook]).ok).toBe(true);
+    expect(mergeHyperlinkColumns(provenCsv, asWorkbook))
+      .toEqual(mergeHyperlinkColumns(provenCsv, fromGrid));
+  });
+});
+
+describe('row position may never decide which brochure belongs to which property', () => {
+  const source = readFileSync(
+    'supabase/functions/_shared/builderStock/sheetHyperlinks.pure.ts', 'utf8');
+
+  it('scores and aligns through the located header, never from row 0', () => {
+    expect(source).toContain('locateHeaderRow');
+    expect(source).toContain('alignWorksheetRows');
+    // The old reading — a CSV row index used to index the worksheet — is gone.
+    expect(source).not.toMatch(/sheet\.links\[r \+ 1\]/);
+  });
+
+  it('gives the same answer however far down the sheet the table starts', () => {
+    // Behaviour, not spelling: pushing the whole table down must change
+    // nothing, because nothing may depend on where a row physically sits.
+    const csv = [['Lot #', 'Brochure'], ['1002', 'Brochure'], ['1003', 'Brochure']];
+    const build = (padding: number) => {
+      const cell = (v: string, link?: string) => ({
+        formattedValue: v, ...(link ? { hyperlink: link } : {}) });
+      const rowData: unknown[] = Array.from({ length: padding }, () => ({}));
+      rowData.push({ values: [cell('Lot #'), cell('Brochure')] });
+      rowData.push({ values: [cell('1002'), cell('Brochure', 'https://example.invalid/a.pdf')] });
+      rowData.push({});
+      rowData.push({ values: [cell('1003'), cell('Brochure', 'https://example.invalid/b.pdf')] });
+      return gridToWorkbookSheets({
+        sheets: [{ properties: { title: 'T' }, data: [{ rowData }] }],
+      })[0];
+    };
+
+    for (const padding of [0, 1, 7, 40]) {
+      const sheet = build(padding);
+      expect(locateHeaderRow(csv, sheet)).toBe(padding);
+      expect(worksheetScore(csv, sheet)).toBe(1);
+      const merged = mergeHyperlinkColumns(csv, sheet);
+      const urlAt = merged.matrix[0].indexOf('Brochure URL');
+      expect(merged.matrix[1][urlAt]).toBe('https://example.invalid/a.pdf');
+      expect(merged.matrix[2][urlAt]).toBe('https://example.invalid/b.pdf');
+    }
+  });
+
+  it('pairs a row only when exactly one worksheet row says the same thing', () => {
+    expect(source).toMatch(/at\.length === 1/);
+  });
+
+  it('is still the one shared implementation, with no Google-specific twin', () => {
+    const twin = 'supabase/functions/_shared/builderStock/sheetGrid.pure.ts';
+    const adapter = readFileSync(twin, 'utf8');
+    expect(adapter).not.toMatch(/\bworksheetScore\s*\(/);
+    expect(adapter).not.toMatch(/\balignWorksheetRows\s*\(/);
+    expect(adapter).not.toMatch(/\blocateHeaderRow\s*\(/);
   });
 });

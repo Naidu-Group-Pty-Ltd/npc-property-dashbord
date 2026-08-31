@@ -246,8 +246,17 @@ export interface CallbackBody {
   request_id?: unknown;
   spreadsheet_id?: unknown;
   gid?: unknown;
-  /** The exported workbook, base64. The only representation carrying targets. */
+  /**
+   * The exported workbook, base64. Carries link targets, and is available
+   * only where the document's owner permits it to be downloaded.
+   */
   workbook_base64?: unknown;
+  /**
+   * A `spreadsheets.get` grid. Carries the same targets cell by cell, and
+   * answers where the export refuses — because reading cells and downloading
+   * a file are different permissions on the builder's own document.
+   */
+  grid?: unknown;
 }
 
 export type CallbackRefusal =
@@ -310,8 +319,16 @@ export function callbackRefusal(
   const spreadsheetId = typeof body.spreadsheet_id === 'string'
     ? body.spreadsheet_id.trim() : '';
   if (!requestId || !spreadsheetId) return { code: 'malformed_payload', status: 400 };
+  /*
+   * EITHER REPRESENTATION, NEVER NEITHER. A workbook and a grid are two ways
+   * of reading the SAME document, and which one a builder's sharing settings
+   * allow is not ours to choose — so the contract accepts both and requires
+   * one. A body carrying neither says nothing about any spreadsheet and is
+   * refused on shape, before the request row is consulted at all.
+   */
   const workbook = typeof body.workbook_base64 === 'string' ? body.workbook_base64.trim() : '';
-  if (!workbook) return { code: 'malformed_payload', status: 400 };
+  const grid = body.grid !== null && body.grid !== undefined && typeof body.grid === 'object';
+  if (!workbook && !grid) return { code: 'malformed_payload', status: 400 };
 
   if (!request || request.id !== requestId) return { code: 'unknown_request', status: 404 };
   if (request.consumed_at) return { code: 'request_already_consumed', status: 409 };
@@ -402,21 +419,28 @@ export function decodeWorkbook(
  * a link is read at THIS row and THIS column. Nothing is looked up by lot, by
  * address or by anything two rows could share.
  *
+ * THE HEADING ROW IS GIVEN, NOT GUESSED. `matchWorksheet` located it by
+ * content and hands it over. Assuming row 0 was true of no real document: the
+ * live stocklist opens with a banner and spacers and names its columns on the
+ * eighth row, so taking `values[0]` produced empty headings, no headed rows,
+ * and a recovery that applied nothing while reporting success.
+ *
  * Only http(s) targets are kept. A cell may legitimately link within the
  * workbook, to a local file, or to a mail address, and none of those is a
  * document this pipeline can open.
  */
 export function recoveredRowsFromWorksheet(sheet: {
   values: (string | null)[][]; links: (string | null)[][];
-} | null | undefined): RecoveredRow[] {
+} | null | undefined, headerRow = 0): RecoveredRow[] {
   const values = sheet?.values ?? [];
   const links = sheet?.links ?? [];
-  if (values.length < 2) return [];
+  const head = Number.isInteger(headerRow) && headerRow >= 0 ? headerRow : 0;
+  if (values.length < head + 2) return [];
 
-  const headings = (values[0] ?? []).map((cell) => String(cell ?? '').trim());
+  const headings = (values[head] ?? []).map((cell) => String(cell ?? '').trim());
 
   const rows: RecoveredRow[] = [];
-  for (let index = 1; index < values.length; index += 1) {
+  for (let index = head + 1; index < values.length; index += 1) {
     const cells = values[index] ?? [];
     const linkCells = links[index] ?? [];
     const rowValues: Record<string, string> = {};
