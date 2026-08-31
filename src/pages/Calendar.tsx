@@ -28,6 +28,9 @@ import { EventDetailsModal } from '@/components/calendar/EventDetailsModal';
 import { CalendarSearchDropdown } from '@/components/calendar/CalendarSearchDropdown';
 import { TimelineView } from '@/components/calendar/TimelineView';
 import { DraggableEvent } from '@/components/calendar/DraggableEvent';
+import { eventColourSource, statusBadgeClass } from '@/lib/calendar/eventColour.pure';
+import { byStartTimeAscending } from '@/lib/calendar/eventOrder.pure';
+import { FALLBACK_CALENDAR_COLOR } from '@/lib/calendarColors';
 import { DropZone } from '@/components/calendar/DropZone';
 import { AvailabilitySlots } from '@/components/calendar/AvailabilitySlots';
 import { CalendarHeatmap } from '@/components/calendar/CalendarHeatmap';
@@ -665,10 +668,12 @@ export default function Calendar() {
 
   const selectedDateEvents = useMemo(() => {
     if (!selectedDate) return [];
-    return filteredEvents.filter((event) => {
-      const d = safeParseISO(event.startTime);
-      return d ? isSameDay(d, selectedDate) : false;
-    });
+    return filteredEvents
+      .filter((event) => {
+        const d = safeParseISO(event.startTime);
+        return d ? isSameDay(d, selectedDate) : false;
+      })
+      .sort(byStartTimeAscending(safeParseISO));
   }, [filteredEvents, selectedDate]);
 
   const upcomingEvents = useMemo(() => {
@@ -703,11 +708,17 @@ export default function Calendar() {
     return Array.from({ length: 24 }, (_, i) => i);
   }, []);
 
+  // Earliest first. This only filtered before, so a day's pills came out in
+  // whatever order the provider happened to return — which is why the 28th read
+  // 16:00 above 13:00 while the 29th read 14:00 above 16:00 on the same screen.
+  // An unparseable start sorts last rather than throwing the order away.
   const getEventsForDay = (day: Date) => {
-    return filteredEvents.filter((event) => {
-      const d = safeParseISO(event.startTime);
-      return d ? isSameDay(d, day) : false;
-    });
+    return filteredEvents
+      .filter((event) => {
+        const d = safeParseISO(event.startTime);
+        return d ? isSameDay(d, day) : false;
+      })
+      .sort(byStartTimeAscending(safeParseISO));
   };
 
   const getEventsForDayAndHour = (day: Date, hour: number) => {
@@ -717,18 +728,11 @@ export default function Calendar() {
     });
   };
 
-  const getStatusColor = (status: string, appointmentStatus?: string) => {
-    const effectiveStatus = appointmentStatus || status;
-    switch (effectiveStatus?.toLowerCase()) {
-      case 'confirmed': return 'rounded-full border-success/25 bg-success/15 text-success';
-      case 'booked': return 'rounded-full border-info/25 bg-info/15 text-info';
-      case 'showed': return 'rounded-full border-success/25 bg-success/15 text-success';
-      case 'noshow': return 'rounded-full border-destructive/25 bg-destructive/15 text-destructive';
-      case 'cancelled': return 'rounded-full border-border bg-muted text-muted-foreground';
-      case 'pending': return 'rounded-full border-brand-400/25 bg-brand-500/15 text-brand-300';
-      default: return 'rounded-full border-border bg-card/85 text-muted-foreground';
-    }
-  };
+  // Delegates, so the chip here and the analytics breakdown cannot drift into
+  // two status vocabularies — which is how "Confirmed" came to wear a calendar's
+  // green dot on one panel and a badge on another.
+  const getStatusColor = (status: string, appointmentStatus?: string) =>
+    statusBadgeClass(appointmentStatus || status);
 
   const handleEventClick = (event: GHLEvent) => {
     setSelectedEvent(event);
@@ -747,28 +751,35 @@ export default function Calendar() {
       };
     }
 
-    // Cancelled appointments - Red styling with strikethrough effect
-    if (status === 'cancelled' || status === 'canceled') {
-      return {
-        backgroundColor: 'hsl(var(--destructive) / 0.15)',
-        borderLeft: '3px solid hsl(var(--destructive))',
-        color: 'hsl(var(--destructive))',
-        textDecoration: 'line-through',
-        opacity: 0.8,
-      };
-    }
+    // Only an EXCEPTIONAL state may take the pill's colour away from the
+    // calendar it belongs to. `confirmed` is not exceptional — it is how a live
+    // booking looks — and giving it a branch here painted every event on the
+    // grid the same green, so which calendar a booking belonged to (the one
+    // thing a month view is scanned for) never reached the pill. The events
+    // list beside it colours by calendar, which is why the two disagreed on
+    // screen. `eventColourSource` is the one place that rule is written.
+    if (eventColourSource(status) === 'status') {
+      // Cancelled - destructive, struck through.
+      if (status === 'cancelled' || status === 'canceled') {
+        return {
+          backgroundColor: 'hsl(var(--destructive) / 0.15)',
+          borderLeft: '3px solid hsl(var(--destructive))',
+          color: 'hsl(var(--destructive))',
+          textDecoration: 'line-through',
+          opacity: 0.8,
+        };
+      }
 
-    // Rescheduled appointments - Orange styling
-    if (status === 'rescheduled') {
-      return {
-        backgroundColor: 'hsl(38 92% 50% / 0.15)',
-        borderLeft: '3px solid hsl(38 92% 50%)',
-        color: 'hsl(38 92% 50%)',
-      };
-    }
+      // Rescheduled - this slot is not the one.
+      if (status === 'rescheduled') {
+        return {
+          backgroundColor: 'hsl(var(--warning) / 0.15)',
+          borderLeft: '3px solid hsl(var(--warning))',
+          color: 'hsl(var(--warning))',
+        };
+      }
 
-    // No-show appointments - Muted red
-    if (status === 'no_show' || status === 'noshow' || status === 'no-show') {
+      // No-show - destructive, dimmed.
       return {
         backgroundColor: 'hsl(var(--destructive) / 0.1)',
         borderLeft: '3px solid hsl(var(--destructive) / 0.6)',
@@ -777,16 +788,6 @@ export default function Calendar() {
       };
     }
 
-    // Confirmed appointments - Green styling
-    if (status === 'confirmed') {
-      return {
-        backgroundColor: 'hsl(142 76% 36% / 0.15)',
-        borderLeft: '3px solid hsl(142 76% 36%)',
-        color: 'hsl(142 76% 36%)',
-      };
-    }
-
-    // Default - Use calendar color
     const color = event.calendarColor || getCalendarColor(event.calendarId);
     return {
       backgroundColor: `${color}20`,
@@ -2088,7 +2089,10 @@ function EventCard({
   getStatusColor: (status: string, appointmentStatus?: string) => string;
   onClick: () => void;
 }) {
-  const color = event.calendarColor || '#3b82f6';
+  // The deterministic palette's first colour, not a literal blue: a card
+  // whose calendar colour has not resolved yet must not invent a hue that
+  // belongs to some other calendar.
+  const color = event.calendarColor || FALLBACK_CALENDAR_COLOR;
 
   return (
     <button
