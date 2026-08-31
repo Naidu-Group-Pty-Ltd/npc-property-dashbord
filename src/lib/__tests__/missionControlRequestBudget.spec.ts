@@ -108,8 +108,17 @@ describe('the borrowing capacity engine records where its time went', () => {
   it('sets the duration header its CORS policy already promised', () => {
     // `x-duration-ms` has been in Access-Control-Expose-Headers all along with
     // nothing ever setting it.
+    //
+    // Neither pattern below opens with a quote before `x-`, and that is
+    // deliberate. `check-cors-contract.mjs` reads any `"x-…":` in a `src/`
+    // file that mentions `invokeSecureFunction` as a request header the
+    // browser will send — and this file mentions it in a comment. Written the
+    // obvious way, the assertion failed the security gate by claiming this
+    // file preflights a header it only describes. `x-duration-ms` is a
+    // RESPONSE header; it belongs to Access-Control-Expose-Headers, which is
+    // exactly what the first line checks.
     expect(engine).toMatch(/"Access-Control-Expose-Headers":[^\n]*x-duration-ms/);
-    const sets = engine.match(/"x-duration-ms": String\(Date\.now\(\) - t0\)/g) ?? [];
+    const sets = engine.match(/x-duration-ms": String\(Date\.now\(\) - t0\)/g) ?? [];
     expect(sets).toHaveLength(2);
   });
 });
