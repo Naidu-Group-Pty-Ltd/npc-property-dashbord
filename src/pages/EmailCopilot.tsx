@@ -1830,6 +1830,26 @@ export default function EmailCopilot() {
     return new Date(bEmails[0].received_at).getTime() - new Date(aEmails[0].received_at).getTime();
   });
   
+  /**
+   * Audit item 40 — Sent had no search.
+   *
+   * `filteredEmails` has always applied `searchQuery` to sent emails, including
+   * their recipients; what was missing was the box, and this list. The Sent
+   * view shows synced sent emails AND replies composed here, so searching one
+   * and not the other would be worse than searching neither.
+   */
+  const filteredSentReplies = sentReplies.filter((reply) => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return [
+      reply.recipient,
+      reply.subject,
+      reply.body,
+      ...(reply.cc_recipients ?? []),
+      ...(reply.bcc_recipients ?? []),
+    ].some((field) => toSafeString(field).toLowerCase().includes(query));
+  });
+
   const inboxEmails = emails.filter(e => e.folder === 'inbox' && e.status !== 'archived');
   const sentEmails = emails.filter(e => e.folder === 'sent');
   const unreadCount = inboxEmails.filter(e => e.status === 'unread').length;
@@ -2038,10 +2058,19 @@ export default function EmailCopilot() {
             </div>
           </div>
 
-          {viewMode === 'inbox' ? (
-            <>
-              {/* Search and Filter Bar */}
-              <div className="shrink-0 space-y-3 border-b border-border/70 bg-background/20 px-3 py-3">
+          {/*
+            Audit item 40 — Sent had no search while Inbox did.
+
+            One control above the branch rather than a second copy inside it:
+            `searchQuery` already drove `filteredEmails` for BOTH folders,
+            matching recipients as well as sender, subject and body — what was
+            missing was the box. `filteredSentReplies` now applies the same
+            query to replies composed here, because searching the synced half
+            of Sent and not the composed half would be worse than searching
+            neither. The status filter and Show Archived stay inbox-only:
+            neither means anything for Sent.
+          */}
+          <div className="shrink-0 border-b border-border/70 bg-background/20 px-3 py-3">
                 {/* Search */}
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-primary/70" />
@@ -2062,7 +2091,12 @@ export default function EmailCopilot() {
                     </button>
                   )}
                 </div>
-                
+          </div>
+
+          {viewMode === 'inbox' ? (
+            <>
+              {/* Search and Filter Bar */}
+              <div className="shrink-0 space-y-3 border-b border-border/70 bg-background/20 px-3 py-3">
                 {/* Filters */}
                 <div className="flex flex-wrap items-center gap-2">
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -2353,7 +2387,7 @@ export default function EmailCopilot() {
             ) : (
               // Sent view - shows both synced sent emails AND manually sent replies
               <>
-                {filteredEmails.length === 0 && sentReplies.length === 0 ? (
+                {filteredEmails.length === 0 && filteredSentReplies.length === 0 ? (
                   <div className="m-4 rounded-[1.75rem] border border-dashed border-success/25 bg-[linear-gradient(135deg,hsl(var(--card)/0.76),hsl(var(--background)/0.58))] p-8 text-center shadow-inner shadow-sm dark:shadow-black/10">
                     <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-success/20 bg-success/10">
                       <Send className="h-7 w-7 text-success-foreground0/55" />
@@ -2423,7 +2457,7 @@ export default function EmailCopilot() {
                     ))}
                     
                     {/* Show manually sent replies from the dashboard */}
-                    {sentReplies.map((reply) => (
+                    {filteredSentReplies.map((reply) => (
                       <div
                         key={`reply-${reply.id}`}
                         role="button"
