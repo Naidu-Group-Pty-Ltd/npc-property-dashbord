@@ -155,3 +155,51 @@ describe('there is exactly one implementation', () => {
     expect(modal).toMatch(/clientData\?\.client\?\.secondary_first_name \?\? null/);
   });
 });
+
+describe('the correction can only ever go one way', () => {
+  /**
+   * The rule this replaced, verbatim from all three server-side copies.
+   * Kept here as data so the property below is checked against the real
+   * predecessor rather than against a description of it.
+   */
+  const previousRule = (maritalStatus: string | null | undefined) =>
+    ['married', 'de facto', 'couple', 'partnered']
+      .includes(String(maritalStatus ?? '').toLowerCase());
+
+  const spellings = [
+    null, undefined, '', 'married', 'Married', 'MARRIED', 'de facto', 'De Facto',
+    'de_facto', 'Defacto', 'defacto', 'couple', 'Couple', 'partnered', 'spouse',
+    'single', 'Single', 'widowed', 'Widow', 'divorced', 'separated', 'unknown',
+  ];
+
+  it('never turns a couple household into a single one', () => {
+    // This is the safety property. A household reclassified single would
+    // LOWER its HEM and RAISE the capacity reported for it — the dangerous
+    // direction, and the one that cannot be justified as prudence. The new
+    // rule is a strict superset of the old, so it cannot happen: normalising
+    // only widens what matches, and a secondary applicant only adds.
+    for (const status of spellings) {
+      for (const secondary of [null, 'Kirukku']) {
+        if (previousRule(status)) {
+          expect(isCoupleHousehold({ maritalStatus: status, secondaryApplicantName: secondary }))
+            .toBe(true);
+        }
+      }
+    }
+  });
+
+  it('changes exactly the cases production showed were wrong', () => {
+    // Defacto — the only de-facto spelling in the column, matched by nothing.
+    expect(previousRule('Defacto')).toBe(false);
+    expect(isCoupleHousehold({ maritalStatus: 'Defacto' })).toBe(true);
+
+    // A second applicant with no usable status — three clients.
+    expect(previousRule(null)).toBe(false);
+    expect(isCoupleHousehold({ maritalStatus: null, secondaryApplicantName: 'Atish' })).toBe(true);
+
+    // And nothing else moves.
+    for (const status of ['single', 'Single', 'widowed', 'Widow', 'divorced', 'separated']) {
+      expect(isCoupleHousehold({ maritalStatus: status })).toBe(false);
+    }
+  });
+});
