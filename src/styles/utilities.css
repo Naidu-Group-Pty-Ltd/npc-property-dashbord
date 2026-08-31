@@ -762,6 +762,30 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/></svg>");
 }
 
+/* Opt out, for a field that supplies its own picker button.
+   The replacement glyph above is a good default, but it is a UA pseudo-element:
+   it cannot be reached with Tab and carries no accessible name, so a field that
+   wants a keyboard-operable, labelled trigger has to draw a real button and
+   remove this one.
+
+   `display: none`, not `opacity: 0` — an invisible indicator still takes its
+   width and still answers a click, which is a second, unlabelled hit target
+   sitting next to the real one.
+
+   The class is required because of specificity. The rule above is an element
+   plus an attribute plus a pseudo-element, which out-ranks any utility class on
+   the same pseudo-element — `[&::-webkit-calendar-picker-indicator]:opacity-0`
+   was tried in Quick Add and did nothing at all, which is why that dialog drew
+   two calendars and two clocks (audit item 21). Adding the class here makes it
+   one rank higher, so it wins. */
+input[type="date"].has-custom-picker::-webkit-calendar-picker-indicator,
+input[type="time"].has-custom-picker::-webkit-calendar-picker-indicator,
+input[type="month"].has-custom-picker::-webkit-calendar-picker-indicator,
+input[type="week"].has-custom-picker::-webkit-calendar-picker-indicator,
+input[type="datetime-local"].has-custom-picker::-webkit-calendar-picker-indicator {
+  display: none;
+}
+
 input[type="date"]::-webkit-calendar-picker-indicator:hover,
 input[type="time"]::-webkit-calendar-picker-indicator:hover,
 input[type="month"]::-webkit-calendar-picker-indicator:hover,

@@ -493,8 +493,11 @@ export function OutlookCalendarPanel({
                         className={cn(
                           'text-[10px] px-2 py-1 rounded-full border transition-colors font-medium',
                           allAdded
-                            ? 'bg-primary/20 border-primary/40 text-primary'
-                            : 'bg-accent/50 border-primary/20 hover:bg-accent text-primary'
+                            ? 'border-primary/50 bg-primary/25 text-primary hover:bg-primary/30'
+                            // Was `bg-accent/50 … text-primary` — the accent is
+                            // a violet and the primary is too, so the control
+                            // rendered as unreadable text on its own colour.
+                            : 'border-primary/30 bg-primary/10 text-primary hover:bg-primary/20'
                         )}
                       >
                         {allAdded ? 'Remove All' : 'Invite All'}
