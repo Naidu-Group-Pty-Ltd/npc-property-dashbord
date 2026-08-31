@@ -802,6 +802,49 @@ export default function Calendar() {
     };
   };
 
+  /**
+   * Cancel an appointment and tell the people who were invited to it.
+   *
+   * Audit item 33: only the client heard about a cancellation. The command
+   * centre set `appointmentStatus: 'cancelled'` on GHL and stopped there — GHL
+   * emails the client, and the additional contact and finance partner, who were
+   * invited by `send-appointment-notification`, were never told.
+   *
+   * The recipient list is resolved SERVER-side from what was actually invited,
+   * because this page has never held it: the cancel path knows an event id and
+   * nothing else.
+   *
+   * The notice is best-effort and deliberately after the fact. A cancellation
+   * that succeeded must not be reported as failed because an email did not go,
+   * and it must not be attempted twice.
+   */
+  const cancelEventAndNotify = useCallback(async (event: GHLEvent) => {
+    const result = await updateEvent(event.id, { appointmentStatus: 'cancelled' });
+    if (!result?.success) return result;
+
+    try {
+      await invokeSecureFunction('send-appointment-notification', {
+        kind: 'cancelled',
+        appointmentGhlId: event.id,
+        appointmentTitle: event.title || 'Appointment',
+        appointmentStart: event.startTime,
+        appointmentEnd: event.endTime,
+        appointmentType: 'call',
+        appointmentNotes: event.notes || undefined,
+        // The Zoom link, for a Zoom booking. GHL keeps it on `address`, and
+        // nothing used to pass it here — audit item 33.
+        appointmentLocation: event.address || undefined,
+        calendarName: event.calendarName,
+        // Omitted on purpose — the server reads who was invited.
+        recipients: [],
+      });
+    } catch (err) {
+      console.error('[Calendar] Cancellation notice failed to send', err);
+    }
+
+    return result;
+  }, [updateEvent]);
+
   // Go to today
   const goToToday = useCallback(() => {
     const today = new Date();
@@ -918,6 +961,7 @@ export default function Calendar() {
                   appointmentEnd: data.newEndTime,
                   appointmentType: 'reschedule',
                   appointmentNotes: selectedEvent?.notes,
+                  appointmentLocation: selectedEvent?.address || undefined,
                   calendarName,
                   recipients: allNotificationRecipients,
                 });
@@ -1411,7 +1455,7 @@ export default function Calendar() {
                                     toast({ title: 'Event confirmed' });
                                   }}
                                   onCancel={async () => {
-                                    await updateEvent(event.id, { appointmentStatus: 'cancelled' });
+                                    await cancelEventAndNotify(event);
                                     toast({ title: 'Event cancelled' });
                                   }}
                                 >
@@ -1932,6 +1976,7 @@ export default function Calendar() {
                   appointmentEnd: data.endTime,
                   appointmentType: 'call',
                   appointmentNotes: data.notes,
+                  appointmentLocation: result.event?.address || undefined,
                   calendarName,
                   recipients: allNotificationRecipients,
                 });
