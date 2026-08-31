@@ -27,7 +27,6 @@ import {
 } from './linkRecovery.pure.ts';
 
 const REQUEST_TABLE = 'builder_stock_link_recovery_requests';
-const ALLOWLIST_TABLE = 'builder_stock_link_recovery_orgs';
 
 /** How long we will wait for the webhook to accept the request. */
 const DISPATCH_TIMEOUT_MS = 5_000;
@@ -45,29 +44,6 @@ export interface LinkRecoveryOutcome {
   requestId?: string;
   /** Why nothing was asked. Operational only; never shown to a builder. */
   reason?: string;
-}
-
-/** Is this organisation on the internal allowlist? Absent means no. */
-export async function linkRecoveryEnabledFor(
-  db: any,
-  organisationId: string,
-): Promise<boolean> {
-  try {
-    const { data, error } = await db
-      .from(ALLOWLIST_TABLE)
-      .select('enabled')
-      .eq('organisation_id', organisationId)
-      .maybeSingle();
-    if (error) return false;
-    return ((data ?? {}) as { enabled?: boolean }).enabled === true;
-  } catch {
-    /*
-     * FAIL CLOSED. An allowlist we cannot read is not an allowlist that says
-     * yes — this gate exists to stop one organisation spending a shared
-     * metered budget, and a database blip must not open it.
-     */
-    return false;
-  }
 }
 
 export function linkRecoveryWebhookConfigured(): boolean {

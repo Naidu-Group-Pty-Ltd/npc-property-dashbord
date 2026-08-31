@@ -46,7 +46,6 @@ const OK = {
   importSucceeded: true,
   availability: 'unavailable_source_export' as const,
   spreadsheetId: 'sheet-abc',
-  organisationEnabled: true,
   webhookConfigured: true,
 };
 
@@ -77,8 +76,39 @@ describe('the one condition worth asking about', () => {
     }
   });
 
-  it('never asks for an organisation nobody enabled', () => {
-    expect(shouldRequestLinkRecovery({ ...OK, organisationEnabled: false })).toBe(false);
+  it('asks for EVERY organisation — there is no tenant gate', () => {
+    /*
+     * A sheet whose link targets cannot be read is the same defect whoever
+     * uploaded it. Gating the fix per tenant means every builder nobody
+     * remembered to enable goes on silently losing its brochures, so the only
+     * things that narrow this are the conditions above and the rate limiting.
+     */
+    expect(shouldRequestLinkRecovery({ ...OK })).toBe(true);
+    // No property of the input names an organisation, a tenant or a flag.
+    for (const key of Object.keys(OK)) {
+      expect(key).not.toMatch(/organisation|tenant|allow|enabled|flag/i);
+    }
+  });
+
+  it('no allowlist, feature flag or hardcoded organisation survives anywhere', () => {
+    for (const file of [
+      'supabase/functions/_shared/builderStock/linkRecovery.pure.ts',
+      'supabase/functions/_shared/builderStock/requestLinkRecovery.ts',
+      'supabase/functions/builder-portal-stock/index.ts',
+      'supabase/functions/builder-stock-link-callback/index.ts',
+      'supabase/migrations/20261030000000_builder_stock_link_recovery.sql',
+    ]) {
+      const source = readFileSync(file, 'utf8');
+      for (const gone of [
+        'builder_stock_link_recovery_orgs',
+        'linkRecoveryEnabledFor',
+        'organisationEnabled',
+      ]) {
+        expect(`${file}: ${source.includes(gone)}`).toBe(`${file}: false`);
+      }
+      // And no production organisation may be named in code either.
+      expect(source).not.toMatch(/kopi\s*jantan/i);
+    }
   });
 
   it('never asks when no webhook is configured', () => {

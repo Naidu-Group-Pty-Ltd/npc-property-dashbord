@@ -121,27 +121,32 @@ export interface RecoveryTriggerInput {
   availability: HyperlinkAvailability | null | undefined;
   /** The document and tab, parsed from the source URL. Null for every other source. */
   spreadsheetId: string | null | undefined;
-  /** Whether this organisation is on the internal allowlist. */
-  organisationEnabled: boolean;
   /** Whether a webhook is configured at all. */
   webhookConfigured: boolean;
 }
 
 /**
- * Ask only where all five hold.
+ * Ask only where all four hold.
  *
- * Written as one expression of five named facts rather than as branching,
+ * Written as one expression of four named facts rather than as branching,
  * because the expensive mistake here is not refusing too often — it is asking
- * for a source that was never a Google Sheet, or for an organisation nobody
- * enabled, or when the reader already has the links. Each of those spends a
- * metered operation from a small shared budget and, worse, sends a document
- * identifier to a third party for no reason.
+ * for a source that was never a Google Sheet, or when the reader already has
+ * the links. Each of those spends a metered operation from a small shared
+ * budget and, worse, sends a document identifier to a third party for no
+ * reason.
+ *
+ * THERE IS NO PER-ORGANISATION GATE, DELIBERATELY. A sheet whose links this
+ * product cannot read is the same defect whoever uploaded it, and a builder
+ * whose brochures silently never arrive is not a support burden worth
+ * protecting a budget with. The conditions above already make this narrow —
+ * only a Google Sheet, only one reading of it, only where the workbook itself
+ * never came — and what bounds the spend is the rate limiting, not a list of
+ * approved tenants.
  */
 export function shouldRequestLinkRecovery(input: RecoveryTriggerInput): boolean {
   if (!input.importSucceeded) return false;
   if (input.availability !== RECOVERABLE_AVAILABILITY) return false;
   if (!input.spreadsheetId || !input.spreadsheetId.trim()) return false;
-  if (!input.organisationEnabled) return false;
   if (!input.webhookConfigured) return false;
   return true;
 }

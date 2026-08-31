@@ -107,32 +107,22 @@ ALTER TABLE public.builder_stock_link_recovery_requests ENABLE ROW LEVEL SECURIT
 REVOKE ALL ON public.builder_stock_link_recovery_requests FROM PUBLIC, anon, authenticated;
 
 
--- ── The internal allowlist ──────────────────────────────────────────────────
+-- ── Why there is no per-organisation gate ───────────────────────────────────
 /*
- * WHICH ORGANISATIONS MAY SPEND THE SHARED BUDGET.
+ * An earlier draft carried an internal allowlist, so the recovery ran only for
+ * organisations somebody had opted in. The reasoning was budget: the path
+ * spends a metered third-party allowance shared across every builder.
  *
- * The recovery runs on a metered third-party plan with a small monthly
- * allowance shared across every builder. One organisation whose sheet can
- * never export would otherwise consume it on every import, silently denying
- * the others. So the path is opt-in per organisation.
+ * It was the wrong trade. A Google Sheet whose link targets this product
+ * cannot read is the SAME DEFECT whoever uploaded it, and gating the fix per
+ * tenant means every other builder's brochures go on silently not arriving
+ * until a human notices and adds a row. A fix that only works for the
+ * organisation somebody remembered is not a fix; it is a support queue.
  *
- * DELIBERATELY NOT A SETTING. There is no builder-facing toggle and no
- * settings page: a builder cannot usefully answer "should this consume our
- * automation budget", and a self-service switch on a metered shared resource
- * is a support burden rather than a feature. It is an internal allowlist, set
- * by whoever administers the integration, and nothing else.
+ * What actually bounds the spend is narrowness and rate limiting, not a list
+ * of approved tenants. `shouldRequestLinkRecovery` asks only for a Google
+ * Sheet, only on the one reading that means the workbook never arrived, and
+ * only where a webhook is configured at all; the manual refresh is capped at
+ * one per upload per ten minutes on the server, and the callback is rate
+ * limited per organisation on the authority it recovered.
  */
-CREATE TABLE IF NOT EXISTS public.builder_stock_link_recovery_orgs (
-  organisation_id uuid PRIMARY KEY
-    REFERENCES public.builder_organisations(id) ON DELETE CASCADE,
-  enabled boolean NOT NULL DEFAULT true,
-  note text,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-ALTER TABLE public.builder_stock_link_recovery_orgs ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.builder_stock_link_recovery_orgs FROM PUBLIC, anon, authenticated;
-
-COMMENT ON TABLE public.builder_stock_link_recovery_orgs IS
-  'Internal allowlist for Google Sheets hyperlink recovery. Not builder-facing and deliberately not a setting: the path spends a shared metered third-party allowance, so it is opt-in per organisation and administered here.';

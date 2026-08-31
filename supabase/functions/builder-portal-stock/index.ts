@@ -41,7 +41,7 @@ import {
 } from '../_shared/builderStock/runImport.ts';
 import { sourceAccessNoticeFor } from '../_shared/builderStock/sourceAccessNotice.pure.ts';
 import {
-  linkRecoveryEnabledFor, linkRecoveryWebhookConfigured, requestLinkRecovery,
+  linkRecoveryWebhookConfigured, requestLinkRecovery,
 } from '../_shared/builderStock/requestLinkRecovery.ts';
 import {
   MANUAL_REFRESH_WINDOW_SECONDS, isRecoverableStoredAvailability, shouldRequestLinkRecovery,
@@ -289,7 +289,6 @@ Deno.serve(async (req) => {
           importSucceeded: true,
           availability,
           spreadsheetId: ref?.spreadsheetId ?? null,
-          organisationEnabled: await linkRecoveryEnabledFor(supabase, activeOrganisationId),
           webhookConfigured: linkRecoveryWebhookConfigured(),
         })) return;
 
@@ -1286,11 +1285,10 @@ Deno.serve(async (req) => {
         return json({ success: false, error: 'This stock list is not a Google Sheet.' }, 409);
       }
 
-      if (!await linkRecoveryEnabledFor(supabase, activeOrganisationId)
-        || !linkRecoveryWebhookConfigured()) {
+      if (!linkRecoveryWebhookConfigured()) {
         return json({
           success: false,
-          error: 'Brochure link recovery is not available for this account.',
+          error: 'Brochure link recovery is not configured for this deployment.',
         }, 409);
       }
 
