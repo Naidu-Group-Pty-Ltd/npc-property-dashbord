@@ -387,6 +387,7 @@ export function FormaraPDFGenerator({
       const uploadResult = await secureStorageUpload('client-files', storagePath, file, {
         contentType: 'application/pdf',
         upsert: true,
+        resourceId: clientIdVal,
       });
 
       if (uploadResult?.success) {

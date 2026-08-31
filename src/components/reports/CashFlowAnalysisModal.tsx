@@ -3567,6 +3567,8 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
       const uploadResult = await secureStorageUpload('investment-reports', fileName, file, {
         contentType: 'application/pdf',
+        // The `investment-reports` bucket binds to the report row itself.
+        resourceId: report.id,
       });
 
       if (uploadResult?.success && uploadResult.path) {

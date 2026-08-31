@@ -620,6 +620,7 @@ export function ClientReportsTab({
         const uploadResult = await secureStorageUpload('client-files', uploadPath, result.blob, {
           contentType: 'application/pdf',
           upsert: true,
+          resourceId: clientId,
         });
 
         if (!uploadResult.success) {
