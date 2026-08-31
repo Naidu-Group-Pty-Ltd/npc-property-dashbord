@@ -1252,8 +1252,40 @@ describe('row position may never decide which brochure belongs to which property
     }
   });
 
-  it('pairs a row only when exactly one worksheet row says the same thing', () => {
-    expect(source).toMatch(/at\.length === 1/);
+  it('pairs a row only when one worksheet row beats every other', () => {
+    const cell = (v: string, link?: string) => ({
+      formattedValue: v, ...(link ? { hyperlink: link } : {}) });
+    const csv = [['Lot #', 'Estate', 'Beds', 'Brochure'],
+      ['605', 'Acclaim', '4', 'Brochure']];
+
+    // Near-identical neighbours must NOT block a row: the true row agrees on
+    // every cell, the neighbour on all but the lot, so the winner is strict.
+    const distinguishable = gridToWorkbookSheets({
+      sheets: [{ properties: { title: 'T' }, data: [{ rowData: [
+        { values: [cell('Lot #'), cell('Estate'), cell('Beds'), cell('Brochure')] },
+        { values: [cell('606'), cell('Acclaim'), cell('4'),
+          cell('Brochure', 'https://example.invalid/606.pdf')] },
+        { values: [cell('605'), cell('Acclaim'), cell('4'),
+          cell('Brochure', 'https://example.invalid/605.pdf')] },
+      ] }] }],
+    })[0];
+    expect(alignWorksheetRows(csv, distinguishable)[1]).toBe(2);
+    const merged = mergeHyperlinkColumns(csv, distinguishable);
+    expect(merged.matrix[1][merged.matrix[0].indexOf('Brochure URL')])
+      .toBe('https://example.invalid/605.pdf');
+
+    // A genuine tie — the same row twice — lends nothing to either.
+    const tied = gridToWorkbookSheets({
+      sheets: [{ properties: { title: 'T' }, data: [{ rowData: [
+        { values: [cell('Lot #'), cell('Estate'), cell('Beds'), cell('Brochure')] },
+        { values: [cell('605'), cell('Acclaim'), cell('4'),
+          cell('Brochure', 'https://example.invalid/first.pdf')] },
+        { values: [cell('605'), cell('Acclaim'), cell('4'),
+          cell('Brochure', 'https://example.invalid/second.pdf')] },
+      ] }] }],
+    })[0];
+    expect(alignWorksheetRows(csv, tied)[1]).toBe(-1);
+    expect(mergeHyperlinkColumns(csv, tied).linksResolved).toBe(0);
   });
 
   it('is still the one shared implementation, with no Google-specific twin', () => {

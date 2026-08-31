@@ -58,7 +58,9 @@ import { readWorkbookSheets } from '../_shared/builderStock/workbookSheets.ts';
 import {
   GridTooLargeError, gridToWorkbookSheets,
 } from '../_shared/builderStock/sheetGrid.pure.ts';
-import { matchWorksheet } from '../_shared/builderStock/sheetHyperlinks.pure.ts';
+import {
+  locateHeaderRow, matchWorksheet, worksheetScore,
+} from '../_shared/builderStock/sheetHyperlinks.pure.ts';
 import { fetchStockSource } from '../_shared/builderStock/fetchSource.ts';
 import { parseDelimited } from '../_shared/builderStock/table.pure.ts';
 import { sha256Hex } from '../_shared/builderStock/requestLinkRecovery.ts';
@@ -188,6 +190,15 @@ Deno.serve(async (req) => {
   let rows: ReturnType<typeof recoveredRowsFromWorksheet> = [];
   let worksheet = '';
   let refusedFor = '';
+  /*
+   * WHY A WORKSHEET WAS REFUSED, IN NUMBERS. `no_match` on its own is the
+   * least actionable sentence this function can produce — it cannot be told
+   * apart from an empty document, a header we failed to find, or a tab that
+   * genuinely is not the one asked for. The scores and the shapes are logged
+   * so the next refusal is diagnosable from the record rather than from a
+   * fresh round of production experiments.
+   */
+  const diagnosis: Record<string, unknown> = {};
   try {
     /*
      * ONE READER'S WORTH OF WORKSHEETS, FROM WHICHEVER REPRESENTATION CAME.
@@ -205,12 +216,25 @@ Deno.serve(async (req) => {
     const matrix = parseDelimited(new TextDecoder('utf-8', { fatal: false })
       .decode(proven.bytes));
 
+    diagnosis.csv_rows = matrix.length;
+    diagnosis.csv_columns = (matrix[0] ?? []).length;
+    diagnosis.worksheets = sheets.map((sheet) => ({
+      name: sheet.name,
+      rows: sheet.values.length,
+      header_row: locateHeaderRow(matrix, sheet),
+      score: Number(worksheetScore(matrix, sheet).toFixed(4)),
+    }));
+
     const match = matchWorksheet(matrix, sheets);
     if (match.ok) {
       worksheet = match.sheet.name;
+      diagnosis.header_row = match.headerRow;
+      diagnosis.score = Number(match.score.toFixed(4));
       rows = recoveredRowsFromWorksheet(match.sheet, match.headerRow);
     } else {
       refusedFor = match.reason;
+      diagnosis.best = Number(match.best.toFixed(4));
+      diagnosis.runner_up = Number(match.runnerUp.toFixed(4));
     }
   } catch (error) {
     // A workbook we could not read, a grid too large to convert, or a CSV we
@@ -255,6 +279,7 @@ Deno.serve(async (req) => {
     unmatched_rows: applied.unmatched,
     worksheet_matched: !!worksheet,
     worksheet_refused: refusedFor || null,
+    worksheet_diagnosis: diagnosis,
   });
 
   return new Response(JSON.stringify({
