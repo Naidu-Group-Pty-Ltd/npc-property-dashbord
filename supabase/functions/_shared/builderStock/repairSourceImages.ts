@@ -46,8 +46,9 @@ import {
   negativeProvenanceStillStands, recordNoDeterministicImage,
 } from './negativeProvenance.pure.ts';
 import {
-  attemptsSoFar, packageAttemptsExhausted, recordPackageAttempt,
-  recordPackageUnprocessable, provenanceAfterAttempt,
+  attemptsSoFar, MAX_UNREACHABLE_ATTEMPTS, packageAttemptsExhausted,
+  recordPackageAttempt, recordPackageUnprocessable, recordPackageUnreachable,
+  recordUnreachableAttempt, unreachableAttemptsExhausted, provenanceAfterAttempt,
 } from './packageAttempt.pure.ts';
 import {
   demoteUnprovenSourceImage, hasReadySourceImage, readPrimaryImageStanding,
@@ -1049,6 +1050,54 @@ export async function repairSourceImagesForUpload(
      * abandoning the rest of the upload, and it is emphatically NOT recorded as
      * "no image": the run stays incomplete so the property is asked again.
      */
+    /**
+     * A BRANCH THAT CAN BE FETCHED AND NEVER READ IS STILL AN ANSWER, EVENTUALLY.
+     *
+     * `unreachable` records nothing on purpose — a sign-in wall may open
+     * tomorrow. But the branch is then open again next tick, for ever, and a
+     * property whose every remaining branch is unreachable never leaves the
+     * source stage and so never reaches the fallback ladder that would have
+     * given it a picture.
+     *
+     * PRODUCTION, 31 AUGUST 2026, upload `43ffa452`: thirteen properties
+     * claimed every sixty seconds, indefinitely, on two Drive files answering
+     * 404, one answering `Google Drive: Sign-in`, and single-page siting plans
+     * with no text layer. Rotation gave each branch its turn; each turn
+     * answered the same nothing.
+     *
+     * So the nothing is COUNTED, and past `MAX_UNREACHABLE_ATTEMPTS` the
+     * branch is retired with a verdict that says what actually happened. The
+     * count is kept on the same attempt record the kill path uses, under its
+     * own key and its own budget, because a link that answered cleanly and a
+     * package that destroyed the worker are different failures.
+     */
+    const bankUnreachable = async () => {
+      if (unreachableAttemptsExhausted(branchBefore, question)) {
+        const { error: bankError } = await db
+          .from('builder_stock_items')
+          .update({ source_provenance_result: writeBranchState(
+            negativeBefore.get(itemId), packageUrl, recordPackageUnreachable(question)) })
+          .eq('id', itemId)
+          .eq('organisation_id', input.organisationId);
+        // Unrecorded means unadvanced; say so rather than settle on it.
+        if (bankError) outcome.incomplete = true;
+        else outcome.packageNotIdentified += 1;
+        outcome.problems.push({
+          reference: packageUrl.slice(0, 400),
+          reason: `link retired after ${MAX_UNREACHABLE_ATTEMPTS} unreadable answers`,
+        });
+        return;
+      }
+      await db
+        .from('builder_stock_items')
+        .update({ source_provenance_result: writeBranchState(
+          negativeBefore.get(itemId), packageUrl,
+          recordUnreachableAttempt(branchBefore, question)) })
+        .eq('id', itemId)
+        .eq('organisation_id', input.organisationId);
+      outcome.incomplete = true;
+    };
+
     let recovered: PackageOutcome;
     try {
       recovered = await recoverPackageImage(
@@ -1062,14 +1111,13 @@ export async function repairSourceImagesForUpload(
         { fetchPackage: deps.fetchPackage, cache, readPageTexts: deps.readPageTexts },
       );
     } catch (error) {
-      await clearAttempt();
       outcome.packageUnreachable += 1;
-      outcome.incomplete = true;
       outcome.problems.push({
         reference: packageUrl.slice(0, 400),
         reason: String((error as { safeMessage?: string; message?: string })?.safeMessage
           ?? (error as { message?: string })?.message ?? error).slice(0, 200),
       });
+      await bankUnreachable();
       continue;
     }
 
@@ -1080,9 +1128,8 @@ export async function repairSourceImagesForUpload(
      * suppress a package that may be perfectly readable tomorrow.
      */
     if (recovered.status === 'unreachable') {
-      await clearAttempt();
       outcome.packageUnreachable += 1;
-      outcome.incomplete = true;
+      await bankUnreachable();
       continue;
     }
 
