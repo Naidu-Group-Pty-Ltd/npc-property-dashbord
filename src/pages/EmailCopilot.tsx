@@ -1045,9 +1045,14 @@ export default function EmailCopilot() {
         urgency_level: nextSummary.urgencyLevel,
         status: 'summarized',
       } : e));
-    } catch (error) {
+    } catch (error: any) {
+      // Audit item 43 — this discarded the reason, so a rejected credential, an
+      // exhausted balance and a rate limit all read as one sentence. The
+      // Intelligence panel beside it already showed `e?.message`, which is why
+      // Analyze and Translate reported "internal error" while Summarize said
+      // nothing at all. Both say what happened now.
       console.error('Error summarizing:', error);
-      toast.error('Failed to summarize email');
+      toast.error(error?.message || 'Failed to summarize email');
     } finally {
       setIsSummarizing(false);
     }
@@ -1184,10 +1189,18 @@ export default function EmailCopilot() {
   };
 
   // Parse comma-separated emails
+  /**
+   * A typed recipient list, split on comma OR semicolon.
+   *
+   * Outlook writes semicolons, and somebody pasting a list out of it should
+   * not have to know that this box wanted commas — a semicolon-separated paste
+   * used to parse as one address containing several `@`s and reach nobody.
+   * `send-email-reply` splits on the same two characters.
+   */
   const parseEmailList = (emails: string): string[] => {
     const safeEmails = toSafeString(emails);
     if (!safeEmails.trim()) return [];
-    return safeEmails.split(',').map(e => e.trim()).filter(e => e.includes('@'));
+    return safeEmails.split(/[,;]/).map(e => e.trim()).filter(e => e.includes('@'));
   };
 
   // Initialize reply fields when opening draft modal
@@ -1225,8 +1238,20 @@ export default function EmailCopilot() {
       toast.error('Cannot send empty email');
       return;
     }
-    if (!replyTo.trim() || !replyTo.includes('@')) {
+    // Audit item 45 — To takes a list now, like Cc and Bcc always have, so
+    // the check is "did we get at least one address" rather than "does this
+    // string contain an @". A typed list with one bad entry is named, because
+    // silently dropping a recipient is how somebody does not get an email.
+    const toEntries = replyTo.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
+    const validTo = toEntries.filter((e) => e.includes('@'));
+    if (validTo.length === 0) {
       toast.error('Please enter a valid recipient email');
+      return;
+    }
+    if (validTo.length < toEntries.length) {
+      toast.error('One of the recipients is not a valid email address', {
+        description: toEntries.filter((e) => !e.includes('@')).join(', '),
+      });
       return;
     }
     // Missing-attachment guard
@@ -1436,7 +1461,7 @@ export default function EmailCopilot() {
       );
 
       const { data, error } = await invokeSecureFunction('send-email-reply', {
-        to: forwardTo,
+        to: parseEmailList(forwardTo),
         subject: `Fwd: ${selectedEmail.subject}`,
         body: forwardBody,
         cc: ccList.length > 0 ? ccList : undefined,
@@ -1517,7 +1542,7 @@ export default function EmailCopilot() {
       );
 
       const { data, error } = await invokeSecureFunction('send-email-reply', {
-        to: replyTo,
+        to: parseEmailList(replyTo),
         subject: replySubject,
         body: currentDraft,
         cc: ccList.length > 0 ? ccList : undefined,
@@ -1621,7 +1646,7 @@ export default function EmailCopilot() {
       }
 
       const { data, error } = await invokeSecureFunction('send-email-reply', {
-        to: composeEmail.to,
+        to: parseEmailList(composeEmail.to),
         subject: composeEmail.subject || '(No Subject)',
         body: composeEmail.body,
         cc: ccList.length > 0 ? ccList : undefined,
@@ -3062,7 +3087,7 @@ export default function EmailCopilot() {
                     value={replyTo}
                     aria-label="Reply recipient"
                     onChange={(e) => setReplyTo(e.target.value)}
-                    placeholder="recipient@example.com"
+                    placeholder="name@example.com, second@example.com"
                     className="h-9 rounded-xl border-border/70 bg-background/70 text-xs focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:shadow-[0_0_0_3px_hsl(var(--primary)/0.10)] sm:text-sm"
                   />
                 </div>
@@ -3476,7 +3501,7 @@ export default function EmailCopilot() {
                     value={composeEmail.to}
                     aria-label="Recipient email address"
                     onChange={(e) => setComposeEmail({ ...composeEmail, to: e.target.value })}
-                    placeholder="recipient@example.com"
+                    placeholder="name@example.com, second@example.com"
                     className="h-9 rounded-xl border-border/70 bg-background/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:shadow-[0_0_0_3px_hsl(var(--primary)/0.10)]"
                   />
                 </div>
@@ -3726,7 +3751,7 @@ export default function EmailCopilot() {
                     value={replyTo}
                     aria-label="Reply recipient"
                     onChange={(e) => setReplyTo(e.target.value)}
-                    placeholder="recipient@example.com"
+                    placeholder="name@example.com, second@example.com"
                     className="h-8"
                   />
                 </div>
@@ -3850,7 +3875,7 @@ export default function EmailCopilot() {
                   <Input
                     value={forwardTo}
                     onChange={(e) => setForwardTo(e.target.value)}
-                    placeholder="recipient@example.com"
+                    placeholder="name@example.com, second@example.com"
                     className="h-8"
                   />
                 </div>
