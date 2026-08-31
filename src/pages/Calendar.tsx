@@ -628,7 +628,13 @@ export default function Calendar() {
     }
 
     return filtered;
-  }, [events, selectedCalendarId, searchQuery, outlookVisible, outlookEvents]);
+    // `visibleCalendars` and `calendars` are READ above (the overlay filter)
+    // and were missing here, so toggling a calendar in the overlay changed the
+    // state and this never recomputed — the grid, the events list, conflicts,
+    // the heatmap and analytics all kept the old set. That is audit item 26:
+    // "toggling on and off the calendar overlay but nothing happens". The
+    // Outlook toggle worked only because `outlookVisible` was already listed.
+  }, [events, calendars, visibleCalendars, selectedCalendarId, searchQuery, outlookVisible, outlookEvents]);
 
   const ghlExportFields = [
     { key: 'first_name', label: 'First Name' },
