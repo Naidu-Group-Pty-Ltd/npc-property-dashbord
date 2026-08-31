@@ -22,7 +22,7 @@
  * identifier is a capability for anyone who can reach the document.
  */
 import {
-  RECOVERY_REQUEST_TTL_MINUTES, outboundRecoveryPayload, signedPayload,
+  CALLBACK_TOKEN_BYTES, RECOVERY_REQUEST_TTL_MINUTES, outboundRecoveryPayload,
   type RecoveryRequestRecord,
 } from './linkRecovery.pure.ts';
 
@@ -87,8 +87,19 @@ export async function requestLinkRecovery(
   ask: LinkRecoveryAsk,
 ): Promise<LinkRecoveryOutcome> {
   const webhook = (Deno.env.get('MAKE_SHEET_LINKS_WEBHOOK_URL') ?? '').trim();
-  const secret = (Deno.env.get('MAKE_SHEET_LINKS_SHARED_SECRET') ?? '').trim();
-  if (!webhook || !secret) return { requested: false, reason: 'not_configured' };
+  if (!webhook) return { requested: false, reason: 'not_configured' };
+
+  /*
+   * THE TOKEN IS MINTED HERE AND STORED ONLY AS A HASH.
+   *
+   * The plaintext exists in this function's memory, in the outbound request,
+   * and in the callback that answers it. It is never written down. So a leak
+   * of the database yields nothing that can answer a request, and the worst a
+   * leak of the token yields is one answer to one question already asked —
+   * within half an hour, and only until the real answer arrives first.
+   */
+  const callbackToken = mintCallbackToken();
+  const callbackTokenHash = await sha256Hex(callbackToken);
 
   let request: RecoveryRequestRecord;
   try {
@@ -100,37 +111,34 @@ export async function requestLinkRecovery(
       gid: ask.gid,
       origin: ask.origin,
       expires_at: expiresAt.toISOString(),
-    }).select('id, organisation_id, upload_id, spreadsheet_id, gid, expires_at').single();
+      callback_token_hash: callbackTokenHash,
+    }).select(
+      'id, organisation_id, upload_id, spreadsheet_id, gid, expires_at, callback_token_hash',
+    ).single();
     if (error || !data) return { requested: false, reason: 'request_not_recorded' };
     request = data as RecoveryRequestRecord;
   } catch {
     return { requested: false, reason: 'request_not_recorded' };
   }
 
-  const body = JSON.stringify(outboundRecoveryPayload(request));
-  const timestamp = String(Math.floor(Date.now() / 1000));
+  const body = JSON.stringify(outboundRecoveryPayload(request, callbackToken));
 
   let dispatched = false;
   let status = 0;
   try {
-    const signature = await hmacHex(secret, signedPayload(timestamp, body));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DISPATCH_TIMEOUT_MS);
     try {
       const response = await fetch(webhook, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-aurixa-timestamp': timestamp,
-          'x-aurixa-signature': `v1=${signature}`,
-        },
+        headers: { 'content-type': 'application/json' },
         body,
         signal: controller.signal,
       });
       status = response.status;
       dispatched = response.ok;
-      // The body is not read. Make answers the request through the signed
-      // callback, and anything it returns here is neither trusted nor needed.
+      // The body is not read. Make answers the request through the callback,
+      // and anything it returns here is neither trusted nor needed.
     } finally {
       clearTimeout(timer);
     }
@@ -161,13 +169,23 @@ export async function requestLinkRecovery(
     : { requested: false, requestId: request.id, reason: 'dispatch_failed' };
 }
 
-/** HMAC-SHA256, lower-case hex. The same construction the callback verifies. */
-export async function hmacHex(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw', new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
-  );
-  const signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
-  return Array.from(new Uint8Array(signed))
+/**
+ * A fresh callback capability token: 256 bits, lower-case hex.
+ *
+ * `crypto.getRandomValues` is the platform CSPRNG. Nothing about the request
+ * feeds into it — a token derived from the request id, the organisation or the
+ * clock would be guessable by anyone who knows those, which is the whole set of
+ * people it exists to stop.
+ */
+export function mintCallbackToken(): string {
+  const bytes = new Uint8Array(CALLBACK_TOKEN_BYTES);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** SHA-256, lower-case hex. The one construction both sides of the token use. */
+export async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }

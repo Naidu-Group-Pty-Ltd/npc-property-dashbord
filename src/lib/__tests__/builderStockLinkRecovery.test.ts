@@ -25,15 +25,22 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 import {
-  MAX_CALLBACK_BYTES, MAX_TIMESTAMP_SKEW_SECONDS, RECOVERABLE_AVAILABILITY,
-  RECOVERABLE_AVAILABILITY_LEGACY, RECOVERY_REQUEST_TTL_MINUTES, callbackRefusal,
+  AUTHENTICATED_REFUSALS, CALLBACK_TOKEN_BYTES, MAX_CALLBACK_BYTES,
+  RECOVERABLE_AVAILABILITY, RECOVERABLE_AVAILABILITY_LEGACY,
+  RECOVERY_REQUEST_TTL_MINUTES, callbackRefusal, constantTimeEquals,
   isRecoverableStoredAvailability, mergeRecoveredLink,
   outboundRecoveryPayload, recoveredRowsFromGrid, shouldRequestLinkRecovery,
-  signedPayload, timestampWithinSkew,
 } from '../../../supabase/functions/_shared/builderStock/linkRecovery.pure';
 import { rowSourceBranches } from '../../../supabase/functions/_shared/builderStock/sourceBranches.pure';
+
+/** The same construction both sides of the token use. */
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
+const TOKEN = 'a'.repeat(64);
+const TOKEN_HASH = sha256(TOKEN);
 
 const OK = {
   importSucceeded: true,
@@ -93,23 +100,33 @@ describe('what leaves this product', () => {
   const request = {
     id: 'req-1', organisation_id: 'org-secret', upload_id: 'upload-secret',
     spreadsheet_id: 'sheet-abc', gid: '0',
-    expires_at: new Date().toISOString(),
+    expires_at: new Date().toISOString(), callback_token_hash: TOKEN_HASH,
   };
 
-  it('is three fields and nothing else', () => {
-    expect(outboundRecoveryPayload(request))
-      .toEqual({ request_id: 'req-1', spreadsheet_id: 'sheet-abc', gid: '0' });
+  it('is four fields and nothing else', () => {
+    expect(outboundRecoveryPayload(request, TOKEN)).toEqual({
+      request_id: 'req-1', spreadsheet_id: 'sheet-abc', gid: '0',
+      callback_token: TOKEN,
+    });
   });
 
   it('carries no organisation, upload, property or customer data', () => {
-    const serialised = JSON.stringify(outboundRecoveryPayload(request));
+    const serialised = JSON.stringify(outboundRecoveryPayload(request, TOKEN));
     for (const secret of ['org-secret', 'upload-secret', 'organisation', 'upload_id']) {
       expect(serialised).not.toContain(secret);
     }
   });
 
+  it('sends the token itself and NEVER the stored hash', () => {
+    const serialised = JSON.stringify(outboundRecoveryPayload(request, TOKEN));
+    expect(serialised).toContain(TOKEN);
+    expect(serialised).not.toContain('callback_token_hash');
+    // Belt and braces: the hash of a different value must not appear either.
+    expect(serialised).not.toContain(sha256('anything-else'));
+  });
+
   it('a sheet-wide link with no tab still sends an explicit null', () => {
-    expect(outboundRecoveryPayload({ ...request, gid: null }).gid).toBeNull();
+    expect(outboundRecoveryPayload({ ...request, gid: null }, TOKEN).gid).toBeNull();
   });
 
   it('the dispatch can never fail the import', () => {
@@ -126,7 +143,7 @@ describe('what leaves this product', () => {
       'supabase/functions/_shared/builderStock/requestLinkRecovery.ts', 'utf8');
     const logged = source.slice(source.indexOf('console.info('));
     expect(logged).toContain('request_id');
-    for (const forbidden of ['spreadsheet_id', 'webhook', 'secret', 'signature']) {
+    for (const forbidden of ['spreadsheet_id', 'webhook', 'secret', 'token']) {
       expect(logged.slice(0, 400)).not.toContain(forbidden);
     }
   });
@@ -140,39 +157,61 @@ describe('the callback cannot name its own authority', () => {
     id: 'req-1', organisation_id: 'org-a', upload_id: 'upload-a',
     spreadsheet_id: 'sheet-abc', gid: '0',
     expires_at: new Date(now + 60_000).toISOString(), consumed_at: null,
+    callback_token_hash: TOKEN_HASH,
   };
-  const body = { request_id: 'req-1', spreadsheet_id: 'sheet-abc', sheets: [] };
+  const body = {
+    request_id: 'req-1', spreadsheet_id: 'sheet-abc', gid: '0', sheets: [],
+  };
 
-  it('accepts a well-formed, bound, unconsumed, unexpired request', () => {
-    expect(callbackRefusal(request, body, now)).toBeNull();
+  it('accepts a well-formed, bound, unconsumed, unexpired, authorised request', () => {
+    expect(callbackRefusal(request, body, now, TOKEN_HASH)).toBeNull();
   });
 
   it('refuses an unknown request id', () => {
-    expect(callbackRefusal(null, body, now))
+    expect(callbackRefusal(null, body, now, TOKEN_HASH))
       .toEqual({ code: 'unknown_request', status: 404 });
   });
 
   it('refuses a replay of a consumed request', () => {
-    expect(callbackRefusal({ ...request, consumed_at: '2026-08-30T11:59:00Z' }, body, now))
+    expect(callbackRefusal(
+      { ...request, consumed_at: '2026-08-30T11:59:00Z' }, body, now, TOKEN_HASH))
       .toEqual({ code: 'request_already_consumed', status: 409 });
   });
 
   it('refuses an expired request', () => {
     expect(callbackRefusal(
-      { ...request, expires_at: new Date(now - 1).toISOString() }, body, now))
+      { ...request, expires_at: new Date(now - 1).toISOString() }, body, now, TOKEN_HASH))
       .toEqual({ code: 'request_expired', status: 409 });
   });
 
   it('refuses a document that is not the one we asked about', () => {
-    expect(callbackRefusal(request, { ...body, spreadsheet_id: 'sheet-other' }, now))
+    expect(callbackRefusal(
+      request, { ...body, spreadsheet_id: 'sheet-other' }, now, TOKEN_HASH))
       .toEqual({ code: 'spreadsheet_mismatch', status: 409 });
+  });
+
+  it('refuses a TAB that is not the one we asked about', () => {
+    expect(callbackRefusal(request, { ...body, gid: '7' }, now, TOKEN_HASH))
+      .toEqual({ code: 'gid_mismatch', status: 409 });
+  });
+
+  it('treats absent, null and empty gid as the same statement', () => {
+    const sheetWide = { ...request, gid: null };
+    for (const gid of [null, undefined, '']) {
+      expect(callbackRefusal(sheetWide, { ...body, gid }, now, TOKEN_HASH)).toBeNull();
+    }
+    // ...and a numeric gid is the same tab as its digits, either way round.
+    expect(callbackRefusal(request, { ...body, gid: 0 }, now, TOKEN_HASH)).toBeNull();
+    expect(callbackRefusal({ ...request, gid: '0' }, { ...body, gid: '0' }, now, TOKEN_HASH))
+      .toBeNull();
   });
 
   it('refuses a malformed payload before looking anything up', () => {
     for (const bad of [{}, { request_id: 'req-1' }, { spreadsheet_id: 'sheet-abc' },
       { request_id: 'req-1', spreadsheet_id: 'sheet-abc' },
       { request_id: 'req-1', spreadsheet_id: 'sheet-abc', sheets: 'not-an-array' }]) {
-      expect(callbackRefusal(request, bad as never, now)?.code).toBe('malformed_payload');
+      expect(callbackRefusal(request, bad as never, now, TOKEN_HASH)?.code)
+        .toBe('malformed_payload');
     }
   });
 
@@ -181,7 +220,7 @@ describe('the callback cannot name its own authority', () => {
       ...body,
       organisation_id: 'org-b', upload_id: 'upload-b', property_id: 'prop-b',
     };
-    expect(callbackRefusal(request, hostile, now)).toBeNull();
+    expect(callbackRefusal(request, hostile, now, TOKEN_HASH)).toBeNull();
     // The refusal check passes, and the function reads authority from the row:
     const callback = readFileSync(
       'supabase/functions/builder-stock-link-callback/index.ts', 'utf8');
@@ -195,50 +234,148 @@ describe('the callback cannot name its own authority', () => {
   });
 });
 
-describe('freshness and signing', () => {
+// ── The one-time capability token ──────────────────────────────────────────
+
+describe('authorisation is a per-request capability, not a shared secret', () => {
   const now = Date.parse('2026-08-30T12:00:00Z');
-  const seconds = Math.floor(now / 1000);
+  const request = {
+    id: 'req-1', organisation_id: 'org-a', upload_id: 'upload-a',
+    spreadsheet_id: 'sheet-abc', gid: '0',
+    expires_at: new Date(now + 60_000).toISOString(), consumed_at: null,
+    callback_token_hash: TOKEN_HASH,
+  };
+  const body = {
+    request_id: 'req-1', spreadsheet_id: 'sheet-abc', gid: '0', sheets: [],
+  };
 
-  it('accepts a timestamp inside the skew, either way', () => {
-    expect(timestampWithinSkew(String(seconds), now)).toBe(true);
-    expect(timestampWithinSkew(String(seconds - MAX_TIMESTAMP_SKEW_SECONDS + 1), now)).toBe(true);
-    expect(timestampWithinSkew(String(seconds + MAX_TIMESTAMP_SKEW_SECONDS - 1), now)).toBe(true);
+  it('accepts the token minted for this request', () => {
+    expect(callbackRefusal(request, body, now, sha256(TOKEN))).toBeNull();
   });
 
-  it('refuses one outside it, and anything unparseable', () => {
-    expect(timestampWithinSkew(String(seconds - MAX_TIMESTAMP_SKEW_SECONDS - 1), now)).toBe(false);
-    expect(timestampWithinSkew(String(seconds + MAX_TIMESTAMP_SKEW_SECONDS + 1), now)).toBe(false);
-    for (const bad of ['', 'soon', 'NaN']) expect(timestampWithinSkew(bad, now)).toBe(false);
+  it('refuses a wrong token', () => {
+    expect(callbackRefusal(request, body, now, sha256('not-the-token')))
+      .toEqual({ code: 'invalid_token', status: 401 });
   });
 
-  it('the timestamp is inside the signed string, which is what closes replay', () => {
-    expect(signedPayload('123', '{"a":1}')).toBe('123.{"a":1}');
-    expect(signedPayload('124', '{"a":1}')).not.toBe(signedPayload('123', '{"a":1}'));
+  it('refuses a missing token, and says so distinctly from a wrong one', () => {
+    expect(callbackRefusal(request, body, now, null))
+      .toEqual({ code: 'missing_token', status: 401 });
   });
 
-  it('the callback compares signatures in constant time and bounds the body', () => {
+  it('refuses a token that belongs to a DIFFERENT request', () => {
+    const other = sha256('b'.repeat(64));
+    expect(callbackRefusal(request, body, now, other)?.code).toBe('invalid_token');
+  });
+
+  it('refuses when the row carries no hash at all, rather than letting it through', () => {
+    expect(callbackRefusal(
+      { ...request, callback_token_hash: '' }, body, now, sha256(''))?.code)
+      .toBe('invalid_token');
+  });
+
+  it('checks the token BEFORE the binding, so a wrong token never reveals the binding', () => {
+    // Wrong token AND wrong document: the token failure is what is reported.
+    expect(callbackRefusal(
+      request, { ...body, spreadsheet_id: 'sheet-other' }, now, sha256('wrong'))?.code)
+      .toBe('invalid_token');
+  });
+
+  it('checks existence, use and expiry before the token — those reveal nothing', () => {
+    expect(callbackRefusal(null, body, now, null)?.code).toBe('unknown_request');
+    expect(callbackRefusal(
+      { ...request, consumed_at: 'x' }, body, now, null)?.code)
+      .toBe('request_already_consumed');
+  });
+
+  it('only an AUTHENTICATED refusal may cause a write', () => {
+    // A caller that has not proven possession must not be able to make this
+    // product write, even a diagnostic status.
+    for (const unauthenticated of ['malformed_payload', 'unknown_request',
+      'request_already_consumed', 'request_expired', 'missing_token', 'invalid_token']) {
+      expect(AUTHENTICATED_REFUSALS.has(unauthenticated)).toBe(false);
+    }
+    for (const authenticated of ['spreadsheet_mismatch', 'gid_mismatch']) {
+      expect(AUTHENTICATED_REFUSALS.has(authenticated)).toBe(true);
+    }
+  });
+
+  it('compares in constant time and never short-circuits on content', () => {
+    expect(constantTimeEquals(TOKEN_HASH, TOKEN_HASH)).toBe(true);
+    expect(constantTimeEquals(TOKEN_HASH, sha256('other'))).toBe(false);
+    expect(constantTimeEquals('abc', 'abcd')).toBe(false);
+  });
+
+  it('carries 256 bits of randomness, minted from the platform CSPRNG', () => {
+    expect(CALLBACK_TOKEN_BYTES).toBe(32);
+    const source = readFileSync(
+      'supabase/functions/_shared/builderStock/requestLinkRecovery.ts', 'utf8');
+    expect(source).toContain('crypto.getRandomValues');
+    // Nothing about the request may feed the token — that would be guessable.
+    const mint = source.slice(source.indexOf('export function mintCallbackToken'));
+    for (const derived of ['request', 'organisation', 'Date.now', 'upload']) {
+      expect(mint.slice(0, 400)).not.toContain(derived);
+    }
+  });
+
+  it('stores only the hash, and never the token', () => {
+    const source = readFileSync(
+      'supabase/functions/_shared/builderStock/requestLinkRecovery.ts', 'utf8');
+    const from = source.indexOf('.insert({');
+    const insert = source.slice(from, source.indexOf('.select(', from));
+    expect(insert).toContain('callback_token_hash: callbackTokenHash');
+    expect(insert).not.toMatch(/callback_token:/);
+  });
+
+  it('the database refuses to hold anything but a sha256 digest', () => {
+    const migration = readFileSync(
+      'supabase/migrations/20261030000000_builder_stock_link_recovery.sql', 'utf8');
+    expect(migration).toContain('callback_token_hash text NOT NULL');
+    expect(migration).toContain("CHECK (callback_token_hash ~ '^[0-9a-f]{64}$')");
+  });
+
+  it('the callback reads a Bearer token and hashes it before comparing', () => {
     const callback = readFileSync(
       'supabase/functions/builder-stock-link-callback/index.ts', 'utf8');
-    expect(callback).toContain('constantTimeEquals');
-    expect(callback).toMatch(/diff \|=/);
-    expect(callback).toContain('enforceRawBodyLimit');
+    expect(callback).toContain("bearerToken(req.headers.get('authorization'))");
+    expect(callback).toContain('await sha256Hex(presented)');
+    // The plaintext must never meet a stored value.
+    expect(callback).not.toMatch(/callback_token_hash\s*===\s*presented\b/);
+  });
+
+  it('bounds the body before it reads or parses anything', () => {
+    const callback = readFileSync(
+      'supabase/functions/builder-stock-link-callback/index.ts', 'utf8');
+    const bound = callback.indexOf('enforceRawBodyLimit');
+    const parse = callback.indexOf('JSON.parse');
+    const lookup = callback.indexOf('.from(REQUEST_TABLE)');
+    expect(bound).toBeGreaterThan(0);
+    expect(bound).toBeLessThan(parse);
+    expect(parse).toBeLessThan(lookup);
     expect(MAX_CALLBACK_BYTES).toBe(5 * 1024 * 1024);
   });
 
-  it('freshness and signature are both checked before anything is parsed', () => {
+  it('claims the request atomically, so only one concurrent callback proceeds', () => {
     const callback = readFileSync(
       'supabase/functions/builder-stock-link-callback/index.ts', 'utf8');
-    const skew = callback.indexOf('timestampWithinSkew');
-    const signature = callback.indexOf('constantTimeEquals(presented');
-    const parse = callback.indexOf('JSON.parse(rawBody)');
-    expect(skew).toBeLessThan(parse);
-    expect(signature).toBeLessThan(parse);
+    // A conditional UPDATE ... WHERE consumed_at IS NULL is the claim: the
+    // database, not this code, decides which of two racing callers wins.
+    expect(callback).toMatch(/\.update\(\{\s*consumed_at:[\s\S]{0,200}?\.is\('consumed_at', null\)/);
+    expect(callback).toContain('request_already_consumed');
+    // And the claim happens before any property is touched.
+    const claim = callback.indexOf("is('consumed_at', null)\n    .select('id')");
+    const mutate = callback.indexOf('applyRecoveredLinks(supabase');
+    expect(callback.indexOf('consumed_at: new Date')).toBeLessThan(mutate);
+    expect(claim === -1 || claim < mutate).toBe(true);
   });
 
-  it('rate limiting keys on recovered authority, never on the body', () => {
+  it('rate limits on recovered authority, after the token is proven', () => {
     const callback = readFileSync(
       'supabase/functions/builder-stock-link-callback/index.ts', 'utf8');
-    expect(callback).toMatch(/consumeRateLimit\(\s*\n?\s*supabase, `bs:link-recovery:\$\{authority\.organisation_id\}/);
+    const token = callback.indexOf('callbackRefusal(');
+    const limit = callback.indexOf('consumeRateLimit(');
+    expect(token).toBeGreaterThan(0);
+    expect(token).toBeLessThan(limit);
+    expect(callback).toContain('bs:link-recovery:${authority.organisation_id}');
   });
 });
 
@@ -405,15 +542,72 @@ describe('nothing here names a deployment', () => {
     }
   });
 
-  it('the secret is read from the environment and never written down', () => {
+  it('the webhook URL is read from the environment and never written down', () => {
+    const source = readFileSync(
+      'supabase/functions/_shared/builderStock/requestLinkRecovery.ts', 'utf8');
+    expect(source).toContain("Deno.env.get('MAKE_SHEET_LINKS_WEBHOOK_URL')");
+    // No default, no fallback, no literal.
+    expect(source).not.toMatch(/MAKE_SHEET_LINKS_WEBHOOK_URL'\s*\)\s*\?\?\s*'h[^']+'/);
+    expect(source).not.toMatch(/hook\.[a-z0-9]+\.make\.com/);
+  });
+});
+
+// ── The architecture that was removed ──────────────────────────────────────
+
+describe('the static shared secret is gone, not merely unused', () => {
+  /*
+   * A dead compatibility path is one import away from coming back, and this
+   * one had a distribution problem rather than a bug: a secret that must be
+   * byte-identical in two systems, where the side that can write one cannot
+   * write the other. Nothing about the old design should survive as something
+   * a future change could reach for, so this asserts absence rather than
+   * trusting it.
+   */
+  const FILES = [
+    'supabase/functions/_shared/builderStock/linkRecovery.pure.ts',
+    'supabase/functions/_shared/builderStock/requestLinkRecovery.ts',
+    'supabase/functions/builder-stock-link-callback/index.ts',
+    'supabase/functions/builder-portal-stock/index.ts',
+    'supabase/migrations/20261030000000_builder_stock_link_recovery.sql',
+    'supabase/config.toml',
+    '.github/workflows/set-builder-stock-link-secrets.yml',
+  ];
+
+  it('names no shared secret, signature header or timestamp signing anywhere', () => {
+    for (const file of FILES) {
+      const source = readFileSync(file, 'utf8');
+      for (const gone of [
+        'MAKE_SHEET_LINKS_SHARED_SECRET',
+        'REPLACE_ME_MAKE_SHEET_LINKS_SHARED_SECRET',
+        'x-make-signature',
+        'x-make-timestamp',
+        'x-aurixa-signature',
+        'x-aurixa-timestamp',
+        'timestampWithinSkew',
+        'signedPayload',
+        'MAX_TIMESTAMP_SKEW_SECONDS',
+      ]) {
+        expect(`${file}: ${source.includes(gone)}`).toBe(`${file}: false`);
+      }
+    }
+  });
+
+  it('signs nothing with HMAC on this path', () => {
     for (const file of [
       'supabase/functions/_shared/builderStock/requestLinkRecovery.ts',
       'supabase/functions/builder-stock-link-callback/index.ts',
     ]) {
       const source = readFileSync(file, 'utf8');
-      expect(source).toContain("Deno.env.get('MAKE_SHEET_LINKS_SHARED_SECRET')");
-      // No default, no fallback, no literal.
-      expect(source).not.toMatch(/MAKE_SHEET_LINKS_SHARED_SECRET'\s*\)\s*\?\?\s*'[^']+'/);
+      expect(source).not.toContain('hmacHex');
+      expect(source).not.toMatch(/name:\s*'HMAC'/);
+    }
+  });
+
+  it('refuses no request for a reason that only a shared secret could produce', () => {
+    const callback = readFileSync(
+      'supabase/functions/builder-stock-link-callback/index.ts', 'utf8');
+    for (const gone of ['recovery_not_configured', 'stale_timestamp', 'invalid_signature']) {
+      expect(callback).not.toContain(gone);
     }
   });
 });

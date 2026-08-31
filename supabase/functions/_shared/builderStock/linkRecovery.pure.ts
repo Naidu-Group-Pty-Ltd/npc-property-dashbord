@@ -53,8 +53,15 @@ export const RECOVERY_REQUEST_TTL_MINUTES = 30;
 /** The largest callback body that will be read. A 119-row sheet is ~300 KB. */
 export const MAX_CALLBACK_BYTES = 5 * 1024 * 1024;
 
-/** How far a signed timestamp may be from ours, either way. */
-export const MAX_TIMESTAMP_SKEW_SECONDS = 300;
+/**
+ * How much randomness a callback token carries.
+ *
+ * 32 bytes — 256 bits — because the token IS the authorisation. It is minted
+ * per request, so there is no key distribution and nothing to rotate; the only
+ * property that matters is that it cannot be guessed within the half hour it
+ * is valid for.
+ */
+export const CALLBACK_TOKEN_BYTES = 32;
 
 /** How often one upload may be refreshed by hand. */
 export const MANUAL_REFRESH_WINDOW_SECONDS = 600;
@@ -152,44 +159,60 @@ export interface RecoveryRequestRecord {
   expires_at: string;
   consumed_at?: string | null;
   status?: string | null;
+  /** SHA-256, lower-case hex, of the one-time token. Never the token itself. */
+  callback_token_hash: string;
 }
 
 export interface OutboundRecoveryPayload {
   request_id: string;
   spreadsheet_id: string;
   gid: string | null;
+  callback_token: string;
 }
 
 /**
  * THE WHOLE OF WHAT LEAVES THIS PRODUCT.
  *
- * Three fields: which request, which document, which tab. No organisation, no
- * upload, no property, no row, no customer, no token. Make does not need to
- * know whose sheet it is reading in order to read it, and the callback cannot
- * use any of it to claim authority, so sending it would be pure risk.
+ * Four fields: which request, which document, which tab, and the one-time
+ * token that authorises answering. No organisation, no upload, no property, no
+ * row, no customer. Make does not need to know whose sheet it is reading in
+ * order to read it, and the callback consults none of it to decide whose stock
+ * may be touched, so sending more would be pure risk.
+ *
+ * THE TOKEN IS A CAPABILITY, NOT A CREDENTIAL. It authorises exactly one
+ * answer to exactly one question this product asked, it is useless the moment
+ * that answer arrives or the half hour lapses, and only its hash is stored. So
+ * it can sit in a third party's execution log without being worth anything —
+ * which is the whole reason it replaced a shared secret. A static secret in
+ * that same log would be worth every future request.
  *
  * Written as an explicit object rather than a subset of the request row, so a
- * column added to that row later cannot silently start being transmitted.
+ * column added to that row later cannot silently start being transmitted —
+ * and so that `callback_token_hash` in particular can never be.
  */
 export function outboundRecoveryPayload(
   request: RecoveryRequestRecord,
+  callbackToken: string,
 ): OutboundRecoveryPayload {
   return {
     request_id: request.id,
     spreadsheet_id: request.spreadsheet_id,
     gid: request.gid ?? null,
+    callback_token: callbackToken,
   };
 }
 
 /**
- * The exact string both sides sign.
+ * Compare two equal-purpose strings without revealing where they differ.
  *
- * The timestamp is inside the signature, which is what makes the skew check
- * meaningful: a replayed body with a fresh timestamp does not verify, and a
- * replayed body with its original timestamp is refused as stale.
+ * Used for the token hash. Both sides are SHA-256 hex of the same length, so
+ * the early length return leaks nothing an attacker does not already know.
  */
-export function signedPayload(timestamp: string, rawBody: string): string {
-  return `${timestamp}.${rawBody}`;
+export function constantTimeEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +222,7 @@ export function signedPayload(timestamp: string, rawBody: string): string {
 export interface CallbackBody {
   request_id?: unknown;
   spreadsheet_id?: unknown;
+  gid?: unknown;
   sheets?: unknown;
 }
 
@@ -207,25 +231,56 @@ export type CallbackRefusal =
   | { code: 'unknown_request'; status: 404 }
   | { code: 'request_already_consumed'; status: 409 }
   | { code: 'request_expired'; status: 409 }
-  | { code: 'spreadsheet_mismatch'; status: 409 };
+  | { code: 'missing_token'; status: 401 }
+  | { code: 'invalid_token'; status: 401 }
+  | { code: 'spreadsheet_mismatch'; status: 409 }
+  | { code: 'gid_mismatch'; status: 409 };
+
+/**
+ * The refusals a caller reached by PROVING it holds the request's token.
+ *
+ * Only these may write anything — a status stamp on the request row. An
+ * unauthenticated caller that guesses a request id must not be able to make
+ * this product write, even a diagnostic field, so everything before the token
+ * check answers and stops.
+ */
+export const AUTHENTICATED_REFUSALS: ReadonlySet<string> = new Set([
+  'spreadsheet_mismatch', 'gid_mismatch',
+]);
 
 /**
  * May this body be acted on for this stored request?
  *
  * Order matters and is deliberate: shape, then existence, then single-use,
- * then freshness, then binding. Each refusal writes nothing, and none of them
- * reveals which of the later checks would also have failed.
+ * then freshness, then AUTHORISATION, then binding. Each refusal writes
+ * nothing by itself, and none reveals which of the later checks would also
+ * have failed.
  *
- * THE BINDING CHECK IS THE POINT. Make is told which spreadsheet to read; if
- * what comes back names a different document then either the scenario is
- * misconfigured or somebody is replaying one builder's answer at another
- * builder's request. Neither is a state in which a brochure should be attached
- * to a property, so it is refused outright rather than reconciled.
+ * THE TOKEN IS THE AUTHORISATION AND IT IS CHECKED BEFORE THE BINDING. What
+ * comes before it is only what can be answered from the request row's own
+ * existence and lifetime, which a caller learns nothing from. Everything that
+ * follows — and every write — happens only once possession of the one-time
+ * token minted for this exact request has been proven.
+ *
+ * The caller hands in the SHA-256 of the presented token rather than the token,
+ * so this stays free of IO and the plaintext never enters a comparison. `null`
+ * means no token was presented at all, which is refused separately from a wrong
+ * one because the two are different operational faults: one is a scenario that
+ * was never configured to send it, the other is a scenario sending the wrong
+ * thing or somebody guessing.
+ *
+ * THE BINDING CHECKS ARE THE POINT. Make is told which spreadsheet and which
+ * tab to read; if what comes back names a different document or a different
+ * worksheet then either the scenario is misconfigured or an answer to one
+ * question is being offered against another. Neither is a state in which a
+ * brochure should be attached to a property, so it is refused outright rather
+ * than reconciled.
  */
 export function callbackRefusal(
   request: RecoveryRequestRecord | null | undefined,
   body: CallbackBody,
   nowMs: number,
+  presentedTokenHash: string | null,
 ): CallbackRefusal | null {
   const requestId = typeof body.request_id === 'string' ? body.request_id.trim() : '';
   const spreadsheetId = typeof body.spreadsheet_id === 'string'
@@ -241,17 +296,33 @@ export function callbackRefusal(
     return { code: 'request_expired', status: 409 };
   }
 
+  if (!presentedTokenHash) return { code: 'missing_token', status: 401 };
+  if (!request.callback_token_hash
+    || !constantTimeEquals(presentedTokenHash, request.callback_token_hash)) {
+    return { code: 'invalid_token', status: 401 };
+  }
+
   if (request.spreadsheet_id !== spreadsheetId) {
     return { code: 'spreadsheet_mismatch', status: 409 };
+  }
+  if (normalisedGid(body.gid) !== normalisedGid(request.gid)) {
+    return { code: 'gid_mismatch', status: 409 };
   }
   return null;
 }
 
-/** Is a signed timestamp close enough to now to be acted on? */
-export function timestampWithinSkew(timestamp: string, nowMs: number): boolean {
-  const seconds = Number.parseInt(String(timestamp ?? '').trim(), 10);
-  if (!Number.isFinite(seconds)) return false;
-  return Math.abs(nowMs / 1000 - seconds) <= MAX_TIMESTAMP_SKEW_SECONDS;
+/**
+ * One spelling for "which tab", so the two sides can be compared at all.
+ *
+ * A gid reaches this product as a URL fragment and returns through a JSON
+ * round trip, so the same worksheet can present as `"0"`, `0`, `null`,
+ * `undefined` or `""`. Absent and empty are the same statement — no tab was
+ * named — and a number and its digits are the same tab.
+ */
+function normalisedGid(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const text = String(value).trim();
+  return text;
 }
 
 // ---------------------------------------------------------------------------

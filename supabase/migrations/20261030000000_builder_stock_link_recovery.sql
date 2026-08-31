@@ -26,6 +26,16 @@
 --
 -- The row is also the replay guard: `consumed_at` makes a request single-use,
 -- and `expires_at` makes a leaked id worthless after thirty minutes.
+--
+-- AUTHORISATION IS A ONE-TIME CAPABILITY, AND ONLY ITS HASH LIVES HERE.
+--
+-- Each request mints its own 256-bit token, sends it to Make, and stores the
+-- SHA-256 of it in `callback_token_hash`. The plaintext is never written down,
+-- so this table cannot leak anything that answers a request; and because the
+-- token dies with the request, one sitting in a third party's execution log is
+-- worth a single answer to a question already asked. That is what replaced a
+-- long-lived secret held in two systems, which had to be distributed by hand
+-- and was worth every future request for as long as it lived.
 
 CREATE TABLE IF NOT EXISTS public.builder_stock_link_recovery_requests (
   -- The nonce. Unguessable, single-use, and the only thing the callback
@@ -38,9 +48,18 @@ CREATE TABLE IF NOT EXISTS public.builder_stock_link_recovery_requests (
   upload_id uuid NOT NULL
     REFERENCES public.builder_stock_uploads(id) ON DELETE CASCADE,
 
-  -- What was asked for, so what comes back can be checked against it.
+  -- What was asked for, so what comes back can be checked against it. BOTH are
+  -- binding: an answer naming another document, or another tab of this one, is
+  -- an answer to a different question and is refused rather than reconciled.
   spreadsheet_id text NOT NULL,
   gid text,
+
+  -- SHA-256, lower-case hex, of the one-time callback token. NEVER the token.
+  -- The constraint is a floor under that rule: a 64-character hex digest is
+  -- the only thing this column can hold, so a plaintext token written here by
+  -- mistake is rejected by the database rather than stored.
+  callback_token_hash text NOT NULL
+    CHECK (callback_token_hash ~ '^[0-9a-f]{64}$'),
 
   status text NOT NULL DEFAULT 'requested'
     CHECK (status = ANY (ARRAY[

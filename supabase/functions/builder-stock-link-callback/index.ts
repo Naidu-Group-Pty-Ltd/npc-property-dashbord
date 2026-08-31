@@ -18,6 +18,14 @@
  *   asked. Forging the entire payload still reaches nothing, because nothing
  *   in the payload is consulted to decide whose stock is reachable.
  *
+ *   AUTHORISATION IS A ONE-TIME CAPABILITY, NOT A SHARED SECRET. Each request
+ *   mints its own 256-bit token, sends it to Make, and stores only its
+ *   SHA-256. The bearer proves possession on the way back. There is no
+ *   long-lived key held in two systems, nothing to distribute, nothing to
+ *   rotate, and a token in somebody's execution log is worth exactly one
+ *   answer to one question already asked — for half an hour, and only until
+ *   the real answer arrives first.
+ *
  *   A ROW IS MATCHED BY WHAT IT IS, NEVER BY WHERE IT SITS. Position, order
  *   and count are ignored entirely; each returned row goes through the same
  *   normalisation and property identity the import itself used. Exactly one
@@ -34,10 +42,10 @@
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import {
-  MAX_CALLBACK_BYTES, callbackRefusal, mergeRecoveredLink, recoveredRowsFromGrid,
-  signedPayload, timestampWithinSkew, type RecoveryRequestRecord,
+  AUTHENTICATED_REFUSALS, MAX_CALLBACK_BYTES, callbackRefusal, mergeRecoveredLink,
+  recoveredRowsFromGrid, type RecoveryRequestRecord,
 } from '../_shared/builderStock/linkRecovery.pure.ts';
-import { hmacHex } from '../_shared/builderStock/requestLinkRecovery.ts';
+import { sha256Hex } from '../_shared/builderStock/requestLinkRecovery.ts';
 import {
   consumeRateLimit, enforceRawBodyLimit, securityJsonError,
 } from '../_shared/requestSecurity.ts';
@@ -56,33 +64,12 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 });
   if (req.method !== 'POST') return securityJsonError(400, 'method_not_allowed');
 
-  const secret = (Deno.env.get('MAKE_SHEET_LINKS_SHARED_SECRET') ?? '').trim();
-  if (!secret) return securityJsonError(503, 'recovery_not_configured');
-
   const bounded = await enforceRawBodyLimit(req, MAX_CALLBACK_BYTES);
   if (!bounded.ok) return bounded.error;
-  const rawBody = bounded.raw;
-
-  /*
-   * FRESHNESS BEFORE AUTHENTICITY, and both before anything is parsed. The
-   * timestamp is inside the signed string, so a replayed body with a fresh
-   * timestamp does not verify and a replayed body with its own timestamp is
-   * stale. Neither reaches the database.
-   */
-  const timestamp = req.headers.get('x-make-timestamp') ?? '';
-  if (!timestampWithinSkew(timestamp, Date.now())) {
-    return securityJsonError(401, 'stale_timestamp');
-  }
-
-  const presented = (req.headers.get('x-make-signature') ?? '').replace(/^v1=/, '');
-  const expected = await hmacHex(secret, signedPayload(timestamp, rawBody));
-  if (!constantTimeEquals(presented, expected)) {
-    return securityJsonError(401, 'invalid_signature');
-  }
 
   let body: Record<string, unknown>;
   try {
-    body = JSON.parse(rawBody) as Record<string, unknown>;
+    body = JSON.parse(bounded.raw) as Record<string, unknown>;
   } catch {
     return securityJsonError(400, 'malformed_payload');
   }
@@ -92,18 +79,40 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
   );
 
+  /*
+   * THE ROW IS LOADED BY ID ALONE, AND IT IS THE ONLY AUTHORITY.
+   *
+   * Everything with consequences — organisation, upload, document, tab — comes
+   * from here. The body's copies are compared against it and never trusted in
+   * its place.
+   */
   const requestId = typeof body.request_id === 'string' ? body.request_id.trim() : '';
   let request: RecoveryRequestRecord | null = null;
   if (/^[0-9a-f-]{36}$/i.test(requestId)) {
     const { data } = await supabase.from(REQUEST_TABLE)
-      .select('id, organisation_id, upload_id, spreadsheet_id, gid, expires_at, consumed_at, status')
+      .select('id, organisation_id, upload_id, spreadsheet_id, gid, expires_at, '
+        + 'consumed_at, status, callback_token_hash')
       .eq('id', requestId).maybeSingle();
     request = (data ?? null) as RecoveryRequestRecord | null;
   }
 
-  const refusal = callbackRefusal(request, body, Date.now());
+  /*
+   * The presented token is hashed before it is compared, so the plaintext
+   * never meets a stored value and a database read can never yield something
+   * that answers a request.
+   */
+  const presented = bearerToken(req.headers.get('authorization'));
+  const presentedTokenHash = presented ? await sha256Hex(presented) : null;
+
+  const refusal = callbackRefusal(request, body, Date.now(), presentedTokenHash);
   if (refusal) {
-    if (request) {
+    /*
+     * ONLY AN AUTHENTICATED CALLER MAY CAUSE A WRITE, even a diagnostic one.
+     * A caller that has not proven possession of this request's token gets an
+     * answer and nothing else, so guessing request ids cannot make this
+     * product write.
+     */
+    if (request && AUTHENTICATED_REFUSALS.has(refusal.code)) {
       await supabase.from(REQUEST_TABLE)
         .update({ status: 'refused', refusal_reason: refusal.code })
         .eq('id', request.id).is('consumed_at', null);
@@ -249,11 +258,18 @@ async function applyRecoveredLinks(
   return { linksApplied, reopened, unmatched };
 }
 
-function constantTimeEquals(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+/**
+ * The bearer token, or null.
+ *
+ * Only the `Bearer` scheme is accepted, case-insensitively on the scheme
+ * alone. Anything else — no header, a bare token, another scheme — is "no
+ * token presented", which is refused as its own reading rather than being
+ * silently treated as a wrong one.
+ */
+function bearerToken(header: string | null): string | null {
+  const match = /^bearer\s+(.+)$/i.exec((header ?? '').trim());
+  const token = match?.[1]?.trim();
+  return token ? token : null;
 }
 
 function jsonError(status: number, code: string): Response {
