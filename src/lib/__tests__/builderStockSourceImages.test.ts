@@ -1841,3 +1841,4 @@ describe('what the Builder Stock card displays', () => {
     expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBe('was-a-tile');
   });
 });
+

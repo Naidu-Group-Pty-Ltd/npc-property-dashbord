@@ -55,7 +55,8 @@ import {
 } from './sourceImages.ts';
 import { driveFileId, driveFolderId } from './drivePackage.pure.ts';
 import {
-  branchRecord, openBranches, rowSourceBranches, writeBranchState,
+  branchRecord, openBranches, rowSourceBranches, unmappedWithRecoveredLinks,
+  writeBranchState,
 } from './sourceBranches.pure.ts';
 import {
   DriveListingCache, recoverPackageImage, type PackageFetcher, type PackageOutcome,
@@ -595,9 +596,20 @@ export async function repairSourceImagesForUpload(
    * whether to skip would give most of that back.
    */
   const negativeBefore = new Map<string, unknown>();
+  /**
+   * Each property's stored row, so the branch derivation can lay the recovered
+   * link columns over the freshly parsed one — see
+   * `unmappedWithRecoveredLinks`. Read from the rows already loaded here, so
+   * this costs no query of its own.
+   */
+  const storedRowByItem = new Map<string, Record<string, unknown>>();
   for (const item of (existingRows ?? []) as ExistingItem[]) {
     primaryBefore.set(item.id, item.primary_image_id ?? null);
     if (item.source_provenance_result) negativeBefore.set(item.id, item.source_provenance_result);
+
+    if (item.source_row) {
+      storedRowByItem.set(item.id, item.source_row as Record<string, unknown>);
+    }
     const reference = referenceKey(item);
     if (reference) byReference.set(reference, item.id);
     const developmentUnit = developmentUnitKey(item);
@@ -712,7 +724,13 @@ export async function repairSourceImagesForUpload(
      * paths need it: the no-assets path, and the path below where the row's
      * own cover turns out to be a convicted marketing tile.
      */
-    const branches = rowSourceBranches(record.unmapped);
+    /*
+     * The row as the builder's document states it, plus the targets only the
+     * recovery could see. Recovered columns win because the re-read cannot
+     * carry a link at all — it has nothing to overwrite them with.
+     */
+    const branches = rowSourceBranches(
+      unmappedWithRecoveredLinks(record.unmapped, storedRowByItem.get(itemId)));
 
     if (all.length) {
       outcome.matched += 1;
