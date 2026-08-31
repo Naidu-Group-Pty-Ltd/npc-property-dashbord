@@ -1579,7 +1579,10 @@ export default function Calendar() {
                           aria-pressed={sidebarTab === tab.id}
                           aria-haspopup="menu"
                           aria-expanded={contextMenuTab === tab.id}
-                          title={tab.label}
+                          // Same as the expanded rail: the Radix tooltip names
+                          // this tool, so the browser's own would be a second
+                          // box beside it.
+
                           onClick={() => {
                             setSidebarTab(tab.id);
                             setSidebarCollapsed(false);
@@ -1680,7 +1683,11 @@ export default function Calendar() {
                               <ContextMenuTrigger asChild>
                               <TabsTrigger
                                 aria-label={`${tab.label}${isPinned ? ', pinned' : ''}`}
-                                title={tab.label}
+                                // No `title`. The Radix tooltip below already
+                                // names this tool and adds its shortcut and the
+                                // right-click hint; the browser's own tooltip
+                                // drew a second, smaller box beside it saying
+                                // only the label (audit item 32).
                                 value={tab.id}
                                 aria-haspopup="menu"
                                 aria-expanded={contextMenuTab === tab.id}

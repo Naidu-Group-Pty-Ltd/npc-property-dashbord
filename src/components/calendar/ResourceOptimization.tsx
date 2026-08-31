@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
+import { fallsOutsideWeek, resolveRecommendedSlot } from '@/lib/calendar/recommendedSlot.pure';
 
 interface ResourceOptimizationProps {
   events: Array<{
@@ -121,9 +122,10 @@ export function ResourceOptimization({ events, currentWeek, selectedDate, onSlot
           reasons.push('Underutilized slot');
         }
 
-        // Check if slot is available this week
-        const dayDate = weekDays[day];
-        const slotTime = setMinutes(setHours(dayDate, hour), 0);
+        // Availability is asked of the date this slot would actually book —
+        // `weekDays[day]` is this calendar week's occurrence, which may already
+        // be in the past, so it was answering for the wrong day.
+        const slotTime = resolveRecommendedSlot(day, hour);
         const isOccupied = events.some(e => {
           const start = safeParseISO(e.startTime);
           const end = safeParseISO(e.endTime);
@@ -229,13 +231,13 @@ export function ResourceOptimization({ events, currentWeek, selectedDate, onSlot
             </h4>
             <div className="grid grid-cols-2 gap-2">
               {analysis.recommendations.map((slot, idx) => {
-                const dayDate = weekDays[slot.day];
-                const slotTime = setMinutes(setHours(dayDate, slot.hour), 0);
+                const slotTime = resolveRecommendedSlot(slot.day, slot.hour);
+                const nextWeek = fallsOutsideWeek(slotTime, weekStart);
                 
                 return (
                   <button
                     key={idx}
-                    onClick={() => onSlotSelect?.(dayDate, slot.hour)}
+                    onClick={() => onSlotSelect?.(slotTime, slot.hour)}
                     className={cn(
                       'p-2 rounded-lg border text-left transition-all hover:scale-[1.02]',
                       getScoreBg(slot.score)
@@ -243,7 +245,12 @@ export function ResourceOptimization({ events, currentWeek, selectedDate, onSlot
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-medium">
-                        {format(dayDate, 'EEE')} {format(slotTime, 'h:mm a')}
+                        {format(slotTime, 'EEE d MMM')} {format(slotTime, 'h:mm a')}
+                        {nextWeek && (
+                          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                            next week
+                          </span>
+                        )}
                       </span>
                       <span className={cn('text-xs font-bold', getScoreColor(slot.score))}>
                         {slot.score}%
