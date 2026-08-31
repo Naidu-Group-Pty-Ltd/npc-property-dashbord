@@ -50,8 +50,26 @@ import type { HyperlinkAvailability } from './sheetHyperlinks.pure.ts';
  */
 export const RECOVERY_REQUEST_TTL_MINUTES = 30;
 
-/** The largest callback body that will be read. A 119-row sheet is ~300 KB. */
+/** The largest callback body that will be read. */
 export const MAX_CALLBACK_BYTES = 5 * 1024 * 1024;
+
+/**
+ * The largest workbook that will be decoded, AFTER base64.
+ *
+ * WHY A WORKBOOK AND NOT THE SHEETS API's GRID. `spreadsheets.get` will return
+ * a grid only when no field mask is set — a mask makes `includeGridData`
+ * ignored, so `data` is never populated — and without a mask every cell
+ * carries its full formatting. Measured against the live 119-row document:
+ * **14.2 MB** for one tab, about 1.4 KB a cell, which the body cap refuses and
+ * which a larger builder would only make worse. The same document exports as a
+ * compressed workbook two orders of magnitude smaller, and the workbook is the
+ * one representation that carries link targets at all.
+ *
+ * The cap is on the DECODED bytes because base64 inflates by a third, so a
+ * body inside `MAX_CALLBACK_BYTES` can still decode to more than a reader
+ * should be handed.
+ */
+export const MAX_WORKBOOK_BYTES = 3 * 1024 * 1024;
 
 /**
  * How much randomness a callback token carries.
@@ -228,7 +246,8 @@ export interface CallbackBody {
   request_id?: unknown;
   spreadsheet_id?: unknown;
   gid?: unknown;
-  sheets?: unknown;
+  /** The exported workbook, base64. The only representation carrying targets. */
+  workbook_base64?: unknown;
 }
 
 export type CallbackRefusal =
@@ -291,7 +310,8 @@ export function callbackRefusal(
   const spreadsheetId = typeof body.spreadsheet_id === 'string'
     ? body.spreadsheet_id.trim() : '';
   if (!requestId || !spreadsheetId) return { code: 'malformed_payload', status: 400 };
-  if (!Array.isArray(body.sheets)) return { code: 'malformed_payload', status: 400 };
+  const workbook = typeof body.workbook_base64 === 'string' ? body.workbook_base64.trim() : '';
+  if (!workbook) return { code: 'malformed_payload', status: 400 };
 
   if (!request || request.id !== requestId) return { code: 'unknown_request', status: 404 };
   if (request.consumed_at) return { code: 'request_already_consumed', status: 409 };
@@ -331,7 +351,7 @@ function normalisedGid(value: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// The grid
+// The workbook
 // ---------------------------------------------------------------------------
 
 export interface RecoveredRow {
@@ -342,86 +362,78 @@ export interface RecoveredRow {
 }
 
 /**
- * Turn one worksheet of Google's grid into headed rows.
+ * Decode the workbook a callback carried, refusing anything oversized.
  *
- * THE TAB IS CHOSEN BY ITS OWN ID, never by position. A workbook's first sheet
- * is not the tab a `gid` names, and a stock list frequently sits behind other
- * tabs. Where the request named no gid, the documented behaviour of a link
- * without one is the first tab, and that is what is used.
- *
- * Only http(s) targets are kept. A cell may legitimately link to a place
- * within the workbook, to a local file, or to a mail address, and none of
- * those is a document this pipeline can open — carrying them forward would
- * mean failing later with a worse message.
+ * The cap is applied to the DECODED length, computed from the base64 before
+ * any of it is turned into bytes — so an enormous body is refused by
+ * arithmetic rather than by allocating it first.
  */
-export function recoveredRowsFromGrid(
-  sheets: unknown,
-  gid: string | null,
-): RecoveredRow[] {
-  if (!Array.isArray(sheets) || sheets.length === 0) return [];
+export function decodeWorkbook(
+  base64: string,
+): { ok: true; bytes: Uint8Array } | { ok: false; reason: 'too_large' | 'undecodable' } {
+  const clean = String(base64 ?? '').replace(/\s+/g, '');
+  if (!clean) return { ok: false, reason: 'undecodable' };
 
-  const wanted = gid === null || gid === undefined || gid === ''
-    ? null
-    : Number.parseInt(String(gid), 10);
+  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
+  const decodedLength = Math.floor((clean.length * 3) / 4) - padding;
+  if (decodedLength > MAX_WORKBOOK_BYTES) return { ok: false, reason: 'too_large' };
 
-  const sheet = (wanted === null || !Number.isFinite(wanted))
-    ? sheets[0]
-    : sheets.find((candidate) => sheetIdOf(candidate) === wanted);
-  if (!sheet) return [];
+  try {
+    const binary = atob(clean);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return { ok: true, bytes };
+  } catch {
+    return { ok: false, reason: 'undecodable' };
+  }
+}
 
-  const rowData = ((sheet as { data?: Array<{ rowData?: unknown }> }).data ?? [])
-    .flatMap((block) => (Array.isArray(block?.rowData) ? block.rowData : []));
-  if (rowData.length < 2) return [];
+/**
+ * Turn the matched worksheet into headed rows.
+ *
+ * THE WORKSHEET IS CHOSEN BEFORE THIS RUNS, and it is chosen by CONTENT —
+ * `matchWorksheet` scores every tab against the CSV the import already proved
+ * and demands a decisive winner. An XLSX export is the WHOLE workbook and
+ * records no gid anywhere, so position is not identity: the requested tab is
+ * routinely not the first, and borrowing a near-identical tab's links is
+ * precisely the failure that rule exists to prevent.
+ *
+ * Here the only job left is pairing each row's cells with their headings, and
+ * a link is read at THIS row and THIS column. Nothing is looked up by lot, by
+ * address or by anything two rows could share.
+ *
+ * Only http(s) targets are kept. A cell may legitimately link within the
+ * workbook, to a local file, or to a mail address, and none of those is a
+ * document this pipeline can open.
+ */
+export function recoveredRowsFromWorksheet(sheet: {
+  values: (string | null)[][]; links: (string | null)[][];
+} | null | undefined): RecoveredRow[] {
+  const values = sheet?.values ?? [];
+  const links = sheet?.links ?? [];
+  if (values.length < 2) return [];
 
-  const headerCells = cellsOf(rowData[0]);
-  const headings = headerCells.map((cell) => String(cell?.formattedValue ?? '').trim());
+  const headings = (values[0] ?? []).map((cell) => String(cell ?? '').trim());
 
   const rows: RecoveredRow[] = [];
-  for (let index = 1; index < rowData.length; index += 1) {
-    const cells = cellsOf(rowData[index]);
-    const values: Record<string, string> = {};
-    const links: Record<string, string> = {};
+  for (let index = 1; index < values.length; index += 1) {
+    const cells = values[index] ?? [];
+    const linkCells = links[index] ?? [];
+    const rowValues: Record<string, string> = {};
+    const rowLinks: Record<string, string> = {};
     let sawAnything = false;
 
     for (let column = 0; column < headings.length; column += 1) {
       const heading = headings[column];
       if (!heading) continue;
-      const cell = cells[column];
-      const text = String(cell?.formattedValue ?? '').trim();
-      if (text) { values[heading] = text; sawAnything = true; }
-      const target = String(cell?.hyperlink ?? '').trim();
-      if (target && /^https?:\/\//i.test(target)) links[heading] = target;
+      const text = String(cells[column] ?? '').trim();
+      if (text) { rowValues[heading] = text; sawAnything = true; }
+      const target = String(linkCells[column] ?? '').trim();
+      if (target && /^https?:\/\//i.test(target)) rowLinks[heading] = target;
     }
-    if (sawAnything) rows.push({ values, links });
+    if (sawAnything) rows.push({ values: rowValues, links: rowLinks });
   }
   return rows;
-}
-
-/**
- * A worksheet's own id, decoded the way Google actually sends it.
- *
- * THE SHEETS API OMITS `sheetId` WHEN IT IS ZERO. Its JSON is proto3, which
- * leaves out scalar fields holding their default — so the first tab of very
- * nearly every spreadsheet arrives carrying no `sheetId` at all, and `gid=0`
- * is by far the commonest link anyone pastes.
- *
- * Read as `Number(undefined)` that is `NaN`, which equals nothing, so the tab
- * was never found and the recovery returned zero rows while reporting itself
- * fulfilled. Measured against the live document: an identical payload carrying
- * `sheetId: 0` parsed a row, and the same payload without it parsed none.
- *
- * Absent therefore means zero. That is the wire format's own meaning rather
- * than a guess, and it is emphatically NOT positional — a workbook whose first
- * tab is 12345 and whose third is 0 still resolves `gid=0` to the third.
- */
-function sheetIdOf(sheet: unknown): number {
-  const id = (sheet as { properties?: { sheetId?: unknown } })?.properties?.sheetId;
-  return Number(id ?? 0);
-}
-
-function cellsOf(row: unknown): Array<{ formattedValue?: unknown; hyperlink?: unknown }> {
-  const values = (row as { values?: unknown })?.values;
-  return Array.isArray(values) ? values : [];
 }
 
 // ---------------------------------------------------------------------------
