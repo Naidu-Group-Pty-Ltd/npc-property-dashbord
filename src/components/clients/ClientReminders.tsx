@@ -104,7 +104,7 @@ function FollowUpBanner({ clientId, followUpDate }: { clientId: string; followUp
   const statusConfig = isOverdue
     ? { bg: 'bg-destructive/5 border-destructive/30', icon: 'text-destructive', label: 'Overdue', labelClass: 'text-destructive font-semibold' }
     : isDueToday
-    ? { bg: 'bg-warning/5 border-warning/30', icon: 'text-warning-foreground0', label: 'Due Today', labelClass: 'text-warning font-semibold' }
+    ? { bg: 'bg-warning/5 border-warning/30', icon: 'text-warning', label: 'Due Today', labelClass: 'text-warning font-semibold' }
     : parsedDate
     ? { bg: 'bg-brand-500/5 border-brand-500/30', icon: 'text-brand-500', label: formatDistanceToNow(parsedDate, { addSuffix: true }), labelClass: 'text-muted-foreground' }
     : { bg: 'border-dashed border-muted-foreground/30', icon: 'text-muted-foreground', label: '', labelClass: '' };

@@ -1908,7 +1908,7 @@ export default function EmailCopilot() {
               Audit item 41 — these two buttons drew the SAME icon. One mutes a
               sound and one stops a browser notification, and a reader had only
               position to tell them apart; the second's colour did not help
-              either, because `text-success-foreground0` is not a token and
+              either, because `text-success` is not a token and
               compiled to nothing, so both bells inherited the same colour.
 
               A speaker for the sound and a bell for the notification says
@@ -2300,12 +2300,12 @@ export default function EmailCopilot() {
                                   )}
                                   {hasDraft && (
                                     <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-accent border-accent/30 bg-accent/5">
-                                      <MessageSquare className="h-2.5 w-2.5 mr-0.5 text-accent-foreground0" /> Draft
+                                      <MessageSquare className="h-2.5 w-2.5 mr-0.5 text-accent" /> Draft
                                     </Badge>
                                   )}
                                   {latestEmail.status === 'replied' && (
                                     <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-info border-info/30 bg-info/5">
-                                      <Reply className="h-2.5 w-2.5 mr-0.5 text-info-foreground0" /> Replied
+                                      <Reply className="h-2.5 w-2.5 mr-0.5 text-info" /> Replied
                                     </Badge>
                                   )}
                                   {isNonEmptyArray(latestEmail.attachments) && (
@@ -2361,10 +2361,10 @@ export default function EmailCopilot() {
                                         {extractSenderName(email.sender)}
                                       </span>
                                       {email.summary && (
-                                        <Sparkles className="h-3 w-3 text-success-foreground0 flex-shrink-0" />
+                                        <Sparkles className="h-3 w-3 text-success flex-shrink-0" />
                                       )}
                                       {email.draft_reply && (
-                                        <MessageSquare className="h-3 w-3 text-accent-foreground0 flex-shrink-0" />
+                                        <MessageSquare className="h-3 w-3 text-accent flex-shrink-0" />
                                       )}
                                       {isNonEmptyArray(email.attachments) && (
                                         <Paperclip className="h-3 w-3 text-primary flex-shrink-0" />
@@ -2413,7 +2413,7 @@ export default function EmailCopilot() {
                 {filteredEmails.length === 0 && filteredSentReplies.length === 0 ? (
                   <div className="m-4 rounded-[1.75rem] border border-dashed border-success/25 bg-[linear-gradient(135deg,hsl(var(--card)/0.76),hsl(var(--background)/0.58))] p-8 text-center shadow-inner shadow-sm dark:shadow-black/10">
                     <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-success/20 bg-success/10">
-                      <Send className="h-7 w-7 text-success-foreground0/55" />
+                      <Send className="h-7 w-7 text-success/55" />
                     </span>
                     <p className="text-sm font-semibold text-foreground">No sent emails</p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -2875,7 +2875,7 @@ export default function EmailCopilot() {
                             <ul className="mt-3 space-y-2">
                               {toStringArray(selectedEmail.summary.requiredActions).map((action, i) => (
                                 <li key={i} className="flex items-start gap-2 text-sm leading-6">
-                                  <CheckCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-success-foreground0" />
+                                  <CheckCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-success" />
                                   <span className="min-w-0 break-words text-foreground/85">{action}</span>
                                 </li>
                               ))}
@@ -3517,7 +3517,7 @@ export default function EmailCopilot() {
                     <ul className="mt-2 space-y-2">
                       {toStringArray(selectedEmail.summary.requiredActions).map((action, i) => (
                         <li key={i} className="text-sm flex items-start gap-2 p-2 bg-success/10 rounded-lg">
-                          <CheckCircle className="h-4 w-4 text-success-foreground0 flex-shrink-0 mt-0.5" />
+                          <CheckCircle className="h-4 w-4 text-success flex-shrink-0 mt-0.5" />
                           <span>{action}</span>
                         </li>
                       ))}

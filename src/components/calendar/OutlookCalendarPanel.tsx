@@ -675,7 +675,7 @@ export function OutlookCalendarPanel({
                         <span className="font-medium truncate max-w-[120px]">{member.username}</span>
                         <div className="flex items-center gap-1">
                           {member.busySlots.length === 0 ? (
-                            <Badge variant="outline" className="text-[10px] text-success-foreground0 border-success/30">Free</Badge>
+                            <Badge variant="outline" className="text-[10px] text-success border-success/30">Free</Badge>
                           ) : (
                             <Badge variant="outline" className="text-[10px] text-brand-500 border-brand-500/30">
                               {member.busySlots.length} busy

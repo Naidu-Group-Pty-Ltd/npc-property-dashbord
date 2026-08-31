@@ -1403,12 +1403,12 @@ const CallLogs = () => {
                         <div className="flex items-center gap-1.5 mt-0.5">
                           {selectedCall.call_direction === 'inbound' ? (
                             <>
-                              <PhoneIncoming className="w-4 h-4 flex-shrink-0 text-success-foreground0" />
+                              <PhoneIncoming className="w-4 h-4 flex-shrink-0 text-success" />
                               <span className="text-sm font-medium">Inbound</span>
                             </>
                           ) : (
                             <>
-                              <PhoneOutgoing className="w-4 h-4 flex-shrink-0 text-info-foreground0" />
+                              <PhoneOutgoing className="w-4 h-4 flex-shrink-0 text-info" />
                               <span className="text-sm font-medium">Outbound</span>
                             </>
                           )}
@@ -1464,12 +1464,12 @@ const CallLogs = () => {
                           <div className="flex items-center gap-1.5 mt-1">
                             {selectedCall.call_direction === 'inbound' ? (
                               <>
-                                <PhoneIncoming className="w-4 h-4 text-success-foreground0" />
+                                <PhoneIncoming className="w-4 h-4 text-success" />
                                 <span className="text-sm">Inbound</span>
                               </>
                             ) : (
                               <>
-                                <PhoneOutgoing className="w-4 h-4 text-info-foreground0" />
+                                <PhoneOutgoing className="w-4 h-4 text-info" />
                                 <span className="text-sm">Outbound</span>
                               </>
                             )}
