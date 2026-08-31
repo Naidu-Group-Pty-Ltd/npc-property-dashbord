@@ -55,6 +55,9 @@ import {
   mergeRecoveredLink, recoveredRowsFromWorksheet, type RecoveryRequestRecord,
 } from '../_shared/builderStock/linkRecovery.pure.ts';
 import { readWorkbookSheets } from '../_shared/builderStock/workbookSheets.ts';
+import {
+  GridTooLargeError, gridToWorkbookSheets,
+} from '../_shared/builderStock/sheetGrid.pure.ts';
 import { matchWorksheet } from '../_shared/builderStock/sheetHyperlinks.pure.ts';
 import { fetchStockSource } from '../_shared/builderStock/fetchSource.ts';
 import { parseDelimited } from '../_shared/builderStock/table.pure.ts';
@@ -152,8 +155,12 @@ Deno.serve(async (req) => {
    * The caller has already proven possession of the token by this point, and
    * the organisation is already rate limited, so this cannot be used to probe.
    */
-  const decoded = decodeWorkbook(String(body.workbook_base64 ?? ''));
-  if (!decoded.ok) {
+  const sentWorkbook = typeof body.workbook_base64 === 'string'
+    && body.workbook_base64.trim() !== '';
+  const decoded = sentWorkbook
+    ? decodeWorkbook(String(body.workbook_base64 ?? ''))
+    : null;
+  if (decoded && !decoded.ok) {
     return jsonError(decoded.reason === 'too_large' ? 413 : 400,
       decoded.reason === 'too_large' ? 'workbook_too_large' : 'workbook_undecodable');
   }
@@ -182,7 +189,16 @@ Deno.serve(async (req) => {
   let worksheet = '';
   let refusedFor = '';
   try {
-    const sheets = await readWorkbookSheets(decoded.bytes);
+    /*
+     * ONE READER'S WORTH OF WORKSHEETS, FROM WHICHEVER REPRESENTATION CAME.
+     * A workbook is parsed; a grid is adapted into the identical shape. What
+     * follows — the worksheet match, the row identity, the link merge — cannot
+     * tell the two apart, which is the point: a builder whose document may not
+     * be downloaded gets the same brochures, decided by the same rules.
+     */
+    const sheets = decoded && decoded.ok
+      ? await readWorkbookSheets(decoded.bytes)
+      : gridToWorkbookSheets(body.grid);
     const proven = await fetchStockSource(
       `https://docs.google.com/spreadsheets/d/${authority.spreadsheet_id}/edit`
       + `?gid=${encodeURIComponent(authority.gid ?? '0')}`);
@@ -196,11 +212,14 @@ Deno.serve(async (req) => {
     } else {
       refusedFor = match.reason;
     }
-  } catch {
-    // A workbook we could not read, or a CSV we could not re-prove. Either way
-    // nothing is known about which tab these links belong to, so nothing is
-    // applied — the upload keeps the notice it already had.
-    refusedFor = 'workbook_unreadable';
+  } catch (error) {
+    // A workbook we could not read, a grid too large to convert, or a CSV we
+    // could not re-prove. Either way nothing is known about which tab these
+    // links belong to, so nothing is applied — the upload keeps the notice it
+    // already had. The oversized grid is named separately because it points at
+    // a different remedy from a document we simply could not parse.
+    refusedFor = error instanceof GridTooLargeError
+      ? 'grid_too_large' : 'workbook_unreadable';
   }
 
   const { data: items } = await supabase.from('builder_stock_items')

@@ -246,8 +246,17 @@ export interface CallbackBody {
   request_id?: unknown;
   spreadsheet_id?: unknown;
   gid?: unknown;
-  /** The exported workbook, base64. The only representation carrying targets. */
+  /**
+   * The exported workbook, base64. Carries link targets, and is available
+   * only where the document's owner permits it to be downloaded.
+   */
   workbook_base64?: unknown;
+  /**
+   * A `spreadsheets.get` grid. Carries the same targets cell by cell, and
+   * answers where the export refuses — because reading cells and downloading
+   * a file are different permissions on the builder's own document.
+   */
+  grid?: unknown;
 }
 
 export type CallbackRefusal =
@@ -310,8 +319,16 @@ export function callbackRefusal(
   const spreadsheetId = typeof body.spreadsheet_id === 'string'
     ? body.spreadsheet_id.trim() : '';
   if (!requestId || !spreadsheetId) return { code: 'malformed_payload', status: 400 };
+  /*
+   * EITHER REPRESENTATION, NEVER NEITHER. A workbook and a grid are two ways
+   * of reading the SAME document, and which one a builder's sharing settings
+   * allow is not ours to choose — so the contract accepts both and requires
+   * one. A body carrying neither says nothing about any spreadsheet and is
+   * refused on shape, before the request row is consulted at all.
+   */
   const workbook = typeof body.workbook_base64 === 'string' ? body.workbook_base64.trim() : '';
-  if (!workbook) return { code: 'malformed_payload', status: 400 };
+  const grid = body.grid !== null && body.grid !== undefined && typeof body.grid === 'object';
+  if (!workbook && !grid) return { code: 'malformed_payload', status: 400 };
 
   if (!request || request.id !== requestId) return { code: 'unknown_request', status: 404 };
   if (request.consumed_at) return { code: 'request_already_consumed', status: 409 };
