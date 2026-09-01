@@ -224,7 +224,7 @@ async function sendMessage(supabase: any, partner: any, body: any, json: JsonRes
   // Lookup client recipient info
   const { data: client } = await supabase
     .from('clients')
-    .select('id, primary_email, secondary_email, primary_phone, secondary_phone, primary_contact_name')
+    .select('id, primary_email, secondary_email, primary_mobile, secondary_mobile')
     .eq('id', client_id)
     .maybeSingle();
   if (!client) return json({ error: 'client_not_found' }, 404);
@@ -265,7 +265,7 @@ async function sendMessage(supabase: any, partner: any, body: any, json: JsonRes
 
     recipient = channel === 'email'
       ? (client.primary_email || client.secondary_email)
-      : (client.primary_phone || client.secondary_phone);
+      : (client.primary_mobile || client.secondary_mobile);
 
     let finalBody = text;
     if (channel === 'email') {
