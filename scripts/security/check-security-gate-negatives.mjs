@@ -104,7 +104,7 @@ const CASES = [
     gate: 'check-storage-upload-hardening.mjs',
     file: 'supabase/functions/secure-storage/index.ts',
     what: 'a human upload path is caller-chosen rather than server-generated',
-    find: 'uploadPath = `${uploadBinding.clientId || uploadBinding.ownerUserId || actorId}/${crypto.randomUUID()}',
+    find: 'uploadPath = `${uploadBinding.clientId || uploadBinding.objectClientId || uploadBinding.ownerUserId || actorId}/${crypto.randomUUID()}',
     replace: 'uploadPath = `${path}',
   },
   {
