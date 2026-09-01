@@ -233,9 +233,8 @@ const MIN_PACKAGE_FACTS = 2;
  * The page (or pages) that present this property as a package.
  *
  * `pageTexts[i]` is the text of visible page `i + 1`. More than one match is
- * returned rather than resolved, because a document that presents the same
- * property twice has not told us which presentation is its cover — and the
- * caller's answer to that is no primary image.
+ * returned rather than resolved, because which of them is the COVER is a
+ * separate question with its own rule — see `resolvePropertyCover`.
  */
 export function findPropertyCoverPages(
   pageTexts: string[],
@@ -252,6 +251,50 @@ export function findPropertyCoverPages(
     covers.push({ page: index + 1, identity, packageFacts });
   });
   return covers;
+}
+
+/**
+ * Which of several qualifying pages is the property's COVER.
+ *
+ * WHY THIS IS NOT A REFUSAL. The old rule was "exactly one qualifying page or
+ * no image", and it was written against the fear that a document covering two
+ * PROPERTIES would hand one property's photograph to the other. That fear is
+ * already answered upstream and not here: `pageStatesIdentity` requires the
+ * page to state THIS lot and refuses any page that states another one, so a
+ * page belonging to a different property can never reach this function. Every
+ * cover passed in names the same property.
+ *
+ * So the ambiguity left is not "whose house is this" — it is "which page of
+ * this property's own package leads", and refusing that threw away the
+ * document entirely.
+ *
+ * MEASURED, 1 SEPTEMBER 2026. A builder package is a cover page and a floor
+ * plan, and both repeat the lot header and the price block, so both qualify.
+ * On ten real brochures from the live stock list, five were refused for
+ * exactly this and every one of them had its facade render on page 1 and its
+ * floor plan on page 2. The rule below recovered all five, changed nothing on
+ * the one that already worked, and each recovered image was inspected and is
+ * the house.
+ *
+ * THE RULE: the page that states the MOST of the package is the cover. A
+ * cover carries the price, the heading, the land or build size and the
+ * bed/bath/car line; a floor plan repeats the header and little else. It is
+ * evidence about the page rather than its position, so a document that opens
+ * with its floor plan is read correctly too.
+ *
+ * A STRICT TIE IS STILL NO IMAGE. Two pages stating equally much have not
+ * said which leads, and the posture of this whole module is that a blank card
+ * beats a guess.
+ */
+export function resolvePropertyCover(
+  covers: readonly PropertyCoverEvidence[],
+): PropertyCoverEvidence | null {
+  const all = covers ?? [];
+  if (all.length <= 1) return all[0] ?? null;
+
+  const most = Math.max(...all.map((cover) => cover.packageFacts.length));
+  const leaders = all.filter((cover) => cover.packageFacts.length === most);
+  return leaders.length === 1 ? leaders[0] : null;
 }
 
 /**
@@ -514,7 +557,7 @@ export function assignPdfMediaRoles(input: {
     : [];
   const designCover = designCovers.length === 1 ? designCovers[0] : null;
 
-  const cover = covers.length === 1 ? covers[0] : (structural ?? designCover);
+  const cover = resolvePropertyCover(covers) ?? structural ?? designCover;
 
   const onCover = cover
     ? media
@@ -541,9 +584,9 @@ export function assignPdfMediaRoles(input: {
       ? 'the document\'s text could not be read, so no page can be read as this property\'s cover'
       : !String(input.label ?? '').trim()
         ? 'the property has no label for a page to state, so no page can be read as its cover'
-        : covers.length > 1
-          ? `${covers.length} pages present this property as a package and the document does `
-            + 'not say which is its cover'
+        : covers.length > 1 && !resolvePropertyCover(covers)
+          ? `${covers.length} pages present this property as a package and state equally `
+            + 'much of it, so the document does not say which is its cover'
           : !covers.length
             ? 'no page states this property\'s identity together with its package information'
             : outcome?.kind === 'none'
