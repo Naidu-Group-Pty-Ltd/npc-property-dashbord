@@ -892,9 +892,19 @@ Deno.serve(async (req) => {
       /**
        * Settle EVERY property, not only the ones this run touched.
        *
-       * A property whose builder supplied nothing must end the run with no
-       * primary image rather than the Street View it had before the rule
-       * changed — that stale pointer IS the defect being repaired.
+       * A property whose pointer no longer matches what the ranking would pick
+       * — an image re-judged a marketing tile since it was chosen, a builder
+       * cover that has arrived for a property showing a fallback — must end the
+       * run pointing at the current answer rather than the old one.
+       *
+       * It settles to the SAME ranking the per-item path uses
+       * (`chooseCardImage`). This comment used to say the opposite: that a
+       * property whose builder supplied nothing must end with no image "rather
+       * than the Street View it had before the rule changed". That was true of
+       * the builder-or-nothing rule and stopped being true when
+       * `imagePriority.pure.ts` reinstated the fallback tiers; the function it
+       * describes went on enforcing the repealed rule, and this operation is
+       * the caller that could reach it. See `enforceStrictPrimaryImages`.
        */
       const primaries = await enforceStrictPrimaryImages(supabase, activeOrganisationId);
 
