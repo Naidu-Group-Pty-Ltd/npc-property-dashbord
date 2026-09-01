@@ -49,6 +49,7 @@ import { settleFallbackImages } from './settleFallbackImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import { repairStoredIdentity } from './storedIdentityRepair.pure.ts';
 import { reverifyStoredWebImages } from './reverifyWebImages.ts';
+import { applyDesignRenderFor } from './attachBuilderImage.ts';
 import type { ClaimedItem, ItemWorkStage } from './itemWorkClaim.ts';
 
 export interface ItemSettlement {
@@ -151,6 +152,21 @@ export async function settleClaimedItem(
    * candidate for exactly this.
    */
   await reverifyWebImagesFor(db, item.id);
+
+  /*
+   * AND THE RENDER ITS BUILDER SUPPLIED FOR ITS DESIGN, IF THERE IS ONE.
+   *
+   * Applied on every sweep rather than only at upload, because a render is
+   * supplied once and the stock keeps arriving: next month's list adds four
+   * more lots of a design whose render the builder handed over in March, and
+   * they should not have to hand it over again. Idempotent — a property that
+   * already carries it costs one indexed read and no write.
+   *
+   * It carries `DESIGN_EVIDENCE_LEVEL`, so it never outranks a document. A
+   * brochure page naming this lot takes the card back the moment one is read,
+   * which is what a builder means by supplying a stand-in.
+   */
+  await applyDesignRenderFor(db, item);
 
   try {
     if (stage === 'source') {
