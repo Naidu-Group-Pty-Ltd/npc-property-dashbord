@@ -47,6 +47,9 @@ import {
   MANUAL_REFRESH_WINDOW_SECONDS, isRecoverableStoredAvailability, shouldRequestLinkRecovery,
 } from '../_shared/builderStock/linkRecovery.pure.ts';
 import { googleSheetsRef } from '../_shared/builderStock/googleSheetsSource.pure.ts';
+import {
+  isTraversableBranch, rowSourceBranches,
+} from '../_shared/builderStock/sourceBranches.pure.ts';
 import { consumeRateLimit } from '../_shared/requestSecurity.ts';
 import { fetchStockSource, SourceFetchError } from '../_shared/builderStock/fetchSource.ts';
 import type { HyperlinkAvailability } from '../_shared/builderStock/sheetHyperlinks.pure.ts';
@@ -1648,7 +1651,7 @@ async function decorateItems(
   if (!items.length) return [];
   const ids = items.map((item) => item.id);
 
-  const [{ data: images }, { data: selections }] = await Promise.all([
+  const [{ data: images }, { data: selections }, { data: rows }] = await Promise.all([
     supabase.from('builder_stock_item_images')
       .select(STOCK_IMAGE_SELECT)
       .in('stock_item_id', ids)
@@ -1659,6 +1662,24 @@ async function decorateItems(
       .in('stock_item_id', ids)
       .eq('organisation_id', organisationId)
       .neq('status', 'withdrawn'),
+    /*
+     * WHY A PROPERTY HAS NO PICTURE, WHERE THE ANSWER IS THE BUILDER'S TO FIX.
+     *
+     * Read here rather than added to `STOCK_ITEM_SELECT`, because that list is
+     * a disclosure boundary and `source_row` is the builder's whole raw row.
+     * What leaves this function is a COUNT — how many documents this property's
+     * own row attaches — and never an address, so the page can say "your stock
+     * list attaches no document to this row" without the row travelling.
+     *
+     * On the one live source that is thirteen of twenty-six properties, and it
+     * is the only reason among them that a person can act on: no reader
+     * conjures a document nobody attached, and until this the page said only
+     * "No image yet", which reads as something the product is still doing.
+     */
+    supabase.from('builder_stock_items')
+      .select('id, source_row')
+      .in('id', ids)
+      .eq('organisation_id', organisationId),
   ]);
 
   const imagesByItem = new Map<string, any[]>();
@@ -1674,9 +1695,29 @@ async function decorateItems(
     selectionsByItem.set(selection.stock_item_id, list);
   }
 
+  /*
+   * Counted with `rowSourceBranches` — the same function the image pipeline
+   * uses to decide what it will try — so the page cannot say a property has a
+   * document the pipeline would not read, or none where it would find five.
+   */
+  const documentsByItem = new Map<string, number>();
+  for (const row of rows ?? []) {
+    const unmapped = (row?.source_row as { unmapped?: Record<string, string> } | null)?.unmapped;
+    documentsByItem.set(
+      String(row.id),
+      rowSourceBranches(unmapped).filter(isTraversableBranch).length,
+    );
+  }
+
   return items.map((item) => ({
     ...item,
     images: imagesByItem.get(item.id) ?? [],
+    /*
+     * How many builder documents this property's own row attaches. Zero is the
+     * one reason for a missing picture that the builder can fix, and it is a
+     * count rather than a list because an address is not needed to say so.
+     */
+    source_documents: documentsByItem.get(String(item.id)) ?? 0,
     // The builder's activation signal: how many Command Centre selections this
     // property has, and where the most recent one is up to.
     selection_count: (selectionsByItem.get(item.id) ?? []).length,

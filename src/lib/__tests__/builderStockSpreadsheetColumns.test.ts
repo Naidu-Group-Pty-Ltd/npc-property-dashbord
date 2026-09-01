@@ -39,7 +39,7 @@ import {
   attachRowHyperlinks, LINK_COLUMN_SUFFIX,
 } from '../../../supabase/functions/_shared/builderStock/sheetHyperlinks.pure';
 import {
-  rowSourceBranches, sharedLinkFileUrl,
+  isTraversableBranch, rowSourceBranches, sharedLinkFileUrl,
 } from '../../../supabase/functions/_shared/builderStock/sourceBranches.pure';
 
 /** The heading row of a live house-and-land stock list, verbatim. */
@@ -305,5 +305,48 @@ describe('a shared link is asked for the file, not the viewer', () => {
     for (const forbidden of ['hostname =', 'pathname =', 'protocol =', 'new URL(`']) {
       expect(rule).not.toContain(forbidden);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// And where there is no document, the page says so
+// ---------------------------------------------------------------------------
+
+/**
+ * "No image yet" reads as something the product is still doing.
+ *
+ * For thirteen of the twenty-six live properties it never will be: their stock
+ * list attaches no brochure to those rows, the photograph comes out of the
+ * builder's own document, and no reader conjures a document nobody attached.
+ * That is the one reason for a missing picture that a person can act on, and
+ * the page could not say it.
+ *
+ * The count the page reads is produced by `rowSourceBranches` — the same
+ * function the image pipeline uses to decide what it will try — so the two
+ * cannot disagree about whether a property owns a document. What travels is
+ * the COUNT: saying a row attaches nothing needs no address, and the row
+ * itself stays on the server.
+ */
+describe('a property with no document is distinguishable from one still being worked', () => {
+  const countFor = (unmapped: Record<string, string>) =>
+    rowSourceBranches(unmapped).filter(isTraversableBranch).length;
+
+  it('counts the documents a row attaches, by the pipeline\'s own rule', () => {
+    expect(countFor({ 'DOWNLOAD URL': 'https://example.invalid/lot-231.pdf' })).toBe(1);
+    // A property legitimately carries several: a brochure, a siting plan, a
+    // plan of subdivision. All of them are branches, none of them is a choice.
+    expect(countFor({
+      'DOWNLOAD URL': 'https://example.invalid/lot-231.pdf',
+      'PLAN URL': 'https://example.invalid/lot-231-siting.pdf',
+    })).toBe(2);
+  });
+
+  it('and answers ZERO where the builder attached nothing at all', () => {
+    // The thirteen: every column present, none of them an address.
+    expect(countFor({ HOUSE: 'DK 22B', 'PACKAGE $': '$871,450', DOWNLOAD: 'Brochure' })).toBe(0);
+    expect(countFor({})).toBe(0);
+    // A link this pipeline cannot take a photograph out of is not a document
+    // either, so the page does not promise one.
+    expect(countFor({ 'SITE URL': 'https://example.invalid/about-us' })).toBe(0);
   });
 });

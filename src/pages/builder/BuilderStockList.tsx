@@ -1215,12 +1215,27 @@ function PriceBlock({ item }: { item: BuilderStockItem }) {
 function ImageSources({ item, showLabels = false }: { item: BuilderStockItem; showLabels?: boolean }) {
   const image = primaryStockImage(item);
   const stages = stockImageStageSummary(item);
+  /*
+   * "No image yet" reads as something the product is still doing, and for a
+   * row whose stock list attaches no brochure it never will be — the picture
+   * comes out of the builder's own document, and there is no document. Saying
+   * so is the only reading here a person can act on.
+   *
+   * Counted by the server with the rule the image pipeline itself uses, so
+   * this cannot promise a document the pipeline would not read.
+   */
+  const noDocument = !image && item.source_documents === 0;
 
   return (
     <div className="flex min-w-0 flex-col items-start gap-1.5">
       <Badge
         variant="outline"
-        title={image ? STOCK_IMAGE_STAGE_BADGES[image.source_stage] : 'No image yet'}
+        title={image
+          ? STOCK_IMAGE_STAGE_BADGES[image.source_stage]
+          : noDocument
+            ? 'This stock list attaches no brochure or plan to this property. '
+              + 'Add a link to its row and the photograph is read from it.'
+            : 'No image yet'}
         className={cn(
           'max-w-full gap-1 px-1.5 py-0 text-[11px] font-medium',
           image
@@ -1232,7 +1247,9 @@ function ImageSources({ item, showLabels = false }: { item: BuilderStockItem; sh
           ? <ImageIcon className="h-3 w-3 shrink-0" aria-hidden />
           : <ImageOff className="h-3 w-3 shrink-0" aria-hidden />}
         <span className="truncate">
-          {image ? STOCK_IMAGE_STAGE_BADGES[image.source_stage] : 'No image yet'}
+          {image
+            ? STOCK_IMAGE_STAGE_BADGES[image.source_stage]
+            : noDocument ? 'No brochure on this row' : 'No image yet'}
         </span>
       </Badge>
 

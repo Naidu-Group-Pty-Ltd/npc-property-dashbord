@@ -138,12 +138,25 @@ whole purpose is to import it again.
 
 In the portal it is **Read again**, on the source row, beside Source images.
 
-## What this does not fix
+## What this does not fix, and how the page says so
 
 Of the 26, **13 carry no brochure link in the spreadsheet at all** — every one
 of them a `DK 22A/22B/23B` design, and no document anywhere in the database
 carries that design. No reader conjures a document that was never attached.
 Those properties can be given a photograph only by their builder adding one.
+
+Which is exactly why the page has to say it. "No image yet" reads as something
+the product is still doing, and for those thirteen it never will be. The
+property row now reads **"No brochure on this row"**, with the remedy on hover:
+*add a link to its row and the photograph is read from it.*
+
+`source_documents` carries it — how many documents this property's own row
+attaches, counted server-side by `rowSourceBranches`, the same function the
+image pipeline uses to decide what it will try, so the page cannot claim a
+document the pipeline would not read. It is deliberately **a count and not a
+list**, and it is read in `decorateItems` rather than added to
+`STOCK_ITEM_SELECT`: that list is a disclosure boundary and `source_row` is the
+builder's whole raw row. Saying a row attaches nothing needs no address.
 
 ## What it does, measured
 
