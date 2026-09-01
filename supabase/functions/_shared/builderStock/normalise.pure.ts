@@ -42,6 +42,22 @@ export interface NormalisedStockRecord {
   bathrooms: number | null;
   car_spaces: number | null;
   property_type: StockPropertyType | null;
+  /**
+   * The house design this lot is being sold with — "Elara 18", "Miami 190".
+   *
+   * A BUILDER SELLS FEWER DESIGNS THAN LOTS, and the document library is
+   * organised the way the business is: one brochure per design, linked from
+   * every row that sells it. The package matcher has always understood designs
+   * — `pageStatesIdentity` requires the page to state the label's design before
+   * it will call the page a property's cover — but it read them out of
+   * BRACKETED text in the display label, which a spreadsheet row never carries.
+   * So a design column arrived, went to `unmapped`, and the one document that
+   * names the house was refused for not naming the lot.
+   *
+   * Canonical and structured, alongside `building_size_sqm`, because the
+   * matcher takes discriminators as fields rather than re-parsing a label.
+   */
+  house_design: string | null;
   land_size_sqm: number | null;
   building_size_sqm: number | null;
   price: number | null;
@@ -78,7 +94,8 @@ type FieldKey =
   | 'suburb' | 'state' | 'postcode' | 'lot_number' | 'unit_number'
   | 'bedrooms' | 'bathrooms' | 'car_spaces' | 'property_type'
   | 'land_size_sqm' | 'building_size_sqm' | 'price' | 'availability_status'
-  | 'expected_completion' | 'description' | 'image_url' | 'builder_name';
+  | 'expected_completion' | 'description' | 'image_url' | 'builder_name'
+  | 'house_design';
 
 /**
  * Header text is compared with punctuation, spacing and case removed, so
@@ -147,6 +164,22 @@ alias('car_spaces',
 alias('property_type',
   'type', 'property type', 'dwelling type', 'product', 'product type',
   'house type', 'stock type');
+
+/*
+ * THE DESIGN, AND DELIBERATELY NOT THE FOUR HEADINGS ABOVE.
+ *
+ * `product`, `product type`, `house type` and `type` are already claimed by
+ * `property_type` — they answer "house or townhouse", not "which design" — so
+ * taking them here would silently change what an existing column means for
+ * every builder who already uses one. `floor plan` is likewise not this: on a
+ * stock list that column holds a LINK to a drawing, and `floor area` is
+ * `building_size_sqm`.
+ *
+ * What is left is the headings that can only mean the design itself.
+ */
+alias('house_design',
+  'design', 'house design', 'home design', 'design name', 'house design name',
+  'home design name', 'facade design', 'design type');
 
 // The unit is written six ways — "(m2)", "m²", "sqm", "sq m" — and the header
 // normaliser strips the punctuation but not the letters, so each spelling is a
@@ -349,7 +382,7 @@ export function emptyStockRecord(): NormalisedStockRecord {
     external_reference: null, development_name: null, project_name: null,
     address_line: null, suburb: null, state: null, postcode: null,
     lot_number: null, unit_number: null, bedrooms: null, bathrooms: null,
-    car_spaces: null, property_type: null, land_size_sqm: null,
+    car_spaces: null, property_type: null, house_design: null, land_size_sqm: null,
     building_size_sqm: null, price: null, price_display: null,
     availability_status: 'unknown', expected_completion: null, description: null,
     image_urls: [], image_url_fields: {}, source_anchor: null, unmapped: {},
@@ -413,6 +446,7 @@ export function normaliseStockRow(
       case 'bathrooms': record.bathrooms = clampCount(coerceNumber(value)); break;
       case 'car_spaces': record.car_spaces = clampCount(coerceNumber(value)); break;
       case 'property_type': record.property_type = coercePropertyType(value); break;
+      case 'house_design': record.house_design = text(value, 120); break;
       case 'land_size_sqm': record.land_size_sqm = clampArea(coerceNumber(value)); break;
       case 'building_size_sqm': record.building_size_sqm = clampArea(coerceNumber(value)); break;
       case 'price': {

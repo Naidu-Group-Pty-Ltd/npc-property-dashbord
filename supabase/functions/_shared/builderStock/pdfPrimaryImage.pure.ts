@@ -41,7 +41,8 @@
  */
 import { withoutTenureWording } from './drivePackage.pure.ts';
 import {
-  noPrimaryEvidence, roleFromAssetName, roleFromPropertyCover, secondaryRole,
+  noPrimaryEvidence, roleFromAssetName, roleFromDesignCover, roleFromPropertyCover,
+  secondaryRole,
   type SourceImageRoleAssignment,
 } from './sourceImageRole.pure.ts';
 
@@ -253,6 +254,95 @@ export function findPropertyCoverPages(
   return covers;
 }
 
+/**
+ * Generic words a design name shares with every other design name.
+ *
+ * Explicit, and deliberately not a similarity score: a design has to carry a
+ * token that belongs to IT, and "Single Storey" carries none.
+ */
+const GENERIC_DESIGN_WORDS: ReadonlySet<string> = new Set([
+  'single', 'double', 'storey', 'story', 'house', 'home', 'homes', 'design',
+  'designs', 'classic', 'standard', 'basic', 'premium', 'deluxe', 'series',
+  'range', 'collection', 'plan', 'plans', 'type', 'option', 'options',
+  'facade', 'facades', 'elevation', 'package', 'packages', 'lot', 'unit',
+]);
+
+/**
+ * Is this design name distinctive enough to identify a document by itself?
+ *
+ * THREE TESTS, ALL EXPLICIT. A design has to be at least two tokens, carry a
+ * word rather than only digits, and carry something that is not shared by
+ * every design in the catalogue.
+ *
+ *   "Elara 18"       elara + 18, `elara` is a word and is not generic.   YES
+ *   "18"             one token, no word at all.                          no
+ *   "Classic"        one token.                                          no
+ *   "Single Storey"  two tokens, both words, both generic.               no
+ *
+ * The cost of refusing is a blank card, which is this module's whole posture:
+ * a design that cannot name itself must not be allowed to name a photograph.
+ */
+export function designIdentityIsDistinctive(design: string | null | undefined): boolean {
+  const tokens = tokenise(String(design ?? ''));
+  if (tokens.length < 2) return false;
+  if (!tokens.some((token) => /^[a-z]{3,}$/.test(token))) return false;
+  return tokens.some((token) => !GENERIC_DESIGN_WORDS.has(token));
+}
+
+/**
+ * The page (or pages) presenting THIS DESIGN as a package.
+ *
+ * WHY THIS EXISTS. A builder sells fourteen designs across eighty-nine lots and
+ * files one brochure per design, linked from every row that sells it. That
+ * brochure names the design and never the lot, so `findPropertyCoverPages`
+ * refuses it — correctly, because it is not evidence about a lot. It IS
+ * evidence about a design, and the row states which design it bought.
+ *
+ * FOUR TESTS, AND EACH REFUSES RATHER THAN GUESSES:
+ *
+ *   1  THE DESIGN IDENTIFIES ITSELF. Every token of the row's stated design
+ *      appears on the page as a whole token. "Elara 18" against an "Elara 21"
+ *      page fails on `21`, which is what keeps one design's render off another
+ *      design's row.
+ *
+ *   2  THE PAGE IS A PACKAGE PAGE. The same `MIN_PACKAGE_FACTS` a property
+ *      cover must clear. A design token in a footer, a specification table or
+ *      an index is not a design's cover.
+ *
+ *   3  THE PAGE DESIGNATES NO LOT. A page naming a lot is some property's own
+ *      package page; taking it as a design render for a different lot would be
+ *      attribution by coincidence. Design evidence has to come from a page that
+ *      is about the design.
+ *
+ *   4  EXACTLY ONE PAGE, resolved by the caller. This is what stops a range
+ *      catalogue: its generic cover states no design and clears no facts, and
+ *      if two pages both present the design the document has not said which is
+ *      its render.
+ */
+export function findDesignCoverPages(
+  pageTexts: string[],
+  design: string | null | undefined,
+): PropertyCoverEvidence[] {
+  const identity = String(design ?? '').trim();
+  if (!designIdentityIsDistinctive(identity)) return [];
+
+  const wanted = tokenise(identity);
+  const covers: PropertyCoverEvidence[] = [];
+  (pageTexts ?? []).forEach((text, index) => {
+    const page = String(text ?? '');
+    const haystack = ` ${tokenise(page).join(' ')} `;
+    // 1 — the design states itself, every token of it.
+    if (!wanted.every((token) => haystack.includes(` ${token} `))) return;
+    // 3 — and the page is not some property's own package page.
+    if (lotDesignations(page).length) return;
+    // 2 — and it presents a package rather than mentioning a name.
+    const packageFacts = packageFactsOn(page);
+    if (packageFacts.length < MIN_PACKAGE_FACTS) return;
+    covers.push({ page: index + 1, identity, packageFacts });
+  });
+  return covers;
+}
+
 // ---------------------------------------------------------------------------
 // Which picture on that page is the hero
 // ---------------------------------------------------------------------------
@@ -383,6 +473,14 @@ export function assignPdfMediaRoles(input: {
    * today.
    */
   structuralCoverPage?: number | null;
+  /**
+   * The house design this row states, from the canonical `house_design` field.
+   *
+   * Consulted ONLY where the property-specific paths above found nothing, so a
+   * document naming this lot always decides first and a design render can
+   * never displace one. Absent or indistinct, and the design path never runs.
+   */
+  design?: string | null;
 }): SourceImageRoleAssignment[] {
   const media = input.media ?? [];
   const covers = input.pageOrderAuthoritative
@@ -402,7 +500,21 @@ export function assignPdfMediaRoles(input: {
       packageFacts: ['the builder\'s own folder names this document for this property'],
     }
     : null;
-  const cover = covers.length === 1 ? covers[0] : structural;
+  /*
+   * THE DESIGN, AND ONLY WHERE THE PROPERTY ITSELF SAID NOTHING.
+   *
+   * Ordered, not merged: a property cover wins, then the structural tie, and
+   * only then the design. So this can turn a blank into a render and can never
+   * turn a lot-specific render into a design one. Exactly-one-or-nothing is
+   * kept — a range catalogue presenting the design twice has not said which
+   * page is its render, and answers no image.
+   */
+  const designCovers = input.pageOrderAuthoritative && !covers.length && !structural
+    ? findDesignCoverPages(input.pageTexts ?? [], input.design)
+    : [];
+  const designCover = designCovers.length === 1 ? designCovers[0] : null;
+
+  const cover = covers.length === 1 ? covers[0] : (structural ?? designCover);
 
   const onCover = cover
     ? media
@@ -450,6 +562,15 @@ export function assignPdfMediaRoles(input: {
       return secondaryRole(named, `the source names this image "${entry.name}"`);
     }
     if (index === heroIndex && cover) {
+      // The design path never claims the property named it. See
+      // `roleFromDesignCover`.
+      if (designCover && cover === designCover) {
+        return roleFromDesignCover({
+          where: `visible page ${cover.page}`,
+          design: cover.identity,
+          packageFacts: cover.packageFacts,
+        });
+      }
       return roleFromPropertyCover({
         where: `visible page ${cover.page}`,
         identity: cover.identity,

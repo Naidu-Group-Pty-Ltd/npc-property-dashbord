@@ -37,6 +37,7 @@ import {
 } from './sourceAssets.pure.ts';
 import { roleDetail, roleFromExplicitField } from './sourceImageRole.pure.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
+import { readAllRows } from './pagedRead.ts';
 import { assignPdfMediaRolesPerProperty } from './pdfPrimaryImage.pure.ts';
 import {
   PROVENANCE_VERSION, storeSourceImages, type SourceImageFetcher,
@@ -316,12 +317,15 @@ async function buildInventoryIndex(db: any, organisationId: string): Promise<{
 
   const projectIds = Array.from(new Set(Array.from(projectByName.values())));
   if (projectIds.length) {
-    const { data: units } = await db
-      .from('builder_units')
-      .select('id, project_id, unit_number')
-      .in('project_id', projectIds)
-      .limit(5000);
-    for (const unit of units ?? []) {
+    // Paged: `.limit(5000)` is capped at 1,000 by the API, and a unit missing
+    // from this map is a unit the import cannot link. See `pagedRead.ts`.
+    const unitPage = await readAllRows<{ id: string; project_id: string; unit_number: unknown }>(
+      () => db
+        .from('builder_units')
+        .select('id, project_id, unit_number')
+        .in('project_id', projectIds)
+        .order('id', { ascending: true }));
+    for (const unit of unitPage.rows) {
       const number = String(unit.unit_number ?? '').trim().toLowerCase();
       if (number) unitByProjectAndNumber.set(`${unit.project_id}|${number}`, unit.id);
     }
@@ -480,12 +484,23 @@ export async function importStockRecords(
     });
   }
 
-  const { data: existingRows, error: existingError } = await db
-    .from('builder_stock_items')
-    .select(EXISTING_ITEM_SELECT)
-    .eq('organisation_id', input.organisationId)
-    .order('created_at', { ascending: true })
-    .limit(20000);
+  /*
+   * PAGED. `.limit(20000)` was never honoured — the API caps a response at
+   * 1,000 rows — so past a thousand properties this index silently held only
+   * the oldest thousand, and the note below applied to every property after
+   * them. `id` joins the ordering because `created_at` is not unique and
+   * offset paging needs a total order. See `pagedRead.ts`.
+   */
+  const existingPage = await readAllRows<ExistingItem>(
+    () => db
+      .from('builder_stock_items')
+      .select(EXISTING_ITEM_SELECT)
+      .eq('organisation_id', input.organisationId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true }));
+  const existingRows = existingPage.rows;
+  const existingError = existingPage.failed
+    ? (existingPage.error as { message?: string } | null) : null;
 
   /*
    * A FAILED READ IS NOT AN EMPTY ORGANISATION.

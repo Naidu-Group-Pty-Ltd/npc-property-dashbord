@@ -547,6 +547,11 @@ export async function selectPdfPropertyPrimary(
      * `assignPdfMediaRoles`.
      */
     structuralCoverPage?: number | null;
+    /**
+     * The house design this row states, from the canonical `house_design`
+     * field. Used only where no page named the property itself.
+     */
+    design?: string | null;
   } = {},
 ): Promise<{
   assets: PdfSourceAsset[];
@@ -558,6 +563,7 @@ export async function selectPdfPropertyPrimary(
   // The SAME decision an upload and a repair make, over the same inputs.
   const roles = assignPdfMediaRoles({
     label: options.label ?? null,
+    design: options.design ?? null,
     pageTexts: options.pageTexts ?? [],
     pageOrderAuthoritative: found.pageOrderAuthoritative,
     media: found.assets.map((asset) => asset.placement),
