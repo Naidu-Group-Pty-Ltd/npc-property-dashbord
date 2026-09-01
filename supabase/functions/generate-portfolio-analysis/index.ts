@@ -5,6 +5,7 @@ import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_share
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { internalError } from '../_shared/errorResponse.ts';
+import { readModelJson } from '../_shared/llmJson.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -545,10 +546,16 @@ Respond with ONLY this JSON:
           { role: 'user', content: insightsPrompt },
         ],
         temperature: 0.7,
-        // A fraction of the full review's 8,000. The card renders five short
-        // fields; asking for more spends a forwarded vendor key on tokens
-        // nothing will display.
-        maxTokens: 1200,
+        // Ask for JSON as JSON. Five other functions here already do this and
+        // it is what stops the model wrapping its answer in a ```json fence
+        // that then has to be regexed back off.
+        responseFormat: { type: 'json_object' },
+        // 1,200 was sized for the five short fields this card renders, which
+        // was right for the answer and wrong for the call: `gemini-2.5-pro` is
+        // a REASONING model and its thinking is billed as completion tokens,
+        // spent before a character of the answer is written. Production spent
+        // 1,196 of 1,200 and produced 184 characters — one truncated sentence.
+        maxTokens: 4000,
       });
 
       if (!insightsResponse.ok) {
@@ -569,20 +576,28 @@ Respond with ONLY this JSON:
 
       const insightsData = await insightsResponse.json();
       const insightsText = insightsData.choices?.[0]?.message?.content ?? '';
-      // The system prompt asks for bare JSON, but a fenced block is the
-      // failure mode every other caller here already guards against.
-      const fenced = insightsText.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
-      const braced = (fenced ? fenced[1] : insightsText).match(/\{[\s\S]*\}/);
-      if (!braced) {
-        console.error('[generate-portfolio-analysis] insights response was not JSON:', insightsText.slice(0, 400));
+      // `readModelJson` rather than a fence regex of our own. The regex here
+      // required a CLOSING fence, so a cut-off answer — which has neither a
+      // closing fence nor a closing brace — fell through to a raw match that
+      // could not succeed either, and the operator was told the model had not
+      // answered in JSON when it had, and had simply been stopped mid-word.
+      const insightsRead = readModelJson<Record<string, unknown>>(
+        insightsText,
+        insightsData.choices?.[0]?.finish_reason,
+      );
+      if (!insightsRead.ok) {
+        console.error(
+          `[generate-portfolio-analysis] insights ${insightsRead.reason}:`,
+          insightsText.slice(0, 400),
+        );
         return new Response(
-          JSON.stringify({ error: 'Failed to parse analysis results' }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+          JSON.stringify({ error: insightsRead.message, reason: insightsRead.reason }),
+          { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
         );
       }
 
       return new Response(
-        JSON.stringify({ success: true, insights: JSON.parse(braced[0]) }),
+        JSON.stringify({ success: true, insights: insightsRead.value }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
@@ -775,7 +790,13 @@ Format your response as valid JSON with this structure:
         { role: 'user', content: prompt },
       ],
       temperature: 0.7,
-      maxTokens: 8000,
+      // Same reasoning-model arithmetic as the insights call above: 8,000 was
+      // sized for a fourteen-section document and production spent 7,996 of it
+      // — four short of the ceiling on every run — because the model's own
+      // thinking is billed against the same budget. `request_timeout` is
+      // raised alongside this, because a longer answer is a longer call.
+      maxTokens: 14000,
+      responseFormat: { type: 'json_object' },
     });
 
     if (!aiResponse.ok) {
@@ -798,23 +819,26 @@ Format your response as valid JSON with this structure:
     const aiData = await aiResponse.json();
     const analysisText = aiData.choices[0].message.content;
 
-    // Parse JSON response
-    let analysis;
-    try {
-      let jsonString = analysisText;
-      const jsonMatch = analysisText.match(/\`\`\`(?:json)?\s*\n([\s\S]*?)\n\`\`\`/);
-      if (jsonMatch) {
-        jsonString = jsonMatch[1];
-      }
-      analysis = JSON.parse(jsonString);
-    } catch (parseError) {
-      console.error('Failed to parse AI response:', parseError);
-      console.log('Raw response:', analysisText);
+    // Parse JSON response.
+    //
+    // This was `JSON.parse` behind a fence regex that required a CLOSING
+    // fence. Every answer in production arrived truncated, so the regex never
+    // matched, the raw ```json text went to `JSON.parse`, and the function
+    // threw `Unexpected token '`'` — a crash rather than a refusal, which is
+    // why the button reported a bare 500 with nothing to act on.
+    const analysisRead = readModelJson<Record<string, unknown>>(
+      analysisText,
+      aiData.choices?.[0]?.finish_reason,
+    );
+    if (!analysisRead.ok) {
+      console.error(`[generate-portfolio-analysis] analysis ${analysisRead.reason}`);
+      console.log('Raw response:', String(analysisText).slice(0, 1000));
       return new Response(
-        JSON.stringify({ error: 'Failed to parse analysis results' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: analysisRead.message, reason: analysisRead.reason }),
+        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+    const analysis = analysisRead.value as any;
 
     const processingTime = Date.now() - startTime;
     console.log(`✅ Portfolio analysis completed in ${processingTime}ms`);
