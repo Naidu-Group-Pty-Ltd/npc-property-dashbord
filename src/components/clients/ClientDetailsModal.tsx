@@ -67,6 +67,7 @@ import { BorrowingCapacityCard, BorrowingCapacityModal } from '@/components/borr
 import { ClientCommercialIndustrialTab } from './ClientCommercialIndustrialTab';
 import { ClientCommercialIndustrialSnapshot } from './ClientCommercialIndustrialSnapshot';
 import { ClientAIInsights } from './ClientAIInsights';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 import { ClientFormaraUpload } from './ClientFormaraUpload';
 import { ClientFormaraForms } from './ClientFormaraForms';
 import { PropertyManualEntry } from './PropertyManualEntry';
@@ -382,7 +383,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
             size="sm"
             onClick={() => setShowReviewWizard(true)}
             disabled={properties.length === 0}
-            title={properties.length === 0 ? 'Add properties to start a review' : 'Start portfolio review wizard'}
+            title={properties.length === 0 ? 'Add properties to start a review' : `Start the ${PORTFOLIO_REPORT_LABEL} wizard`}
           >
             <ClipboardCheck className="h-4 w-4 mr-1.5" />
             <span className={isMobile ? "text-xs" : ""}>Review</span>
@@ -1152,7 +1153,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
         onComplete={(reviewId) => {
           setShowReviewWizard(false);
           refetchClient();
-          toast.success('Portfolio review completed successfully');
+          toast.success(`${PORTFOLIO_REPORT_LABEL} completed successfully`);
         }}
       />
 

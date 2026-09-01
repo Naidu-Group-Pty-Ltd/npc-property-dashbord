@@ -132,17 +132,30 @@ describe('the insights mode reuses what is already there', () => {
       fn.indexOf("if (mode === 'insights')"),
       fn.indexOf('const prompt = `You are an expert Australian property portfolio analyst'),
     );
+    /* The card's five short fields must stay cheaper than the fourteen-section
+       review — but "cheaper" is relative to that review's own budget, not to a
+       number typed here. Both were raised once production showed a REASONING
+       model spending the whole allowance before it began answering. */
     const maxTokens = Number(branch.match(/maxTokens:\s*(\d+)/)?.[1]);
+    const fullReview = Math.max(
+      ...[...fn.matchAll(/maxTokens:\s*(\d+)/g)].map((m) => Number(m[1])),
+    );
     expect(maxTokens).toBeGreaterThan(0);
-    expect(maxTokens).toBeLessThan(8000);
+    expect(maxTokens).toBeLessThan(fullReview);
   });
 
   it('tolerates a fenced response, like every other parse here', () => {
+    /* This asserted the presence of a specific fence REGEX, which is a
+       mechanism and not a rule — and that regex turned out to be wrong: it
+       required a CLOSING fence, so it never matched the truncated answers
+       production actually produced. The rule is that a fenced answer is read,
+       and `readModelJson` is the one implementation of it that three other
+       functions already share. Assert the rule. */
     const branch = fn.slice(
       fn.indexOf("if (mode === 'insights')"),
       fn.indexOf('const prompt = `You are an expert Australian property portfolio analyst'),
     );
-    expect(branch).toMatch(/```\(\?:json\)\?/);
-    expect(branch).toMatch(/Failed to parse analysis results/);
+    expect(branch).toMatch(/readModelJson/);
+    expect(branch).not.toMatch(/\.match\(/);
   });
 });

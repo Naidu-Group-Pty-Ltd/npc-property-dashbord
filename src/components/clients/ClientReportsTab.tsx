@@ -615,7 +615,7 @@ export function ClientReportsTab({
                     size="icon"
                     className="h-10 w-10 sm:h-8 sm:w-8"
                     icon={<Sparkles className="h-4 w-4" />}
-                    triggerLabel="Download the portfolio review"
+                    triggerLabel={`Download the ${PORTFOLIO_REPORT_LABEL}`}
                     reportId={report.id}
                     storedPath={report.fileUrl}
                     storedFileName={`${report.name.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`}
