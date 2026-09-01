@@ -60,6 +60,35 @@ interface ClientData {
   equity_release: number | null;
 }
 
+
+/**
+ * Ask for JSON as JSON, and fall back to asking in prose if the provider
+ * refuses the field.
+ *
+ * `compare-investment-reports` learned this the hard way and built a ladder
+ * for it: a provider that cannot do `response_format` answers 4xx naming the
+ * field, and dropping the request is right — but ONLY for that reason. A 429,
+ * a 402 or a 5xx is about capacity, credit or health, and retrying without the
+ * format would answer a question nobody asked. `rungRejected` is that rule,
+ * imported rather than restated.
+ *
+ * Without this, adding `response_format` to a path that is already broken
+ * risks trading a truncated answer for no answer at all. The reader below
+ * handles a fenced response either way, so the fallback loses nothing.
+ */
+async function callForJson(args: Record<string, unknown>) {
+  const { callLLMRaw } = await import('../_shared/llmRouter.ts');
+  const withFormat = await callLLMRaw({ ...args, responseFormat: { type: 'json_object' } } as any);
+  if (withFormat.ok) return withFormat;
+
+  const { rungRejected } = await import('../_shared/reports/propertyComparison/analysisRequest.pure.ts');
+  const body = await withFormat.text().catch(() => '');
+  if (!rungRejected(withFormat.status, body)) return withFormat;
+
+  console.warn('[generate-portfolio-analysis] provider refused response_format; asking in prose');
+  return await callLLMRaw(args as any);
+}
+
 const __portfolioHandler = async (req: Request): Promise<Response> => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -535,8 +564,7 @@ Respond with ONLY this JSON:
   "recommendations": ["recommendation 1", "recommendation 2", "recommendation 3"]
 }`;
 
-      const { callLLMRaw: callInsights } = await import('../_shared/llmRouter.ts');
-      const insightsResponse = await callInsights({
+      const insightsResponse = await callForJson({
         agentKey: 'portfolio_analysis',
         messages: [
           {
@@ -546,10 +574,6 @@ Respond with ONLY this JSON:
           { role: 'user', content: insightsPrompt },
         ],
         temperature: 0.7,
-        // Ask for JSON as JSON. Five other functions here already do this and
-        // it is what stops the model wrapping its answer in a ```json fence
-        // that then has to be regexed back off.
-        responseFormat: { type: 'json_object' },
         // 1,200 was sized for the five short fields this card renders, which
         // was right for the answer and wrong for the call: `gemini-2.5-pro` is
         // a REASONING model and its thinking is billed as completion tokens,
@@ -778,9 +802,8 @@ Format your response as valid JSON with this structure:
 }`;
 
     // Call Lovable AI
-    const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     console.log('Calling LLM router for portfolio analysis...');
-    const aiResponse = await callLLMRaw({
+    const aiResponse = await callForJson({
       agentKey: 'portfolio_analysis',
       messages: [
         {
@@ -796,7 +819,6 @@ Format your response as valid JSON with this structure:
       // thinking is billed against the same budget. `request_timeout` is
       // raised alongside this, because a longer answer is a longer call.
       maxTokens: 14000,
-      responseFormat: { type: 'json_object' },
     });
 
     if (!aiResponse.ok) {

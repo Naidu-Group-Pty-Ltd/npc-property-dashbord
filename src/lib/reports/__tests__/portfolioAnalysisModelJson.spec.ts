@@ -88,11 +88,18 @@ describe('generate-portfolio-analysis parses through the shared reader', () => {
     expect(code).not.toMatch(/JSON\.parse\(\s*(?:jsonString|analysisText|insightsText|braced)/);
   });
 
-  it('asks for JSON as JSON on both calls', () => {
-    // Five other functions here already do this; it is what stops the model
-    // fencing an answer that then has to be unwrapped.
-    const occurrences = code.match(/responseFormat: \{ type: 'json_object' \}/g) ?? [];
-    expect(occurrences.length).toBe(2);
+  it('asks for JSON as JSON on both calls, through one caller', () => {
+    // Both branches go through `callForJson`, which adds `response_format` and
+    // — this is the part that matters — DROPS it if the provider answers a 4xx
+    // naming the field. `compare-investment-reports` built that rule after the
+    // same lesson; it is imported rather than restated.
+    expect((code.match(/await callForJson\(/g) ?? []).length).toBe(2);
+    expect(code).toContain("responseFormat: { type: 'json_object' }");
+    expect(code).toContain('rungRejected');
+    // A capacity or credit failure must NOT be read as a format refusal, which
+    // is exactly what `rungRejected` refuses to do — so neither branch may
+    // decide that for itself.
+    expect(code).not.toMatch(/status === 429[\s\S]{0,80}responseFormat/);
   });
 
   it('gives a reasoning model room for reasoning AND an answer', () => {
