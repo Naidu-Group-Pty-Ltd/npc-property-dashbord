@@ -266,21 +266,43 @@ npx wrangler deploy
 
 ### Verifying it against real pictures
 
-The endpoint is only worth turning on if it is right about this repository's
-own documents, and that cannot be asserted from a test with a stub binding.
-After deploying, run it against pictures taken out of real brochures:
+The endpoint is only worth turning on if it is right about **this repository's
+own documents**, and no test with a stub binding can show that: a stub answers
+whatever the test wrote. So the acceptance test is a script that runs the real
+thing — the repository's own reader picks the page and pulls the rasters out of
+it, and the deployed worker's own model says what each one shows.
 
 ```sh
-curl -sS -X POST "$WORKER/v1/classify" \
-  -H "Authorization: Bearer $BUILDER_STOCK_IMAGE_WORKER_TOKEN" \
-  -F 'image-facade=@facade.jpg' \
-  -F 'image-logo=@wordmark.jpg' \
-  -F 'image-plan=@floorplan.jpg' | jq .
+deno run -A scripts/builder-stock/classify-brochure-page.ts \
+  --pdf ./Thornhill-Gardens-Lot-313.pdf \
+  --label "Lot 313, Thornhill Gardens, Thornhill Park" \
+  --worker https://builder-stock-image-worker.<subdomain>.workers.dev \
+  --token "$BUILDER_STOCK_IMAGE_WORKER_TOKEN"
 ```
 
-What has to come back, or it does not go into the selection path: the facade
-`shows_house_exterior` with `confident: true`, and **neither** of the other two
-carrying that subject. A run in which the wordmark or the plan reads as a house
-is a run that would have put the wrong picture on a client's card, and the
-right response to it is to leave the classifier out of the path rather than to
-soften the rule that consults it.
+```
+  the document designates visible page 2 as this property's cover
+  3 raster(s) on that page; asking the worker what each shows
+
+  -> obj34     480x339 DCTDecode          shows_house_exterior
+     obj35     3423x1588 DCTDecode        shows_logo
+     obj76     466x867 DCTDecode          shows_floor_plan
+
+  PASS — exactly one raster on this page is a house from the street.
+```
+
+It writes nothing, reaches no database and changes no property: the pictures go
+to the worker and the verdicts come back to the terminal.
+
+**Passing is exactly one** `shows_house_exterior` with `confident: true`. Zero
+is a classifier that cannot help here; two is a classifier that would be making
+the choice by coin toss. Both are reasons to leave it out of the selection path
+— not reasons to soften the rule that consults it, and not reasons to take the
+first of two.
+
+The script deliberately applies **no pixel or page-share floor** to the set it
+asks about, because those floors are what cannot be applied here: on the
+brochure that made this necessary the facade render is 480x339 and fails the
+pixel floor, while the wordmark is 3423x1588 and passes it. That is also why
+widening discovery is only safe where something else can narrow it again —
+admitting the render admits the floor plan too.
