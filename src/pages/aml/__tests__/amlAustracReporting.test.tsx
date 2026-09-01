@@ -69,13 +69,34 @@ import AmlAustracReporting from "../AmlAustracReporting";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 
+/**
+ * A suspicion formed TODAY, and that is deliberate.
+ *
+ * An SMR runs on a three-business-day clock from the obligation, and
+ * `austracReadiness` reports "Within the statutory window" as `blocked` once
+ * that clock expires — which turns the plain approval below into one that
+ * asks `window.confirm` first. This fixture used to carry a literal
+ * `2026-08-27`: a Thursday, so the report fell due at 2026-09-01T00:00Z, and
+ * at 00:45Z that morning CI went red on a suite nobody had touched. Between
+ * the last green run and the first red one the only change to the repository
+ * was in Builder Stock. The calendar was the change.
+ *
+ * A fixture that is inside its statutory window has to SAY it is inside it,
+ * not name a date that was. Today's date is always inside a window measured
+ * forward from today, on any day the suite is ever run.
+ */
+const nowIso = () => new Date().toISOString();
+
+/** Well past any window this product measures, on any day. */
+const longOverdueIso = () => new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString();
+
 const REPORT = {
   id: "r1", kind: "smr", case_id: "case-1", title: "SMR — unusual cash deposits",
   status: "draft", narrative: "x".repeat(300), reference_code: null,
   reporting_period_start: null, reporting_period_end: null,
   mlro_signed_at: null, submitted_at: null, acknowledged_at: null,
-  metadata: { obligation_at: "2026-08-27T00:00:00.000Z" },
-  created_at: "2026-08-27T00:00:00.000Z", updated_at: "2026-08-27T00:00:00.000Z",
+  metadata: { obligation_at: nowIso() },
+  created_at: nowIso(), updated_at: nowIso(),
 };
 
 beforeEach(() => {
@@ -355,9 +376,10 @@ describe("the guided path leads somewhere", () => {
 
   /* Complete enough to reach the approval, and past its statutory window —
      the one check that can still be outstanding when the approval is the
-     open step. A suspicion formed in January is long past three business
-     days. */
-  const withGaps = { ...REPORT, metadata: { obligation_at: "2026-01-05T00:00:00.000Z" } };
+     open step. Measured backwards from today for the same reason the fixture
+     above is measured forwards: a literal date is only ever correct for a
+     while. */
+  const withGaps = { ...REPORT, metadata: { obligation_at: longOverdueIso() } };
 
   it("keeps the row's own approval for an MLRO who has already read it", async () => {
     /* Removing a control is not what opening the report was for. */
