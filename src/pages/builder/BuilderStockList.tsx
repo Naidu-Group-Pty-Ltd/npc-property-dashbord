@@ -28,7 +28,8 @@ import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShe
 import { BuilderPortalMetricCard } from '@/components/builder-portal/ui/BuilderPortalMetricCard';
 import { useDebounce } from '@/hooks/useDebounce';
 import {
-  importBuilderStockUrl, type StockImportSummary, type StockUploadProgress, type StockUploadResult, uploadBuilderStockFile, useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections, useBuilderStockUploads, useDeleteBuilderStockSource, useEnrichPendingStockImages, useRecoverStockSourceImages, useRefreshBrochureLinks, useSetBuilderStockAvailability,
+  importBuilderStockUrl, type StockImportSummary, type StockUploadProgress, type StockUploadResult, uploadBuilderStockFile, useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections, useBuilderStockUploads, useDeleteBuilderStockSource, useEnrichPendingStockImages, useRecoverStockSourceImages, useRefreshBrochureLinks, useReprocessStockSource,
+  useSetBuilderStockAvailability,
 } from '@/lib/builderStockQueries';
 import {
   formatFileSize, primaryStockImage, stockFileAcceptAttribute, stockImageStageSummary,
@@ -136,6 +137,7 @@ export default function BuilderStockList() {
   const deleteSource = useDeleteBuilderStockSource();
   const recoverImages = useRecoverStockSourceImages();
   const refreshLinks = useRefreshBrochureLinks();
+  const reprocessSource = useReprocessStockSource();
 
   const records = itemsQuery.data?.records ?? [];
   const pagination = itemsQuery.data?.pagination;
@@ -239,6 +241,47 @@ export default function BuilderStockList() {
       },
     });
   }, [refreshLinks, toast]);
+
+  /**
+   * Read this source again with today's parsers.
+   *
+   * Offered on a source that has already been read — a source still waiting
+   * for its first pass has `process_upload`, which reports its own progress
+   * and its own duplicate refusal, and the server refuses this one for it.
+   *
+   * The confirmation says what actually changes, because this is the one
+   * control here that DOES rewrite property data: prices, sizes, designs and
+   * document links are re-read from the file. What it cannot do is lose a
+   * property or a selection — the import matches by the same identity rule it
+   * always has and updates in place.
+   */
+  const canReprocess = useCallback((upload: BuilderStockUpload) => (
+    !upload.deleted_at
+    && !['uploaded', 'failed', 'parsing'].includes(String(upload.status ?? ''))
+  ), []);
+
+  const reprocessStockSource = useCallback((upload: BuilderStockUpload) => {
+    reprocessSource.mutate(upload.id, {
+      onSuccess: (response) => {
+        const summary = response.summary;
+        toast({
+          title: 'Source read again',
+          description: summary
+            ? `${summary.imported ?? 0} added, ${summary.updated ?? 0} updated. `
+              + 'Any pictures we can now reach will appear shortly.'
+            : 'Any pictures we can now reach will appear shortly.',
+        });
+        void uploadsQuery.refetch();
+      },
+      onError: (error) => {
+        toast({
+          title: 'That source could not be read again',
+          description: error instanceof Error ? error.message : 'Please try again shortly.',
+          variant: 'destructive',
+        });
+      },
+    });
+  }, [reprocessSource, toast, uploadsQuery]);
 
   const recoverSourceImages = useCallback((upload: BuilderStockUpload) => {
     recoverImages.mutate(upload.id, {
@@ -778,6 +821,24 @@ export default function BuilderStockList() {
                             <span className="sr-only sm:not-sr-only sm:ml-2">
                               Refresh brochure links
                             </span>
+                          </Button>
+                        ) : null}
+                        {/*
+                          Read the file again with today's parsers. Shown only
+                          on a source that has already been read; the server
+                          refuses the rest, so this is a convenience rather
+                          than the control.
+                        */}
+                        {canReprocess(upload) ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={reprocessSource.isPending || busy}
+                            onClick={() => reprocessStockSource(upload)}
+                            aria-label={`Read ${stockSourceLabel(upload)} again`}
+                          >
+                            <RefreshCw className="h-4 w-4" aria-hidden />
+                            <span className="sr-only sm:not-sr-only sm:ml-2">Read again</span>
                           </Button>
                         ) : null}
                         <Button

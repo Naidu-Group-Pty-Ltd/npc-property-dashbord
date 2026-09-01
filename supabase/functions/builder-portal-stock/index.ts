@@ -15,7 +15,7 @@
  * body is a lookup key, never authority.
  *
  * Operations
- *   create_upload | process_upload | enrich_images
+ *   create_upload | process_upload | reprocess_upload | enrich_images
  *   list_uploads | get_upload
  *   list_stock | get_stock_item | set_availability | archive_stock_item
  *   image_url
@@ -500,6 +500,99 @@ Deno.serve(async (req) => {
         console.error('[builder-portal-stock] processing failed', error);
         return await failUpload(upload.id, 'processing_failed',
           'That file could not be processed. Please check the format and try again.',
+          (error as { message?: string })?.message);
+      }
+    }
+
+    /*
+     * =====================================================================
+     * Re-read a source this organisation already imported
+     * =====================================================================
+     *
+     * THE READERS IMPROVE, AND WHAT THEY LEARN HAS TO REACH ROWS THAT ALREADY
+     * EXIST. A stock list is read once at upload and never again, so every
+     * correction to the parsers — a column mapping, a link target, a page
+     * rule — applied only to the NEXT builder's file. The rows already
+     * published kept whatever the reader believed on the day.
+     *
+     * Measured on the one live source: its brochure links were discarded
+     * because an uploaded workbook was read for its values alone, and its
+     * `LAND $` column was written into `land_size_sqm`, so twenty-six
+     * published properties carried a 428,000 m2 block, no price and no
+     * document. Both are fixed in the readers; neither reaches those rows
+     * without re-reading the file.
+     *
+     * AND RE-UPLOADING IS NOT THE ANSWER. A unique index on
+     * `(organisation_id, file_sha256)` refuses the same bytes twice — rightly,
+     * because a builder who uploads their list again is usually doing it by
+     * accident — so the only route was to DELETE the source and upload it
+     * again, which discards the audit trail and every selection made against
+     * those properties.
+     *
+     * It is the SAME `runStockImport` the first pass ran, on the SAME bytes
+     * out of the same private bucket. Nothing here re-implements an import:
+     * the rows are matched by the identity rule the import already uses and
+     * updated in place, so a property keeps its id, its history and anything a
+     * client has done with it.
+     *
+     * The one precondition is that a run is not already in flight. Every other
+     * status may be re-read, which is the difference from `process_upload` —
+     * that operation's guard exists to stop a double-click importing a file
+     * twice, and this operation's whole purpose is to import it again.
+     */
+    if (operation === 'reprocess_upload') {
+      if (!await can('edit')) {
+        return json({ error: 'You do not have permission to upload stock', code: 'permission_denied' }, 403);
+      }
+
+      const upload = await loadUpload(cleanText(body.upload_id, 64));
+      if (!upload) return json({ error: 'Upload not found' }, 404);
+      if (upload.deleted_at) return json({ error: 'Upload not found' }, 404);
+      if (!isAcceptableStockStoragePath(upload.storage_path)) {
+        return json({ error: 'That file location is not allowed' }, 400);
+      }
+      if (String(upload.status) === 'parsing') {
+        return json({
+          error: 'This source is being read right now. Try again when it finishes.',
+          code: 'already_processing',
+          upload,
+        }, 409);
+      }
+      // Nothing has been read yet, so this is an ordinary first pass and the
+      // builder should be sent to the operation that performs one — which
+      // reports its own progress and its own duplicate refusal.
+      if (['uploaded', 'failed'].includes(String(upload.status))) {
+        return json({
+          error: 'This source has not been read yet. Process it instead.',
+          code: 'not_yet_processed',
+          upload,
+        }, 409);
+      }
+
+      await markParsing(upload.id);
+
+      try {
+        const { data: blob, error: downloadError } = await supabase.storage
+          .from(upload.storage_bucket).download(upload.storage_path);
+        if (downloadError || !blob) {
+          return await failUpload(upload.id, 'file_missing',
+            'The stored file could not be read, so it cannot be re-read.', downloadError?.message);
+        }
+
+        const result = await runStockImport({
+          supabase,
+          organisationId: activeOrganisationId,
+          organisationName,
+          builderUserId: me.id,
+          upload: { id: upload.id, original_filename: upload.original_filename },
+          bytes: new Uint8Array(await blob.arrayBuffer()),
+          sourceKind: 'file',
+        });
+        return await finishImport(upload.id, result, { reprocessed: true });
+      } catch (error) {
+        console.error('[builder-portal-stock] reprocessing failed', error);
+        return await failUpload(upload.id, 'processing_failed',
+          'That source could not be re-read. Please check the format and try again.',
           (error as { message?: string })?.message);
       }
     }
