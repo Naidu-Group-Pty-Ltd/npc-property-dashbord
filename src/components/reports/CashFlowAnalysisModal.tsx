@@ -68,7 +68,13 @@ import {
   resolveYearDepreciation,
   hydrateYearlyOverrides,
 } from '@/utils/cashFlowDepreciation';
-import { comparisonCandidates } from '@/lib/cashFlow/comparisonCandidates.pure';
+import {
+  COMPARISON_CANDIDATE_PAGE_LIMIT,
+  COMPARISON_CANDIDATE_PAGE_SIZE,
+  COMPARISON_TOTAL_REPORTS,
+  MAX_COMPARISON_PEERS,
+  comparisonCandidates,
+} from '@/lib/cashFlow/comparisonCandidates.pure';
 
 interface InvestmentReport {
   id: string;
@@ -471,32 +477,69 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     }
   }, [comparisonMode, report, selectedComparisonReportIds, toast]);
 
-  // Fetch available reports for comparison when comparison mode is enabled
+  // Fetch available reports for comparison when comparison mode is enabled.
+  //
+  // Two things this had wrong, and each on its own emptied the picker.
+  //
+  // `listOptions.select` is declared "deprecated and deliberately ignored" by
+  // `get-investment-reports` — callers cannot define database projections — so
+  // asking for `financial_calculations` got the DEFAULT `library` projection,
+  // which does not select that column at all. `comparisonCandidates` then
+  // rejected every row for having no figures, and the popover read "No
+  // properties found." on a library of 1,169 completed reports. The projection
+  // built for this page is `cashFlowLibrary`: it resolves the two headline
+  // figures server-side into scalars, which is what the cards render and what
+  // decides comparability.
+  //
+  // And the page size defaults to 50. One property has up to twenty completed
+  // reports, so the newest fifty rows are a handful of addresses — the picker
+  // could never have offered the library even with the right projection. It
+  // walks the pages now, in parallel after the first tells it how many there
+  // are, bounded so an unbounded library cannot hang the dialog.
   useEffect(() => {
     if (comparisonMode && isOpen && report) {
+      let cancelled = false;
+      const fetchPage = async (page: number) => {
+        const { data, error } = await invokeSecureFunction('get-investment-reports', {
+          listMode: true,
+          projection: 'cashFlowLibrary',
+          listOptions: {
+            status: 'completed',
+            isArchived: false,
+            page,
+            pageSize: COMPARISON_CANDIDATE_PAGE_SIZE,
+          },
+        });
+        if (error) throw new Error(error.message);
+        return data as { reports?: InvestmentReport[]; pagination?: { totalPages?: number } };
+      };
+
       const fetchReports = async () => {
         setLoadingReports(true);
         try {
-          const { data, error } = await invokeSecureFunction('get-investment-reports', {
-            listMode: true,
-            listOptions: {
-              select: 'id, property_address, financial_calculations, manual_overrides',
-              status: 'completed',
-              orderBy: 'created_at',
-              orderAsc: false
-            }
-          });
-
-          if (error) throw new Error(error.message);
+          const first = await fetchPage(1);
+          const totalPages = Math.min(
+            Math.max(1, Number(first?.pagination?.totalPages) || 1),
+            COMPARISON_CANDIDATE_PAGE_LIMIT,
+          );
+          const rest = totalPages > 1
+            ? await Promise.all(
+                Array.from({ length: totalPages - 1 }, (_, index) => fetchPage(index + 2)),
+              )
+            : [];
+          if (cancelled) return;
+          const allReports = [first, ...rest].flatMap(
+            (payload) => (payload?.reports || []) as InvestmentReport[],
+          );
           // Audit item 16 — the picker listed REPORTS and calls itself a
           // property picker, so one address appeared once per report kind.
           // `comparisonCandidates` keeps only reports that carry figures a
           // comparison can draw, and one entry per property. Measured against
           // production: 1,169 entries become 98, and 984 of the ones removed
           // could not have been compared against at all.
-          const allReports = (data?.reports || []) as InvestmentReport[];
-          setAvailableReports(comparisonCandidates(allReports, report.id));
+          setAvailableReports(comparisonCandidates(allReports, report.id, report.property_address));
         } catch (error) {
+          if (cancelled) return;
           console.error('Error fetching reports for comparison:', error);
           toast({
             title: "Failed to load reports",
@@ -504,18 +547,74 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
             variant: "destructive",
           });
         } finally {
-          setLoadingReports(false);
+          if (!cancelled) setLoadingReports(false);
         }
       };
       fetchReports();
+      return () => { cancelled = true; };
     }
   }, [comparisonMode, isOpen, report, toast]);
 
-  // Fetch selected comparison reports details
+  /**
+   * Load the SOURCE figures for the reports the user picked.
+   *
+   * The candidate rows carry the two headline scalars and nothing else, and
+   * `allComparisonProjections` replays a ten-year projection out of
+   * `financial_calculations` and `manual_overrides` — council rates, the
+   * interest rate, capital growth, the depreciation schedule, every per-year
+   * override. Handed a collapsed row it does not fail: it falls back to
+   * 0 / 5% / 5.5% and draws a plausible projection of nothing. So a selection
+   * is never projected from a list row — it is either hydrated or it is not
+   * compared.
+   */
   useEffect(() => {
-    const selectedReports = availableReports.filter(r => selectedComparisonReportIds.includes(r.id));
-    setComparisonReports(selectedReports);
-  }, [selectedComparisonReportIds, availableReports]);
+    if (!selectedComparisonReportIds.length) {
+      setComparisonReports([]);
+      return;
+    }
+    let cancelled = false;
+    const hydrate = async () => {
+      try {
+        const request = (projection: 'cashFlowComparison' | 'detail') =>
+          invokeSecureFunction('get-investment-reports', {
+            reportIds: selectedComparisonReportIds,
+            projection,
+          });
+        let { data, error } = await request('cashFlowComparison');
+        // A deployment whose edge function predates this projection answers
+        // INVALID_REPORT_QUERY. `detail` selects the same two blobs (with the
+        // report prose alongside) and has always existed, so a comparison keeps
+        // working through a partial rollout instead of silently emptying.
+        if (error?.code === 'INVALID_REPORT_QUERY') {
+          ({ data, error } = await request('detail'));
+        }
+        if (error) throw new Error(error.message);
+        if (cancelled) return;
+        const hydrated = new Map(
+          ((data?.reports || []) as InvestmentReport[]).map((row) => [row.id, row]),
+        );
+        // Selection order, so the comparison columns stay where the user put
+        // them; anything the server did not return is left out rather than
+        // projected from a row without figures.
+        setComparisonReports(
+          selectedComparisonReportIds
+            .map((id) => hydrated.get(id))
+            .filter((row): row is InvestmentReport => Boolean(row)),
+        );
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Error loading comparison figures:', error);
+        setComparisonReports([]);
+        toast({
+          title: "Comparison figures unavailable",
+          description: "The selected reports could not be loaded. Please try again.",
+          variant: "destructive",
+        });
+      }
+    };
+    hydrate();
+    return () => { cancelled = true; };
+  }, [selectedComparisonReportIds, toast]);
 
   // Handle adding/removing comparison reports
   const handleToggleComparisonReport = useCallback((reportId: string) => {
@@ -523,10 +622,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       if (prev.includes(reportId)) {
         return prev.filter(id => id !== reportId);
       }
-      if (prev.length >= 4) {
+      if (prev.length >= MAX_COMPARISON_PEERS) {
         toast({
           title: "Maximum reached",
-          description: "You can compare up to 5 properties total (including the primary).",
+          description: `You can compare up to ${COMPARISON_TOTAL_REPORTS} properties in total, including this one.`,
           variant: "destructive"
         });
         return prev;
@@ -534,6 +633,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       return [...prev, reportId];
     });
   }, [toast]);
+
+  const handleClearComparisonReports = useCallback(() => {
+    setSelectedComparisonReportIds([]);
+  }, []);
 
   const exportChartAsPNG = useCallback(async (chartRef: React.RefObject<HTMLDivElement>, filename: string) => {
     if (!chartRef.current) return;
@@ -4288,6 +4391,8 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
               selectedComparisonReportIds={selectedComparisonReportIds}
               availableReports={availableReports}
               onToggleComparisonReport={handleToggleComparisonReport}
+              onClearComparisonReports={handleClearComparisonReports}
+              primaryAddress={report?.property_address || ''}
               loadingReports={loadingReports}
               investorProfile={investorProfile}
               onInvestorProfileChange={setInvestorProfile}
