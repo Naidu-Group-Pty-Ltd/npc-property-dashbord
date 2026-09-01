@@ -74,7 +74,15 @@ const REPORT = {
   status: "draft", narrative: "x".repeat(300), reference_code: null,
   reporting_period_start: null, reporting_period_end: null,
   mlro_signed_at: null, submitted_at: null, acknowledged_at: null,
-  metadata: { obligation_at: "2026-08-27T00:00:00.000Z" },
+  /*
+   * RELATIVE, NEVER A LITERAL — see `austracReportPath.test.ts`, which carries
+   * the same rule and the reason. The statutory window is measured against the
+   * real clock, so a hard-coded obligation date makes this fixture overdue on
+   * a date certain; `2026-08-27` went overdue on 2026-09-01 and took the MLRO
+   * approval case with it, because an outstanding check routes the approval
+   * through `window.confirm`, which jsdom does not implement.
+   */
+  metadata: { obligation_at: new Date().toISOString() },
   created_at: "2026-08-27T00:00:00.000Z", updated_at: "2026-08-27T00:00:00.000Z",
 };
 

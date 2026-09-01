@@ -10,13 +10,33 @@ import {
   lodgementClock, type AustracReportFacts,
 } from "./austracReportPath.pure";
 
+/**
+ * WHEN THE OBLIGATION AROSE, RELATIVE TO NOW — NEVER A LITERAL.
+ *
+ * `austracReadiness` calls `lodgementClock` without a `now`, so the statutory
+ * window is measured against the real wall clock. A fixture that hard-codes
+ * the date therefore passes only until that date's window closes, and then
+ * fails for ever with nothing having changed.
+ *
+ * It did. `2026-08-27` was a Thursday and an SMR gets three business days, so
+ * this fixture came due on 2026-09-01 — the day it started failing, on `main`,
+ * on every branch, taking a second test with it: the page's approval calls
+ * `window.confirm` once anything is outstanding, and jsdom does not implement
+ * `confirm`, so the MLRO's approval silently never fired.
+ *
+ * A clean report is one raised TODAY, which is inside its window on every day
+ * this ever runs. The tests that want an overdue report still name an explicit
+ * past date, because a date in the past stays in the past.
+ */
+const clockSafeObligation = () => new Date().toISOString();
+
 const facts = (over: Partial<AustracReportFacts> = {}): AustracReportFacts => ({
   kind: "smr", status: "draft", caseId: "case-1", subjectLabel: "Rugesh Naidu",
   title: "SMR — unusual cash deposits",
   narrative: "Third-party funds arrived with no explained connection to the buyer.",
   periodStart: null, periodEnd: null, mlroSignedAt: null, submittedAt: null,
   externalReference: null, receiptReference: null,
-  obligationAt: "2026-08-27T00:00:00.000Z", ...over,
+  obligationAt: clockSafeObligation(), ...over,
 });
 
 describe("the statutory clock", () => {
