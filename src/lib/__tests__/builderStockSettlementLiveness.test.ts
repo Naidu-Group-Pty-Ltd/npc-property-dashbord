@@ -30,8 +30,15 @@ import {
 import {
   nextImageStage,
 } from '../../../supabase/functions/_shared/builderStock/imagePriority.pure';
-
-const PROVENANCE_VERSION = 5;
+/*
+ * THE REAL CONSTANT, NOT A COPY OF IT. This was `const PROVENANCE_VERSION = 5`
+ * — a literal restating a value that exists to be raised, so every bump broke
+ * two tests that had no opinion about the version at all. A literal at each end
+ * is how two ends drift.
+ */
+import {
+  PROVENANCE_VERSION,
+} from '../../../supabase/functions/_shared/builderStock/sourceImages';
 
 describe('A — the package link is readable without the live source', () => {
   it('a stored source_row carries the package link and the anchor', () => {
