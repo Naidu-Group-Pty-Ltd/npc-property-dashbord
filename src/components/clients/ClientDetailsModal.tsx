@@ -939,6 +939,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
               <ClientSentReportsTab
                 clientId={client.id}
                 clientName={`${client.primary_first_name} ${client.primary_surname}`}
+                properties={properties}
               />
             </TabsContent>
 
