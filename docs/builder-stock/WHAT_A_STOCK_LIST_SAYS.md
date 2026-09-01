@@ -89,6 +89,36 @@ picture — its own, or one carried forward from the row it matched — is left
 alone, because re-running the source stage for it would spend a claim to reach
 the answer it already has.
 
+## 4 — a shared link points at a viewer, not at a file
+
+Capturing the link is not the same as reaching the document. Fetched as it is
+written, every one of the 13 Dropbox brochures answered **207 KB of
+`text/html`** — the viewer application — where the PDF behind it is **6.2 MB**.
+The reader downstream does not fail on that; it succeeds at reading the wrong
+thing.
+
+`sharedLinkFileUrl` asks the host for the file, using the parameter the host
+publishes for exactly that purpose (`dl=1`). **This is not a user-agent trick,
+and that was measured**: Dropbox serves the file to `curl/8.5.0` and the
+preview to `python-requests`, to `Mozilla/5.0`, to a Chrome string and to no
+user agent at all — so dressing this client up as a browser is both dishonest
+and unreliable.
+
+It runs inside `fetchStockSource`, in front of the SSRF guard, for the reason
+that function already gives about Google Sheets: *done here rather than at the
+caller so that EVERY retrieval gets it*. Three rules make that safe:
+
+- **Only a query parameter moves.** Scheme, host, port and path come back
+  exactly as they arrived, so this cannot send a retrieval anywhere — the guard
+  judges the address it would have judged. A test asserts it, and asserts the
+  function's own source names no way to reach a different address.
+- **Only a host that publishes one.** There is one entry because one was
+  measured. Google Drive is absent because it never reaches here: a Drive link
+  classifies as `drive_file`/`drive_folder` and `driveDownloadUrl` already
+  addresses it.
+- **Idempotent.** A builder who pastes the download form of their own link gets
+  it back unchanged.
+
 ## Reaching rows that already exist
 
 A stock list is read once at upload and never again, so every correction to the
@@ -126,3 +156,14 @@ Same file, same 26 rows, run through the readers end to end:
 | house size present | 0 | **26** |
 | design present | 0 | **26** |
 | reaches a builder document | 0 | **13** |
+| resolves a primary image | 0 | **11** |
+
+The last line is the whole chain, run end to end against the real file: the
+uploaded workbook → the link in its `DOWNLOAD` cell → the real fetcher → the
+real PDF readers → a selected image. All eleven were extracted and looked at,
+and every one is that property's own facade render.
+
+The two that do not resolve are lots 313 and 318, whose cover page presents the
+facade at 480x339, the Luxton wordmark at 3423x1588 and the floor plan — and
+every deterministic discriminator points at the wordmark. That is the case the
+picture classifier in `IMAGE_WORKER.md` exists for.

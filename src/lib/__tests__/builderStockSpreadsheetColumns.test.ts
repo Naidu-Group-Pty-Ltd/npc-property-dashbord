@@ -29,6 +29,8 @@
  * the parser: every heading below is one a builder actually shipped.
  */
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
   normaliseHeader, normaliseStockRow,
@@ -37,7 +39,7 @@ import {
   attachRowHyperlinks, LINK_COLUMN_SUFFIX,
 } from '../../../supabase/functions/_shared/builderStock/sheetHyperlinks.pure';
 import {
-  rowSourceBranches,
+  rowSourceBranches, sharedLinkFileUrl,
 } from '../../../supabase/functions/_shared/builderStock/sourceBranches.pure';
 
 /** The heading row of a live house-and-land stock list, verbatim. */
@@ -209,5 +211,99 @@ describe('an uploaded workbook keeps the addresses its cells point at', () => {
     const result = attachRowHyperlinks(input);
     expect(result.columnsAdded).toEqual([]);
     expect(input.rows[0]['DOWNLOAD URL']).toBe(mine);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// And the link has to resolve to the FILE
+// ---------------------------------------------------------------------------
+
+/**
+ * A shared-link host serves two things at one address: a person opening it
+ * gets an interactive preview, and the file is behind a parameter the host
+ * publishes for the purpose.
+ *
+ * Fetched without it, every one of the live source's thirteen brochures came
+ * back as 207 KB of `text/html` — the viewer APPLICATION — where the PDF
+ * behind it is 6.2 MB. The reader downstream does not fail on that; it
+ * succeeds at reading the wrong thing, which is worse.
+ *
+ * The alternative was measured and rejected: Dropbox serves the file to
+ * `curl/8.5.0` and the preview to `python-requests`, to `Mozilla/5.0`, to a
+ * Chrome string and to no user agent at all — so dressing this client up as a
+ * browser is both dishonest and unreliable, and the host's own parameter is
+ * the only stable way through.
+ */
+describe('a shared link is asked for the file, not the viewer', () => {
+  const LINK = 'https://www.dropbox.com/scl/fi/abc123/Lot-231-Brochure.pdf?rlkey=zzz&dl=0';
+
+  it('asks the host for the file, using the parameter the host publishes', () => {
+    const resolved = new URL(sharedLinkFileUrl(LINK));
+    expect(resolved.searchParams.get('dl')).toBe('1');
+    // The link is still a document, decided by the same rule as before.
+    expect(rowSourceBranches({ 'DOWNLOAD URL': sharedLinkFileUrl(LINK) })[0])
+      .toMatchObject({ kind: 'document' });
+  });
+
+  it('ONLY A QUERY PARAMETER MOVES — which is what makes it safe on every fetch', () => {
+    // This runs inside `fetchStockSource`, in front of the SSRF guard, so it
+    // must not be able to send a retrieval anywhere: the scheme, the host, the
+    // port and the path come back exactly as they arrived.
+    for (const raw of [
+      LINK,
+      'https://www.dropbox.com:443/scl/fi/x/A%20B.pdf?rlkey=q',
+      'http://dropbox.com/s/xyz/plan.pdf',
+    ]) {
+      const before = new URL(raw);
+      const after = new URL(sharedLinkFileUrl(raw));
+      expect(after.protocol).toBe(before.protocol);
+      expect(after.hostname).toBe(before.hostname);
+      expect(after.port).toBe(before.port);
+      expect(after.pathname).toBe(before.pathname);
+      // And every parameter the builder wrote is still there.
+      for (const [name, value] of before.searchParams) {
+        if (name === 'dl') continue;
+        expect(after.searchParams.get(name)).toBe(value);
+      }
+    }
+  });
+
+  it('is idempotent, and leaves every other host exactly alone', () => {
+    const once = sharedLinkFileUrl(LINK);
+    expect(sharedLinkFileUrl(once)).toBe(once);
+
+    for (const untouched of [
+      // Drive never reaches here — it classifies as a drive file and
+      // `driveDownloadUrl` already addresses it.
+      'https://drive.google.com/file/d/1abc/view?usp=sharing',
+      'https://builder.example.com/brochures/lot-231.pdf',
+      'https://example.invalid/a.pdf?dl=0',
+      // Not a URL at all, and not this function's business to complain.
+      'Brochure',
+      '',
+    ]) {
+      expect(sharedLinkFileUrl(untouched)).toBe(untouched);
+    }
+  });
+
+  it('a host is added here only where a retrieval proved it', () => {
+    /*
+     * One entry, because one was measured. A host added without a fetch that
+     * proves it is a guess about somebody else's service, and the failure it
+     * produces is the silent kind — a preview page read as a brochure. This
+     * test is the reminder, not a limit: the next entry arrives with its
+     * measurement.
+     */
+    const source = readFileSync(
+      resolve(process.cwd(), 'supabase/functions/_shared/builderStock/sourceBranches.pure.ts'),
+      'utf8',
+    );
+    const rule = /export function sharedLinkFileUrl\([\s\S]*?\n}/.exec(source)?.[0] ?? '';
+    expect(rule).not.toBe('');
+    expect(rule).toContain('dropbox.com');
+    // Nothing in it may reach for a different address, only a parameter.
+    for (const forbidden of ['hostname =', 'pathname =', 'protocol =', 'new URL(`']) {
+      expect(rule).not.toContain(forbidden);
+    }
   });
 });
