@@ -9,6 +9,20 @@ const FN = readFileSync(
   'utf8',
 );
 
+/**
+ * The failure arm, named explicitly.
+ *
+ * `ModelJsonRead` is a discriminated union, which narrows correctly under
+ * Deno's strict settings — where the edge function actually compiles. The app
+ * project sets `strictNullChecks: false`, and a boolean discriminant does not
+ * narrow there, so the union stays (it is the right type for its consumer) and
+ * the test says which arm it is asserting about.
+ */
+function failure(read: ReturnType<typeof readModelJson>) {
+  expect(read.ok).toBe(false);
+  return read as Extract<ReturnType<typeof readModelJson>, { ok: false }>;
+}
+
 describe('reading a model JSON answer', () => {
   it('reads a bare object', () => {
     const r = readModelJson<{ a: number }>('{"a":1}', 'stop');
@@ -37,9 +51,7 @@ describe('reading a model JSON answer', () => {
     const cut = '```json\n{\n  "summary": "Hello Arvin, your portfolio is in an '
       + 'exceptionally strong financial position. With substantial equity, a very low '
       + 'loan-to-value ratio, and healthy positive cash flow';
-    const r = readModelJson(cut, 'length');
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
+    const r = failure(readModelJson(cut, 'length'));
     expect(r.reason).toBe('truncated');
     // The message has to name the remedy: retrying stops at the same place.
     expect(r.message).toMatch(/budget/i);
@@ -47,17 +59,11 @@ describe('reading a model JSON answer', () => {
 
   it('a cut-off answer with no finish reason is only "not JSON"', () => {
     // Never claim truncation without the evidence for it.
-    const r = readModelJson('```json\n{"a":', 'stop');
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.reason).toBe('not_json');
+    expect(failure(readModelJson('```json\n{"a":', 'stop')).reason).toBe('not_json');
   });
 
   it('an empty answer is its own reading', () => {
-    const r = readModelJson('   ', 'stop');
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.reason).toBe('empty');
+    expect(failure(readModelJson('   ', 'stop')).reason).toBe('empty');
   });
 
   it('a COMPLETE object is accepted even when the model kept going after it', () => {

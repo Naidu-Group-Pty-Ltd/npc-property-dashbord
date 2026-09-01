@@ -293,7 +293,7 @@ export default function PortalReports() {
               className="client-portal-soft-panel"
               icon={<Send className="h-8 w-8" />}
               title="No report requests yet"
-              description="Request a portfolio review, borrowing capacity snapshot, or investment property report when you need a fresh analysis."
+              description={`Request a ${PORTFOLIO_REPORT_LABEL}, borrowing capacity snapshot, or investment property report when you need a fresh analysis.`}
               actionLabel="Make Your First Request"
               onAction={() => setShowRequestForm(true)}
             />
