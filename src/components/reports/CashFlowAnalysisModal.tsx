@@ -36,6 +36,11 @@ import {
   type InvestmentMetrics,
 } from '@/lib/cashFlow/investmentMetrics.pure';
 import { toWireComparison, type WireComparison } from '@/lib/reports/cashFlowComparison/toWireComparison';
+import {
+  CASH_FLOW_ANALYSIS_CLIENT_MS,
+  classifyCashFlowAnalysis,
+  describeMissingSections,
+} from '@/lib/reports/cashFlowComparison/analysisRequest.pure';
 import { CashFlowComparisonDownloadButton } from '@/components/cash-flow/modal/CashFlowComparisonDownloadButton';
 import { toWireProjection } from '@/lib/reports/cashFlow/toWireProjection';
 import { matchStoredScenario } from '@/lib/reports/cashFlow/storedSeriesMatch';
@@ -58,7 +63,8 @@ import { CashFlowKpiStrip } from '@/components/cash-flow/modal/CashFlowKpiStrip'
 import { CashFlowPresentationShell } from '@/components/cash-flow/modal/CashFlowPresentationShell';
 import type { CashFlowPresentation } from '@/components/cash-flow/modal/types';
 import { CashFlowChartsWorkspace } from '@/components/cash-flow/modal/CashFlowChartsWorkspace';
-import { CashFlowAiPanel } from '@/components/cash-flow/modal/CashFlowAiPanel';
+import { AI_PANEL_TITLE, CashFlowAiPanel } from '@/components/cash-flow/modal/CashFlowAiPanel';
+import { CashFlowAnalysisFindings } from '@/components/cash-flow/modal/CashFlowAnalysisFindings';
 import { CashFlowConstructionPanel } from '@/components/cash-flow/modal/CashFlowConstructionPanel';
 import { CashFlowProjectionTable } from '@/components/cash-flow/modal/CashFlowProjectionTable';
 import { CashFlowPropertySwitcher } from '@/components/cash-flow/modal/CashFlowPropertySwitcher';
@@ -1548,6 +1554,40 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     };
   }, [detailPropertyId, report, allComparisonMetrics, COMPARISON_COLORS, chartTheme]);
 
+  /**
+   * Which of the eight sections this analysis actually holds.
+   *
+   * Derived from the analysis rather than read off the response, because a
+   * saved analysis is loaded straight from `analysis_data` and never carries
+   * the producer's `missingSections` — and a document that is incomplete on
+   * generation is still incomplete when it is re-opened a week later. One
+   * reading, from the module the producer classifies with.
+   */
+  const analysisReading = useMemo(
+    () => (aiAnalysis ? classifyCashFlowAnalysis(aiAnalysis) : null),
+    [aiAnalysis],
+  );
+  const analysisShortfall = analysisReading ? describeMissingSections(analysisReading.missing) : '';
+
+  /**
+   * The properties the analysis is about, for resolving the numbers it uses.
+   *
+   * The order is the producer's — the open report first, then each comparison
+   * — but the resolution does not rely on it: `CashFlowAnalysisFindings` maps a
+   * property number through the model's own `finalRankings` and uses this only
+   * to turn the address it echoed back into the one on our record.
+   */
+  const analysisProperties = useMemo(
+    () =>
+      report
+        ? [report, ...comparisonReports].map((r, index) => ({
+            number: index + 1,
+            address: r.property_address,
+          }))
+        : [],
+    [report, comparisonReports],
+  );
+
   // Generate AI-powered comparison analysis
   const generateAiAnalysis = useCallback(async () => {
     if (!report || comparisonReports.length === 0) return;
@@ -1582,12 +1622,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         };
       });
       
+      // `invokeSecureFunction` defaults to 60 seconds and this call had no
+      // override, so an eight-section analysis over five properties could be
+      // abandoned by the browser while the model was still writing it — and
+      // the adviser was told it had failed. The number is the producer's, so
+      // the two ends cannot drift.
       const { data, error } = await invokeSecureFunction('compare-cash-flow-reports', {
         reportIds: allReportIds,
         projectionData,
         investorProfile,
         timeHorizon: '10 years',
-      });
+      }, { timeoutMs: CASH_FLOW_ANALYSIS_CLIENT_MS });
       
       if (error) throw error;
       
@@ -5439,7 +5484,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         <span className="rounded-xl bg-info/10 p-2 text-info">
                           <Zap className="h-4 w-4" />
                         </span>
-                        AI Cash Flow Decision Support
+                        {AI_PANEL_TITLE}
                       </CardTitle>
                       <p className="max-w-2xl text-xs text-muted-foreground">
                         Generate a profile-aware comparison analysis across selected properties, rankings, and recommendations.
@@ -5572,6 +5617,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                   
                   {aiAnalysis && (
                     <div className="max-h-[min(70vh,900px)] space-y-4 overflow-y-auto overscroll-contain rounded-3xl border border-brand-300/25 bg-background/95 dark:bg-background/95 p-3 shadow-2xl shadow-foreground/20 ring-1 ring-brand-400/15 sm:p-4 [scrollbar-gutter:stable]">
+                      {/* What did not arrive is said, rather than left to be
+                          noticed. A partial answer is a normal arrival and is
+                          worth keeping — six sections of real work — but it may
+                          never be presented as a whole one. */}
+                      {analysisShortfall && (
+                        <div className="min-w-0 rounded-2xl border border-warning/30 bg-warning/5 p-3 text-xs leading-6 text-warning sm:p-4">
+                          <span className="font-semibold">This analysis is incomplete. </span>
+                          <span className="text-muted-foreground dark:text-foreground">{analysisShortfall}</span>
+                        </div>
+                      )}
+
                       {/* Executive Summary */}
                       {aiAnalysis.executiveSummary && (
                         <div className="min-w-0 rounded-2xl border border-brand-300/30 bg-gradient-to-br from-card dark:from-background via-card dark:via-background to-card dark:to-background p-4 shadow-lg shadow-sm dark:shadow-black/20 ring-1 ring-brand-400/10 sm:p-5">
@@ -5613,6 +5669,12 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         </div>
                       )}
                       
+                      {/* The four sections the model has always been asked for
+                          and this panel never drew. The typeset PDF has drawn
+                          all eight since the format was migrated, so the
+                          document said more than the screen it came from. */}
+                      <CashFlowAnalysisFindings analysis={aiAnalysis} properties={analysisProperties} />
+
                       {/* Investor Recommendations */}
                       {aiAnalysis.investorRecommendations && (
                         <div className="min-w-0 rounded-2xl border border-brand-300/25 bg-gradient-to-br from-card dark:from-background via-card dark:via-background to-card dark:to-background p-4 shadow-lg shadow-sm dark:shadow-black/20 ring-1 ring-brand-400/10 sm:p-5">
