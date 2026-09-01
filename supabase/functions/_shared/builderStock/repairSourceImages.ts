@@ -65,6 +65,24 @@ import {
 import { attachDocumentMedia } from './importStock.ts';
 import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
+
+/**
+ * The house design a stored row states, or null.
+ *
+ * READ FROM `source_row`, WHICH IS WHERE THE NORMALISED RECORD LIVES. The
+ * import writes the whole `NormalisedStockRecord` into that jsonb column, so a
+ * canonical field added to the record is persisted and read back without a
+ * migration and without a second place to keep it in step. Older rows,
+ * imported before `house_design` existed, simply answer null and take the
+ * lot-specific path exactly as they do today.
+ */
+function designOf(record: unknown): string | null {
+  const row = (record as { source_row?: unknown })?.source_row;
+  if (!row || typeof row !== 'object') return null;
+  const value = (row as { house_design?: unknown }).house_design;
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text || null;
+}
 import type { ExtractedMedia } from './extract.ts';
 
 export interface RepairOutcome {
@@ -1107,6 +1125,14 @@ export async function repairSourceImagesForUpload(
           // Tells "(178 SqM)" from "(207 SqM)" where a lot has two packages.
           buildingSqm: Number((record as { building_size_sqm?: unknown })?.building_size_sqm)
             || null,
+          /*
+           * The row's own house design, read from the normalised source row.
+           * A builder sells fewer designs than lots and files one brochure per
+           * design, so this is what lets the document that names the HOUSE be
+           * accepted where no document names the LOT. Strictly weaker evidence
+           * — see `roleFromDesignCover`.
+           */
+          design: designOf(record),
         },
         { fetchPackage: deps.fetchPackage, cache, readPageTexts: deps.readPageTexts },
       );
