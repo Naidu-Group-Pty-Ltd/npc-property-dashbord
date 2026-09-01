@@ -23,6 +23,18 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import { requestCashFlowPdf } from '@/lib/reports/cashFlow/requestCashFlowPdf';
 import { readBaseFinancials } from '@/lib/reports/cashFlow/readBaseFinancials';
+import {
+  exportBackgroundFor,
+  useCashFlowChartTheme,
+} from '@/lib/cashFlow/chartTheme';
+import {
+  METRICS_UNAVAILABLE_REASON,
+  deriveInvestmentMetrics,
+  formatBreakEven,
+  formatMetricMultiple,
+  formatMetricPercent,
+  type InvestmentMetrics,
+} from '@/lib/cashFlow/investmentMetrics.pure';
 import { toWireComparison, type WireComparison } from '@/lib/reports/cashFlowComparison/toWireComparison';
 import { CashFlowComparisonDownloadButton } from '@/components/cash-flow/modal/CashFlowComparisonDownloadButton';
 import { toWireProjection } from '@/lib/reports/cashFlow/toWireProjection';
@@ -49,6 +61,8 @@ import { CashFlowChartsWorkspace } from '@/components/cash-flow/modal/CashFlowCh
 import { CashFlowAiPanel } from '@/components/cash-flow/modal/CashFlowAiPanel';
 import { CashFlowConstructionPanel } from '@/components/cash-flow/modal/CashFlowConstructionPanel';
 import { CashFlowProjectionTable } from '@/components/cash-flow/modal/CashFlowProjectionTable';
+import { CashFlowPropertySwitcher } from '@/components/cash-flow/modal/CashFlowPropertySwitcher';
+import { CashFlowPeerDetail } from '@/components/cash-flow/modal/CashFlowPeerDetail';
 import {
   PROJECTION_TABLE_CLASS,
   PROJECTION_LABEL_HEAD_CLASS,
@@ -309,6 +323,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   const [selectedComparisonReportIds, setSelectedComparisonReportIds] = useState<string[]>([]);
   const [comparisonReports, setComparisonReports] = useState<InvestmentReport[]>([]);
   const [loadingReports, setLoadingReports] = useState(false);
+
+  /**
+   * Which property's inputs and projection the detail section shows.
+   *
+   * `null` means the report the adviser opened — the only one with an editable
+   * projection, because the per-year overrides are stored against it.
+   */
+  const [detailPropertyId, setDetailPropertyId] = useState<string | null>(null);
   const [investorProfile, setInvestorProfile] = useState<'growth' | 'income' | 'balanced'>('balanced');
   
   // AI-powered comparison analysis state
@@ -389,13 +411,19 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   const isNewBuild = buildType === 'new_build';
 
   // Comparison chart colors for up to 5 properties
-  const COMPARISON_COLORS = [
-    { value: 'hsl(var(--primary))', cashFlow: '#8b5cf6' }, // Primary
-    { value: '#f97316', cashFlow: '#14b8a6' }, // Comparison 1
-    { value: '#ef4444', cashFlow: '#06b6d4' }, // Comparison 2
-    { value: '#eab308', cashFlow: '#84cc16' }, // Comparison 3
-    { value: '#a855f7', cashFlow: '#f43f5e' }, // Comparison 4
-  ];
+  /**
+   * The charts' palette, resolved from the design tokens for the theme the
+   * reader is actually in. All three chart cards were `bg-white` with an inline
+   * `backgroundColor: '#ffffff'` and light-theme greys for the grid and axes.
+   */
+  const chartTheme = useCashFlowChartTheme();
+
+  // One entry per compared property. The old shape carried a second `cashFlow`
+  // colour per property that nothing ever read.
+  const COMPARISON_COLORS = useMemo(
+    () => chartTheme.property.map((value) => ({ value })),
+    [chartTheme],
+  );
 
   // Initialize overrides from report when modal opens
   useEffect(() => {
@@ -643,7 +671,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     
     try {
       const canvas = await html2canvas(chartRef.current, {
-        backgroundColor: '#ffffff',
+        backgroundColor: exportBackgroundFor(chartRef.current, chartTheme),
         scale: 2,
       });
       
@@ -1456,91 +1484,69 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
 
   // Calculate advanced comparison metrics
-  const calculateAdvancedMetrics = useCallback((
-    projs: YearlyProjection[],
-    baseData: any
-  ) => {
-    if (!baseData || projs.length < 11) return null;
+  /**
+   * The headline metrics, for the property open and for each peer.
+   *
+   * Both readings go through `readBaseFinancials` and `deriveInvestmentMetrics`
+   * — one implementation each. They used to be two: the peers were fed a
+   * hand-rolled `compBaseData` that missed `initialCosts.propertyValue`,
+   * `initialCosts.stampDuty` and LMI, so a peer's cost base collapsed to a
+   * $2,000 solicitor-fee default and its ROI read 160,902%.
+   */
+  const primaryMetrics = useMemo(() => {
+    const read = deriveInvestmentMetrics(projections, baseFinancialData);
+    return read.ok ? read.metrics : null;
+  }, [projections, baseFinancialData]);
 
-    const purchasePrice = baseData.purchasePrice;
-    const depositValue = baseData.depositValue || (purchasePrice * (1 - baseData.loanToValueRatio / 100));
-    const stampDuty = baseData.stampDuty;
-    const lmiAmount = baseData.lmiAmount || 0;
-    const totalInitialInvestment = depositValue + stampDuty + (baseData.solicitorFees || 2000) + lmiAmount;
-
-    // Total cash flow over 10 years
-    const totalCashFlow = projs.slice(1).reduce((sum, p) => sum + p.afterTaxCashFlowPA, 0);
-
-    // Capital gain
-    const capitalGain = projs[10].propertyMarketValue - purchasePrice;
-
-    // Total return (capital gain + cash flow)
-    const totalReturn = capitalGain + totalCashFlow;
-
-    // ROI = Total Return / Initial Investment * 100
-    const roi = totalInitialInvestment > 0 ? (totalReturn / totalInitialInvestment) * 100 : 0;
-
-    // Annualized ROI
-    const annualizedRoi = Math.pow(1 + roi / 100, 1 / 10) * 100 - 100;
-
-    // Break-even year (when cumulative cash flow becomes positive)
-    let cumulativeCashFlow = 0;
-    let breakEvenYear: number | null = null;
-    for (let i = 1; i <= 10; i++) {
-      cumulativeCashFlow += projs[i].afterTaxCashFlowPA;
-      if (cumulativeCashFlow >= 0 && breakEvenYear === null) {
-        breakEvenYear = i;
-      }
-    }
-
-    // Cash-on-cash return (Year 1)
-    const cashOnCash = totalInitialInvestment > 0 
-      ? (projs[1].afterTaxCashFlowPA / totalInitialInvestment) * 100 
-      : 0;
-
-    // Equity multiple
-    const equityMultiple = totalInitialInvestment > 0 
-      ? (projs[10].equityInProperty + totalCashFlow) / totalInitialInvestment 
-      : 0;
-
-    return {
-      totalInitialInvestment,
-      totalCashFlow,
-      capitalGain,
-      totalReturn,
-      roi,
-      annualizedRoi,
-      breakEvenYear,
-      cashOnCash,
-      equityMultiple
-    };
-  }, []);
-
-  // Memoized metrics for primary property
-  const primaryMetrics = useMemo(() => 
-    calculateAdvancedMetrics(projections, baseFinancialData),
-    [projections, baseFinancialData, calculateAdvancedMetrics]
-  );
-
-  // Memoized metrics for all comparison properties
   const allComparisonMetrics = useMemo(() => {
     return allComparisonProjections.map(({ report: compReport, projections: compProjs }) => {
-      if (compProjs.length < 11) return { report: compReport, metrics: null };
-      
-      const fc = compReport.financial_calculations || {};
-      const mo = compReport.manual_overrides || {};
-      
-      const compBaseData = {
-        purchasePrice: mo.purchasePrice || fc.purchasePrice || fc.propertyValue || 0,
-        depositValue: mo.depositValue || fc.depositValue || 0,
-        stampDuty: mo.stampDuty || fc.stampDuty || 0,
-        solicitorFees: mo.solicitorFees || fc.solicitorFees || 2000,
-        loanToValueRatio: mo.loanToValueRatio || fc.loanToValueRatio || 80,
+      const compBase = readBaseFinancials(compReport, new Date().getFullYear());
+      const read = deriveInvestmentMetrics(compProjs, compBase);
+      return {
+        report: compReport,
+        metrics: read.ok ? read.metrics : null,
+        unavailable: read.ok ? null : read.reason,
+        projections: compProjs,
       };
-      
-      return { report: compReport, metrics: calculateAdvancedMetrics(compProjs, compBaseData), projections: compProjs };
     });
-  }, [allComparisonProjections, calculateAdvancedMetrics]);
+  }, [allComparisonProjections]);
+
+  /** Every property whose details can be shown: the open report, then peers. */
+  const detailProperties = useMemo(() => {
+    if (!report) return [];
+    return [
+      {
+        id: report.id,
+        address: report.property_address,
+        colour: COMPARISON_COLORS[0]?.value ?? chartTheme.series.propertyValue,
+        isPrimary: true,
+      },
+      ...allComparisonMetrics.map(({ report: compReport }, index) => ({
+        id: compReport.id,
+        address: compReport.property_address,
+        colour: COMPARISON_COLORS[index + 1]?.value ?? chartTheme.tick,
+        isPrimary: false,
+      })),
+    ];
+  }, [report, allComparisonMetrics, COMPARISON_COLORS, chartTheme]);
+
+  /**
+   * The selected peer, or null for the open report.
+   *
+   * Resolved rather than stored so removing a property from the comparison
+   * cannot leave the section showing a property that is no longer in it.
+   */
+  const selectedPeer = useMemo(() => {
+    if (!detailPropertyId || detailPropertyId === report?.id) return null;
+    const entry = allComparisonMetrics.find(({ report: r }) => r.id === detailPropertyId);
+    if (!entry) return null;
+    const index = allComparisonMetrics.indexOf(entry);
+    return {
+      ...entry,
+      colour: COMPARISON_COLORS[index + 1]?.value ?? chartTheme.tick,
+      inputs: readBaseFinancials(entry.report, new Date().getFullYear()),
+    };
+  }, [detailPropertyId, report, allComparisonMetrics, COMPARISON_COLORS, chartTheme]);
 
   // Generate AI-powered comparison analysis
   const generateAiAnalysis = useCallback(async () => {
@@ -1683,16 +1689,24 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   const propertyRecommendation = useMemo(() => {
     if (!primaryMetrics || comparisonReports.length === 0 || !report) return null;
 
-    // Calculate profile-specific scores
-    const getProfileScore = (metrics: typeof primaryMetrics, profile: 'growth' | 'income' | 'balanced') => {
-      if (!metrics) return 0;
+    // Calculate profile-specific scores.
+    //
+    // The projections are the PROPERTY'S own. They used to be closed over from
+    // the primary, so under the income profile every peer was scored on the
+    // open report's Year-1 gross yield — the one input that distinguishes an
+    // income property was identical for all of them.
+    const getProfileScore = (
+      metrics: InvestmentMetrics,
+      projs: YearlyProjection[],
+      profile: 'growth' | 'income' | 'balanced',
+    ) => {
       
       switch (profile) {
         case 'growth':
           return (
             (metrics.capitalGain / 100000) * 30 +
             (metrics.roi) * 25 +
-            (metrics.annualizedRoi) * 20 +
+            (metrics.annualisedRoi ?? 0) * 20 +
             (metrics.equityMultiple) * 25
           );
         case 'income':
@@ -1700,7 +1714,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
             (metrics.totalCashFlow > 0 ? metrics.totalCashFlow / 1000 : metrics.totalCashFlow / 500) * 35 +
             (metrics.cashOnCash * 10) * 30 +
             ((10 - (metrics.breakEvenYear || 10)) * 10) * 20 +
-            (projections[1]?.grossYield || 0) * 15
+            (projs[1]?.grossYield || 0) * 15
           );
         case 'balanced':
           return (
@@ -1714,20 +1728,25 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       }
     };
 
-    // Build all property scores
+    // A property whose metrics could not be derived is EXCLUDED rather than
+    // scored zero: zero is a score, and it would rank an unmeasurable property
+    // above a measurable one that is genuinely negative.
+    const excluded = allComparisonMetrics.filter(({ metrics }) => !metrics).length;
     const allScores = [
-      { 
-        name: report.property_address.split(',')[0], 
-        score: getProfileScore(primaryMetrics, investorProfile),
+      {
+        name: report.property_address.split(',')[0],
+        score: getProfileScore(primaryMetrics, projections, investorProfile),
         isPrimary: true,
         metrics: primaryMetrics
       },
-      ...allComparisonMetrics.map(({ report: compReport, metrics }) => ({
-        name: compReport.property_address.split(',')[0],
-        score: getProfileScore(metrics, investorProfile),
-        isPrimary: false,
-        metrics
-      }))
+      ...allComparisonMetrics
+        .filter((entry): entry is typeof entry & { metrics: InvestmentMetrics } => Boolean(entry.metrics))
+        .map(({ report: compReport, metrics, projections: compProjs }) => ({
+          name: compReport.property_address.split(',')[0],
+          score: getProfileScore(metrics, compProjs, investorProfile),
+          isPrimary: false,
+          metrics
+        }))
     ].sort((a, b) => b.score - a.score);
 
     const winner = allScores[0];
@@ -1738,11 +1757,13 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       winner: winner.name,
       rankings: allScores.map((s, i) => ({ rank: i + 1, name: s.name, score: Math.round(s.score) })),
       confidence,
+      excluded,
       insights: [
         `${winner.name} scores highest for ${investorProfile}-focused investors`,
         winner.metrics?.roi ? `10-Year ROI: ${winner.metrics.roi.toFixed(1)}%` : '',
-        winner.metrics?.totalCashFlow ? `Total Cash Flow: $${winner.metrics.totalCashFlow.toLocaleString('en-AU')}` : ''
-      ].filter(Boolean).slice(0, 3)
+        winner.metrics?.totalCashFlow ? `Total Cash Flow: $${winner.metrics.totalCashFlow.toLocaleString('en-AU')}` : '',
+        excluded ? `${excluded} propert${excluded === 1 ? 'y is' : 'ies are'} not ranked — no cost base recorded` : ''
+      ].filter(Boolean).slice(0, 4)
     };
   }, [primaryMetrics, allComparisonMetrics, report, comparisonReports, investorProfile, projections]);
 
@@ -1790,7 +1811,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       for (const chart of chartRefs) {
         if (chart.ref.current) {
           const canvas = await html2canvas(chart.ref.current, {
-            backgroundColor: '#ffffff',
+            backgroundColor: exportBackgroundFor(chart.ref.current, chartTheme),
             scale: 2,
           });
           
@@ -1847,7 +1868,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
       const metrics = [
         { label: '10-Year ROI', key: 'roi', format: 'percent' },
-        { label: 'Annualized ROI', key: 'annualizedRoi', format: 'percent' },
+        { label: 'Annualised ROI', key: 'annualisedRoi', format: 'percent' },
         { label: 'Total Return', key: 'totalReturn', format: 'currency' },
         { label: 'Break-Even Year', key: 'breakEvenYear', format: 'year' },
         { label: 'Cash-on-Cash (Y1)', key: 'cashOnCash', format: 'percent' },
@@ -2586,7 +2607,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       if (activeChartToggles.cashFlowTrends && cashFlowChartRef.current) {
         try {
           const canvas = await html2canvas(cashFlowChartRef.current, {
-            backgroundColor: '#ffffff',
+            backgroundColor: exportBackgroundFor(cashFlowChartRef.current, chartTheme),
             scale: 2,
           });
           cashFlowChartImage = canvas.toDataURL('image/png');
@@ -2598,7 +2619,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       if (activeChartToggles.yieldChart && yieldChartRef.current) {
         try {
           const canvas = await html2canvas(yieldChartRef.current, {
-            backgroundColor: '#ffffff',
+            backgroundColor: exportBackgroundFor(yieldChartRef.current, chartTheme),
             scale: 2,
           });
           yieldChartImage = canvas.toDataURL('image/png');
@@ -2610,7 +2631,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       if (activeChartToggles.comparisonChart && comparisonChartRef.current) {
         try {
           const canvas = await html2canvas(comparisonChartRef.current, {
-            backgroundColor: '#ffffff',
+            backgroundColor: exportBackgroundFor(comparisonChartRef.current, chartTheme),
             scale: 2,
           });
           comparisonChartImage = canvas.toDataURL('image/png');
@@ -4424,10 +4445,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                     <div className="flex flex-wrap gap-2 text-xs">
                       {[
                         { key: 'propertyValue' as const, label: 'Property Value', color: 'hsl(var(--primary))' },
-                        { key: 'equity' as const, label: 'Equity', color: '#22c55e' },
-                        { key: 'loanBalance' as const, label: 'Loan Balance', color: '#ef4444' },
-                        { key: 'rentalIncome' as const, label: 'Rental Income', color: '#f59e0b' },
-                        { key: 'cashFlow' as const, label: 'Cash Flow', color: '#8b5cf6' },
+                        { key: 'equity' as const, label: 'Equity', color: chartTheme.series.equity },
+                        { key: 'loanBalance' as const, label: 'Loan Balance', color: chartTheme.series.loanBalance },
+                        { key: 'rentalIncome' as const, label: 'Rental Income', color: chartTheme.series.rentalIncome },
+                        { key: 'cashFlow' as const, label: 'Cash Flow', color: chartTheme.series.cashFlow },
                       ].map(({ key, label, color }) => (
                         <button
                           key={key}
@@ -4481,7 +4502,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
                   return (
                     <>
-                      <div ref={cashFlowChartRef} className="h-[320px] w-full rounded-3xl border bg-white p-3 shadow-inner sm:h-[380px] xl:h-[420px]" style={{ backgroundColor: '#ffffff' }}>
+                      <div ref={cashFlowChartRef} className="h-[320px] w-full rounded-3xl border border-border/60 p-3 shadow-inner shadow-black/5 sm:h-[380px] xl:h-[420px]" style={{ backgroundColor: chartTheme.surface }}>
                         <ResponsiveContainer width="100%" height="100%">
                           <ComposedChart
                             data={chartData}
@@ -4489,23 +4510,23 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           >
                             <defs>
                               <linearGradient id="fillPropertyValue" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.15}/>
-                                <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
+                                <stop offset="5%" stopColor={chartTheme.series.propertyValue} stopOpacity={0.15}/>
+                                <stop offset="95%" stopColor={chartTheme.series.propertyValue} stopOpacity={0}/>
                               </linearGradient>
                               <linearGradient id="fillEquity" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#22c55e" stopOpacity={0.15}/>
-                                <stop offset="95%" stopColor="#22c55e" stopOpacity={0}/>
+                                <stop offset="5%" stopColor={chartTheme.series.equity} stopOpacity={0.15}/>
+                                <stop offset="95%" stopColor={chartTheme.series.equity} stopOpacity={0}/>
                               </linearGradient>
                             </defs>
-                            <CartesianGrid strokeDasharray="3 3" opacity={0.15} stroke="#d1d5db" />
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.15} stroke={chartTheme.grid} />
                             <XAxis 
                               dataKey="year" 
-                              tick={{ fontSize: 11, fill: '#6b7280' }}
-                              axisLine={{ stroke: '#e5e7eb' }}
+                              tick={{ fontSize: 11, fill: chartTheme.tick }}
+                              axisLine={{ stroke: chartTheme.axisLine }}
                               tickLine={false}
                             />
                             <YAxis 
-                              tick={{ fontSize: 11, fill: '#6b7280' }} 
+                              tick={{ fontSize: 11, fill: chartTheme.tick }} 
                               tickFormatter={(value) => {
                                 if (Math.abs(value) >= 1000000) return `$${(value / 1000000).toFixed(1)}M`;
                                 if (Math.abs(value) >= 1000) return `$${(value / 1000).toFixed(0)}K`;
@@ -4555,14 +4576,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             {chartMetrics.cashFlow && breakEvenYear && (
                               <ReferenceLine 
                                 x={`Yr ${breakEvenYear.year}`} 
-                                stroke="#22c55e" 
+                                stroke={chartTheme.series.equity} 
                                 strokeDasharray="4 4" 
                                 strokeWidth={1.5}
                                 label={{ 
                                   value: `Break-even: Yr ${breakEvenYear.year}`, 
                                   position: 'top', 
                                   fontSize: 10, 
-                                  fill: '#22c55e',
+                                  fill: chartTheme.series.equity,
                                   fontWeight: 600
                                 }}
                               />
@@ -4571,14 +4592,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             {chartMetrics.equity && chartMetrics.loanBalance && crossoverYear && (
                               <ReferenceLine 
                                 x={`Yr ${crossoverYear.year}`} 
-                                stroke="#06b6d4" 
+                                stroke={chartTheme.series.crossover} 
                                 strokeDasharray="4 4" 
                                 strokeWidth={1.5}
                                 label={{ 
                                   value: `Equity > Debt: Yr ${crossoverYear.year}`, 
                                   position: 'insideTopRight', 
                                   fontSize: 10, 
-                                  fill: '#06b6d4',
+                                  fill: chartTheme.series.crossover,
                                   fontWeight: 600
                                 }}
                               />
@@ -4595,7 +4616,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               <Line 
                                 type="monotone" 
                                 dataKey="Property Value" 
-                                stroke="hsl(var(--primary))" 
+                                stroke={chartTheme.series.propertyValue} 
                                 strokeWidth={2.5}
                                 dot={{ r: 4, fill: 'hsl(var(--primary))', strokeWidth: 0 }}
                                 activeDot={{ r: 6, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
@@ -4605,9 +4626,9 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               <Line 
                                 type="monotone" 
                                 dataKey="Equity" 
-                                stroke="#22c55e" 
+                                stroke={chartTheme.series.equity} 
                                 strokeWidth={2.5}
-                                dot={{ r: 4, fill: '#22c55e', strokeWidth: 0 }}
+                                dot={{ r: 4, fill: chartTheme.series.equity, strokeWidth: 0 }}
                                 activeDot={{ r: 6, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
                               />
                             )}
@@ -4615,10 +4636,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               <Line 
                                 type="monotone" 
                                 dataKey="Loan Balance" 
-                                stroke="#ef4444" 
+                                stroke={chartTheme.series.loanBalance} 
                                 strokeWidth={2}
                                 strokeDasharray="8 4"
-                                dot={{ r: 3, fill: '#ef4444', strokeWidth: 0 }}
+                                dot={{ r: 3, fill: chartTheme.series.loanBalance, strokeWidth: 0 }}
                                 activeDot={{ r: 5, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
                               />
                             )}
@@ -4626,10 +4647,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               <Line 
                                 type="monotone" 
                                 dataKey="Rental Income" 
-                                stroke="#f59e0b" 
+                                stroke={chartTheme.series.rentalIncome} 
                                 strokeWidth={2}
                                 strokeDasharray="6 3"
-                                dot={{ r: 3, fill: '#f59e0b', strokeWidth: 0 }}
+                                dot={{ r: 3, fill: chartTheme.series.rentalIncome, strokeWidth: 0 }}
                                 activeDot={{ r: 5, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
                               />
                             )}
@@ -4637,10 +4658,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               <Line 
                                 type="monotone" 
                                 dataKey="Cash Flow (After Tax)" 
-                                stroke="#8b5cf6" 
+                                stroke={chartTheme.series.cashFlow} 
                                 strokeWidth={2}
                                 strokeDasharray="6 3"
-                                dot={{ r: 3, fill: '#8b5cf6', strokeWidth: 0 }}
+                                dot={{ r: 3, fill: chartTheme.series.cashFlow, strokeWidth: 0 }}
                                 activeDot={{ r: 5, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
                               />
                             )}
@@ -4674,7 +4695,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             change: `+$${(yr10.equityInProperty - yr1.equityInProperty).toLocaleString('en-AU')}`,
                             positive: true,
                             sparkData: values.map(v => v.equityInProperty),
-                            color: '#22c55e'
+                            color: chartTheme.series.equity
                           },
                           { 
                             label: 'Loan Balance', 
@@ -4683,7 +4704,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             change: `-$${(yr1.loanAmount - yr10.loanAmount).toLocaleString('en-AU')}`,
                             positive: yr10.loanAmount < yr1.loanAmount,
                             sparkData: values.map(v => v.loanAmount),
-                            color: '#ef4444'
+                            color: chartTheme.series.loanBalance
                           },
                           { 
                             label: 'Cash Flow', 
@@ -4692,7 +4713,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             change: yr10.afterTaxCashFlowPA >= 0 ? 'Positive' : 'Negative',
                             positive: yr10.afterTaxCashFlowPA >= 0,
                             sparkData: values.map(v => v.afterTaxCashFlowPA),
-                            color: '#8b5cf6'
+                            color: chartTheme.series.cashFlow
                           },
                         ];
 
@@ -4815,7 +4836,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
                   return (
                     <>
-                      <div ref={yieldChartRef} className="h-[280px] w-full rounded-3xl border bg-white p-3 shadow-inner sm:h-[320px]" style={{ backgroundColor: '#ffffff' }}>
+                      <div ref={yieldChartRef} className="h-[280px] w-full rounded-3xl border border-border/60 p-3 shadow-inner shadow-black/5 sm:h-[320px]" style={{ backgroundColor: chartTheme.surface }}>
                         <ResponsiveContainer width="100%" height="100%">
                           <ComposedChart
                             data={yieldData}
@@ -4827,15 +4848,15 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                 <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.03}/>
                               </linearGradient>
                             </defs>
-                            <CartesianGrid strokeDasharray="3 3" opacity={0.15} stroke="#d1d5db" />
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.15} stroke={chartTheme.grid} />
                             <XAxis 
                               dataKey="year" 
-                              tick={{ fontSize: 11, fill: '#6b7280' }}
-                              axisLine={{ stroke: '#e5e7eb' }}
+                              tick={{ fontSize: 11, fill: chartTheme.tick }}
+                              axisLine={{ stroke: chartTheme.axisLine }}
                               tickLine={false}
                             />
                             <YAxis 
-                              tick={{ fontSize: 11, fill: '#6b7280' }} 
+                              tick={{ fontSize: 11, fill: chartTheme.tick }} 
                               tickFormatter={(value) => `${value}%`}
                               domain={['auto', 'auto']}
                               axisLine={false}
@@ -4855,7 +4876,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                     {gross && (
                                       <div className="flex items-center justify-between gap-4">
                                         <span className="flex items-center gap-1.5">
-                                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: '#06b6d4' }} />
+                                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: chartTheme.series.grossYield }} />
                                           Gross Yield
                                         </span>
                                         <span className="font-medium">
@@ -4871,7 +4892,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                     {net && (
                                       <div className="flex items-center justify-between gap-4">
                                         <span className="flex items-center gap-1.5">
-                                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: '#ec4899' }} />
+                                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: chartTheme.series.netYield }} />
                                           Net Yield
                                         </span>
                                         <span className="font-medium">
@@ -4886,7 +4907,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                     )}
                                     <div className="flex items-center justify-between gap-4 pt-1 border-t border-border/50">
                                       <span className="flex items-center gap-1.5">
-                                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: '#f59e0b' }} />
+                                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: chartTheme.series.rentalIncome }} />
                                         Expense Drag
                                       </span>
                                       <span className="font-medium text-brand-500">{spread}pp</span>
@@ -4911,17 +4932,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             <Line 
                               type="monotone" 
                               dataKey="Gross Yield %" 
-                              stroke="#06b6d4" 
+                              stroke={chartTheme.series.crossover} 
                               strokeWidth={2.5}
-                              dot={{ r: 4, fill: '#06b6d4', strokeWidth: 0 }}
+                              dot={{ r: 4, fill: chartTheme.series.grossYield, strokeWidth: 0 }}
                               activeDot={{ r: 6, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
                             />
                             <Line 
                               type="monotone" 
                               dataKey="Net Yield %" 
-                              stroke="#ec4899" 
+                              stroke={chartTheme.series.netYield} 
                               strokeWidth={2.5}
-                              dot={{ r: 4, fill: '#ec4899', strokeWidth: 0 }}
+                              dot={{ r: 4, fill: chartTheme.series.netYield, strokeWidth: 0 }}
                               activeDot={{ r: 6, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
                             />
                           </ComposedChart>
@@ -4936,9 +4957,9 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         const avgSpread = values.reduce((s, v) => s + (v.grossYield - v.netYield), 0) / values.length;
                         
                         const yieldKpis = [
-                          { label: 'Gross Yield', value: `${yr10.grossYield.toFixed(2)}%`, sub: `from ${yr1.grossYield.toFixed(2)}%`, sparkData: values.map(v => v.grossYield), color: '#06b6d4' },
-                          { label: 'Net Yield', value: `${yr10.netYield.toFixed(2)}%`, sub: `from ${yr1.netYield.toFixed(2)}%`, sparkData: values.map(v => v.netYield), color: '#ec4899' },
-                          { label: 'Avg Expense Drag', value: `${avgSpread.toFixed(2)}pp`, sub: 'Gross − Net spread', sparkData: values.map(v => v.grossYield - v.netYield), color: '#f59e0b' },
+                          { label: 'Gross Yield', value: `${yr10.grossYield.toFixed(2)}%`, sub: `from ${yr1.grossYield.toFixed(2)}%`, sparkData: values.map(v => v.grossYield), color: chartTheme.series.grossYield },
+                          { label: 'Net Yield', value: `${yr10.netYield.toFixed(2)}%`, sub: `from ${yr1.netYield.toFixed(2)}%`, sparkData: values.map(v => v.netYield), color: chartTheme.series.netYield },
+                          { label: 'Avg Expense Drag', value: `${avgSpread.toFixed(2)}pp`, sub: 'Gross − Net spread', sparkData: values.map(v => v.grossYield - v.netYield), color: chartTheme.series.rentalIncome },
                         ];
 
                         return (
@@ -5040,7 +5061,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                   </div>
                 </CardHeader>
                 <CardContent className="p-4">
-                  <div ref={comparisonChartRef} className="h-[320px] w-full rounded-3xl border bg-white p-3 shadow-inner sm:h-[380px] xl:h-[420px]" style={{ backgroundColor: '#ffffff' }}>
+                  <div ref={comparisonChartRef} className="h-[320px] w-full rounded-3xl border border-border/60 p-3 shadow-inner shadow-black/5 sm:h-[380px] xl:h-[420px]" style={{ backgroundColor: chartTheme.surface }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart
                         data={projections.filter(p => p.year >= 1).map((p, i) => {
@@ -5088,7 +5109,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             key={compReport.id}
                             type="monotone" 
                             dataKey={`${compReport.property_address.split(',')[0]} Value`}
-                            stroke={COMPARISON_COLORS[idx + 1]?.value || '#888'}
+                            stroke={COMPARISON_COLORS[idx + 1]?.value || chartTheme.tick}
                             strokeWidth={2}
                             strokeDasharray="5 5"
                             dot={{ r: 2 }}
@@ -5109,7 +5130,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         yr10Equity: cp[10]?.equityInProperty || 0,
                         yr10Yield: cp[10]?.grossYield || 0,
                         totalCashFlow: cp.filter((_: any, i: number) => i >= 1).reduce((s: number, p: any) => s + (p.afterTaxCashFlowPA || 0), 0),
-                        color: COMPARISON_COLORS[idx + 1]?.value || '#888',
+                        color: COMPARISON_COLORS[idx + 1]?.value || chartTheme.tick,
                       }))
                     ];
                     
@@ -5184,40 +5205,51 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             </TableHead>
                             {allComparisonMetrics.map(({ report: compReport }, idx) => (
                               <TableHead key={compReport.id} className="text-center min-w-[120px]">
-                                <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COMPARISON_COLORS[idx + 1]?.value || '#888' }} />
+                                <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COMPARISON_COLORS[idx + 1]?.value || chartTheme.tick }} />
                                 {compReport.property_address.split(',')[0].substring(0, 15)}
                               </TableHead>
                             ))}
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {[
-                            { label: '10-Year ROI', key: 'roi', format: (v: number) => `${v?.toFixed(1)}%`, higherBetter: true },
-                            { label: 'Annualized ROI', key: 'annualizedRoi', format: (v: number) => `${v?.toFixed(2)}%`, higherBetter: true },
-                            { label: 'Total Return', key: 'totalReturn', format: (v: number) => `$${(v || 0).toLocaleString('en-AU')}`, higherBetter: true },
-                            { label: 'Break-Even Year', key: 'breakEvenYear', format: (v: number) => v ? `Year ${v}` : 'N/A', higherBetter: false },
-                            { label: 'Cash-on-Cash (Y1)', key: 'cashOnCash', format: (v: number) => `${v?.toFixed(2)}%`, higherBetter: true },
-                            { label: 'Equity Multiple', key: 'equityMultiple', format: (v: number) => `${v?.toFixed(2)}x`, higherBetter: true },
-                            { label: 'Capital Gain', key: 'capitalGain', format: (v: number) => `$${(v || 0).toLocaleString('en-AU')}`, higherBetter: true },
-                            { label: 'Total Cash Flow', key: 'totalCashFlow', format: (v: number) => `$${(v || 0).toLocaleString('en-AU')}`, higherBetter: true },
-                          ].map(({ label, key, format, higherBetter }) => {
-                            const allValues = [
-                              (primaryMetrics as any)?.[key] || (key === 'breakEvenYear' ? 99 : 0),
-                              ...allComparisonMetrics.map(({ metrics }) => (metrics as any)?.[key] || (key === 'breakEvenYear' ? 99 : 0))
+                          {([
+                            { label: '10-Year ROI', key: 'roi', render: (m: InvestmentMetrics) => formatMetricPercent(m.roi), higherBetter: true },
+                            { label: 'Annualised ROI', key: 'annualisedRoi', render: (m: InvestmentMetrics) => formatMetricPercent(m.annualisedRoi, 2), higherBetter: true },
+                            { label: 'Total Return', key: 'totalReturn', render: (m: InvestmentMetrics) => formatCurrency(m.totalReturn), higherBetter: true },
+                            { label: 'Capital committed', key: 'capitalCommitted', render: (m: InvestmentMetrics) => formatCurrency(m.capitalCommitted), higherBetter: false, neutral: true },
+                            { label: 'Break-even', key: 'breakEvenYear', render: (m: InvestmentMetrics) => formatBreakEven(m.breakEvenYear), higherBetter: false },
+                            { label: 'Cash-on-Cash (Y1)', key: 'cashOnCash', render: (m: InvestmentMetrics) => formatMetricPercent(m.cashOnCash, 2), higherBetter: true },
+                            { label: 'Equity Multiple', key: 'equityMultiple', render: (m: InvestmentMetrics) => formatMetricMultiple(m.equityMultiple), higherBetter: true },
+                            { label: 'Capital Gain (10 yrs)', key: 'capitalGain', render: (m: InvestmentMetrics) => formatCurrency(m.capitalGain), higherBetter: true },
+                            { label: 'Total Cash Flow', key: 'totalCashFlow', render: (m: InvestmentMetrics) => formatCurrency(m.totalCashFlow), higherBetter: true },
+                          ] as const).map(({ label, key, render, higherBetter, ...row }) => {
+                            // Only properties that HAVE the metric compete for
+                            // the highlight. A column with no cost base used to
+                            // score 0 and, when every column was 0, every one
+                            // of them was marked best.
+                            const neutral = 'neutral' in row && row.neutral;
+                            const columns: (InvestmentMetrics | null)[] = [
+                              primaryMetrics,
+                              ...allComparisonMetrics.map(({ metrics }) => metrics),
                             ];
-                            const bestValue = higherBetter 
-                              ? Math.max(...allValues.filter(v => v !== 99 && v !== null))
-                              : Math.min(...allValues.filter(v => v !== 99 && v !== null));
-                            
+                            const numeric = columns
+                              .map((m) => (m ? (m as any)[key] : null))
+                              .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+                            const bestValue = neutral || !numeric.length
+                              ? null
+                              : higherBetter ? Math.max(...numeric) : Math.min(...numeric);
+                            const isBest = (m: InvestmentMetrics | null) =>
+                              bestValue !== null && m != null && (m as any)[key] === bestValue;
+
                             return (
                               <TableRow key={key}>
                                 <TableCell className="font-medium sticky left-0 bg-background">{label}</TableCell>
-                                <TableCell className={`text-center ${(primaryMetrics as any)?.[key] === bestValue ? 'text-success font-semibold' : ''}`}>
-                                  {format((primaryMetrics as any)?.[key])}
+                                <TableCell className={`text-center tabular-nums ${isBest(primaryMetrics) ? 'text-success font-semibold' : ''}`}>
+                                  {primaryMetrics ? render(primaryMetrics) : <span className="text-muted-foreground">—</span>}
                                 </TableCell>
                                 {allComparisonMetrics.map(({ report: compReport, metrics }) => (
-                                  <TableCell key={compReport.id} className={`text-center ${(metrics as any)?.[key] === bestValue ? 'text-success font-semibold' : ''}`}>
-                                    {format((metrics as any)?.[key])}
+                                  <TableCell key={compReport.id} className={`text-center tabular-nums ${isBest(metrics) ? 'text-success font-semibold' : ''}`}>
+                                    {metrics ? render(metrics) : <span className="text-muted-foreground">—</span>}
                                   </TableCell>
                                 ))}
                               </TableRow>
@@ -5247,6 +5279,29 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           </TableRow>
                         </TableBody>
                       </Table>
+                    </div>
+
+                    {/* The basis, stated. Every percentage on this table is a
+                        ratio, and a ratio is only readable if the reader knows
+                        what it is over. */}
+                    <div className="mt-3 space-y-1.5 rounded-xl border border-border/60 bg-muted/20 px-3 py-2.5">
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        <span className="font-medium text-foreground">How these are measured.</span>{' '}
+                        Returns are over the ten years projected above — capital gain is the movement from
+                        today's value to Year 10, not from the original purchase price. <span className="font-medium text-foreground">Capital
+                        committed</span> is what the investor has in the property at Year 0: the cash to
+                        acquire it (deposit, stamp duty, legal and LMI), or the equity held today where that
+                        is greater.
+                      </p>
+                      {(!primaryMetrics || allComparisonMetrics.some(({ metrics }) => !metrics)) && (
+                        <p className="text-[11px] leading-relaxed text-warning">
+                          A dash means the figure could not be measured, not that it is zero.{' '}
+                          {METRICS_UNAVAILABLE_REASON[
+                            allComparisonMetrics.find(({ unavailable }) => unavailable)?.unavailable
+                              ?? 'capital_unknown'
+                          ]}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </CardContent>
@@ -5614,7 +5669,29 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
             </CashFlowAiPanel>
 
+            {/* Which property the details below belong to. Drawn only when
+                there is more than one, and always above them: the section used
+                to be the open report's alone, at the very bottom, with a peer's
+                own assumptions unreachable from anywhere on the page. */}
+            <CashFlowPropertySwitcher
+              properties={detailProperties}
+              selectedId={detailPropertyId ?? report.id}
+              onSelect={(id) => setDetailPropertyId(id === report.id ? null : id)}
+            />
+
+            {selectedPeer && (
+              <CashFlowPeerDetail
+                address={selectedPeer.report.property_address}
+                colour={selectedPeer.colour}
+                inputs={selectedPeer.inputs}
+                projections={selectedPeer.projections as never}
+                metrics={selectedPeer.metrics}
+                unavailable={selectedPeer.unavailable}
+              />
+            )}
+
             {/* Inputs Summary Table - Collapsible */}
+            {!selectedPeer && (
             <Collapsible open={inputsSummaryOpen} onOpenChange={setInputsSummaryOpen}>
               <Card>
                 <CollapsibleTrigger asChild>
@@ -5883,6 +5960,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                 </CollapsibleContent>
               </Card>
             </Collapsible>
+            )}
 
             <CashFlowConstructionPanel active={isNewBuild && !!constructionProgressSchedule && constructionProgressSchedule.buildPrice > 0}>
             {/* Construction Progress Payment Schedule - Collapsible (New Builds Only) */}
@@ -6054,6 +6132,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
             </CashFlowConstructionPanel>
 
+            {/* The editable projection belongs to the open report: the
+                per-year overrides are stored against it, so a peer's table
+                is drawn read-only by `CashFlowPeerDetail` instead. */}
+            {!selectedPeer && (
             <CashFlowProjectionTable>
             {/* 10-Year Projection Table with Inline Editing */}
             <Card className="overflow-hidden border-border/80 bg-background/95 shadow-lg ring-1 ring-border/5">
@@ -6395,6 +6477,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
               </CardContent>
             </Card>
             </CashFlowProjectionTable>
+            )}
         </div>
     </CashFlowPresentationShell>
 
