@@ -100,9 +100,31 @@ type FieldKey =
 /**
  * Header text is compared with punctuation, spacing and case removed, so
  * "Land Size (m2)", "land_size_m2" and "LANDSIZEM2" are one key.
+ *
+ * A UNIT MARKER IS PART OF THE HEADING, and deleting it made two different
+ * columns one key. `LAND M2` and `LAND $` sit side by side in a stock list —
+ * one is an area and one is money — and stripping the `$` left `land` for
+ * both. `land` is an alias for `land_size_sqm`, so every property imported
+ * from such a sheet had its LAND PRICE written into its land size: 26 live
+ * properties published a 428,000 m2 block, which is 105 acres, because the
+ * land cost $428,000. The same collapse hid `HOUSE $` behind `HOUSE`, and
+ * `PACKAGE $` — the number a buyer actually sees — behind `PACKAGE`, so not
+ * one of those 26 carried a price at all.
+ *
+ * So the two markers that distinguish a MEASURE from MONEY survive as words.
+ * `$` and `%` are the only characters this treats specially, and neither
+ * appeared in any alias before this — so a heading that carries one could only
+ * ever have been judged as though it did not, and every key that changes here
+ * is a key that was wrong. A `X $` column this table does not name now lands
+ * in `unmapped`, which is visible in the audit record, instead of silently
+ * becoming `X`.
  */
 export function normaliseHeader(raw: unknown): string {
-  return String(raw ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return String(raw ?? '')
+    .toLowerCase()
+    .replace(/\$/g, ' dollars ')
+    .replace(/%/g, ' percent ')
+    .replace(/[^a-z0-9]+/g, '');
 }
 
 /**
@@ -179,7 +201,24 @@ alias('property_type',
  */
 alias('house_design',
   'design', 'house design', 'home design', 'design name', 'house design name',
-  'home design name', 'facade design', 'design type');
+  'home design name', 'facade design', 'design type',
+  /*
+   * A stock list names the design in a column called plainly `HOUSE`, beside
+   * `HOUSE m2` and `HOUSE $`. That was unmappable while the normaliser deleted
+   * the marker — `HOUSE $` produced the same key, and whichever column came
+   * last would have written "$447,950" into the design. It is safe now because
+   * the three are three keys. The design is what `findDesignCoverPages` reads
+   * to attribute a render, so a null here is a whole rung of the evidence
+   * ladder that can never run.
+   */
+  /*
+   * `house` ALONE, and deliberately nothing near it. `Product`, `Type`,
+   * `Product Type` and `House Type` belong to `property_type` and a test
+   * asserts this table does not take them — a heading that answers "what kind
+   * of dwelling is this" is not the heading that answers "which of our designs
+   * is it".
+   */
+  'house');
 
 // The unit is written six ways — "(m2)", "m²", "sqm", "sq m" — and the header
 // normaliser strips the punctuation but not the letters, so each spelling is a
@@ -195,11 +234,27 @@ alias('building_size_sqm',
   'building size m2', 'house size', 'house size m2', 'floor area',
   'floor area m2', 'floor area sqm', 'internal area', 'internal area sqm',
   'living area', 'build area', 'home size', 'building area sqm',
-  'building area m2', 'house area');
+  'building area m2', 'house area',
+  // A stock list writes the house's own area as bare "HOUSE m2", beside
+  // "LAND M2". Distinct keys from `house` and `house $` only since the
+  // normaliser stopped deleting the marker — see `normaliseHeader`.
+  'house m2', 'house m²', 'house sqm', 'home m2', 'build m2', 'build m²');
 
+/**
+ * THE PRICE IS WHAT THE PROPERTY COSTS, which for a house-and-land package is
+ * the PACKAGE.
+ *
+ * A stock list states three figures — `LAND $`, `HOUSE $`, `PACKAGE $` — and
+ * only the third is the number a buyer is quoted. The other two are its
+ * breakdown, they have no field here, and they stay in `unmapped` rather than
+ * being mapped to something adjacent: a card showing the house component as
+ * the price understates a $871,450 package by $428,000.
+ */
 alias('price',
   'price', 'total price', 'list price', 'package price', 'asking price',
-  'sale price', 'price from', 'full price', 'purchase price', 'amount');
+  'sale price', 'price from', 'full price', 'purchase price', 'amount',
+  'price $', 'total $', 'package $', 'total package $', 'package price $',
+  'house and land $', 'house land $', 'total price $', 'list price $');
 
 alias('availability_status',
   'status', 'availability', 'available', 'sales status', 'stock status',
