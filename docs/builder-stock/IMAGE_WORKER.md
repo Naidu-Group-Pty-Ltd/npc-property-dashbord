@@ -155,3 +155,132 @@ it at nothing.
 Until both secrets exist, the generative route reports `inpaint_unavailable`
 and stays retryable — the deterministic route, clean-source precedence, and
 all serving behaviour work regardless.
+
+---
+
+# `POST /v1/classify` — what a picture shows
+
+The second endpoint on the same worker, behind the same bearer, calling the
+same binding. It exists for one measured case and is deliberately unable to do
+anything else.
+
+## The case
+
+Of thirteen Luxton rows carrying a brochure link, eleven resolve a primary
+image deterministically (see
+[`FILLED_TEMPLATE_BROCHURES.md`](./FILLED_TEMPLATE_BROCHURES.md)). Two do not,
+and they fail for a reason no rule about documents can settle: their cover page
+— the page whose text states the lot, the address and the price — presents
+three rasters, and **the document says nothing about which is the house**.
+
+| lot 313 / 318, page 2 | what it is |
+|---|---|
+| 480x339 JPEG, 17% of the page | the facade render |
+| 3423x1588 JPEG, 3% of the page | the Luxton wordmark, white on black |
+| 466x867 JPEG, 13% of the page | the floor plan |
+
+Every deterministic discriminator points the wrong way. The **largest by
+pixels** is the wordmark. The **only one passing the pixel floor** is the
+wordmark. A filename hint would not help — this repository has already had a
+"pick the best photo" rule promote an agency logo over a photograph on two real
+listings, because a logo lockup is called a *main* lockup.
+
+So the question is semantic, and this endpoint answers exactly that question
+and no other.
+
+## The contract
+
+```
+POST /v1/classify
+Authorization: Bearer <BUILDER_STOCK_IMAGE_WORKER_TOKEN>
+Content-Type: multipart/form-data
+
+image-<key>: one picture        (at most 6 parts, ≤3 MB each, ≤10 MB total)
+```
+
+The key is the caller's own — Builder Stock sends `<objectNumber>:<name>` — and
+comes back verbatim.
+
+```json
+{
+  "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+  "verdicts": [
+    { "key": "34:X13", "subject": "shows_house_exterior", "confident": true,  "unavailable": null },
+    { "key": "35:X14", "subject": "shows_logo",           "confident": true,  "unavailable": null },
+    { "key": "76:X21", "subject": null, "confident": false, "unavailable": "the model could not be reached (…)" }
+  ]
+}
+```
+
+`x-classify-model` and `x-classify-transport` name what ran.
+
+## The rules
+
+**Pictures only.** A part named anything but `image-<key>` is refused rather
+than ignored, so there is no field through which a caller can name a lot, an
+estate or a design. A classifier that has been told what to look for will find
+it. The wording is a constant in the reviewed source and a test fails on any
+interpolation in its declaration.
+
+**The vocabulary is closed and shares no value with the role vocabulary.**
+Every subject is prefixed `shows_`, because `sourceImageRole.pure.ts` already
+spells `site_plan`, `interior` and `floorplan` — a subject is a fact about
+pixels, a role is a conclusion about a document, and the second is never
+inferred from the first alone. The prefix is also what makes the last-resort
+keyword scan safe: `shows_floor_plan` is not a phrase English produces by
+accident.
+
+**Only one subject can promote.** `shows_house_exterior`. The other eight can
+only demote, so a verdict that is wrong in any other direction costs a property
+nothing it had.
+
+**One picture per model call.** A single call about six pictures answers in one
+list, and a list that comes back short, long or reordered is a verdict attached
+to the wrong photograph — undetectable from the answer. Six calls cost six
+calls; a misattributed hero costs a client's card. The batching is at the
+request, which is what lets the caller chunk.
+
+**Nothing is invented.** An unreachable model, an unparseable body, a word
+outside the vocabulary, or a sentence naming two of them all produce
+`subject: null`. Confidence that is not stated is not confidence. A batch of
+which *nothing* was answered is `502` — operational, retry it — because
+recording "this document contains no house" on the strength of a rate limiter
+is the failure this whole subsystem exists to prevent.
+
+**The transport is found, not guessed.** Cloudflare's catalog documents
+OpenAI-shaped content parts for its multimodal models and a top-level `image`
+field for the older vision ones, and does not say which this model takes.
+Guessing would fail *silently* — every verdict absent, which reads exactly like
+a model with no opinion — so both shapes are attempted, the one that answers is
+reused for the rest of the request, and the response header says which ran.
+
+## Deploying it
+
+The endpoint ships with the worker; there is no separate deploy and no new
+secret.
+
+```sh
+cd cloudflare/builder-stock-image-worker
+npx wrangler deploy
+```
+
+### Verifying it against real pictures
+
+The endpoint is only worth turning on if it is right about this repository's
+own documents, and that cannot be asserted from a test with a stub binding.
+After deploying, run it against pictures taken out of real brochures:
+
+```sh
+curl -sS -X POST "$WORKER/v1/classify" \
+  -H "Authorization: Bearer $BUILDER_STOCK_IMAGE_WORKER_TOKEN" \
+  -F 'image-facade=@facade.jpg' \
+  -F 'image-logo=@wordmark.jpg' \
+  -F 'image-plan=@floorplan.jpg' | jq .
+```
+
+What has to come back, or it does not go into the selection path: the facade
+`shows_house_exterior` with `confident: true`, and **neither** of the other two
+carrying that subject. A run in which the wordmark or the plan reads as a house
+is a run that would have put the wrong picture on a client's card, and the
+right response to it is to leave the classifier out of the path rather than to
+soften the rule that consults it.
