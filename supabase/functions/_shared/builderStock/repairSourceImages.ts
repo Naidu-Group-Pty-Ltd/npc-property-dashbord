@@ -598,7 +598,7 @@ export async function repairSourceImagesForUpload(
    * appended to the ordering because `created_at` is not unique and an
    * offset-paged read needs a total order. See `pagedRead.ts`.
    */
-  const existingPage = await readAllRows<Record<string, unknown>>(
+  const existingPage = await readAllRows<ExistingItem>(
     () => db
       .from('builder_stock_items')
       .select('id, external_reference, development_name, project_name, unit_number, lot_number, source_row, primary_image_id, source_provenance_result, image_work_attempts')

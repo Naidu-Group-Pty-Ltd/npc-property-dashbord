@@ -491,7 +491,7 @@ export async function importStockRecords(
    * them. `id` joins the ordering because `created_at` is not unique and
    * offset paging needs a total order. See `pagedRead.ts`.
    */
-  const existingPage = await readAllRows<Record<string, unknown>>(
+  const existingPage = await readAllRows<ExistingItem>(
     () => db
       .from('builder_stock_items')
       .select(EXISTING_ITEM_SELECT)
