@@ -74,6 +74,7 @@ import {
   settleUploadSourceImages, uploadsNeedingSettlement,
 } from '../_shared/builderStock/settleSourceImages.ts';
 import { newRepairBudget } from '../_shared/builderStock/settleImageSanitization.ts';
+import { readAllRows } from '../_shared/builderStock/pagedRead.ts';
 import {
   BUILDER_SELECTION_SELECT, STOCK_AVAILABILITY_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, STOCK_UPLOAD_SELECT, stockPagination,
@@ -1063,13 +1064,17 @@ Deno.serve(async (req) => {
         // ever on exactly those uploads — the audit record then said nothing
         // about image processing precisely where a reader most wants it.
         if (upload && ['enriching', 'partially_complete'].includes(String(upload.status))) {
-          const { data: stageCounts } = await supabase
-            .from('builder_stock_item_images')
-            .select('source_stage, processing_status')
-            .eq('upload_id', uploadId)
-            .limit(5000);
+          // Paged: the API caps a response at 1,000 rows whatever `.limit()`
+          // asks for, and a truncated read here under-reports the progress a
+          // builder is watching. See `pagedRead.ts`.
+          const stagePage = await readAllRows<{ source_stage: unknown; processing_status: unknown }>(
+            () => supabase
+              .from('builder_stock_item_images')
+              .select('id, source_stage, processing_status')
+              .eq('upload_id', uploadId)
+              .order('id', { ascending: true }));
           const summary: Record<string, Record<string, number>> = {};
-          for (const row of stageCounts ?? []) {
+          for (const row of stagePage.rows) {
             const stage = String((row as any).source_stage);
             const state = String((row as any).processing_status);
             summary[stage] = summary[stage] ?? {};
@@ -1350,17 +1355,26 @@ Deno.serve(async (req) => {
 
       // Everything this organisation holds that named the source. Read before
       // anything changes, so the decision is made against stored state.
-      const { data: items } = await supabase
+      /*
+       * PAGED, and a failed read refuses the whole act. `.limit(20000)` is
+       * capped at 1,000 by the API, and this list decides which properties a
+       * source deletion ARCHIVES — so a truncated read silently spares stock
+       * the builder asked to remove, and an errored one would read as an
+       * upload supplying nothing at all. See `pagedRead.ts`.
+       */
+      const itemPage = await readAllRows<{
+        id: string; upload_id: string | null;
+        first_upload_id: string | null; lifecycle_status: string | null;
+      }>(() => supabase
         .from('builder_stock_items')
         .select('id, upload_id, first_upload_id, lifecycle_status')
         .eq('organisation_id', activeOrganisationId)
         .or(`upload_id.eq.${upload.id},first_upload_id.eq.${upload.id}`)
-        .limit(20000);
-
-      const rows = (items ?? []) as Array<{
-        id: string; upload_id: string | null;
-        first_upload_id: string | null; lifecycle_status: string | null;
-      }>;
+        .order('id', { ascending: true }));
+      if (itemPage.failed) {
+        return json({ success: false, error: 'stock_could_not_be_read' }, 503);
+      }
+      const rows = itemPage.rows;
       // The rule lives in `sourceDeletion.pure.ts`: only stock this source is
       // CURRENTLY supplying is deactivated. A property re-supplied by a newer
       // list keeps standing, which is the whole point of storing both ids.

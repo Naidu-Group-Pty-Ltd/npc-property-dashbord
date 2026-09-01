@@ -65,6 +65,7 @@ import {
 import { attachDocumentMedia } from './importStock.ts';
 import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
+import { readAllRows } from './pagedRead.ts';
 
 /**
  * The house design a stored row states, or null.
@@ -587,13 +588,31 @@ export async function repairSourceImagesForUpload(
   if (!rows.length) return outcome;
 
   // The stock this organisation already holds, and nobody else's.
-  const { data: existingRows } = await db
-    .from('builder_stock_items')
-    .select('id, external_reference, development_name, project_name, unit_number, lot_number, source_row, primary_image_id, source_provenance_result, image_work_attempts')
-    .eq('organisation_id', input.organisationId)
-    .in('lifecycle_status', PROCESSED_LIFECYCLE)
-    .order('created_at', { ascending: true })
-    .limit(20000);
+  /*
+   * PAGED, because `.limit(20000)` is not a number PostgREST honours — the
+   * deployment caps a response at 1,000 rows and reports it in a header
+   * nothing here reads. This index is what decides whether an incoming row is
+   * a property we already hold, so a truncated read does not make a smaller
+   * index: it makes every property past the cut look NEW, which duplicates it,
+   * and leaves its images to be matched against a partial set. `id` is
+   * appended to the ordering because `created_at` is not unique and an
+   * offset-paged read needs a total order. See `pagedRead.ts`.
+   */
+  const existingPage = await readAllRows<Record<string, unknown>>(
+    () => db
+      .from('builder_stock_items')
+      .select('id, external_reference, development_name, project_name, unit_number, lot_number, source_row, primary_image_id, source_provenance_result, image_work_attempts')
+      .eq('organisation_id', input.organisationId)
+      .in('lifecycle_status', PROCESSED_LIFECYCLE)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true }));
+  // A FAILED READ IS NOT AN EMPTY ORGANISATION: matching nothing here means
+  // inserting duplicates of every property the builder already has.
+  if (existingPage.failed) {
+    throw new Error('Existing stock could not be read: '
+      + String((existingPage.error as { message?: string })?.message ?? existingPage.error));
+  }
+  const existingRows = existingPage.rows;
 
   const byReference = new Map<string, string>();
   const byDevelopmentUnit = new Map<string, string>();
@@ -1471,18 +1490,23 @@ async function repairPdfUpload(
   },
   outcome: RepairOutcome,
 ): Promise<RepairOutcome> {
-  const { data: items } = await db
+  // Paged for the reason above, and ordered totally so no page can repeat or
+  // drop a property. An upload of more than 1,000 rows is ordinary.
+  const itemPage = await readAllRows<ExistingItem & {
+    address_line?: string | null; suburb?: string | null;
+  }>(() => db
     .from('builder_stock_items')
     .select('id, external_reference, development_name, project_name, unit_number, lot_number, address_line, suburb, source_row, primary_image_id')
     .eq('organisation_id', input.organisationId)
     .eq('upload_id', input.upload.id)
     .in('lifecycle_status', PROCESSED_LIFECYCLE)
     .order('created_at', { ascending: true })
-    .limit(5000);
-
-  const existing = (items ?? []) as Array<ExistingItem & {
-    address_line?: string | null; suburb?: string | null;
-  }>;
+    .order('id', { ascending: true }));
+  if (itemPage.failed) {
+    throw new Error('Upload stock could not be read: '
+      + String((itemPage.error as { message?: string })?.message ?? itemPage.error));
+  }
+  const existing = itemPage.rows;
   outcome.rowsRead = existing.length;
   outcome.rowsWithImagery = input.media.length;
   if (!existing.length || !input.media.length) return outcome;
