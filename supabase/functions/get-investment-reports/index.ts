@@ -50,7 +50,10 @@ const INVESTMENT_LIBRARY_SOURCE_SELECT = `${INVESTMENT_LIBRARY_SELECT},manual_ov
 // projection of nothing, which is the one outcome a comparison must never
 // produce. It is deliberately not the list projection: the payload is large
 // and only the handful of reports actually selected need it.
-const INVESTMENT_DETAIL_SELECT = `${INVESTMENT_LIBRARY_SELECT},report_content,sources_content,manual_overrides,financial_calculations,demographics_data,economic_data,location_intelligence`;
+// `data_sources` and `validation_flags` ride along for the viewer's
+// data-coverage disclosure: which sources informed the report, which
+// returned nothing, and any prose-vs-record fact contradictions.
+const INVESTMENT_DETAIL_SELECT = `${INVESTMENT_LIBRARY_SELECT},report_content,sources_content,manual_overrides,financial_calculations,demographics_data,economic_data,location_intelligence,data_sources,validation_flags`;
 // Live-progress projection for the floating generation widget, which polls every
 // few seconds. The library projection omits `updated_at`, `error_message` and the
 // section counters, so the widget was rendering `new Date(undefined)` and a

@@ -10,6 +10,7 @@ import { HeroImageStudio } from '@/components/reports/HeroImageStudio';
 import { ReportVersionHistory } from '@/components/reports/ReportVersionHistory';
 import { DEFAULT_PDF_DESIGN_OPTIONS, type PdfDesignOptions } from '@/components/reports/premiumPdfDesign';
 import { InvestmentReportCommandHeader } from '@/components/reports/report-view/InvestmentReportCommandHeader';
+import { InvestmentReportCoverageNote } from '@/components/reports/report-view/InvestmentReportCoverageNote';
 import { InvestmentReportDocument } from '@/components/reports/report-view/InvestmentReportDocument';
 import { InvestmentReportErrorState } from '@/components/reports/report-view/InvestmentReportErrorState';
 import { InvestmentReportExportPanel } from '@/components/reports/report-view/InvestmentReportExportPanel';
@@ -70,7 +71,7 @@ export default function InvestmentReportView() {
       const { data, error: fetchError } = await invokeSecureFunction('get-investment-reports', {
         reportId: id,
         listOptions: {
-        select: 'id, property_address, property_listing_id, report_content, sources_content, created_at, status, manual_overrides, financial_calculations, demographics_data, economic_data, investment_score, location_intelligence, is_client_report, client_property_id, current_version, report_tier, report_variant, derived_from_report_id, parent_report_id, pdf_url'
+        select: 'id, property_address, property_listing_id, report_content, sources_content, created_at, status, manual_overrides, financial_calculations, demographics_data, economic_data, investment_score, location_intelligence, is_client_report, client_property_id, current_version, report_tier, report_variant, derived_from_report_id, parent_report_id, pdf_url, data_sources, validation_flags'
         }
       });
 
@@ -124,7 +125,7 @@ export default function InvestmentReportView() {
     const { data } = await invokeSecureFunction('get-investment-reports', {
       reportId: id,
       listOptions: {
-        select: 'id, property_address, property_listing_id, report_content, sources_content, created_at, status, manual_overrides, financial_calculations, demographics_data, economic_data, investment_score, location_intelligence, is_client_report, client_property_id, current_version, report_tier, report_variant, derived_from_report_id, parent_report_id, pdf_url'
+        select: 'id, property_address, property_listing_id, report_content, sources_content, created_at, status, manual_overrides, financial_calculations, demographics_data, economic_data, investment_score, location_intelligence, is_client_report, client_property_id, current_version, report_tier, report_variant, derived_from_report_id, parent_report_id, pdf_url, data_sources, validation_flags'
       }
     });
 
@@ -229,6 +230,11 @@ export default function InvestmentReportView() {
                 onHeroImagesManage={() => setHeroDialogOpen(true)}
                 onRegenerated={handleReportUpdate}
                 onDownload={handleDownload}
+              />
+
+              <InvestmentReportCoverageNote
+                dataSources={report.data_sources}
+                validationFlags={report.validation_flags}
               />
 
               {hasOverrides && (

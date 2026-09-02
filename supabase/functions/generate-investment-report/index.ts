@@ -12,7 +12,8 @@ import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
-import { applyDisplayOverrides, buildAnnualCostOverrides } from '../_shared/reports/investment/overrides.pure.ts';
+import { applyDisplayOverrides, buildAnnualCostOverrides, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
+import { reconcileFacts, factFindingToFlag } from '../_shared/reports/investment/factReconciliation.pure.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
@@ -2684,16 +2685,18 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               // sensitivity and metrics all describe them; splatting them
               // over the response afterwards (the old way) left every
               // downstream figure describing the formula estimates.
-              ...(Number.isFinite(toNumberOr(mergedOverrides.capitalGrowth, NaN)) && toNumberOr(mergedOverrides.capitalGrowth, 0) > 0
-                ? { capitalGrowthRate: toNumberOr(mergedOverrides.capitalGrowth, 0) } : {}),
-              ...(Number.isFinite(toNumberOr(mergedOverrides.cpiGrowthRate, NaN)) && toNumberOr(mergedOverrides.cpiGrowthRate, 0) > 0
-                ? { cpiGrowthRate: toNumberOr(mergedOverrides.cpiGrowthRate, 0) } : {}),
+              // (toFiniteNumber, not the local toNumberOr — that const is
+              // declared later in this handler and would be TDZ here.)
+              ...((toFiniteNumber(mergedOverrides.capitalGrowth) ?? 0) > 0
+                ? { capitalGrowthRate: toFiniteNumber(mergedOverrides.capitalGrowth) } : {}),
+              ...((toFiniteNumber(mergedOverrides.cpiGrowthRate) ?? 0) > 0
+                ? { cpiGrowthRate: toFiniteNumber(mergedOverrides.cpiGrowthRate) } : {}),
               ...(buildAnnualCostOverrides(mergedOverrides)
                 ? { annualCostOverrides: buildAnnualCostOverrides(mergedOverrides) } : {}),
-              ...(Number.isFinite(toNumberOr(mergedOverrides.stampDuty, NaN))
-                ? { stampDutyOverride: toNumberOr(mergedOverrides.stampDuty, 0) } : {}),
-              ...(Number.isFinite(toNumberOr(mergedOverrides.solicitorFees, NaN))
-                ? { legalFeesOverride: toNumberOr(mergedOverrides.solicitorFees, 0) } : {})
+              ...(toFiniteNumber(mergedOverrides.stampDuty) !== undefined
+                ? { stampDutyOverride: toFiniteNumber(mergedOverrides.stampDuty) } : {}),
+              ...(toFiniteNumber(mergedOverrides.solicitorFees) !== undefined
+                ? { legalFeesOverride: toFiniteNumber(mergedOverrides.solicitorFees) } : {})
             })
           });
           
@@ -6080,34 +6083,67 @@ YOUR DEDICATED PROPERTY PARTNER
         council_area: propertyDetails?.councilArea || null
       };
       
-      // Prepare data sources tracking
+      // Prepare data sources tracking. Every source the generation ATTEMPTED
+      // is recorded — present with its provenance, or null — so the viewer's
+      // coverage disclosure can say "9 of 11 sources" instead of the four
+      // this block used to name. A null is a fact ("we asked and got
+      // nothing"), never an error.
+      const sourceStamp = (source: string, confidence: number) => ({
+        source,
+        confidence,
+        timestamp: new Date().toISOString()
+      });
       const dataSources = {
         demographics: enhancedData.demographics ? {
           source: 'abs',
           confidence: enhancedData.demographics.data_quality === 'live' ? 1.0 : 0.6,
           timestamp: new Date().toISOString()
         } : null,
-        financials: enhancedData.financials ? {
-          source: 'calculated',
-          confidence: 1.0,
-          timestamp: new Date().toISOString()
-        } : null,
-        marketData: enhancedData.domainData ? {
-          source: 'domain',
-          confidence: 0.9,
-          timestamp: new Date().toISOString()
-        } : null,
-        locationIntelligence: enhancedData.locationIntelligence ? {
-          source: 'google_maps',
-          confidence: 0.95,
-          timestamp: new Date().toISOString()
-        } : null
+        financials: enhancedData.financials ? sourceStamp('calculated', 1.0) : null,
+        marketData: enhancedData.domainData ? sourceStamp('domain', 0.9) : null,
+        locationIntelligence: enhancedData.locationIntelligence ? sourceStamp('google_maps', 0.95) : null,
+        economics: enhancedData.economics ? sourceStamp('rba', 0.9) : null,
+        seifa: enhancedData.seifaData ? sourceStamp('abs_seifa', 0.9) : null,
+        crimeStatistics: enhancedData.crimeStatistics ? sourceStamp('state_crime_data', 0.8) : null,
+        employment: enhancedData.employmentData ? sourceStamp('abs_employment', 0.9) : null,
+        climate: enhancedData.climateData ? sourceStamp('climate_service', 0.8) : null,
+        riskAssessment: enhancedData.riskAssessment ? sourceStamp('risk_assessment', 0.85) : null,
+        investmentScore: enhancedData.investmentScore ? sourceStamp('scoring_engine', 1.0) : null
       };
+
+      // Fact reconciliation: does the written analysis agree with the record
+      // it rides on? Findings DISCLOSE (validation_flags → the viewer's
+      // coverage note); they never gate completion — a report that never
+      // finishes is worse than one carrying a named warning. Report-level
+      // rule, so comparative prose about other properties cannot trip it.
+      let factFlags: Array<ReturnType<typeof factFindingToFlag>> = [];
+      try {
+        const factNum = (v: unknown): number | undefined => {
+          const n = toFiniteNumber(v);
+          return n !== undefined && n > 0 ? n : undefined;
+        };
+        const factFindings = reconcileFacts(reportContent, {
+          bedrooms: factNum(mergedOverrides.bedrooms) ?? factNum(propertyDetails?.beds),
+          bathrooms: factNum(mergedOverrides.bathrooms) ?? factNum(propertyDetails?.baths),
+          carSpaces: factNum(mergedOverrides.carSpaces) ?? factNum(propertyDetails?.carSpaces),
+          purchasePrice: factNum(mergedOverrides.purchasePrice) ?? factNum(propertyDetails?.price),
+          weeklyRent: factNum(mergedOverrides.weeklyRent) ?? factNum(propertyDetails?.weeklyRent),
+          landSizeSqm: factNum(mergedOverrides.landSizeSqm) ?? factNum(propertyDetails?.landSize),
+        });
+        factFlags = factFindings.map(factFindingToFlag);
+        if (factFlags.length) {
+          console.warn(`⚠️ Fact reconciliation: ${factFlags.length} contradiction(s) — ${factFlags.map((f) => f.field).join(', ')}`);
+        }
+      } catch (factError) {
+        console.warn('Fact reconciliation skipped:', factError instanceof Error ? factError.message : factError);
+      }
       
       // Combine financial validation flags with schema validation flags
       const allValidationFlags = [
         ...(enhancedData.validation?.flags || []),
         ...schemaValidationFlags,
+        // Prose-vs-record contradictions, from the reconciliation above.
+        ...factFlags,
         // Add quality-based validation flags
         ...(avgScore < 70 ? [{
           type: 'quality',

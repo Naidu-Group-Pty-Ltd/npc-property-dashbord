@@ -32,7 +32,8 @@ import {
   type LoanCalculationInput,
 } from './financialEngine.pure.ts';
 
-const num = (v: unknown): number | undefined => {
+/** Loose numeric coercion for override payloads ("$1,190,000" → 1190000). */
+export const toFiniteNumber = (v: unknown): number | undefined => {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
   if (typeof v === 'string' && v.trim() !== '') {
     const n = Number(v.replace(/[$,\s]/g, ''));
@@ -40,6 +41,7 @@ const num = (v: unknown): number | undefined => {
   }
   return undefined;
 };
+const num = toFiniteNumber;
 
 const isRecord = (v: unknown): v is Record<string, any> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
