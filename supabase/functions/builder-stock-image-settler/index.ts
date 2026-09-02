@@ -82,6 +82,7 @@ import {
 import { previewSanitization } from '../_shared/builderStock/previewSanitization.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
+import { storeVerifiedWebImages } from '../_shared/builderStock/webImageStore.ts';
 import {
   claimOneImageWorkItem, completeItemWork, isMissingCapability, publishUploadIfReady,
   readItemWorkPending,
@@ -681,6 +682,24 @@ Deno.serve(async (req: Request) => {
     const enforce = async (organisationId: string) => {
       if (enforced.has(organisationId)) return;
       enforced.add(organisationId);
+      /*
+       * The displayed web images first: store the hotlinked ones, retire the
+       * ones whose address says the picture is GONE — so the enforcement a
+       * moment later re-decides those cards in the same tick, and a "Web
+       * sourced" badge can never outlive the photograph behind it. Its own
+       * guard, because this pass must never cost the enforcement its turn.
+       * See `webImageStore.ts` for the lot 310 measurement that demands it.
+       */
+      try {
+        await storeVerifiedWebImages(supabase, organisationId);
+      } catch (storeError) {
+        console.warn('[builder-stock-image-settler] web images not stored', {
+          organisation_id: organisationId,
+          phase: 'web_image_store',
+          message: String((storeError as { message?: string })?.message ?? storeError)
+            .slice(0, 200),
+        });
+      }
       try {
         await enforceStrictPrimaryImages(supabase, organisationId);
       } catch (enforceError) {
