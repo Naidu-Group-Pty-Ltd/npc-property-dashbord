@@ -59,6 +59,9 @@ import {
 import {
   settleFallbackImages,
 } from '../../../supabase/functions/_shared/builderStock/settleFallbackImages';
+import {
+  persistDiscoveredRowLinks,
+} from '../../../supabase/functions/_shared/builderStock/repairSourceImages';
 
 // The shape of a live Luxton row: the label is the visible cell, the address
 // is the hyperlink underneath it that `mergeHyperlinkColumns` put beside it.
@@ -540,5 +543,101 @@ describe('every row the import writes carries the stamp', () => {
     expect(writes).toHaveLength(3);
     // And no write site bypasses it.
     expect(source).not.toMatch(/source_row: record as unknown/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Discovery is made DURABLE — the stored row learns what the live fetch saw
+// ---------------------------------------------------------------------------
+
+describe('a live fetch\'s discoveries survive onto the stored row', () => {
+  const write = async (input: Parameters<typeof persistDiscoveredRowLinks>[1]) => {
+    const updates: Array<Record<string, unknown>> = [];
+    const db = {
+      from: () => ({
+        update: (patch: Record<string, unknown>) => {
+          updates.push(patch);
+          const chain = { eq: () => chain, then: (r: (v: unknown) => unknown) =>
+            Promise.resolve({ error: null }).then(r) } as any;
+          return chain;
+        },
+      }),
+    } as any;
+    const row = await persistDiscoveredRowLinks(db, input);
+    return { row, updates };
+  };
+
+  it('adds URL columns the stored row lacks, records them, and stamps the row', async () => {
+    const { row, updates } = await write({
+      itemId: 'i1', organisationId: 'o1',
+      freshUnmapped: { 'Brochure V002 URL': 'https://drive.google.com/file/d/AB/view', Status: 'Available' },
+      storedRow: { unmapped: { 'Brochure V002': 'Brochure' }, source_anchor: 'r9' },
+      availability: 'resolved', method: 'htmlview',
+    });
+    expect(updates).toHaveLength(1);
+    const stored = (row!.unmapped as Record<string, string>);
+    // Add-only: the label column survives beside the new URL column.
+    expect(stored['Brochure V002']).toBe('Brochure');
+    expect(stored['Brochure V002 URL']).toContain('drive.google.com');
+    // A plain value is never persisted as a link column.
+    expect(stored.Status).toBeUndefined();
+    expect(row!.recovered_link_columns).toEqual(['Brochure V002 URL']);
+    expect(row!.link_discovery).toEqual({ state: 'complete', method: 'htmlview' });
+    // The row it returns is the row it wrote, so the run reads its own write.
+    expect((updates[0].source_row as Record<string, unknown>).link_discovery)
+      .toEqual({ state: 'complete', method: 'htmlview' });
+  });
+
+  it('writes NOTHING when the stored row already knows everything', async () => {
+    const { row, updates } = await write({
+      itemId: 'i1', organisationId: 'o1',
+      freshUnmapped: { 'Brochure V002 URL': 'https://drive.google.com/file/d/AB/view' },
+      storedRow: {
+        unmapped: { 'Brochure V002 URL': 'https://drive.google.com/file/d/AB/view' },
+        link_discovery: { state: 'complete', method: 'htmlview' },
+      },
+      availability: 'resolved', method: 'htmlview',
+    });
+    expect(row).toBeNull();
+    expect(updates).toHaveLength(0);
+  });
+
+  it('never replaces a URL a stored column already carries', async () => {
+    const { row } = await write({
+      itemId: 'i1', organisationId: 'o1',
+      freshUnmapped: { 'Brochure V002 URL': 'https://drive.google.com/file/d/NEW/view' },
+      storedRow: {
+        unmapped: { 'Brochure V002 URL': 'https://www.dropbox.com/s/old.pdf' },
+      },
+      availability: 'resolved', method: 'workbook_export',
+    });
+    // Only the stamp changed; the recovered URL column kept its value.
+    expect((row!.unmapped as Record<string, string>)['Brochure V002 URL'])
+      .toBe('https://www.dropbox.com/s/old.pdf');
+  });
+
+  it('stamps a row unavailable when the live fetch could not read the layer', async () => {
+    const { row } = await write({
+      itemId: 'i1', organisationId: 'o1',
+      freshUnmapped: { 'Brochure V002': 'Brochure' },
+      storedRow: { unmapped: { 'Brochure V002': 'Brochure' } },
+      availability: 'unavailable_source_export', method: null,
+    });
+    expect(row!.link_discovery).toEqual({
+      state: 'unavailable', reason: 'unavailable_source_export',
+    });
+  });
+});
+
+describe('the repair re-fetches a live Google Sheet, and only a Google Sheet', () => {
+  it('is pinned in the source: guarded by googleSheetsRef, falling back to storage', () => {
+    const source = readFileSync(
+      'supabase/functions/_shared/builderStock/repairSourceImages.ts', 'utf8');
+    const guard = source.indexOf('if (googleSheetsRef(sourceUrl))');
+    const fallback = source.indexOf('if (!bytes) {');
+    expect(guard).toBeGreaterThan(-1);
+    expect(fallback).toBeGreaterThan(guard);
+    // And what it learns is made durable through the one writer.
+    expect(source).toContain('persistDiscoveredRowLinks(db,');
   });
 });
