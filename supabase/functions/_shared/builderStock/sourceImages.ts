@@ -108,6 +108,20 @@ import {
  * of 5334x3334 JPEGs needs in order to be read inside an edge worker at all.
  * Both live examples sat at `attempts: 2`, one tick from being retired.
  *
+ * 9 changes what the reader can SEE and what it can AFFORD. Two capabilities.
+ *
+ * A locked-export Google Sheet's links are now read at all: a document whose
+ * owner disabled download answers 401 to every `export?format=…` while
+ * serving its rows, and its link targets are recovered from the one public
+ * representation that carries them (`htmlview/sheet` — see
+ * `googleSheetsHtmlGrid.pure.ts`), merged by the same content-proven
+ * alignment as ever. And a heavy document no longer costs a full-buffer scan
+ * PER PAGE: the object index is memoised (see `scanPdfObjects`), which took
+ * the live 13.9 MB Mandalay brochure from ~5.9 s of parser CPU — a worker
+ * kill on every attempt, retired operationally at 8 — to ~0.5 s. Every
+ * operational retirement banked at 8 was decided under that cost and is
+ * stale by definition.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.
