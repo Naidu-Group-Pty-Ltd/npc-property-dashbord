@@ -16,6 +16,7 @@
  *
  * Operations
  *   create_upload | process_upload | reprocess_upload | enrich_images
+ *   create_builder_image | attach_builder_image | list_designs | delete_design_image
  *   list_uploads | get_upload
  *   list_stock | get_stock_item | set_availability | archive_stock_item
  *   image_url
@@ -50,6 +51,19 @@ import { googleSheetsRef } from '../_shared/builderStock/googleSheetsSource.pure
 import {
   isTraversableBranch, rowSourceBranches,
 } from '../_shared/builderStock/sourceBranches.pure.ts';
+import {
+  designImageKey, designImageStoragePath, designOfStoredRow, designsInStock,
+  isBuilderSuppliedPath, propertiesForDesign, propertyImageStoragePath,
+} from '../_shared/builderStock/builderSuppliedImage.pure.ts';
+import {
+  attachBuilderImage, builderImageReference,
+} from '../_shared/builderStock/attachBuilderImage.ts';
+import {
+  roleFromBuilderDesign, roleFromBuilderProperty,
+} from '../_shared/builderStock/sourceImageRole.pure.ts';
+import { validateSourceImageBytes } from '../_shared/builderStock/sourceAssets.pure.ts';
+import { PROCESSED_LIFECYCLE } from '../_shared/builderStock/stockLifecycle.pure.ts';
+import { sha256Hex } from '../_shared/builderStock/rasterPng.ts';
 import { consumeRateLimit } from '../_shared/requestSecurity.ts';
 import { fetchStockSource, SourceFetchError } from '../_shared/builderStock/fetchSource.ts';
 import type { HyperlinkAvailability } from '../_shared/builderStock/sheetHyperlinks.pure.ts';
@@ -505,6 +519,314 @@ Deno.serve(async (req) => {
           'That file could not be processed. Please check the format and try again.',
           (error as { message?: string })?.message);
       }
+    }
+
+    /*
+     * =====================================================================
+     * The picture a builder hands over directly
+     * =====================================================================
+     *
+     * Every image this product serves is READ out of something — a column
+     * naming a URL, a brochure page naming a lot, a page cover. That works
+     * until there is nothing to read, and on the one live source thirteen of
+     * twenty-six published properties attach no document at all. The
+     * pipeline's fallbacks then offered a Simonds display home, an ABC Homes
+     * display home and the land developer's estate marketing for those rows,
+     * and refused all three, correctly. The cards were blank because there was
+     * nothing to read, and no reader fixes that.
+     *
+     * So the builder can hand the picture over. Two routes, one act: a render
+     * FOR A DESIGN, which serves every row of theirs stating it — three
+     * uploads cover those thirteen properties and every future one — or a
+     * picture FOR ONE PROPERTY, which is the exception and the guarantee.
+     *
+     * Uploaded exactly as a stock list is: a signed URL, the browser PUTs to
+     * it, and a second call confirms. The bytes are validated SERVER-SIDE on
+     * that second call, out of storage, so what is registered is what was
+     * actually stored rather than what the browser said it sent.
+     */
+    if (operation === 'create_builder_image') {
+      if (!await can('edit')) {
+        return json({ error: 'You do not have permission to add images', code: 'permission_denied' }, 403);
+      }
+
+      const filename = cleanText(body.filename, 200) || 'image';
+      const designLabel = cleanText(body.design, 120);
+      const stockItemId = cleanText(body.stock_item_id, 64);
+      if (!designLabel && !stockItemId) {
+        return json({ error: 'Say which design or which property this picture is for.' }, 400);
+      }
+      if (designLabel && stockItemId) {
+        return json({ error: 'A picture is for a design or for a property, not both.' }, 400);
+      }
+
+      let storagePath: string;
+      if (stockItemId) {
+        const item = await loadItem(stockItemId);
+        if (!item) return json({ error: 'Property not found' }, 404);
+        storagePath = propertyImageStoragePath({
+          organisationId: activeOrganisationId,
+          stockItemId,
+          filename: safeObjectName(filename),
+        });
+      } else {
+        const designKey = designImageKey(designLabel);
+        if (!designKey) return json({ error: 'That design name cannot be used.' }, 400);
+        /*
+         * A RENDER ONLY FOR A DESIGN THIS ORGANISATION SELLS. This is the
+         * guard that replaces `designIdentityIsDistinctive` — see
+         * `builderSuppliedImage.pure.ts`. There is no text matching here to
+         * be strict about: the design is an exact, builder-chosen key, and
+         * the one thing worth refusing is a design their own stock never
+         * states.
+         */
+        const stating = await readAllRows<{ source_row?: unknown }>(() => supabase
+          .from('builder_stock_items')
+          .select('id, source_row')
+          .eq('organisation_id', activeOrganisationId)
+          .in('lifecycle_status', PROCESSED_LIFECYCLE)
+          .order('id'));
+        // A read that FAILED is not stock that states no design, so it is
+        // refused as unavailable rather than as a design they do not sell.
+        if (stating.failed) {
+          return json({ error: 'Your stock could not be read just now.' }, 503);
+        }
+        const states = stating.rows.some((row) =>
+          designImageKey(designOfStoredRow(row.source_row)) === designKey);
+        if (!states) {
+          return json({
+            error: 'None of your properties state that design.',
+            code: 'design_not_in_stock',
+          }, 400);
+        }
+        storagePath = designImageStoragePath({
+          organisationId: activeOrganisationId,
+          designKey,
+          filename: safeObjectName(filename),
+        });
+      }
+
+      const { data: signed, error: signError } = await supabase.storage
+        .from(STOCK_IMAGE_BUCKET)
+        .createSignedUploadUrl(storagePath);
+      if (signError || !signed?.signedUrl) {
+        console.error('[builder-portal-stock] builder image signed url failed', {
+          bucket: STOCK_IMAGE_BUCKET,
+          storage_path: storagePath,
+          message: signError?.message ?? 'no signed url returned',
+        });
+        return json({ error: 'Storage could not accept the image.' }, 502);
+      }
+      const raw = signed.signedUrl;
+      return json({
+        success: true,
+        storage_path: storagePath,
+        upload_url: raw.startsWith('http')
+          ? raw
+          : `${Deno.env.get('SUPABASE_URL')}/storage/v1${raw.startsWith('/') ? '' : '/'}${raw}`,
+        token: signed.token,
+      });
+    }
+
+    if (operation === 'attach_builder_image') {
+      if (!await can('edit')) {
+        return json({ error: 'You do not have permission to add images', code: 'permission_denied' }, 403);
+      }
+
+      const storagePath = cleanText(body.storage_path, 400);
+      /*
+       * The path arrives in the body and is therefore a LOOKUP KEY, never
+       * authority — the same rule every other write in this function keeps.
+       * It must be one this product wrote, under this organisation's own
+       * prefix, or a caller could register somebody else's object.
+       */
+      if (!isBuilderSuppliedPath(storagePath) || !storagePath.includes(`/${activeOrganisationId}/`)) {
+        return json({ error: 'That image location is not allowed' }, 400);
+      }
+
+      const { data: blob, error: downloadError } = await supabase.storage
+        .from(STOCK_IMAGE_BUCKET).download(storagePath);
+      if (downloadError || !blob) {
+        return json({ error: 'That image was not uploaded. Please try again.' }, 400);
+      }
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      /*
+       * VALIDATED OUT OF STORAGE, not off the request. What is registered is
+       * what was actually stored, so a browser cannot declare a PNG and put a
+       * PDF there — and the size, format and minimum-dimension rules are the
+       * ones every other source image already passes.
+       */
+      const checked = validateSourceImageBytes(bytes);
+      if (checked.ok !== true) {
+        await supabase.storage.from(STOCK_IMAGE_BUCKET).remove([storagePath]);
+        return json({ error: checked.reason }, 400);
+      }
+      const sha256 = await sha256Hex(bytes);
+
+      const designLabel = cleanText(body.design, 120);
+      const stockItemId = cleanText(body.stock_item_id, 64);
+      const suppliedBy = 'builder' as const;
+
+      // ---- one property -------------------------------------------------
+      if (stockItemId) {
+        const item = await loadItem(stockItemId);
+        if (!item) return json({ error: 'Property not found' }, 404);
+        const attached = await attachBuilderImage(supabase, {
+          organisationId: activeOrganisationId,
+          stockItemId,
+          uploadId: item.upload_id ?? null,
+          storageBucket: STOCK_IMAGE_BUCKET,
+          storagePath,
+          contentType: checked.contentType,
+          byteSize: bytes.length,
+          sha256,
+          role: roleFromBuilderProperty({
+            suppliedBy,
+            property: stockPropertyLabel(item),
+          }),
+        });
+        if ('error' in attached) return json({ error: 'The image could not be stored.' }, 500);
+        // `attachBuilderImage` requeues the property itself — see its header.
+        await logBuilderProjectActivity(supabase, req, {
+          builderUserId: me.id, organisationId: activeOrganisationId,
+          action: 'builder_stock_image_supplied',
+          entityType: 'stock_item', entityId: stockItemId,
+          metadata: { storage_path: storagePath, scope: 'property' },
+        });
+        return json({ success: true, scope: 'property', properties: 1 });
+      }
+
+      // ---- one design, every property stating it -------------------------
+      const designKey = designImageKey(designLabel);
+      if (!designKey) return json({ error: 'That design name cannot be used.' }, 400);
+
+      const { data: designRow, error: designError } = await supabase
+        .from('builder_design_images')
+        .upsert({
+          organisation_id: activeOrganisationId,
+          design_key: designKey,
+          design_label: designLabel,
+          storage_bucket: STOCK_IMAGE_BUCKET,
+          storage_path: storagePath,
+          content_type: checked.contentType,
+          byte_size: bytes.length,
+          sha256,
+          uploaded_by_builder_user_id: me.id,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'organisation_id,design_key' })
+        .select('id')
+        .maybeSingle();
+      if (designError || !designRow) {
+        console.error('[builder-portal-stock] design image upsert failed', designError?.message);
+        return json({ error: 'The render could not be stored.' }, 500);
+      }
+
+      const fanned = await fanOutDesignImage(supabase, {
+        organisationId: activeOrganisationId,
+        designImage: {
+          id: String(designRow.id),
+          design_key: designKey,
+          design_label: designLabel,
+          storage_bucket: STOCK_IMAGE_BUCKET,
+          storage_path: storagePath,
+          content_type: checked.contentType,
+          byte_size: bytes.length,
+          sha256,
+        },
+        suppliedBy,
+      });
+
+      await logBuilderProjectActivity(supabase, req, {
+        builderUserId: me.id, organisationId: activeOrganisationId,
+        action: 'builder_stock_image_supplied',
+        entityType: 'stock_item', entityId: String(designRow.id),
+        metadata: { storage_path: storagePath, scope: 'design', design: designLabel, properties: fanned },
+      });
+      return json({ success: true, scope: 'design', design: designLabel, properties: fanned });
+    }
+
+    /*
+     * The designs this organisation's stock states, what each one covers, and
+     * which of them already have a render.
+     *
+     * This is the surface that makes the design route usable: a builder does
+     * not have to know that eleven of their properties are `DK 22B`, and they
+     * must not have to type it — the list is derived from their own rows, and
+     * the one that would fix the most blank cards is first.
+     */
+    if (operation === 'list_designs') {
+      if (!await can('view')) {
+        return json({ error: 'You do not have permission to view stock', code: 'permission_denied' }, 403);
+      }
+      const stock = await readAllRows<Record<string, unknown>>(() => supabase
+        .from('builder_stock_items')
+        .select('id, source_row, primary_image_id')
+        .eq('organisation_id', activeOrganisationId)
+        .in('lifecycle_status', PROCESSED_LIFECYCLE)
+        .order('id'));
+      if (stock.failed) {
+        return json({ error: 'Your designs could not be read just now.' }, 503);
+      }
+      const { data: renders } = await supabase
+        .from('builder_design_images')
+        .select('id, design_key, design_label, storage_path, updated_at')
+        .eq('organisation_id', activeOrganisationId);
+
+      const rendered = new Map<string, Record<string, unknown>>();
+      for (const render of renders ?? []) rendered.set(String(render.design_key), render);
+
+      const designs = designsInStock(stock.rows.map((row: Record<string, unknown>) => ({
+        house_design: designOfStoredRow(row.source_row),
+        hasImage: !!row.primary_image_id,
+      }))).map((design) => ({
+        ...design,
+        render: rendered.get(design.key)
+          ? {
+            id: rendered.get(design.key)!.id,
+            supplied_at: rendered.get(design.key)!.updated_at,
+          }
+          : null,
+      }));
+      return json({ success: true, designs });
+    }
+
+    if (operation === 'delete_design_image') {
+      if (!await can('edit')) {
+        return json({ error: 'You do not have permission to remove images', code: 'permission_denied' }, 403);
+      }
+      const designKey = designImageKey(cleanText(body.design, 120));
+      if (!designKey) return json({ error: 'That design name cannot be used.' }, 400);
+
+      const { data: render } = await supabase
+        .from('builder_design_images')
+        .select('id, storage_path')
+        .eq('organisation_id', activeOrganisationId)
+        .eq('design_key', designKey)
+        .maybeSingle();
+      if (!render) return json({ error: 'No render is stored for that design.' }, 404);
+
+      /*
+       * The fan-out rows go with it. A render withdrawn from the design but
+       * left on eleven properties is a picture the builder believes they
+       * removed, still on eleven cards — the worst outcome available here.
+       * `enforceStrictPrimaryImages` re-decides each card on its own sweep.
+       */
+      const reference = builderImageReference({
+        designImageId: String(render.id), storagePath: String(render.storage_path),
+      });
+      const { data: removed } = await supabase
+        .from('builder_stock_item_images')
+        .delete()
+        .eq('organisation_id', activeOrganisationId)
+        .eq('source_reference', reference)
+        .select('stock_item_id');
+      await supabase.from('builder_design_images').delete().eq('id', render.id);
+      await supabase.storage.from(STOCK_IMAGE_BUCKET).remove([String(render.storage_path)]);
+
+      const touched = [...new Set((removed ?? []).map((row: { stock_item_id: string }) =>
+        String(row.stock_item_id)))];
+      await reopenImageWork(supabase, activeOrganisationId, touched);
+      return json({ success: true, properties: touched.length });
     }
 
     /*
@@ -1643,6 +1965,113 @@ Deno.serve(async (req) => {
  * One query per collection rather than per row: a 100-row stock page must not
  * become 201 round trips.
  */
+
+/** How a property is named to a person, for the record a role assignment writes. */
+function stockPropertyLabel(item: Record<string, unknown>): string {
+  const parts = [
+    item.lot_number ? `Lot ${String(item.lot_number)}` : '',
+    String(item.address_line ?? ''),
+    String(item.development_name ?? ''),
+    String(item.suburb ?? ''),
+  ].map((part) => part.trim()).filter(Boolean);
+  return parts.join(', ') || 'this property';
+}
+
+/**
+ * Put properties back in front of the image ladder.
+ *
+ * The link recovery's rule, in its own words: reopened only where there is
+ * something to gain. A property already holding a picture is left alone —
+ * except that here the picture may BE the one just supplied, so the sweep is
+ * what re-decides the card, not this.
+ */
+async function reopenImageWork(
+  supabase: any,
+  organisationId: string,
+  stockItemIds: string[],
+): Promise<void> {
+  if (!stockItemIds.length) return;
+  await supabase.from('builder_stock_items').update({
+    enrichment_status: 'pending',
+    image_work_stage: 'source',
+    image_work_claim_until: null,
+    image_work_next_attempt_at: new Date().toISOString(),
+    image_work_updated_at: new Date().toISOString(),
+  }).eq('organisation_id', organisationId).in('id', stockItemIds);
+}
+
+/**
+ * Attach one design render to every property of this organisation that states
+ * that design.
+ *
+ * EXACT KEY EQUALITY, inside one organisation, and nothing else — see
+ * `propertiesForDesign`. `DK 22B` reaches `DK 22B` and never `DK 23B`, which
+ * differ by one character and are different houses.
+ *
+ * Re-run whenever the render changes and whenever new stock arrives stating
+ * the design, which is what makes three uploads cover the properties that
+ * exist today AND the ones imported next month.
+ */
+async function fanOutDesignImage(
+  supabase: any,
+  input: {
+    organisationId: string;
+    designImage: {
+      id: string; design_key: string; design_label: string;
+      storage_bucket: string; storage_path: string;
+      content_type: string; byte_size: number | null; sha256: string | null;
+    };
+    suppliedBy: 'builder' | 'staff';
+  },
+): Promise<number> {
+  const stock = await readAllRows<Record<string, unknown>>(() => supabase
+    .from('builder_stock_items')
+    .select('id, upload_id, source_row')
+    .eq('organisation_id', input.organisationId)
+    .in('lifecycle_status', PROCESSED_LIFECYCLE)
+    .order('id'));
+  /*
+   * A PARTIAL READ WOULD FAN OUT PARTIALLY, and silently: some of the eleven
+   * properties would carry the render and the rest would not, with nothing
+   * saying which. `readAllRows` never answers a partial set — see its header —
+   * so a failed read attaches to nobody and the builder is told the count was
+   * zero rather than being shown a number that is wrong.
+   */
+  if (stock.failed) return 0;
+
+  interface DesignCandidate { id: string; upload_id: string | null; house_design: string | null }
+  const candidates: DesignCandidate[] = stock.rows.map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    upload_id: (row.upload_id as string | null) ?? null,
+    house_design: designOfStoredRow(row.source_row),
+  }));
+  const matched = propertiesForDesign(candidates, input.designImage.design_key);
+
+  const role = roleFromBuilderDesign({
+    suppliedBy: input.suppliedBy,
+    design: input.designImage.design_label,
+  });
+  const attached: string[] = [];
+  for (const property of matched) {
+    const result = await attachBuilderImage(supabase, {
+      organisationId: input.organisationId,
+      stockItemId: property.id,
+      uploadId: property.upload_id,
+      storageBucket: input.designImage.storage_bucket,
+      storagePath: input.designImage.storage_path,
+      contentType: input.designImage.content_type,
+      byteSize: input.designImage.byte_size,
+      sha256: input.designImage.sha256,
+      role,
+      designImageId: input.designImage.id,
+      designKey: input.designImage.design_key,
+    });
+    if (!('error' in result)) attached.push(property.id);
+  }
+  // Each attach requeues its own property — see `attachBuilderImage`.
+  return attached.length;
+}
+
 async function decorateItems(
   supabase: any,
   items: any[],
