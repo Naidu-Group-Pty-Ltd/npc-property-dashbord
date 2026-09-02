@@ -326,11 +326,11 @@ Deno.serve(async (req) => {
     // legacy browser generator all read one set of figures. Idempotent on
     // healthy rows, and it never writes anything back.
     if (table === 'investment_reports' && responseData.length) {
-      responseData = responseData.map(row => {
-        const r = row as ReportRow;
-        if (!r || typeof r !== 'object' || !r.financial_calculations) return row;
-        return { ...r, financial_calculations: reconcileStoredFinancials(r.financial_calculations).fin } as typeof row;
+      const healed = (responseData as unknown as ReportRow[]).map((r) => {
+        if (!r || typeof r !== 'object' || !r.financial_calculations) return r;
+        return { ...r, financial_calculations: reconcileStoredFinancials(r.financial_calculations).fin };
       });
+      responseData = healed as unknown as typeof responseData;
     }
     if (table === 'investment_reports' && projection === 'cashFlowLibrary') {
       responseData = responseData.map(row => toLibraryFinancialSummary(row as ReportRow)) as typeof responseData;
