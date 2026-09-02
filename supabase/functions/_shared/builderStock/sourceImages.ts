@@ -143,6 +143,18 @@ import {
  * `not_identified` banked at 10 was judged under the split-blind reading and
  * is stale by definition.
  *
+ * 12 reads the LIVE generation of an incrementally updated document. The
+ * compressed-object recovery kept the FIRST copy of each object number, and
+ * an incremental update appends revisions after the ones they replace — so
+ * on the same lot 102 brochure (five generations, twenty-one object streams)
+ * the walker served the STALE page dictionary, whose image map pointed at
+ * the template's sample artwork (another design's floor plan, labelled
+ * LOT 414) while the newest generation mapped the builder's real 1920x1080
+ * facade render. Recovery is last-generation-wins now, agreeing with the raw
+ * byte scan (see `recoverCompressedObjects`), so every negative banked at 11
+ * against such a document was judged on the wrong generation's pictures and
+ * is stale by definition.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.
