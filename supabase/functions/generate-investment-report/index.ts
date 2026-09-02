@@ -12,6 +12,7 @@ import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
+import { applyDisplayOverrides, buildAnnualCostOverrides } from '../_shared/reports/investment/overrides.pure.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
@@ -2678,77 +2679,40 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               state: state,
               propertyType: propertyDetails?.propertyType || 'house',
               isFirstHomeBuyer: effectiveIsFirstHomeBuyer,
-              isNewBuild: effectiveIsNewBuild
+              isNewBuild: effectiveIsNewBuild,
+              // Reviewed figures go INTO the engine so the totals, series,
+              // sensitivity and metrics all describe them; splatting them
+              // over the response afterwards (the old way) left every
+              // downstream figure describing the formula estimates.
+              ...(Number.isFinite(toNumberOr(mergedOverrides.capitalGrowth, NaN)) && toNumberOr(mergedOverrides.capitalGrowth, 0) > 0
+                ? { capitalGrowthRate: toNumberOr(mergedOverrides.capitalGrowth, 0) } : {}),
+              ...(Number.isFinite(toNumberOr(mergedOverrides.cpiGrowthRate, NaN)) && toNumberOr(mergedOverrides.cpiGrowthRate, 0) > 0
+                ? { cpiGrowthRate: toNumberOr(mergedOverrides.cpiGrowthRate, 0) } : {}),
+              ...(buildAnnualCostOverrides(mergedOverrides)
+                ? { annualCostOverrides: buildAnnualCostOverrides(mergedOverrides) } : {}),
+              ...(Number.isFinite(toNumberOr(mergedOverrides.stampDuty, NaN))
+                ? { stampDutyOverride: toNumberOr(mergedOverrides.stampDuty, 0) } : {}),
+              ...(Number.isFinite(toNumberOr(mergedOverrides.solicitorFees, NaN))
+                ? { legalFeesOverride: toNumberOr(mergedOverrides.solicitorFees, 0) } : {})
             })
           });
           
           if (financialResponse.ok) {
             const financialData = await financialResponse.json();
             
-            // Merge manual overrides with fresh financial calculations
+            // The modelled overrides already went INTO the calculator call
+            // above; only the fields the engine does not model (tax
+            // treatment, occupancy display, build splits, loan labels) are
+            // merged onto the result. The old splat loop wrote every
+            // override over the response's leaves, which is how stored rows
+            // came to carry overridden line items beside totals, series and
+            // metrics computed from the formula estimates.
             if (hasOverrides) {
-              console.log('🔀 Merging manual overrides with fresh financial calculations');
-              
-              // Create a deep copy of financial data
-              const mergedFinancials = JSON.parse(JSON.stringify(financialData.data));
-              
-              // Map flat override keys to nested structure
-              const overrideMapping: Record<string, string> = {
-                'purchasePrice': 'initialCosts.propertyValue',
-                'stampDuty': 'initialCosts.stampDuty',
-                'depositValue': 'initialCosts.deposit',
-                'loanToValueRatio': 'keyMetrics.lvr',
-                'interestRate': 'loanDetails.interestRate',
-                'weeklyRent': 'income.weeklyRent',
-                'councilRates': 'annualCosts.councilRates',
-                'waterRates': 'annualCosts.waterRates',
-                'bodyCorporateFees': 'annualCosts.strataFees',
-                'buildingLandlordInsurance': 'annualCosts.landlordInsurance',
-                'propertyManagementFees': 'annualCosts.propertyManagementPercent',
-                'solicitorFees': 'initialCosts.legalFees',
-                'repairsMaintenance': 'annualCosts.maintenance',
-                'lettingFees': 'annualCosts.lettingFees',
-                'capitalGrowth': 'assumptions.capitalGrowth',
-                'buildPrice': 'initialCosts.buildPrice',
-                'landPrice': 'initialCosts.landPrice',
-                'landSizeSqm': 'propertySpecs.landSizeSqm',
-                'buildSizeSqm': 'propertySpecs.buildSizeSqm',
-                'landTax': 'annualCosts.landTax',
-                'depreciation': 'taxBenefits.depreciation',
-                'taxRate': 'taxBenefits.marginalTaxRate',
-                'occupancyRate': 'assumptions.occupancyWeeks',
-                'cpiGrowthRate': 'assumptions.cpiGrowth',
-                'loanType': 'loanDetails.loanType',
-                'loanAmount': 'loanDetails.loanAmount',
-                'interestOnlyPeriodYears': 'loanDetails.interestOnlyPeriod'
+              console.log('🔀 Applying display-only overrides to fresh financial calculations');
+              enhancedData = {
+                ...enhancedData,
+                financials: applyDisplayOverrides(financialData.data, mergedOverrides)
               };
-              
-              // Apply overrides to the nested structure
-              for (const [flatKey, overrideValue] of Object.entries(mergedOverrides)) {
-                const nestedPath = overrideMapping[flatKey];
-                if (nestedPath) {
-                  const keys = nestedPath.split('.');
-                  let current = mergedFinancials;
-                  
-                  // Navigate to the nested location
-                  for (let i = 0; i < keys.length - 1; i++) {
-                    if (!current[keys[i]]) {
-                      current[keys[i]] = {};
-                    }
-                    current = current[keys[i]];
-                  }
-                  
-                  // Set the overridden value
-                  current[keys[keys.length - 1]] = overrideValue;
-                  console.log(`  ✓ Override applied: ${flatKey} → ${nestedPath} = ${overrideValue}`);
-                }
-              }
-              
-              enhancedData = { 
-                ...enhancedData, 
-                financials: mergedFinancials
-              };
-              console.log('✓ Manual overrides applied to financial calculations');
             } else {
               enhancedData = { ...enhancedData, financials: financialData.data };
             }

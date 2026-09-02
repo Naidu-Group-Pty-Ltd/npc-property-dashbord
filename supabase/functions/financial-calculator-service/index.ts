@@ -117,8 +117,10 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
     isNewBuild
   );
 
-  // Calculate ongoing costs
-  const annualCosts = calculateAnnualCosts(propertyValue, weeklyRent, state, propertyType);
+  // Calculate ongoing costs. Reviewed figures arrive as INPUT so the totals,
+  // projections, sensitivity and metrics all describe them — see
+  // overrides.pure.ts for why they must never be splatted over the output.
+  const annualCosts = calculateAnnualCosts(propertyValue, weeklyRent, state, propertyType, input.annualCostOverrides);
 
   // Generate 10-year projections with scenarios
   // If a custom capital growth rate is provided (e.g., from Perplexity research), use it
@@ -144,10 +146,13 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
 
   // The upfront position is stated once: these exact lines appear in
   // initialCosts AND fund the cash-on-cash denominator, so the total a
-  // report prints always foots against the lines printed above it.
-  const legalFees = 1500;
+  // report prints always foots against the lines printed above it. An
+  // operator-supplied duty or conveyancing figure replaces the estimate in
+  // those lines — the schedule assessment is still reported beside it.
+  const stampDuty = input.stampDutyOverride ?? stampDutyResult.stampDuty;
+  const legalFees = input.legalFeesOverride ?? 1500;
   const inspectionFees = 500;
-  const totalUpfront = deposit + stampDutyResult.stampDuty + rateInfo.lmiEstimate + legalFees + inspectionFees;
+  const totalUpfront = deposit + stampDuty + rateInfo.lmiEstimate + legalFees + inspectionFees;
 
   // Calculate key metrics
   const metrics = calculateKeyMetrics(
@@ -162,7 +167,7 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
       propertyValue,
       deposit,
       loanAmount,
-      stampDuty: stampDutyResult.stampDuty,
+      stampDuty,
       stampDutyConcession: stampDutyResult.concession,
       stampDutyBeforeConcession: stampDutyResult.originalAmount,
       fhbEligible: stampDutyResult.fhbEligible,

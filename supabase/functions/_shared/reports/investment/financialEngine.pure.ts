@@ -43,6 +43,29 @@ export interface LoanCalculationInput {
   cpiGrowthRate?: number;
   // Rent growth rate - optional override (defaults to CPI-aligned)
   rentGrowthRate?: number;
+  // Reviewed cost figures that replace the formula estimates AS INPUT, so the
+  // totals, projections, sensitivity and metrics all describe them. Splatting
+  // a reviewed figure over the output instead is how a stored row stops
+  // footing against itself.
+  annualCostOverrides?: AnnualCostOverrides;
+  // An operator-supplied duty figure (e.g. from a settlement statement); the
+  // schedule assessment still runs and is reported, but this value funds the
+  // upfront position.
+  stampDutyOverride?: number;
+  legalFeesOverride?: number;
+}
+
+export interface AnnualCostOverrides {
+  councilRates?: number;
+  waterRates?: number;
+  landlordInsurance?: number;
+  propertyManagement?: number;
+  propertyManagementPercent?: number;
+  maintenance?: number;
+  landTax?: number;
+  strataFees?: number;
+  /** No formula estimates this; present only when a reviewer supplied it. */
+  lettingFees?: number;
 }
 
 export interface FinancialProjection {
@@ -174,20 +197,34 @@ export function calculateMonthlyPayment(loanAmount: number, monthlyRate: number,
          (Math.pow(1 + monthlyRate, totalPayments) - 1);
 }
 
-export function calculateAnnualCosts(propertyValue: number, weeklyRent: number, state: string, propertyType: string) {
+export function calculateAnnualCosts(
+  propertyValue: number,
+  weeklyRent: number,
+  state: string,
+  propertyType: string,
+  overrides?: AnnualCostOverrides,
+) {
   const annualRent = weeklyRent * 52;
+  const o = overrides ?? {};
+  // `??` throughout: an explicit reviewed $0 replaces the estimate; only an
+  // absent override falls back to the formula.
+  const councilRates = o.councilRates ?? Math.floor(propertyValue * 0.008);
+  const waterRates = o.waterRates ?? 800;
+  const landlordInsurance = o.landlordInsurance ?? Math.floor(annualRent * 0.01);
+  const propertyManagementPercent = o.propertyManagementPercent ?? 7;
+  const propertyManagement = o.propertyManagement
+    ?? Math.floor(annualRent * (propertyManagementPercent / 100));
+  const maintenance = o.maintenance ?? 1500;
+  const landTax = o.landTax ?? calculateLandTax(propertyValue, state);
+  const strataFees = o.strataFees ?? (propertyType === 'unit' ? 4800 : 0);
+  const lettingFees = o.lettingFees;
 
-  const councilRates = Math.floor(propertyValue * 0.008);
-  const waterRates = 800;
-  const landlordInsurance = Math.floor(annualRent * 0.01);
-  const propertyManagement = Math.floor(annualRent * 0.07);
-  const propertyManagementPercent = 7;
-  const maintenance = 1500;
-  const landTax = calculateLandTax(propertyValue, state);
-  const strataFees = propertyType === 'unit' ? 4800 : 0;
-
-  const totalAnnual = councilRates + waterRates + landlordInsurance + propertyManagement + maintenance + strataFees + landTax;
-  const totalAnnualExcludingLandTax = councilRates + waterRates + landlordInsurance + propertyManagement + maintenance + strataFees;
+  // The totals foot against the final line items — whatever supplied them —
+  // so everything downstream (operatingExpensesFrom prefers this footing)
+  // describes the same costs the page lists.
+  const totalAnnual = councilRates + waterRates + landlordInsurance + propertyManagement
+    + maintenance + strataFees + landTax + (lettingFees ?? 0);
+  const totalAnnualExcludingLandTax = totalAnnual - landTax;
 
   return {
     councilRates,
@@ -198,6 +235,7 @@ export function calculateAnnualCosts(propertyValue: number, weeklyRent: number, 
     maintenance,
     landTax,
     strataFees,
+    ...(lettingFees !== undefined ? { lettingFees } : {}),
     totalAnnual,
     totalAnnualExcludingLandTax
   };
