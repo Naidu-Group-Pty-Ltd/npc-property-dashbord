@@ -113,6 +113,7 @@ import {
   resolveNarrativeProfile,
 } from './reports/markdownPaging.pure.ts';
 import { stripBakedCover } from './reports/investment/narrativeClean.pure.ts';
+import { reconcileStoredFinancials } from './reports/investment/financialEngine.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
@@ -357,7 +358,11 @@ export function projectReportNarrative(
  */
 export function projectInvestmentReport(row: InvestmentReportRowLike): ProjectedNamespaces {
   const specs = obj(row.property_specs);
-  const fin = obj(row.financial_calculations);
+  // Stored financials are reconciled before anything reads them: historic
+  // rows carry the pre-fix fold's inflated series and totals that do not
+  // foot against their own lines. See reconcileStoredFinancials — exact,
+  // component-derived, and a no-op on a post-fix row.
+  const fin = obj(reconcileStoredFinancials(obj(row.financial_calculations)).fin);
   const score = obj(row.investment_score);
 
   const initial = obj(fin.initialCosts);
@@ -393,6 +398,9 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(financials, 'stampDuty', num(initial.stampDuty));
   put(financials, 'legalFees', num(initial.legalFees));
   put(financials, 'inspectionFees', num(initial.inspectionFees));
+  // Published so a page listing the upfront lines can foot to `totalCost`,
+  // which the reconciliation derives from exactly these lines.
+  put(financials, 'lmi', num(initial.lmi));
   put(financials, 'totalCost', num(initial.totalUpfront));
   put(financials, 'deposit', num(initial.deposit));
   put(financials, 'loanAmount', num(loan.loanAmount) ?? num(initial.loanAmount));
@@ -558,7 +566,7 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   // says ("property value less loan balance"), it is positive on all 4,860
   // stored elements, and every chart primitive a family resolves to can draw
   // it. See `cashFlowProjection.pure.ts` for the rest of that series.
-  const projections = obj(obj(row.financial_calculations).projections);
+  const projections = obj(fin.projections);
   const moderate = Array.isArray(projections.moderate) ? projections.moderate : [];
   const equitySeries = moderate
     .map((y) => {

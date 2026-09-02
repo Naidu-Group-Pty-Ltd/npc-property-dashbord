@@ -307,3 +307,128 @@ live in the seeded schemas.
   typed pages on financially-empty rows are queued with Phase 2's
   completeness work, where the row-level `when:` guards already carry most of
   it.
+
+## 9 · Phase 2 — accuracy gates (2026-09-02)
+
+Phase 2 set out to make the Investment report's figures one truth end to end.
+Reconnaissance for it found something larger than the divergence the audit
+had measured: **every stored 10-year projection series was charging the
+property's operating costs roughly three times over.**
+
+### F26 — the projection fold triple-charged operating costs
+
+`generateProjections` (financial-calculator-service) folded
+`Object.values(annualCosts)` into its cost base, and that object carries its
+own totals (`totalAnnual`, `totalAnnualExcludingLandTax`) and a percentage
+beside the line items — so the opex base was
+`2·totalAnnual + totalAnnualExcludingLandTax + percent`. Proven to the
+dollar on the captured production row ($1.19M NSW house, rent $739/wk):
+
+|                                   | stored | honest |
+|-----------------------------------|--------|--------|
+| Year-1 operating costs charged    | **$59,931** | $22,232 (totalAnnual × 1.038 CPI) |
+| Year-1 cash flow (moderate)       | **−$92,557** | −$54,858 |
+| Year-1 ROI                        | **−18.89%** | −3.05% |
+| 10-year cumulative position       | overstated by ~**$370k** | — |
+
+The buggy base reconstructs exactly: 2×21,418 + 14,893 + 7 = $57,736, and
+×1.038 (that day's cached year-1 CPI) = $59,930 ≈ the stored charge. The
+headline `keyMetrics` used a third base (un-escalated, land tax out), so one
+page contradicted itself by $43,885/yr — and the generator's prompt injected
+the poisoned series verbatim as the cash-flow table the model transcribes,
+directly under a stated formula ("rent − operating costs − repayments")
+whose quoted operating costs were the sane ones. The sensitivity analysis
+carried the same fold twice more. Nobody could reconcile these numbers
+because they were not reconcilable.
+
+### F27 — adjacent accuracy defects, same commit series
+
+- `totalUpfront` = deposit + duty + hardcoded $2,000 — ignoring the row's
+  own `legalFees`/`inspectionFees` lines (historic rows off by $500+); the
+  cash-on-cash denominator was a second hardcoded derivation.
+- The prompt forced **accounting-negative notation onto positive cash
+  flows** (`($X)` via `Math.abs`), taught that P&I repayments decline ~5% by
+  year 10 (they are constant; the split changes), bound `p.lvr` — a field
+  the series never had — printing the literal "XX%", and asserted "all
+  scenarios produce negative cumulative cashflow" unconditionally.
+- Manual overrides reached `financial_calculations` by three writers, all
+  splatting values over computed leaves: the captured row carries overridden
+  line items summing $13,578 beside `totalAnnual` $21,418, with projections
+  and metrics describing neither (C5's defect, proven on the same row).
+
+### What shipped
+
+- **C1 — one engine, one cost base**
+  (`_shared/reports/investment/financialEngine.pure.ts`). All calculator
+  arithmetic extracted pure and pinned by `financialEngine.spec.ts` against
+  the captured row; the service keeps orchestration only. Projections,
+  sensitivity and headline cash flow share `operatingExpensesFrom` (the
+  footed total, never a fold); the year-0→year-1 gap is exactly the declared
+  escalation. The one deliberate asymmetry: net rental **yield** keeps the
+  land-tax-excluded base (land tax follows the owner's aggregated holdings,
+  not the property) and the report states the exclusion. Cash-on-cash
+  divides by the same `totalUpfront` the report prints. The prompt's
+  narrative figures are now derived FROM the series (`impliedOpexFromSeries`,
+  `fmtCashFlow`, `seriesLvrPercent`, `cumulativeCashFlow`), so prose and
+  table cannot disagree; the sign convention keeps the sign, and the
+  cumulative-cashflow teaching is conditional on the data.
+- **C2 — historic rows healed at every read boundary**
+  (`reconcileStoredFinancials`). ~1,170 stored rows carry the fold; nothing
+  rewrites them until regeneration, so readers heal them exactly: the fold
+  base reconstructs from the row's own aggregates (original even where line
+  items were overridden — nothing ever rewrote the aggregates), each year's
+  CPI factor recovers as impliedOpex ÷ base, and cash flow, cumulative and
+  ROI follow. Detection cannot misfire (buggy year-1 charge ≥ 2× totalAnnual;
+  healthy ≤ ~1.1×). Totals are derived from the row's own lines; headline
+  metrics recompute from components. Wired at the template binding
+  projection, the legacy `render-investment-report-pdf` route (its 10-year
+  and cash-flow charts drew the inflated series on every historic re-render),
+  and the design-composer normaliser. Idempotent, never mutates the stored
+  row, no-op on post-fix rows. Historic **prose** is beyond render-time
+  repair — regeneration is the remedy, and regeneration now writes correct
+  figures.
+- **C5 — overrides go INTO the engine, on every writer**
+  (`overrides.pure.ts`). An override that changes a modelled input (price,
+  rent, rate, reviewed costs, duty, conveyancing) becomes calculator INPUT —
+  `calculateAnnualCosts` takes the reviewed figures, an explicit $0 replaces
+  the estimate, letting fees join the totals, and the totals foot against
+  the final lines whoever supplied them. Only non-modelled fields (tax
+  treatment, occupancy display, build splits, loan labels) merge afterwards,
+  through one shared `applyDisplayOverrides`. `manage-investment-reports`
+  recomputes server-side before the write (never blocking the save; the
+  response and the modal's toast say which happened), and the generator's
+  30-line splat loop is gone.
+- **C3 — fact reconciliation** (`factReconciliation.pure.ts`). The prose is
+  compared with the record at completion — bedrooms, bathrooms, car spaces,
+  purchase price, weekly rent, land size. Report-level rule (recorded value
+  never appears + a different value repeats) so comparative prose cannot
+  trip it; money facts are context-anchored. Findings disclose as
+  `validation_flags` `type:'fact'` entries in lay wording and never gate
+  completion. Feeding findings into regeneration retries is deliberately
+  deferred until the detector has production mileage.
+- **C4 — completeness recorded and disclosed, no schema change.**
+  `data_sources` now records all eleven attempted sources (was four) —
+  present with provenance, or null as a recorded fact. The viewer's new
+  `InvestmentReportCoverageNote` renders ONLY when a source is missing or a
+  fact check flagged ("9 of 11 sources", the gaps named, each contradiction
+  in a sentence); a complete, clean report shows nothing, because a badge
+  must mean something is unmet. Carried on the detail projection of
+  `get-investment-reports`.
+
+### Verification
+
+63 new spec assertions across `financialEngine.spec.ts`,
+`investmentOverrides.spec.ts`, `factReconciliation.spec.ts` — the engine
+pinned against the captured production row (its reconstruction reproduces
+the stored totals and monthly payment exactly, and the heal reproduces the
+stored corruption before repairing it). Full affected surface green: 2,330
+tests, tsc, eslint, `audit:style` under baseline, production build.
+
+### Deferred, with reasons
+
+- Regeneration-retry wiring for fact findings (detector mileage first).
+- Browser viewer chart components reading `financial_calculations` directly
+  (the two live PDF routes and the composer are healed; the viewer's own
+  charts join in the delivery-unification phase).
+- Historic prose corrections (regeneration is the remedy; C1 makes every
+  regeneration correct).
