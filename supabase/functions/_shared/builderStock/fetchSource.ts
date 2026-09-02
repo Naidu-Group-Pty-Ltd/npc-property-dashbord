@@ -2,7 +2,7 @@
  * Builder stock lists — retrieving a source the builder linked to.
  *
  * THE SSRF CONTROL IS THE EXISTING ONE. `assertPublicUrl` and
- * `isPrivateOrReservedAddress` come from `import-from-url/ssrfGuard.ts` — the
+ * `isPrivateOrReservedAddress` come from `_shared/ssrfGuard.ts` — the
  * guard the link importer already uses, already covered by its own unit tests,
  * and already the place this deployment states which address space is
  * off-limits. A second implementation here would be a second thing to keep
@@ -16,7 +16,7 @@
  * portal session. The request carries a User-Agent and an Accept and nothing
  * else, and `credentials` never applies because nothing is attached to omit.
  */
-import { assertPublicUrl, type DnsRecordType } from '../../import-from-url/ssrfGuard.ts';
+import { assertPublicUrl, type DnsRecordType } from '../ssrfGuard.ts';
 
 /** One hop's wall clock. */
 const HOP_TIMEOUT_MS = 15_000;
