@@ -148,16 +148,31 @@ describe('an identity that improves reaches the pictures already found', () => {
     expect(verifyWebImageIdentity(candidate, PROPERTY).ok).toBe(true);
   });
 
-  it('the re-judgement only ever promotes, and spends nothing', () => {
+  it('the re-judgement spends nothing and defers to the one authority', () => {
     const source = readFileSync(
       'supabase/functions/_shared/builderStock/reverifyWebImages.ts', 'utf8');
-    // Never re-opens a picture a client may already be looking at.
-    expect(source).toContain('=== WEB_VERIFIED_VERIFICATION) continue');
     // No search, no fetch, no model — the evidence was stored when it was found.
     expect(source).not.toMatch(/\bfetch\(/);
     expect(source).not.toMatch(/perplexity|openai|llmRouter/i);
     // One authority, imported rather than re-implemented.
     expect(source).toContain("from './webImageIdentity.pure.ts'");
+  });
+
+  it('a VERIFIED candidate the current rule refuses is taken back, with the reason written', () => {
+    /*
+     * "Only ever promotes" stood until the accepting rule itself was wrong:
+     * Lot 818's verified render came from a page about lot 118 by another
+     * builder, and a promote-only re-judgement could never reach the one card
+     * the rule change existed for. Demotion is deterministic — judged from the
+     * same stored evidence the acceptance was — and it must write WHY.
+     */
+    const source = readFileSync(
+      'supabase/functions/_shared/builderStock/reverifyWebImages.ts', 'utf8');
+    expect(source).toMatch(/!verdict\.ok && row\.verification_status === WEB_VERIFIED_VERIFICATION/);
+    expect(source).toContain("verification_status: 'unverified'");
+    expect(source).toContain('identity_refused: verdict.reason');
+    // And an already-verified candidate the rule still ACCEPTS is left alone.
+    expect(source).toContain('=== WEB_VERIFIED_VERIFICATION) continue');
   });
 
   it('it runs inside the claim, after identity is repaired', () => {
