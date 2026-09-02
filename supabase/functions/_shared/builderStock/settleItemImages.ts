@@ -49,7 +49,14 @@ import { settleFallbackImages } from './settleFallbackImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import { repairStoredIdentity } from './storedIdentityRepair.pure.ts';
 import { reverifyStoredWebImages } from './reverifyWebImages.ts';
-import { applyDesignRenderFor } from './attachBuilderImage.ts';
+import {
+  rowSourceBranches, unmappedWithRecoveredLinks,
+} from './sourceBranches.pure.ts';
+import {
+  describeSuppliedEvidence, fallbackMayRun, readSuppliedEvidence,
+  type SuppliedEvidenceReading,
+} from './suppliedEvidence.pure.ts';
+import { PROVENANCE_VERSION } from './provenanceVersion.pure.ts';
 import type { ClaimedItem, ItemWorkStage } from './itemWorkClaim.ts';
 
 export interface ItemSettlement {
@@ -153,21 +160,6 @@ export async function settleClaimedItem(
    */
   await reverifyWebImagesFor(db, item.id);
 
-  /*
-   * AND THE RENDER ITS BUILDER SUPPLIED FOR ITS DESIGN, IF THERE IS ONE.
-   *
-   * Applied on every sweep rather than only at upload, because a render is
-   * supplied once and the stock keeps arriving: next month's list adds four
-   * more lots of a design whose render the builder handed over in March, and
-   * they should not have to hand it over again. Idempotent — a property that
-   * already carries it costs one indexed read and no write.
-   *
-   * It carries `DESIGN_EVIDENCE_LEVEL`, so it never outranks a document. A
-   * brochure page naming this lot takes the card back the moment one is read,
-   * which is what a builder means by supplying a stand-in.
-   */
-  await applyDesignRenderFor(db, item);
-
   try {
     if (stage === 'source') {
       /*
@@ -224,18 +216,100 @@ export async function settleClaimedItem(
         + `cleared ${sanitization.cleared}`;
       settlement.nextStage = sanitization.incomplete ? 'sanitization' : NEXT_STAGE.sanitization;
     } else if (stage === 'fallback') {
-      const fallback = await settleFallback(db, {
-        limit: 1, deadlineAt: input.deadlineAt, stockItemId: item.id,
-      });
-      settlement.progressed = fallback.attempted > 0;
-      settlement.result = `fallback: attempted ${fallback.attempted}, `
-        + `resolved ${fallback.resolved}`;
       /*
-       * The ladder is climbed one rung per claim. `remaining` counts THIS
-       * property's outstanding rungs, so a property still owed a stage comes
-       * straight back rather than being declared settled with a blank card.
+       * WHERE A PROPERTY GOES WHEN THE BUILDER'S OWN SOURCES ARE NOT FINISHED.
+       *
+       * `settleFallbackImages` REFUSES to run the external ladder unless the
+       * supplied evidence is exhausted — that is the enforcement and it
+       * protects every caller. This read is the ROUTING, over the same pure
+       * function and the same stored record, and the two cannot disagree
+       * because there is only one implementation of the question.
+       *
+       * Three destinations, and the third is the one that matters:
+       *
+       *   pending / processing — sources are still owed a look, so the
+       *   property goes BACK to `source`. It terminates because every branch
+       *   ends terminal within its own attempt budget.
+       *
+       *   retryable_failure — every source is finished and at least one
+       *   finished on a fault of OURS. Returning it to `source` would spin: a
+       *   retired branch is terminal, so the source stage has nothing left to
+       *   do. So it SETTLES, with a blank card and a reason on the row. The
+       *   way back is a `PROVENANCE_VERSION` bump, which is keyed into every
+       *   branch record and re-opens the question from zero — never a hand
+       *   edit.
+       *
+       *   found — the builder's own picture is already on the card, so there
+       *   is nothing left to buy and nothing left to look at. Settles.
+       *
+       *   exhausted / no_evidence — the ordinary path, unchanged: the ladder
+       *   runs.
        */
-      settlement.nextStage = fallback.remaining > 0 ? 'fallback' : NEXT_STAGE.fallback;
+      const evidence = await readItemSuppliedEvidence(db, item.id);
+      if (evidence && !fallbackMayRun(evidence.state)) {
+        settlement.result = describeSuppliedEvidence(evidence);
+        settlement.progressed = true;
+        settlement.nextStage = evidence.state === 'pending'
+            || evidence.state === 'processing'
+          ? 'source'
+          : 'settled';
+        /*
+         * A PROPERTY THAT SETTLES WITHOUT THE LADDER MUST STILL LEAVE THE
+         * LADDER'S QUEUE. `readFallbackQueue` selects on
+         * `enrichment_status IN ('pending','enriching')`, and the settler's
+         * own completion rule keeps the cron alive while that queue is
+         * non-empty — so a card parked on `retryable_failure` with its status
+         * still `pending` would hold the whole deployment's cron awake for
+         * ever, ticking and withholding the same property every minute.
+         *
+         * `failed` is the vocabulary the ladder itself uses for "ended with
+         * no picture", and the reason is already on the row in
+         * `image_work_last_result`. A provenance bump's migration sets the
+         * status back to `pending` when it requeues, so the way back in is
+         * the same as for every other terminal reading.
+         */
+        if (settlement.nextStage === 'settled') {
+          try {
+            await db.from('builder_stock_items')
+              .update({
+                enrichment_status: 'failed',
+                enriched_at: new Date().toISOString(),
+              })
+              .eq('id', item.id)
+              .eq('organisation_id', item.organisation_id);
+          } catch {
+            // Unwritten means the queue read keeps it; the next claim retries.
+          }
+        }
+        console.info('[builderStock] fallback not reached', {
+          phase: 'fallback_routing', stock_item_id: item.id,
+          supplied_evidence: evidence.state, next_stage: settlement.nextStage,
+          sources_total: evidence.total, sources_open: evidence.open,
+          sources_inspected: evidence.inspected,
+          sources_operational: evidence.operational,
+        });
+      } else {
+        const fallback = await settleFallback(db, {
+          limit: 1, deadlineAt: input.deadlineAt, stockItemId: item.id,
+        });
+        settlement.progressed = fallback.attempted > 0;
+        settlement.result = `fallback: attempted ${fallback.attempted}, `
+          + `resolved ${fallback.resolved}`;
+        /*
+         * The ladder is climbed one rung per claim. `remaining` counts THIS
+         * property's outstanding rungs, so a property still owed a stage comes
+         * straight back rather than being declared settled with a blank card.
+         *
+         * A tick the gate WITHHELD is not a rung owed: it left `attempted` at
+         * zero and the row still in the queue, so counting it as remaining
+         * would hold the property at `fallback` for ever. That case never
+         * reaches here — the branch above routes it — but `withheld` is
+         * subtracted so the arithmetic is honest for any other caller.
+         */
+        settlement.nextStage = fallback.remaining > fallback.withheld
+          ? 'fallback'
+          : NEXT_STAGE.fallback;
+      }
     }
   } catch (error) {
     /*
@@ -377,5 +451,53 @@ async function reverifyWebImagesFor(db: any, itemId: string): Promise<void> {
       phase: 'web_identity_reverify', stock_item_id: itemId,
       detail: String((error as { message?: string })?.message ?? error).slice(0, 200),
     });
+  }
+}
+
+
+/**
+ * This property's supplied-evidence reading, from its own stored row.
+ *
+ * READ RATHER THAN RE-DERIVED. The branches come from the row the import
+ * persisted — which is the only place the targets recovered from a Google
+ * Sheet's hyperlinks exist at all — and the answers come from the provenance
+ * column beside it. Nothing here re-reads the builder's document.
+ *
+ * A READ THAT FAILED IS NOT A PROPERTY WITH NO EVIDENCE. It answers null, the
+ * caller falls through to the ordinary path, and the gate inside
+ * `settleFallbackImages` — which reads the same two columns as part of the
+ * queue it was already selecting — still refuses. Failing open HERE is safe
+ * precisely because the enforcement is not here.
+ */
+async function readItemSuppliedEvidence(
+   
+  db: any,
+  itemId: string,
+): Promise<SuppliedEvidenceReading | null> {
+  if (typeof db?.from !== 'function') return null;
+  try {
+    const { data, error } = await db
+      .from('builder_stock_items')
+      .select('id, source_row, source_provenance_result, primary_image_id')
+      .eq('id', itemId)
+      .maybeSingle();
+    if (error || !data) return null;
+    const row = data as Record<string, unknown>;
+    const sourceRow = (row.source_row ?? null) as Record<string, unknown> | null;
+    const anchor = sourceRow && typeof sourceRow.source_anchor === 'string'
+      ? sourceRow.source_anchor : null;
+    const unmapped = (sourceRow?.unmapped ?? null) as Record<string, string> | null;
+    return readSuppliedEvidence({
+      // BOTH halves: what the import parsed onto the row, and the separately
+      // recovered link columns laid over it. See `storedRowBranches` in
+      // `settleFallbackImages.ts` — passing null as the base silently drops
+      // every link that never needed recovery.
+      branches: rowSourceBranches(unmappedWithRecoveredLinks(unmapped, sourceRow)),
+      stored: row.source_provenance_result,
+      provenanceVersion: PROVENANCE_VERSION,
+      sourceAnchor: anchor || null,
+    });
+  } catch {
+    return null;
   }
 }

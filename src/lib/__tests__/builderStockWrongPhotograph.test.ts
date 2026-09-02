@@ -100,10 +100,37 @@ describe('a page that names THIS lot is about this property', () => {
   it('the veto is evaluated AFTER the evidence, not before it', () => {
     const source = readFileSync(
       'supabase/functions/_shared/builderStock/webImageIdentity.pure.ts', 'utf8');
-    const gather = source.indexOf('const named = lotsNamedIn(haystack)');
+    const gather = source.indexOf('const named = [...new Set(lotsNamedIn(pageHaystack))]');
     const veto = source.indexOf("reason: 'generic_estate_page'");
     expect(gather).toBeGreaterThan(-1);
     expect(veto).toBeGreaterThan(gather);
+  });
+
+  it('reads the lot from the PAGE and never from the image file name', () => {
+    /*
+     * THE LIVE DEFECT. Luxton's Lot 818 was given a render from a page about
+     * Lot 118 by Simonds Homes, because the image was FILED as `…lot-818…`
+     * and the old haystack merged the two. The page is what says which
+     * property is being described.
+     */
+    const verdict = verifyWebImageIdentity({
+      imageUrl: 'https://cdn.example.invalid/images/sample-reach-lot-310-render.jpg',
+      pageUrl: 'https://example.invalid/sample-reach/house-land/lot-118-by-another-builder-52221',
+      title: 'Sample Reach, Northfield – lot/render image',
+    }, PROPERTY);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toBe('names_a_different_lot');
+  });
+
+  it('refuses a page that names OUR lot and somebody else\'s together', () => {
+    // One page, one property. A comparison table has identified nothing.
+    const verdict = verifyWebImageIdentity({
+      imageUrl: 'https://example.invalid/uploads/sample-reach.jpg',
+      pageUrl: 'https://example.invalid/sample-reach/lot-310-and-lot-118',
+      title: 'Lot 310 and Lot 118, Sample Reach, Northfield 3427 VIC',
+    }, PROPERTY);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toBe('names_a_different_lot');
   });
 });
 

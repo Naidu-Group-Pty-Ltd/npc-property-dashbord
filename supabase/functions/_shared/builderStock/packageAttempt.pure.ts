@@ -193,6 +193,10 @@ export function recordPackageUnreachable(
     `That link could not be read after ${MAX_UNREACHABLE_ATTEMPTS} attempts — `
     + `it answered with no readable document — so no builder image was taken `
     + `from it.`,
+    // OURS, NOT THE DOCUMENT'S. A 404, a sign-in wall and a scan with no text
+    // layer are all facts about our access, so this retirement retires the
+    // branch and never admits the online fallback. See `suppliedEvidence`.
+    'operational',
     now,
   );
 }
@@ -273,6 +277,9 @@ export function recordPackageUnprocessable(
     `This package could not be processed within the worker's resource limits `
     + `after ${MAX_PACKAGE_ATTEMPTS} attempts, so no builder image was taken `
     + `from it.`,
+    // A DESTROYED WORKER IS NOT AN EMPTY DOCUMENT. This is what "settling"
+    // used to buy the fallback ladder with, and it may not any more.
+    'operational',
     now,
   );
 }

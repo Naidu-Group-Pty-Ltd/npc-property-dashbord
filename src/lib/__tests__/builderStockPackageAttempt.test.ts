@@ -147,7 +147,7 @@ describe('the attempt shares a column with the verdict and cannot be mistaken fo
   });
 
   it('a real verdict is never counted as an attempt', () => {
-    const verdict = recordNoDeterministicImage(question(), 'that folder names no document');
+    const verdict = recordNoDeterministicImage(question(), 'that folder names no document', 'inspected');
     expect(attemptsSoFar(verdict, question())).toBe(0);
     expect(packageAttemptsExhausted(verdict, question())).toBe(false);
     // And it still stands as the answer it is.
@@ -160,7 +160,7 @@ describe('the attempt shares a column with the verdict and cannot be mistaken fo
     // whole design rests on.
     const attempt = killedTick(null);
     expect(attemptsSoFar(attempt, question())).toBe(1);
-    const settled = recordNoDeterministicImage(question(), 'read, names nothing');
+    const settled = recordNoDeterministicImage(question(), 'read, names nothing', 'inspected');
     expect(attemptsSoFar(settled, question())).toBe(0);
   });
 
@@ -263,7 +263,7 @@ describe('a returned step never resurrects the claim a kill left behind', () => 
   });
 
   it('gives back a real verdict untouched — only a claim is cleared', () => {
-    const verdict = recordNoDeterministicImage(lot1342, 'That folder names no document.');
+    const verdict = recordNoDeterministicImage(lot1342, 'That folder names no document.', 'inspected');
     expect(provenanceAfterAttempt(verdict, lot1342)).toBe(verdict);
     expect(provenanceAfterAttempt(null, lot1342)).toBeNull();
   });
@@ -357,7 +357,7 @@ describe('a link that can be fetched and never read is retired, eventually', () 
   });
 
   it('the retirement is a verdict, and says the link could not be READ', () => {
-    const verdict = recordPackageUnreachable(question()) as Record<string, unknown>;
+    const verdict = recordPackageUnreachable(question()) as unknown as Record<string, unknown>;
     expect(verdict.result).toBe(NO_DETERMINISTIC_IMAGE);
     // It must not claim the builder's document was empty, nor blame the
     // worker's limits — an operator is told what actually happened.
