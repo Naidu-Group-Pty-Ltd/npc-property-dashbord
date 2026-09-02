@@ -279,3 +279,31 @@ and no severed row. The remaining sparse pages are the typed fixed-geometry
 pages (contents, dashboard, property, sources) — Phase 1B's schema-side
 economy work, alongside the part-numbering and back-page theming that also
 live in the seeded schemas.
+
+### Phase 1B — the schema-side pass (2026-09-02, same day)
+
+- **One part number for the whole report body.** Every narrative continuation
+  page minted its own — running heads marched "Part 08 · Report" through
+  "Part 33", and Sources introduced itself as Part 49 with a two-inch numeral.
+  The opener mints the label once and every continuation (and the cut page)
+  carries it verbatim; a Compass now runs Part 01–09. The labels are baked
+  into schema furniture, so the fix ships as the v9 catalogue seed
+  (`20260916100000`) plus a reactivation migration (`20260916110000`) that
+  refreshes every active row from its published entry — the same mechanism,
+  guards and colourway-exclusion as `20260816150000`, with a probe that no
+  active investment schema still carries "Part 15 · Report".
+- **The closing page dresses in the family's tokens.** `disclaimer.html.ts`
+  hardcoded a foreign ground (#141414), one of the audit's eight stray golds
+  (#BF9B50) and a Helvetica fallback — the critic's "back cover from a
+  different design system". It now reads the colourway (`bg`,
+  `accentOnField`, `text`, `mutedOnField`, the heading face), with the old
+  literals as fallbacks so token-less templates render unchanged. The
+  split wordmark (every word large, the last small beneath — "SERVICES" as a
+  subtitle) is one name at one size in the family's heading face.
+- **Deliberately not done here, and why:** the typed front-matter pages
+  (contents, dashboard) measure sparse and are left so — front matter in a
+  premium document is airy by intent, and densifying it is a family-design
+  decision for the Claude Design catalogue, not a defect fix. The data-sparse
+  typed pages on financially-empty rows are queued with Phase 2's
+  completeness work, where the row-level `when:` guards already carry most of
+  it.
