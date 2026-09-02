@@ -232,17 +232,28 @@ describe('storeVerifiedWebImages', () => {
   });
 });
 
-describe('the settler runs the store before the enforcement', () => {
-  it('is wired ahead of enforceStrictPrimaryImages, inside the same per-org pass', () => {
-    const source = readFileSync(
-      resolve(__dirname, '../../../supabase/functions/builder-stock-image-settler/index.ts'),
-      'utf8',
-    );
-    const store = source.indexOf('storeVerifiedWebImages(supabase, organisationId)');
-    const enforcement = source.indexOf('enforceStrictPrimaryImages(supabase, organisationId)');
-    expect(store).toBeGreaterThan(-1);
-    expect(enforcement).toBeGreaterThan(-1);
-    // A retirement must have its card re-decided in the SAME tick.
-    expect(store).toBeLessThan(enforcement);
+describe('the settler runs the store on its own enumeration', () => {
+  const source = () => readFileSync(
+    resolve(__dirname, '../../../supabase/functions/builder-stock-image-settler/index.ts'),
+    'utf8',
+  );
+
+  it('does not hide inside the per-candidate enforcement, which an empty queue never runs', () => {
+    // The first wiring sat inside `enforce`, which is only invoked for
+    // organisations with settlement candidates — and once the marketplace had
+    // settled, it measurably never ran. The pass enumerates the hotlinked
+    // displayable images itself, so the steady state is exactly when it works.
+    const text = source();
+    expect(text).toContain("        .eq('source_stage', 'internet_search')");
+    expect(text).toContain('storeVerifiedWebImages(supabase, organisationId)');
+  });
+
+  it('a retirement re-decides the card in the SAME tick, past the once-per-tick guard', () => {
+    const text = source();
+    const retired = text.indexOf('if (webOutcome.retired > 0)');
+    expect(retired).toBeGreaterThan(-1);
+    const after = text.slice(retired, retired + 400);
+    expect(after).toContain('enforced.delete(organisationId)');
+    expect(after).toContain('await enforce(organisationId)');
   });
 });
