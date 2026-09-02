@@ -47,13 +47,28 @@ export const PACKAGE_RECOVERY_ATTEMPT = 'package_recovery_attempt' as const;
 /**
  * How many times one package may kill the worker before the sweep moves on.
  *
- * TWO, then the third tick gives up. A kill can be transient — a cold cache, a
- * slow origin, another tenant's noisy neighbour — so one is too eager and would
- * retire a package that would have read fine. Each wasted attempt costs one
- * five-minute tick and nothing else, because the attempt is written before the
- * spend rather than after it.
+ * FOUR. It was two, priced when an attempt cost a five-minute upload-wide
+ * tick and a stuck package pinned every property behind it — under that
+ * regime a third try was mostly a third kill. Neither premise survives the
+ * per-item settler: an attempt now costs one claim whose OWN backoff walks
+ * toward an hour, and a killed package pins nobody but itself.
+ *
+ * WHAT TWO ACTUALLY RETIRED, MEASURED 2 SEPTEMBER 2026. A provenance bump
+ * requeued twenty properties at once and the reprocessing burst drew seven
+ * `CPU Time exceeded` kills in three minutes — contention, not weight: in the
+ * same runtime, on the same tick cadence, Lot 824's 7.2 MB brochure read and
+ * stored, and Lot 516's 10.6 MB one stored its render with the kill landing
+ * AFTER the row was written. Lots 709 and 818 — 5 MB documents that read in
+ * three seconds on a clean isolate — were killed twice each in that burst and
+ * retired at the budget, unread. A budget that cannot tell a toxic document
+ * from a busy minute is priced wrong for the failure it meters.
+ *
+ * Four spreads the attempts across the claim backoff's growing gaps, so a
+ * burst has ended by the time the later tries arrive, while a document that
+ * genuinely destroys the worker every time it is opened still retires — and
+ * still retires as `operational`, never as evidence exhaustion.
  */
-export const MAX_PACKAGE_ATTEMPTS = 2;
+export const MAX_PACKAGE_ATTEMPTS = 4;
 
 /**
  * How many times a branch may answer `unreachable` before it is retired.

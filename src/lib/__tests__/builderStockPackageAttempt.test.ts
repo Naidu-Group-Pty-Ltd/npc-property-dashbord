@@ -82,12 +82,13 @@ describe('the reproduced defect — repeated kills on one package', () => {
     () => {
       let stored: unknown = null;
 
-      // Tick 1 and tick 2 are killed mid-recovery.
-      stored = killedTick(stored);
-      expect(packageAttemptsExhausted(stored, question())).toBe(false);
-      stored = killedTick(stored);
+      // Every tick up to the budget is killed mid-recovery…
+      for (let kill = 0; kill < MAX_PACKAGE_ATTEMPTS; kill += 1) {
+        expect(packageAttemptsExhausted(stored, question())).toBe(false);
+        stored = killedTick(stored);
+      }
 
-      // Tick 3 refuses to start the work that killed the previous two.
+      // …and the next one refuses to start the work that killed them all.
       expect(packageAttemptsExhausted(stored, question())).toBe(true);
 
       const verdict = recordPackageUnprocessable(question());
@@ -106,18 +107,28 @@ describe('the reproduced defect — repeated kills on one package', () => {
     expect(verdict.detail).not.toMatch(/names no|empty/i);
   });
 
-  it('gives a package more than one chance, because a kill can be transient', () => {
+  it('gives a package more than one chance, and not unbounded ones', () => {
+    // A kill can be transient — measured on 2 Sep 2026: a requeue burst drew
+    // seven CPU kills in three minutes and retired 5 MB documents that read
+    // in three seconds on a clean isolate, at the old budget of two. Under
+    // the per-item settler an attempt costs one claim on its own growing
+    // backoff, so the later tries arrive after any burst has ended.
     expect(MAX_PACKAGE_ATTEMPTS).toBeGreaterThanOrEqual(2);
-    // And not so many that a pinned upload waits an hour to advance.
-    expect(MAX_PACKAGE_ATTEMPTS).toBeLessThanOrEqual(3);
+    // Bounded, because "we keep trying" is not the alternative to retiring:
+    // the alternative is a property pinned on `source` with no picture at
+    // all — and a genuinely toxic document must still retire, as
+    // `operational`, never as evidence exhaustion.
+    expect(MAX_PACKAGE_ATTEMPTS).toBeLessThanOrEqual(6);
     expect(packageAttemptsExhausted(killedTick(null), question())).toBe(false);
   });
 });
 
 describe('a new question starts its own count', () => {
   it('a swapped package does not inherit the old one\'s failures', () => {
-    let stored: unknown = killedTick(null);
-    stored = recordPackageAttempt(stored, question());
+    let stored: unknown = null;
+    for (let kill = 0; kill < MAX_PACKAGE_ATTEMPTS; kill += 1) {
+      stored = recordPackageAttempt(stored, question());
+    }
     expect(packageAttemptsExhausted(stored, question())).toBe(true);
 
     // The builder swapped package A for package B: a different document, and
@@ -247,18 +258,21 @@ describe('a returned step never resurrects the claim a kill left behind', () => 
     // Production rolled back to 1 here and looped for ever. It must not.
     expect(attemptsSoFar(stored, lot1342)).toBe(0);
 
-    // Tick 3 and 4 are two clean kills, which is what the guard counts.
-    stored = recordPackageAttempt(stored, lot1342);
-    stored = recordPackageAttempt(stored, lot1342);
+    // Then clean kills up to the budget, which is what the guard counts.
+    for (let kill = 0; kill < MAX_PACKAGE_ATTEMPTS; kill += 1) {
+      stored = recordPackageAttempt(stored, lot1342);
+    }
     expect(attemptsSoFar(stored, lot1342)).toBe(MAX_PACKAGE_ATTEMPTS);
     expect(packageAttemptsExhausted(stored, lot1342)).toBe(true);
   });
 
   it('never counts more kills than actually happened', () => {
-    // Two kills in a row must exhaust, and no undo ran between them.
-    let stored: unknown = recordPackageAttempt(null, lot1342);
-    expect(packageAttemptsExhausted(stored, lot1342)).toBe(false);
-    stored = recordPackageAttempt(stored, lot1342);
+    // Kills in a row, no undo between them: exhausted at the budget exactly.
+    let stored: unknown = null;
+    for (let kill = 0; kill < MAX_PACKAGE_ATTEMPTS; kill += 1) {
+      expect(packageAttemptsExhausted(stored, lot1342)).toBe(false);
+      stored = recordPackageAttempt(stored, lot1342);
+    }
     expect(packageAttemptsExhausted(stored, lot1342)).toBe(true);
   });
 
