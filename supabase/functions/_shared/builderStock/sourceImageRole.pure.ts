@@ -346,36 +346,6 @@ export function roleFromBuilderProperty(input: {
   };
 }
 
-/**
- * The builder handed us this render FOR A DESIGN this property states.
- *
- * `DESIGN_EVIDENCE_LEVEL`, the same rung a design brochure's render sits on,
- * because it is the same claim arriving by a different route: this is what
- * this design looks like, and this row bought this design. It is therefore
- * weaker than every property-specific reading, and a brochure that names this
- * lot takes the card back from it the moment one arrives — which is the
- * behaviour a builder expects and the reason the level exists.
- *
- * The attribution is exact key equality inside one organisation
- * (`propertiesForDesign`); `DK 22B` never reaches `DK 23B`.
- */
-export function roleFromBuilderDesign(input: {
-  suppliedBy: 'builder' | 'staff';
-  /** The design as the builder's own rows write it. */
-  design: string;
-}): SourceImageRoleAssignment {
-  const who = input.suppliedBy === 'staff'
-    ? 'supplied on the builder\'s behalf'
-    : 'supplied by the builder';
-  return {
-    role: PRIMARY_ROLE,
-    evidenceLevel: DESIGN_EVIDENCE_LEVEL,
-    evidence: `${who} as the render for ${input.design}`,
-    reason: `this property states the design ${input.design}, and the builder supplied `
-      + 'one render for it; a document naming this lot would take its place',
-  };
-}
-
 export function roleFromStructuralContainer(input: {
   container: string;
   designation: string;

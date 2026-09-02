@@ -413,55 +413,31 @@ export function useRecoverStockSourceImages() {
   });
 }
 
-/** One of a builder's own designs, and what supplying a render for it would do. */
-export interface BuilderStockDesign {
-  key: string;
-  label: string;
-  properties: number;
-  withoutImage: number;
-  render: { id: string; supplied_at: string } | null;
-}
-
 /**
- * The designs this builder's own stock states.
- *
- * This is the surface that makes the design route usable. A builder should not
- * have to know that eleven of their properties are `DK 22B`, and must not have
- * to type it: the list is derived from their own rows, and the design whose
- * render would fix the most blank cards is first.
- */
-export function useBuilderStockDesigns() {
-  return useQuery({
-    queryKey: [...builderStockKeys.root(), 'designs'],
-    queryFn: () => invoke<{ designs: BuilderStockDesign[] }>({ operation: 'list_designs' })
-      .then((response) => response.designs ?? []),
-    staleTime: 30_000,
-  });
-}
-
-/**
- * Hand over a picture: one render for a design, or one picture for a property.
+ * Hand over a picture for ONE property.
  *
  * Uploaded exactly as a stock list is — a signed URL, the browser PUTs to it,
  * and a second call confirms. The bytes are validated SERVER-SIDE out of
  * storage on that second call, so what is registered is what was actually
  * stored rather than what this browser said it sent.
  *
+ * IT NAMES ONE PROPERTY AND REACHES NO OTHER. There was briefly a second
+ * scope — a render supplied against a house DESIGN and fanned out to every
+ * lot stating it — and it is withdrawn: a matching design string is not
+ * evidence that a photograph is of a particular house.
+ *
  * NOTHING HERE DECIDES WHICH PICTURE A CARD DRAWS. The supplied image is
- * stored with the evidence it deserves — level 1 for a property, the design
- * rung for a design — and the settler re-decides each card from the roles, as
- * it always has. A brochure naming the lot still takes the card back from a
- * design render.
+ * stored at evidence level 1 and the settler re-decides each card from the
+ * roles, as it always has.
  */
-export function useSupplyBuilderImage() {
+export function useSupplyBuilderStockImage() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { file: File; design?: string; stockItemId?: string }) => {
+    mutationFn: async (input: { file: File; stockItemId: string }) => {
       const created = await invoke<{ storage_path: string; upload_url: string }>({
         operation: 'create_builder_image',
         filename: input.file.name,
-        ...(input.design ? { design: input.design } : {}),
-        ...(input.stockItemId ? { stock_item_id: input.stockItemId } : {}),
+        stock_item_id: input.stockItemId,
       });
 
       const put = await fetch(created.upload_url, {
@@ -471,29 +447,12 @@ export function useSupplyBuilderImage() {
       });
       if (!put.ok) throw new Error('The image could not be uploaded. Please try again.');
 
-      return await invoke<{ scope: 'design' | 'property'; design?: string; properties: number }>({
+      return await invoke<{ scope: 'property'; properties: number }>({
         operation: 'attach_builder_image',
         storage_path: created.storage_path,
-        ...(input.design ? { design: input.design } : {}),
-        ...(input.stockItemId ? { stock_item_id: input.stockItemId } : {}),
+        stock_item_id: input.stockItemId,
       });
     },
-    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: builderStockKeys.root() }); },
-  });
-}
-
-/**
- * Withdraw a design's render.
- *
- * The properties carrying it lose it too — a render withdrawn from the design
- * but left on eleven cards is a picture the builder believes they removed,
- * still on eleven cards, which is the worst outcome available here.
- */
-export function useRemoveBuilderDesignImage() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (design: string) =>
-      invoke<{ properties: number }>({ operation: 'delete_design_image', design }),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: builderStockKeys.root() }); },
   });
 }
