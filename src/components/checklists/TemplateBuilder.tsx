@@ -59,7 +59,11 @@ export function TemplateBuilder({ template: initialTemplate, onBack }: TemplateB
 
   const toggleSection = (id: string) => {
     const next = new Set(openSections);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
     setOpenSections(next);
   };
 
