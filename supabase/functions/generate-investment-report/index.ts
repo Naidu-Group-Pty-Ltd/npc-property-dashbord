@@ -11,6 +11,7 @@ import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
+import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
@@ -3597,6 +3598,23 @@ Produce a comprehensive statewide investment analysis following the structure ab
     console.log(`📊 Annual Costs Breakdown: Council=$${effectiveCouncilRates}, Water=$${effectiveWaterRates}, Strata=$${effectiveStrataFees}, Insurance=$${effectiveLandlordInsurance}, Maintenance=$${effectiveMaintenance}, PM=$${effectivePmDollar}`);
     console.log(`📅 Occupancy: ${effectiveOccupancyRate} weeks/year (${((effectiveOccupancyRate/52)*100).toFixed(0)}%)`);
     console.log(`📊 Land Tax Override: $${effectiveLandTax} (will be injected into prompt)`);
+
+    // Cash-flow narrative figures are derived FROM the projections series so
+    // the prose can never disagree with the table it introduces — the table
+    // below transcribes the series verbatim. The helpers live in
+    // financialEngine.pure.ts beside the arithmetic that writes the series.
+    const annualLoanPayments = Math.round((enhancedData.financials?.loanDetails?.monthlyPayment || 0) * 12);
+    const moderateSeries: any[] = Array.isArray(enhancedData.financials?.projections?.moderate)
+      ? enhancedData.financials.projections.moderate
+      : [];
+    const opexYear1 = impliedOpexFromSeries(moderateSeries[0], annualLoanPayments)
+      ?? toNumberOr(enhancedData.financials?.annualCosts?.totalAnnual, totalAnnualCostsForNetYield + effectiveLandTax);
+    const opexYear10 = impliedOpexFromSeries(moderateSeries[9], annualLoanPayments) ?? opexYear1;
+    const cumConservative = cumulativeCashFlow(enhancedData.financials?.projections?.conservative);
+    const cumModerate = cumulativeCashFlow(enhancedData.financials?.projections?.moderate);
+    const cumOptimistic = cumulativeCashFlow(enhancedData.financials?.projections?.optimistic);
+    const allScenariosCashNegative = cumConservative < 0 && cumModerate < 0 && cumOptimistic < 0;
+
     const _brandPp = await getBrandConfig();
     const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.
 Your role is to produce comprehensive, professional-grade investment reports following the EXACT structure, length, and format of our reference template.
@@ -4192,8 +4210,8 @@ The rental analysis below is based on suburb-level median rental data and the sp
 | Metric | Calculation | Value |
 |--------|-------------|-------|
 | Annual Income | $${effectiveWeeklyRent || enhancedData.financials?.income?.weeklyRent || 'XXX'} × ${effectiveOccupancyRate} weeks | $${annualRentIncome.toLocaleString() || 'XX,XXX'} |
-| Annual Expenses | Property Mgmt + Maintenance + Rates + Insurance | $${enhancedData.financials?.annualCosts?.totalAnnualExcludingLandTax?.toLocaleString() || 'X,XXX'} |
-| Net Annual Return | Income - Expenses | $${(annualRentIncome - (enhancedData.financials?.annualCosts?.totalAnnualExcludingLandTax || 0)).toLocaleString() || 'XX,XXX'} |
+| Annual Expenses | Mgmt + Maintenance + Rates + Insurance${effectiveStrataFees ? ' + Strata' : ''} (excludes land tax — owner-specific) | $${totalAnnualCostsForNetYield.toLocaleString()} |
+| Net Annual Return | Income - Expenses | $${(annualRentIncome - totalAnnualCostsForNetYield).toLocaleString()} |
 | **Net Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${preCalculatedNetYield}%** |
 
 **Yield Comparison to Benchmarks:**
@@ -4352,26 +4370,26 @@ ${enhancedData.financials?.projections?.conservative ? enhancedData.financials.p
 
 Cashflow = Annual Rental Income - Annual Operating Costs - Annual Loan Repayments
 
-**Annual Operating Costs (excluding loan repayment):** $${enhancedData.financials?.annualCosts?.totalAnnualExcludingLandTax?.toLocaleString() || 'X,XXX'} Year 1, escalating to $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.249 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.18).toLocaleString()} Year 10 (as detailed in table above)
+**Annual Operating Costs (excluding loan repayments, including land tax where applicable):** $${opexYear1.toLocaleString()} in Year 1, escalating with CPI to approximately $${opexYear10.toLocaleString()} by Year 10
 
-**Annual P&I Repayment:** $${(enhancedData.financials?.loanDetails?.monthlyPayment ? enhancedData.financials.loanDetails.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'} Year 1 (declining to $${Math.round((enhancedData.financials?.loanDetails?.monthlyPayment || 0) * 12 * 0.95).toLocaleString()} Year 10 as interest component decreases and principal portion increases through amortization)
+**Annual P&I Repayment:** $${annualLoanPayments.toLocaleString()} (constant across the loan term — the interest portion falls and the principal portion rises as the loan amortises, but the repayment itself does not change)
 
 | Year | Conservative (2%) | Base Case (3%) | Optimistic (4%) |
 |------|-------------------|----------------|-----------------|
-${enhancedData.financials?.projections?.conservative ? enhancedData.financials.projections.conservative.slice(0, 10).map((p: any, i: number) => 
-`| ${i + 1} | ($${Math.abs(p.cashFlow || 0).toLocaleString()}) | ($${Math.abs(enhancedData.financials?.projections?.moderate?.[i]?.cashFlow || 0).toLocaleString()}) | ($${Math.abs(enhancedData.financials?.projections?.optimistic?.[i]?.cashFlow || 0).toLocaleString()}) |`
+${enhancedData.financials?.projections?.conservative ? enhancedData.financials.projections.conservative.slice(0, 10).map((p: any, i: number) =>
+`| ${i + 1} | ${fmtCashFlow(p.cashFlow)} | ${fmtCashFlow(enhancedData.financials?.projections?.moderate?.[i]?.cashFlow)} | ${fmtCashFlow(enhancedData.financials?.projections?.optimistic?.[i]?.cashFlow)} |`
 ).join('\n') : '| 1-10 | [Calculate] | [Calculate] | [Calculate] |'}
-| **10-Year Total** | **($${Math.abs(enhancedData.financials?.projections?.conservative?.reduce((sum: number, p: any) => sum + (p.cashFlow || 0), 0) || 0).toLocaleString() || 'XXX,XXX'})** | **($${Math.abs(enhancedData.financials?.projections?.moderate?.reduce((sum: number, p: any) => sum + (p.cashFlow || 0), 0) || 0).toLocaleString() || 'XXX,XXX'})** | **($${Math.abs(enhancedData.financials?.projections?.optimistic?.reduce((sum: number, p: any) => sum + (p.cashFlow || 0), 0) || 0).toLocaleString() || 'XXX,XXX'})** |
+| **10-Year Total** | **${fmtCashFlow(cumConservative)}** | **${fmtCashFlow(cumModerate)}** | **${fmtCashFlow(cumOptimistic)}** |
 
 **Projected Loan-to-Value Ratio (LVR) - Year 10:**
 
-Loan Balance at Year 10: Approximately $[XXX,XXX] (declining from initial $${enhancedData.financials?.initialCosts?.loanAmount?.toLocaleString() || 'X,XXX,XXX'})
+Loan Balance at Year 10: $${enhancedData.financials?.projections?.moderate?.[9]?.loanBalance?.toLocaleString() || '[XXX,XXX]'} (declining from initial $${enhancedData.financials?.initialCosts?.loanAmount?.toLocaleString() || 'X,XXX,XXX'})
 
 | Scenario | Year 10 Property Value | Loan Balance | LVR |
 |----------|------------------------|--------------|-----|
-| Conservative (2%) | $${enhancedData.financials?.projections?.conservative?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.conservative?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${enhancedData.financials?.projections?.conservative?.[9]?.lvr || 'XX'}% |
-| Base Case (4%) | $${enhancedData.financials?.projections?.moderate?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.moderate?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${enhancedData.financials?.projections?.moderate?.[9]?.lvr || 'XX'}% |
-| Optimistic (6%) | $${enhancedData.financials?.projections?.optimistic?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.optimistic?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${enhancedData.financials?.projections?.optimistic?.[9]?.lvr || 'XX'}% |
+| Conservative (2%) | $${enhancedData.financials?.projections?.conservative?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.conservative?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${seriesLvrPercent(enhancedData.financials?.projections?.conservative?.[9])}% |
+| Base Case (4%) | $${enhancedData.financials?.projections?.moderate?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.moderate?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${seriesLvrPercent(enhancedData.financials?.projections?.moderate?.[9])}% |
+| Optimistic (6%) | $${enhancedData.financials?.projections?.optimistic?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.optimistic?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${seriesLvrPercent(enhancedData.financials?.projections?.optimistic?.[9])}% |
 
 **10-Year Projection Commentary (200+ words required):**
 
@@ -4381,9 +4399,13 @@ The base case scenario (4% growth) delivers Year 10 value of $[X,XXX,XXX], produ
 
 The optimistic scenario (6% growth) projects Year 10 value of $[X,XXX,XXX], with capital gains of $[X,XXX,XXX] ([XX.X]%). LVR declines to [XX]%, indicating strong equity position and reduced leverage.
 
-**Cumulative Cashflow:** All scenarios produce negative cumulative cashflow over the 10-year period, ranging from ($[XXX,XXX]) in the conservative case to ($[XXX,XXX]) in the optimistic case. This negative cashflow is offset by capital appreciation, making the investment viable only for investors capable of sustaining annual shortfalls and targeting long-term wealth accumulation through capital growth rather than rental income.
+**Cumulative Cashflow:** ${allScenariosCashNegative
+  ? `All scenarios produce negative cumulative cashflow over the 10-year period: Conservative ${fmtCashFlow(cumConservative)}, Base Case ${fmtCashFlow(cumModerate)}, Optimistic ${fmtCashFlow(cumOptimistic)}. This shortfall is weighed against capital appreciation — the investment suits buyers able to fund the annual gap while targeting long-term growth.`
+  : `The 10-year cumulative cashflow is Conservative ${fmtCashFlow(cumConservative)}, Base Case ${fmtCashFlow(cumModerate)}, Optimistic ${fmtCashFlow(cumOptimistic)}. Describe the actual position using these exact figures: state which scenarios are self-funding and which require the investor to contribute each year. Do not describe the cashflow as negative in a scenario where the figure above is positive.`}
 
-**Critical Insight:** This property is fundamentally structured as a Capital Growth investment, with [X]% annual property appreciation expectations, with rental income insufficient to cover debt servicing costs.
+**Critical Insight:** ${(typeof moderateSeries[0]?.cashFlow === 'number' ? moderateSeries[0].cashFlow : -1) < 0
+  ? `This property is fundamentally structured as a Capital Growth investment, with rental income insufficient to cover debt servicing and holding costs in the early years.`
+  : `In the base case, rental income covers the property's debt servicing and holding costs, so returns combine income and capital growth. Characterise the balance between the two using the projections above — do not describe the rental income as insufficient.`}
 
 ---
 
