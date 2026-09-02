@@ -405,6 +405,10 @@ export function impliedOpexFromSeries(row: any, annualLoanPayments: number): num
   return Math.round(row.annualRent - annualLoanPayments - row.cashFlow);
 }
 
+/** Thousands separation without consulting the runtime locale. */
+const groupThousands = (n: number): string =>
+  String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
 /**
  * Accounting sign convention that keeps the sign: a negative cash flow in
  * parentheses, a positive one as plain dollars. Wrapping `Math.abs` in
@@ -413,7 +417,7 @@ export function impliedOpexFromSeries(row: any, annualLoanPayments: number): num
  */
 export function fmtCashFlow(n: number | null | undefined): string {
   const v = typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : 0;
-  return v < 0 ? `($${Math.abs(v).toLocaleString('en-AU')})` : `$${v.toLocaleString('en-AU')}`;
+  return v < 0 ? `($${groupThousands(Math.abs(v))})` : `$${groupThousands(v)}`;
 }
 
 /**
@@ -431,4 +435,207 @@ export function cumulativeCashFlow(rows: unknown): number {
   return Array.isArray(rows)
     ? rows.reduce((sum: number, p: any) => sum + (typeof p?.cashFlow === 'number' ? p.cashFlow : 0), 0)
     : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Reconciling a STORED financial_calculations row at read time.
+//
+// ~1,170 historic rows were written by the pre-fix fold, and nothing re-writes
+// a stored row until its report is regenerated — so every reader of stored
+// financials (the template binding projection, the design-composer
+// normaliser) reconciles here first. Two independent repairs:
+//
+//  * The inflated series is healed EXACTLY, not approximately. The old fold's
+//    base reconstructs from the row's own aggregates
+//    (2·totalAnnual + totalAnnualExcludingLandTax + percent — the aggregates
+//    are original even where line items were later overridden, because
+//    nothing ever rewrote them), each year's CPI compounding factor recovers
+//    as impliedOpex ÷ that base, and the true cash flow follows. Detection is
+//    unambiguous: the buggy base is provably ≥ 2× totalAnnual while a healthy
+//    year-1 charge is ≤ ~1.1× (one year of CPI), so the 1.7 threshold cannot
+//    misfire on either side.
+//
+//  * Totals are derived, never accepted: totalUpfront becomes the sum of the
+//    upfront lines the row itself publishes (132 of 161 sampled rows carried
+//    a total that did not foot against its own lines), and the headline
+//    weekly/annual net and cash-on-cash are recomputed from the row's
+//    components on the engine's one cost base. On a post-fix row every
+//    recomputation equals what is stored, so this is a no-op there.
+//
+// The stored row is NEVER mutated — reconciliation returns a new object —
+// and a row whose components are missing keeps its stored values: a heal
+// that cannot establish its inputs must not guess.
+// ---------------------------------------------------------------------------
+
+export interface StoredFinancialsReconciliation {
+  /** The reconciled object (the input, untouched, when nothing applied). */
+  fin: any;
+  /** Scenario keys whose series were healed from the fold inflation. */
+  healedScenarios: string[];
+  /** Whether the sensitivity block was healed alongside the series. */
+  sensitivityHealed: boolean;
+  /** Whether headline metrics were recomputed from components. */
+  metricsReconciled: boolean;
+  /** Whether totalUpfront was re-derived from the row's own lines. */
+  totalUpfrontDerived: boolean;
+}
+
+const isRecord = (v: unknown): v is Record<string, any> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+const asNum = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) ? v : null;
+
+/** The threshold separating a CPI-escalated year-1 charge (≤ ~1.1×) from the fold (≥ 2×). */
+const FOLD_DETECTION_RATIO = 1.7;
+
+export function reconcileStoredFinancials(raw: unknown): StoredFinancialsReconciliation {
+  const none = (fin: any): StoredFinancialsReconciliation => ({
+    fin, healedScenarios: [], sensitivityHealed: false, metricsReconciled: false, totalUpfrontDerived: false,
+  });
+  if (!isRecord(raw)) return none(raw);
+
+  const costs = isRecord(raw.annualCosts) ? raw.annualCosts : {};
+  const loan = isRecord(raw.loanDetails) ? raw.loanDetails : {};
+  const income = isRecord(raw.income) ? raw.income : {};
+  const initial = isRecord(raw.initialCosts) ? raw.initialCosts : {};
+
+  const totalAnnual = operatingExpensesFrom(costs);
+  const monthlyPayment = asNum(loan.monthlyPayment);
+  const annualLoanPayments = monthlyPayment !== null ? monthlyPayment * 12 : null;
+  const weeklyRent = asNum(income.weeklyRent);
+  const annualRent = weeklyRent !== null ? weeklyRent * 52 : asNum(income.annualRent);
+
+  // What the old fold summed for THIS row: the line items (= totalAnnual)
+  // plus every aggregate the object carries plus the percentage.
+  const storedTotalAnnual = asNum(costs.totalAnnual);
+  const storedExcl = asNum(costs.totalAnnualExcludingLandTax);
+  const pct = asNum(costs.propertyManagementPercent) ?? 0;
+  const foldBase = totalAnnual
+    + (storedTotalAnnual ?? 0)
+    + (storedExcl ?? 0)
+    + pct;
+
+  const fin: Record<string, any> = { ...raw };
+  const result = none(fin);
+
+  // ── the series ────────────────────────────────────────────────────────────
+  const deposit = asNum(initial.deposit);
+  const propertyValue0 = asNum(initial.propertyValue);
+  if (isRecord(raw.projections) && totalAnnual > 0 && annualLoanPayments !== null && annualLoanPayments > 0 && foldBase > totalAnnual) {
+    const healedProjections: Record<string, any> = { ...raw.projections };
+    for (const [scenario, rows] of Object.entries(raw.projections)) {
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+      const opex1 = impliedOpexFromSeries(rows[0], annualLoanPayments);
+      if (opex1 === null || opex1 / totalAnnual < FOLD_DETECTION_RATIO) continue;
+
+      let cumulative = 0;
+      let healedAny = false;
+      const healedRows = rows.map((row: any) => {
+        const impliedOpex = impliedOpexFromSeries(row, annualLoanPayments);
+        const annualRentN = asNum(row?.annualRent);
+        if (impliedOpex === null || annualRentN === null || impliedOpex <= 0) {
+          // A row the heal cannot establish keeps its stored values; the
+          // running total still counts what the row says.
+          cumulative += asNum(row?.cashFlow) ?? 0;
+          return row;
+        }
+        // The CPI compounding factor this row was escalated by, recovered
+        // from the inflated charge itself; the true charge is the real cost
+        // base under the same factor.
+        const cpiFactor = impliedOpex / foldBase;
+        const healedOpex = totalAnnual * cpiFactor;
+        const cashFlow = Math.round(annualRentN - annualLoanPayments - healedOpex);
+        cumulative += cashFlow;
+        healedAny = true;
+        const healed: Record<string, any> = { ...row, cashFlow, cumulativeCashFlow: Math.round(cumulative) };
+        const year = asNum(row?.year);
+        const pv = asNum(row?.propertyValue);
+        if (deposit !== null && deposit > 0 && propertyValue0 !== null && year !== null && year > 0 && pv !== null) {
+          healed.roi = Math.round(((cashFlow + (pv - propertyValue0) / year) / deposit) * 100 * 100) / 100;
+        }
+        return healed;
+      });
+      if (healedAny) {
+        healedProjections[scenario] = healedRows;
+        result.healedScenarios.push(scenario);
+      }
+    }
+    if (result.healedScenarios.length) fin.projections = healedProjections;
+  }
+
+  // ── the sensitivity block, written by the same fold ───────────────────────
+  if (result.healedScenarios.length && isRecord(raw.sensitivityAnalysis) && annualRent !== null && annualLoanPayments !== null) {
+    const sens = raw.sensitivityAnalysis;
+    const rents = isRecord(sens.rentChanges) ? sens.rentChanges : null;
+    const storedMinus10 = rents ? asNum(rents.minus10Percent) : null;
+    // Identity check before touching anything: the stored base the fold
+    // produced must reconstruct from this row's own numbers, or the block
+    // was written by some other hand and stays as it is.
+    const expectedFoldBaseNet = annualRent - foldBase - annualLoanPayments;
+    if (storedMinus10 !== null && Math.abs(storedMinus10 + annualRent * 0.1 - expectedFoldBaseNet) <= 5) {
+      const excess = foldBase - totalAnnual;
+      const healedBaseNet = annualRent - totalAnnual - annualLoanPayments;
+      const healedSens: Record<string, any> = { ...sens };
+      if (rents) {
+        healedSens.rentChanges = {
+          ...rents,
+          minus10Percent: healedBaseNet - annualRent * 0.1,
+          plus10Percent: healedBaseNet + annualRent * 0.1,
+          plus20Percent: healedBaseNet + annualRent * 0.2,
+        };
+      }
+      if (isRecord(sens.interestRateChanges)) {
+        // Only the payment leg varies with the rate, so the fold's excess is
+        // a constant additive error on every rate scenario.
+        const healedRates: Record<string, any> = {};
+        for (const [k, v] of Object.entries(sens.interestRateChanges)) {
+          const n = asNum(v);
+          healedRates[k] = n === null ? v : n + excess;
+        }
+        healedSens.interestRateChanges = healedRates;
+      }
+      fin.sensitivityAnalysis = healedSens;
+      result.sensitivityHealed = true;
+    }
+  }
+
+  // ── totals derived from the row's own lines ───────────────────────────────
+  const stampDuty = asNum(initial.stampDuty);
+  let derivedUpfront: number | null = null;
+  if (deposit !== null && stampDuty !== null) {
+    derivedUpfront = deposit + stampDuty + (asNum(initial.lmi) ?? 0)
+      + (asNum(initial.legalFees) ?? 0) + (asNum(initial.inspectionFees) ?? 0);
+    if (derivedUpfront !== asNum(initial.totalUpfront)) {
+      fin.initialCosts = { ...initial, totalUpfront: derivedUpfront };
+      result.totalUpfrontDerived = true;
+    }
+  }
+
+  // ── headline metrics recomputed from components ───────────────────────────
+  if (isRecord(raw.keyMetrics) && totalAnnual > 0 && annualRent !== null && annualLoanPayments !== null && annualLoanPayments > 0) {
+    const km = raw.keyMetrics;
+    const netCashFlow = annualRent - totalAnnual - annualLoanPayments;
+    const denominator = derivedUpfront ?? asNum(initial.totalUpfront) ?? asNum(km.totalInvestment);
+    const healedKm: Record<string, any> = {
+      ...km,
+      annualNet: Math.round(netCashFlow),
+      weeklyNet: Math.round(netCashFlow / 52),
+    };
+    if (denominator !== null && denominator > 0) {
+      healedKm.totalInvestment = denominator;
+      healedKm.cashOnCashReturn = Math.round((netCashFlow / denominator) * 100 * 100) / 100;
+    }
+    if (
+      healedKm.annualNet !== km.annualNet
+      || healedKm.weeklyNet !== km.weeklyNet
+      || healedKm.totalInvestment !== km.totalInvestment
+      || healedKm.cashOnCashReturn !== km.cashOnCashReturn
+    ) {
+      fin.keyMetrics = healedKm;
+      result.metricsReconciled = true;
+    }
+  }
+
+  return result;
 }
