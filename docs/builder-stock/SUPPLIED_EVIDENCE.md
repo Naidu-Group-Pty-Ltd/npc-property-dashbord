@@ -36,15 +36,24 @@ drops every link that never needed recovery) and the per-branch records in
 | `no_evidence` | the row names no source this pipeline can open | may run |
 | `pending` | at least one source has never been opened | shut |
 | `processing` | an attempt claim is standing (a recovery in flight, or a killed worker under budget) | shut |
-| `found` | a builder-supplied image is accepted | shut |
+| `found` | a builder-supplied image is accepted | enters, spends nothing¹ |
 | `exhausted` | every source was **opened and read**, none names an image for this row | may run |
 | `retryable_failure` | every source finished, at least one on a fault of OURS | **shut** |
+
+¹ A success **clears its branch record**, so by the provenance column alone a
+just-recovered property reads `pending` for ever — the accepted picture (one
+indexed read of `builder_stock_item_images`) is what answers the question. A
+`found` property is admitted because the ladder module owns the bookkeeping
+for "picture already here": every paid stage records itself skipped, nothing
+is fetched, and the enrichment is marked complete, which is what takes the
+property out of the queue.
 
 Enforcement is in `settleFallbackImages` — the one module that buys the
 ladder — as a skip that spends nothing, counts as `withheld`, and logs a
 structured `fallback withheld` line. Routing is in `settleItemImages`:
-`pending`/`processing` go back to `source`; `retryable_failure` and `found`
-settle. Both read the same pure function, so they cannot disagree.
+`pending`/`processing` go back to `source`; `retryable_failure` settles blank
+(and leaves the ladder queue as `failed`). Both read the same pure function,
+so they cannot disagree.
 
 ## A timeout is not exhaustion
 

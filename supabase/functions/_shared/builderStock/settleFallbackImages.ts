@@ -124,6 +124,30 @@ function storedRowBranches(sourceRow: Record<string, unknown> | null) {
 }
 
 /**
+ * Has a builder-supplied picture been accepted for this property?
+ *
+ * One indexed read. A read that FAILS answers false, which is the withholding
+ * direction: the gate then treats the property by its branch records alone,
+ * and the worst outcome is a tick's delay — never a spend and never a wrong
+ * image.
+ */
+async function hasBuilderSuppliedImage(db: any, itemId: string): Promise<boolean> {
+  try {
+    const { data, error } = await db
+      .from('builder_stock_item_images')
+      .select('id')
+      .eq('stock_item_id', itemId)
+      .eq('source_stage', 'uploaded_document')
+      .eq('processing_status', 'ready')
+      .limit(1);
+    if (error) return false;
+    return Array.isArray(data) && data.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The source row's own anchor, which keys every provenance record on it.
  *
  * Read from the stored row rather than recomputed: the anchor a verdict was
@@ -304,6 +328,15 @@ export async function settleFallbackImages(
       stored: row.source_provenance_result,
       provenanceVersion: PROVENANCE_VERSION,
       sourceAnchor: anchorOf(row.source_row),
+      /*
+       * A SUCCESS CLEARS ITS BRANCH RECORD, so without this a property whose
+       * brochure just yielded its picture reads `pending` — the branch looks
+       * unopened — and is withheld from the very bookkeeping that would mark
+       * it complete. The accepted picture is the fact that settles the
+       * question, and it lives in the images table, not the provenance
+       * column.
+       */
+      builderImageAccepted: await hasBuilderSuppliedImage(db, itemId),
     });
     if (!fallbackMayRun(evidence.state)) {
       outcome.withheld += 1;

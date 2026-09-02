@@ -115,13 +115,24 @@ describe('what "finished looking" means for one property', () => {
     expect(fallbackMayRun(reading.state)).toBe(true);
   });
 
-  it('the builder\'s own picture settles it, and the ladder stays shut', () => {
+  it('the builder\'s own picture settles it — even though a success CLEARS its branch record', () => {
+    /*
+     * The branch record is erased when a recovery succeeds, so by the
+     * provenance column alone this property looks `pending` for ever. The
+     * accepted picture is the fact that answers the question, and it is
+     * ADMITTED to the ladder module deliberately: the ladder spends nothing
+     * on it (`nextImageStage` answers `none`, the paid stages record
+     * themselves skipped) and owns the bookkeeping that marks the enrichment
+     * complete and takes the property out of the queue. Measured live: Lot
+     * 824 gained its brochure image and then bounced fallback→source on
+     * every claim, because the reader could not see the picture.
+     */
     const reading = readSuppliedEvidence({
       branches: branchesOf(BROCHURE), stored: null, provenanceVersion: PROVENANCE_VERSION,
       sourceAnchor: null, builderImageAccepted: true,
     });
     expect(reading.state).toBe('found');
-    expect(fallbackMayRun(reading.state)).toBe(false);
+    expect(fallbackMayRun(reading.state)).toBe(true);
   });
 });
 

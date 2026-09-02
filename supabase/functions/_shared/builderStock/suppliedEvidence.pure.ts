@@ -274,15 +274,24 @@ export function readSuppliedEvidence(
 }
 
 /**
- * MAY THE ONLINE FALLBACK RUN FOR THIS PROPERTY?
+ * MAY THIS PROPERTY ENTER THE ONLINE FALLBACK LADDER?
  *
- * The one predicate, so no caller can hold a different opinion. Two states
- * admit it and four withhold it, and the four are the point: `pending`,
- * `processing` and `retryable_failure` are all "we have not finished", and
- * `found` is "we finished and the builder's own picture won".
+ * The one predicate, so no caller can hold a different opinion. Three states
+ * withhold it and they are the point: `pending`, `processing` and
+ * `retryable_failure` are all "we have not finished with what the builder
+ * supplied", and nothing external may be spent — or accepted — until we have.
+ *
+ * `found` is ADMITTED, deliberately. The ladder module is also the owner of
+ * the bookkeeping for "this property already holds a displayable picture":
+ * `nextImageStage` answers `none`, every paid stage records itself skipped
+ * ("Skipped: the builder supplied an image for this property"), nothing is
+ * fetched and nothing is bought, and the property's enrichment is marked
+ * complete — which is what takes it OUT of the fallback queue. Withholding a
+ * `found` property would leave that bookkeeping to a second implementation,
+ * and a property parked in the queue for ever is how the cron never retires.
  */
 export function fallbackMayRun(state: SuppliedEvidenceState): boolean {
-  return state === 'exhausted' || state === 'no_evidence';
+  return state === 'exhausted' || state === 'no_evidence' || state === 'found';
 }
 
 /**

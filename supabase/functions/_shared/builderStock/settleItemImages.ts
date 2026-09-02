@@ -239,11 +239,10 @@ export async function settleClaimedItem(
        *   branch record and re-opens the question from zero — never a hand
        *   edit.
        *
-       *   found — the builder's own picture is already on the card, so there
-       *   is nothing left to buy and nothing left to look at. Settles.
-       *
-       *   exhausted / no_evidence — the ordinary path, unchanged: the ladder
-       *   runs.
+       *   found / exhausted / no_evidence — fall through to the ladder, which
+       *   for `found` spends nothing: it records its paid stages as skipped
+       *   ("the builder supplied an image") and marks the enrichment
+       *   complete, which is what takes the property out of the queue.
        */
       const evidence = await readItemSuppliedEvidence(db, item.id);
       if (evidence && !fallbackMayRun(evidence.state)) {
@@ -486,6 +485,25 @@ async function readItemSuppliedEvidence(
     const sourceRow = (row.source_row ?? null) as Record<string, unknown> | null;
     const anchor = sourceRow && typeof sourceRow.source_anchor === 'string'
       ? sourceRow.source_anchor : null;
+    /*
+     * A SUCCESS CLEARS ITS BRANCH RECORD, so the accepted picture — not the
+     * provenance column — is what says this property is finished. Without
+     * this read, a property whose brochure just yielded its image reads
+     * `pending` and is routed back to `source` on every lap, for ever.
+     */
+    let builderImageAccepted = false;
+    try {
+      const { data: supplied, error: suppliedError } = await db
+        .from('builder_stock_item_images')
+        .select('id')
+        .eq('stock_item_id', itemId)
+        .eq('source_stage', 'uploaded_document')
+        .eq('processing_status', 'ready')
+        .limit(1);
+      builderImageAccepted = !suppliedError && Array.isArray(supplied) && supplied.length > 0;
+    } catch {
+      builderImageAccepted = false;
+    }
     const unmapped = (sourceRow?.unmapped ?? null) as Record<string, string> | null;
     return readSuppliedEvidence({
       // BOTH halves: what the import parsed onto the row, and the separately
@@ -496,6 +514,7 @@ async function readItemSuppliedEvidence(
       stored: row.source_provenance_result,
       provenanceVersion: PROVENANCE_VERSION,
       sourceAnchor: anchor || null,
+      builderImageAccepted,
     });
   } catch {
     return null;
