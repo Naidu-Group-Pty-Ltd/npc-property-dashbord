@@ -2563,7 +2563,7 @@ export default function ReportQA() {
             <div className="report-qa-loaded-reports flex min-h-0 shrink-0 flex-col gap-2 lg:min-h-[13rem] lg:flex-1 lg:basis-0 lg:shrink">
                 <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
                   <span>Reports in this chat</span>
-                  <span className="normal-case tracking-normal text-primary">{selectedReports.length > 1 ? `Comparing ${selectedReports.length}` : selectedReports.length === 1 ? '1 selected' : 'Select reports'}</span>
+                  <span className="normal-case tracking-normal text-primary">{selectedReports.length > 1 ? `${selectedReports.length} in context` : selectedReports.length === 1 ? '1 selected' : 'Select reports'}</span>
                 </div>
                 {uploadedReports.length > 0 ? (
                   <ScrollArea className="report-qa-report-list -mx-1 min-h-0 flex-1 px-1" aria-label="Reports in this chat">
@@ -2642,7 +2642,7 @@ export default function ReportQA() {
             {selectedReports.length > 1 && (
               <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 rounded-xl border border-primary/20">
                 <GitCompare className="h-3.5 w-3.5 text-primary" />
-                <span className="text-xs text-primary font-medium">Comparison mode: {selectedReports.length} selected reports</span>
+                <span className="text-xs text-primary font-medium">{selectedReports.length} reports in context — answers can draw on any of them, comparisons included</span>
               </div>
             )}
 
@@ -2855,7 +2855,7 @@ export default function ReportQA() {
             </div>
             <CardDescription className="report-qa-chat-subtitle hidden pl-11 text-xs sm:block">
               {selectedReports.length > 1
-                ? `Comparing ${selectedReports.length} selected reports`
+                ? `Answering across ${selectedReports.length} selected reports — ask about any of them, or ask for a comparison`
                 : selectedReports.length === 1
                   ? `Ask questions about ${selectedReports[0].name.replace(/\.pdf$/i, '')}`
                   : 'Select at least one report to ask grounded questions'}
@@ -2914,7 +2914,7 @@ export default function ReportQA() {
                       <p className="report-qa-empty-title">
                         {uploadedReports.length > 0
                           ? selectedReports.length > 1
-                            ? 'Ask a question to compare the selected reports'
+                            ? 'Ask across the selected reports — anything from one of them, or a comparison'
                             : selectedReports.length === 1
                               ? 'Ask a question about the selected report'
                               : 'Select at least one report to start asking questions'
@@ -3222,7 +3222,7 @@ export default function ReportQA() {
                     uploadedReports.length === 0
                       ? 'Ask anything or upload a report for context...'
                       : selectedReportCount > 1
-                        ? 'Ask a comparison question about selected reports...'
+                        ? 'Ask about any of the selected reports, or ask for a comparison...'
                         : selectedReportCount === 1
                           ? 'Ask a question about the selected report...'
                           : 'Select at least one report to ask a grounded question...'

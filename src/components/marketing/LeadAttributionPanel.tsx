@@ -196,15 +196,15 @@ export function LeadAttributionPanel() {
   const deviceList = Array.from(deviceMap.entries()).sort((a, b) => b[1] - a[1]);
 
   // Geo breakdown. The intake pipeline stores GHL's raw IP address in
-  // geo_location when no place name exists, and an IP is not a location —
-  // printing them made the table a column of opaque addresses. They are
-  // grouped honestly until a geo-enrichment source resolves them.
+  // geo_location when no place name exists, and an IP is neither a location
+  // nor something to showcase on a client-facing screen — those rows fold
+  // into the same neutral bucket as empty values. Only real place names
+  // are listed by name.
   const IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
   const IPV6_RE = /^[0-9a-f]{0,4}(:[0-9a-f]{0,4}){2,7}(%.+)?$/i;
   const geoLabelFor = (raw: string | null): string => {
     const value = (raw || '').trim();
-    if (!value) return 'Unknown';
-    if (IPV4_RE.test(value) || IPV6_RE.test(value)) return 'Unresolved (IP address only)';
+    if (!value || IPV4_RE.test(value) || IPV6_RE.test(value)) return 'Location not captured';
     return value;
   };
   const geoMap = new Map<string, number>();
