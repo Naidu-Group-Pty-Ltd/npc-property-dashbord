@@ -497,3 +497,76 @@ dispatcher→render edge.
 - `ClientPDFGenerator`'s client-side override splat (a fourth copy) is
   harmless now that stored financials are override-coherent (Phase 2 C5)
   and folds with the duplicate-copy work.
+
+## 11 · Phase 4 — sub-report cascade (2026-09-02)
+
+Programme item D: the Compass family behaves as one family — one engine per
+variant name, one linkage, and staleness that shows itself.
+
+### What the phase found live (beyond the register)
+
+- **F9 was structural, not just a mis-routed button.** The two engines used
+  DIFFERENT linkage columns (fork → `derived_from_report_id`, condense →
+  `parent_report_id`) with different idempotency keys, so neither could see
+  the other's child: one Compass could hold two contradictory "Financial"
+  documents, one deterministic and one model-written.
+- **F28 — the tier switcher read `investment_reports` from the browser.**
+  The table's policies are service-role-only, so the sibling lookup always
+  answered `[]` with HTTP 200: switching to an existing child was
+  impossible and every click regenerated one (model spend included). The
+  fourth surface to hit the read-through-the-server trap.
+- **A regenerated condense child kept its first-creation data copies.**
+  Regeneration rewrote the prose and left `financial_calculations`,
+  demographics, specs et al. as copied on day one — fresh words over stale
+  figures.
+- **Every fork was scored against $0.** The fork's score inputs read
+  `financial_calculations.purchasePrice` / `.weeklyRent` — paths the record
+  never had (the figures live at `initialCosts.propertyValue` and
+  `income.weeklyRent`).
+
+### What shipped
+
+- **`subReportFamily.pure.ts`** — one mapping (`engineForVariant`:
+  financial/strategic → fork, briefing/snapshot → condense), family
+  resolution across BOTH historical linkage columns, and derived staleness
+  (`variant_generated_at` vs the parent's `updated_at`; missing stamps never
+  cry wolf). Bridged to src; both switchers route through the shared
+  `generateSubReport`, and `condense-investment-report` refuses
+  `financial` at the server, naming the right engine.
+- **`familyOf` on `get-investment-reports`** — the family read, server-side,
+  under the reports module gate: two indexed lookups (never a composed
+  `.or()` string), per-child staleness in the answer. `TierSwitcher` uses it
+  (its direct browser query is gone), lists all five variants including
+  Strategic, and shows "parent has changed since" on stale rows.
+- **Staleness stamps and honest refreshes.** Condense stamps
+  `variant_generated_at` on completion and refreshes the structured copies
+  from the parent on regeneration; both engines write both linkage columns
+  on new rows.
+- **`InvestmentReportFamilyNotice`** on the report page: renders nothing
+  when the family is clean; on a stale child, one "Refresh from latest
+  data"; on a parent, which sub-reports lag and one click that refreshes
+  exactly the children that already exist — a refresh never mints documents
+  nobody asked for. Fork refreshes are free (deterministic); condense
+  refreshes cost a generation and the button counts what it touches.
+- **Fork scores read the record** (override → initialCosts/income), not
+  absent top-level paths.
+
+### Verification
+
+31 assertions across the pure-module spec (engine mapping, dual-column
+family resolution from any anchor, the staleness truth table, orphan and
+incomplete-child handling) and the source pins (server refusal, no inline
+engine choice on any surface, no browser table read, stamps and structured
+refresh present, page wiring). Full affected surface green: 2,356 report
+tests, `tsc`, eslint, `audit:style` under baseline, production build, edge
+column gate; security inventory unchanged (no new call edges).
+
+### Deliberately not done here
+
+- Auto-regenerating children when a parent regenerates: a condense refresh
+  spends a model generation, so the family refresh stays an explicit,
+  counted click on the page rather than a silent side effect of every
+  parent save.
+- Backfilling the two linkage columns into one: readers resolve the union
+  either way; a data migration is pure tidiness and can ride with any later
+  schema work.

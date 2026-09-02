@@ -22,6 +22,8 @@ import type { ClientInfo, InvestmentReport } from '@/components/reports/report-v
 import { getHasOverrides, getOverriddenFields, getReportStatusLabel, getReportTierLabel, getReportVariantLabel } from '@/components/reports/report-view/utils';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { deliverInvestmentPdf, publishInvestmentPdf } from '@/lib/reports/investment/deliverInvestmentPdf';
+import { InvestmentReportFamilyNotice } from '@/components/reports/report-view/InvestmentReportFamilyNotice';
+import { fetchReportFamily, type ReportFamily } from '@/lib/reports/subReports';
 import { toast } from 'sonner';
 import {
   CASH_FLOW_ANALYSIS_BACK_LABEL,
@@ -40,6 +42,7 @@ export default function InvestmentReportView() {
   const fromCashFlowAnalysis = cameFromCashFlowAnalysis(location);
   const [report, setReport] = useState<InvestmentReport | null>(null);
   const [clientInfo, setClientInfo] = useState<ClientInfo | null>(null);
+  const [family, setFamily] = useState<ReportFamily | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,7 +95,11 @@ export default function InvestmentReportView() {
 
       const reportData = data.report;
       setReport(reportData as InvestmentReport);
-      
+
+      // The Compass family, with per-child staleness derived server-side —
+      // feeds the "parent has changed" notice and never blocks the page.
+      fetchReportFamily(id).then(setFamily).catch(() => setFamily(null));
+
       // If it's a client report, fetch the client info for back navigation
       if (reportData.is_client_report && reportData.client_property_id) {
         const { data: clientData } = await invokeSecureFunction('manage-client-data', {
@@ -233,6 +240,16 @@ export default function InvestmentReportView() {
             reportTierLabel={reportTierLabel}
             reportVariantLabel={reportVariantLabel}
             reportStatusLabel={reportStatusLabel}
+          />
+
+          <InvestmentReportFamilyNotice
+            family={family}
+            currentReportId={report.id}
+            onRefreshed={async () => {
+              await handleReportUpdate();
+              const refreshed = await fetchReportFamily(report.id);
+              setFamily(refreshed);
+            }}
           />
 
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
