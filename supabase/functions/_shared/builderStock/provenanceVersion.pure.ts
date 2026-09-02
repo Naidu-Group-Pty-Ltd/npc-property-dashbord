@@ -16,4 +16,4 @@
  */
 
 /** See `sourceImages.ts` for what each version changed and why. */
-export const PROVENANCE_VERSION = 10;
+export const PROVENANCE_VERSION = 11;

@@ -134,6 +134,15 @@ import {
  * `not_identified` banked at 9 was judged under the narrower rule and is
  * stale by definition.
  *
+ * 11 reads a lot number the way the PAGE typesets it. The same list's lot 103
+ * brochure extracts its identity line as "2 1 Lot 10 3 Watsons Reach Estate"
+ * — the exporter split the digits into runs — so the strict token reading saw
+ * "Lot 10", failed the our-lot test and counted a foreign lot, and the
+ * builder's own document was refused. A run of digit tokens after Lot/Unit is
+ * now read fused as well as strictly (see `lotDesignationReadings`), so a
+ * `not_identified` banked at 10 was judged under the split-blind reading and
+ * is stale by definition.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.

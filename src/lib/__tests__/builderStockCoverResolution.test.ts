@@ -189,3 +189,54 @@ describe('a cover may corroborate itself by the estate the label omits', () => {
     expect(roles[0].role).toBe('primary_property');
   });
 });
+
+/**
+ * A LOT NUMBER THE EXPORTER SPLIT IS STILL THE LOT NUMBER.
+ *
+ * MEASURED AGAINST PRODUCTION, 2 SEPTEMBER 2026, the same Watsons Reach list.
+ * The supplied brochure for lot 103 extracts its identity line as
+ * "2 1 Lot 10 3 Watsons Reach Estate …" — the page a person reads says
+ * "Lot 103"; the text layer broke the digits into two runs. The strict token
+ * reading saw "Lot 10", failed the our-lot test, counted a foreign lot, and
+ * the builder's own document was refused — while the sibling lot 102
+ * brochure, typeset with its digits in one run, was read fine. How an
+ * exporter split a number is typography, not evidence about the property, so
+ * a run of digit tokens after Lot/Unit is read fused as well as strictly, and
+ * a run is a FOREIGN lot only when neither reading is ours.
+ */
+describe('a lot number split across text runs is read whole', () => {
+  // Verbatim from the live lot 103 brochure, page 1 (trimmed mid-sentence).
+  const splitLotPage = '*Price based on standard inclusions and facade. It is not the '
+    + 'actual lot for sale. 2 1 Lot 10 3 Watsons Reach Estate Titles December 2026 '
+    + 'Land - $ 232,500 Build - $ 364 ,000 TOTAL - $ 596,500 PICO 8 VERV '
+    + 'Inclusions & Turnkey Pack';
+  const hints = ['Watsons Reach'];
+
+  it('was refused under the strict reading — the defect, kept visible', () => {
+    // Strictly, "Lot 10 3" designates lot 10: not ours, and a foreign lot.
+    // The fused reading is what recovers it below.
+    const covers = findPropertyCoverPages([splitLotPage], 'Lot 10, Diggers Rest', hints);
+    expect(covers.map((cover) => cover.page)).toEqual([1]);
+  });
+
+  it('reads "Lot 10 3" as lot 103 on lot 103\'s own document', () => {
+    const covers = findPropertyCoverPages([splitLotPage], 'Lot 103, Diggers Rest', hints);
+    expect(covers.map((cover) => cover.page)).toEqual([1]);
+  });
+
+  it('still refuses a genuinely different lot, split or not', () => {
+    expect(findPropertyCoverPages([splitLotPage], 'Lot 104, Diggers Rest', hints))
+      .toEqual([]);
+    const wholeForeign = splitLotPage.replace('Lot 10 3', 'Lot 104');
+    expect(findPropertyCoverPages([wholeForeign], 'Lot 103, Diggers Rest', hints))
+      .toEqual([]);
+  });
+
+  it('a fused run never excuses a second, foreign lot on the page', () => {
+    const twoLots = `${splitLotPage} adjoining Lot 20 5 sold separately`;
+    // "Lot 20 5" reads as 20 and 205 — neither is 103, so the page states
+    // another lot and is refused.
+    expect(findPropertyCoverPages([twoLots], 'Lot 103, Diggers Rest', hints))
+      .toEqual([]);
+  });
+});

@@ -113,6 +113,53 @@ function lotDesignations(value: string): string[] {
 }
 
 /**
+ * A lot designation as a PAGE actually typesets it: the first digit token
+ * after "Lot"/"Unit", and the whole run of digit tokens fused back together.
+ *
+ * WHY THE FUSED READING EXISTS. A PDF's text layer breaks a number wherever
+ * the exporter placed its glyph runs, and the lot number itself is not
+ * exempt. Measured live, 2 September 2026, on the Watsons Reach list: the
+ * supplied brochure for lot 103 extracts as "2 1 Lot 10 3 Watsons Reach
+ * Estate" — the page a person reads says "Lot 103", the token stream says
+ * "Lot 10" then "3", and the strict reading refused the builder's own
+ * document as being about some other lot. The sibling brochure for lot 102
+ * survived only because its digits happened to land in one run. How an
+ * exporter SPLIT a number is typography, not evidence about the property.
+ *
+ * WHY BOTH READINGS TRAVEL, AND HOW THEY ARE SPENT. A run counts as OUR lot
+ * when either reading matches the label's lot, and as ANOTHER lot only when
+ * neither does — so "Lot 104" still contradicts lot 103 (strict 104, fused
+ * 1042-with-a-trailing-bath-count, neither ours), while "Lot 10 3" stops
+ * reading as a foreign lot 10 on lot 103's own document. The deliberate
+ * trade-off: a page genuinely about lot 10 whose next token is a bare "3"
+ * (say a bedroom count) would read as lot 103's too — but this test only
+ * ever CONFIRMS a document the row itself supplied, the corroboration,
+ * package-fact and single-hero tests still stand behind it, and refusing
+ * every brochure whose number the exporter split is the measured, recurring
+ * loss. The label side stays strict: labels are our own strings, and nothing
+ * splits them.
+ */
+interface LotReading { strict: string; fused: string }
+
+function lotDesignationReadings(value: string): LotReading[] {
+  const tokens = tokenise(value);
+  const found: LotReading[] = [];
+  for (let index = 0; index < tokens.length - 1; index++) {
+    if (tokens[index] !== 'lot' && tokens[index] !== 'unit') continue;
+    const first = tokens[index + 1];
+    if (!/^\d{1,5}$/.test(first)) continue;
+    let fused = first;
+    for (let next = index + 2; next < tokens.length; next++) {
+      if (!/^\d{1,5}$/.test(tokens[next])) break;
+      if (fused.length + tokens[next].length > 5) break;
+      fused += tokens[next];
+    }
+    found.push({ strict: first, fused });
+  }
+  return found;
+}
+
+/**
  * The design or product a label names in brackets — "[Miami 190]".
  *
  * The SECOND discriminator, and on the live list it is the only one that
@@ -209,12 +256,16 @@ function pageStatesIdentity(
     return labelTokens.slice(0, MAX_IDENTITY_TOKENS).every(states);
   }
 
-  // 1 — the lot is stated, as a lot.
-  const pageLots = lotDesignations(pageText);
-  if (!pageLots.some((lot) => labelLots.includes(lot))) return false;
+  // 1 — the lot is stated, as a lot. A number the exporter split into runs
+  // is read whole as well as strictly — see `lotDesignationReadings`.
+  const pageLotReadings = lotDesignationReadings(pageText);
+  const readsAsOurs = (reading: LotReading) =>
+    labelLots.includes(reading.strict) || labelLots.includes(reading.fused);
+  if (!pageLotReadings.some(readsAsOurs)) return false;
 
-  // 2 — and no other lot is.
-  if (pageLots.some((lot) => !labelLots.includes(lot))) return false;
+  // 2 — and no other lot is: a run is another lot only when NEITHER of its
+  // readings is ours.
+  if (pageLotReadings.some((reading) => !readsAsOurs(reading))) return false;
 
   // 3 — the design, when the label names one.
   const design = designTokens(label);
