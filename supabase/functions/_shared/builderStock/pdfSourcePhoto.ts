@@ -580,6 +580,11 @@ export async function selectPdfPropertyPrimary(
      * field. Used only where no page named the property itself.
      */
     design?: string | null;
+    /**
+     * The row's other identity names — the estate, the project — for the
+     * cover rule's corroboration test alone. See `pageStatesIdentity`.
+     */
+    identityHints?: readonly string[] | null;
   } = {},
 ): Promise<{
   assets: PdfSourceAsset[];
@@ -602,6 +607,7 @@ export async function selectPdfPropertyPrimary(
     pageTexts: options.pageTexts ?? [],
     design: options.design ?? null,
     structuralCoverPage: options.structuralCoverPage ?? null,
+    identityHints: options.identityHints ?? [],
   });
   const found = await discoverPdfSourceAssets(bytes, {
     maxPages: options.maxPages,
@@ -612,6 +618,7 @@ export async function selectPdfPropertyPrimary(
   const roles = assignPdfMediaRoles({
     label: options.label ?? null,
     design: options.design ?? null,
+    identityHints: options.identityHints ?? [],
     pageTexts: options.pageTexts ?? [],
     pageOrderAuthoritative: found.pageOrderAuthoritative,
     media: found.assets.map((asset) => asset.placement),

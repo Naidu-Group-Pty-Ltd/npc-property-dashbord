@@ -33,8 +33,8 @@ import { extractStockFile } from './extract.ts';
 import { keyRowsByHeader } from './table.pure.ts';
 import { isNotionUrl } from './urlSource.pure.ts';
 import {
-  emptyStockRecord, identifiesAProperty, normaliseStockRow, stockMatchKeys,
-  stockRecordLabel, stockRowFingerprint,
+  emptyStockRecord, identifiesAProperty, normaliseStockRow, stockIdentityHints,
+  stockMatchKeys, stockRecordLabel, stockRowFingerprint,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import {
@@ -1207,6 +1207,9 @@ export async function repairSourceImagesForUpload(
         {
           packageUrl,
           label: stockRecordLabel(record),
+          // The estate and project names the display label leaves out, for
+          // the cover rule's corroboration test. See `stockIdentityHints`.
+          identityHints: stockIdentityHints(record),
           // Tells "(178 SqM)" from "(207 SqM)" where a lot has two packages.
           buildingSqm: Number((record as { building_size_sqm?: unknown })?.building_size_sqm)
             || null,

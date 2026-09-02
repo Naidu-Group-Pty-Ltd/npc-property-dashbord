@@ -124,3 +124,68 @@ describe('the cover a document names is the one whose image becomes primary', ()
     expect(covers.map((cover) => cover.page)).toEqual([1]);
   });
 });
+
+/**
+ * THE CORROBORATION POOL IS THE ROW'S IDENTITY, NOT THE LABEL'S SUBSET OF IT.
+ *
+ * MEASURED AGAINST PRODUCTION, 2 SEPTEMBER 2026, the Watsons Reach stock
+ * list. The row for lot 102 has no street address, so its display label reads
+ * "Lot 102, Diggers Rest" — the suburb. Its own supplied brochure's first
+ * page (the text below is that page, verbatim but trimmed) states "Lot 102
+ * Watsons Reach Estate" beside the package prices, which is how house-and-land
+ * marketing writes identity: the ESTATE, which `stockRecordLabel` includes
+ * only when a row has neither lot nor address to show. Corroboration fed only
+ * the label found neither "diggers" nor "rest" on the page and refused the
+ * builder's own document; the fallback gate then held the property blank. The
+ * row's remaining identity names now travel as hints for that one test.
+ */
+describe('a cover may corroborate itself by the estate the label omits', () => {
+  // Verbatim from the live lot 102 brochure, page 1 (trimmed mid-sentence).
+  const vgCoverPage = '*Price based on standard inclusions and facade. Image depicts '
+    + 'upgrade items not included in the price. It is not the actual lot for sale. '
+    + '2 1 Lot 102 Watsons Reach Estate Titles December 2026 Land - $232,500 '
+    + 'Build - $364,000 TOTAL - $596,500 PICO 8 VERV Inclusions & Turnkey Pack';
+  const vgLabel = 'Lot 102, Diggers Rest';
+  const vgHints = ['Watsons Reach'];
+
+  it('was refused when only the label could corroborate — the defect, kept visible', () => {
+    expect(findPropertyCoverPages([vgCoverPage], vgLabel)).toEqual([]);
+  });
+
+  it('is accepted when the row\'s estate travels as a hint', () => {
+    const covers = findPropertyCoverPages([vgCoverPage], vgLabel, vgHints);
+    expect(covers.map((cover) => cover.page)).toEqual([1]);
+  });
+
+  it('lets the hint corroborate but never identify: another lot still refuses', () => {
+    const otherLot = vgCoverPage.replace(/Lot 102/g, 'Lot 103');
+    expect(findPropertyCoverPages([otherLot], vgLabel, vgHints)).toEqual([]);
+  });
+
+  it('never lets a hint excuse a page that names a second lot', () => {
+    const twoLots = `${vgCoverPage} adjoining Lot 104 sold separately`;
+    expect(findPropertyCoverPages([twoLots], vgLabel, vgHints)).toEqual([]);
+  });
+
+  it('leaves the lot-less full-conjunction path exactly as strict as it was', () => {
+    // A label with no lot keeps the every-token rule; a hint must not soften
+    // it into "some token somewhere".
+    const label = 'Watsons Reach Stage 3';
+    const page = 'Watsons Reach masterplan overview Package Price - $596,500 '
+      + 'Land Size 350 m2';
+    expect(findPropertyCoverPages([page], label, ['Diggers Rest'])).toEqual([]);
+  });
+
+  it('the hero on a hint-corroborated cover becomes primary through the one decision', () => {
+    const roles = assignPdfMediaRoles({
+      label: vgLabel,
+      identityHints: vgHints,
+      design: 'Pico 8',
+      pageTexts: [vgCoverPage],
+      pageOrderAuthoritative: true,
+      media: [{ page: 1, name: 'Im0', placementsOnPage: 1, pagesDrawnOn: 1 }],
+      structuralCoverPage: null,
+    });
+    expect(roles[0].role).toBe('primary_property');
+  });
+});

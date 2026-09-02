@@ -170,12 +170,33 @@ function designTokens(label: string): string[] {
  *      estate, the suburb, the street where the document does name it — must
  *      appear, so a bare "Lot 51" on an unrelated page cannot qualify.
  *
+ *      THE CORROBORATION POOL IS THE ROW'S IDENTITY, NOT THE LABEL'S SUBSET
+ *      OF IT. The label is a short display string, and `stockRecordLabel`
+ *      includes the estate only when the row has nothing else to show — so a
+ *      label can read "Lot 102, Diggers Rest" for a row whose own
+ *      `development_name` is "Watsons Reach". Measured live, 2 September
+ *      2026: that row's supplied brochure states "Lot 102 Watsons Reach
+ *      Estate" beside its package price, which is how house-and-land
+ *      marketing writes identity — the estate, not the suburb — and this
+ *      test refused it for not saying "Diggers Rest". A builder's own
+ *      brochure, fetched and read, became a blank card. So the caller passes
+ *      the row's remaining identity names as HINTS, and a hint token counts
+ *      as corroboration exactly as a label token does. Hints are spent on
+ *      this test and nowhere else: they cannot substitute for the lot,
+ *      cannot excuse a page naming another lot, and never touch the
+ *      full-conjunction path below — every page accepted without hints is
+ *      still accepted, and no test gets weaker than it was.
+ *
  * A label with no lot or unit number keeps the OLD conjunction exactly, because
  * for those rows the tokens are all there is and there is no discriminator to
  * lean on. Nothing about this is a similarity score: every test is a statement
  * the document either makes or does not make.
  */
-function pageStatesIdentity(pageText: string, label: string): boolean {
+function pageStatesIdentity(
+  pageText: string,
+  label: string,
+  identityHints: readonly string[] = [],
+): boolean {
   const labelTokens = tokenise(label);
   if (labelTokens.length < MIN_IDENTITY_TOKENS) return false;
 
@@ -213,7 +234,15 @@ function pageStatesIdentity(pageText: string, label: string): boolean {
     token !== 'lot' && token !== 'unit' && !labelLots.includes(token)
     && !design.includes(token));
   if (!corroborating.length) return true;
-  return corroborating.some(states);
+  if (corroborating.some(states)) return true;
+  // The row's other identity names — the estate, the project — filtered the
+  // same way, so a hint can never be the lot wearing a different hat.
+  return identityHints
+    .flatMap((hint) => tokenise(hint))
+    .filter((token) =>
+      token !== 'lot' && token !== 'unit' && !labelLots.includes(token)
+      && !design.includes(token))
+    .some(states);
 }
 
 /** The package facts a page states, in the order they are defined above. */
@@ -239,13 +268,14 @@ const MIN_PACKAGE_FACTS = 2;
 export function findPropertyCoverPages(
   pageTexts: string[],
   label: string | null | undefined,
+  identityHints: readonly string[] = [],
 ): PropertyCoverEvidence[] {
   const identity = String(label ?? '').trim();
   if (!identity) return [];
 
   const covers: PropertyCoverEvidence[] = [];
   (pageTexts ?? []).forEach((text, index) => {
-    if (!pageStatesIdentity(text ?? '', identity)) return;
+    if (!pageStatesIdentity(text ?? '', identity, identityHints)) return;
     const packageFacts = packageFactsOn(text ?? '');
     if (packageFacts.length < MIN_PACKAGE_FACTS) return;
     covers.push({ page: index + 1, identity, packageFacts });
@@ -515,9 +545,13 @@ export function coverSearchPages(input: {
   pageTexts: string[];
   design?: string | null;
   structuralCoverPage?: number | null;
+  /** The row's other identity names. See `pageStatesIdentity`, test 4. */
+  identityHints?: readonly string[] | null;
 }): number[] {
   const pages = new Set<number>();
-  for (const cover of findPropertyCoverPages(input.pageTexts ?? [], input.label)) {
+  for (const cover of findPropertyCoverPages(
+    input.pageTexts ?? [], input.label, input.identityHints ?? [],
+  )) {
     pages.add(cover.page);
   }
   for (const cover of findDesignCoverPages(input.pageTexts ?? [], input.design ?? null)) {
@@ -575,10 +609,12 @@ export function assignPdfMediaRoles(input: {
    * never displace one. Absent or indistinct, and the design path never runs.
    */
   design?: string | null;
+  /** The row's other identity names. See `pageStatesIdentity`, test 4. */
+  identityHints?: readonly string[] | null;
 }): SourceImageRoleAssignment[] {
   const media = input.media ?? [];
   const covers = input.pageOrderAuthoritative
-    ? findPropertyCoverPages(input.pageTexts ?? [], input.label)
+    ? findPropertyCoverPages(input.pageTexts ?? [], input.label, input.identityHints ?? [])
     : [];
   const structural = input.pageOrderAuthoritative
     && Number.isInteger(input.structuralCoverPage)
@@ -691,6 +727,8 @@ export function assignPdfMediaRolesPerProperty(input: {
   /** The property each picture reached, index-aligned. Null is unattributed. */
   stockItemIds: Array<string | null>;
   labelByItemId: Map<string, string>;
+  /** Each property's other identity names. See `pageStatesIdentity`, test 4. */
+  identityHintsByItemId?: Map<string, readonly string[]>;
   pageTexts: string[];
   pageOrderAuthoritative: boolean;
 }): SourceImageRoleAssignment[] {
@@ -711,6 +749,7 @@ export function assignPdfMediaRolesPerProperty(input: {
   for (const [itemId, indexes] of byProperty) {
     const assignments = assignPdfMediaRoles({
       label: input.labelByItemId.get(itemId) ?? null,
+      identityHints: input.identityHintsByItemId?.get(itemId) ?? [],
       pageTexts: input.pageTexts,
       pageOrderAuthoritative: input.pageOrderAuthoritative,
       media: indexes.map((index) => media[index].placement ?? {

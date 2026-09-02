@@ -122,6 +122,18 @@ import {
  * operational retirement banked at 8 was decided under that cost and is
  * stale by definition.
  *
+ * 10 widens what a cover page may CORROBORATE ITSELF with. The cover rule's
+ * fourth test accepted only tokens of the row's display label, and that label
+ * shows the suburb and hides the estate whenever a lot is present — while a
+ * builder's own cover identifies a lot the way the estate's marketing does.
+ * Measured live, 2 September 2026: the Watsons Reach brochure for lot 102
+ * states "Lot 102 Watsons Reach Estate" beside its package price and was
+ * refused for not saying "Diggers Rest". The row's own identity names —
+ * `development_name`, `project_name` — now travel as hints for that one test
+ * (see `stockIdentityHints` and `pageStatesIdentity`), so every
+ * `not_identified` banked at 9 was judged under the narrower rule and is
+ * stale by definition.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.

@@ -19,7 +19,7 @@
  *   to `unknown`.
  */
 import {
-  normaliseStockRow, stockMatchKeys, stockRecordLabel,
+  normaliseStockRow, stockIdentityHints, stockMatchKeys, stockRecordLabel,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import {
@@ -473,6 +473,7 @@ export async function importStockRecords(
    */
   const itemIdByAnchor = new Map<string, string | null>();
   const labelByItemId = new Map<string, string>();
+  const identityHintsByItemId = new Map<string, readonly string[]>();
   const claimAnchor = (anchor: string | null, itemId: string) => {
     if (!anchor) return;
     if (!itemIdByAnchor.has(anchor)) { itemIdByAnchor.set(anchor, itemId); return; }
@@ -861,8 +862,10 @@ export async function importStockRecords(
 
       outcome.itemIds.push(itemId);
       // The label the property was matched on, kept so a paginated source can
-      // ask which page states THIS property's identity.
+      // ask which page states THIS property's identity — and the identity
+      // names the label leaves out, for the corroboration test alone.
       labelByItemId.set(itemId, label);
+      identityHintsByItemId.set(itemId, stockIdentityHints(record));
       claimAnchor(record.source_anchor, itemId);
 
       /**
@@ -937,6 +940,7 @@ export async function importStockRecords(
     input.pageTexts?.length
       ? {
         labelByItemId,
+        identityHintsByItemId,
         pageTexts: input.pageTexts,
         pageOrderAuthoritative: input.pageOrderAuthoritative !== false,
       }
@@ -1102,6 +1106,8 @@ export async function attachDocumentMedia(
    */
   paginated?: {
     labelByItemId: Map<string, string>;
+    /** Each property's other identity names. See `pageStatesIdentity`. */
+    identityHintsByItemId?: Map<string, readonly string[]>;
     pageTexts: string[];
     pageOrderAuthoritative: boolean;
   } | null,
