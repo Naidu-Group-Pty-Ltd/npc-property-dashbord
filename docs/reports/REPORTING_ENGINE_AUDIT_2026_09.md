@@ -432,3 +432,68 @@ tests, tsc, eslint, `audit:style` under baseline, production build.
   charts join in the delivery-unification phase).
 - Historic prose corrections (regeneration is the remedy; C1 makes every
   regeneration correct).
+
+## 10 · Phase 3 — delivery unification (2026-09-02)
+
+Programme item C: every pathway that puts an Investment document in front of
+a person produces THE document — template-first, one implementation — and
+the scheduled Market Intelligence email can finally attach one.
+
+### What shipped
+
+- **`deliverInvestmentPdf.ts` — investment's own `deliver*` module.** The
+  correct chain (the person's chosen template → the legacy WeasyPrint
+  route) existed once, inside `PremiumPdfButton`. It is the module now, in
+  the same shape every other migrated format has, and every surface asks
+  it. `templateRouteEnforcement`'s investment pins moved onto the module,
+  which makes them stronger: they now guard the path every surface uses
+  rather than one button.
+- **F11 — the primary Download produces the document.** The page's main
+  action (header, mobile bar) had saved the markdown as a `.txt` for the
+  life of the page while the real PDF sat lower in a collapsible panel. It
+  now delivers template-first with a busy state, and says "Download PDF".
+  The raw-text export survives everywhere its label already said "raw
+  text": the panel button, the header menu item, the document card.
+- **F12 — Send to Client publishes what the operator reviewed.** The send
+  produced nothing before: it shipped whatever `pdf_url` held (legacy
+  route or browser raster, whichever wrote last) or minted a fresh raster.
+  It now produces fresh through the same chain, uploads template renders,
+  reuses the path the legacy route just persisted rather than re-uploading
+  the same bytes, and falls back to the raster only when both engines fail
+  — reachability kept, primacy corrected. The portal needed no change: it
+  serves the snapshot it was sent, and the snapshot is now the document.
+- **`pdf_url` has one meaning**: the storage path of the most recent
+  standard-delivery document, recorded through the one
+  `manage-investment-reports` broker (the module and the browser
+  generator's bookkeeping both go through it; the legacy route's internal
+  write is the same delivery's server half).
+- **F16 — the scheduled Market Intelligence email renders its own
+  attachment.** The dispatcher's generate step writes content, never a
+  PDF, so every dispatch that had to generate failed before sending
+  (`pdf_storage_path` 0/7 in production). It now reuses a recent report
+  even when that report carries no PDF yet, renders through the same
+  design-composer route the download button uses (`persist` on), and
+  attaches the path handed back. The route still refuses anonymous
+  service_role exactly as pinned; the dispatch acts FOR the schedule's
+  creator, whose `marketing_analytics` permission the route checks under a
+  delegated authMethod that cannot hit the permission short-circuit.
+
+### Verification
+
+18 behavioural assertions on the delivery module (chain order, option
+forwarding, publish reuse-vs-upload, bookkeeping-never-fails-a-document)
+plus the `investmentDeliveryUnified` source pins (F11/F12/F16 wiring by
+name). Full affected surface green: 6,243 tests, `tsc`, eslint,
+`audit:style` under baseline, production build; MI's `legacyPathStays`
+route pins all hold; security inventory regenerated with the new
+dispatcher→render edge.
+
+### Deliberately not done here
+
+- The orphaned investment design-composer (`buildInvestmentReport` /
+  `render.pure.ts`) stays orphaned: it is the legacy monolith's eventual
+  replacement and belongs to the separately-authorised legacy phase (F),
+  not to delivery unification.
+- `ClientPDFGenerator`'s client-side override splat (a fourth copy) is
+  harmless now that stored financials are override-coherent (Phase 2 C5)
+  and folds with the duplicate-copy work.

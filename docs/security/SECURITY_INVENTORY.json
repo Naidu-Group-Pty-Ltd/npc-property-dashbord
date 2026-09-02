@@ -637,6 +637,7 @@
     "auto-report-sync->generate-investment-report",
     "auto-report-webhook->generate-investment-report",
     "dispatch-marketing-reports->generate-market-intelligence-report",
+    "dispatch-marketing-reports->render-market-intelligence-pdf",
     "dispatch-marketing-reports->send-email-reply",
     "finance-portal-automations->finance-portal-nudges",
     "finance-portal-client-comms->finance-email-track-pixel",

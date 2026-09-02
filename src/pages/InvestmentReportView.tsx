@@ -21,6 +21,8 @@ import { InvestmentReportOverridePanel } from '@/components/reports/report-view/
 import type { ClientInfo, InvestmentReport } from '@/components/reports/report-view/types';
 import { getHasOverrides, getOverriddenFields, getReportStatusLabel, getReportTierLabel, getReportVariantLabel } from '@/components/reports/report-view/utils';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
+import { deliverInvestmentPdf, publishInvestmentPdf } from '@/lib/reports/investment/deliverInvestmentPdf';
+import { toast } from 'sonner';
 import {
   CASH_FLOW_ANALYSIS_BACK_LABEL,
   CASH_FLOW_ANALYSIS_PATH,
@@ -134,7 +136,36 @@ export default function InvestmentReportView() {
     }
   };
 
-  const handleDownload = () => {
+  /**
+   * The page's PRIMARY action delivers the DOCUMENT — the person's chosen
+   * template first, the legacy server render as the fallback — the same
+   * chain every other surface (send, premium button) now uses. It saved the
+   * markdown as a `.txt` for the life of this page (audit F11) while the
+   * real PDF sat lower in a collapsible panel.
+   */
+  const [downloadBusy, setDownloadBusy] = useState(false);
+  const handleDownload = async () => {
+    if (!report || downloadBusy) return;
+    setDownloadBusy(true);
+    try {
+      await deliverInvestmentPdf(report.id, {
+        variant: report.report_variant ?? null,
+        includeCharts,
+        includeHeroImages,
+        includeSparklines,
+        designOptions: pdfDesignOptions,
+      });
+    } catch (err) {
+      toast.error('The report PDF could not be produced', {
+        description: err instanceof Error ? err.message : 'Try the export panel, or retry shortly.',
+      });
+    } finally {
+      setDownloadBusy(false);
+    }
+  };
+
+  /** The raw markdown, for the panel's explicitly-labelled text export. */
+  const handleExportText = () => {
     if (!report) return;
     let content = report.report_content;
     if (includeSources && report.sources_content) {
@@ -188,6 +219,8 @@ export default function InvestmentReportView() {
         onManageHeroImages={() => setHeroDialogOpen(true)}
         onOpenVersionHistory={() => setVersionHistoryOpen(true)}
         onDownload={handleDownload}
+        downloadBusy={downloadBusy}
+        onExportText={handleExportText}
       />
 
       {/* Main content */}
@@ -204,10 +237,11 @@ export default function InvestmentReportView() {
 
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
             <main className="min-w-0 order-1">
+              {/* The document card's own button says "Raw text" and means it. */}
               <InvestmentReportDocument
                 report={report}
                 includeSources={includeSources}
-                onDownload={handleDownload}
+                onDownload={handleExportText}
               />
             </main>
 
@@ -229,7 +263,7 @@ export default function InvestmentReportView() {
                 onPdfDesignOptionsChange={setPdfDesignOptions}
                 onHeroImagesManage={() => setHeroDialogOpen(true)}
                 onRegenerated={handleReportUpdate}
-                onDownload={handleDownload}
+                onDownload={handleExportText}
               />
 
               <InvestmentReportCoverageNote
@@ -251,6 +285,7 @@ export default function InvestmentReportView() {
 
       <InvestmentReportMobileActionBar
         onDownload={handleDownload}
+        downloadBusy={downloadBusy}
         onSendToClient={() => setSendToClientOpen(true)}
         onCashFlow={() => navigate(`${CASH_FLOW_ANALYSIS_PATH}/${report.id}`)}
         onEdit={() => setEditorOpen(true)}
@@ -278,22 +313,43 @@ export default function InvestmentReportView() {
       />
 
       {/* Send to Client Modal */}
+      {/*
+        A send PRODUCES the document rather than shipping whatever pdf_url
+        held (audit F12: the stored path was written by the legacy route or
+        the browser raster, whichever ran last — so a client could receive a
+        document the operator never saw). The same template-first chain as
+        the primary download; the browser generator survives only as the
+        last resort when both engines fail.
+      */}
       <SendToClientModal
         isOpen={sendToClientOpen}
         onClose={() => setSendToClientOpen(false)}
         reportId={report.id}
         reportTitle={report.property_address}
         reportTier={report.report_tier || undefined}
-        storagePath={report.pdf_url || null}
+        storagePath={null}
         onGeneratePDF={async () => {
-          if (pdfGeneratorRef.current) {
-            const url = await pdfGeneratorRef.current.generateAndUpload();
-            if (url) {
-              setReport((prev) => prev ? { ...prev, pdf_url: url } : prev);
+          try {
+            const published = await publishInvestmentPdf(report.id, {
+              variant: report.report_variant ?? null,
+              includeCharts,
+              includeHeroImages,
+              includeSparklines,
+              designOptions: pdfDesignOptions,
+            });
+            setReport((prev) => prev ? { ...prev, pdf_url: published.path } : prev);
+            return published.path;
+          } catch (err) {
+            console.warn('[InvestmentReportView] standard publish failed; falling back to browser generator', err);
+            if (pdfGeneratorRef.current) {
+              const url = await pdfGeneratorRef.current.generateAndUpload();
+              if (url) {
+                setReport((prev) => prev ? { ...prev, pdf_url: url } : prev);
+              }
+              return url;
             }
-            return url;
+            return null;
           }
-          return null;
         }}
       />
 
