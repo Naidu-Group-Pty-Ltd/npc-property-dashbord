@@ -3,6 +3,7 @@ import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { DollarSign, Bell, CheckCircle, Clock, Circle, ReceiptText, Send, Banknote } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -230,16 +231,13 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
                         <ToggleCheck value={row.fundsReleased} field="funds_released" row={row} />
                       </TableCell>
                       <TableCell>
-                        <button
-                          onClick={() => onUpdatePayment?.(row.paymentId, row.clientId, {
-                            commission_received: true,
-                            commission_received_date: new Date().toISOString().split('T')[0],
-                          })}
-                          className="rounded-full transition-transform hover:-translate-y-0.5 hover:shadow-md"
-                          title="Mark commission as received"
-                        >
+                        {/* The status pill is a reading, not a control: it
+                            used to BE the button, so clicking "Awaiting" to
+                            see what it meant silently marked the commission
+                            received. The act now has its own labelled button. */}
+                        <div className="flex items-center gap-1.5 whitespace-nowrap">
                           {row.fundsReleased ? (
-                            <Badge className={pipelineBadgeClass('warning', false, 'whitespace-nowrap transition-colors hover:bg-brand-500/20')}><Banknote className="mr-1 h-3 w-3" />Awaiting</Badge>
+                            <Badge className={pipelineBadgeClass('warning', false, 'whitespace-nowrap')}><Banknote className="mr-1 h-3 w-3" />Awaiting</Badge>
                           ) : row.submittedToLender ? (
                             <Badge variant="outline" className={pipelineBadgeClass('warning', false, 'whitespace-nowrap')}><Send className="mr-1 h-3 w-3" />Submitted</Badge>
                           ) : row.builderInvoiceReceived ? (
@@ -247,7 +245,21 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
                           ) : (
                             <span className={emptyDashClass}>—</span>
                           )}
-                        </button>
+                          {onUpdatePayment && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 shrink-0 rounded-full border-success/35 bg-success/5 px-2.5 text-[11px] font-semibold text-success hover:bg-success/10"
+                              title="Record that this commission payment has been received"
+                              onClick={() => onUpdatePayment(row.paymentId, row.clientId, {
+                                commission_received: true,
+                                commission_received_date: new Date().toISOString().split('T')[0],
+                              })}
+                            >
+                              Mark received
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

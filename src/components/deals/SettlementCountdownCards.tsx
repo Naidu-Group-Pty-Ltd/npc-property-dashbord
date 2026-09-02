@@ -15,7 +15,8 @@ export function SettlementCountdownCards({ deals, onDealClick }: Props) {
   const upcoming = useMemo(() => {
     const now = new Date();
     return deals
-      .filter(d => d.settlement_date)
+      // A settlement marked complete on the deal is settled, not counting down.
+      .filter(d => d.settlement_date && !d.critical_date_completions?.settlement_date)
       .map(d => ({
         deal: d,
         daysUntil: differenceInDays(new Date(d.settlement_date!), now),

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { format, differenceInDays, isPast } from 'date-fns';
-import { cn } from '@/lib/utils';
-import { CalendarIcon, AlertTriangle } from 'lucide-react';
+import { CalendarIcon, AlertTriangle, Check, Undo2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -39,7 +38,23 @@ const DATE_FIELDS: DateFieldConfig[] = [
   { key: 'clawback_expiry_date', label: 'Clawback Expiry', showFor: ['refinance'], isUrgent: true },
 ];
 
-function DateWarningBadge({ dateStr }: { dateStr: string }) {
+/** Completion stamps keyed by the date column ({ settlement_date: ISO }). */
+export type CriticalDateCompletions = Record<string, string>;
+
+export function criticalDateCompletionsOf(deal: Pick<Deal, 'critical_date_completions'>): CriticalDateCompletions {
+  const raw = deal.critical_date_completions;
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as CriticalDateCompletions) : {};
+}
+
+function DateWarningBadge({ dateStr, completedAt }: { dateStr: string; completedAt?: string }) {
+  if (completedAt) {
+    return (
+      <Badge variant="outline" className="border-success/40 bg-success/10 text-[10px] text-success">
+        <Check className="mr-0.5 h-3 w-3" />
+        Done {format(new Date(completedAt), 'dd MMM')}
+      </Badge>
+    );
+  }
   const date = new Date(dateStr);
   const daysAway = differenceInDays(date, new Date());
 
@@ -55,18 +70,34 @@ function DateWarningBadge({ dateStr }: { dateStr: string }) {
   return <Badge variant="outline" className="text-[10px]">{daysAway}d away</Badge>;
 }
 
-function DatePickerField({ value, label, onChange }: { value: string | null; label: string; onChange: (v: string | null) => void }) {
+function DatePickerField({
+  value,
+  label,
+  completedAt,
+  onChange,
+  onToggleComplete,
+}: {
+  value: string | null;
+  label: string;
+  completedAt?: string;
+  onChange: (v: string | null) => void;
+  onToggleComplete: () => void;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-xs text-muted-foreground truncate">{label}</span>
-      <div className="flex items-center gap-1.5 shrink-0">
-        {value && <DateWarningBadge dateStr={value} />}
+    <div className="flex items-start justify-between gap-2">
+      {/* No truncate: "Discharge Authority Submitted" must stay readable, so
+          the label wraps instead of being cut mid-word. */}
+      <span className="min-w-0 flex-1 break-words pt-1 text-xs leading-4 text-muted-foreground" title={label}>
+        {label}
+      </span>
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+        {value && <DateWarningBadge dateStr={value} completedAt={completedAt} />}
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="h-7 text-xs px-2">
-              <CalendarIcon className="h-3 w-3 mr-1" />
+            <Button variant="outline" size="sm" className="h-7 px-2 text-xs">
+              <CalendarIcon className="mr-1 h-3 w-3" />
               {value ? format(new Date(value), 'dd MMM yyyy') : 'Set'}
             </Button>
           </PopoverTrigger>
@@ -82,23 +113,52 @@ function DatePickerField({ value, label, onChange }: { value: string | null; lab
             />
           </PopoverContent>
         </Popover>
+        {value && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-1.5 text-[10px] text-muted-foreground hover:text-success"
+            onClick={onToggleComplete}
+            title={completedAt ? `Reopen ${label}` : `Mark ${label} as complete`}
+            aria-label={completedAt ? `Reopen ${label}` : `Mark ${label} as complete`}
+            aria-pressed={!!completedAt}
+          >
+            {completedAt ? <Undo2 className="h-3 w-3" /> : <Check className="h-3 w-3" />}
+            <span className="ml-0.5">{completedAt ? 'Reopen' : 'Done'}</span>
+          </Button>
+        )}
       </div>
     </div>
   );
 }
 
 export function DealCriticalDates({ deal, onUpdate }: DealCriticalDatesProps) {
+  const completions = criticalDateCompletionsOf(deal);
+
   const visibleFields = DATE_FIELDS.filter(f => {
     if (f.showFor === 'all') return true;
     return f.showFor.includes(deal.deal_type);
   });
 
+  // A completed date is a finished obligation, not an urgent one — the whole
+  // reason completion exists is that a passed date otherwise reads Overdue
+  // forever, here and on the pipeline's executive summary.
   const urgentDates = visibleFields.filter(f => {
     const val = deal[f.key] as string | null;
-    if (!val || !f.isUrgent) return false;
+    if (!val || !f.isUrgent || completions[f.key as string]) return false;
     const daysAway = differenceInDays(new Date(val), new Date());
     return daysAway <= 7;
   });
+
+  const toggleComplete = (key: string) => {
+    const next: CriticalDateCompletions = { ...completions };
+    if (next[key]) {
+      delete next[key];
+    } else {
+      next[key] = new Date().toISOString().slice(0, 10);
+    }
+    onUpdate({ critical_date_completions: next } as Partial<Deal>);
+  };
 
   return (
     <Card>
@@ -123,7 +183,9 @@ export function DealCriticalDates({ deal, onUpdate }: DealCriticalDatesProps) {
                 key={field.key}
                 value={value}
                 label={field.label}
+                completedAt={completions[field.key as string]}
                 onChange={(d) => onUpdate({ [field.key]: d } as Partial<Deal>)}
+                onToggleComplete={() => toggleComplete(field.key as string)}
               />
             );
           })}
