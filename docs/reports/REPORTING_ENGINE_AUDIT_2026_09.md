@@ -210,3 +210,72 @@ copies onto their canonical modules.
 - Live counts: the SQL in `COVERAGE.md`, plus `template_render_jobs`,
   `report_template_selections`, `report_templates` grouped by
   engine/scope/active.
+
+## 8 · Phase 0 + Phase 1A — implemented (2026-09-02)
+
+The first two phases of §6's programme shipped together, and every number
+below was re-measured on the same two production rows §5 measured, so the
+before and after are the same instrument.
+
+### Phase 0 — the measure
+
+`public.report_render_coverage` (migration `20260915100000`) unions the nine
+`*_renders` ledgers, `template_render_jobs`, and engine-tagged
+`activity_logs` events into one engine × format × week matrix. The write side
+is two pieces: `src/lib/secureInvoke.ts` auto-tags every successful
+`render-*-pdf` / `render-template-pdf` invocation (the meteredFetch pattern —
+coverage a new call site cannot forget), and `src/lib/reports/renderEvent.ts`
+is the explicit helper for the ledgerless pathways, wired into the stored-PDF
+chokepoint (`clientPdfDownload`), Formara, the Market Intelligence jsPDF
+buttons and the portfolio pdf-lib generator. Remaining minor surfaces (print
+views, flatten buttons, the QA editors, the commercial/industrial utils, the
+listings modal) are listed for the same one-line treatment in the follow-up.
+
+### Phase 1A — the narrative channel, calibrated and cleaned
+
+`scripts/reports/markdownCalibration.mts` is the new measuring instrument: it
+rendered probes through the real seeded Chancery master twice — pager in
+charge, then bucket cap lifted — and found the pager sending every narrative
+page at **40–47% of its measured capacity** (~54.5 rendered line-units per
+continuation page, ~42.5 on the first; prose wraps at ~98 chars, the charge
+model said 65). That under-fill was every "large sectional gap".
+
+What changed (all charge-model changes are opt-in per format via
+`resolveNarrativeProfile`; every uncalibrated caller is byte-identical):
+
+- **Measured charges + calibrated budgets** for the investment narrative
+  (`markdownPaging.pure.ts`, `markdown.pure.ts:charging`), resolved
+  identically by the markdown block and the projection so the conditional
+  page count and the drawn buckets cannot disagree. The deployed schemas'
+  baked `linesPerPage: 34` is read as the legacy sentinel.
+- **Keep-with-next**: a page never ends on a heading or a lead-in line
+  ending in a colon.
+- **Tables split by rows with the head repeated** when taller than a page
+  (`splitTableBlock`), charged by real cell wrap — the clipped risk-register
+  row (F21) is structurally impossible now.
+- **Loose lists merge** (fifteen "1." items are one list again) and ordered
+  runs keep their opening number (F20).
+- **Footnotes render**: `[^id]` becomes a superscript with a Notes list;
+  a citation-shaped ref with no definition strips instead of printing (F24).
+  `sup.fn-ref`/`ol.fn-notes` joined the print stylesheet's vocabulary.
+- **Skeleton headings drop** (`dropEmptyHeadings`, default on) and the
+  word-cap truncation now cuts cleanly: no heading survives its deleted
+  prose, no literal "…", while figures and tables still always survive
+  (F18, and the standing figures-and-tables rule).
+- **The baked cover is gone twice over**: `compass.cover` is excluded from
+  generation (the contents-section precedent), and
+  `reports/investment/narrativeClean.pure.ts` strips the masthead and
+  "Cover Page" section out of the 1,100+ stored narratives at read time, on
+  both sides of the contract (F4).
+- **Scorecard band jargon is cleaned at the projection** — "Good walkability
+  (50-69)" publishes as "Good walkability" (the F-series readability item).
+
+Measured on the same rows as §5: 48 Budgeree via the user's selected
+Dictionary master went **36pp → 22pp, median body ink 0.055 → 0.111**, with
+every narrative page inside the native 0.10–0.13 band, zero cover/masthead
+artefacts, zero footnote syntax; the 6 Acer Court financial fork via Chancery
+went **21pp → 15pp, median 0.097**, risk register split with repeated heads
+and no severed row. The remaining sparse pages are the typed fixed-geometry
+pages (contents, dashboard, property, sources) — Phase 1B's schema-side
+economy work, alongside the part-numbering and back-page theming that also
+live in the seeded schemas.
