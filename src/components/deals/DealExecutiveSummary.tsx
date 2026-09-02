@@ -47,6 +47,8 @@ export function DealExecutiveSummary({ deals, allDeals, isLoading, onDealClick }
     const totalValue = statsSource.reduce((sum, d) => sum + (d.total_contract_price || 0), 0);
     const upcomingSettlements = statsSource.filter(d => {
       if (!d.settlement_date) return false;
+      // A settlement marked complete on the deal is no longer "upcoming".
+      if (d.critical_date_completions?.settlement_date) return false;
       const days = differenceInDays(new Date(d.settlement_date), new Date());
       return days >= 0 && days <= 30;
     }).length;
@@ -65,8 +67,10 @@ export function DealExecutiveSummary({ deals, allDeals, isLoading, onDealClick }
     return 'All complete';
   }
 
-  function getDateUrgency(dateStr: string | null): 'overdue' | 'urgent' | 'warning' | 'ok' | null {
+  function getDateUrgency(dateStr: string | null, completedAt?: string): 'done' | 'overdue' | 'urgent' | 'warning' | 'ok' | null {
     if (!dateStr) return null;
+    // A completed critical date is a met obligation — never overdue.
+    if (completedAt) return 'done';
     const days = differenceInDays(new Date(dateStr), new Date());
     if (isPast(new Date(dateStr))) return 'overdue';
     if (days <= 5) return 'urgent';
@@ -173,7 +177,10 @@ export function DealExecutiveSummary({ deals, allDeals, isLoading, onDealClick }
                 ) : (
                   deals.map(deal => {
                     const riskCfg = RISK_STATUS_CONFIG[deal.risk_status];
-                    const dateUrgency = getDateUrgency(deal.settlement_date);
+                    const dateUrgency = getDateUrgency(
+                      deal.settlement_date,
+                      deal.critical_date_completions?.settlement_date,
+                    );
 
                     return (
                       <TableRow key={deal.id} tabIndex={onDealClick ? 0 : undefined} role={onDealClick ? 'button' : undefined} aria-label={`Open deal for ${deal.client_name}`} className={cn('border-border dark:border-white/10 transition-colors hover:bg-brand-300/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300/60', onDealClick && 'cursor-pointer')} onClick={() => onDealClick?.(deal)} onKeyDown={(event) => { if (onDealClick && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onDealClick(deal); } }}>
@@ -186,7 +193,12 @@ export function DealExecutiveSummary({ deals, allDeals, isLoading, onDealClick }
                         </TableCell>
                         <TableCell className="py-4">
                           <div className="flex min-w-[150px] items-center gap-2">
-                            <Badge variant="outline" className="border-info/25 bg-info/10 text-[10px] font-bold text-info-foreground">S{deal.current_stage_number}</Badge>
+                            {/* text-info, never text-info-foreground: the
+                                -foreground token is the ink for a SOLID
+                                bg-info and is near-black in dark mode, which
+                                made the stage number unreadable on this
+                                10% tint. */}
+                            <Badge variant="outline" className="border-info/40 bg-info/10 text-[10px] font-bold text-info">S{deal.current_stage_number}</Badge>
                             <span className="max-w-[180px] truncate text-xs font-medium text-foreground dark:text-foreground sm:text-sm">{deal.current_stage}</span>
                           </div>
                         </TableCell>
@@ -198,8 +210,9 @@ export function DealExecutiveSummary({ deals, allDeals, isLoading, onDealClick }
                         </TableCell>
                         <TableCell className="py-4">
                           {deal.settlement_date ? (
-                            <div className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold', dateUrgency === 'overdue' || dateUrgency === 'urgent' ? 'border-destructive/25 bg-destructive/10 text-destructive-foreground' : dateUrgency === 'warning' ? 'border-brand-300/25 bg-brand-400/10 text-brand-100' : 'border-success/20 bg-success/10 text-success-foreground')}>
+                            <div className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold', dateUrgency === 'overdue' || dateUrgency === 'urgent' ? 'border-destructive/25 bg-destructive/10 text-destructive' : dateUrgency === 'warning' ? 'border-brand-300/25 bg-brand-400/10 text-brand-100' : 'border-success/20 bg-success/10 text-success')}>
                               <span className="whitespace-nowrap">{format(new Date(deal.settlement_date), 'dd MMM yy')}</span>
+                              {dateUrgency === 'done' && <span className="text-[10px] uppercase tracking-wide">Done</span>}
                               {(dateUrgency === 'overdue' || dateUrgency === 'urgent') && (
                                 <AlertTriangle className="h-3.5 w-3.5" />
                               )}

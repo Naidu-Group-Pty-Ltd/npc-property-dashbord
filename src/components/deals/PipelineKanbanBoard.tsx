@@ -27,6 +27,9 @@ import { RISK_STATUS_CONFIG } from '@/components/clients/deal-tracker/types';
 import { pipelineBadgeClass } from '@/components/deals/pipelineBadgeStyles';
 import { DealLoadingState } from '@/components/deals/DealStatePresentation';
 import type { DealWithClient } from '@/hooks/useAllDeals';
+import { useUserNames } from '@/hooks/useUserNames';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface Props {
   deals: DealWithClient[];
@@ -96,6 +99,14 @@ function DealCard({ deal, onClick }: { deal: DealWithClient; onClick?: () => voi
   const totalStages = stages.length;
   const progressPct = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
 
+  // responsible_person stores a custom_users id — resolve it to a name the
+  // same way the toolbar's filter chips do, instead of printing the UUID.
+  const responsibleIsId = !!deal.responsible_person && UUID_RE.test(deal.responsible_person);
+  const { labelFor } = useUserNames(responsibleIsId ? [deal.responsible_person] : []);
+  const responsibleLabel = deal.responsible_person
+    ? (responsibleIsId ? labelFor(deal.responsible_person) : deal.responsible_person)
+    : null;
+
   const ageInDays = differenceInDays(new Date(), new Date(deal.created_at));
 
   const nextAction = useMemo(() => {
@@ -160,7 +171,7 @@ function DealCard({ deal, onClick }: { deal: DealWithClient; onClick?: () => voi
         <div className="space-y-1.5 rounded-lg border border-border dark:border-white/10 bg-background dark:bg-black/20 p-2 shadow-inner">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground dark:text-muted-foreground">Progress</span>
-            <span className="rounded-full border border-success/20 bg-success/10 px-2 py-0.5 font-mono text-[11px] font-black text-success-foreground">{progressPct}%</span>
+            <span className="rounded-full border border-success/20 bg-success/10 px-2 py-0.5 font-mono text-[11px] font-black text-success">{progressPct}%</span>
           </div>
           <Progress value={progressPct} className="h-2.5 overflow-hidden rounded-full bg-card dark:bg-background/95 shadow-[inset_0_1px_3px_rgba(0,0,0,0.55)] [&>div]:bg-gradient-to-r [&>div]:from-success [&>div]:via-success [&>div]:to-brand-300 [&>div]:shadow-[0_0_14px_rgba(52,211,153,0.45)]" />
           <span className="block text-[9px] text-muted-foreground">{completedStages}/{totalStages} stages</span>
@@ -215,7 +226,7 @@ function DealCard({ deal, onClick }: { deal: DealWithClient; onClick?: () => voi
             {deal.responsible_person ? (
               <>
                 <User className="h-2.5 w-2.5 shrink-0" />
-                <span className="truncate break-all">{deal.responsible_person}</span>
+                <span className="truncate" title={responsibleLabel}>{responsibleLabel}</span>
               </>
             ) : (
               <span className="italic">Unassigned</span>
