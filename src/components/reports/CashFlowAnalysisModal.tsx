@@ -1514,7 +1514,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       const compBase = readBaseFinancials(compReport, new Date().getFullYear());
       const read = deriveInvestmentMetrics(compProjs, compBase);
       let metrics: InvestmentMetrics | null = null;
-      let unavailable: string | null = null;
+      let unavailable: MetricsUnavailable | null = null;
       if (read.ok === true) {
         metrics = read.metrics;
       } else {
