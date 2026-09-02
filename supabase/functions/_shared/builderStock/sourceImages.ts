@@ -79,11 +79,23 @@ import {
  * Every negative banked at 5 was therefore decided by a reader that could not
  * see a two-page package at all, and is stale by definition.
  *
+ * 7 changes which HOSTS the package reader can open at all. Every link that
+ * was not Google Drive was refused at the front door — "That package is not
+ * on a source we can read" — before anything was fetched, and the refusal was
+ * banked as a finished `no_deterministic_image`. On the live stock list that
+ * was every one of its thirteen brochures: Dropbox shared links, each serving
+ * the actual PDF (measured: 5–8 MB, `%PDF-`) once asked for the FILE rather
+ * than the viewer via the `dl=1` parameter Dropbox itself publishes. A direct
+ * document link on an ordinary host now goes through the same guarded fetch
+ * and the same cover-identification path a Drive direct link does. Every
+ * negative banked at 6 for a non-Drive branch was therefore decided by a
+ * reader that never fetched anything, and is stale by definition.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.
  */
-export const PROVENANCE_VERSION = 6;
+export const PROVENANCE_VERSION = 7;
 
 /** What a retrieval produced. Injected in tests; the default is the guard. */
 export interface FetchedImage {
