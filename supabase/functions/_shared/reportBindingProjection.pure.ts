@@ -106,7 +106,13 @@
  * `occupancyWeeks` rather than assuming 52.
  */
 import { renderMarkdown } from './reports/markdown.pure.ts';
-import { packMarkdownPages, DEFAULT_LINES_PER_PAGE } from './reports/markdownPaging.pure.ts';
+import {
+  DEFAULT_LINES_PER_PAGE,
+  packMarkdownPages,
+  packNarrativePages,
+  resolveNarrativeProfile,
+} from './reports/markdownPaging.pure.ts';
+import { stripBakedCover } from './reports/investment/narrativeClean.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
@@ -315,7 +321,14 @@ export function projectReportNarrative(
   linesPerPage: number = DEFAULT_LINES_PER_PAGE,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  const source = typeof content === 'string' ? content.trim() : '';
+  const raw = typeof content === 'string' ? content.trim() : '';
+  if (!raw) return out;
+
+  // The baked masthead and "Cover Page" section come out before anything else
+  // reads this narrative — every surface draws its own cover now, and the
+  // baked one rendered as a second cover inside the body of a templated
+  // document. See `narrativeClean.pure.ts` for what is (and is not) matched.
+  const source = stripBakedCover(raw).text.trim();
   if (!source) return out;
 
   // The chart directives the generator's prompt demands are an instruction to
@@ -323,7 +336,16 @@ export function projectReportNarrative(
   // printing its source. Nothing to strip here: a directive that survives to
   // the block is drawn or dropped there, in one place.
   put(out, 'source', source);
-  const pages = packMarkdownPages(renderMarkdown(source).blocks, linesPerPage).length;
+
+  // The calibrated narrative profile — the SAME resolution the markdown block
+  // makes, so the page count this publishes and the buckets the block draws
+  // cannot disagree. `linesPerPage` doubles as the schema sentinel: the value
+  // deployed masters bake (34) resolves to the calibrated budgets.
+  const profile = resolveNarrativeProfile('investment');
+  const blocks = renderMarkdown(source, { charging: profile?.charging }).blocks;
+  const pages = (profile
+    ? packNarrativePages(blocks, profile, linesPerPage)
+    : packMarkdownPages(blocks, linesPerPage)).length;
   put(out, 'pages', pages || undefined);
   return out;
 }
@@ -480,6 +502,22 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
    * happened. So the numeric `score`/`weight` are withheld — nothing can plot
    * a placeholder — and the table binds the composed labels instead.
    */
+  /**
+   * The engine writes its thresholds into its own explanation — "Good
+   * walkability (50-69)", "Moderate LVR (70-80%)" — and those parenthetical
+   * scoring bands are the engine talking to itself, not to a client. A reader
+   * outside the industry gets the words; the band edges belong to the
+   * methodology page, not a scorecard cell.
+   */
+  const humaniseScoreDetail = (detail: string | undefined): string | undefined => {
+    if (!detail) return detail;
+    const cleaned = detail
+      .replace(/\s*\((?:[<>~≤≥]?\s*\d+[\d.,]*\s*(?:[-–—]|to)\s*\d+[\d.,]*\s*%?|\d+[\d.,]*\s*\+?\s*%?)\)/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    return cleaned || detail;
+  };
+
   const assessment = DIMENSIONS.map(({ key, label }) => {
     const d = obj(breakdown[key]);
     const score = num(d.score);
@@ -494,7 +532,7 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
     }
     put(entry, 'scoreLabel', scored && score !== undefined ? String(Math.round(score)) : 'Not assessed');
     put(entry, 'weightLabel', scored && weight !== undefined ? `${Math.round(weight)}%` : '—');
-    put(entry, 'details', str(d.details));
+    put(entry, 'details', humaniseScoreDetail(str(d.details)));
     return entry;
     // A dimension the record does not carry at all has no score AND no
     // exclusion flag; it is absent from the engine's output rather than
