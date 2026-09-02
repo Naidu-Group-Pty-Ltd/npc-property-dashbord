@@ -91,17 +91,25 @@ export function ReportLibraryPicker({ onAdd, existingNames = [], disabled, class
         setClientPropertyIds(null);
         return;
       }
-      const { data, error } = await supabase
-        .from('client_properties')
-        .select('id')
-        .eq('client_id', clientId);
+      // Through the server, not the table: `client_properties` grants SELECT
+      // to `service_role` alone, so this browser read answered `[]` with HTTP
+      // 200 for every user — and the empty list then short-circuits the
+      // library to "no reports" whenever the picker is opened for a client.
+      // The same trap as the report reads below, one table further back.
+      const res = await invokeSecureFunction('get-client-data', {
+        clientId,
+        listMode: true,
+        listOptions: { table: 'client_properties', select: 'id', filters: { client_id: clientId } },
+      });
+      const error = res.error;
+      const data = (res.data?.records ?? null) as Array<{ id: string }> | null;
       if (cancelled) return;
       if (error) {
         console.error('[ReportLibraryPicker] client_properties fetch failed', error);
         setClientPropertyIds([]);
         return;
       }
-      setClientPropertyIds((data ?? []).map((r: any) => r.id));
+      setClientPropertyIds((data ?? []).map((r) => r.id));
     }
     resolve();
     return () => {

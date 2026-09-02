@@ -844,6 +844,21 @@ already carried every filter needed) or write through
 than 200 documents to draw a list. `closingPass.spec.ts` pins all six
 files (the Phase 4 one included) against a table read.
 
+**A sixth instance, found by the gate rather than by the sweep.** Removing
+the browser client from the Q&A picker left one call behind, and CI's
+undefined-identifier gate caught it — `check-src-missing-names.mjs`, the
+one gate this repo keeps precisely because the app is never fully
+type-checked (`tsconfig.json` declares `"files": []` and delegates to
+project references, so a bare `tsc --noEmit` verifies **nothing**; that is
+why a local run said clean). Looking at the line it named turned up a
+defect older than this pass: the call read `client_properties`, whose only
+SELECT policies are **service-role**, so it answered `[]` with HTTP 200 for
+every user — and an empty property list short-circuits the picker to "no
+reports" whenever it is opened for a client. It now reads through
+`get-client-data`, which brokers that table behind the
+`client_management` permission and a client filter. The lesson is the
+gate's, not the sweep's: an import removed is an audit of every use of it.
+
 **F15.** `manage-branding` trims string columns at the write boundary, and
 the migration brings the stored `company_name` — trailing space, measured
 — to what every reader was already trimming it to.

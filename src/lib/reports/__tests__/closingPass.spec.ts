@@ -94,6 +94,31 @@ describe('investment_reports is read through the server, never the table (F28 cl
     const source = code('src/components/report-qa/ReportLibraryPicker.tsx');
     expect(source).toContain("invokeSecureFunction('get-investment-reports', { reportId: id })");
   });
+
+  /**
+   * One table further back, and the same trap: `client_properties` grants
+   * SELECT to `service_role` alone, so the browser read answered `[]` with
+   * HTTP 200 for every user — and an empty property list short-circuits the
+   * picker to "no reports" whenever it is opened for a client. Caught by
+   * CI's undefined-identifier gate when the import was removed around it,
+   * which is the only reason anyone looked.
+   */
+  it('the picker resolves a client\'s properties through the server too', () => {
+    const source = code('src/components/report-qa/ReportLibraryPicker.tsx');
+    expect(source).not.toContain("from('client_properties')");
+    expect(source).toContain("invokeSecureFunction('get-client-data'");
+    expect(source).toContain("table: 'client_properties'");
+  });
+
+  it('no report surface still holds a browser handle to the database', () => {
+    for (const path of [
+      'src/components/report-qa/ReportLibraryPicker.tsx',
+      'src/components/overview/OperationsSnapshot.tsx',
+    ]) {
+      expect(code(path), `${path} still imports the browser supabase client`)
+        .not.toContain("from '@/integrations/supabase/client'");
+    }
+  });
 });
 
 describe('the fact detector is measured, not trusted', () => {
