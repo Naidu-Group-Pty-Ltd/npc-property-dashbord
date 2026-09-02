@@ -86,14 +86,17 @@ function DatePickerField({
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="flex items-start justify-between gap-2">
-      {/* No truncate: "Discharge Authority Submitted" must stay readable, so
-          the label wraps instead of being cut mid-word. */}
-      <span className="min-w-0 flex-1 break-words pt-1 text-xs leading-4 text-muted-foreground" title={label}>
-        {label}
-      </span>
-      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-        {value && <DateWarningBadge dateStr={value} completedAt={completedAt} />}
+    // Stacked, not side-by-side: the label owns a full row, so the date
+    // button + badge + Done cluster can never crush "Finance Clause Expiry"
+    // into one letter per line inside a half-width card.
+    <div className="space-y-1.5 rounded-lg border border-border/60 bg-background/40 p-2">
+      <div className="flex items-start justify-between gap-2">
+        <span className="min-w-0 break-words text-xs font-medium leading-4 text-muted-foreground" title={label}>
+          {label}
+        </span>
+        {value && <span className="shrink-0"><DateWarningBadge dateStr={value} completedAt={completedAt} /></span>}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <Button variant="outline" size="sm" className="h-7 px-2 text-xs">

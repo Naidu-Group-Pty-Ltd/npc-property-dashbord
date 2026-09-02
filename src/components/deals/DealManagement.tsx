@@ -53,6 +53,7 @@ import { RISK_STATUS_CONFIG } from '@/components/clients/deal-tracker/types';
 import { smartCapitalize } from '@/utils/nameFormatting';
 import { useTeamUsers, type TeamUser } from '@/hooks/useTeamUsers';
 import type { DealWithClient } from '@/hooks/useAllDeals';
+import { deriveDealJourney } from '@/lib/deals/dealJourney.pure';
 
 const UNASSIGNED_SENTINEL = '__unassigned__';
 
@@ -360,8 +361,17 @@ function DealManageRow({
         {/* Current Stage */}
         <TableCell>
           <div className="flex max-w-[190px] items-start gap-1.5">
-            <Badge variant="outline" className="h-5 shrink-0 border-brand-200/25 bg-brand-400/10 px-1.5 text-[10px] text-brand-100">S{deal.current_stage_number}</Badge>
-            <span className="break-words text-xs leading-4 text-muted-foreground">{deal.current_stage}</span>
+            {(() => {
+              const journey = deriveDealJourney(deal);
+              return (
+                <>
+                  {journey.stageNumber != null && (
+                    <Badge variant="outline" className="h-5 shrink-0 border-brand-200/25 bg-brand-400/10 px-1.5 text-[10px] text-brand-100">S{journey.stageNumber}</Badge>
+                  )}
+                  <span className="break-words text-xs leading-4 text-muted-foreground">{journey.stageLabel}</span>
+                </>
+              );
+            })()}
           </div>
         </TableCell>
 

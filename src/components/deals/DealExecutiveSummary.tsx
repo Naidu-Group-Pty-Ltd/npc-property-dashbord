@@ -27,6 +27,7 @@ import {
 import { RISK_STATUS_CONFIG } from '@/components/clients/deal-tracker/types';
 import { DealLoadingState, NoResultsState } from '@/components/deals/DealStatePresentation';
 import type { DealWithClient } from '@/hooks/useAllDeals';
+import { deriveDealJourney } from '@/lib/deals/dealJourney.pure';
 
 interface Props {
   deals: DealWithClient[];
@@ -59,11 +60,13 @@ export function DealExecutiveSummary({ deals, allDeals, isLoading, onDealClick }
     new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 }).format(val);
 
   function getNextAction(deal: DealWithClient): string {
-    const stages = deal.stages || [];
-    const inProgress = stages.find(s => s.status === 'in_progress');
-    if (inProgress) return inProgress.internal_action || inProgress.stage_name;
-    const nextPending = stages.find(s => s.status === 'pending');
-    if (nextPending) return nextPending.internal_action || nextPending.stage_name;
+    // The shared journey derivation — the same rule as the board and the
+    // client page, instead of a third private copy of "what's next".
+    const journey = deriveDealJourney(deal);
+    if (journey.currentStage) return journey.currentStage.internal_action || journey.currentStage.stage_name;
+    if (journey.phaseId === 'construction' && journey.build?.currentName) {
+      return `Progress the ${journey.build.currentName} build payment`;
+    }
     return 'All complete';
   }
 
@@ -198,8 +201,17 @@ export function DealExecutiveSummary({ deals, allDeals, isLoading, onDealClick }
                                 bg-info and is near-black in dark mode, which
                                 made the stage number unreadable on this
                                 10% tint. */}
-                            <Badge variant="outline" className="border-info/40 bg-info/10 text-[10px] font-bold text-info">S{deal.current_stage_number}</Badge>
-                            <span className="max-w-[180px] truncate text-xs font-medium text-foreground dark:text-foreground sm:text-sm">{deal.current_stage}</span>
+                            {(() => {
+                              const journey = deriveDealJourney(deal);
+                              return (
+                                <>
+                                  {journey.stageNumber != null && (
+                                    <Badge variant="outline" className="border-info/40 bg-info/10 text-[10px] font-bold text-info">S{journey.stageNumber}</Badge>
+                                  )}
+                                  <span className="max-w-[180px] truncate text-xs font-medium text-foreground dark:text-foreground sm:text-sm" title={journey.stageLabel}>{journey.stageLabel}</span>
+                                </>
+                              );
+                            })()}
                           </div>
                         </TableCell>
                         <TableCell className="max-w-[240px] truncate py-4 text-xs text-muted-foreground dark:text-foreground sm:text-sm">

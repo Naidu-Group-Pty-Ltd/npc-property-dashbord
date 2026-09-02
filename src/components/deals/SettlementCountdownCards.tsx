@@ -5,6 +5,7 @@ import { Clock, CalendarDays, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import type { DealWithClient } from '@/hooks/useAllDeals';
+import { stageDisplayOf } from '@/lib/deals/dealJourney.pure';
 
 interface Props {
   deals: DealWithClient[];
@@ -67,7 +68,7 @@ export function SettlementCountdownCards({ deals, onDealClick }: Props) {
                     ) : daysUntil === 0 ? 'TODAY' : `${daysUntil}d`}
                   </span>
                 </div>
-                <p className="text-[10px] opacity-80 truncate">{deal.property_address || deal.current_stage}</p>
+                <p className="text-[10px] opacity-80 truncate">{deal.property_address || stageDisplayOf(deal)}</p>
                 <div className="flex items-center justify-between mt-1">
                   <span className="text-[10px] opacity-70">
                     <CalendarDays className="h-3 w-3 inline mr-0.5" />

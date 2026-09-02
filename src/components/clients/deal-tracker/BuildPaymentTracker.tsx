@@ -78,8 +78,8 @@ export function BuildPaymentTracker({ payments, buildPrice, onUpdatePayment }: B
         <span className="text-xs text-muted-foreground font-medium">{completedCount}/{sorted.length} stages</span>
       </div>
 
-      <div className="overflow-auto max-w-full">
-        <Table>
+      <div className="overflow-x-auto max-w-full">
+        <Table className="min-w-[960px]">
           <TableHeader>
             <TableRow>
               <TableHead className="w-[30px]">#</TableHead>
