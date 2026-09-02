@@ -34,6 +34,7 @@ import {
   formatMetricMultiple,
   formatMetricPercent,
   type InvestmentMetrics,
+  type MetricsUnavailable,
 } from '@/lib/cashFlow/investmentMetrics.pure';
 import { toWireComparison, type WireComparison } from '@/lib/reports/cashFlowComparison/toWireComparison';
 import {
