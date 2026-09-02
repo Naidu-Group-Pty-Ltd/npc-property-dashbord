@@ -65,3 +65,4 @@ ds-bundle/
 # pushed to claude.ai/design with the DesignSync tool — never edited by hand.
 .design-system/
 tests-e2e/manual-screening-dialog/harness/dist/
+scripts/security/deno.lock
