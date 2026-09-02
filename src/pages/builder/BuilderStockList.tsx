@@ -26,8 +26,8 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShell';
 import {
-  BuilderDesignRenders, BuilderPropertyImageButton,
-} from '@/components/builder-portal/BuilderDesignRenders';
+  BuilderPropertyImageButton,
+} from '@/components/builder-portal/BuilderPropertyImage';
 import { BuilderPortalMetricCard } from '@/components/builder-portal/ui/BuilderPortalMetricCard';
 import { useDebounce } from '@/hooks/useDebounce';
 import {
@@ -663,13 +663,6 @@ export default function BuilderStockList() {
           )}
         </CardContent>
       </Card>
-
-      {/*
-        One render per design, used by every property that has it.
-        Sits between the properties it fixes and the sources it belongs beside,
-        and draws nothing at all where the stock states no designs.
-      */}
-      <BuilderDesignRenders canEdit={!uploadsQuery.isError} />
 
       <Card>
         <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
