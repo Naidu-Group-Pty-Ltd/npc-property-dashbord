@@ -50,6 +50,7 @@ import {
   MANUAL_REFRESH_WINDOW_SECONDS, isRecoverableStoredAvailability, projectUploadListRow,
   shouldRequestLinkRecovery,
 } from '../_shared/builderStock/linkRecovery.pure.ts';
+import { settleUploadCompletion } from '../_shared/builderStock/uploadCompletion.ts';
 import { googleSheetsRef } from '../_shared/builderStock/googleSheetsSource.pure.ts';
 import {
   isTraversableBranch, rowSourceBranches,
@@ -1335,35 +1336,22 @@ Deno.serve(async (req) => {
        */
       const outstanding = (remaining ?? 0) + settlementRemaining;
 
+      /*
+       * THE UPLOAD'S OWN STATUS IS SETTLED BY THE SHARED RULE.
+       *
+       * This block used to be the ONLY place an import was marked finished,
+       * and it runs only while somebody has this page open — so an import
+       * that completed headlessly stayed `enriching` with an empty
+       * `image_stage_summary` for ever. `uploadCompletion.ts` holds the rule
+       * now and the settler's tick asks it too; the call here keeps a person
+       * who IS watching from waiting on a tick, and the decision is the same
+       * either way. It also no longer writes a summary from an incomplete
+       * read — see that module's header.
+       */
       if (uploadId && !remaining) {
-        const upload = await loadUpload(uploadId);
-        // `partially_complete` as well as `enriching`. An upload with even one
-        // unsaveable row is set straight to `partially_complete` at import, so
-        // testing for `enriching` alone left `image_stage_summary` empty for
-        // ever on exactly those uploads — the audit record then said nothing
-        // about image processing precisely where a reader most wants it.
-        if (upload && ['enriching', 'partially_complete'].includes(String(upload.status))) {
-          // Paged: the API caps a response at 1,000 rows whatever `.limit()`
-          // asks for, and a truncated read here under-reports the progress a
-          // builder is watching. See `pagedRead.ts`.
-          const stagePage = await readAllRows<{ source_stage: unknown; processing_status: unknown }>(
-            () => supabase
-              .from('builder_stock_item_images')
-              .select('id, source_stage, processing_status')
-              .eq('upload_id', uploadId)
-              .order('id', { ascending: true }));
-          const summary: Record<string, Record<string, number>> = {};
-          for (const row of stagePage.rows) {
-            const stage = String((row as any).source_stage);
-            const state = String((row as any).processing_status);
-            summary[stage] = summary[stage] ?? {};
-            summary[stage][state] = (summary[stage][state] ?? 0) + 1;
-          }
-          await supabase.from('builder_stock_uploads').update({
-            status: upload.records_failed > 0 ? 'partially_complete' : 'complete',
-            image_stage_summary: summary,
-          }).eq('id', uploadId);
-        }
+        await settleUploadCompletion(supabase, {
+          uploadId, organisationId: activeOrganisationId,
+        });
       }
 
       return json({
