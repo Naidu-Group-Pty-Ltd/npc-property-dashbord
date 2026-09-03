@@ -124,6 +124,17 @@ BEGIN
 END;
 $function$;
 
+-- CREATE grants EXECUTE to PUBLIC, and `anon` inherits it — so a SECURITY
+-- DEFINER function shipped without this is reachable from the browser with
+-- the publishable key on any database built from these migrations. The grant
+-- is the one this function has carried since 20260818120000, restated because
+-- the privileges belong with the definition rather than to whichever earlier
+-- migration happened to set them.
+REVOKE ALL ON FUNCTION public.settle_builder_stock_marketplace_eligibility_tick()
+  FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.settle_builder_stock_marketplace_eligibility_tick()
+  TO postgres, service_role;
+
 COMMENT ON FUNCTION public.settle_builder_stock_marketplace_eligibility_tick() IS
   'Drives builder-stock-image-settler and unschedules its cron job when no '
   'work of ANY kind remains: settlement versions, enrichment, item work, '
