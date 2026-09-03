@@ -50,7 +50,9 @@ import {
   MANUAL_REFRESH_WINDOW_SECONDS, isRecoverableStoredAvailability, projectUploadListRow,
   shouldRequestLinkRecovery,
 } from '../_shared/builderStock/linkRecovery.pure.ts';
-import { settleUploadCompletion } from '../_shared/builderStock/uploadCompletion.ts';
+import {
+  parseIsAbandoned, settleUploadCompletion,
+} from '../_shared/builderStock/uploadCompletion.ts';
 import { googleSheetsRef } from '../_shared/builderStock/googleSheetsSource.pure.ts';
 import {
   isTraversableBranch, rowSourceBranches,
@@ -713,7 +715,14 @@ Deno.serve(async (req) => {
       if (!isAcceptableStockStoragePath(upload.storage_path)) {
         return json({ error: 'That file location is not allowed' }, 400);
       }
-      if (String(upload.status) === 'parsing') {
+      /*
+       * A LIVE READ IS REFUSED; AN ABANDONED ONE IS THE WHOLE POINT OF THIS
+       * OPERATION. A request killed on its resource limit leaves the row at
+       * `parsing` for ever, and both doors then refuse it — `process_upload`
+       * with "already processed" and this one with "being read right now",
+       * neither of which is true. See `parseIsAbandoned`.
+       */
+      if (String(upload.status) === 'parsing' && !parseIsAbandoned(upload)) {
         return json({
           error: 'This source is being read right now. Try again when it finishes.',
           code: 'already_processing',

@@ -12,9 +12,13 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import {
-  COMPLETABLE_UPLOAD_STATUSES, finalUploadStatus, settleCompletedUploads,
-  settleUploadCompletion, summariseImageStages,
+  ABANDONED_PARSE_MS, COMPLETABLE_UPLOAD_STATUSES, finalUploadStatus,
+  parseIsAbandoned, settleCompletedUploads, settleUploadCompletion,
+  summariseImageStages,
 } from '../../../supabase/functions/_shared/builderStock/uploadCompletion';
 
 interface UploadRow {
@@ -246,5 +250,54 @@ describe('the rule itself', () => {
   it('only an unfinished upload is completable', () => {
     expect(COMPLETABLE_UPLOAD_STATUSES).toEqual(['enriching', 'partially_complete']);
     expect(COMPLETABLE_UPLOAD_STATUSES).not.toContain('complete');
+  });
+});
+
+/*
+ * A crashed import used to shut both doors: `process_upload` answered "This
+ * file has already been processed" and `reprocess_upload` answered "This
+ * source is being read right now" — neither true — so the builder's file
+ * could never be imported again without deleting the source, which archives
+ * its properties.
+ */
+describe('an abandoned parse is not an import in flight', () => {
+  const parsing = (startedMinutesAgo: number | null) => ({
+    status: 'parsing',
+    processing_started_at: startedMinutesAgo === null
+      ? null
+      : new Date(Date.now() - startedMinutesAgo * 60_000).toISOString(),
+  });
+
+  it('protects a read that really is running', () => {
+    expect(parseIsAbandoned(parsing(0))).toBe(false);
+    expect(parseIsAbandoned(parsing(2))).toBe(false);
+    // Six times the edge ceiling: no live invocation can reach it.
+    expect(ABANDONED_PARSE_MS).toBeGreaterThanOrEqual(6 * 150_000);
+  });
+
+  it('releases one that died', () => {
+    expect(parseIsAbandoned(parsing(16))).toBe(true);
+    expect(parseIsAbandoned(parsing(60 * 24))).toBe(true);
+  });
+
+  it('a parsing row with no start stamp cannot be in flight', () => {
+    // Every path that sets `parsing` stamps the start in the same write.
+    expect(parseIsAbandoned(parsing(null))).toBe(true);
+    expect(parseIsAbandoned({ status: 'parsing', processing_started_at: 'not a date' })).toBe(true);
+  });
+
+  it('says nothing about any other status', () => {
+    for (const status of ['uploaded', 'imported', 'enriching', 'complete', 'failed']) {
+      expect(parseIsAbandoned({ status, processing_started_at: null })).toBe(false);
+    }
+  });
+
+  it('the reprocess door asks it before refusing', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../../../supabase/functions/builder-portal-stock/index.ts'),
+      'utf8',
+    );
+    expect(source).toContain(
+      "if (String(upload.status) === 'parsing' && !parseIsAbandoned(upload)) {");
   });
 });

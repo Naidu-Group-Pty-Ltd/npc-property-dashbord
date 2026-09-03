@@ -39,6 +39,18 @@
  *     `stagePage.failed`, which is exactly that defect.
  *   - THE IMPORT'S OWN VERDICT DECIDES THE FINAL STATUS: an upload that could
  *     not save every row settles to `partially_complete`, never `complete`.
+ *
+ * THE SAME MODULE ANSWERS ONE MORE QUESTION ABOUT AN UPLOAD ROW'S OWN STATE:
+ * whether a `parsing` row is still being read, or was abandoned by a request
+ * that died. Both recovery doors were shut on the second case —
+ * `process_upload` answers "This file has already been processed" (it has
+ * not) and `reprocess_upload` answers "This source is being read right now"
+ * (it is not) — so a builder whose import was killed mid-parse could never
+ * import that file again, and their only recourse was deleting the source,
+ * which archives its properties. An edge invocation cannot outlive its own
+ * ceiling of roughly 150 seconds, and worker kills are a measured, ordinary
+ * event in this pipeline, so a `parsing` row older than a generous multiple
+ * of that ceiling is not in flight.
  */
 import { readAllRows } from './pagedRead.ts';
 
@@ -50,6 +62,38 @@ export const UNFINISHED_ENRICHMENT_STATUSES = ['pending', 'enriching'];
 
 /** Uploads one settler tick will look at. Cheap reads, and resumable. */
 const MAX_UPLOADS_PER_PASS = 25;
+
+/**
+ * How long a `parsing` row may be believed.
+ *
+ * An edge invocation is capped at roughly 150 seconds and stamps
+ * `processing_started_at` before it begins, so six times that ceiling cannot
+ * mistake a running import for an abandoned one — while a request killed on
+ * its resource limit stops refusing the retry a quarter of an hour later
+ * rather than never.
+ */
+export const ABANDONED_PARSE_MS = 15 * 60 * 1000;
+
+/**
+ * Is this `parsing` row a request that died, rather than one still running?
+ *
+ * Answers false for every other status: only a `parsing` row makes the claim
+ * this question is about.
+ */
+export function parseIsAbandoned(
+  upload: { status?: unknown; processing_started_at?: unknown },
+  now: number = Date.now(),
+): boolean {
+  if (String(upload?.status) !== 'parsing') return false;
+  const startedAt = Date.parse(String(upload?.processing_started_at ?? ''));
+  /*
+   * Every path that sets `parsing` stamps the start in the same write, so a
+   * row without one cannot be an import in flight — and refusing the retry on
+   * an unreadable stamp is the failure this exists to end.
+   */
+  if (!Number.isFinite(startedAt)) return true;
+  return now - startedAt > ABANDONED_PARSE_MS;
+}
 
 export type SettledUploadStatus = 'complete' | 'partially_complete';
 
