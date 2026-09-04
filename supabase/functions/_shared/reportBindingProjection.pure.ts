@@ -113,11 +113,13 @@ import {
   resolveNarrativeProfile,
 } from './reports/markdownPaging.pure.ts';
 import { stripBakedCover } from './reports/investment/narrativeClean.pure.ts';
+import { planningChartContext, vizDirectiveRenderer } from './reports/vizFigures.pure.ts';
 import { reconcileStoredFinancials } from './reports/investment/financialEngine.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
   property_address?: string | null;
+  report_tier?: string | null;
   property_specs?: Record<string, unknown> | null;
   financial_calculations?: Record<string, unknown> | null;
   investment_score?: Record<string, unknown> | null;
@@ -253,6 +255,35 @@ function specReader(
   };
 }
 
+/**
+ * What each Investment tier's document is CALLED, and the line under its
+ * cover title. One vocabulary, translated here and bound by the masters —
+ * never spelled per family, because ten families times five layouts is how
+ * one wording change becomes fifty edits.
+ */
+export const DOCUMENT_IDENTITY: Record<string, { title: string; standfirst: string }> = {
+  compass: {
+    title: 'Investment Compass',
+    standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
+  },
+  financial: {
+    title: 'Financial Analysis',
+    standfirst: 'What it costs to buy and hold, what it returns, and how the position moves over ten years.',
+  },
+  snapshot: {
+    title: 'Snapshot Report',
+    standfirst: 'The numbers that matter and a short assessment.',
+  },
+  briefing: {
+    title: 'Executive Briefing',
+    standfirst: 'The assessment, condensed for a decision.',
+  },
+  strategic: {
+    title: 'Strategic Overview',
+    standfirst: 'The strategy this assessment supports, and what carries it.',
+  },
+};
+
 export interface ProjectedNamespaces {
   property: Record<string, unknown>;
   financials: Record<string, unknown>;
@@ -343,7 +374,16 @@ export function projectReportNarrative(
   // cannot disagree. `linesPerPage` doubles as the schema sentinel: the value
   // deployed masters bake (34) resolves to the calibrated budgets.
   const profile = resolveNarrativeProfile('investment');
-  const blocks = renderMarkdown(source, { charging: profile?.charging }).blocks;
+  // The SAME directive accounting the block makes. The block draws the
+  // figures in the template's palette; this side draws them in the planning
+  // greys and keeps only the line charge — `figureLines` reads the SVG's own
+  // geometry, so the two sides charge identical counts whatever each paints
+  // with. Without this the count ignored every figure while the block drew
+  // them, which is exactly the one-line drift this module's header forbids.
+  const blocks = renderMarkdown(source, {
+    charging: profile?.charging,
+    renderDirective: vizDirectiveRenderer(planningChartContext()),
+  }).blocks;
   const pages = (profile
     ? packNarrativePages(blocks, profile, linesPerPage)
     : packMarkdownPages(blocks, linesPerPage)).length;
@@ -580,6 +620,22 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
 
   const report: Record<string, unknown> = {};
   put(report, 'generatedDate', str(row.updated_at) ?? str(row.created_at));
+  // ── the document's own name ────────────────────────────────────────────────
+  // The Investment masters serve FOUR document kinds — the compass tier plus
+  // the financial, snapshot, briefing and strategic tiers all resolve to this
+  // page sequence — and the composer's identity strings (cover eyebrow,
+  // wordmark, running head, running foot) used to be the literal words
+  // "Investment Compass". So a Financial Analysis rendered as an Investment
+  // Compass on every one of its pages, and no template choice could say
+  // otherwise. The masters bind `report.documentTitle` / `report.standfirst`
+  // now, and THIS is the one place the tier is translated into them; an
+  // unrecognised or absent tier reads as compass, which is what the ranking's
+  // default document has always been.
+  const tier = String(row.report_tier ?? 'compass').trim().toLowerCase();
+  const identity = DOCUMENT_IDENTITY[tier] ?? DOCUMENT_IDENTITY.compass;
+  put(report, 'tier', tier);
+  put(report, 'documentTitle', identity.title);
+  put(report, 'standfirst', identity.standfirst);
 
   return {
     property, financials, assumptions: assumptionsOut, recommendation,

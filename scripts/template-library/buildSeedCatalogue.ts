@@ -180,7 +180,7 @@ const REPO = resolve(__dirname, '../..');
  */
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20260916100000_seed_template_library_v9_report_part_numbering.sql',
+  'supabase/migrations/20260917100000_seed_template_library_v10_tier_identity_contents_figures.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

@@ -532,25 +532,54 @@ export function renderHeatmap(
     || grid.some((row) => row.length !== cols)
   ) return '';
 
-  const rowLabels = opts.rowLabels ?? [];
-  const colLabels = opts.colLabels ?? [];
+  // A label beyond the grid is a promise with no figure under it: a real
+  // render drew "5=High)" as a second row label below a one-row grid after
+  // the directive parser split a parenthesised label. The parser is fixed;
+  // the renderer still refuses to draw a label for a row or column that
+  // does not exist.
+  const rowLabels = (opts.rowLabels ?? []).slice(0, rows);
+  const colLabels = (opts.colLabels ?? []).slice(0, cols);
   const flat = grid.flat();
   const lo = Math.min(...flat), hi = Math.max(...flat);
   const span = (hi - lo) || 1;
 
-  // Approximate advance width per character at the label size.
-  const charPx = 5.4;
   const maxRowLabel = rowLabels.reduce((m, l) => Math.max(m, String(l ?? '').length), 0);
   const maxColLabel = colLabels.reduce((m, l) => Math.max(m, String(l ?? '').length), 0);
   const cellText = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
   const maxCellLen = Math.max(...flat.map((v) => cellText(v).length), 3);
 
-  const padL = Math.max(110, Math.ceil(maxRowLabel * charPx) + 24);
-  const padT = opts.title ? 56 : 36;
+  // The label column and cells are sized from the type's own advance (0.58em
+  // of micro, the measured mixed-case worst; the old 5.4-unit guess clipped a
+  // 26-character row label by three characters). The advance is in viewBox
+  // units, which scale with the total width, which is the sum of what the
+  // labels need — a fixed point, iterated to convergence. It converges
+  // whenever the labels, printed at micro size, are physically narrower than
+  // the measure; when they are not, no box width fits (the type scales with
+  // the box), and the chart refuses rather than clipping — the module's rule.
   const padR = 22, padB = 28;
-  const cellW = Math.max(64, Math.ceil(maxColLabel * charPx) + 18, Math.ceil(maxCellLen * charPx) + 22);
-  const cellH = 38;
-  const w = padL + padR + cols * cellW;
+  const advMm = CHART_TEXT_PT.micro * MM_PER_PT * 0.58;
+  const inkFraction = (maxRowLabel + cols * Math.max(maxColLabel, maxCellLen)) * advMm / ctx.widthMm;
+  if (inkFraction >= 0.98) return '';
+  let padL = Math.max(110, maxRowLabel * 6 + 24);
+  let cellW = Math.max(64, maxColLabel * 6 + 18, maxCellLen * 6 + 22);
+  let w = padL + padR + cols * cellW;
+  for (let i = 0; i < 40; i += 1) {
+    const charU = ptToUnits(CHART_TEXT_PT.micro, w, ctx.widthMm) * 0.58;
+    padL = Math.max(110, Math.ceil(maxRowLabel * charU) + 24);
+    cellW = Math.max(64, Math.ceil(maxColLabel * charU) + 18, Math.ceil(maxCellLen * charU) + 22);
+    const next = padL + padR + cols * cellW;
+    if (Math.abs(next - w) < 0.5) { w = next; break; }
+    w = next;
+  }
+  // The vertical metrics ride the type for the same reason: at a converged
+  // width the units-per-mm grow, and the fixed header band (title at y=22,
+  // padT=56) would set the title through the column labels, while a fixed
+  // 38-unit cell would pinch the cell text it exists to hold.
+  const microU = ptToUnits(CHART_TEXT_PT.micro, w, ctx.widthMm);
+  const titleU = ptToUnits(CHART_TEXT_PT.title, w, ctx.widthMm);
+  const titleY = Math.ceil(titleU + 6);
+  const padT = Math.ceil((opts.title ? titleY + microU * 0.4 : 0) + (colLabels.length ? microU + 14 : microU + 8));
+  const cellH = Math.max(38, Math.ceil(microU * 1.7));
   const h = padT + padB + rows * cellH;
 
   let cells = '';
@@ -573,7 +602,7 @@ export function renderHeatmap(
     { x: padL + c * cellW + cellW / 2, y: padT - 10, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle' },
     svgEscape(lbl))).join('');
   const title = opts.title
-    ? text(ctx, w, { x: padL, y: 22, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title))
+    ? text(ctx, w, { x: padL, y: titleY, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title))
     : '';
 
   return `${svgOpen(w, h)}<rect width="${w}" height="${h}" rx="6" fill="${ctx.palette.ground}"/>`
@@ -581,6 +610,27 @@ export function renderHeatmap(
 }
 
 /** Score wheel — a radar over three or more dimensions. */
+/**
+ * Wrap a wheel label into at most two lines at the word break that best
+ * balances them. A label of one long word cannot wrap and stays whole — the
+ * width solve then pays for it. Never truncates: a shortened dimension name
+ * in a client's scorecard is a different dimension.
+ */
+function wrapWheelLabel(label: string): string[] {
+  const t = label.trim();
+  if (t.length <= 12 || !/\s/.test(t)) return [t];
+  const words = t.split(/\s+/);
+  let best = [t];
+  let bestLen = t.length;
+  for (let i = 1; i < words.length; i++) {
+    const a = words.slice(0, i).join(' ');
+    const b = words.slice(i).join(' ');
+    const len = Math.max(a.length, b.length);
+    if (len < bestLen) { bestLen = len; best = [a, b]; }
+  }
+  return best;
+}
+
 export function renderScoreWheel(
   ctx: ChartContext,
   scores: number[],
@@ -588,11 +638,65 @@ export function renderScoreWheel(
 ): string {
   if (scores.length < 3 || scores.length > MAX_WHEEL_SCORES) return '';
   const max = opts.max ?? 100;
-  const labels = opts.labels ?? [];
-  const w = CHART_WIDTH.compact, h = 360;
-  const cx = w / 2, cy = h / 2 + 8, R = 130;
+  const R = 130;
+  const LABEL_R = R + 22;
   const n = scores.length;
   const angle = (i: number) => -Math.PI / 2 + (i / n) * Math.PI * 2;
+
+  // The side labels are the sizing problem, and padding cannot solve it.
+  // `text()` converts points to viewBox units through `w / ctx.widthMm`, so
+  // widening the box also enlarges every label in units — chasing a clipped
+  // label with more padding never converges. Measured on the real failing
+  // render: at w=460 a 17-char micro label took 140u of the 78u available
+  // ("FUTURE RESILIENCE" printed as "RE RESILIENCE"); widened to w=532 it
+  // took 161u of 114u and still clipped. A single line would need w≈813,
+  // wider than the wide box. Two things fix it together: a long label WRAPS
+  // at a word break, and the width is the closed form of
+  // `w/2 − LABEL_R ≥ label(w) + EDGE`, solvable because label(w) is linear
+  // in w. The advance is measured, not guessed: 0.71em per tracked
+  // uppercase character of the body stack (Chromium getComputedTextLength
+  // over the failing labels, tracking included), carried with margin.
+  const labels = (opts.labels?.length ? opts.labels : scores.map((_, i) => `D${i + 1}`))
+    .map((l) => String(l ?? '').trim().toUpperCase());
+  const wrapped = labels.map(wrapWheelLabel);
+  const anchorFor = (i: number) => {
+    const c = Math.cos(angle(i));
+    return Math.abs(c) < 0.2 ? 'middle' as const : c > 0 ? 'start' as const : 'end' as const;
+  };
+  // Only start/end-anchored labels press against the half-width; a centred
+  // top or bottom label has the whole measure.
+  const longestSideLine = wrapped.reduce((m, ls, i) =>
+    anchorFor(i) === 'middle' ? m : Math.max(m, ...ls.map((s) => s.length)), 1);
+  const ADV_EM = 0.74;
+  const EDGE = 8;
+  const q = longestSideLine * ADV_EM * CHART_TEXT_PT.micro * MM_PER_PT / ctx.widthMm;
+  const w = Math.min(
+    CHART_WIDTH.wide,
+    Math.max(CHART_WIDTH.compact, q < 0.42 ? Math.ceil((LABEL_R + EDGE) / (0.5 - q)) : CHART_WIDTH.wide),
+  );
+
+  // Vertical rhythm in the units the type actually takes at this width.
+  const microU = ptToUnits(CHART_TEXT_PT.micro, w, ctx.widthMm);
+  const captionU = ptToUnits(CHART_TEXT_PT.caption, w, ctx.widthMm);
+  const lead = Math.round(microU * 12) / 10;
+  const valueLead = Math.round((captionU + microU * 0.35) * 10) / 10;
+  const lineCount = (i: number) => wrapped[i].length;
+  const maxLines = Math.max(...wrapped.map((ls) => ls.length));
+  // The box height is derived from the actual extents: the bottom-most block
+  // grows downward from its anchor, the top block is pinned just above the
+  // disc's crown, and both must clear the edge. cy = h/2 + 8 cancels cleanly.
+  const maxBottomExtent = wrapped.reduce((m, ls, i) => {
+    const s = Math.sin(angle(i));
+    if (s <= 0.2) return m;
+    return Math.max(m, LABEL_R * s + 3.5 + (ls.length - 1) * lead + valueLead + captionU * 0.3);
+  }, R);
+  const topBlock = R + 6 + captionU * 0.3 + valueLead + (maxLines - 1) * lead + microU * 0.8;
+  const h = Math.max(
+    360,
+    16 + 2 * Math.ceil(maxBottomExtent + EDGE),
+    2 * Math.ceil(topBlock + EDGE - 8),
+  );
+  const cx = w / 2, cy = h / 2 + 8;
   const pt = (i: number, r: number) =>
     `${(cx + r * Math.cos(angle(i))).toFixed(1)},${(cy + r * Math.sin(angle(i))).toFixed(1)}`;
 
@@ -611,14 +715,27 @@ export function renderScoreWheel(
       + `r="3" fill="${ctx.palette.accent}" stroke="${ctx.palette.ground}" stroke-width="1"/>`;
   }).join('');
 
-  const lbls = (labels.length ? labels : scores.map((_, i) => `D${i + 1}`)).map((lbl, i) => {
+  const lbls = wrapped.map((lines, i) => {
     const a = angle(i);
-    const lx = cx + (R + 22) * Math.cos(a);
-    const ly = cy + (R + 22) * Math.sin(a);
-    const anchor = Math.abs(Math.cos(a)) < 0.2 ? 'middle' : Math.cos(a) > 0 ? 'start' : 'end';
-    return text(ctx, w, { x: lx, y: ly + 3.5, pt: 'micro', fill: ctx.palette.inkMuted, anchor, tracking: 0.3 },
-      svgEscape(lbl.toUpperCase()))
-      + text(ctx, w, { x: lx, y: ly + 16, pt: 'caption', fill: ctx.palette.ink, anchor, stack: 'display', weight: 700, tabular: true },
+    const s = Math.sin(a);
+    const lx = cx + LABEL_R * Math.cos(a);
+    const ly = cy + LABEL_R * s;
+    const anchor = anchorFor(i);
+    // Blocks stack radially outward: below the disc they grow downward from
+    // the anchor, above it the value hugs the crown and the lines rise from
+    // there, beside it the last line holds the anchor. Reading order stays
+    // label line(s) then value in every case.
+    const valueY = s < -0.2
+      ? cy - R - 6 - captionU * 0.3
+      : ly + 3.5 + (s > 0.2 ? (lines.length - 1) * lead : 0) + valueLead;
+    const lastLineY = valueY - valueLead;
+    const lineText = lines.map((ln, j) =>
+      text(ctx, w, {
+        x: lx, y: lastLineY - (lines.length - 1 - j) * lead,
+        pt: 'micro', fill: ctx.palette.inkMuted, anchor, tracking: 0.3,
+      }, svgEscape(ln))).join('');
+    return lineText
+      + text(ctx, w, { x: lx, y: valueY, pt: 'caption', fill: ctx.palette.ink, anchor, stack: 'display', weight: 700, tabular: true },
         String(Math.round(Number(scores[i]) || 0)));
   }).join('');
 
@@ -797,7 +914,18 @@ export function renderBars(
   const rowH = 28;
   const padT = opts.title ? 36 : 14;
   const padB = 14;
-  const labelW = 180, valueW = 76;
+  // The label column sizes to the longest label, the heatmap's own treatment.
+  // Fixed at 180 it clipped at the SVG's left edge: "Property-specific
+  // verification need" lost its first letters on a real render, which in a
+  // right-anchored column is the START of the words — the worst place. The
+  // per-character advance is derived from the type's own size in units
+  // (0.58em: the measured mixed-case worst was 0.55, digits included), so it
+  // stays honest whatever width the chart prints across. Capped at 45% of
+  // the measure so the bars keep room to differ.
+  const charU = ptToUnits(CHART_TEXT_PT.micro, w, ctx.widthMm) * 0.58;
+  const longestLabel = items.reduce((m, it) => Math.max(m, String(it.label ?? '').length), 0);
+  const labelW = Math.min(Math.max(180, Math.ceil(longestLabel * charU) + 8), Math.floor(w * 0.45));
+  const valueW = 76;
   const barX = labelW + 12;
   const barW = w - barX - valueW - 16;
   const h = padT + items.length * rowH + padB;

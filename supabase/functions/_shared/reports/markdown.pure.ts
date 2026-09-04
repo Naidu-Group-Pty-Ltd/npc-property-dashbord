@@ -958,7 +958,15 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
    */
   const listLines = (items: readonly ListItem[]) => items.reduce(
     (n, it) => {
-      const width = Math.max(20, cpl - it.depth * 4);
+      // A top-level item does not set at the full measure either: its marker
+      // and hanging indent eat ~6 characters before the nesting steps start.
+      // Charging depth 0 at the whole `cpl` is how a source-note list charged
+      // 17.5 lines and rendered past the footer on a real Compass render
+      // (1/27D Mitchell Street, p19, 2026-09-04) — every item was a bold
+      // lead-in plus a long sentence, undercharged by its own indent, and the
+      // page's tail printed over the running foot. Measured model only; the
+      // legacy charge stays byte-identical for the uncalibrated formats.
+      const width = Math.max(20, cpl - (measured ? 6 : 0) - it.depth * 4);
       return n + (measured
         ? Math.max(1, it.text.length / width)
         : Math.ceil(Math.max(1, it.text.length) / width));

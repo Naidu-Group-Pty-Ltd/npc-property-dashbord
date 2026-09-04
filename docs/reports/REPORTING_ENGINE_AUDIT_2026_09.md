@@ -1142,3 +1142,155 @@ adjacent template suites green; all five Chromium layout tests green; eslint
 ratchet holding; `check-src-missing-names` clean; production build; full
 vitest suite green in one run — **1,077 files, 20,575 tests, 0 failures**. Production reads for fixtures and measurements were
 read-only.
+
+---
+
+## 17 · Five client PDFs, six defects, one render (2026-09-04)
+
+The owner attached five PDFs downloaded that morning — three reports of
+1/27D Mitchell Street, Muswellbrook (a Compass, a Financial Analysis and a
+derived Snapshot), rendered through Chancery and through the Luxury
+Editorial "Frontispiece" chosen in the new picker — and named four
+complaints: N/A everywhere, no table of contents anywhere, every report
+titled Investment Compass whatever was chosen, and content cut off. All
+four reproduced from the files, and the investigation found two more
+underneath them that none of the four names: the silently dropped figures
+(§1), and — visible only once those figures drew — the chart primitives
+clipping their own labels (§6).
+
+### 1 · Every figure the model composed was silently dropped
+
+The stored Compass body carries **43 chart directives** — 13 glance strips,
+6 bars, 6 donuts, 6 gauges, 4 timelines, a wheel, tiles, a heatmap, a
+pictograph — and the rendered PDF contains **none of them**.
+`markdownBlock.html.ts` called `renderMarkdown` without `renderDirective`,
+and a shortcode is an instruction to the renderer either way, so every
+directive was removed and drawn as nothing. The Disclaimer, whose whole
+content is one glance strip, printed as a heading over nothing.
+
+The block passes `vizDirectiveRenderer` now, in a `ChartContext` built from
+the template's own tokens (keyword fallbacks, per the planning-context
+convention), and `projectReportNarrative` charges the SAME directives
+through `planningChartContext()` — `figureLines` reads the SVG's geometry
+alone, so the page count and the buckets stay one arithmetic. The Compass
+document grows from 13 truncated body pages to 23 complete ones.
+
+### 2 · The tail printed over the running foot, silently
+
+Page 19 of the Compass render ends mid-bullet — "Commercial Property Data
+Providers (CoreLogic, Domain, realestate.com.au)" with its description
+gone — and the footer beneath it is garbled where overflow text struck
+through it. Measured: the final bucket packed **47 charged units under the
+50 budget** and still overflowed the physical box, because the measured
+charge model undercounts a bold-lead bullet list (a top-level item was
+charged at the full measure, ignoring its own hanging indent) and page
+margins. The estimator's error exceeded the 8% held back.
+
+Two changes: measured list charging now subtracts the marker indent at
+depth 0, and `CALIBRATED_CONT_LINES`/`CALIBRATED_FIRST_LINES` sit at
+**46/36** (~16% under the bench capacity) — because a sparse page costs
+white space and an overfull one costs a client the end of the document.
+Re-packed against the real content: the failing bucket splits, the
+Disclaimer and Notes get their own page, nothing touches the foot.
+
+### 3 · N/A nineteen times, about figures the row held
+
+The Snapshot's "The report" pages tabulate Median Price N/A, Grade N/A,
+Score N/A/100, five component scores N/A, six financial rows N/A — while
+the SAME ROW carries score 62, grade B and a complete
+`financial_calculations` block. `condense-investment-report` hands the
+model only the parent's PROSE — and a Compass parent deliberately states
+no financials — then demands tables. The model, forced to fill a table
+from a document that never says the numbers, wrote N/A.
+
+`condenseFacts.pure.ts` renders the row through `projectInvestmentReport`
+(the same reconciled projection every templated document binds) into an
+authoritative RECORDED FIGURES block in the prompt, and the rule travels
+with it: a metric absent from the record and the prose loses its ROW —
+never gains a placeholder. The snapshot/financial guides' fixed metric
+menus became choose-from lists under the same rule.
+
+### 4 · Four document kinds, one name
+
+Cover eyebrow, wordmark, running head and running foot were the literal
+words "Investment Compass" in the Investment composer — and those masters
+serve the compass, financial, snapshot, briefing AND strategic tiers. So a
+Financial Analysis was titled Investment Compass on all 15 of its pages.
+The composer binds `{{report.documentTitle}}` / `{{report.standfirst}}`
+now, and `DOCUMENT_IDENTITY` in the projection is the one place a tier is
+translated into words (Financial Analysis; Snapshot Report; Executive
+Briefing; Strategic Overview; compass keeps its name and standfirst — and
+an unrecognised tier reads as compass, the ranking's default document).
+
+### 5 · Two whole families had no contents page
+
+37 of the 50 Investment masters carry a Contents page; **Luxury Editorial
+and Private Banking declare `toc_style: none` family-wide** — the house
+default and the design the owner chose, which is why all five PDFs lack
+one. `hasContents` returns true for every style now: navigability is a
+property of the document, not of a family's styling, and `toc_style` keeps
+deciding how the list is drawn, not whether the reader gets one.
+
+### 6 · The chart primitives clipped their own labels
+
+Fixing §1 made the figures visible, and the first honest render showed the
+primitives cutting text: the score wheel printed "FUTURE RESILIENCE" as
+"RE RESILIENCE" and lost GROWTH ALIGNMENT's tail; the bars' label column
+clipped "Property-specific verification need" at the left edge; and the
+risk matrix drew "5=High)" as an orphan row label floating under a one-row
+grid.
+
+The wheel taught the real lesson. `text()` converts points to viewBox
+units through `w / widthMm`, so **widening the box also enlarges every
+label in units** — a first fix added the label's estimated width to the
+padding and the clip only moved ("TURE RESILIENCE"). Measured in Chromium
+(`getComputedTextLength` over the failing labels): a 17-character tracked
+uppercase micro label needs 140u of the 78u available at w=460, 161u of
+114u at w=532, and would need w≈813 — wider than the wide box — on one
+line. The fix is structural: long labels **wrap at the word break that
+best balances two lines** (never truncated — a shortened dimension name is
+a different dimension), the width is the closed-form solution of
+`w/2 − labelR ≥ label(w) + edge` (solvable because label(w) is linear in
+w), and the label/value blocks stack radially outward with leads computed
+from the type's own unit size, growing the box height from the actual
+extents. The advance is measured, not guessed: 0.71em per uppercase
+character, 0.55em mixed-case, carried with margin.
+
+The same honesty went to the other two. The bars and matrix label columns
+size from `ptToUnits(micro) × 0.58` instead of a 5.4-unit guess (three
+characters short on the real 26-character row label); the matrix solves
+its width as a converged fixed point, refuses — the module's own rule —
+when labels at micro size are physically wider than the measure and no
+box width can fit them, and scales its header band and cell height with
+the type. And the orphan label was the directive parser: `csv()` split
+`rows=Risk level (1=Low, 5=High)` on the comma inside the parenthesis,
+declaring a second row the grid never had — it now splits only on commas
+outside parentheses (the quote-aware splitter's rule, extended), and
+`renderHeatmap` refuses to draw a label for a row or column the grid does
+not hold, because a labelled row is a promise that figures follow.
+
+### Shipping the fix to documents people already generate
+
+Master schemas are COPIES — seeded and adopted rows never updated — so the
+v10 seed alone would fix only future adoptions. Two migrations ship
+together: `20260917100000` reseeds the library (543 templates revalidated),
+and `20260917110000` refreshes every ACTIVE `report_templates` row that
+descends from a listed design: the entry's new schema with THE ROW'S OWN
+token colours carried forward (a colourway bake is exactly that merge, so
+no palette is invented), and the lineage's entryVersion advanced so the
+picker's fold keeps recognising the copy. Rows with no lineage are
+untouched.
+
+### Verified against the failing documents themselves
+
+Both real reports were re-rendered through the updated Luxury Editorial
+master with the real projection in Chromium: the Financial Analysis covers
+itself as FINANCIAL ANALYSIS with its own standfirst; both carry Contents
+as page 2; the wheel, donuts, glance strips and gauges draw in the family
+palette; and both tails — the exact sentences missing from the shipped
+PDFs — sit whole on their pages. Every chart-bearing page was then
+screenshot and read: all five wheel labels whole (wrapped, values clear of
+the disc), the three DD-focus bar labels whole, and the risk matrix one
+labelled row with six labelled columns. `reportRenderDefects.spec.ts` pins
+all six fixes; `narrativeCalibration.spec.ts`, `vizDirectives.spec.ts` and
+`vizFigures.spec.ts` hold.
