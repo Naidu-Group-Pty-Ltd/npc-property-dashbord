@@ -544,6 +544,25 @@ Deno.serve(async (req) => {
     // Get access token
     const accessToken = await getAccessToken();
 
+    // Rows written before the rule above was widened are still sitting in the
+    // inbox. A migration cannot fix them — it has no way to know which
+    // addresses are ours, because they are environment configuration rather
+    // than data. So the repair runs here, where the identities are known. It
+    // is idempotent and touches only rows that are demonstrably ours.
+    if (ownAddresses.size > 0) {
+      const { error: repairError, count } = await supabase
+        .from('email_copilot_emails')
+        .update({ folder: 'sent' }, { count: 'exact' })
+        .eq('folder', 'inbox')
+        .in('sender', Array.from(ownAddresses));
+      if (repairError) {
+        // Never fail a sync over the repair: the sync is the job.
+        console.error('[Outlook Sync] self-sent repair failed:', repairError.message);
+      } else if (count) {
+        console.log(`[Outlook Sync] reclassified ${count} self-sent email(s) out of the inbox`);
+      }
+    }
+
     // Fetch both inbox and sent emails from Outlook
     const [inboxEmails, sentEmails] = await Promise.all([
       fetchEmailsFromFolder(accessToken, targetMailbox, 'inbox', limit),
@@ -553,20 +572,35 @@ Deno.serve(async (req) => {
     console.log(`[Outlook Sync] Fetched ${inboxEmails.length} inbox and ${sentEmails.length} sent emails`);
 
     // Helper function to process and insert emails
+    // Every address this deployment sends as. A copy of our own outbound mail
+    // landing in an inbox is a delivery receipt, not incoming correspondence,
+    // whichever of our addresses it went out under.
+    const ownAddresses = new Set(
+      [targetMailbox, DEFAULT_MAILBOX_EMAIL]
+        .map((a) => (a || '').toLowerCase().trim())
+        .filter(Boolean),
+    );
+
     // Uses DB unique constraint (idx_email_copilot_no_duplicates) to skip duplicates
     async function processEmails(emails: OutlookMessage[], folder: 'inbox' | 'sent') {
       let insertedCount = 0;
       let skippedCount = 0;
       
       for (const email of emails) {
-        // Detect self-sent emails: when the mailbox owner is the sender
-        // (e.g. an outbound message from CRM / GHL that also lands back in the
-        // inbox as a delivery copy). Reclassify these as 'sent' so they appear
-        // in the Sent tab of Email Copilot instead of polluting the inbox.
+        // Detect self-sent emails: when one of OUR OWN addresses is the
+        // sender (e.g. an outbound message from CRM / GHL that also lands back
+        // in the inbox as a delivery copy). Reclassify these as 'sent' so they
+        // appear in the Sent tab of Email Copilot instead of polluting the
+        // inbox.
+        //
+        // This used to compare against the mailbox being synced and nothing
+        // else, so a message sent as the shared admin address and delivered
+        // into a personal mailbox — which is exactly what the CRM
+        // Conversations page produces — matched nothing and was filed as
+        // incoming mail. Every identity this deployment sends as counts.
         const senderAddress = (email.from?.emailAddress?.address || '').toLowerCase();
-        const mailboxAddress = (targetMailbox || '').toLowerCase();
         const effectiveFolder: 'inbox' | 'sent' =
-          folder === 'inbox' && senderAddress && senderAddress === mailboxAddress
+          folder === 'inbox' && senderAddress && ownAddresses.has(senderAddress)
             ? 'sent'
             : folder;
 
