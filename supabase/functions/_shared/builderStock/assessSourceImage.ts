@@ -20,6 +20,16 @@ import {
   type MarketplaceEligibility,
 } from './marketplaceEligibility.pure.ts';
 import { isPrimaryRole } from './sourceImageRole.pure.ts';
+import { classifyThumbnail, type VisualKind } from './sourceImageVision.pure.ts';
+
+/**
+ * How many pictures of one document are worth looking at.
+ *
+ * A cover page carries a handful of unique rasters; twenty-four is generous
+ * for a brochure and small enough that a pathological document cannot spend
+ * an import's whole allowance on decoding.
+ */
+const MAX_VISION_DECODES = 24;
 
 /**
  * Judge bytes the pipeline is about to store.
@@ -62,4 +72,49 @@ export async function eligibilityDetailFor(
   // bytes cannot inherit it — see `marketplaceEligibilityDetail`.
   return marketplaceEligibilityDetail(
     await assessMarketplaceEligibility(bytes), await sha256Hex(bytes));
+}
+
+/**
+ * What each of a document's pictures IS, for the ones that could lead a card.
+ *
+ * BOUNDED ON PURPOSE, TWICE OVER. Decoding is the most expensive thing this
+ * pipeline does — a single redundant decode of one 1819×1223 JPEG killed the
+ * settler on five consecutive attempts — so this never reads the whole
+ * document. It reads only pictures that could actually be elected: a raster
+ * the page repeats, or that another page also draws, is eliminated by
+ * `selectCoverHero` before its pixels could matter, and there is a hard cap
+ * beyond that.
+ *
+ * Never throws. A picture that could not be read comes back null, which every
+ * reader treats as "nothing is known" — the state before this existed.
+ */
+export async function documentVisualKinds(
+  media: ReadonlyArray<{
+    bytes?: Uint8Array | null;
+    placement?: { placementsOnPage?: number; pagesDrawnOn?: number } | null;
+  }>,
+  limit = MAX_VISION_DECODES,
+): Promise<Array<VisualKind | null>> {
+  const kinds: Array<VisualKind | null> = media.map(() => null);
+  let spent = 0;
+  for (const [index, entry] of media.entries()) {
+    if (spent >= limit) break;
+    const placement = entry.placement;
+    // The same elimination `selectCoverHero` applies. Anything it drops is a
+    // decode nobody would have read.
+    if (placement && ((placement.placementsOnPage ?? 1) > 1 || (placement.pagesDrawnOn ?? 1) > 1)) {
+      continue;
+    }
+    const bytes = entry.bytes;
+    if (!bytes?.length) continue;
+    spent += 1;
+    try {
+      const result = await decodeThumbnailResult(bytes);
+      if (result.ok === false) continue;
+      kinds[index] = classifyThumbnail(result.thumbnail)?.kind ?? null;
+    } catch {
+      // Nothing is known about this picture; that is not a finding about it.
+    }
+  }
+  return kinds;
 }
