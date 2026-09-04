@@ -544,22 +544,32 @@ Deno.serve(async (req) => {
     // Get access token
     const accessToken = await getAccessToken();
 
+    // Every address this deployment sends as. A copy of our own outbound mail
+    // landing in an inbox is a delivery receipt, not incoming correspondence,
+    // whichever of our addresses it went out under.
+    const ownAddresses = new Set(
+      [targetMailbox, DEFAULT_MAILBOX_EMAIL]
+        .map((a) => (a || '').toLowerCase().trim())
+        .filter(Boolean),
+    );
+
     // Rows written before the rule above was widened are still sitting in the
     // inbox. A migration cannot fix them — it has no way to know which
     // addresses are ours, because they are environment configuration rather
     // than data. So the repair runs here, where the identities are known. It
     // is idempotent and touches only rows that are demonstrably ours.
     if (ownAddresses.size > 0) {
-      const { error: repairError, count } = await supabase
+      const { data: repaired, error: repairError } = await supabase
         .from('email_copilot_emails')
-        .update({ folder: 'sent' }, { count: 'exact' })
+        .update({ folder: 'sent' })
         .eq('folder', 'inbox')
-        .in('sender', Array.from(ownAddresses));
+        .in('sender', Array.from(ownAddresses))
+        .select('id');
       if (repairError) {
         // Never fail a sync over the repair: the sync is the job.
         console.error('[Outlook Sync] self-sent repair failed:', repairError.message);
-      } else if (count) {
-        console.log(`[Outlook Sync] reclassified ${count} self-sent email(s) out of the inbox`);
+      } else if (repaired && repaired.length > 0) {
+        console.log(`[Outlook Sync] reclassified ${repaired.length} self-sent email(s) out of the inbox`);
       }
     }
 
@@ -572,15 +582,6 @@ Deno.serve(async (req) => {
     console.log(`[Outlook Sync] Fetched ${inboxEmails.length} inbox and ${sentEmails.length} sent emails`);
 
     // Helper function to process and insert emails
-    // Every address this deployment sends as. A copy of our own outbound mail
-    // landing in an inbox is a delivery receipt, not incoming correspondence,
-    // whichever of our addresses it went out under.
-    const ownAddresses = new Set(
-      [targetMailbox, DEFAULT_MAILBOX_EMAIL]
-        .map((a) => (a || '').toLowerCase().trim())
-        .filter(Boolean),
-    );
-
     // Uses DB unique constraint (idx_email_copilot_no_duplicates) to skip duplicates
     async function processEmails(emails: OutlookMessage[], folder: 'inbox' | 'sent') {
       let insertedCount = 0;
