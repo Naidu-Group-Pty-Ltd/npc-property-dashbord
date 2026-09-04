@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select';
@@ -17,7 +18,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription
 } from '@/components/ui/dialog';
 import {
-  Search, Loader2, Clock, ArrowRight, CheckCircle2, XCircle,
+  Loader2, Clock, ArrowRight, CheckCircle2, XCircle,
   BarChart3, PiggyBank, Building2, User, Send, Calendar,
   MessageSquare, Filter, Inbox, Mail, Phone, MapPin, ExternalLink
 } from 'lucide-react';
@@ -319,16 +320,15 @@ export default function ReportRequests() {
         <DashboardThemeFrame variant="toolbar" className="relative overflow-hidden p-3 shadow-xl shadow-sm dark:shadow-black/10 sm:p-4 dark:shadow-black/25">
           <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/35 to-transparent" />
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="group/search relative flex-1">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground dark:text-muted-foreground transition-colors group-focus-within/search:text-brand-200" />
-              <Input
-                aria-label="Search report requests"
-                placeholder="Search by client, property, or notes..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="h-12 rounded-2xl border-border dark:border-white/10 bg-background/45 dark:bg-black/45 pl-11 pr-4 text-sm text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/30 placeholder:text-muted-foreground dark:placeholder:text-muted-foreground transition-all duration-200 hover:border-white/20 hover:bg-black/55 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/20 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-              />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              aria-label="Search report requests"
+              placeholder="Search by client, property, or notes..."
+              containerClassName="group/search flex-1"
+              className="h-12 rounded-2xl border-border dark:border-white/10 bg-background/45 dark:bg-black/45 pr-4 text-sm text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/30 placeholder:text-muted-foreground dark:placeholder:text-muted-foreground transition-all duration-200 hover:border-white/20 hover:bg-black/55 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/20 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              iconClassName="left-4 dark:text-muted-foreground transition-colors group-focus-within/search:text-brand-200"
+            />
             <Select value={typeFilter} onValueChange={setTypeFilter}>
               <SelectTrigger
                 aria-label="Filter report requests by type"

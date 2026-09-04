@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { AlertTriangle, Building2, Check, ChevronsUpDown, Circle, CheckCircle2, Factory, FileCheck2, Link2, Search, ShieldAlert, Sparkles, UserRound, GitBranch } from 'lucide-react';
+import { AlertTriangle, Building2, Check, ChevronsUpDown, Circle, CheckCircle2, Factory, FileCheck2, Link2, ShieldAlert, Sparkles, UserRound, GitBranch } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { SearchInput } from '@/components/ui/search-input';
 import { useCommercialDealState } from '@/utils/commercial/commercialDealState';
 import { buildGlobalSyncLabel } from '@/utils/commercial/calculatorDataSync';
 import { calculateCommercialIndustrialBorrowing, lenderPolicyProfiles, type AcquisitionPurpose, type AssetCategory, type BorrowingInputs, type BorrowingResult, type LenderPolicyProfileKey, type LeaseStatus, type PurchaserStructure } from '@/utils/commercial';
@@ -194,10 +195,14 @@ function ClientProfileCombobox({ value, options, loading, onChange }: { value: s
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-        <div className="p-2 border-b flex items-center gap-2">
-          <Search className="h-3.5 w-3.5 text-muted-foreground" />
-          <Input autoFocus placeholder="Type to search clients…" value={query} onChange={(e) => setQuery(e.target.value)} className="border-0 h-8 p-0 text-sm focus-visible:ring-0 shadow-none" />
-        </div>
+        <SearchInput
+          value={query}
+          onValueChange={setQuery}
+          placeholder="Type to search clients…"
+          containerClassName="p-2 border-b flex items-center gap-2"
+          className="border-0 h-8 p-0 text-sm focus-visible:ring-0 shadow-none"
+          iconClassName="h-3.5 w-3.5"
+        />
         <ScrollArea className="max-h-[260px]">
           <div className="p-1">
             {filtered.length === 0 ? (

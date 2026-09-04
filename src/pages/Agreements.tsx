@@ -11,6 +11,7 @@ import { FlattenPdfMenuItem } from "@/components/common/FlattenPdfMenuItem";
 import { fetchPdfBlob } from "@/lib/pdf/downloadPdf";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Table,
   TableBody,
@@ -692,13 +693,13 @@ export default function Agreements() {
             <div className="pointer-events-none absolute inset-y-1.5 left-1.5 z-10 flex w-10 items-center justify-center rounded-xl border border-transparent bg-primary/8 text-primary shadow-[inset_0_1px_0_hsl(0_0%_100%/0.32)] transition-all duration-300 group-hover/search:border-brand-300/35 group-hover/search:bg-brand-400/12 group-focus-within/search:border-brand-300/55 group-focus-within/search:bg-brand-400/18 group-focus-within/search:text-brand-700 dark:bg-brand-300/10 dark:text-brand-200 dark:group-hover/search:bg-brand-200/12 dark:group-focus-within/search:bg-brand-200/16 dark:group-focus-within/search:text-brand-100">
               <Search className="h-4 w-4" aria-hidden="true" />
             </div>
-            <Input
+            <SearchInput
+              value={searchTerm}
+              onValueChange={setSearchTerm}
               id={searchInputId}
-              type="search"
               aria-label="Search agreements by buyer name, email, or status"
               placeholder={`Search ${agreements.length} agreements by name, email, status...`}
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              hideIcon
               className="h-[3.25rem] rounded-[1.15rem] border-border/70 bg-background/95 py-3 pl-14 pr-4 text-[0.95rem] font-medium text-foreground shadow-[0_16px_42px_rgba(15,23,42,0.10),inset_0_1px_0_hsl(0_0%_100%/0.45)] outline-none transition-all duration-300 placeholder:text-muted-foreground/80 hover:border-brand-300/50 hover:bg-background hover:shadow-[0_18px_48px_rgba(15,23,42,0.13),0_0_0_1px_hsl(43_84%_52%/0.12),inset_0_1px_0_hsl(0_0%_100%/0.55)] focus-visible:border-brand-400/70 focus-visible:ring-2 focus-visible:ring-brand-400/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:border-white/10 dark:bg-background/75 dark:shadow-[0_16px_42px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.08)] dark:placeholder:text-muted-foreground dark:hover:border-brand-200/35 dark:hover:bg-background/90 dark:hover:shadow-[0_18px_48px_rgba(0,0,0,0.34),0_0_0_1px_hsl(43_84%_52%/0.12),inset_0_1px_0_rgba(255,255,255,0.10)] dark:focus-visible:border-brand-200/60 dark:focus-visible:ring-brand-300/25"
             />
           </div>

@@ -8,8 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
+import { SearchInput } from '@/components/ui/search-input';
 import {
-  FileText, Search, Loader2, FolderOpen, Download, Upload,
+  FileText, Loader2, FolderOpen, Download, Upload,
   File, Image, FileSpreadsheet, FileIcon, X, CheckCircle, RotateCcw, AlertCircle
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -475,10 +476,12 @@ export default function PortalDocuments() {
 
       {files.length > 0 && (
         <div className="client-portal-soft-panel flex flex-col gap-3 rounded-2xl p-4 sm:flex-row">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search documents..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
-          </div>
+          <SearchInput
+            value={search}
+            onValueChange={setSearch}
+            placeholder="Search documents..."
+            containerClassName="flex-1"
+          />
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
             <SelectTrigger className="w-full sm:w-48">
               <SelectValue placeholder="All categories" />

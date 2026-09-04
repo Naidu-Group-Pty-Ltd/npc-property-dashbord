@@ -269,6 +269,12 @@ jobs:
       - name: Undefined identifiers in src/ (never type debt)
         run: node scripts/security/check-src-missing-names.mjs
 
+      # A search box you cannot empty is a dead end, and it was shipped 90
+      # times. The field is a component now; this stops a raw <Input> search
+      # box being added beside it.
+      - name: Search fields offer a way to clear them
+        run: node scripts/security/check-search-clear.mjs
+
       - name: Build
         run: npm run build
 
