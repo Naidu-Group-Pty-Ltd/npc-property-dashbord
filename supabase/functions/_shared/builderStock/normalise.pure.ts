@@ -661,6 +661,44 @@ export function developmentUnitMatchKey(
   return `${parts.development}|${parts.unit}|${parts.design}`;
 }
 
+/** A stored row, as much of it as this key needs. */
+export interface StoredRowKeyFields {
+  development_name?: string | null;
+  project_name?: string | null;
+  unit_number?: string | null;
+  lot_number?: string | null;
+  /** `source_row->>house_design`, where the reader projected it. */
+  house_design?: string | null;
+  /** The whole record, where the reader has it. */
+  source_row?: Record<string, unknown> | null;
+}
+
+/**
+ * The same key, for a row we already hold — and there is ONE of these.
+ *
+ * The importer and the image-attachment path each had their own copy of this
+ * function, which is exactly how they came to disagree: adding the design to
+ * the importer's alone would have left every Harlow 801 brochure going to
+ * whichever of the three packages was read last, badged "Builder supplied",
+ * on the wrong house.
+ *
+ * The design is taken from the projected alias or from the stored record,
+ * because the two readers differ in which they have: the importer projects
+ * the scalar and never reads the blob, while the repair path reads the record
+ * whole. Looking in both is what lets one function serve both.
+ */
+export function storedRowDevelopmentUnitKey(row: StoredRowKeyFields): string | null {
+  const development = (row.development_name ?? row.project_name ?? '').trim().toLowerCase();
+  const unit = (row.unit_number ?? row.lot_number ?? '').trim().toLowerCase();
+  if (!development || !unit) return null;
+  const fromRecord = typeof row.source_row?.house_design === 'string'
+    ? row.source_row.house_design
+    : null;
+  return developmentUnitMatchKey({
+    development, unit, design: designToken(row.house_design ?? fromRecord),
+  });
+}
+
 /**
  * A fingerprint of everything a row SAID, for re-finding the property it
  * already became.

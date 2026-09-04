@@ -19,8 +19,8 @@
  *   to `unknown`.
  */
 import {
-  designToken, developmentUnitMatchKey, normaliseStockRow, stockIdentityHints,
-  stockMatchKeys, stockRecordLabel,
+  developmentUnitMatchKey, normaliseStockRow, stockIdentityHints,
+  stockMatchKeys, stockRecordLabel, storedRowDevelopmentUnitKey,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import {
@@ -259,14 +259,7 @@ function referenceKey(item: ExistingItem): string | null {
   return value || null;
 }
 
-function developmentUnitKey(item: ExistingItem): string | null {
-  const development = (item.development_name ?? item.project_name ?? '').trim().toLowerCase();
-  const unit = (item.unit_number ?? item.lot_number ?? '').trim().toLowerCase();
-  if (!development || !unit) return null;
-  return developmentUnitMatchKey({
-    development, unit, design: designToken(item.house_design),
-  });
-}
+const developmentUnitKey = storedRowDevelopmentUnitKey;
 
 /** Only the fields the record actually carries. Null means "the file was silent". */
 function writablePatch(record: NormalisedStockRecord): Record<string, unknown> {

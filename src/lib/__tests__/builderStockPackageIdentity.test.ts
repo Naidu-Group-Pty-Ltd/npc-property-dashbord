@@ -44,6 +44,7 @@ import { describe, expect, it } from 'vitest';
 import { importStockRecords } from '../../../supabase/functions/_shared/builderStock/importStock';
 import {
   designToken, developmentUnitMatchKey, normaliseStockRow, stockMatchKeys,
+  storedRowDevelopmentUnitKey,
 } from '../../../supabase/functions/_shared/builderStock/normalise.pure';
 import {
   identityDifferences, stockPropertyIdentity,
@@ -203,6 +204,56 @@ describe('the match key', () => {
   it('builds the key in one place, so no caller can spell it differently', () => {
     expect(developmentUnitMatchKey({ development: 'harlow', unit: '801', design: 'nex 20' }))
       .toBe('harlow|801|nex 20');
+  });
+});
+
+/*
+ * THE KEY FOR A ROW WE ALREADY HOLD.
+ *
+ * Two modules build it: the importer, which decides whether a row is a new
+ * property, and the image-attachment path, which decides whose photograph a
+ * document's picture is. They had a copy each, and a mutation that dropped
+ * the design from the second one alone was killed by NOTHING — which is the
+ * shape of the wrong-house defect this repository fears most. One function
+ * now, and these are its terms.
+ */
+describe('the key for a stored row', () => {
+  const harlow = { development_name: 'Harlow', lot_number: '801' };
+
+  it('separates the packages held on one lot', () => {
+    const cura = storedRowDevelopmentUnitKey({ ...harlow, house_design: 'Cura 20B' });
+    const nex = storedRowDevelopmentUnitKey({ ...harlow, house_design: 'Nex 20' });
+
+    expect(cura).not.toBeNull();
+    expect(cura).not.toBe(nex);
+  });
+
+  it('reads the design from the projected alias OR the stored record', () => {
+    // The importer projects the scalar and never reads the blob; the repair
+    // path reads the record whole. One function has to serve both.
+    const projected = storedRowDevelopmentUnitKey({ ...harlow, house_design: 'Nex 20' });
+    const fromRecord = storedRowDevelopmentUnitKey({
+      ...harlow, source_row: { house_design: 'Nex 20' },
+    });
+
+    expect(projected).toBe(fromRecord);
+  });
+
+  it('agrees with the key built from the row the file states', () => {
+    const record = normaliseStockRow(packageRow({ 'House Design': 'Nex 20' }));
+    const fromFile = developmentUnitMatchKey(stockMatchKeys(record!).developmentUnit!);
+    const fromStore = storedRowDevelopmentUnitKey({
+      development_name: 'Harlow', lot_number: '801', source_row: { house_design: 'Nex 20' },
+    });
+
+    // The two sides of every re-import. If they disagree the importer inserts
+    // duplicates for ever and the repair path attributes to the wrong row.
+    expect(fromStore).toBe(fromFile);
+  });
+
+  it('still refuses a row missing either half', () => {
+    expect(storedRowDevelopmentUnitKey({ development_name: 'Harlow' })).toBeNull();
+    expect(storedRowDevelopmentUnitKey({ lot_number: '801' })).toBeNull();
   });
 });
 
