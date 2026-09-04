@@ -9,6 +9,9 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { invokeBuilderFunction } from '@/lib/builderPortal';
+import {
+  countWorkingImages,
+} from '../../supabase/functions/_shared/builderStock/imageProgress.pure';
 import type {
   BuilderStockItem, BuilderStockSelectionForBuilder, BuilderStockUpload,
 } from '@/lib/builderStock';
@@ -58,6 +61,13 @@ export function useBuilderStockUploads(page = 1) {
   });
 }
 
+/**
+ * How often the list re-reads itself while the imagery engine still owes it
+ * something. The engine's own scheduler runs each minute, so this is a little
+ * faster than the fastest thing it could report.
+ */
+const STOCK_WORKING_POLL_MS = 20_000;
+
 export function useBuilderStockItems(filters: StockFilters) {
   return useQuery({
     queryKey: builderStockKeys.items(filters),
@@ -69,6 +79,29 @@ export function useBuilderStockItems(filters: StockFilters) {
       page: filters.page,
       page_size: filters.pageSize,
     }),
+    /*
+     * POLL ONLY WHILE THERE IS SOMETHING TO SEE.
+     *
+     * A row that says "Finding a picture…" has to be able to stop saying it
+     * without the person reloading the page — telling somebody to wait on a
+     * screen that never changes is worse than telling them nothing. So the
+     * list re-reads itself exactly while at least one property on this page
+     * is still being worked, and stops the moment none is.
+     *
+     * Off by default rather than on: a builder whose stock has all settled is
+     * the ordinary case, and every one of those pages polling for ever would
+     * be this page's cost to every other tenant.
+     */
+    refetchInterval: (query) => {
+      const records = query.state.data?.records ?? [];
+      return countWorkingImages(records.map((item) => ({
+        hasImage: !!item.primary_image_id,
+        sourceDocuments: item.source_documents ?? 0,
+        workStage: item.image_work_stage,
+      }))) > 0
+        ? STOCK_WORKING_POLL_MS
+        : false;
+    },
   });
 }
 
