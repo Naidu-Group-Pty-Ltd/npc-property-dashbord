@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchInput } from '@/components/ui/search-input';
 import { ConfidenceBadge } from '@/components/dashboard/ConfidenceBadge';
 import { ListingFilters } from '@/components/listings/ListingFilters';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
@@ -957,14 +958,14 @@ function ListingsMarketplace({ sectionTabs }: { sectionTabs?: ReactNode } = {}) 
             <div className="pointer-events-none absolute inset-y-0 left-0 flex w-14 items-center justify-center">
               <Search className="h-5 w-5 text-muted-foreground transition-colors duration-200 group-focus-within:text-brand-600 dark:group-focus-within:text-brand-300" />
             </div>
-            <Input
-              placeholder="Search properties..."
+            <SearchInput
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onValueChange={setSearchQuery}
+              placeholder="Search properties..."
               id="listings-search"
-              type="search"
               aria-label="Search listings by address, suburb, agency, or agent"
               autoComplete="off"
+              hideIcon
               className="h-14 rounded-full border-border/70 bg-background/95 pl-14 pr-5 text-[15px] font-medium shadow-[0_14px_36px_rgba(15,23,42,0.10)] transition-all duration-200 placeholder:text-muted-foreground/65 hover:border-brand-300/70 hover:bg-background focus-visible:border-brand-400 focus-visible:ring-4 focus-visible:ring-brand-400/20 dark:border-white/10 dark:bg-background/70 dark:hover:border-brand-300/35 sm:h-16 sm:text-base"
             />
           </div>

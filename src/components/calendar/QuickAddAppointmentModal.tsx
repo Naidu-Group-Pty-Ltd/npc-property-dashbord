@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
+import { SearchInput } from '@/components/ui/search-input';
 import { Calendar, Clock, Plus, Loader2, Keyboard, User, Search, Phone, Mail, Video, PhoneCall, Globe, Users, X, UserPlus } from 'lucide-react';
 import { format, addMinutes } from 'date-fns';
 import { toTimezoneISO } from '@/lib/sydneyTime';
@@ -480,11 +481,12 @@ export function QuickAddAppointmentModal({
               <div className="relative" ref={dropdownRef}>
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search contacts by name, email, or phone..."
+                  <SearchInput
                     value={contactSearch}
-                    onChange={(e) => setContactSearch(e.target.value)}
+                    onValueChange={setContactSearch}
+                    placeholder="Search contacts by name, email, or phone..."
                     onFocus={() => searchResults.length > 0 && setShowContactDropdown(true)}
+                    hideIcon
                     className="pl-8"
                   />
                   {isSearching && (

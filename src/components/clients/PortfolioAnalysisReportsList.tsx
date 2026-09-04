@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Table,
   TableBody,
@@ -424,11 +425,12 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
               <div className="pointer-events-none absolute left-3.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl border border-brand-300/15 bg-brand-300/10 text-brand-200/80">
                 <Search className="h-4 w-4" />
               </div>
-              <Input
+              <SearchInput
+                value={searchQuery}
+                onValueChange={setSearchQuery}
                 aria-label="Search portfolio reports by client name"
                 placeholder="Search by client name..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                hideIcon
                 className="h-12 rounded-2xl border-border dark:border-white/10 bg-background dark:bg-background/80 pl-14 pr-4 text-sm font-medium text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/20 transition-all placeholder:text-muted-foreground hover:border-brand-300/25 focus-visible:border-brand-300/70 focus-visible:ring-2 focus-visible:ring-brand-300/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               />
             </div>

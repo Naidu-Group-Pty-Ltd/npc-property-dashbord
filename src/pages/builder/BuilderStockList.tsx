@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Bath, BedDouble, Boxes, Car, CheckCircle2, ChevronLeft, ChevronRight, FileImage,
   FileSpreadsheet, Globe, Image as ImageIcon, ImageDown, ImageOff, Link2, Loader2, Map, Plus,
-  RefreshCw, Search, Sparkles, Trash2, Upload, UserCheck, type LucideIcon,
+  RefreshCw, Sparkles, Trash2, Upload, UserCheck, type LucideIcon,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { SearchInput } from '@/components/ui/search-input';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShell';
@@ -508,19 +509,14 @@ export default function BuilderStockList() {
             line instead of forcing the card wider than the column.
           */}
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative min-w-0 flex-1 basis-64">
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden
-              />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search address, suburb, development or reference"
-                className="h-9 w-full pl-9"
-                aria-label="Search stock"
-              />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              placeholder="Search address, suburb, development or reference"
+              aria-label="Search stock"
+              containerClassName="min-w-0 flex-1 basis-64"
+              className="h-9 w-full"
+            />
             <Select value={availability} onValueChange={setAvailability}>
               <SelectTrigger
                 className="h-9 w-full min-w-0 sm:w-44"

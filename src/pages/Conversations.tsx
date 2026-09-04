@@ -28,6 +28,7 @@ import { useBrand } from "@/branding/useBrand";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SearchInput } from '@/components/ui/search-input';
 import { cn } from "@/lib/utils";
 import {
   MessageSquare,
@@ -1275,11 +1276,12 @@ export default function Conversations() {
                 <div className="pointer-events-none absolute inset-y-0 left-0 flex w-11 items-center justify-center">
                   <Search className="h-4 w-4 text-muted-foreground dark:text-muted-foreground transition-colors duration-200 group-focus-within:text-brand-300" />
                 </div>
-                <Input
+                <SearchInput
+                  value={searchTerm}
+                  onValueChange={setSearchTerm}
                   placeholder="Search conversations..."
                   aria-label="Search conversations by contact or message"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  hideIcon
                   className="h-11 rounded-2xl border-brand-100/10 bg-[linear-gradient(135deg,rgba(0,0,0,0.62),rgba(39,39,42,0.38))] pl-11 pr-4 text-sm font-medium text-foreground dark:text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.055),inset_0_-10px_22px_rgba(0,0,0,0.20)] outline-none transition-all duration-200 placeholder:font-normal placeholder:text-muted-foreground dark:placeholder:text-muted-foreground hover:border-brand-100/24 hover:bg-black/65 focus-visible:border-brand-300/70 focus-visible:ring-2 focus-visible:ring-brand-300/25 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 />
               </div>
