@@ -186,6 +186,16 @@ import {
  * matters more than its predecessors: it is the first that can withdraw a
  * picture as well as find one.
  *
+ * 15 IS 14, ACTUALLY APPLIED. The gate 14 was raised for was wired into the
+ * import path alone, and a reopen runs through the REPAIR path — so the v14
+ * pass re-derived all 65 live properties, took forty minutes, and re-elected
+ * every picture it had elected before. Lots 109 and 115 Palomino came back
+ * still leading with `page1:Im3`, the floor plan, and lot 116 changed from
+ * the house TO the plan, which is the two paths openly disagreeing. Both
+ * paths classify now (#2480), and a package banked at 14 is skipped as
+ * current, so the answers reached without looking have to be invalidated
+ * before they can be re-asked. Nothing else changed.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.
