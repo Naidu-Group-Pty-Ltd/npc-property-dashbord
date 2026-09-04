@@ -320,7 +320,7 @@ export function ClientComparison({ clients }: ClientComparisonProps) {
           <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/45 to-transparent" />
           <div className="relative flex flex-col gap-3 rounded-3xl border border-border/60 dark:border-white/10 bg-muted/45 dark:bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.16em] text-success dark:text-success-foreground">
+              <div className="inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.16em] text-success dark:text-success">
                 <Scale className="h-3.5 w-3.5" />
                 Comparison active
               </div>
@@ -403,7 +403,7 @@ export function ClientComparison({ clients }: ClientComparisonProps) {
                                 {metric.format(value)}
                               </p>
                               {isBest && (
-                                <Badge variant="secondary" className="shrink-0 rounded-full border border-success/20 bg-success/10 text-xs text-success dark:text-success-foreground">
+                                <Badge variant="secondary" className="shrink-0 rounded-full border border-success/20 bg-success/10 text-xs text-success dark:text-success">
                                   Best
                                 </Badge>
                               )}

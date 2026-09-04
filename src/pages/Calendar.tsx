@@ -914,7 +914,7 @@ export default function Calendar() {
                 fetchCalendarData(start.toISOString(), end.toISOString());
               }}
               variant="outline"
-              className="rounded-xl border-destructive/25 bg-destructive/10 text-destructive-foreground transition-all hover:border-destructive/40 hover:bg-destructive/15 hover:text-destructive-foreground focus-visible:ring-2 focus-visible:ring-destructive/40"
+              className="rounded-xl border-destructive/25 bg-destructive/10 text-destructive transition-all hover:border-destructive/40 hover:bg-destructive/15 hover:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/40"
             >
               <RefreshCw className="h-4 w-4 mr-2" />
               Retry

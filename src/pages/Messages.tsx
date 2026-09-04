@@ -314,7 +314,7 @@ export default function Messages() {
                     <CardTitle className="text-[13px] font-bold uppercase tracking-[0.18em] text-primary">Clients</CardTitle>
                     <p className="mt-1 text-[11px] text-muted-foreground">{filteredClientThreads.length} visible · {totalClientUnread} unread</p>
                   </div>
-                  <Badge variant="outline" className="rounded-full border-success/25 bg-success/10 px-2 text-[10px] text-success-foreground">Client Portal</Badge>
+                  <Badge variant="outline" className="rounded-full border-success/25 bg-success/10 px-2 text-[10px] text-success">Client Portal</Badge>
                 </div>
               </CardHeader>
               <CardContent className="min-h-0 flex-1 p-0">
@@ -407,7 +407,7 @@ export default function Messages() {
                     <CardTitle className="text-[13px] font-bold uppercase tracking-[0.18em] text-primary">Finance clients</CardTitle>
                     <p className="mt-1 text-[11px] text-muted-foreground">{filteredFinanceGroups.length} visible · {totalFinanceUnread} unread</p>
                   </div>
-                  <Badge variant="outline" className="rounded-full border-info/25 bg-info/10 px-2 text-[10px] text-info-foreground">Finance Portal</Badge>
+                  <Badge variant="outline" className="rounded-full border-info/25 bg-info/10 px-2 text-[10px] text-info">Finance Portal</Badge>
                 </div>
               </CardHeader>
               <CardContent className="min-h-0 flex-1 p-0">
@@ -452,7 +452,7 @@ export default function Messages() {
                             <div className="truncate text-[10px] text-muted-foreground/75">
                               {g.partner_emails.join(', ') || 'Unassigned'}
                             </div>
-                            <Badge variant="outline" className="shrink-0 rounded-full border-info/20 bg-info/10 px-2 text-[10px] text-info-foreground">
+                            <Badge variant="outline" className="shrink-0 rounded-full border-info/20 bg-info/10 px-2 text-[10px] text-info">
                               {g.thread_count} {g.thread_count === 1 ? 'thread' : 'threads'}
                             </Badge>
                           </div>
@@ -487,7 +487,7 @@ export default function Messages() {
                       <p className="mt-2 text-xs leading-5 text-muted-foreground">Choose a finance-linked client to review partner-visible thread activity.</p>
                       <div className="mt-4 flex flex-wrap justify-center gap-1.5 text-[10px] font-medium text-primary/90">
                         <span className="rounded-full border border-primary/15 bg-brand-300/10 px-2 py-0.5">Partner view</span>
-                        <span className="rounded-full border border-info/15 bg-info/10 px-2 py-0.5 text-info-foreground">Finance threads</span>
+                        <span className="rounded-full border border-info/15 bg-info/10 px-2 py-0.5 text-info">Finance threads</span>
                       </div>
                       <div className="mx-auto mt-4 h-1 w-14 rounded-full bg-gradient-to-r from-transparent via-brand-300/70 to-transparent" />
                     </div>

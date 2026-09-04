@@ -147,7 +147,7 @@ export const CleanupTestCalls = ({ onComplete, testNumbersButtonClassName, flush
         </PopoverTrigger>
         <PopoverContent className={utilityPopoverShell} align="end">
           <div className="border-b border-border dark:border-white/10 bg-gradient-to-r from-info/10 via-transparent to-brand-500/10 px-4 py-3">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-info/20 bg-info/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-info-foreground">
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-info/20 bg-info/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-info">
               <FlaskConical className="h-3 w-3" />
               Controlled Testing
             </div>
@@ -164,7 +164,7 @@ export const CleanupTestCalls = ({ onComplete, testNumbersButtonClassName, flush
                 onKeyDown={(e) => e.key === 'Enter' && handleAddNumber()}
                 className={cn("flex-1", utilityControl)}
               />
-              <Button size="sm" onClick={handleAddNumber} disabled={!newNumber.trim()} className="rounded-2xl bg-info/15 text-info-foreground hover:bg-info/25">
+              <Button size="sm" onClick={handleAddNumber} disabled={!newNumber.trim()} className="rounded-2xl bg-info/15 text-info hover:bg-info/25">
                 <Plus className="w-4 h-4" />
               </Button>
             </div>
@@ -226,7 +226,7 @@ export const CleanupTestCalls = ({ onComplete, testNumbersButtonClassName, flush
         <AlertDialogContent className={destructiveDialogShell}>
           <div className="border-b border-destructive/20 bg-gradient-to-r from-destructive/15 via-background dark:via-black/40 to-brand-500/10 px-6 py-5">
             <AlertDialogHeader>
-              <div className="mb-3 inline-flex w-fit items-center gap-2 rounded-full border border-destructive/25 bg-destructive/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-destructive-foreground">
+              <div className="mb-3 inline-flex w-fit items-center gap-2 rounded-full border border-destructive/25 bg-destructive/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-destructive">
                 <ShieldAlert className="h-3 w-3" />
                 Destructive Action
               </div>
@@ -240,7 +240,7 @@ export const CleanupTestCalls = ({ onComplete, testNumbersButtonClassName, flush
                   <li key={number}>{number}</li>
                 ))}
               </ul>
-              <p className="rounded-2xl border border-destructive/25 bg-destructive/10 px-3 py-2 font-semibold text-destructive-foreground">
+              <p className="rounded-2xl border border-destructive/25 bg-destructive/10 px-3 py-2 font-semibold text-destructive">
                 This action cannot be undone.
               </p>
             </AlertDialogDescription>

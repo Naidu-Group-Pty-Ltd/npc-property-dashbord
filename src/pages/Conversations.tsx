@@ -114,7 +114,7 @@ const channelColors: Record<string, string> = {
   email:
     "bg-accent/10 text-accent-foreground border-accent/35 shadow-[0_0_24px_rgba(139,92,246,0.16)]",
   whatsapp:
-    "bg-success/10 text-success-foreground border-success/35 shadow-[0_0_26px_rgba(16,185,129,0.18)]",
+    "bg-success/10 text-success border-success/35 shadow-[0_0_26px_rgba(16,185,129,0.18)]",
   instagram:
     "bg-accent/10 text-accent-foreground border-accent/35 shadow-[0_0_24px_rgba(236,72,153,0.16)]",
   facebook:
@@ -1086,7 +1086,7 @@ export default function Conversations() {
               "group h-10 rounded-full px-4 font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:translate-y-0 disabled:cursor-not-allowed",
               isSyncing || loadingConversations
                 ? "border-brand-200/45 bg-brand-500/15 text-brand-50 shadow-[0_0_28px_rgba(245,158,11,0.16)] disabled:opacity-100"
-                : "border-success/25 bg-success/30 text-success-foreground shadow-[0_0_24px_rgba(16,185,129,0.08)] hover:border-brand-200/55 hover:bg-brand-300/10 hover:text-brand-50 hover:shadow-[0_0_30px_rgba(245,158,11,0.16)] disabled:opacity-65",
+                : "border-success/25 bg-success/30 text-success shadow-[0_0_24px_rgba(16,185,129,0.08)] hover:border-brand-200/55 hover:bg-brand-300/10 hover:text-brand-50 hover:shadow-[0_0_30px_rgba(245,158,11,0.16)] disabled:opacity-65",
             )}
             onClick={handleSyncAndRefresh}
             disabled={isSyncing || loadingConversations}
@@ -1407,7 +1407,7 @@ export default function Conversations() {
                 </div>
               ) : conversationsError ? (
                 <div className="mx-3 mt-4 flex flex-col items-center justify-center rounded-3xl border border-destructive/20 bg-[radial-gradient(circle_at_top,rgba(244,63,94,0.12),transparent_34%),rgba(255,255,255,0.025)] px-5 py-14 text-center shadow-inner shadow-sm dark:shadow-black/20">
-                  <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-destructive/25 bg-destructive/10 text-destructive-foreground">
+                  <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-destructive/25 bg-destructive/10 text-destructive">
                     <AlertTriangle className="h-5 w-5" />
                   </span>
                   <p className="text-sm font-semibold text-destructive-foreground">
@@ -1420,7 +1420,7 @@ export default function Conversations() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="mt-4 rounded-full border-destructive/25 bg-destructive/10 text-destructive-foreground hover:bg-destructive/15"
+                    className="mt-4 rounded-full border-destructive/25 bg-destructive/10 text-destructive hover:bg-destructive/15"
                     onClick={() => refetchConversations()}
                   >
                     <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
@@ -1677,7 +1677,7 @@ export default function Conversations() {
                           <Badge className={cn('rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] shadow-[inset_0_1px_0_rgba(255,255,255,0.10)]', channelColors[normalizeChannel(selectedConversation.channel_type)] || 'border-border dark:border-white/10 bg-white/[0.04] text-foreground dark:text-foreground')}>
                             {normalizeChannel(selectedConversation.channel_type).replace('_', ' ')}
                           </Badge>
-                          <Badge variant="outline" className="rounded-full border-success/25 bg-success/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-success-foreground">
+                          <Badge variant="outline" className="rounded-full border-success/25 bg-success/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-success">
                             <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-success/30 shadow-[0_0_10px_rgba(110,231,183,0.75)]" />
                             {selectedConversation.unread_count > 0 ? `${selectedConversation.unread_count} unread` : 'Current'}
                           </Badge>
@@ -1758,7 +1758,7 @@ export default function Conversations() {
                     </div>
                   ) : messagesError ? (
                     <div className="mx-auto mt-8 flex max-w-md flex-col items-center justify-center rounded-3xl border border-destructive/20 bg-[radial-gradient(circle_at_top,rgba(244,63,94,0.12),transparent_34%),rgba(255,255,255,0.025)] px-6 py-12 text-center shadow-inner shadow-sm dark:shadow-black/20">
-                      <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-destructive/25 bg-destructive/10 text-destructive-foreground">
+                      <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-destructive/25 bg-destructive/10 text-destructive">
                         <AlertTriangle className="h-5 w-5" />
                       </span>
                       <p className="text-sm font-semibold text-destructive-foreground">
@@ -1771,7 +1771,7 @@ export default function Conversations() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="mt-4 rounded-full border-destructive/25 bg-destructive/10 text-destructive-foreground hover:bg-destructive/15"
+                        className="mt-4 rounded-full border-destructive/25 bg-destructive/10 text-destructive hover:bg-destructive/15"
                         onClick={() => refetchMessages()}
                       >
                         <RefreshCw className="mr-1.5 h-3.5 w-3.5" />

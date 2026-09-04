@@ -275,6 +275,12 @@ jobs:
       - name: Search fields offer a way to clear them
         run: node scripts/security/check-search-clear.mjs
 
+      # `text-<tone>-foreground` is ink for a SOLID fill and is near-black in
+      # dark mode; on a 10% tint it is invisible. Reported in three
+      # consecutive audits, fixed one instance at a time. 112 more were found.
+      - name: Status ink matches the fill it sits on
+        run: node scripts/security/check-status-ink-contrast.mjs
+
       - name: Build
         run: npm run build
 

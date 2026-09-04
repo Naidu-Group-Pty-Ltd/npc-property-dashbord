@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "check:src-names": "node scripts/security/check-src-missing-names.mjs",
     "check:search-clear": "node scripts/security/check-search-clear.mjs",
+    "check:status-ink": "node scripts/security/check-status-ink-contrast.mjs",
     "audit:style": "node scripts/audit-style-tokens.cjs",
     "brand:icons": "node scripts/brand/build-aurixa-icons.mjs",
     "brand:icons:check": "node scripts/brand/build-aurixa-icons.mjs --check",
