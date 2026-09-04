@@ -19,6 +19,8 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { InvestmentReportEditor } from './InvestmentReportEditor';
 import { ClientPDFGenerator } from './ClientPDFGenerator';
 import { PremiumPdfButton } from './PremiumPdfButton';
+import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
+import { INVESTMENT_REPORT_FORMAT } from '@/lib/reportTemplate/reportFormats';
 import { RegenerateWithPerplexityButton } from './RegenerateWithPerplexityButton';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { TierBadge, type ReportTier } from './TierBadge';
@@ -580,6 +582,16 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
               <Separator className="flex-shrink-0" />
               <CardContent className="p-0 flex-1 flex flex-col overflow-hidden min-h-0">
                 <div className="p-4 border-b bg-muted/50 flex-shrink-0 flex flex-wrap items-center gap-2 sm:gap-4">
+                  {/* Which template the document comes out in, before the
+                      buttons that use it — the same line the report page's
+                      export panel leads with. This viewer is the library's
+                      main exit and offered no way to see or change it. */}
+                  <div className="w-full">
+                    <ReportTemplateSelector
+                      reportType={INVESTMENT_REPORT_FORMAT.reportType}
+                      formatLabel={INVESTMENT_REPORT_FORMAT.label}
+                    />
+                  </div>
                   {/* Unified delivery first; the browser generator is the
                       named legacy layout beside it. */}
                   <PremiumPdfButton
