@@ -92,9 +92,9 @@ const premiumActiveFilterBadge = "rounded-full border border-brand-300/35 bg-bra
 const premiumActionBase = "min-h-10 justify-center rounded-full border px-3.5 font-medium shadow-sm transition-all duration-200 hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black active:translate-y-0 disabled:pointer-events-none disabled:opacity-50";
 const premiumReportAction = `${premiumActionBase} border-brand-300/50 bg-gradient-to-r from-brand-300/95 to-brand-500/90 text-brand-950 shadow-brand-500/20 hover:border-brand-100 hover:from-brand-200 hover:to-brand-400 hover:text-brand-950 hover:shadow-lg hover:shadow-brand-500/25 focus-visible:ring-brand-300`;
 const premiumUtilityAction = `${premiumActionBase} border-info/40 bg-info/10 text-info shadow-info/10 hover:border-info/60 hover:bg-info/15 hover:shadow-lg hover:shadow-info/15 focus-visible:ring-info`;
-const premiumQualityAction = `${premiumActionBase} border-success/25 bg-success/10 text-success-foreground hover:border-success/45 hover:bg-success/15 hover:text-success-foreground focus-visible:ring-success`;
+const premiumQualityAction = `${premiumActionBase} border-success/25 bg-success/10 text-success hover:border-success/45 hover:bg-success/15 hover:text-success focus-visible:ring-success`;
 const premiumAlertAction = `${premiumActionBase} border-brand-300/30 bg-brand-400/10 text-brand-100 hover:border-brand-300/55 hover:bg-brand-400/15 hover:text-brand-50 focus-visible:ring-brand-300`;
-const premiumDangerAction = `${premiumActionBase} border-destructive/35 bg-destructive/10 text-destructive hover:border-destructive/55 hover:bg-destructive/15 hover:text-destructive-foreground focus-visible:ring-destructive`;
+const premiumDangerAction = `${premiumActionBase} border-destructive/35 bg-destructive/10 text-destructive hover:border-destructive/55 hover:bg-destructive/15 hover:text-destructive focus-visible:ring-destructive`;
 const premiumSecondaryAction = `${premiumActionBase} border-border dark:border-white/10 bg-card/5 dark:bg-white/5 text-foreground dark:text-foreground hover:border-brand-300/35 hover:bg-brand-300/10 hover:text-brand-50 focus-visible:ring-brand-300`;
 const premiumTabList = "inline-flex h-auto min-w-max items-center gap-1.5 rounded-[1.35rem] border border-border dark:border-white/10 bg-background/45 dark:bg-black/45 p-1.5 shadow-2xl shadow-sm dark:shadow-black/30 backdrop-blur-xl";
 const premiumTabTrigger = "group relative min-h-11 rounded-2xl border border-transparent px-4 py-2.5 text-xs font-medium text-muted-foreground dark:text-muted-foreground transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-brand-300/25 hover:bg-brand-300/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-black data-[state=active]:border-brand-300/45 data-[state=active]:bg-gradient-to-r data-[state=active]:from-brand-400/25 data-[state=active]:via-brand-300/15 data-[state=active]:to-brand-500/10 data-[state=active]:text-brand-50 data-[state=active]:shadow-[0_14px_34px_rgba(245,158,11,0.16),inset_0_1px_0_rgba(255,255,255,0.12)] md:text-sm";
@@ -1117,7 +1117,7 @@ const CallLogs = () => {
                   </Badge>
                 )}
                 {selectedIntent !== 'all' && (
-                  <Badge className="rounded-full border border-success/30 bg-success/15 px-2.5 py-1 text-xs text-success-foreground shadow-sm shadow-success/10">
+                  <Badge className="rounded-full border border-success/30 bg-success/15 px-2.5 py-1 text-xs text-success shadow-sm shadow-success/10">
                     Intent: {selectedIntent.replace(/_/g, ' ')}
                   </Badge>
                 )}
@@ -1233,7 +1233,7 @@ const CallLogs = () => {
 
                           {/* Intent badge */}
                           {call.call_intent && (
-                            <Badge className="rounded-full border border-success/30 bg-success/15 text-xs text-success-foreground shadow-sm shadow-success/10">
+                            <Badge className="rounded-full border border-success/30 bg-success/15 text-xs text-success shadow-sm shadow-success/10">
                               <Target className="w-3 h-3 mr-1" />
                               {call.call_intent.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                             </Badge>
@@ -1361,8 +1361,8 @@ const CallLogs = () => {
                     </TabsTrigger>
                   )}
                   <TabsTrigger value="transcript" className={cn(detailTabTrigger, "data-[state=active]:bg-brand-300/15 data-[state=active]:text-brand-100", isMobile ? "text-xs" : "")}>Transcript</TabsTrigger>
-                  <TabsTrigger value="tool-calls" className={cn(detailTabTrigger, "data-[state=active]:bg-info/15 data-[state=active]:text-info-foreground", isMobile ? "text-xs" : "")}>{isMobile ? "Tools" : "Tool Calls"}</TabsTrigger>
-                  <TabsTrigger value="analysis" className={cn(detailTabTrigger, "data-[state=active]:bg-success/15 data-[state=active]:text-success-foreground", isMobile ? "text-xs" : "")}>Analysis</TabsTrigger>
+                  <TabsTrigger value="tool-calls" className={cn(detailTabTrigger, "data-[state=active]:bg-info/15 data-[state=active]:text-info", isMobile ? "text-xs" : "")}>{isMobile ? "Tools" : "Tool Calls"}</TabsTrigger>
+                  <TabsTrigger value="analysis" className={cn(detailTabTrigger, "data-[state=active]:bg-success/15 data-[state=active]:text-success", isMobile ? "text-xs" : "")}>Analysis</TabsTrigger>
                   <TabsTrigger value="metadata" className={cn(detailTabTrigger, "data-[state=active]:bg-muted data-[state=active]:text-foreground", isMobile ? "text-xs" : "")}>{isMobile ? "Meta" : "Metadata"}</TabsTrigger>
                 </TabsList>
               </div>

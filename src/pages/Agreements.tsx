@@ -143,42 +143,42 @@ const STATUS_CONFIG: Record<
     variant: "success",
     icon: CheckCircle2,
     toneClassName:
-      "border-success/60 bg-success/10 text-success shadow-success/5 dark:border-success/35 dark:bg-success/12 dark:text-success-foreground",
+      "border-success/60 bg-success/10 text-success shadow-success/5 dark:border-success/35 dark:bg-success/12 dark:text-success",
   },
   completed: {
     label: "Completed",
     variant: "success",
     icon: CheckCircle2,
     toneClassName:
-      "border-success/60 bg-success/10 text-success shadow-success/5 dark:border-success/35 dark:bg-success/12 dark:text-success-foreground",
+      "border-success/60 bg-success/10 text-success shadow-success/5 dark:border-success/35 dark:bg-success/12 dark:text-success",
   },
   declined: {
     label: "Declined",
     variant: "destructive",
     icon: AlertTriangle,
     toneClassName:
-      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive-foreground",
+      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive",
   },
   voided: {
     label: "Voided",
     variant: "destructive",
     icon: Ban,
     toneClassName:
-      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive-foreground",
+      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive",
   },
   expired: {
     label: "Expired",
     variant: "secondary",
     icon: Clock,
     toneClassName:
-      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive-foreground",
+      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive",
   },
   failed: {
     label: "Failed",
     variant: "destructive",
     icon: AlertTriangle,
     toneClassName:
-      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive-foreground",
+      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive",
   },
 };
 
@@ -514,7 +514,7 @@ export default function Agreements() {
 
   const renderAgreementsError = () => (
     <div className="mx-4 my-5 overflow-hidden rounded-[1.35rem] border border-destructive/35 bg-[radial-gradient(circle_at_top,hsl(var(--destructive)/0.08),transparent_38%),linear-gradient(180deg,hsl(var(--card)/0.96),hsl(var(--background)/0.88))] px-5 py-10 text-center shadow-sm dark:border-destructive/25 dark:bg-[radial-gradient(circle_at_top,rgba(248,113,113,0.10),transparent_42%),linear-gradient(180deg,rgba(15,23,42,0.78),rgba(2,6,23,0.56))]">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-destructive/40 bg-destructive/10 text-destructive dark:border-destructive/25 dark:text-destructive-foreground">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-destructive/40 bg-destructive/10 text-destructive dark:border-destructive/25 dark:text-destructive">
         <AlertTriangle className="h-5 w-5" aria-hidden="true" />
       </div>
       <p className="mx-auto max-w-md text-base font-semibold text-foreground">Unable to load agreements.</p>
@@ -683,9 +683,9 @@ export default function Agreements() {
               status, signature milestones, and safe agreement actions.
             </p>
             <div className="mt-3 flex flex-wrap gap-2 text-[0.68rem] font-bold uppercase tracking-[0.12em]">
-              <span className="rounded-full border border-info/45 bg-info/10 px-2.5 py-1 text-info dark:border-info/25 dark:text-info-foreground">Generated = ready to prepare</span>
+              <span className="rounded-full border border-info/45 bg-info/10 px-2.5 py-1 text-info dark:border-info/25 dark:text-info">Generated = ready to prepare</span>
               <span className="rounded-full border border-brand-300/45 bg-brand-500/10 px-2.5 py-1 text-brand-700 dark:border-brand-200/25 dark:text-brand-100">Sent/Awaiting = with buyer</span>
-              <span className="rounded-full border border-success/45 bg-success/10 px-2.5 py-1 text-success dark:border-success/25 dark:text-success-foreground">Signed = completed</span>
+              <span className="rounded-full border border-success/45 bg-success/10 px-2.5 py-1 text-success dark:border-success/25 dark:text-success">Signed = completed</span>
             </div>
           </div>
           <div className="group/search relative w-full sm:min-w-80 sm:max-w-md lg:w-96">

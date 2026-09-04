@@ -36,9 +36,9 @@ const requestTypeConfig: Record<string, { label: string; icon: typeof BarChart3;
 
 const statusConfig: Record<string, { label: string; icon: typeof Clock; color: string; badgeVariant: string }> = {
   pending: { label: 'Pending', icon: Clock, color: 'text-brand-300', badgeVariant: 'border-brand-300/35 bg-brand-400/10 text-brand-100 shadow-brand-950/20' },
-  in_progress: { label: 'In Progress', icon: ArrowRight, color: 'text-info', badgeVariant: 'border-info/35 bg-info/10 text-info-foreground shadow-info/20' },
-  completed: { label: 'Completed', icon: CheckCircle2, color: 'text-success', badgeVariant: 'border-success/35 bg-success/10 text-success-foreground shadow-success/20' },
-  declined: { label: 'Declined', icon: XCircle, color: 'text-destructive', badgeVariant: 'border-destructive/35 bg-destructive/10 text-destructive-foreground shadow-destructive/20' },
+  in_progress: { label: 'In Progress', icon: ArrowRight, color: 'text-info', badgeVariant: 'border-info/35 bg-info/10 text-info shadow-info/20' },
+  completed: { label: 'Completed', icon: CheckCircle2, color: 'text-success', badgeVariant: 'border-success/35 bg-success/10 text-success shadow-success/20' },
+  declined: { label: 'Declined', icon: XCircle, color: 'text-destructive', badgeVariant: 'border-destructive/35 bg-destructive/10 text-destructive shadow-destructive/20' },
 };
 
 const statusCardConfig: Record<string, { glow: string; iconWrap: string; edge: string; count: string; active: string }> = {
@@ -79,18 +79,18 @@ const statusButtonConfig: Record<string, { idle: string; active: string; icon: s
     icon: 'text-brand-200',
   },
   in_progress: {
-    idle: 'hover:border-info/45 hover:bg-info/10 hover:text-info-foreground focus-visible:ring-info/35',
-    active: 'border-info/55 bg-info/15 text-info-foreground ring-2 ring-info/20 shadow-[0_10px_26px_rgba(59,130,246,0.16)]',
+    idle: 'hover:border-info/45 hover:bg-info/10 hover:text-info focus-visible:ring-info/35',
+    active: 'border-info/55 bg-info/15 text-info ring-2 ring-info/20 shadow-[0_10px_26px_rgba(59,130,246,0.16)]',
     icon: 'text-info',
   },
   completed: {
-    idle: 'hover:border-success/45 hover:bg-success/10 hover:text-success-foreground focus-visible:ring-success/35',
-    active: 'border-success/55 bg-success/15 text-success-foreground ring-2 ring-success/20 shadow-[0_10px_26px_rgba(16,185,129,0.14)]',
+    idle: 'hover:border-success/45 hover:bg-success/10 hover:text-success focus-visible:ring-success/35',
+    active: 'border-success/55 bg-success/15 text-success ring-2 ring-success/20 shadow-[0_10px_26px_rgba(16,185,129,0.14)]',
     icon: 'text-success',
   },
   declined: {
-    idle: 'hover:border-destructive/45 hover:bg-destructive/10 hover:text-destructive-foreground focus-visible:ring-destructive/35',
-    active: 'border-destructive/55 bg-destructive/15 text-destructive-foreground ring-2 ring-destructive/20 shadow-[0_10px_26px_rgba(248,113,113,0.14)]',
+    idle: 'hover:border-destructive/45 hover:bg-destructive/10 hover:text-destructive focus-visible:ring-destructive/35',
+    active: 'border-destructive/55 bg-destructive/15 text-destructive ring-2 ring-destructive/20 shadow-[0_10px_26px_rgba(248,113,113,0.14)]',
     icon: 'text-destructive',
   },
 };

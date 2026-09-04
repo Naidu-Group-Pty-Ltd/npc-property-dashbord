@@ -1604,7 +1604,7 @@ export default function ClientTracker() {
                                   {stageInfo.name}
                                 </Badge>
                                 {isOverdue && (
-                                  <Badge variant="destructive" className={cn(badgeBaseClass, "bg-destructive/15 text-destructive-foreground shadow-destructive/15")}>Overdue</Badge>
+                                  <Badge variant="destructive" className={cn(badgeBaseClass, "bg-destructive/15 text-destructive shadow-destructive/15")}>Overdue</Badge>
                                 )}
                               </div>
                               <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
@@ -2028,12 +2028,12 @@ function KanbanCard({
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
           {isOverdue && (
-            <Badge variant="destructive" className={cn(compactBadgeBaseClass, "bg-destructive/15 text-destructive-foreground shadow-destructive/15")}>
+            <Badge variant="destructive" className={cn(compactBadgeBaseClass, "bg-destructive/15 text-destructive shadow-destructive/15")}>
               Overdue
             </Badge>
           )}
           {client.deal_status === 'closed' && (
-            <Badge variant="default" className={cn(compactBadgeBaseClass, "bg-success/15 text-success-foreground shadow-success/15")}>
+            <Badge variant="default" className={cn(compactBadgeBaseClass, "bg-success/15 text-success shadow-success/15")}>
               🏆
             </Badge>
           )}
