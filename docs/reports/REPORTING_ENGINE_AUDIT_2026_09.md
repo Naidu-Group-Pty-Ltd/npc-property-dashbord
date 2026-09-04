@@ -1294,3 +1294,87 @@ the disc), the three DD-focus bar labels whole, and the risk matrix one
 labelled row with six labelled columns. `reportRenderDefects.spec.ts` pins
 all six fixes; `narrativeCalibration.spec.ts`, `vizDirectives.spec.ts` and
 `vizFigures.spec.ts` hold.
+
+## 18 · Coverage of the choice, and the cascade into every format (2026-09-04)
+
+The owner attached a real 15-page Property Comparison and asked two things:
+that the visual template choice reach **every** area that produces a report
+or downloadable document, and that §17's rectifications (Contents pages and
+the rest) demonstrably cascade beyond the Investment format. Both were
+measured before anything was changed.
+
+### The choice — 40 exits swept, three gaps, one lawful absence
+
+Every document exit in `src/` was inventoried: forty inside the report-format
+system and twenty-three deliberately outside it (AML records, agreement
+templates, portal file downloads — each governed by its own rules, none a
+candidate for a template choice). Coverage was already strong: the primary
+exits of nine formats carry `useReportTemplateMenu` or an inline
+`ReportTemplateSelector`, and `templateDocument.ts` honours the stored
+selection at delivery with the `unavailable` guard. Three Investment exits
+did not — the Generated Reports **viewer**, the listings **modal** and the
+client-property **download sheet** all delivered through the unified
+template-first road while offering no way to see or change which template
+the document comes out in. Each now mounts the selector where the export
+panel precedent puts it: before the buttons that use it. The Cash Flow
+Comparison's absence is correct, not a gap — the format is preview-only
+because nothing about a comparison is persisted anywhere a template can
+read, and the menu hook already returns nothing for a format a choice
+cannot change. Legacy jsPDF paths are outside selection by definition: they
+ARE the named legacy layout.
+
+### The cascade — one real comparison, eight defects, three of them global
+
+The attached PDF (three properties, NSW) reproduced a defect family §17's
+fixes had not reached, because every §17 measurement was taken on the
+Investment format:
+
+1. **Parts jumped 12 → 19.** Part numbers were baked at compose time
+   (`partNo += 1`), so every page a `conditional` dropped left a hole in the
+   numbering of the document that shipped. Part numbers now resolve at
+   render time: the renderer counts `{{partNumber}}`-binding pages over the
+   pages that actually draw (the binding is also the opt-in, so the cover
+   stays outside the count), `pad2` keeps the "Part 07" style, and the same
+   per-page value serves the running head and the section numeral so the two
+   cannot disagree. All six composers that number parts converted
+   (`renderTimePart` in `blocks.ts`); the count is folded into the page
+   cache signature because a page's number depends on which preceding pages
+   opted in.
+2. **Empty ruled stripes under labels.** The scorecard drew two blank zebra
+   rows for axes the record does not hold, and three of six "Basis of the
+   analysis" rows printed as label-over-nothing. `data-table` rows already
+   had the answer — an explicit per-row `when`, added for exactly this rule —
+   so `definition-list` items gained the same (`renderDefinitionListHtml`
+   filters, a list whose every item is absent draws nothing), and the
+   comparison composer declares the conditions on every fixed slot.
+3. **Whole pages of furniture over nothing.** The "Money · cash flow" page
+   rendered a heading and zero rows; "Who each property is for" rendered a
+   heading and nothing at all (its continuation page was conditional, the
+   first page was not). The axis-reason pages are now conditional on holding
+   at least one slot, and the first investor-fit page on `matches[0]`.
+4. **A callout that asked its own question and left it blank.** "Why there
+   is no recommendation here" bound `comparison.truncationNote`, which was
+   composed only for salvaged rows — the attached row is structured and
+   complete, merely without a structured `bestOverall`, so the heading drew
+   over an empty body. The projection now composes the note whenever the
+   pick is absent, whatever the cause, in the format's own sentences.
+5. **"Eleven axes, side by side"** was a hardcoded count over a
+   data-dependent table showing eight. The heading is count-free; with row
+   suppression the table describes itself.
+
+The Contents-page cascade needed no new work — every format's composer gates
+its Contents on the same `hasContents` §17 made unconditionally true — but
+it was verified rather than trusted: the fixture comparison renders 14 pages
+with Contents as Part 01 and parts 01–12 consecutive, the empty pages gone,
+the basis list three honest rows, and the verdict callout answered. A
+converted Borrowing Capacity master renders gap-free under sample data with
+no unresolved `{{partNumber}}`.
+
+Shipping is the §17 pattern: the v11 seed (543 templates revalidated) plus
+`20260918100000_refresh_active_masters_from_library_v11.sql`, which
+re-copies every active library-descended row with its own baked colourway
+carried forward. `reportCoverageCascade.spec.ts` pins the renderer count,
+the filter, the item `when`, the projection note, the composer conditionals,
+the three selector mounts and the migration pair; the four catalogue specs
+that assert "bind nothing the projection cannot publish" now name
+`partNumber` as renderer-ambient, beside `pageNumber`.
