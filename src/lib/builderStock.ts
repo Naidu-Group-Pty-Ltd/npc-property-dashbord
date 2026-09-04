@@ -144,6 +144,15 @@ export interface BuilderStockItem {
   created_at: string;
   updated_at: string;
   last_seen_at: string;
+  /**
+   * Where the imagery engine has got to on this property — the ladder's rung,
+   * `settled` being the last. It reaches the browser so a row can tell a
+   * picture that is still coming from one that is not: those read identically
+   * without it, and a person looking at work in flight can only conclude the
+   * product is broken. Optional because a deployment whose server predates
+   * this sends no such field, and `stockImageProgress` treats its absence as
+   * finished rather than inventing progress. */
+  image_work_stage?: string | null;
   /** Attached by the server. */
   images?: BuilderStockImage[];
   /**

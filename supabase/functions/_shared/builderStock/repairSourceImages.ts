@@ -33,8 +33,9 @@ import { extractStockFile } from './extract.ts';
 import { keyRowsByHeader } from './table.pure.ts';
 import { isNotionUrl } from './urlSource.pure.ts';
 import {
-  emptyStockRecord, identifiesAProperty, normaliseStockRow, stockIdentityHints,
-  stockMatchKeys, stockRecordLabel, stockRowFingerprint,
+  developmentUnitMatchKey, emptyStockRecord, identifiesAProperty,
+  normaliseStockRow, stockIdentityHints,
+  stockMatchKeys, stockRecordLabel, stockRowFingerprint, storedRowDevelopmentUnitKey,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import {
@@ -277,11 +278,18 @@ function referenceKey(item: ExistingItem): string | null {
   return value || null;
 }
 
-function developmentUnitKey(item: ExistingItem): string | null {
-  const development = (item.development_name ?? item.project_name ?? '').trim().toLowerCase();
-  const unit = (item.unit_number ?? item.lot_number ?? '').trim().toLowerCase();
-  return development && unit ? `${development}|${unit}` : null;
-}
+/**
+ * THE SAME KEY THE IMPORTER USES — the same function, not a copy of it.
+ *
+ * This is the module that decides which property a document's photograph
+ * belongs to, so a key coarser than the importer's is the worst kind of
+ * drift: with three packages on Harlow 801 the map would hold whichever row
+ * was read last and hand every Harlow 801 brochure to it, badged "Builder
+ * supplied", on the wrong house. It was a second copy of the importer's
+ * function until the design had to go into it, which is how a copy announces
+ * itself.
+ */
+const developmentUnitKey = storedRowDevelopmentUnitKey;
 
 /**
  * Re-read one source and attach the imagery it states.
@@ -759,7 +767,7 @@ export async function repairSourceImagesForUpload(
     const keys = stockMatchKeys(record);
     const itemId = (keys.reference ? byReference.get(keys.reference) : undefined)
       ?? (keys.developmentUnit
-        ? byDevelopmentUnit.get(`${keys.developmentUnit.development}|${keys.developmentUnit.unit}`)
+        ? byDevelopmentUnit.get(developmentUnitMatchKey(keys.developmentUnit))
         : undefined)
       ?? byFingerprint.get(stockRowFingerprint(record))?.shift();
 

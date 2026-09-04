@@ -111,8 +111,10 @@ describe('duplicate matching is conservative', () => {
 
   it('requires BOTH halves of development + unit', () => {
     const withUnit = normaliseStockRow({ Estate: 'Riverbend', Lot: '108' })!;
+    // The design rides along and is empty where the row names none; the two
+    // halves this is about are still both required.
     expect(stockMatchKeys(withUnit).developmentUnit)
-      .toEqual({ development: 'riverbend', unit: '108' });
+      .toEqual({ development: 'riverbend', unit: '108', design: '' });
 
     const withoutUnit = normaliseStockRow({ Estate: 'Riverbend', Suburb: 'Tarneit' })!;
     expect(stockMatchKeys(withoutUnit).developmentUnit).toBeNull();
