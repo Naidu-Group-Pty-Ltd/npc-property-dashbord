@@ -224,13 +224,49 @@ interface ExportJobStatus {
  */
 const GHL_SYNC_TIMEOUT_MS = 120_000;
 
-async function triggerGhlSync() {
-  const { data, error } = await invokeSecureFunction("sync-ghl-conversations", {
-    mode: "incremental",
-  }, { timeoutMs: GHL_SYNC_TIMEOUT_MS });
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
-  return data;
+/**
+ * Audit 3 item 15 — the same "Request timed out" came back.
+ *
+ * Raising the client's budget to the declared 120s was right and was not
+ * enough: the function walks EVERY client with a GoHighLevel contact id,
+ * pausing 500ms between contacts because GHL rate-limits, so its runtime
+ * grows with the tenant and no single request can ever be long enough. The
+ * function now stops while it still has time to answer and reports how far it
+ * got; this drives it to the end, one leg at a time.
+ *
+ * Each leg is a fresh request with its own 120s budget, so the browser never
+ * aborts. The loop is bounded so a server that stopped advancing cannot spin
+ * here for ever.
+ */
+async function triggerGhlSync(onProgress?: (done: number, total: number) => void) {
+  const MAX_LEGS = 40;
+  let cursor: number | null = 0;
+  let conversations = 0;
+  let messages = 0;
+
+  for (let leg = 0; leg < MAX_LEGS; leg++) {
+    const { data, error } = await invokeSecureFunction("sync-ghl-conversations", {
+      mode: "incremental",
+      cursor,
+    }, { timeoutMs: GHL_SYNC_TIMEOUT_MS });
+    if (error) throw new Error(error.message);
+    if (data?.error) throw new Error(data.error);
+
+    conversations += data?.conversations_synced ?? 0;
+    messages += data?.messages_synced ?? 0;
+
+    // A server that predates the cursor answers without `done`; treat that as
+    // a single complete run rather than looping against it for ever.
+    if (data?.done !== false) return { ...data, conversations_synced: conversations, messages_synced: messages };
+
+    const next = typeof data?.cursor === "number" ? data.cursor : null;
+    if (next === null || next === cursor) {
+      return { ...data, conversations_synced: conversations, messages_synced: messages };
+    }
+    cursor = next;
+    onProgress?.(next, data?.total_contacts ?? 0);
+  }
+  return { success: true, conversations_synced: conversations, messages_synced: messages, done: false };
 }
 
 // ── Page Component ───────────────────────────────────────────
@@ -423,6 +459,34 @@ export default function Conversations() {
         });
         if (error) throw new Error(error.message);
         if (data?.error) throw new Error(data.error);
+
+        // The thread reads `ghl_conversation_messages` and nothing else, while
+        // an email reply goes out through Outlook — which writes nothing there.
+        // So the message appeared optimistically, the refetch replaced the
+        // cache with the server's rows, and it vanished: "I sent an email to
+        // Arvin Raj, there's no history of it in the chat window". Recording it
+        // is what makes the history real.
+        //
+        // The id is prefixed so it can never be mistaken for a GoHighLevel one,
+        // and the write cannot fail the send — the email has already gone.
+        try {
+          await invokeSecureFunction("manage-client-data", {
+            operation: "create",
+            table: "ghl_conversation_messages",
+            data: {
+              conversation_id: conversationId,
+              ghl_message_id: `local-email-${idempotencyKey}`,
+              direction: "outbound",
+              channel_type: "email",
+              body: subject ? `${subject}\n\n${message}` : message,
+              message_status: "sent",
+              ghl_date_added: new Date().toISOString(),
+            },
+          });
+        } catch (persistError) {
+          console.error("[Conversations] sent email not recorded in thread:", persistError);
+          toast.warning("Email sent, but it could not be added to the conversation history.");
+        }
         return data;
       }
       const { data, error } = await invokeSecureFunction("send-ghl-message", {
@@ -926,7 +990,7 @@ export default function Conversations() {
     <DashboardThemeFrame
       as="main"
       variant="page"
-      className="flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] min-h-0 max-w-none flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.12),transparent_30%),linear-gradient(135deg,hsl(var(--background)),hsl(var(--background))_45%,hsl(var(--muted)/0.18))] p-3 text-foreground md:p-5"
+      className="flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] min-h-0 max-w-none flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.12),transparent_30%),linear-gradient(135deg,hsl(var(--background)),hsl(var(--background))_45%,hsl(var(--muted)/0.18))] p-2 text-foreground md:p-4"
     >
       {/* Page header */}
       <DashboardThemeFrame as="header" variant="hero" className="relative z-10 flex shrink-0 flex-col gap-4 overflow-hidden border-primary/20 bg-[linear-gradient(135deg,hsl(var(--card)/0.88),hsl(var(--background)/0.78)_48%,hsl(var(--primary)/0.12))] px-4 py-4 shadow-2xl shadow-sm dark:shadow-black/35 md:flex-row md:items-center md:justify-between md:px-5">
@@ -1232,7 +1296,7 @@ export default function Conversations() {
       <DashboardThemeFrame
         as="section"
         variant="section"
-        className="mt-3 flex min-h-0 flex-1 basis-0 flex-col gap-2 overflow-hidden rounded-[2rem] border-border dark:border-white/10 bg-[linear-gradient(135deg,hsl(var(--background)/0.92),hsl(var(--card)/0.72))] p-1.5 shadow-2xl shadow-sm dark:shadow-black/40 lg:flex-row lg:gap-0"
+        className="mt-2 flex min-h-0 flex-1 basis-0 flex-col gap-2 overflow-hidden rounded-[2rem] border-border dark:border-white/10 bg-[linear-gradient(135deg,hsl(var(--background)/0.92),hsl(var(--card)/0.72))] p-1.5 shadow-2xl shadow-sm dark:shadow-black/40 lg:flex-row lg:gap-0"
         onMouseMove={(e) => {
           if (!isDraggingConvRef.current) return;
           const delta = e.clientX - dragStartXConvRef.current;
@@ -1253,7 +1317,7 @@ export default function Conversations() {
         {showList && (
           <div
             className={cn(
-              "flex h-[42%] min-h-[18rem] w-full shrink-0 flex-col overflow-hidden rounded-[1.55rem] lg:h-full lg:min-h-0 lg:w-[var(--conversation-panel-width)] border border-border dark:border-white/12 bg-[radial-gradient(circle_at_20%_0%,rgba(245,158,11,0.10),transparent_28%),linear-gradient(180deg,rgba(24,24,27,0.98),rgba(9,9,11,0.92)_48%,rgba(3,3,5,0.96))] shadow-[inset_0_1px_0_rgba(255,255,255,0.08),inset_-1px_0_0_rgba(255,255,255,0.035),0_22px_60px_rgba(0,0,0,0.34)]",
+              "flex h-[36%] min-h-[15rem] w-full shrink-0 flex-col overflow-hidden rounded-[1.55rem] lg:h-full lg:min-h-0 lg:w-[var(--conversation-panel-width)] border border-border dark:border-white/12 bg-[radial-gradient(circle_at_20%_0%,rgba(245,158,11,0.10),transparent_28%),linear-gradient(180deg,rgba(24,24,27,0.98),rgba(9,9,11,0.92)_48%,rgba(3,3,5,0.96))] shadow-[inset_0_1px_0_rgba(255,255,255,0.08),inset_-1px_0_0_rgba(255,255,255,0.035),0_22px_60px_rgba(0,0,0,0.34)]",
             )}
             style={
               {
@@ -1551,7 +1615,7 @@ export default function Conversations() {
         {/* ─── RIGHT PANEL: Thread View ─── */}
         <div
           className={cn(
-            "flex h-[58%] min-h-[22rem] min-w-0 flex-1 flex-col lg:h-full overflow-hidden rounded-[1.55rem] border border-border dark:border-white/10 bg-[radial-gradient(circle_at_top_right,rgba(234,179,8,0.10),transparent_30%),linear-gradient(180deg,rgba(24,24,27,0.84),rgba(9,9,11,0.92))] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]",
+            "flex h-[64%] min-h-[26rem] min-w-0 flex-1 flex-col lg:h-full overflow-hidden rounded-[1.55rem] border border-border dark:border-white/10 bg-[radial-gradient(circle_at_top_right,rgba(234,179,8,0.10),transparent_30%),linear-gradient(180deg,rgba(24,24,27,0.84),rgba(9,9,11,0.92))] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]",
             !selectedId && "items-center justify-center p-6",
           )}
         >
