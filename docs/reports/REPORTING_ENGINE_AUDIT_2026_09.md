@@ -1056,3 +1056,89 @@ which needs TypeScript 5.7, and they are clean under the CI toolchain — the
 gate is only meaningful on the version CI pins. Production counts were taken
 read-only through the project's SQL interface and are quoted above; nothing
 was written to the database.
+
+---
+
+## 16 · The template picker becomes a gallery (2026-09-04)
+
+The owner's ask, verbatim in intent: choosing a template from names alone is
+not choosing — show the actual template styles, lead with **different design
+families** rather than one family's variants stacked above the next family's
+first appearance, and let it cascade to every report being generated.
+
+### What was there
+
+`ReportTemplatePicker` listed the catalogue as radio rows of text. For the
+Investment format that is **sixty rows** — ten families × five layouts plus
+the ten individual designs — in which "Sovereign Folio" and "Signal Dark"
+are names nobody can rank without seeing them, and the five Private Banking
+variants sat above Dark Executive's first appearance. Meanwhile the Template
+Library's browse page already rendered every design's real first page
+(`TemplateDocumentPreview` — the same `renderTemplateToHtml` the customer's
+PDF goes through, with sample data), so the pictures existed one page away
+from the decision they were for.
+
+### What it is now
+
+- **Families first.** One tile per design family — ten visually different
+  documents — each tile the family's reference layout rendered for real, on
+  the light-table sheet treatment the Library established. Opening a family
+  reveals a tray with its five layouts and its ten curated colourway swatches,
+  and choosing a colourway repaints every sheet in the tray, so "Oxblood or
+  Platinum?" is answered by watching. The tray scrolls itself into reach when
+  opened, because a family in the gallery's second row would otherwise reveal
+  it below the fold — a click that appears to do nothing.
+- **Individual designs** (the voice templates, no `designMeta`) sit beside
+  the families as their own tiles, each with its own face.
+- **Active rows with no library lineage** get a face too. Their rows carry no
+  `preview_schema`, and the picker's projection deliberately never fetches
+  `config`/`schema` whole — so page one and the token palette alone are
+  fetched, lazily, only when the dialog is open with such a row to draw
+  (`fetchActiveTemplatePreviewPages`; PostgREST `schema->pages->0`, measured
+  at ~50KB across every active row in production, largest page 3.9KB). A row
+  whose schema has no pages, or a failed fetch, degrades that tile to an
+  empty sheet — a missing picture never takes the chooser down.
+- **A stored selection is followed visually**: its family opens pre-expanded
+  with the design checked and badged Current, its colourway pre-selected.
+
+**Nothing behavioural changed.** The save flow (adopt-then-select,
+idempotent on entry + version + colourway), the fold of active rows into the
+designs they descend from, "Choose automatically", the unavailable-choice
+alert, the non-WeasyPrint disclosure and the ownership model are all exactly
+as `TEMPLATE_SELECTION.md` records them — the same tests assert them against
+the new surface. And because every surface mounts this ONE dialog
+(`ReportTemplateSelector`, `useReportTemplateMenu`, the Templates page's
+bindings list — the map `templateRouteEnforcement.spec.ts` holds complete
+against the adapter registry), the gallery reaches all nine production
+formats' download controls without touching any of them.
+
+### Measured in a real engine
+
+jsdom has neither layout nor iframes, so a DOM test passes while every tile
+paints blank. `tests-e2e/report-template-picker/` mounts the real dialog in
+Chromium over **sixteen real catalogue rows** (the ten family references,
+all five Private Banking layouts, two standalone designs — their production
+`preview_schema`, fetched read-only) and asserts on painted iframes and
+bounding boxes: families visible and painted before any variant, the tray's
+five layouts painted after one click, swatch repaint, one checked radio on
+the followed selection, no sideways scroll at 1440×900 or 390×844
+(`npm run test:e2e:report-template-picker`).
+
+One environmental fact worth recording: a preview document's Google-Fonts
+`@import` blocks a srcdoc iframe's **first paint** while the stylesheet is
+pending, so an environment that black-holes `fonts.googleapis.com` shows
+blank sheets until the connection dies — which is how this harness's first
+screenshots came out, and why its fixtures strip `tokens.fontFaces` (the
+fallback stacks are what a browser with no reach to the CDN uses anyway).
+Production serves those fonts and the Library page demonstrably paints the
+same previews.
+
+### Verification
+
+Picker unit suites rewritten and green (8 gallery tests, 14 selector tests —
+one renegotiated wording pin); `templateRouteEnforcement.spec.ts` and the
+adjacent template suites green; all five Chromium layout tests green; eslint
+0 errors on every changed file (repo total holding at 44); style-token
+ratchet holding; `check-src-missing-names` clean; production build; full
+vitest suite green in one run — **1,077 files, 20,575 tests, 0 failures**. Production reads for fixtures and measurements were
+read-only.
