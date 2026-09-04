@@ -174,7 +174,8 @@
     "templates:production-fit": "tsx scripts/template-library/productionFit.ts",
     "templates:macro-scan": "tsx scripts/template-library/macroScan.ts",
     "templates:compass:qa": "tsx scripts/template-library/investmentCompass/qa.ts",
-    "templates:compass:generate": "tsx scripts/template-library/investmentCompass/generate.ts"
+    "templates:compass:generate": "tsx scripts/template-library/investmentCompass/generate.ts",
+    "test:e2e:report-template-picker": "vite build --config tests-e2e/report-template-picker/harness/vite.config.ts && playwright test tests-e2e/report-template-picker"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
