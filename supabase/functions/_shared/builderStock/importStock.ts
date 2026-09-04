@@ -19,7 +19,8 @@
  *   to `unknown`.
  */
 import {
-  normaliseStockRow, stockIdentityHints, stockMatchKeys, stockRecordLabel,
+  designToken, developmentUnitMatchKey, normaliseStockRow, stockIdentityHints,
+  stockMatchKeys, stockRecordLabel,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import {
@@ -154,6 +155,13 @@ interface ExistingItem {
   primary_image_id: string | null;
   /** `source_row->>source_anchor`, projected under this alias. */
   source_anchor: string | null;
+  /**
+   * `source_row->>house_design`, projected the same way and for the same
+   * reason: it is part of both the match key and the identity, and it is not
+   * a column of its own. A scalar out of the JSON costs what the anchor
+   * costs, which is why the blob itself still stays unread.
+   */
+  house_design: string | null;
 }
 
 /**
@@ -182,7 +190,8 @@ interface AnchoredProperty {
 const EXISTING_ITEM_SELECT = 'id, external_reference, development_name, project_name, '
   + 'unit_number, lot_number, address_line, suburb, building_size_sqm, '
   + 'lifecycle_status, upload_id, primary_image_id, '
-  + 'source_anchor:source_row->>source_anchor';
+  + 'source_anchor:source_row->>source_anchor, '
+  + 'house_design:source_row->>house_design';
 
 /**
  * Lend a property's settled imagery to the row a re-import just created.
@@ -253,7 +262,10 @@ function referenceKey(item: ExistingItem): string | null {
 function developmentUnitKey(item: ExistingItem): string | null {
   const development = (item.development_name ?? item.project_name ?? '').trim().toLowerCase();
   const unit = (item.unit_number ?? item.lot_number ?? '').trim().toLowerCase();
-  return development && unit ? `${development}|${unit}` : null;
+  if (!development || !unit) return null;
+  return developmentUnitMatchKey({
+    development, unit, design: designToken(item.house_design),
+  });
 }
 
 /** Only the fields the record actually carries. Null means "the file was silent". */
@@ -677,7 +689,7 @@ export async function importStockRecords(
       const existingId = (anchored && !anchorDifferences.length ? anchored.id : undefined)
         ?? (keys.reference ? byReference.get(keys.reference) : undefined)
         ?? (keys.developmentUnit
-          ? byDevelopmentUnit.get(`${keys.developmentUnit.development}|${keys.developmentUnit.unit}`)
+          ? byDevelopmentUnit.get(developmentUnitMatchKey(keys.developmentUnit))
           : undefined);
 
       const patch = writablePatch(record);
@@ -844,8 +856,7 @@ export async function importStockRecords(
         const reference = keys.reference;
         if (reference) byReference.set(reference, itemId);
         if (keys.developmentUnit) {
-          byDevelopmentUnit.set(
-            `${keys.developmentUnit.development}|${keys.developmentUnit.unit}`, itemId);
+          byDevelopmentUnit.set(developmentUnitMatchKey(keys.developmentUnit), itemId);
         }
       }
 

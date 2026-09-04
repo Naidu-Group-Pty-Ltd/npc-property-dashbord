@@ -568,8 +568,26 @@ export function identifiesAProperty(record: NormalisedStockRecord): boolean {
 export interface StockMatchKeys {
   /** organisation + the builder's own reference. */
   reference: string | null;
-  /** organisation + development + lot/unit. Both halves required. */
-  developmentUnit: { development: string; unit: string } | null;
+  /**
+   * organisation + development + lot/unit + house design. Development and
+   * lot/unit are both required; the design is whatever the row states.
+   *
+   * THE DESIGN IS PART OF THIS KEY BECAUSE THE PACKAGE IS THE PRODUCT. A
+   * house-and-land list offers one piece of land with several houses on it,
+   * and those rows are different things to sell: different price, different
+   * bedrooms, different brochure. The live master stocklist does it
+   * constantly — Harlow 801 is offered as a Cura 20B, a Nex 20 and an Elara
+   * 18, Oaklands 117 likewise — and without the design all three rows key to
+   * `harlow|801`, so the second overwrites the first and the third overwrites
+   * the second. 125 rows became 95 properties that way, the survivor decided
+   * by nothing better than its position in the file, and the two packages a
+   * buyer could not see were not archived or reported; they were never
+   * written.
+   *
+   * A row with no design keys exactly as it did before, so a list that names
+   * no design behaves as it always has.
+   */
+  developmentUnit: { development: string; unit: string; design: string } | null;
   /**
    * organisation + the SOURCE'S OWN ID FOR THIS ROW.
    *
@@ -606,14 +624,41 @@ export function stockMatchKeys(record: NormalisedStockRecord): StockMatchKeys {
 
   const development = (record.development_name ?? record.project_name ?? '').trim().toLowerCase();
   const unit = (record.unit_number ?? record.lot_number ?? '').trim().toLowerCase();
+  const design = designToken(record.house_design);
 
   const anchor = record.source_anchor ? record.source_anchor.trim() : null;
 
   return {
     reference: reference || null,
-    developmentUnit: development && unit ? { development, unit } : null,
+    developmentUnit: development && unit ? { development, unit, design } : null,
     anchor: anchor || null,
   };
+}
+
+/**
+ * A house design as a comparable token.
+ *
+ * Whitespace collapsed as well as trimmed, because "Vanta  23" and "Vanta 23"
+ * are the same house and a stock list maintained by hand contains both. The
+ * empty string means the row named no design, which is a state this key
+ * carries rather than rejects.
+ */
+export function designToken(value: string | null | undefined): string {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
+ * The development-unit key as one string, built in ONE place.
+ *
+ * Three copies of this template used to exist — the stored-row index, the
+ * lookup and the post-insert update — and a key format written out at each
+ * end is how two ends drift. Adding the design to two of the three would have
+ * merged a package into its sibling on whichever copy was missed.
+ */
+export function developmentUnitMatchKey(
+  parts: { development: string; unit: string; design: string },
+): string {
+  return `${parts.development}|${parts.unit}|${parts.design}`;
 }
 
 /**
