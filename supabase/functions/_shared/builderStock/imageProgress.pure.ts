@@ -105,3 +105,34 @@ export function countWorkingImages(
 ): number {
   return items.filter((item) => stockImageProgress(item) === 'working').length;
 }
+
+/**
+ * The upload statuses that mean properties may still be ARRIVING.
+ *
+ * A replacement stock list writes its new properties invisible and publishes
+ * them only once their imagery has been looked for — which is what stops a
+ * marketplace filling with blank cards mid-import. The cost is a window in
+ * which a list that detected 125 rows shows 95, with the other thirty staged
+ * and unlistable, and nothing on the page accounting for the difference.
+ *
+ * That window is exactly where somebody concludes the import dropped their
+ * rows and uploads the file again. It is the same missing sentence as a row
+ * that says "No image yet" while being read, one level up.
+ */
+const ARRIVING_UPLOAD_STATUSES: readonly string[] = [
+  'uploaded', 'parsing', 'imported', 'enriching',
+];
+
+/** Is this stock list still bringing properties in? */
+export function uploadIsArriving(status: string | null | undefined): boolean {
+  return ARRIVING_UPLOAD_STATUSES.includes(String(status ?? '').trim());
+}
+
+/** How many of these stock lists are still bringing properties in. */
+export function countArrivingUploads(
+  uploads: readonly { status?: string | null; deleted_at?: string | null }[],
+): number {
+  return uploads.filter(
+    (upload) => !upload.deleted_at && uploadIsArriving(upload.status),
+  ).length;
+}

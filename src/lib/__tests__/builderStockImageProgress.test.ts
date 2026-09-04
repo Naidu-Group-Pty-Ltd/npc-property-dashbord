@@ -24,7 +24,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  countWorkingImages, stockImageProgress,
+  countArrivingUploads, countWorkingImages, stockImageProgress, uploadIsArriving,
   STOCK_IMAGE_PROGRESS_DETAIL, STOCK_IMAGE_PROGRESS_LABEL,
   type StockImageProgress,
 } from '../../../supabase/functions/_shared/builderStock/imageProgress.pure';
@@ -92,6 +92,53 @@ describe('what a property can say about its picture', () => {
       { hasImage: true, sourceDocuments: 1, workStage: 'settled' },
       { hasImage: false, sourceDocuments: 0, workStage: 'settled' },
     ])).toBe(0);
+  });
+});
+
+/*
+ * A SECOND WAIT, ONE LEVEL UP.
+ *
+ * A replacement stock list writes its new properties STAGED — invisible until
+ * their imagery has been looked for, which is what stops a marketplace
+ * filling with blank cards mid-import. The cost is a window in which a file
+ * that detected 125 rows lists 95, and nothing on the page accounts for the
+ * other thirty. That window is exactly where somebody concludes the import
+ * dropped their rows and uploads the file again.
+ */
+describe('stock lists still bringing properties in', () => {
+  it('counts a list that is still being read or still finding images', () => {
+    expect(countArrivingUploads([
+      { status: 'parsing' },
+      { status: 'enriching' },
+      { status: 'complete' },
+    ])).toBe(2);
+  });
+
+  it('never counts a list the builder deleted', () => {
+    // Its rows are archived; nothing is arriving from it and saying otherwise
+    // would leave the banner up for ever.
+    expect(countArrivingUploads([
+      { status: 'enriching', deleted_at: '2026-09-04T03:26:11Z' },
+    ])).toBe(0);
+  });
+
+  it('stops counting once every list has finished, so the polling stops', () => {
+    expect(countArrivingUploads([
+      { status: 'complete' },
+      { status: 'partially_complete' },
+      { status: 'failed' },
+    ])).toBe(0);
+  });
+
+  it('treats a status it does not recognise as finished', () => {
+    /*
+     * The opposite lean to a row's stage, and deliberately so: this one drives
+     * an indefinite poll and a banner with no count behind it, so an unknown
+     * value must not be able to leave either running for ever.
+     */
+    expect(uploadIsArriving('a_status_added_later')).toBe(false);
+    expect(uploadIsArriving(null)).toBe(false);
+    expect(uploadIsArriving(undefined)).toBe(false);
   });
 });
 

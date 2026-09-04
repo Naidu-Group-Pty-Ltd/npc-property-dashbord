@@ -45,7 +45,7 @@ import {
 } from '@/lib/builderStock';
 import { isNonBlockingSourceNotice } from '../../../supabase/functions/_shared/builderStock/sourceAccessNotice.pure';
 import {
-  countWorkingImages, stockImageProgress,
+  countArrivingUploads, countWorkingImages, stockImageProgress,
   STOCK_IMAGE_PROGRESS_DETAIL, STOCK_IMAGE_PROGRESS_LABEL,
 } from '../../../supabase/functions/_shared/builderStock/imageProgress.pure';
 
@@ -129,13 +129,14 @@ export default function BuilderStockList() {
 
   const uploadsQuery = useBuilderStockUploads(1);
   const selectionsQuery = useBuilderStockSelections(1);
+  const arrivingUploads = countArrivingUploads(uploadsQuery.data?.records ?? []);
   const itemsQuery = useBuilderStockItems({
     search: debounced.trim(),
     availability: availability === 'all' ? '' : availability,
     uploadId: uploadFilter === 'all' ? '' : uploadFilter,
     page,
     pageSize: 25,
-  });
+  }, { pollWhileArriving: arrivingUploads > 0 });
 
   const setAvailabilityMutation = useSetBuilderStockAvailability();
   const acknowledge = useAcknowledgeStockSelection();
@@ -587,7 +588,7 @@ export default function BuilderStockList() {
                 each property, so nobody is told to wait on a screen that never
                 changes — and nobody has to reload to find out it is done.
               */}
-              {workingImages > 0 ? (
+              {workingImages > 0 || arrivingUploads > 0 ? (
                 <div
                   role="status"
                   className="mb-4 flex items-start gap-2.5 rounded-lg border border-border/70 bg-muted/40 px-3 py-2.5"
@@ -598,14 +599,23 @@ export default function BuilderStockList() {
                   />
                   <div className="min-w-0 text-sm">
                     <p className="font-medium">
-                      {workingImages === 1
-                        ? 'Finding a picture for 1 property'
-                        : `Finding pictures for ${workingImages} properties`}
+                      {workingImages > 0
+                        ? workingImages === 1
+                          ? 'Finding a picture for 1 property'
+                          : `Finding pictures for ${workingImages} properties`
+                        : 'Bringing in your stock list'}
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      Their brochures are being read now. This runs on its own and
-                      finishes without you — the list updates as each one lands, so
-                      there is no need to upload the file again.
+                      {workingImages > 0
+                        ? 'Their brochures are being read now. '
+                        : null}
+                      {arrivingUploads > 0
+                        ? 'A stock list is still being processed, so more properties '
+                          + 'will appear here as it finishes. '
+                        : null}
+                      This runs on its own and finishes without you — the list
+                      updates as each one lands, so there is no need to upload the
+                      file again.
                     </p>
                   </div>
                 </div>

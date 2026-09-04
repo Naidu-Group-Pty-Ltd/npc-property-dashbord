@@ -10,7 +10,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { invokeBuilderFunction } from '@/lib/builderPortal';
 import {
-  countWorkingImages,
+  countArrivingUploads, countWorkingImages,
 } from '../../supabase/functions/_shared/builderStock/imageProgress.pure';
 import type {
   BuilderStockItem, BuilderStockSelectionForBuilder, BuilderStockUpload,
@@ -52,15 +52,6 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
 // Reads
 // ---------------------------------------------------------------------------
 
-export function useBuilderStockUploads(page = 1) {
-  return useQuery({
-    queryKey: builderStockKeys.uploads(page),
-    queryFn: () => invoke<Paginated<BuilderStockUpload>>({
-      operation: 'list_uploads', page, page_size: 20,
-    }),
-  });
-}
-
 /**
  * How often the list re-reads itself while the imagery engine still owes it
  * something. The engine's own scheduler runs each minute, so this is a little
@@ -68,7 +59,41 @@ export function useBuilderStockUploads(page = 1) {
  */
 const STOCK_WORKING_POLL_MS = 20_000;
 
-export function useBuilderStockItems(filters: StockFilters) {
+export function useBuilderStockUploads(page = 1) {
+  return useQuery({
+    queryKey: builderStockKeys.uploads(page),
+    queryFn: () => invoke<Paginated<BuilderStockUpload>>({
+      operation: 'list_uploads', page, page_size: 20,
+    }),
+    /*
+     * An upload that is still reading its file or finding its images changes
+     * underneath the page, and it is what tells the list whether more
+     * properties are coming. Polled only while one is in flight, and stopped
+     * the moment they have all finished — the same rule as the item list.
+     */
+    refetchInterval: (query) => (
+      countArrivingUploads(query.state.data?.records ?? []) > 0
+        ? STOCK_WORKING_POLL_MS
+        : false
+    ),
+  });
+}
+
+export function useBuilderStockItems(
+  filters: StockFilters,
+  /*
+   * A reason to keep polling that this page's OWN rows cannot show.
+   *
+   * A replacement stock list writes its new properties staged, and this list
+   * reads active ones, so properties still arriving are invisible here by
+   * design. Without this the page would promise "more will appear" on a
+   * screen that had stopped asking — the exact failure the banner exists to
+   * end. Deliberately not part of the query key: it changes when to re-read,
+   * never what is read, and keying on it would throw the cache away each time
+   * an upload finished.
+   */
+  options: { pollWhileArriving?: boolean } = {},
+) {
   return useQuery({
     queryKey: builderStockKeys.items(filters),
     queryFn: () => invoke<Paginated<BuilderStockItem>>({
@@ -93,6 +118,7 @@ export function useBuilderStockItems(filters: StockFilters) {
      * be this page's cost to every other tenant.
      */
     refetchInterval: (query) => {
+      if (options.pollWhileArriving) return STOCK_WORKING_POLL_MS;
       const records = query.state.data?.records ?? [];
       return countWorkingImages(records.map((item) => ({
         hasImage: !!item.primary_image_id,
