@@ -32,7 +32,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ALLOWLIST_PATH = join(root, 'scripts', 'security', 'dependency-audit-allowlist.json');
@@ -88,7 +88,15 @@ function pause(ms) {
 function attemptAudit() {
   let raw;
   try {
-    raw = execSync('npm audit --json', {
+    /*
+     * `execFileSync` rather than the shell variant: `sh -c` in between meant
+     * the timeout's SIGKILL landed on the shell and npm itself survived as an
+     * orphan — the CI runner's post-job cleanup found two of them
+     * ("Terminate orphan process: npm audit") after the first bounded run.
+     * With no shell in the way, the process the bound kills is the process
+     * doing the work.
+     */
+    raw = execFileSync('npm', ['audit', '--json'], {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],

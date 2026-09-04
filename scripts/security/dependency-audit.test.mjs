@@ -31,7 +31,8 @@ function runWithShim(body, env = {}) {
   const npmShim = join(binDir, 'npm');
   writeFileSync(npmShim, [
     '#!/bin/sh',
-    `count_file="${binDir}/calls"`,
+    `shim_dir="${binDir}"`,
+    'count_file="$shim_dir/calls"',
     'calls=$(cat "$count_file" 2>/dev/null || echo 0)',
     'calls=$((calls + 1))',
     'printf %s "$calls" > "$count_file"',
@@ -55,7 +56,9 @@ function runWithShim(body, env = {}) {
     });
     let calls = 0;
     try { calls = Number(readFileSync(join(binDir, 'calls'), 'utf8')) || 0; } catch { /* never ran */ }
-    return { ...result, calls };
+    let shimPid = null;
+    try { shimPid = Number(readFileSync(join(binDir, 'pid'), 'utf8')) || null; } catch { /* not recorded */ }
+    return { ...result, calls, shimPid };
   } finally {
     rmSync(binDir, { recursive: true, force: true });
   }
@@ -119,11 +122,29 @@ test('still fails closed when every attempt fails, and says how many were made',
 
 test('a hanging npm is killed at the time bound rather than holding the build', () => {
   const started = Date.now();
-  const result = runWithShim('sleep 30\nexit 0', { SECURITY_AUDIT_TIMEOUT_MS: '400' });
+  // `exec` keeps the shim's own PID on the sleeping process, so the liveness
+  // check below is a check of the process the gate was supposed to kill.
+  const result = runWithShim('printf %s "$$" > "$shim_dir/pid"\nexec sleep 30',
+    { SECURITY_AUDIT_TIMEOUT_MS: '400' });
   assert.equal(result.signal ?? null, null, 'the gate itself must exit, not be killed by the harness');
   assert.equal(result.status, 2);
   assert.equal(result.calls, 3);
   assert.match(result.stderr, /did not answer within 400ms/);
   assert.match(result.stderr, /3 attempts/);
   assert.ok(Date.now() - started < 20_000, 'three bounded attempts must not take the old seven minutes');
+
+  /*
+   * AND NOTHING IS LEFT BEHIND. The first bounded run in CI killed the shell
+   * `execSync` had put in front of npm, and the runner's post-job cleanup then
+   * found two orphaned `npm audit` processes — the kill has to land on the
+   * process doing the work, not on a wrapper around it.
+   */
+  assert.ok(result.shimPid, 'the shim recorded its pid');
+  const deadline = Date.now() + 2_000;
+  for (;;) {
+    let alive = true;
+    try { process.kill(result.shimPid, 0); } catch { alive = false; }
+    if (!alive) break;
+    assert.ok(Date.now() < deadline, `pid ${result.shimPid} outlived the gate: the kill hit a wrapper, not npm`);
+  }
 });
