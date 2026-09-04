@@ -1,3 +1,5 @@
+import { buildRecordedFactsBlock } from '../_shared/reports/investment/condenseFacts.pure.ts';
+import { projectInvestmentReport, type InvestmentReportRowLike } from '../_shared/reportBindingProjection.pure.ts';
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
@@ -175,8 +177,8 @@ REPORT STRUCTURE (~5 PAGES):
 
 ## Key Market Stats
 | Metric | Value |
-- Median Price, Rental Yield, Vacancy Rate, Capital Growth
-- Days on Market, Walk Score
+- Choose from: Median Price, Rental Yield, Vacancy Rate, Capital Growth, Days on Market, Walk Score
+- Include ONLY metrics whose value is stated in the report or the recorded figures; omit the rest — never write N/A
 
 ## Investment Score
 - Grade: [Letter Grade]
@@ -189,8 +191,8 @@ REPORT STRUCTURE (~5 PAGES):
 
 ## Financial Snapshot
 | Metric | Value |
-- Purchase Price, Weekly Rent, Gross Yield, Net Yield
-- Annual Cashflow, 10-Year Projected Value
+- Choose from: Purchase Price, Weekly Rent, Gross Yield, Net Yield, Annual Cashflow, 10-Year Projected Value
+- Include ONLY metrics whose value is known from the recorded figures or the report; omit the rest — never write N/A
 
 ## Top 3 Opportunities
 - Brief bullet points (1-2 sentences each)
@@ -568,6 +570,16 @@ Deno.serve(async (req) => {
       structure_guide: tierConfig.structureGuide,
     })).text;
 
+    // The recorded figures, from the parent's own structured columns — the
+    // same reconciled projection every templated document binds. The parent's
+    // PROSE deliberately omits most of these (a Compass body carries no
+    // financials, and argues its score without restating the components), and
+    // a model told to fill a table from a document that never states the
+    // numbers wrote N/A nineteen times on a real snapshot whose row held every
+    // figure. The block is authoritative; a metric absent from it and from the
+    // prose loses its row rather than gaining a placeholder.
+    const factsBlock = buildRecordedFactsBlock(projectInvestmentReport(parentReport as InvestmentReportRowLike));
+
     const userPrompt = `Please condense the following comprehensive investment report into a ${tierConfig.name} format (~${tierConfig.targetPages} pages).
 
 Use the structure template from the system prompt and extract the relevant data from this report:
@@ -576,9 +588,10 @@ Use the structure template from the system prompt and extract the relevant data 
 ORIGINAL COMPREHENSIVE REPORT:
 ${parentReport.report_content}
 ---
-
+${factsBlock ? `\n${factsBlock}\n` : ''}
 IMPORTANT:
-- Copy all numerical values, percentages, and scores EXACTLY
+- Copy all numerical values, percentages, and scores EXACTLY — from the RECORDED FIGURES block first, then from the report
+- Include a metric's table row ONLY when its value is known from those sources; NEVER write "N/A", "TBD" or any placeholder — omit the row entirely
 - Keep all table data intact
 - Follow the section structure precisely
 - Maintain professional formatting throughout`;

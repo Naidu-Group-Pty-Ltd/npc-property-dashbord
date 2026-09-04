@@ -103,7 +103,7 @@ const INVESTMENT_COMPASS_FORMAT: ReportFormat = {
  * Compass document was footed "<address> · " with a dangling separator. An
  * unresolved binding renders as the empty string, never as a visible `{{…}}`.
  */
-const FOOTER = '{{property.address}} · Investment Compass';
+const FOOTER = '{{property.address}} · {{report.documentTitle}}';
 
 /**
  * The longest each bound field runs across the 1,182 stored reports.
@@ -124,7 +124,7 @@ const FOOTER = '{{property.address}} · Investment Compass';
 const DETAIL_CHARS = { location: 94, yield: 51, risk: 228 } as const;
 
 /** The left half of the running head. */
-const DOCUMENT_LABEL = 'Investment Compass · {{property.address}}';
+const DOCUMENT_LABEL = '{{report.documentTitle}} · {{property.address}}';
 
 /**
  * The property specification, one guarded row at a time.
@@ -258,10 +258,16 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // ── 01 Cover ─────────────────────────────────────────────────────────────
   pages.push(cover({
     wordmarkTop: '{{org.name}}',
-    wordmarkBottom: 'Investment Compass',
+    // The document's NAME, not the format family's: these masters serve the
+    // compass, financial, snapshot, briefing and strategic tiers, and the
+    // projection translates the tier into `report.documentTitle` /
+    // `report.standfirst` in one place (`DOCUMENT_IDENTITY`). Spelled as a
+    // literal, every Financial Analysis rendered as an "Investment Compass"
+    // on its cover and on every running head and foot.
+    wordmarkBottom: '{{report.documentTitle}}',
     tagline: 'Your dedicated property partner',
-    marker: 'Investment Compass',
-    eyebrow: 'Investment Compass',
+    marker: '{{report.documentTitle}}',
+    eyebrow: '{{report.documentTitle}}',
     title: '{{property.address}}',
     // Was `{{summary.narrative}}`, `{{property.suburb}}`, `{{market.postcode}}`
     // and `{{market.state}}` — none of which any adapter publishes, and none of
@@ -269,7 +275,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     // amenities, commute, schools and transport; there is no postcode, no state
     // and no market prose anywhere in the row. So the cover said nothing under
     // the address, on every report.
-    standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
+    standfirst: '{{report.standfirst}}',
     locations: 'Prepared {{report.generatedDate | date}}',
     facts: [
       // The action, not the sentence. A KPI cell is a quarter of the measure
