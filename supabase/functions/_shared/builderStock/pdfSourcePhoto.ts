@@ -41,6 +41,7 @@ import {
   IDENTITY,
   type DrawnImage, type Matrix, type PdfScope, type PdfWidget,
 } from './pdfPageImages.pure.ts';
+import { documentVisualKinds } from './assessSourceImage.ts';
 import {
   assignPdfMediaRoles, coverSearchPages, type PdfMediaPlacement,
 } from './pdfPrimaryImage.pure.ts';
@@ -628,6 +629,19 @@ export async function selectPdfPropertyPrimary(
     pages: searchPages,
   });
 
+  /*
+   * WHAT EACH PICTURE IS, before the election — and it has to be read HERE as
+   * well as on the import path.
+   *
+   * "The same decision over the same inputs" is only true if both sides supply
+   * the same inputs. When the visual gate was added it was wired into the
+   * import alone, so a re-derivation re-elected exactly what it had elected
+   * before: lots 109 and 115 Palomino came back out of the v14 reopen still
+   * pointing at `page1:Im3`, the floor plan. This is the path a reopen runs
+   * through, so this is the path that has to look.
+   */
+  const visualKinds = await documentVisualKinds(found.assets);
+
   // The SAME decision an upload and a repair make, over the same inputs.
   const roles = assignPdfMediaRoles({
     label: options.label ?? null,
@@ -636,6 +650,7 @@ export async function selectPdfPropertyPrimary(
     pageTexts: options.pageTexts ?? [],
     pageOrderAuthoritative: found.pageOrderAuthoritative,
     media: found.assets.map((asset) => asset.placement),
+    visualKinds,
     structuralCoverPage: options.structuralCoverPage ?? null,
   });
 

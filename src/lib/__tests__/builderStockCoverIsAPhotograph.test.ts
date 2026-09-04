@@ -28,6 +28,8 @@
  * Builder stock never got that judgement; now it borrows the same one.
  */
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   selectCoverHero, type CoverCandidate,
@@ -138,5 +140,43 @@ describe('the adapter onto the measured classifier', () => {
     expect(toAnalysisRgba({ width: 0, height: 0, pixels: new Uint8Array() })).toBeNull();
     // A buffer shorter than its own dimensions is a broken read, not a plan.
     expect(toAnalysisRgba({ width: 8, height: 8, pixels: new Uint8Array(4) })).toBeNull();
+  });
+});
+
+/*
+ * BOTH PATHS HAVE TO LOOK, AND ONLY ONE OF THEM DID.
+ *
+ * `resolvePdfSourcePhoto`'s own comment calls its election "the SAME decision
+ * an upload and a repair make, over the same inputs" — which is only true if
+ * both sides SUPPLY the same inputs. The visual gate was wired into the import
+ * alone, so the v14 reopen re-derived lots 109 and 115 Palomino and re-elected
+ * exactly what it had elected before: `page1:Im3`, the floor plan. The
+ * marketplace drained for forty minutes and came back unchanged.
+ *
+ * A behavioural test cannot reach this — it needs a real PDF and a real
+ * decoder — so the contract is asserted at the source: every caller of the
+ * elector passes what the pictures ARE.
+ */
+describe('every path that elects a cover reads the pixels', () => {
+  const read = (rel: string) => readFileSync(
+    join(process.cwd(), 'supabase/functions/_shared/builderStock', rel), 'utf8');
+
+  it('the import path and the repair path both supply visualKinds', () => {
+    for (const file of ['importStock.ts', 'pdfSourcePhoto.ts']) {
+      const source = read(file);
+      expect(source).toMatch(/documentVisualKinds\(/);
+      expect(source).toMatch(/visualKinds/);
+    }
+  });
+
+  it('no caller of the elector omits them', () => {
+    // If a third caller appears, it is a third way to elect a floor plan.
+    for (const file of ['importStock.ts', 'pdfSourcePhoto.ts']) {
+      const source = read(file);
+      for (const call of source.split(/assignPdfMediaRoles(?:PerProperty)?\(\{/).slice(1)) {
+        const body = call.slice(0, call.indexOf('});'));
+        expect(body).toMatch(/visualKinds/);
+      }
+    }
   });
 });
