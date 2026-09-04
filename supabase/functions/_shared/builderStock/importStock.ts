@@ -46,7 +46,7 @@ import {
   type SourceImageFetcher,
 } from './sourceImages.ts';
 import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
-import { eligibilityDetailFor } from './assessSourceImage.ts';
+import { documentVisualKinds, eligibilityDetailFor } from './assessSourceImage.ts';
 
 /** What `attachDocumentMedia` did with one picture, for a caller that counts. */
 export interface AttachedMedia {
@@ -1147,10 +1147,24 @@ export async function attachDocumentMedia(
    * image as THIS property's listing image? Without it, "source_supplied" was
    * read as "safe to show", and a bedroom render reached a client's card.
    */
+  /*
+   * WHAT EACH PICTURE IS, before anything decides which one leads a card.
+   *
+   * Only the PDF path asks: it is the one that elects a hero from several
+   * pictures on a page using the document's own emphasis, and a brochure that
+   * leads with its floor plan states the plan exactly as emphatically as one
+   * that leads with the house. Two live Palomino cards drew a green line
+   * drawing badged "Builder supplied" for that reason.
+   */
+  const visualKinds = paginated
+    ? await documentVisualKinds(input.media)
+    : [];
+
   const roles = paginated
     ? assignPdfMediaRolesPerProperty({
       media: input.media,
       stockItemIds: attributions.map((attribution) => attribution.stockItemId),
+      visualKinds,
       ...paginated,
     })
     : settleContainerMediaRoles({

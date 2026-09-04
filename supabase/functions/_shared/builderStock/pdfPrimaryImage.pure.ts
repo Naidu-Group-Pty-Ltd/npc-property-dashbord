@@ -39,6 +39,7 @@
  * Pure: no imports beyond the role vocabulary and the label reading it shares
  * with `drivePackage.pure.ts`, no IO, no clock.
  */
+import { mayLeadCard, type VisualKind } from './sourceImageVision.pure.ts';
 import { withoutTenureWording } from './drivePackage.pure.ts';
 import {
   noPrimaryEvidence, roleFromAssetName, roleFromDesignCover, roleFromPropertyCover,
@@ -485,6 +486,17 @@ export interface CoverCandidate {
    * emphasis — see `selectCoverHero`.
    */
   pageAreaShare?: number | null;
+  /**
+   * What the picture IS, by its pixels — `photo`, `floorplan`, `graphic` — or
+   * null where nothing could be established.
+   *
+   * The one fact here that the document cannot state and cannot be wrong
+   * about. Everything else on this candidate is the page's own emphasis, and
+   * a brochure that leads with its floor plan states the plan exactly as
+   * emphatically as one that leads with the house. See
+   * `sourceImageVision.pure.ts`.
+   */
+  visualKind?: VisualKind | null;
 }
 
 /**
@@ -517,11 +529,40 @@ export function selectCoverHero(candidates: CoverCandidate[]): CoverHeroOutcome 
     return { kind: 'none', reason: 'the property cover page presents no photograph' };
   }
 
-  const unique = all.filter(
+  /*
+   * A PLAN IS NOT A PICTURE OF THE HOUSE, HOWEVER LARGE THE PAGE DRAWS IT.
+   *
+   * This is the one test above that is about the PICTURE rather than the
+   * page, and it is here because the page cannot answer it. On the Palomino
+   * Vanta 23 brochure the floor plan is unique on its page and drawn well
+   * over twice the size of anything else, so every rule below correctly
+   * concluded the cover had named it — and two live cards led with a green
+   * line drawing badged "Builder supplied".
+   *
+   * Excluded rather than demoted, because this function returns one hero or
+   * none: ranking a plan last would still elect it on a page that offers
+   * nothing else, which is the defect. A card with no picture is a state this
+   * marketplace already handles and says out loud; a card leading with a
+   * floor plan is one it cannot.
+   *
+   * An UNCLASSIFIED candidate is kept. Absent evidence is not evidence, and
+   * a decoder that could not read a builder's raster must not be able to
+   * withhold their photograph.
+   */
+  const depictions = all.filter((candidate) => mayLeadCard(candidate.visualKind));
+  if (!depictions.length) {
+    return {
+      kind: 'none',
+      reason: 'every picture on the property cover is a plan or a graphic rather than a '
+        + 'photograph of the property',
+    };
+  }
+
+  const unique = depictions.filter(
     (candidate) => candidate.placementsOnPage <= 1 && candidate.pagesDrawnOn <= 1,
   );
   if (unique.length === 1) {
-    const dropped = all.length - unique.length;
+    const dropped = depictions.length - unique.length;
     return {
       kind: 'hero',
       key: unique[0].key,
@@ -670,6 +711,12 @@ export function assignPdfMediaRoles(input: {
   pageOrderAuthoritative: boolean;
   media: PdfMediaPlacement[];
   /**
+   * What each picture IS, index-aligned with `media`, where the caller was
+   * able to look. Absent or null entries mean nothing was established and the
+   * candidate is judged exactly as it was before this existed.
+   */
+  visualKinds?: Array<VisualKind | null>;
+  /**
    * THE DOCUMENT IS ALREADY KNOWN TO BE THIS PROPERTY'S, AND IT CANNOT SAY SO.
    *
    * Set only where the containing document was tied to exactly one stock row by
@@ -758,6 +805,7 @@ export function assignPdfMediaRoles(input: {
       placementsOnPage: entry.placementsOnPage,
       pagesDrawnOn: entry.pagesDrawnOn,
       pageAreaShare: entry.pageAreaShare ?? null,
+      visualKind: input.visualKinds?.[index] ?? null,
     })))
     : null;
 
@@ -832,6 +880,8 @@ export function assignPdfMediaRolesPerProperty(input: {
   identityHintsByItemId?: Map<string, readonly string[]>;
   pageTexts: string[];
   pageOrderAuthoritative: boolean;
+  /** What each picture IS, index-aligned with `media`. See `assignPdfMediaRoles`. */
+  visualKinds?: Array<VisualKind | null>;
 }): SourceImageRoleAssignment[] {
   const media = input.media ?? [];
   const out: SourceImageRoleAssignment[] = media.map(() => noPrimaryEvidence(
@@ -858,6 +908,9 @@ export function assignPdfMediaRolesPerProperty(input: {
         // nothing is known about where the document put it.
         page: 0, name: media[index].name, placementsOnPage: 2, pagesDrawnOn: 2,
       }),
+      // Re-indexed with the media, so a per-property slice keeps each
+      // picture's own verdict rather than the document's position.
+      visualKinds: indexes.map((index) => input.visualKinds?.[index] ?? null),
     });
     indexes.forEach((index, position) => { out[index] = assignments[position]; });
   }

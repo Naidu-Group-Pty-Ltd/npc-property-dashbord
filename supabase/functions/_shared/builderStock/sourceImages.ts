@@ -171,6 +171,21 @@ import {
  * banked at 12 against such a document was judged before the page's own
  * emphasis was read.
  *
+ * 14 LOOKS AT THE PICTURE, not only at what the page did with it. Version 13
+ * elected the raster a cover draws largest, which is the page's own statement
+ * of emphasis and is exactly as emphatic when what it leads with is the floor
+ * plan. Measured live, 4 September 2026: lots 109 and 115 Palomino both drew
+ * a green line drawing on the marketplace badged "Builder supplied", from the
+ * Vanta 23 brochure whose page 1 gives the plan far more room than the
+ * render; lot 116, same builder and estate, drew the house from the Nex 20
+ * brochure. `selectCoverHero` now excludes a candidate whose pixels say
+ * floor plan or graphic, borrowing the measured judgement in
+ * `listingImageVision.pure.ts` rather than inventing a second one. Every
+ * negative banked at 13 was reached without any visual information at all,
+ * and every POSITIVE banked at 13 could be a plan — which is why this bump
+ * matters more than its predecessors: it is the first that can withdraw a
+ * picture as well as find one.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.
