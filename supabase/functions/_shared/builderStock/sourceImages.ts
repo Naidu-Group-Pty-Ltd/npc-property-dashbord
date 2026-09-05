@@ -196,6 +196,23 @@ import {
  * current, so the answers reached without looking have to be invalidated
  * before they can be re-asked. Nothing else changed.
  *
+ * 16 CAN TELL A COLOURED PLAN FROM A PHOTOGRAPH. The v15 pass ran the gate
+ * exactly as designed and still elected the plan, because the classifier
+ * called it a photograph: a plan whose rooms are filled with colour measured
+ * 0.301 colourful through the pipeline's own decoder, and the floorplan
+ * rule's colour bound was 0.30 — one thousandth the wrong side. Measured, 5
+ * September 2026, on the Palomino brochures themselves: both the Vanta 23
+ * and Nex 20 covers carry the SAME two rasters (one house render, one green
+ * plan — which is why one identical plan led five different cards), the plan
+ * is the larger by 2.4x so size dominance elected it, and under the widened
+ * bound the election flips to the render on both documents while the old
+ * bound reproduces the defect byte for byte. The bound is a population
+ * statement, not a tuning: no photograph in the labelled corpus exceeds
+ * white 0.118 against the rule's 0.45 floor, so the widening admits no
+ * photograph. Every verdict banked at 15 was reached with the misreading
+ * classifier, so those answers too have to be invalidated before they can
+ * be re-asked.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.
