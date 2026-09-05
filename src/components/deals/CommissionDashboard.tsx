@@ -65,7 +65,7 @@ interface CommissionRow {
   buildPrice: number | null;
 }
 
-export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props) {
+export function CommissionDashboard({ deals, isLoading, onUpdatePayment, onUpdateDeal }: Props) {
   const commissionRows = useMemo(() => {
     const rows: CommissionRow[] = [];
     for (const deal of deals) {
