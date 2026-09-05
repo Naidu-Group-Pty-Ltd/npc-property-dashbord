@@ -25,6 +25,10 @@
  * a labelled row is a promise that a figure follows.
  */
 
+// Formatting is shared with the financial chapter composer — one thousands
+// separator, one percent trim, locale-free in both runtimes (figures.pure.ts).
+import { money, num, pct, str } from './figures.pure.ts';
+
 /** The slice of the investment projection the facts block reads. */
 export interface RecordedFactsSource {
   property?: Record<string, unknown>;
@@ -33,29 +37,6 @@ export interface RecordedFactsSource {
   assumptions?: Record<string, unknown>;
   assessment?: ReadonlyArray<{ label?: unknown; score?: unknown }>;
 }
-
-const num = (v: unknown): number | undefined =>
-  (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
-const str = (v: unknown): string | undefined =>
-  (typeof v === 'string' && v.trim() ? v.trim() : undefined);
-
-// Thousands separation without consulting the runtime locale — the same
-// prompt is composed in Deno and asserted in Node, and their ICU grouping
-// need not agree (the rule `financialEngine.pure.ts` formats under).
-const groupThousands = (n: number): string =>
-  String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-
-const money = (v: unknown): string | undefined => {
-  const n = num(v);
-  if (n === undefined) return undefined;
-  const r = Math.round(n);
-  return r < 0 ? `-$${groupThousands(Math.abs(r))}` : `$${groupThousands(r)}`;
-};
-const pct = (v: unknown): string | undefined => {
-  const n = num(v);
-  if (n === undefined) return undefined;
-  return `${n.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')}%`;
-};
 
 /**
  * Render the projection's recorded figures as a Markdown facts block, or
