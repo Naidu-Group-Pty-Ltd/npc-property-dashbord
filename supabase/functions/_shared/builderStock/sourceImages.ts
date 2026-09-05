@@ -213,6 +213,24 @@ import {
  * classifier, so those answers too have to be invalidated before they can
  * be re-asked.
  *
+ * 17 RE-ASKS THE QUESTIONS A SHARED ISOLATE ANSWERED FOR THE DOCUMENTS. The
+ * v16 requeue drained 76 of 81 properties and stalled on the five rows of
+ * one CSV upload whose images come from per-row linked brochures: the
+ * settler's designed fan-out put five one-property invocations in one
+ * isolate, five concurrent brochure decodes exceeded its memory ceiling,
+ * and the worker died 546 every minute with no error written. Each of those
+ * documents elects in under three seconds alone — measured through this
+ * pipeline's own election on the fetched files — so the four
+ * `package_recovery_attempt`s their branches accumulated are a fact about
+ * the isolate, not about the documents, and at four the next pass would
+ * retire readable brochures as unprocessable. `pdfDecodeSlot.pure.ts` now
+ * serialises the heavy decode per isolate; this bump is the mechanism
+ * `packageAttempt.pure.ts` names for starting the count again ("a bumped
+ * extractor asks again from zero"). The classifier, the election and the
+ * gate are exactly v16's, so a property already settled at 16 re-derives to
+ * the same answer when it is next asked — and nothing requeues the settled
+ * ones for this bump alone.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.
