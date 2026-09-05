@@ -25,8 +25,10 @@ import { requestCashFlowPdf } from '@/lib/reports/cashFlow/requestCashFlowPdf';
 import { readBaseFinancials } from '@/lib/reports/cashFlow/readBaseFinancials';
 import {
   exportBackgroundFor,
+  propertySeriesStyle,
   useCashFlowChartTheme,
 } from '@/lib/cashFlow/chartTheme';
+import { PropertySeriesMarker } from '@/components/cash-flow/PropertySeriesMarker';
 import {
   METRICS_UNAVAILABLE_REASON,
   deriveInvestmentMetrics,
@@ -431,9 +433,25 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
   // One entry per compared property. The old shape carried a second `cashFlow`
   // colour per property that nothing ever read.
-  const COMPARISON_COLORS = useMemo(
-    () => chartTheme.property.map((value) => ({ value })),
+  //
+  // A comparison holds five properties and the chart drew them with one solid
+  // line and four identical dashes, so four of the five were separated by hue
+  // alone. `propertySeriesStyle` gives each slot its own pattern as well, and
+  // every surface that names a property reads from this same array — so the
+  // table's column head, the switcher and the chart cannot disagree about
+  // which line is whose.
+  const comparisonSeries = useMemo(
+    () => chartTheme.property.map((_, index) => propertySeriesStyle(chartTheme, index)),
     [chartTheme],
+  );
+  const COMPARISON_COLORS = useMemo(
+    () => comparisonSeries.map((style) => ({ value: style.colour })),
+    [comparisonSeries],
+  );
+  /** The style for comparison slot `index`, never falling off the end. */
+  const seriesStyleAt = useCallback(
+    (index: number) => comparisonSeries[index] ?? propertySeriesStyle(chartTheme, index),
+    [comparisonSeries, chartTheme],
   );
 
   // Initialize overrides from report when modal opens
@@ -1536,17 +1554,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       {
         id: report.id,
         address: report.property_address,
-        colour: COMPARISON_COLORS[0]?.value ?? chartTheme.series.propertyValue,
+        ...seriesStyleAt(0),
         isPrimary: true,
       },
       ...allComparisonMetrics.map(({ report: compReport }, index) => ({
         id: compReport.id,
         address: compReport.property_address,
-        colour: COMPARISON_COLORS[index + 1]?.value ?? chartTheme.tick,
+        ...seriesStyleAt(index + 1),
         isPrimary: false,
       })),
     ];
-  }, [report, allComparisonMetrics, COMPARISON_COLORS, chartTheme]);
+  }, [report, allComparisonMetrics, seriesStyleAt]);
 
   /**
    * The selected peer, or null for the open report.
@@ -1561,10 +1579,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     const index = allComparisonMetrics.indexOf(entry);
     return {
       ...entry,
-      colour: COMPARISON_COLORS[index + 1]?.value ?? chartTheme.tick,
+      ...seriesStyleAt(index + 1),
       inputs: readBaseFinancials(entry.report, new Date().getFullYear()),
     };
-  }, [detailPropertyId, report, allComparisonMetrics, COMPARISON_COLORS, chartTheme]);
+  }, [detailPropertyId, report, allComparisonMetrics, seriesStyleAt]);
 
   /**
    * Which of the eight sections this analysis actually holds.
@@ -5153,25 +5171,35 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             fontSize: '11px'
                           }}
                         />
-                        <Legend wrapperStyle={{ fontSize: '9px' }} />
+                        {/* `plainline` at 22px: the default legend icon is a
+                            hook that ignores the dash array, so the key would
+                            have drawn five identical swatches for five
+                            different lines. */}
+                        <Legend wrapperStyle={{ fontSize: '9px' }} iconType="plainline" iconSize={22} />
                         <Line 
                           type="monotone" 
                           dataKey={`${report?.property_address.split(',')[0]} Value`}
-                          stroke={COMPARISON_COLORS[0].value} 
+                          stroke={seriesStyleAt(0).colour} 
                           strokeWidth={2}
+                          strokeDasharray={seriesStyleAt(0).dash}
+                          strokeLinecap={seriesStyleAt(0).linecap ?? 'butt'}
                           dot={{ r: 2 }}
                         />
-                        {allComparisonProjections.map(({ report: compReport }, idx) => (
-                          <Line 
-                            key={compReport.id}
-                            type="monotone" 
-                            dataKey={`${compReport.property_address.split(',')[0]} Value`}
-                            stroke={COMPARISON_COLORS[idx + 1]?.value || chartTheme.tick}
-                            strokeWidth={2}
-                            strokeDasharray="5 5"
-                            dot={{ r: 2 }}
-                          />
-                        ))}
+                        {allComparisonProjections.map(({ report: compReport }, idx) => {
+                          const style = seriesStyleAt(idx + 1);
+                          return (
+                            <Line 
+                              key={compReport.id}
+                              type="monotone" 
+                              dataKey={`${compReport.property_address.split(',')[0]} Value`}
+                              stroke={style.colour}
+                              strokeWidth={2}
+                              strokeDasharray={style.dash}
+                              strokeLinecap={style.linecap ?? 'butt'}
+                              dot={{ r: 2 }}
+                            />
+                          );
+                        })}
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
@@ -5257,13 +5285,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <TableRow>
                             <TableHead className="min-w-[140px] sticky left-0 bg-background">Metric</TableHead>
                             <TableHead className="text-center min-w-[120px]">
-                              <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COMPARISON_COLORS[0].value }} />
-                              {report?.property_address.split(',')[0].substring(0, 15)}
+                              <span className="inline-flex items-center justify-center gap-1.5">
+                                <PropertySeriesMarker {...seriesStyleAt(0)} />
+                                {report?.property_address.split(',')[0].substring(0, 15)}
+                              </span>
                             </TableHead>
                             {allComparisonMetrics.map(({ report: compReport }, idx) => (
                               <TableHead key={compReport.id} className="text-center min-w-[120px]">
-                                <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COMPARISON_COLORS[idx + 1]?.value || chartTheme.tick }} />
-                                {compReport.property_address.split(',')[0].substring(0, 15)}
+                                <span className="inline-flex items-center justify-center gap-1.5">
+                                  <PropertySeriesMarker {...seriesStyleAt(idx + 1)} />
+                                  {compReport.property_address.split(',')[0].substring(0, 15)}
+                                </span>
                               </TableHead>
                             ))}
                           </TableRow>

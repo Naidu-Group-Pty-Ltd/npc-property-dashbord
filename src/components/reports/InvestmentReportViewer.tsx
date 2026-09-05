@@ -361,7 +361,11 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
             </DialogTitle>
           </DialogHeader>
 
-          <div className="flex-1 overflow-hidden flex flex-col space-y-4">
+          {/* `overflow-hidden` with no scroller inside it CLIPS — the report
+              below the fold had no way to be reached, reported as "it is very
+              narrow and no scroll bar in it". `min-h-0` is what lets a flex
+              child shrink enough for its own overflow to engage. */}
+          <div className="flex min-h-0 flex-1 flex-col space-y-4 overflow-y-auto">
             {/* Tier Switcher - Prominent Section */}
             <Card className="flex-shrink-0 border-2 border-primary/30 bg-gradient-to-r from-primary/5 to-transparent">
               <CardContent className="py-3">
@@ -388,18 +392,23 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
             {/* Report Header */}
             <Card className="flex-shrink-0">
               <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <MapPin className="h-4 w-4" />
-                      {report.property_address}
+                {/* The address column declares a basis. `flex: 1 1 0%`
+                    contributes zero to the line's hypothetical size, so the
+                    button cluster beside it took the width it wanted and the
+                    address was handed the leftovers — which is how "6 Acer
+                    Court, Bowral NSW 2576" came to wrap one word per line. */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1 basis-[18rem] space-y-1">
+                    <CardTitle className="flex min-w-0 items-start gap-2 text-lg">
+                      <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span className="min-w-0 break-words">{report.property_address}</span>
                     </CardTitle>
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Calendar className="h-3 w-3" />
+                      <Calendar className="h-3 w-3 shrink-0" />
                       Generated on {format(new Date(report.created_at), 'PPpp')}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
                     <Button
                       variant="outline"
                       size="sm"
