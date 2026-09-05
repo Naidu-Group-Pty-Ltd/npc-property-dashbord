@@ -285,7 +285,7 @@ jobs:
       # reports that refusal as "Object not found" — indistinguishable from a
       # document that was never produced. Signing belongs to the server.
       - name: Signed storage URLs are minted by the server
-        run: node scripts/security/check-browser-signed-urls.mjs
+        run: node scripts/security/check-client-storage-signing.mjs
 
       - name: Build
         run: npm run build
