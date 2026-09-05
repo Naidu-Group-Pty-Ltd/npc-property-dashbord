@@ -183,7 +183,7 @@ function buildEmailBody(params: {
   };
   // An unrecognised value is rendered as words rather than as the token
   // itself: "reschedule" reached this line and was printed verbatim.
-  const typeLabel = typeLabels[params.type]
+  const typeLabel = (params.type ? typeLabels[params.type] : undefined)
     || (params.type
       ? params.type.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
       : 'Meeting');
