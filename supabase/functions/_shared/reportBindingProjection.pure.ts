@@ -115,6 +115,7 @@ import {
 import { stripBakedCover } from './reports/investment/narrativeClean.pure.ts';
 import { planningChartContext, vizDirectiveRenderer } from './reports/vizFigures.pure.ts';
 import { reconcileStoredFinancials } from './reports/investment/financialEngine.pure.ts';
+import { gradedDetailLine, gradedLine } from './reports/investment/scoreSections.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
@@ -487,6 +488,16 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(recommendation, 'action', recommendationAction(str(score.recommendation)));
   put(recommendation, 'grade', str(score.grade));
   put(recommendation, 'score', num(score.totalScore));
+  // The verdict sentence, composed here so it exists only when the record can
+  // say it. The templates used to interpolate grade and score into a literal
+  // ("Graded {{grade}} at {{score}} out of 100, weighted across growth,
+  // location, yield, demand and risk"), which printed with the holes left in
+  // on every row without a score — and misstated the weighting for variant
+  // scores, whose dimensions are not the composite five. `gradedLine` names
+  // the dimensions this score actually carries; absent grade or score, the
+  // binding is absent and the sentence is not drawn.
+  put(recommendation, 'gradedLine', gradedLine(score));
+  put(recommendation, 'gradedDetailLine', gradedDetailLine(score));
 
   const strengths = strArray(score.strengths);
   const weaknesses = strArray(score.weaknesses);
