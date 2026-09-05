@@ -676,3 +676,38 @@ export function postProcessReportMarkdown(
 
   return { markdown: finalMarkdown, report };
 }
+
+/**
+ * Label-stripping alone, for documents that are not the Compass: the fork's
+ * FIN/PLDD variants and the condensed Snapshot slice a PARENT whose legacy
+ * generations carry "What This Means" blocks by the dozen, but their own
+ * section lists are not the Compass registry's, so the full post-processor's
+ * word caps and page-pressure trims must not touch them. Every section —
+ * matched or not — is a client's page, which is the same rule the full pass
+ * states above.
+ */
+export function stripEditorialLabelsFromMarkdown(markdown: string): {
+  markdown: string;
+  removedBlocks: number;
+  removedWords: number;
+} {
+  const { preamble, sections } = parseSections(markdown, COMPASS_40_SECTIONS);
+  let removedBlocks = 0;
+  let removedWords = 0;
+
+  const strip = (heading: string, bodyLines: string[]): string[] => {
+    const r = stripEditorialBlocks({ heading, bodyLines });
+    removedBlocks += r.removedBlocks;
+    removedWords += r.removedWords;
+    return r.lines;
+  };
+
+  const strippedPreamble = strip('(preamble)', preamble);
+  for (const s of sections) s.bodyLines = strip(s.heading, s.bodyLines);
+
+  return {
+    markdown: serializeSections(strippedPreamble, sections),
+    removedBlocks,
+    removedWords,
+  };
+}
