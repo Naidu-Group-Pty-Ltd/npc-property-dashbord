@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -62,7 +63,8 @@ import { LenderComparisonSheets } from '@/components/lenders/LenderComparisonShe
 import { ComplianceTab } from '@/components/compliance/ComplianceTab';
 import { DocumentsTab } from '@/components/documents/DocumentsTab';
 import {
-  agentFeeLabelFor,
+  agentFeeEntry,
+  agentFeeReceiptPatch,
   commissionModelFor,
   hasTrailAndClawback,
 } from '@/lib/deals/commissionModel.pure';
@@ -178,6 +180,9 @@ export function DealDetailView({ deal, clientId, onBack }: DealDetailViewProps) 
   const isRefinance = deal.deal_type === 'refinance';
   // How this deal earns a commission at all — see `commissionModel.pure`.
   const commissionModel = commissionModelFor(deal.deal_type);
+  // The single agent fee, where there is one. Null on a house-and-land deal,
+  // whose commission is counted per build payment instead.
+  const agentFee = agentFeeEntry(deal);
   const riskConfig = RISK_STATUS_CONFIG[deal.risk_status];
 
   // One derivation of "where is this deal" — the same rule the pipeline
@@ -450,15 +455,15 @@ export function DealDetailView({ deal, clientId, onBack }: DealDetailViewProps) 
                   fee, and the figure was sitting in a different column under
                   Financial Controls, which is why the audit reported the
                   section as having no commission tracking at all. */}
-              {commissionModel === 'agent_fee' && (
+              {agentFee && (
                 <div className="space-y-2 rounded-xl border border-border bg-background/35 p-3 dark:border-white/10 dark:bg-background/35">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <span className="text-xs font-semibold text-foreground">
-                      {agentFeeLabelFor(deal.deal_type)}
+                      {agentFee.label}
                     </span>
                     <span className="font-mono text-sm font-semibold text-foreground">
-                      {typeof deal.commission_estimate === 'number'
-                        ? formatCurrency(deal.commission_estimate)
+                      {agentFee.amount !== null
+                        ? formatCurrency(agentFee.amount)
                         : <span className="font-sans text-xs font-normal text-muted-foreground">Not recorded</span>}
                     </span>
                   </div>
@@ -476,11 +481,41 @@ export function DealDetailView({ deal, clientId, onBack }: DealDetailViewProps) 
                       </dd>
                     </dl>
                   )}
+                  {/* The receipt. A house-and-land deal marks this per build
+                      payment; this deal type had no payment to hang it off and
+                      so had no way to record the fee arriving at all — which
+                      is the half of "no agent fee tracking" that a display
+                      alone does not answer. */}
+                  <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-2 dark:border-white/10">
+                    <Checkbox
+                      id={`agent-fee-received-${deal.id}`}
+                      checked={agentFee.received}
+                      onCheckedChange={(checked) =>
+                        handleDealUpdate(agentFeeReceiptPatch(!!checked, format(new Date(), 'yyyy-MM-dd')))
+                      }
+                    />
+                    <Label
+                      htmlFor={`agent-fee-received-${deal.id}`}
+                      className="cursor-pointer text-[11px] font-medium text-foreground"
+                    >
+                      Commission received
+                    </Label>
+                    {agentFee.received ? (
+                      <Badge variant="outline" className="border-success/30 text-[10px] text-success">
+                        {agentFee.receivedDate
+                          ? `Received ${format(new Date(agentFee.receivedDate), 'd MMM yyyy')}`
+                          : 'Received'}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="border-brand-500/30 text-[10px] text-brand-600">Due</Badge>
+                    )}
+                  </div>
                   <p className="text-[11px] leading-5 text-muted-foreground">
                     {/* Named rather than implied: a reader who wants to change
                         the figure should not have to hunt for where. */}
-                    Recorded under Financial Controls. This deal type is paid once
-                    rather than stage by stage, so there is no build payment schedule.
+                    The amount is recorded under Financial Controls. This deal type is
+                    paid once rather than stage by stage, so there is no build payment
+                    schedule.
                   </p>
                 </div>
               )}

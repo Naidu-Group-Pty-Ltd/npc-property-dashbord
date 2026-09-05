@@ -66,3 +66,75 @@ export function agentFeeLabelFor(dealType: DealTypeLike): string {
 export function hasTrailAndClawback(dealType: DealTypeLike): boolean {
   return dealType === 'refinance';
 }
+
+/**
+ * The facts a single agent fee carries, for the surfaces that show one.
+ *
+ * Deliberately structural rather than the `Deal` type: the client's Deals tab
+ * and the pipeline's Commission Dashboard read differently-shaped rows out of
+ * two different queries, and both need the same answer.
+ */
+export interface AgentFeeDealLike {
+  deal_type: DealTypeLike;
+  commission_estimate?: number | null;
+  commission_received?: boolean | null;
+  commission_received_date?: string | null;
+}
+
+export interface AgentFeeEntry {
+  /** What this deal type calls the figure. */
+  label: string;
+  /** The fee, or null when nobody has recorded one. Never 0 as a stand-in. */
+  amount: number | null;
+  received: boolean;
+  /** The day it arrived — null whenever `received` is false. */
+  receivedDate: string | null;
+}
+
+/**
+ * The one agent-fee commission entry a deal contributes, or `null`.
+ *
+ * A house-and-land deal answers `null` because its commission is already
+ * counted per build payment; contributing a second entry here would
+ * double-count it in "Total Received", which is worse than not showing it.
+ *
+ * `receivedDate` is suppressed while `received` is false, so a flag that was
+ * cleared cannot leave a date behind claiming the money arrived.
+ */
+export function agentFeeEntry(deal: AgentFeeDealLike): AgentFeeEntry | null {
+  if (commissionModelFor(deal.deal_type) !== 'agent_fee') return null;
+
+  const raw = deal.commission_estimate;
+  const amount = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+  // Every deal written before the columns existed reads null/undefined here,
+  // and that is "not received" rather than unknown.
+  const received = deal.commission_received === true;
+
+  return {
+    label: agentFeeLabelFor(deal.deal_type),
+    amount,
+    received,
+    receivedDate: received ? (deal.commission_received_date ?? null) : null,
+  };
+}
+
+/**
+ * The write that records — or un-records — receipt of an agent fee.
+ *
+ * The flag and the date are set and cleared together, always. They were two
+ * independent columns on `build_progress_payments` and three call sites each
+ * remembered to pair them by hand; this is the same pair with the rule in one
+ * place, so no surface can leave a date standing against a cleared flag.
+ *
+ * `today` is passed in rather than read here so the function stays pure and a
+ * test can pin the value.
+ */
+export function agentFeeReceiptPatch(
+  received: boolean,
+  today: string,
+): { commission_received: boolean; commission_received_date: string | null } {
+  return {
+    commission_received: received,
+    commission_received_date: received ? today : null,
+  };
+}
