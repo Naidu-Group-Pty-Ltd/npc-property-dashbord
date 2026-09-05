@@ -1378,3 +1378,85 @@ the filter, the item `when`, the projection note, the composer conditionals,
 the three selector mounts and the migration pair; the four catalogue specs
 that assert "bind nothing the projection cannot publish" now name
 `partNumber` as renderer-ambient, beside `pageNumber`.
+
+## 19 · Phase 1 of the tier framework — derived reports read the record (2026-09-05)
+
+The signed-off framework (`docs/reports/TIER_FRAMEWORK.md`, and the audit that
+preceded it) reduced every derived-tier defect to one cause: prose was the only
+carrier of substance, and the Compass — the only parent — stopped carrying
+financial prose in v3.0. Phase 1 makes the record the carrier. All figures
+below were measured on the 4 September production family of 1/27D Mitchell
+Street (parent `0478c410`, children `c21ed1fa`/`2f1f7f6f`/`89b451f6`/
+`8c6edc56`) before and after, re-composed through the same modules the
+functions now run.
+
+**The Financial fork composes its chapters from `financial_calculations`.**
+The "Client Investment Feasibility & Financial Performance Report" was a
+substring routing of a parent with no financial sections to route: 7 headings,
+ONE dollar sign, while its own row held seven key metrics, eleven annual-cost
+lines, ten loan details, three projection scenarios and a sensitivity grid.
+`reports/investment/financialChapters.pure.ts` writes the missing chapters —
+purchase & holding costs, rental & yield, loan structure, sensitivity, the
+ten-year table (with equity and LVR, which the stored series already carried),
+the scorecard and the SWOT — from `reconcileStoredFinancials(...)`'s healed
+record, the same heal the KPI tiles bind, so a chapter and a tile cannot
+disagree. Composed chapters REPLACE routed prose claiming the same FIN ordinal
+or heading (the record wins over a legacy parent's stale tables), and the
+response names what was replaced. After: **14 headings, 109 dollar signs,
+0 N/A**, and the document reads as the declared FIN structure.
+
+**The Briefing's guide is cut to the parent that exists.** It still described
+the 17-section legacy Compass — eight financial tables and a market-performance
+grid demanded from a parent forbidden to carry them, which the model filled
+with N/A: 33.2 per briefing before August, 87 on the newest. The guide now asks
+the model only for the condensed location case; the financial tables, score
+breakdown and SWOT are composed server-side after the call (`composed_sections`
+in the response), and the SWOT is typed from the score record's own four lists
+rather than improvised.
+
+**A labelled row is a promise — enforced on stored markdown.**
+`derivedHygiene.pure.ts#stripPlaceholderRows` drops a table row whose first
+value cell is a placeholder, blanks trailing placeholder cells, drops tables
+left with no body, and drops placeholder-confession lines ("- Source
+attribution: N/A (…)"). Run over the worst production briefing it removed 39
+rows, 11 tables, 5 lines and blanked 15 cells — **87 → 0**. It runs on every
+fork and condense output, alongside `stripEditorialLabelsFromMarkdown` (the
+label strip alone, exported from the post-processor — the full pass's word
+caps are the Compass's and must not touch other tiers' sections).
+
+**The Snapshot is one document again.** The newest snapshot carried its 8
+declared sections and then the parent's 9 echoed back — 17 headings, 2.5× the
+format's length, and nothing post-processed it (hygiene ran on the briefing
+alone, which was exactly backwards). `trimToDeclaredSections` keeps what the
+tier declares and names what it dropped; the guide now says so to the model
+too. Measured: 17 → 9 headings, 12,325 → ~3,000 chars, 17 → 11 rendered pages.
+
+**The Due Diligence scorer can score, and the verdict sentence can no longer
+print holes.** `scorePropertyFundamentals` counted `dDemand` twice (as demand
+AND "tenant fit") against a three-of-five floor, so a row without both real
+dimensions never scored — `investment_score` was null on 11 of 11 strategic
+rows and the verdict page printed "Graded  at  out of 100" with the holes
+left in. Four honest dimensions now, floor stated in place (≥2 available, at
+least one of location/demand), weights rebalanced 40/35/15/10. The fork falls
+back to the parent's composite score when the variant scorer cannot compute
+(a refresh never overwrites a good score with null) and carries the parent's
+strengths/weaknesses/opportunities/risks onto variant scores, whose engine
+leaves them empty. And the sentence itself is COMPOSED: the projection
+publishes `recommendation.gradedLine`/`gradedDetailLine` only when grade and
+score exist, with a weighting clause naming the dimensions THIS score carries
+(`scoreSections.pure.ts`); the two verdict bodies bind it (template library
+v12 + active-master refresh). Measured: the strategic child renders "Graded
+C+ at 53 out of 100, weighted across location and planning risk." where it
+rendered holes.
+
+**Lineage is stamped.** `fork-investment-report` never wrote
+`generation_engine`, so every child took the column default `legacy` —
+including the four forked from a compass-40 parent — and never carried
+`report_scope` at all. Both engines now stamp the parent's engine; the fork
+carries scope.
+
+Pinned by `tierFrameworkPhase1.spec.ts` (19 tests: composition, hygiene,
+scorer, sentence, source-scans of both functions, the v12 migration pair).
+Bridges keep the new pure modules inside the investment format's closed
+import set; `condenseFacts` now shares `figures.pure.ts` with the composer so
+one thousands-separator serves both.
