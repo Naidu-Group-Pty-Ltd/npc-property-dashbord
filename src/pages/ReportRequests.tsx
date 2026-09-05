@@ -471,9 +471,12 @@ export default function ReportRequests() {
                         <div className={cn('shrink-0 rounded-2xl p-3 shadow-inner shadow-sm dark:shadow-black/20', typeConf.color)}><TypeIcon className="h-5 w-5" /></div>
                         <p className="min-w-0 [overflow-wrap:anywhere] break-words text-base font-semibold tracking-tight text-foreground dark:text-white">{typeConf.label}</p>
                       </div>
+                      {/* One status, drawn once. There were two of these — the
+                          same badge, the same variant, the same label — one in
+                          this row and a second directly under it, which is the
+                          audit's "it says in progress twice". */}
                       <Badge variant="outline" className={cn('w-fit shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] shadow-sm backdrop-blur', statConf.badgeVariant)}>{statConf.label}</Badge>
                     </div>
-                    <Badge variant="outline" className={cn('w-fit rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] shadow-sm backdrop-blur', statConf.badgeVariant)}>{statConf.label}</Badge>
                   </div>
 
                   <div className="grid gap-2.5 text-sm">

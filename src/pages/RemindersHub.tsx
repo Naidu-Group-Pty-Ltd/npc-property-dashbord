@@ -13,6 +13,7 @@ import {
   endOfWeek,
   endOfMonth,
 } from 'date-fns';
+import { matchesTimeBucket, type ReminderTimeBucket } from '@/lib/reminders/timeBucket.pure';
 import { cn } from '@/lib/utils';
 import {
   Bell,
@@ -50,7 +51,9 @@ import { ReminderActions } from '@/components/reminders/ReminderActions';
 import { toast } from 'sonner';
 
 type ReminderTab = 'client' | 'team';
-type TimeFilter = 'all' | 'overdue' | 'today' | 'week' | 'month' | 'later';
+// The buckets and the predicate are `lib/reminders/timeBucket.pure` now, so
+// the team tab can offer the same chips without a second copy of the rule.
+type TimeFilter = ReminderTimeBucket;
 type SourceFilter = 'all' | 'client_reminder' | 'follow_up' | 'deal_milestone';
 type PriorityFilter = 'all' | 'high' | 'medium' | 'low';
 
@@ -161,23 +164,13 @@ export default function RemindersHub() {
       result = result.filter(r => r.priority === priorityFilter);
     }
 
-    // Time filter
+    // Time filter — one rule, shared with the team tab.
     if (timeFilter !== 'all') {
-      result = result.filter(r => {
-        const d = new Date(r.due_date);
-        switch (timeFilter) {
-          case 'overdue': return isPast(d) && !isToday(d);
-          case 'today': return isToday(d);
-          case 'week': return d >= todayStart && d <= weekEnd;
-          case 'month': return d >= todayStart && d <= monthEnd;
-          case 'later': return d > monthEnd;
-          default: return true;
-        }
-      });
+      result = result.filter(r => matchesTimeBucket(new Date(r.due_date), timeFilter, now));
     }
 
     return result;
-  }, [reminders, timeFilter, sourceFilter, priorityFilter]);
+  }, [reminders, timeFilter, sourceFilter, priorityFilter, now]);
 
   // Group by date
   const grouped = useMemo(() => {

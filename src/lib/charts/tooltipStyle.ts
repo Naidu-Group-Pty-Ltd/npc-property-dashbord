@@ -87,3 +87,29 @@ export function chartTooltipContentStyleWithin(maxWidth: number): React.CSSPrope
  * establishes a stacking context can otherwise draw over it.
  */
 export const chartTooltipWrapperStyle: React.CSSProperties = { zIndex: 50 };
+
+/**
+ * The wrapper a chart legend is drawn in.
+ *
+ * ## Why there is no `height`
+ *
+ * Recharts' `<Legend>` takes a `height` prop that becomes a hard `height` on
+ * its absolutely-positioned wrapper, and the chart reserves exactly that much
+ * room. It is safe only when the number of entries is fixed.
+ *
+ * The call-logs Call Outcomes pie draws one entry per DISTINCT outcome — 17 of
+ * them on the reported account, with labels like `Call.in Progress.error
+ * Providerfault Eleven Labs 500 Server Error` — and carried `height={48}`,
+ * copied from the four-entry sentiment pie beside it. Measured in Chromium at
+ * 700px: the legend's real content is **87px**, the wrapper was pinned to 48,
+ * and the last row's bottom landed 33px below the container, which clips it.
+ * That is Audit 4 item 5, "the labels/legend under the pie chart has a cutoff
+ * at the bottom". With the prop removed the wrapper measures `auto` at 87px,
+ * the chart reserves it, and the last row sits 6px inside the box.
+ *
+ * So: no height. The legend measures itself and the chart makes room.
+ */
+export const chartLegendWrapperStyle: React.CSSProperties = {
+  color: 'hsl(var(--muted-foreground))',
+  fontSize: 12,
+};

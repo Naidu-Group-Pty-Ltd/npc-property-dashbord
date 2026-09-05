@@ -1110,7 +1110,7 @@ export default function ClientTracker() {
             </div>
           </CardHeader>
           <CardContent className="pt-0">
-            <ScrollArea className="w-full">
+            <ScrollArea horizontal className="w-full">
               <div className="flex gap-3 pb-2">
                 {upcomingAppointments.map(event => (
                   <Card 
@@ -1403,7 +1403,7 @@ export default function ClientTracker() {
             )}
             
             <div className="rounded-[1.5rem] border border-border/70 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.10),transparent_24rem),linear-gradient(135deg,hsl(var(--background)/0.72),hsl(var(--card)/0.62))] p-3 shadow-inner shadow-sm dark:shadow-black/20">
-              <ScrollArea className="client-tracker-kanban-scroll w-full whitespace-nowrap rounded-[1.15rem]" aria-label="Kanban board stages">
+              <ScrollArea horizontal className="client-tracker-kanban-scroll w-full whitespace-nowrap rounded-[1.15rem]" aria-label="Kanban board stages">
                 <div className="flex gap-4 pb-5 pr-3 sm:gap-5">
                 {/* Render stages in order */}
                 {stagesForPipeline.map(stage => {
