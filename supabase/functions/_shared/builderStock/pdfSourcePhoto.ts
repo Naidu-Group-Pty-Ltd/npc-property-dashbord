@@ -42,6 +42,7 @@ import {
   type DrawnImage, type Matrix, type PdfScope, type PdfWidget,
 } from './pdfPageImages.pure.ts';
 import { documentVisualKinds } from './assessSourceImage.ts';
+import { withPdfDecodeSlot } from './pdfDecodeSlot.pure.ts';
 import {
   assignPdfMediaRoles, coverSearchPages, type PdfMediaPlacement,
 } from './pdfPrimaryImage.pure.ts';
@@ -607,6 +608,30 @@ export async function selectPdfPropertyPrimary(
   pageOrderAuthoritative: boolean;
 }> {
   /*
+   * THE WHOLE ELECTION HOLDS THE DECODE SLOT, discovery and classification
+   * both — see `pdfDecodeSlot.pure.ts` for the five-way 546 this bounds. The
+   * internal discovery call below goes to the unwrapped body, because a slot
+   * taken twice by one caller is a deadlock, not a bound.
+   */
+  return withPdfDecodeSlot(() => selectPdfPropertyPrimaryHoldingSlot(bytes, options));
+}
+
+async function selectPdfPropertyPrimaryHoldingSlot(
+  bytes: Uint8Array,
+  options: {
+    label?: string | null;
+    pageTexts?: string[];
+    maxPages?: number;
+    structuralCoverPage?: number | null;
+    design?: string | null;
+    identityHints?: readonly string[] | null;
+  },
+): Promise<{
+  assets: PdfSourceAsset[];
+  primary: PdfSourceAsset | null;
+  pageOrderAuthoritative: boolean;
+}> {
+  /*
    * THE EXPENSIVE STEP IS TOLD WHERE TO LOOK.
    *
    * Which page can be this property's cover is decidable from the text, which
@@ -624,7 +649,7 @@ export async function selectPdfPropertyPrimary(
     structuralCoverPage: options.structuralCoverPage ?? null,
     identityHints: options.identityHints ?? [],
   });
-  const found = await discoverPdfSourceAssets(bytes, {
+  const found = await discoverPdfSourceAssetsHoldingSlot(bytes, {
     maxPages: options.maxPages,
     pages: searchPages,
   });
@@ -688,6 +713,17 @@ export async function discoverPdfSourceAssets(
      * EMPTY OR ABSENT MEANS EVERY PAGE. A caller with no opinion gets the walk
      * it has always had.
      */
+    pages?: readonly number[];
+  } = {},
+): Promise<{ assets: PdfSourceAsset[]; pageOrderAuthoritative: boolean }> {
+  // Same bound as the election: one document's buffers at a time per isolate.
+  return withPdfDecodeSlot(() => discoverPdfSourceAssetsHoldingSlot(bytes, options));
+}
+
+async function discoverPdfSourceAssetsHoldingSlot(
+  bytes: Uint8Array,
+  options: {
+    maxPages?: number;
     pages?: readonly number[];
   } = {},
 ): Promise<{ assets: PdfSourceAsset[]; pageOrderAuthoritative: boolean }> {
