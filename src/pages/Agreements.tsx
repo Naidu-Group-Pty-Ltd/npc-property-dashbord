@@ -66,7 +66,9 @@ import {
 import {
   EnvelopeStatusDialog,
   DocuSignStatusBadge,
+  docuSignStatusLabel,
 } from "@/components/agreements/EnvelopeStatusDialog";
+import { envelopeBadgeIsRedundant } from "@/lib/agreements/statusBadges.pure";
 import { supabase } from "@/integrations/supabase/client";
 import { DashboardThemeFrame } from "@/components/layout/DashboardThemeFrame";
 import { cn } from "@/lib/utils";
@@ -199,16 +201,59 @@ export default function Agreements() {
   const navigate = useNavigate();
   const { canEdit: canEditAgreements } = useModulePermissions("agreements");
 
-  const openPrepareForSigning = async (a: AgencyAgreement) => {
-    if (!a.pdf_storage_path) {
-      toast.error("PDF not ready yet");
-      return;
+  /**
+   * `ok` separates "the call failed" from "it answered, and there is no PDF
+   * yet". Without it a caller cannot tell them apart, and the one that reports
+   * a missing document would stack a second message on top of the failure this
+   * function has already reported.
+   */
+  const fetchAgreementPreview = async (
+    agreementId: string,
+  ): Promise<{ ok: boolean; html: string | null; pdf_url: string | null }> => {
+    const { data, error } = await invokeSecureFunction<{
+      html: string;
+      pdf_url?: string;
+      gamma_url?: string;
+    }>("manage-agency-agreements", {
+      action: "preview",
+      agreement_id: agreementId,
+    });
+    if (error || !data) {
+      toast.error(
+        "Failed to load agreement: " + (error?.message || "Unknown error"),
+      );
+      return { ok: false, html: null, pdf_url: null };
     }
-    const { data, error } = await supabase.storage
-      .from("agency-agreements")
-      .createSignedUrl(a.pdf_storage_path, 600);
-    if (error || !data?.signedUrl) {
-      toast.error(`Failed to load PDF: ${error?.message}`);
+    return { ok: true, html: data.html || null, pdf_url: data.pdf_url || null };
+  };
+
+  /**
+   * Prepare for Signing gets its PDF the way View and Download already do.
+   *
+   * It used to call `supabase.storage.createSignedUrl` from the BROWSER, and
+   * this app's identity is a custom HttpOnly cookie, so that client is anon.
+   * `agency-agreements` is a private bucket and is not in `secure-storage`'s
+   * allow-list either, so the request was refused — and Supabase Storage
+   * answers a refusal with the same message as a genuine absence, by design,
+   * to avoid confirming that an object exists. The operator therefore saw
+   * "Failed to load PDF: Object not found" on a row the page had just
+   * labelled GENERATED · READY, while View Agreement on that same row worked,
+   * because View goes through `manage-agency-agreements` and the signed URL
+   * is minted server-side with the service role.
+   *
+   * So there is one way to reach an agreement PDF now, not two.
+   */
+  const openPrepareForSigning = async (a: AgencyAgreement) => {
+    const { ok, pdf_url } = await fetchAgreementPreview(a.id);
+    // A genuine failure has already been reported; say nothing further.
+    if (!ok) return;
+    if (!pdf_url) {
+      // The ordinary case: Gamma generation is asynchronous, so a freshly
+      // generated agreement has a row before it has a document.
+      toast.error("PDF not ready yet", {
+        description:
+          "The agreement document is still being generated. Try again in a moment.",
+      });
       return;
     }
     const existingRecipients: SigningRecipient[] =
@@ -236,7 +281,7 @@ export default function Agreements() {
                 ]
               : []),
           ];
-    setSigningPdfUrl(data.signedUrl);
+    setSigningPdfUrl(pdf_url);
     setSigningAgreement({
       ...a,
       signing_recipients: existingRecipients,
@@ -257,26 +302,6 @@ export default function Agreements() {
   const pending = agreements.filter((a) =>
     ["sent", "delivered", "viewed"].includes(a.status),
   ).length;
-
-  const fetchAgreementPreview = async (
-    agreementId: string,
-  ): Promise<{ html: string | null; pdf_url: string | null }> => {
-    const { data, error } = await invokeSecureFunction<{
-      html: string;
-      pdf_url?: string;
-      gamma_url?: string;
-    }>("manage-agency-agreements", {
-      action: "preview",
-      agreement_id: agreementId,
-    });
-    if (error || !data) {
-      toast.error(
-        "Failed to load agreement: " + (error?.message || "Unknown error"),
-      );
-      return { html: null, pdf_url: null };
-    }
-    return { html: data.html || null, pdf_url: data.pdf_url || null };
-  };
 
   const handleViewAgreement = async (agreement: AgencyAgreement) => {
     setIsPreviewLoading(true);
@@ -466,14 +491,24 @@ export default function Agreements() {
           getDocuSignTrackingTone(agreement.docusign_status),
         )}
       >
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            {renderStatusBadge(agreement.status)}
-            <DocuSignStatusBadge status={agreement.docusign_status} />
-          </div>
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-card/95 text-primary ring-1 ring-border/70 shadow-sm dark:bg-background/55">
-            <FileSignature className="h-4 w-4" />
-          </span>
+        {/* The envelope badge is drawn only when it says something the
+            agreement's own badge does not. The two share a vocabulary and
+            agree with each other almost always once an agreement is sent, so
+            the row used to read [✈ SENT] [✉ SENT] — which reads as a
+            rendering fault rather than as two sources.
+
+            The raised FileSignature mark that sat on the right has gone with
+            it. It had the full affordance of a button — accent ink, a ring, a
+            shadow — and did nothing at all, which is how it came to be
+            reported as "some kind of blue file with pencil icon that I'm not
+            sure what the function of it is". A decoration that reads as a
+            control is worse than no decoration. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {renderStatusBadge(agreement.status)}
+          {!envelopeBadgeIsRedundant(
+            STATUS_CONFIG[agreement.status]?.label ?? agreement.status,
+            docuSignStatusLabel(agreement.docusign_status),
+          ) && <DocuSignStatusBadge status={agreement.docusign_status} />}
         </div>
       </div>
     );

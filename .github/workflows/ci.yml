@@ -281,6 +281,12 @@ jobs:
       - name: Status ink matches the fill it sits on
         run: node scripts/security/check-status-ink-contrast.mjs
 
+      # A private bucket refuses the anon browser client, and Supabase Storage
+      # reports that refusal as "Object not found" — indistinguishable from a
+      # document that was never produced. Signing belongs to the server.
+      - name: Signed storage URLs are minted by the server
+        run: node scripts/security/check-browser-signed-urls.mjs
+
       - name: Build
         run: npm run build
 

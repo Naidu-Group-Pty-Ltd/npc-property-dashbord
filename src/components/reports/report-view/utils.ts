@@ -154,7 +154,12 @@ export interface CardInvestmentGrade {
  *   from rather than implying this document was graded.
  */
 export function resolveCardInvestmentGrade(
-  report: GradeReport & Pick<InvestmentReport, 'report_scope'>,
+  // `report_scope` is declared inline rather than Pick'd from
+  // `InvestmentReport`, which has never carried that field — the card reads it
+  // off a row whose shape is wider than this module's type. `Pick` of an
+  // absent key is a type error, and it reached main because CI builds with
+  // vite (which transpiles without checking types) and runs no `tsc` step.
+  report: GradeReport & { report_scope?: string | null },
   siblings?: readonly GradeReport[] | null,
 ): CardInvestmentGrade {
   const pool = siblings && siblings.length > 0 ? siblings : [report];
