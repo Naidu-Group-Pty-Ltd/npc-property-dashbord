@@ -49,6 +49,19 @@ const STATUS_TONE: Record<string, { tone: string; icon: any; label: string }> = 
   autoresponded: { tone: 'border-brand-300/55 bg-brand-500/14 text-brand-900 dark:border-brand-200/35 dark:bg-brand-300/14 dark:text-brand-100', icon: AlertTriangle, label: 'Bounced' },
 };
 
+/**
+ * The label this badge would draw for a status, without drawing it.
+ *
+ * Exported so the agreements ledger can ask whether the envelope badge would
+ * merely repeat the agreement's own — see `envelopeBadgeIsRedundant`. The
+ * comparison has to be on the label rather than the code, and the label lives
+ * here, so this is the one place that knows it.
+ */
+export function docuSignStatusLabel(status?: string | null): string | null {
+  if (!status) return null;
+  return STATUS_TONE[status.toLowerCase()]?.label ?? status;
+}
+
 export function DocuSignStatusBadge({ status }: { status?: string | null }) {
   if (!status) return null;
   const key = status.toLowerCase();
