@@ -23,7 +23,7 @@ import { resolve } from 'node:path';
 import { render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PremiumPdfDesignPanel } from '../PremiumPdfDesignPanel';
-import { PREMIUM_PDF_DESIGN_CONTROLS_VISIBLE } from '../premiumPdfDesignVisibility';
+import { REPORT_DESIGN_CONTROLS_VISIBLE } from '@/lib/reports/designControlsVisibility';
 import { DEFAULT_PDF_DESIGN_OPTIONS } from '../premiumPdfDesign';
 
 // The export panel's siblings reach for the network and the session; this
@@ -48,7 +48,7 @@ const EXPORT_PANEL = 'src/components/reports/report-view/InvestmentReportExportP
 
 describe('the premium-PDF design controls are hidden', () => {
   it('one switch decides it, and it is off', () => {
-    expect(PREMIUM_PDF_DESIGN_CONTROLS_VISIBLE).toBe(false);
+    expect(REPORT_DESIGN_CONTROLS_VISIBLE).toBe(false);
   });
 
   it('the panel renders nothing at all', () => {
@@ -73,15 +73,15 @@ describe('the premium-PDF design controls are hidden', () => {
 
   it('the panel refuses in its own body, so any mount inherits the decision', () => {
     const source = read('src/components/reports/PremiumPdfDesignPanel.tsx');
-    expect(source).toContain('PREMIUM_PDF_DESIGN_CONTROLS_VISIBLE');
-    expect(source).toMatch(/if \(!PREMIUM_PDF_DESIGN_CONTROLS_VISIBLE\) return null;/);
+    expect(source).toContain('REPORT_DESIGN_CONTROLS_VISIBLE');
+    expect(source).toMatch(/if \(!REPORT_DESIGN_CONTROLS_VISIBLE\) return null;/);
   });
 
   it('the export panel guards the whole Design section, not just the panel', () => {
     const source = read(EXPORT_PANEL);
     // The guard must open before the heading and the Reset button, or the
     // screen keeps a bordered box titled "Design" with nothing inside it.
-    const guardAt = source.indexOf('PREMIUM_PDF_DESIGN_CONTROLS_VISIBLE &&');
+    const guardAt = source.indexOf('REPORT_DESIGN_CONTROLS_VISIBLE &&');
     const headingAt = source.indexOf('Paintbrush className="h-3.5 w-3.5" />Design');
     const resetAt = source.indexOf('Tune premium PDF presentation settings.');
     const mountAt = source.indexOf('<PremiumPdfDesignPanel');
@@ -132,5 +132,55 @@ describe('the premium-PDF design controls are hidden', () => {
     // And the page still holds them at the defaults.
     const page = read('src/pages/InvestmentReportView.tsx');
     expect(page).toContain('useState<PdfDesignOptions>(DEFAULT_PDF_DESIGN_OPTIONS)');
+  });
+});
+
+describe('the brand design system surfaces are hidden too', () => {
+  const CONVERTER = 'src/pages/admin/TemplateConverter.tsx';
+
+  it('the authoring dialog refuses in its own body', () => {
+    const source = read('src/components/templateBuilder/converter/BrandDesignSystemDialog.tsx');
+    expect(source).toMatch(/if \(!REPORT_DESIGN_CONTROLS_VISIBLE\) return null;/);
+  });
+
+  it('the converter offers neither door — the dialog nor the page it links to', () => {
+    const source = read(CONVERTER);
+    const guardAt = source.indexOf('REPORT_DESIGN_CONTROLS_VISIBLE && (');
+    expect(guardAt).toBeGreaterThan(-1);
+    // Both doors sit after the guard opens.
+    expect(source.indexOf('New design system')).toBeGreaterThan(guardAt);
+    expect(source.indexOf('Manage brand systems')).toBeGreaterThan(guardAt);
+    // And the dialog itself is not even mounted.
+    expect(source.indexOf('<BrandDesignSystemDialog')).toBeGreaterThan(guardAt);
+  });
+
+  it('but the converter can still CONVERT — selecting a saved system is untouched', () => {
+    const source = read(CONVERTER);
+    // The picker, the list it reads and the id sent to the conversion all sit
+    // outside the guard. Hiding the authoring of a design must never take away
+    // the ability to render one.
+    const guardAt = source.indexOf('REPORT_DESIGN_CONTROLS_VISIBLE && (');
+    expect(source.indexOf("<Label htmlFor=\"converter-system\">Design system</Label>")).toBeLessThan(guardAt);
+    expect(source).toContain('listDesignSystems');
+    expect(source).toContain('designSystemId,');
+  });
+
+  it('no navigation surface draws a door to the Brand systems page', () => {
+    const registry = read('src/lib/navigation/registry.ts');
+    const guardAt = registry.indexOf('REPORT_DESIGN_CONTROLS_VISIBLE');
+    const entryAt = registry.indexOf("title: 'Brand systems'");
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(entryAt).toBeGreaterThan(guardAt);
+  });
+
+  it('the page keeps its route and explains itself rather than 404-ing', () => {
+    const page = read('src/pages/admin/BrandSystems.tsx');
+    expect(page).toMatch(/if \(!REPORT_DESIGN_CONTROLS_VISIBLE\) \{/);
+    expect(page).toContain('turned off at the moment');
+    // Hiding is never deleting: the route stays declared.
+    expect(read('src/App.tsx')).toContain('admin/template-builder/brand-systems');
+    // Every hook runs above the early return, or React throws on the second render.
+    const guardAt = page.indexOf('if (!REPORT_DESIGN_CONTROLS_VISIBLE) {');
+    expect(page.slice(guardAt)).not.toMatch(/\bconst \[[^\]]+\] = useState|useMemo\(|useQuery\(|useEffect\(/);
   });
 });

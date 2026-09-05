@@ -14,7 +14,7 @@ import {
   type PdfDesignPreset,
   type PdfTableStyle,
 } from "./premiumPdfDesign";
-import { PREMIUM_PDF_DESIGN_CONTROLS_VISIBLE } from "./premiumPdfDesignVisibility";
+import { REPORT_DESIGN_CONTROLS_VISIBLE } from "@/lib/reports/designControlsVisibility";
 
 interface PremiumPdfDesignPanelProps {
   value: PdfDesignOptions;
@@ -31,10 +31,10 @@ const presetSwatches: Record<PdfDesignPreset, string> = {
 export function PremiumPdfDesignPanel({ value, onChange }: PremiumPdfDesignPanelProps) {
   const patch = (next: Partial<PdfDesignOptions>) => onChange({ ...value, ...next });
 
-  // The design factor is hidden product-wide (premiumPdfDesignVisibility.ts).
+  // The design factor is hidden product-wide (designControlsVisibility.ts).
   // The refusal lives in the component rather than at its call sites so that a
   // future mount inherits the decision instead of reopening it.
-  if (!PREMIUM_PDF_DESIGN_CONTROLS_VISIBLE) return null;
+  if (!REPORT_DESIGN_CONTROLS_VISIBLE) return null;
 
   return (
     <div className="w-full rounded-md border border-border bg-card p-4 shadow-sm">
