@@ -231,6 +231,18 @@ import {
  * the same answer when it is next asked — and nothing requeues the settled
  * ones for this bump alone.
  *
+ * 18 IS 17 FOR THE ATTEMPTS THE ORPHAN SPENT. The v17 budget did its job for
+ * three of the five — 810 and 801 elected the house, 324 re-proved its own
+ * picture — and was consumed whole on the two whose brochures carry one
+ * truncated object stream each: `pump` left a rejected promise unhandled on
+ * exactly that input, the isolate died with no catchable throw and no error
+ * written, and four fresh attempts per branch were spent proving nothing
+ * about the documents. The orphan is fixed in `rasterPng.ts` (the same
+ * document elects its cover in under five seconds through the fixed path),
+ * so the count starts again for a worker that can finally survive the
+ * question. Nothing else changes and nothing requeues for this bump alone —
+ * the two affected properties are requeued by hand after deploy.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.
