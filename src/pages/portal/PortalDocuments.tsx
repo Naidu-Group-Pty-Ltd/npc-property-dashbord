@@ -16,6 +16,7 @@ import {
 import { format } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { stageUploadFiles } from '@/lib/uploads/stageUploadFiles.pure';
 import { useDropzone } from 'react-dropzone';
 import { useQueryClient } from '@tanstack/react-query';
 import { PortalEmptyState } from '@/components/portal/PortalEmptyState';
@@ -32,7 +33,6 @@ import {
   getOverallUploadProgress,
   getPersistedUploadMode,
   getRejectedFilesMessage,
-  mergeFilesWithLimit,
   persistUploadMode,
   runTasksByMode,
   type UploadProcessingMode,
@@ -145,23 +145,22 @@ export default function PortalDocuments() {
 
     if (!acceptedFiles.length) return;
 
-    setUploadFiles((prev) => {
-      const nextFiles = mergeFilesWithLimit(prev, acceptedFiles, MAX_DOCUMENT_UPLOAD_FILES);
-      if (prev.length + acceptedFiles.length > MAX_DOCUMENT_UPLOAD_FILES) {
-        toast.error(`You can upload up to ${MAX_DOCUMENT_UPLOAD_FILES} files at once.`);
-      }
-      if (calculateTotalUploadSize(nextFiles) > MAX_DOCUMENT_BATCH_BYTES) {
-        toast.error('Selected files exceed the batch size limit.', {
-          description: `Keep the total under ${formatUploadBytes(MAX_DOCUMENT_BATCH_BYTES)}.`,
-        });
-        return prev;
-      }
-      return nextFiles;
+    // The same staging rule the client Files tray and the finance vault use:
+    // add rather than replace, refuse a file already staged, and name what a
+    // cap excluded instead of dropping it with a `slice`.
+    const staged = stageUploadFiles(uploadFiles, acceptedFiles, {
+      maxFiles: MAX_DOCUMENT_UPLOAD_FILES,
+      maxTotalBytes: MAX_DOCUMENT_BATCH_BYTES,
+      formatBytes: formatUploadBytes,
     });
+    setUploadFiles(staged.files);
+    for (const notice of staged.notices) toast.warning(notice);
 
-    setUploadFailures([]);
-    setUploadSuccess(false);
-  }, []);
+    if (staged.added.length) {
+      setUploadFailures([]);
+      setUploadSuccess(false);
+    }
+  }, [uploadFiles]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,

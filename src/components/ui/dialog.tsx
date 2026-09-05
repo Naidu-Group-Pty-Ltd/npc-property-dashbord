@@ -81,6 +81,45 @@ export function declaresOwnWidth(className?: string): boolean {
   return /(?:^|\s)max-w-/.test(className);
 }
 
+/**
+ * Does this call site state how tall it may be?
+ *
+ * The same trap as `declaresOwnWidth`, on `max-height`. The default treatment
+ * sets `sm:max-h-[85dvh]`; a caller writing `max-h-[90vh]` is writing an
+ * unprefixed utility, so both survive the merge and the responsive one wins
+ * from 640px up. **110** call sites are in that state.
+ */
+export function declaresOwnMaxHeight(className?: string): boolean {
+  if (!className) return false;
+  return /(?:^|\s)max-h-/.test(className);
+}
+
+/**
+ * Does this call site state what happens to content that does not fit?
+ *
+ * This is the trap's third instance and the one that is actually *visible*:
+ * the default treatment sets `sm:overflow-visible`, so a caller writing
+ * `overflow-y-auto` gets it below 640px and loses it above — and a dialog
+ * whose content exceeds `max-h` then paints straight out through its own
+ * bottom border, with no scrollbar on either axis and no way to reach what
+ * spilled. The audit reported it as "the publish report window has a content
+ * overflow at the bottom"; **99** call sites state an overflow they do not
+ * get.
+ *
+ * `overflow-hidden` counts, and honouring it is the point rather than a side
+ * effect: every one of those call sites pairs it with an inner scroller (a
+ * `ScrollArea`, a bounded `overflow-auto` child, a `flex-col` with a
+ * `min-h-0` body), which is a shape that only works if the shell clips.
+ *
+ * Only an UNPREFIXED `overflow-*` counts, for the same reason as width: a
+ * caller writing `sm:overflow-hidden` alone conflicts with the default on the
+ * same modifier, so the merge already resolves it correctly.
+ */
+export function declaresOwnOverflow(className?: string): boolean {
+  if (!className) return false;
+  return /(?:^|\s)overflow-(?:x-|y-)?(?:auto|scroll|hidden|clip|visible)(?:\s|$)/.test(className);
+}
+
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
@@ -99,10 +138,14 @@ const DialogContent = React.forwardRef<
           "grid gap-4",
           "inset-x-0 bottom-0 top-auto w-full max-w-none rounded-t-2xl border-x-0 border-b-0 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[92dvh] overflow-y-auto",
           "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
-          "sm:inset-auto sm:left-[50%] sm:top-[50%] sm:bottom-auto sm:translate-x-[-50%] sm:translate-y-[-50%] sm:w-full sm:rounded-lg sm:border sm:p-6 sm:max-h-[85dvh] sm:overflow-visible sm:pb-6",
-          // The default width is withheld when the caller states its own —
-          // see `declaresOwnWidth`. 135 dialogs asked for one and never got it.
+          "sm:inset-auto sm:left-[50%] sm:top-[50%] sm:bottom-auto sm:translate-x-[-50%] sm:translate-y-[-50%] sm:w-full sm:rounded-lg sm:border sm:p-6 sm:pb-6",
+          // Each default is withheld when the caller states its own — see
+          // `declaresOwnWidth`, `declaresOwnMaxHeight` and
+          // `declaresOwnOverflow`. 135 dialogs asked for a width, 110 for a
+          // height and 99 for an overflow, and none of the three arrived.
           !declaresOwnWidth(className) && "sm:max-w-lg",
+          !declaresOwnMaxHeight(className) && "sm:max-h-[85dvh]",
+          !declaresOwnOverflow(className) && "sm:overflow-visible",
           "sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%] sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%]",
         ],
         className
