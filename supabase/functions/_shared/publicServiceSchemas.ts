@@ -83,6 +83,18 @@ export const PublicTransportRequest = z.object({
 }).strict();
 
 /**
+ * `crime-statistics-service` — the locality, plus the LGA where the state's
+ * register is LGA-keyed (QLD): the generator passes the cadastre's own
+ * shire name once planning data has resolved it.
+ */
+export const CrimeStatisticsRequest = z.object({
+  suburb: optionalField(localityField),
+  state: stateField,
+  postcode: optionalField(postcodeField),
+  lga: optionalField(localityField),
+}).strict();
+
+/**
  * `planning-data-service` — the coordinate is the question; the locality
  * fields only order which jurisdiction's layers are preferred when two
  * boundary polygons both claim a point.

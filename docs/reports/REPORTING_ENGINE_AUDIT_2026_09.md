@@ -2285,3 +2285,45 @@ code; deno check clean; column gate, verify-jwt gate (427/427) and the
 deterministic inventory regenerated in order. The `planning_data_cache`
 migration is applied in production; the service and rewired generator ship
 on merge.
+
+## §28 — Recorded crime arrives: BOCSAR and QPS by the platform's own geography (2026-09-06)
+
+Q1 of the confirmed build queue. The §24 crime fabricator (postcode bands
+inventing counts, a `safetyScore`, "22% higher than state average") is
+replaced by two loaded registers, production-verified byte-identical to
+their sources:
+
+- **NSW — BOCSAR recorded criminal incidents by month by POSTCODE**: 622
+  postcodes × 21 offence categories, Jan 1995 → Dec 2025, quarterly
+  releases. Postcode-keyed — the same geography as everything else.
+- **QLD — QPS reported offences by LGA**: 78 LGAs × 92 offence columns,
+  Jan 2001 → **Jul 2026**, monthly releases. The LGA arrives from the
+  planning cadastre's own shire name (§27) and matches the register by
+  the same normalised-token rule the DA lookup uses.
+
+Three measured quirks carry the load: QPS's stray apostrophe in
+`Common Assault'` (the file's own header, transcribed exactly); an
+unnamed 95th cell on every QPS row that is a running row counter,
+validated and discarded; and a column set that MIXES rollups with details
+— the hierarchy was measured (400/400 rows per identity), the ingest
+re-checks it per load, and the reading presents one level at a time so
+nothing double-counts.
+
+The reading is counts and their arithmetic: 12-month totals against the
+prior window, six complete calendar years, and a per-100k rate **whose
+denominator is named** — the NSW benchmark divides by the 2021 Census
+population of exactly the file's own 622 postcodes (all 622 matched):
+617,838 recorded offences ≈ 7,598/100k. QLD offers state count-change
+context and no rate, because no LGA population source is integrated yet.
+No score, rating or adjective — a spec bans the fabricated vocabulary
+from the reading, the service and the prompt block, and both fabrication-
+shaped prompt templates (`overallRating || 'Medium'`, `Safety Score
+XX/100`) are replaced by the composed block.
+
+Two lessons were paid for on the first production load and are recorded
+in `CRIME_SOURCES.md`: a whole-table bootstrap seals after stage one (the
+arm is per state now), and a 60 MB inflated string exceeds the edge
+worker (the NSW stage streams the zip's single deflate entry located from
+the central directory — verified byte-identical to the whole-string parse
+before deploying). Other states answer `no_data_for_location` naming
+their real register; VIC's CSA refuses scripted clients, the DFAT class.

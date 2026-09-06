@@ -1,36 +1,41 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { internalError } from '../_shared/errorResponse.ts';
 import { parseJsonBody } from '../_shared/validate.ts';
-import { LocalityRequest, PUBLIC_SERVICE_MAX_BODY_BYTES } from '../_shared/publicServiceSchemas.ts';
-import { sourceUnavailable } from '../_shared/sourceUnavailable.pure.ts';
+import { CrimeStatisticsRequest, PUBLIC_SERVICE_MAX_BODY_BYTES } from '../_shared/publicServiceSchemas.ts';
+import { sourceUnavailable, type SourceUnavailableReason } from '../_shared/sourceUnavailable.pure.ts';
+import { normaliseAuState } from '../_shared/auGeoSanity.pure.ts';
+import { normaliseCouncilTokens } from '../_shared/planning/developmentActivity.pure.ts';
+import type { CrimeSeriesRow } from '../_shared/crimeIngest.pure.ts';
+import {
+  nswCrimeReading, qldCrimeReading, stateContextFrom,
+} from '../_shared/crimeReading.pure.ts';
 
 /**
- * Crime statistics — honestly: no real source is integrated yet.
+ * Recorded crime statistics — from the police services' own published
+ * registers, loaded into `crime_reference` by `crime-data-ingest`.
  *
- * What this service used to do: `getCrimeProfile` sorted every postcode in
- * Australia into a handful of bands (a literal list of CBD postcodes, then
- * everything else) and from the band invented **counts of offences** — so a
- * client's report carried "Break and Enter: N incidents", "22% higher than
- * state average", a "safetyScore" and a trend narrative, none of which any
- * police service ever published. Its per-state "fetchers" did call the open
- * data catalogues (data.nsw, CSA, QPS…), then discarded whatever came back
- * at a `// TODO` and fell through to the invention. Results were cached for
- * **90 days** (`crime_statistics_cache` held **140 rows at removal; not one
- * live**) and each request logged a `success` to `api_health_log`.
+ * The fabricated predecessor is recorded in git history (§24): a postcode
+ * band scheme that invented offence counts, a `safetyScore` and "22% higher
+ * than state average", cached 90 days and served as a hit. The replacement
+ * serves COUNTS and their arithmetic, from:
  *
- * An invented crime figure is worse than most of this class: it defames a
- * suburb or falsely reassures a buyer, in a document a client pays for.
+ *  - **NSW** — BOCSAR's recorded criminal incidents by month by POSTCODE
+ *    (the request's own geography), all 21 offence categories, with a
+ *    per-100k rate whose denominator is named (2021 Census usual residents
+ *    of the postal area) and the state benchmark computed at ingest over
+ *    the file's own postcodes.
+ *  - **QLD** — QPS's reported offences by LOCAL GOVERNMENT AREA. The LGA
+ *    arrives from the caller (the generator passes the cadastre's own
+ *    shire name once planning resolved it) and is matched to the register's
+ *    naming by the same normalised-token rule the DA lookup uses — refusal
+ *    over guessing, `Canterbury-Bankstown` can never match `Bankstown`.
  *
- * The rule: **a source that cannot answer says so.** Both report pipelines
- * attach crime data only on `success && data`, so this envelope makes the
- * section absent instead of invented.
- *
- * Real acquisition, when built: BOCSAR (NSW) publishes LGA/suburb offence
- * tables; the Crime Statistics Agency (VIC), QPS (QLD), SAPOL, WAPOL and
- * the territories publish equivalents — each a downloadable table with its
- * own reference period, loaded and read locally per the pattern in
- * `abs-data-service/index.ts`'s header. Coverage varies by state and must
- * be disclosed per source, never averaged across them.
+ * Any other state answers `no_data_for_location` naming its real register
+ * (VIC's CSA refuses scripted clients — the DFAT class — and the rest are
+ * unprobed), because a state without a loaded register has no figures, not
+ * borrowed ones. No score, no rating, no adjective: a test bans the old
+ * vocabulary from ever returning.
  */
 
 const corsHeaders = {
@@ -38,6 +43,12 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+const unavailable = (reason: SourceUnavailableReason, message: string) =>
+  json(sourceUnavailable('crime-statistics', reason, message));
 
 Deno.serve(async (req) => {
   console.log('Crime Statistics service invoked');
@@ -47,39 +58,113 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // WP-24: bounded and shape-checked. This endpoint takes no session,
-    // so a bare req.json() read whatever was sent.
-    const __parsed = await parseJsonBody(req, LocalityRequest, corsHeaders, PUBLIC_SERVICE_MAX_BODY_BYTES);
+    const __parsed = await parseJsonBody(req, CrimeStatisticsRequest, corsHeaders, PUBLIC_SERVICE_MAX_BODY_BYTES);
     if (!__parsed.ok) return __parsed.response;
-    const { suburb, state, postcode } = __parsed.data;
-    console.log('Crime statistics requested for:', suburb, state, postcode);
+    const { suburb, state, postcode, lga } = __parsed.data;
+    console.log('Crime statistics requested for:', { suburb, state, postcode, lga });
 
-    if (!suburb || !state) {
-      return new Response(JSON.stringify({
-        success: false,
-        error: 'Suburb and state are required'
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    const stateCode = normaliseAuState(state);
+    if (!stateCode) {
+      return json({ success: false, error: 'Unrecognised state' }, 400);
     }
 
-    return new Response(JSON.stringify(sourceUnavailable(
-      'crime-statistics',
-      'source_not_integrated',
-      'No state crime data source is integrated for this deployment — crime figures are unavailable rather than estimated from postcode patterns. Official sources: BOCSAR (NSW), CSA (VIC), QPS (QLD) and state police equivalents.',
-    )), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const rowsFor = async (st: 'NSW' | 'QLD', kind: string, area?: string) => {
+      let q = supabase.from('crime_reference')
+        .select('area, offence, months12, prior12, year_totals, latest_month, series_from, source')
+        .eq('state', st).eq('area_kind', kind);
+      if (area) q = q.eq('area', area);
+      const { data, error } = await q;
+      if (error) throw new Error(`crime_reference read failed: ${error.message}`);
+      return (data ?? []).map((r) => ({
+        area: r.area,
+        offence: r.offence,
+        months12: r.months12,
+        prior12: r.prior12,
+        yearTotals: r.year_totals as Record<string, number>,
+        latestMonth: r.latest_month,
+        seriesFrom: r.series_from,
+        source: r.source as string,
+      }));
+    };
 
-  } catch (error: any) {
+    if (stateCode === 'NSW') {
+      const poa = String(postcode ?? '').trim();
+      if (!/^\d{4}$/.test(poa)) {
+        return unavailable('no_data_for_location',
+          'The NSW register is postcode-keyed and no four-digit postcode was supplied — crime figures are unavailable rather than approximated.');
+      }
+      const rows = await rowsFor('NSW', 'postcode', poa);
+      if (rows.length === 0) {
+        return unavailable('no_data_for_location',
+          `The BOCSAR postcode dataset holds no rows for ${poa} — recorded-crime figures are unavailable for this postal area rather than borrowed from a neighbour.`);
+      }
+      const stateRows = await rowsFor('NSW', 'state_total');
+      const [{ data: poaRow }, { data: bench }] = await Promise.all([
+        supabase.from('abs_census_poa').select('population').eq('poa', poa).maybeSingle(),
+        supabase.from('crime_state_benchmarks').select('total12, population, rate_per_100k, denominator').eq('state', 'NSW').maybeSingle(),
+      ]);
+      const reading = nswCrimeReading(
+        rows as CrimeSeriesRow[],
+        poa,
+        rows[0].source,
+        {
+          area: poaRow?.population ?? null,
+          state: (bench?.population as number | null) ?? null,
+          vintage: '2021 Census usual residents (POA); the state rate uses ' +
+            ((bench?.denominator as string | null) ?? 'no stated denominator'),
+        },
+        (bench?.total12 as number | null) ?? null,
+        stateContextFrom(stateRows as CrimeSeriesRow[], 'NSW'),
+      );
+      if (!reading) {
+        return unavailable('no_data_for_location', `No composable crime reading for postcode ${poa}.`);
+      }
+      return json({ success: true, data: reading });
+    }
+
+    if (stateCode === 'QLD') {
+      const wanted = String(lga ?? '').trim();
+      if (wanted === '') {
+        return unavailable('no_data_for_location',
+          'The QLD register is keyed by local government area and none was supplied — figures are unavailable rather than guessed from a suburb name. The generator passes the cadastre’s shire name once planning data has resolved it.');
+      }
+      // One indexed lookup on the token written at ingest — the register is
+      // 7,176 LGA rows, and fetching them all to match in code is how the
+      // PostgREST max-rows cap silently truncates (the §25 lesson).
+      const want = normaliseCouncilTokens(wanted);
+      const { data: matched, error: matchError } = await supabase
+        .from('crime_reference')
+        .select('area, offence, months12, prior12, year_totals, latest_month, series_from, source')
+        .eq('state', 'QLD').eq('area_kind', 'lga').eq('area_token', want);
+      if (matchError) throw new Error(`crime_reference read failed: ${matchError.message}`);
+      const rows = (matched ?? []).map((r) => ({
+        area: r.area, offence: r.offence, months12: r.months12, prior12: r.prior12,
+        yearTotals: r.year_totals as Record<string, number>,
+        latestMonth: r.latest_month, seriesFrom: r.series_from, source: r.source as string,
+      }));
+      const areas = [...new Set(rows.map((r) => r.area))];
+      if (areas.length !== 1) {
+        return unavailable('no_data_for_location',
+          `The QPS register names no single local government area matching "${wanted}" (${areas.length} candidates) — refusing rather than reporting another council's offences.`);
+      }
+      const stateRows = await rowsFor('QLD', 'state_total');
+      const reading = qldCrimeReading(
+        rows as CrimeSeriesRow[],
+        areas[0],
+        rows[0].source,
+        stateContextFrom(stateRows as CrimeSeriesRow[], 'QLD'),
+      );
+      if (!reading) {
+        return unavailable('no_data_for_location', `No composable crime reading for ${areas[0]}.`);
+      }
+      return json({ success: true, data: reading });
+    }
+
+    return unavailable('no_data_for_location',
+      `No recorded-crime register is loaded for ${stateCode}. NSW (BOCSAR) and QLD (QPS) are integrated; VIC's Crime Statistics Agency refuses scripted clients and the remaining states' registers are not yet verified — figures for ${stateCode} are unavailable rather than estimated.`);
+  } catch (error: unknown) {
     console.error('Error in Crime Statistics service:', error);
-    return new Response(JSON.stringify({
-      ...internalError(error, 'crime-statistics-service'),
-      success: false,
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return json({ ...internalError(error, 'crime-statistics-service'), success: false }, 500);
   }
 });
