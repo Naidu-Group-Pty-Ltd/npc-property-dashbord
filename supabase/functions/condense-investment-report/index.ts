@@ -2,6 +2,7 @@ import { buildRecordedFactsBlock } from '../_shared/reports/investment/condenseF
 import { composeFinancialChapters } from '../_shared/reports/investment/financialChapters.pure.ts';
 import { composeScoreBreakdownSection, composeSwotSection } from '../_shared/reports/investment/scoreSections.pure.ts';
 import { stripPlaceholderRows, trimToDeclaredSections } from '../_shared/reports/investment/derivedHygiene.pure.ts';
+import { authoredHeadingsForTier, markdownHeadingsForTier } from '../_shared/reports/investment/sectionRegistry.pure.ts';
 import { stripEditorialLabelsFromMarkdown } from '../_shared/compassPostProcessor.ts';
 import { projectInvestmentReport, type InvestmentReportRowLike } from '../_shared/reportBindingProjection.pure.ts';
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
@@ -29,22 +30,21 @@ const corsHeaders = {
 // now COMPOSED from the row's own record after the model call
 // (financialChapters / scoreSections), so the model is asked only for what
 // the parent's prose can actually give: the condensed location case.
+//
+// Each tier used to carry a `sections` array and a `contentRatio` here. Both
+// were read by NOTHING — only `name`, `targetPages` and `structureGuide` are —
+// and the snapshot's copy was wrong, naming `Top Opportunities & Risks` and
+// `Recommendation` where the guide below it asks for `Top 3 Opportunities`,
+// `Top 3 Risks` and `Quick Recommendation`, and omitting two headings the guide
+// does ask for. Six declared entries against nine real ones, in one object
+// literal, with nothing to notice. A structure a reader trusts and no code
+// consults is worse than none, so the list now comes from
+// `sectionRegistry.pure.ts` — where it is read, and where a spec resolves every
+// entry against the thing that produces it.
 const TIER_CONFIG = {
   briefing: {
     name: 'Executive Briefing',
     targetPages: 12,
-    contentRatio: 0.4, // 40% of original content
-    sections: [
-      'Executive Summary',
-      'Location & Demand',
-      'Amenity & Access',
-      'Market Position',
-      'Property Fit',
-      'Risk Overview',
-      'Top 3 Opportunities',
-      'Top 3 Risks',
-      'Recommendation',
-    ],
     structureGuide: `
 EXECUTIVE BRIEFING STRUCTURE (~7 pages of prose — financial tables, the
 score breakdown and the SWOT are attached programmatically from the recorded
@@ -87,6 +87,12 @@ calculation AFTER your output; do NOT write them yourself):
 - The parent's final recommendation condensed to its verdict line and
   150 words of rationale, then the immediate actions as a short list.
 
+## Market Data Sources
+- The sources the parent actually cites, with the date each was read.
+- Never invent a source, and never write "N/A" for one you do not have. If
+  the parent cites none, say so in one line — a client is entitled to know
+  what the document rests on, which is why this section is never omitted.
+
 HARD RULES:
 - Do NOT write any financial table (costs, yield, loan, cashflow,
   sensitivity, projections, LVR) — they are attached from the recorded
@@ -96,20 +102,14 @@ HARD RULES:
 - Include a metric ONLY when its value is stated in the report or the
   recorded figures; NEVER write "N/A", "TBD" or a placeholder — omit the
   row, or the table, entirely.
+
+WRITE ONLY THE SECTIONS ABOVE. Do NOT copy the original report's own section
+headings after them — anything outside this structure is discarded.
 `
   },
   snapshot: {
     name: 'Snapshot',
     targetPages: 5,
-    contentRatio: 0.15, // 15% of original content
-    sections: [
-      'Property Summary',
-      'Key Market Stats',
-      'Investment Score',
-      'Financial Snapshot',
-      'Top Opportunities & Risks',
-      'Recommendation'
-    ],
     structureGuide: `
 REPORT STRUCTURE (~5 PAGES):
 
@@ -156,20 +156,6 @@ headings after them — anything outside this structure is discarded.
   financial: {
     name: 'Financial Analysis Report',
     targetPages: 20,
-    contentRatio: 0.35,
-    sections: [
-      'Property & Purchase Snapshot',
-      'Purchase & Acquisition Costs',
-      'Annual Holding Costs',
-      'Rental Income & Yield Analysis',
-      'Loan Structure & Serviceability (LVR, LMI, P&I vs IO)',
-      'Year-1 Cashflow Summary',
-      'Sensitivity Analysis (interest rate, rent, vacancy)',
-      '10-Year Projections (value, rent, cashflow, equity)',
-      'Tax Position & Depreciation',
-      'Equity & Exit Scenarios',
-      'Financial Assumptions & Data Sources',
-    ],
     structureGuide: `
 FINANCIAL ANALYSIS REPORT STRUCTURE (~20 PAGES):
 This report contains ONLY financial / numerical analysis. Do NOT include
@@ -645,15 +631,47 @@ IMPORTANT:
         hygiene.composed_sections = composed.length;
       }
 
-      if (targetTier === 'snapshot') {
-        const declared = [
-          'Property Summary', 'Key Market Stats', 'Investment Score', 'Score Breakdown',
-          'Financial Snapshot', 'Top 3 Opportunities', 'Top 3 Risks', 'Quick Recommendation',
-          'Market Data Sources',
-        ];
+      // Trim to what the tier declares — on BOTH condensed tiers now.
+      //
+      // The snapshot's list used to be typed out here, a ninth copy of the
+      // structure; it comes from the registry, which declares exactly the same
+      // nine headings in the same order, so this half is a no-op.
+      //
+      // The briefing is the change. It had no trim at all, and every one of the
+      // 21 briefings in production carries the PARENT's structure rather than
+      // its own: `Location Overview` on 20, `Historical Price Growth Table` on
+      // 19, `Major Industries & Job Growth` on 19 — while six of its nine
+      // declared headings (`Location & Demand`, `Amenity & Access`, `Market
+      // Position`, `Property Fit`, `Risk Overview`, `Recommendation`) appear on
+      // NONE. Phase 1 re-cut the guide and shipped no enforcement, so the guide
+      // was aspirational; the snapshot got both halves and the briefing got one.
+      //
+      // The trim runs after the composed chapters are appended because their
+      // headings are declared too — `markdownHeadingsForTier` returns the
+      // authored and composed sections together, which is the reason the list
+      // has to come from the registry rather than from either call site.
+      if (targetTier === 'briefing' || targetTier === 'snapshot') {
+        const declared = markdownHeadingsForTier(targetTier);
         const trimmed = trimToDeclaredSections(condensedContent, declared);
-        condensedContent = trimmed.markdown;
-        hygiene.sections_dropped = trimmed.dropped;
+        // A trim that keeps nothing the MODEL wrote is not a trim, it is a
+        // deletion: the briefing would go out as its composed financial tables
+        // with no case attached to them. The question has to be asked of the
+        // authored headings alone — the composed chapters are appended by us
+        // and always match, so "something survived" is satisfied by our own
+        // output and says nothing about whether the model followed the guide.
+        // In that state, keep the untrimmed text and record it: a stub is worse
+        // than a document with the wrong headings, and the count belongs in the
+        // log rather than in a client's hands.
+        const authored = authoredHeadingsForTier(targetTier).map((h) => h.toLowerCase());
+        const survivors = [...trimmed.markdown.matchAll(/^##\s+(.+?)\s*$/gm)]
+          .map((m) => m[1].toLowerCase().replace(/\s+/g, ' ').trim());
+        const keptAny = survivors.some((h) => authored.some((a) => h === a || h.startsWith(`${a} `)));
+        if (keptAny) {
+          condensedContent = trimmed.markdown;
+          hygiene.sections_dropped = trimmed.dropped;
+        } else {
+          hygiene.sections_trim_skipped = trimmed.dropped;
+        }
         const stripped = stripEditorialLabelsFromMarkdown(condensedContent);
         condensedContent = stripped.markdown;
         hygiene.editorial_blocks_removed = stripped.removedBlocks;

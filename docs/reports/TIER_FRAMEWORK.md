@@ -2,7 +2,8 @@
 
 Signed off 2026-09-05. This is the locked architecture for every reporting
 tier; the derivation audit that grounds it is
-`REPORTING_ENGINE_AUDIT_2026_09.md` (§19 records Phase 1's implementation).
+`REPORTING_ENGINE_AUDIT_2026_09.md` (§19 records Phase 1's implementation,
+§20 Phase 2's).
 
 **The doctrine in one sentence:** figures are typed from the record, prose is
 written about the record, structure is selected from one registry — and a tier
@@ -17,7 +18,7 @@ is a depth setting, not a different machine.
    tier, ever.
 3. **One registry is the constitution.** Structure is selected by section id,
    never by matching heading strings; a declared section with no producer
-   fails CI. (Phase 2 collapses the four competing structure definitions.)
+   fails CI. (Shipped — `_shared/reports/investment/sectionRegistry.pure.ts`.)
 4. **Derivation reads the record, not the sibling document.**
 5. **The template owns presentation and nothing else.** White-label changes
    tokens and page furniture; figures, sections and conclusions survive
@@ -47,9 +48,38 @@ Measured/Computed/Recorded values.
 
 The spine — mandatory in every tier: cover + report identity, verdict with
 score/grade/coverage, property identity table, key-figures strip, provenance
-+ disclaimer. The full section-by-tier depth matrix is in the signed-off
-framework document (artifact "One Record, Six Renderings") and becomes the
-registry module in Phase 2.
++ disclaimer.
+
+## The registry
+
+`supabase/functions/_shared/reports/investment/sectionRegistry.pure.ts` is the
+depth matrix as a module: 38 sections, each with its provenance class, the
+headings production has actually carried for it, and a placement per tier
+giving depth, order, label, surface and **producer**. Read its header before
+changing it. Four things it expresses that a list of headings cannot:
+
+- **A tier renames a section.** The label belongs to the placement, not the
+  section — one "purchase and holding costs" section is spelled three ways
+  across the generator, FIN and the briefings production holds.
+- **A tier merges sections.** The Compass draws one `Demand Drivers` where Due
+  Diligence draws four; `depth: 'merged'` with `mergedInto` says so. That fact
+  lived in a code comment, which is why the compass-40 engine shipped a report
+  carrying the *unmerged* v2.0 sections and nothing noticed.
+- **A section is not always markdown.** The cover, property identity table and
+  key-figures strip are drawn by the template from the binding projection.
+- **A declaration is not a producer.** Every `spine` and `required` placement
+  names what makes it — a composer, an authoring guide, a split-registry route,
+  or a projection namespace — and `sectionRegistry.spec.ts` resolves each one by
+  running it. Gaps are frozen in `PRODUCER_GAPS`, which can only shrink.
+
+Two rules bite. **Nothing routes on the registry yet** — Phase 3 assembles from
+it and deletes heading matching; Phase 2 makes the other definitions *checked
+against* it, so `reportSplitRegistry` and `compassSectionRegistry` can drift only
+by failing CI. And **a producer that resolves is not a section that appears**:
+the Due Diligence tier's routed producers are all correct and still put
+`Planning, Zoning and Title Due Diligence` on 1 of 11 documents, because routing
+depends on the *parent* carrying a matchable heading. That is law 4's problem
+and Phase 3's fix.
 
 ## Locked decisions
 
@@ -71,7 +101,10 @@ registry module in Phase 2.
    from the record; Briefing guide re-cut; placeholder scrub + label strip +
    snapshot trim on every derived output; DD scorer fixed; verdict sentence
    composed and guarded (template v12); engine + scope stamped on children.
-2. **One registry** — the tier matrix as a module, with a producibility test.
+2. **One registry** (§20 — shipped): the tier matrix as a module with a
+   producibility test; the six competing structure definitions subordinated to
+   it; the dead `TIER_CONFIG` section lists deleted; the Briefing trimmed to its
+   own structure and given the sources section its tier promises.
 3. **Sectioned record** — per-section storage + abstracts; assembly by id;
    heading-string matching deleted.
 4. **Tier formats** — Financial/Due Diligence/Briefing/Snapshot as first-class

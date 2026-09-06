@@ -1460,3 +1460,123 @@ scorer, sentence, source-scans of both functions, the v12 migration pair).
 Bridges keep the new pure modules inside the investment format's closed
 import set; `condenseFacts` now shares `figures.pure.ts` with the composer so
 one thousands-separator serves both.
+
+---
+
+## §20 — Phase 2: one registry, and what it found
+
+Law 3 of the tier framework: *one registry is the constitution — structure is
+selected by section id, never by matching heading strings, and a declared
+section with no producer fails CI.* Shipped as
+`_shared/reports/investment/sectionRegistry.pure.ts` plus
+`sectionRegistry.spec.ts`, measured against the 1,199-row corpus on 6 September
+2026.
+
+### There were six competing structure definitions, not four
+
+| # | Where | Shape | Read by |
+|---|---|---|---|
+| 1 | `generate-investment-report` `DEFAULT_REPORT_SECTIONS` (+3 scope variants) | 12 groups naming 26 H2s | the generator's prompt |
+| 2 | `compassSectionRegistry.ts` | 12 `compass.*` + 11 `financial.*` ids | post-processor, QA validator, generator |
+| 3 | `reportSplitRegistry.ts` | FIN 16 / PLDD 17, routed by heading substring | `fork-investment-report` |
+| 4 | `condense-investment-report` `TIER_CONFIG[*].sections` | briefing 9, snapshot 6, financial 11 | **nothing** |
+| 5 | the `structureGuide` prose in the same object | the headings a model is asked for | the model |
+| 6 | an inline array at the snapshot's trim call site | 9 headings | `trimToDeclaredSections` |
+
+Two more key on structure without declaring it: `PROSE_GROUPS`
+(`sections.pure.ts`) groups by section **number**, and `TITLED_SECTION_CHARTS`
+(`normalise.pure.ts`) attaches charts by title regex.
+
+### What the corpus said about the declarations
+
+**#4 was read by nothing, and the snapshot's copy was wrong.** Only `.name`,
+`.targetPages` and `.structureGuide` are ever read. The dead snapshot list named
+`Top Opportunities & Risks` and `Recommendation`; the guide beside it in the same
+object literal asks for `Top 3 Opportunities`, `Top 3 Risks` and `Quick
+Recommendation`, and for two more headings the dead list omits entirely. Six
+declared entries against nine real ones. `contentRatio` was likewise never read.
+
+**FIN declares 16 sections and two have never been produced.** Across all 11
+financial forks ever made: `10-Year Cashflow, Equity & Growth Projection` **0**,
+`Financial Investment Scorecard` **0**; ordinals 6, 10 and 13 appear on one
+report each; 4, 5, 8 and 14 on two. Meanwhile `Disclaimer` — which FIN does not
+declare — is on 11 of 11, because `renderVariantMarkdown` appends it
+unconditionally.
+
+**PLDD declares 17 and six consecutive ones appear on 1 of 11.** Ordinals 11–16
+— tenant demand, resale appeal, **planning/zoning/title**, infrastructure,
+environmental risk (2), supply pipeline — on the tier whose entire promise is due
+diligence. Nothing measured this, because a list of strings cannot be asked
+whether anything makes them.
+
+**The compass-40 engine produced three different structures in five runs.** Two
+rows carry exactly the 11 declared `includeInCompass` sections; two carry a v2.0
+set of 17–18; one carries a hybrid with the **unmerged** v2.0 sections
+(`Population & Housing Demand`, `Tenant & Buyer Profile`, `Employment & Economic
+Linkages`, `Education & Family Amenity`, `Retail, Healthcare & Lifestyle
+Amenity`, `Transport & Connectivity`) plus `Cover Page` and `Client Reading
+Guide`, both of which the registry marks `includeInCompass: false`. The v3.0
+merges existed only as a code comment.
+
+**`PROSE_GROUPS` keys on numbers no recent report has.** Compass primary reports
+in the last 90 days: 29, **0 numbered**. Older: 1,098, of which 144 (13.1%) are.
+
+### The registry
+
+38 sections, each carrying its provenance class, the headings production has
+actually carried for it, and a placement per tier: depth, order, label, surface
+and producer. It is the **union** of what every tier draws, because the tiers
+disagree about granularity — Due Diligence splits demand across four headings and
+risk across two where the Compass draws one of each — and a registry with only
+the coarse ids cannot emit PLDD's list while one with only the fine ids cannot
+emit the Compass's. `depth: 'merged'` with `mergedInto` carries the difference.
+
+`sectionRegistry.spec.ts` (136 tests) resolves every producer by running it: a
+composed ordinal must actually come out of `composeFinancialChapters` on a full
+record, an authored section must be named in the prompt that asks for it, a
+routed one must exist at that ordinal in the split registry, and a projection
+namespace must be one `applyInvestmentProjection` really merges. It then asserts
+FIN, PLDD and the Compass registry are each expressible as registry placements at
+the same headings, so the three can drift only by failing CI.
+
+That test earned its place immediately: the first draft of the registry named two
+projection namespaces — `keyFigures.*` and `sources.*` — that do not exist.
+
+### Two findings the producibility check surfaced, and the fixes
+
+**The Briefing had no trim, and 21 of 21 carry the parent's structure.** Phase 1
+re-cut the guide and shipped no enforcement; the snapshot got both halves and the
+briefing got one. Of its nine declared headings, `Top 3 Opportunities` and `Top 3
+Risks` appear on 16 reports, `Executive Summary` on **1**, and `Location &
+Demand`, `Amenity & Access`, `Market Position`, `Property Fit`, `Risk Overview`
+and `Recommendation` on **none** — while `Location Overview` is on 20 and
+`Historical Price Growth Table` on 19. Both condensed tiers are now trimmed to
+`markdownHeadingsForTier(tier)`, which returns the authored and composed headings
+together — the reason the list has to come from the registry rather than from
+either call site. Run against production row `89b451f6`, the trim keeps 5 of 29
+headings and drops 24.
+
+**`provenance` is spine and the Briefing had no producer for it.** The re-cut
+guide never asks for a sources section, so a client's briefing would carry no
+statement of what it rests on. `## Market Data Sources` is now in the guide,
+worded so the section is never omitted and never filled with a placeholder.
+
+**The trim will not empty a document.** If no *authored* heading survives, the
+untrimmed text is kept and `sections_trim_skipped` recorded. The guard asks about
+authored headings specifically because the composed chapters are appended by us
+and always match — "something survived" would be satisfied by our own output and
+say nothing about whether the model followed the guide.
+
+### What Phase 2 deliberately did not do
+
+Nothing routes on the registry yet. `reportSplitRegistry` still owns the fork's
+substring routing and `compassSectionRegistry` still owns the generator's prompt;
+both are now pinned to the registry rather than replaced by it. **A producer that
+resolves is not a section that appears** — the Due Diligence tier's routed
+producers are all correct and still put planning on 1 of 11 documents, because
+routing depends on the parent carrying a matchable heading and the Compass parent
+carries its planning content merged inside Risk Dashboard. That is law 4's
+problem, and Phase 3 fixes it by assembling from stored sections rather than
+re-reading a sibling document.
+
+Pinned by `sectionRegistry.spec.ts` (136) and `tierRegistryAdoption.spec.ts` (11).
