@@ -64,27 +64,39 @@ import {
   DriveListingCache, recoverPackageImage, type PackageFetcher, type PackageOutcome,
 } from './packageImages.ts';
 import { attachDocumentMedia } from './importStock.ts';
+import { designOfRecordOrRow } from './builderSuppliedImage.pure.ts';
 import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import { readAllRows } from './pagedRead.ts';
 
 /**
- * The house design a stored row states, or null.
+ * The house design a row states, or null — WHICHEVER SHAPE THE CALLER HOLDS.
  *
- * READ FROM `source_row`, WHICH IS WHERE THE NORMALISED RECORD LIVES. The
- * import writes the whole `NormalisedStockRecord` into that jsonb column, so a
- * canonical field added to the record is persisted and read back without a
- * migration and without a second place to keep it in step. Older rows,
- * imported before `house_design` existed, simply answer null and take the
- * lot-specific path exactly as they do today.
+ * THE TWO READERS DIFFER IN WHICH THEY HAVE, and this function used to know
+ * only one of them. It read `record.source_row.house_design`, which is the
+ * shape of a DATABASE ROW: the import writes the whole
+ * `NormalisedStockRecord` into that jsonb column. But the caller here is the
+ * repair path, and it holds the normalised record ITSELF — `storedSourceRows`
+ * returns `readStoredRecord(row.source_row)`, so `house_design` sits at the
+ * top level and there is no `source_row` key to descend into. Every call
+ * therefore answered null.
+ *
+ * MEASURED, 6 SEPTEMBER 2026. The design fallback exists because a builder
+ * sells fewer designs than lots and files one brochure per design; it was
+ * built, tested, documented and shipped, and across the whole live database
+ * it had produced ZERO images: 438 primary images at evidence levels 1, 2 and
+ * 3, and not one at level 4. It could not have produced any, because the
+ * design never reached the election. Lots 502 Mambourin and 1004 Five Farms
+ * are the two rows whose only imagery is a design render, and both were told
+ * their own brochures name no image for them.
+ *
+ * `storedRowDevelopmentUnitKey` learned this same lesson — its header says it
+ * outright: "the two readers differ in which they have ... Looking in both is
+ * what lets one function serve both." This now looks in both, through
+ * `designOfStoredRow`, which is the shared reader the other three callers
+ * already use and which also recovers a design from `unmapped.HOUSE`.
  */
-function designOf(record: unknown): string | null {
-  const row = (record as { source_row?: unknown })?.source_row;
-  if (!row || typeof row !== 'object') return null;
-  const value = (row as { house_design?: unknown }).house_design;
-  const text = typeof value === 'string' ? value.trim() : '';
-  return text || null;
-}
+const designOf = designOfRecordOrRow;
 import type { ExtractedMedia } from './extract.ts';
 
 export interface RepairOutcome {

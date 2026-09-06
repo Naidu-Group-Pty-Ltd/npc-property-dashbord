@@ -231,6 +231,25 @@ import {
  * the same answer when it is next asked — and nothing requeues the settled
  * ones for this bump alone.
  *
+ * 23 LETS THE DESIGN REACH THE ELECTION AT ALL. v22 shipped two design-cover
+ * rules, deployed cleanly, and changed nothing in production: Lots 502 and
+ * 1004 were told again that their own brochures name no image, one minute
+ * before Lot 58 elected its cover correctly on the same build. The split was
+ * the clue — every property-cover election worked, every design-cover
+ * election refused — and the cause is older than all of it. The settler read
+ * the design from `record.source_row.house_design`, while the value it is
+ * handed is the normalised record ITSELF (`storedSourceRows` unwraps the
+ * column before returning it), so the read answered undefined every time and
+ * the design never reached `assignPdfMediaRoles`. The whole design-cover
+ * path had therefore produced ZERO images since the day it was built: 438
+ * primary images across the live database at evidence levels 1, 2 and 3, and
+ * not one at level 4. Null is also the honest answer for a row that states no
+ * design, which is why nothing ever reported it. The two shapes are now read
+ * by one shared function (`designOfRecordOrRow`), the same lesson
+ * `storedRowDevelopmentUnitKey` records in its own header, and this bump is
+ * what re-asks the branches banked against v22 — a negative recorded at the
+ * current version stands, so a fix without a bump would never be tried.
+ *
  * 22 READS WHAT THE OLD READER COULD NOT AFFORD, AND WHAT IT WOULD NOT SEE.
  * Three changes, measured on the four rows the fleet still refused. The
  * Lumina brochures elect one 3556x2000 JPEG whose decode alone costs 3.1 s —
