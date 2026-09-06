@@ -1529,6 +1529,12 @@ verify_jwt = false
 [functions.phase6-quality-ops]
 verify_jwt = false
 
+# Zoning/parcel/development readings from state planning services; called
+# internally by the generator with the internal edge secret (verifyAuth
+# inside), like the other location data services.
+[functions.planning-data-service]
+verify_jwt = false
+
 [functions.portal-upload-file]
 verify_jwt = false
 

@@ -2228,3 +2228,60 @@ versions must agree between key and URL, every mapping must resolve to
 esm.sh, and no `deno.lock` may sit beside the function (the spec caught this
 audit's own local runs writing one). The spec fails on the exact broken
 state that shipped; regeneration can no longer strand the map silently.
+
+## §27 — Planning, zoning and what is coming through council (2026-09-06)
+
+The user's confirmation of the §25 build queue led with property-level
+planning: zoning, and "what developments are to be coming in the local
+LGA … from a council application perspective". `planning-data-service`
+delivers it from each jurisdiction's OWN planning services, on the
+research doc's rules (`ZONING_BY_JURISDICTION.md`, now carrying a second
+executed round).
+
+**What a report now receives, per property coordinate:**
+
+- **Zoning** for NSW, VIC, TAS and ACT — verbatim zone code, the
+  instrument's own label, the planning instrument, LGA and the layer's own
+  currency date, plus a derived national *family* that a test forbids from
+  ever being printed as the zone.
+- **Parcel** for QLD — surveyed lot area (labelled surveyed), lot/plan,
+  tenure, LGA — the state where zoning is per-council and the cadastre is
+  the strength.
+- **State development instruments** for QLD — PDAs, SDAs, coordinated
+  projects, infrastructure designations at the point (executed: Moranbah
+  sits inside the Central Queensland Gas Pipeline coordinated project).
+- **Development-application intelligence** for NSW — the Online DA API,
+  no key required: executed end-to-end for Muswellbrook (183 days): 99
+  applications, $66.3M stated cost of development, 83 new dwellings
+  proposed, status distribution, top development types, largest projects.
+  Costs stay attributed to applicants; a sample says both numbers.
+- **A verification instrument sentence** per jurisdiction (s10.7 NSW,
+  planning and development certificate QLD, Crown lease purpose clause
+  ACT, …): the layer is indicative, the certificate is the instrument.
+
+**The router is the services themselves.** No bounding boxes: the
+integrated layers are point-queried in parallel and the polygon containing
+the point answers (executed: the NSW layer answers a definite empty for a
+VIC coordinate). `assessAuPoint` gates the coordinate first — §23's rule,
+one implementation.
+
+**Every absent cell says why**, and the reasons are different sentences:
+QLD zoning is `not_served` (set per council scheme); WA is
+`licence_restricted` (SLIP terms bar commercial republication — nothing is
+fetched at all); SA/NT are `not_integrated` (every host refused this
+egress; no parser may ship unverified against a response nobody has seen);
+an unreachable register is `unavailable`, is never cached, and can never
+read as "no zoning exists".
+
+**Prompt honesty extended (§25's pattern):** the 38-page property prompt's
+"Population & Development Trends" placeholder — which invited "[planned
+infrastructure and residential developments] set to [impact]" — now
+instructs the model to write ONLY from the planning block and to name no
+project the data does not contain.
+
+Verified: 30-test spec on captured live fixtures; the composed adapters
+executed against all five services and the DA register through the shipped
+code; deno check clean; column gate, verify-jwt gate (427/427) and the
+deterministic inventory regenerated in order. The `planning_data_cache`
+migration is applied in production; the service and rewired generator ship
+on merge.

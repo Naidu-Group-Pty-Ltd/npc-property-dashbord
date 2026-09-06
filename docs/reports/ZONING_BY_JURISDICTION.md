@@ -266,3 +266,80 @@ The honest sequence is: fix the geocoder, harvest what the free cadastre and
 planning services give per cell of the matrix, and let the residue define the
 vendor requirement — rather than buying a licence to cover gaps that free
 government data already fills.
+
+---
+
+## 6. Second execution round (2026-09-06, later the same day) — and what got built
+
+Step 0 (the geocoder) merged as PR #2502. This round extended the executed
+matrix and then **built the integration**: `planning-data-service`, the pure
+modules under `_shared/planning/`, and the prompt blocks in
+`_shared/reports/planningPromptBlocks.pure.ts`. Every row below is a live
+query re-run through the REAL builders and parsers the service ships with.
+
+### Newly verified jurisdictions
+
+| jurisdiction | endpoint | executed result |
+|---|---|---|
+| **TAS** ✅ | LISTmap `Public/PlanningOnline` layer 13 (Tasmanian Planning Scheme Zones) | Hobart CBD → `Central Business`, Hobart Local Provisions Schedule, LPSDATE 2025-10-22. The LGA is read from the LPS name. |
+| **ACT** ✅ | ACTmapi AGOL `ACTGOV_TP_LAND_USE_ZONE` FeatureServer layer 1 | Phillip → `CZ1 / CORE ZONE`, division PHILLIP, gazetted 2008-03-31. The layer keeps degazetted history, so the parser prefers `CURRENT_LIFECYCLE_STAGE = GAZETTED`. |
+| **SA** ✗ | every candidate host | `location.sa.gov.au` 404s both path shapes; `sappa.plan.sa.gov.au` 403s a scripted client; three other hosts CONNECT-rejected at this egress. **No parser can be verified against a response nobody has seen** — the cell reads `not_integrated`, and the next probe should run from Supabase egress, which reached what this sandbox could not (the ABS load). |
+| **NT** ✗ | `services.ntlis.nt.gov.au` | CONNECT-rejected at this egress. Same rule, same next step. |
+
+### The DA half — the NSW Online DA API, verified end-to-end
+
+`api.apps1.nsw.gov.au/eplanning/data/v0/OnlineDA` answers **without a key**.
+Two executed facts shaped the design:
+
+1. **The council filter is exact-match** — `["MUSWELLBROOK"]` matches
+   nothing, `["MUSWELLBROOK SHIRE COUNCIL"]` matches 62 — and it accepts a
+   **list**. So the service sends every dressing of the zoning layer's own
+   `LGA_NAME` (`X COUNCIL`, `X SHIRE COUNCIL`, `CITY OF X`, …), reads the
+   real name off the answer's own `Council.CouncilName`, and validates it by
+   normalised-token equality (`CANTERBURY-BANKSTOWN` can never resolve to
+   `BANKSTOWN`). Verified: the candidate list returns the same 62 rows as
+   the exact name.
+2. **The full flow, executed through the shipped code** (Muswellbrook LGA,
+   183-day window): TotalCount **99**, all 99 rows read, resolved to
+   *Muswellbrook Shire Council*; stated cost of development **$66,308,556**;
+   **83 new dwellings** proposed; statuses 53 Determined / 18 Additional
+   Information Requested / 15 Under Assessment / 9 On Exhibition / 2
+   Rejected / 2 Withdrawn; largest application $26,048,000 (residential
+   care facility, Denman, determined 2026-07-30).
+
+Each row carries cost, dwellings, storeys, types, status, dates and
+location — the "what is coming through council" reading the reports need,
+attributed to the register and its period, with sampling disclosed whenever
+fewer rows were read than the register's own total.
+
+### QLD development instruments
+
+The four StatePlanning layers (25 coordinated projects, 30 infrastructure
+designations, 35 PDAs, 40 SDAs) are point-queried with their real field
+names (probed live; layer 30's type field is literally
+`id_type__per_legislation_`). Executed at the Moranbah corpus coordinate:
+inside the **Central Queensland Gas Pipeline** coordinated project
+(Completed EIS project); the other three layers answer definite empties.
+
+### The router, proven
+
+The doc's rule 2 said no bounding boxes. The implementation makes the
+LAYERS the router: all integrated jurisdictions are point-queried in
+parallel and the polygon that contains the point answers — executed check:
+the NSW layer answers a definite EMPTY for the Wyndham Vale (VIC)
+coordinate. The state hint only orders preference; the asserted
+jurisdiction is always the answering service's own.
+
+### What the service refuses to do
+
+- **WA is never fetched** — the SLIP terms bar commercial republication, so
+  the cell says that, rather than fetching a value the PDF may not carry.
+- **A transport failure is never cached and never reads as an absence** —
+  `unavailable` cells poison the cache write; only settled responses (every
+  cell a reading or a definite reasoned absence) are stored, 7-day TTL.
+- **The family never impersonates the zone** (`deriveZoneFamily` reads the
+  instrument's own words; NSW's ambiguous post-reform "Employment" wording
+  deliberately resolves to NO family; ACT uses the Territory Plan's own
+  prefix legend because its labels name sub-policies like "CORE ZONE").
+- **Surveyed vs computed area stays labelled**; NSW parcel attributes stay
+  `not_integrated` until the computed-area caveat ships with them.
