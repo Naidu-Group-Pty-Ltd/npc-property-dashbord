@@ -74,25 +74,34 @@ That leaves **zoning and council area** as the only true acquisition gap.
 
 ## The three options, cheapest first
 
-### 1. Free government spatial services — recommended first
+### 1. Government spatial services — recommended first, but NOT uniform
 
-Every state publishes land zoning as a public, point-queryable spatial service.
-NSW's is an ArcGIS REST MapServer under
-`mapprod3.environment.nsw.gov.au/arcgis/rest/services/ePlanning/…`, published via
-Data.NSW as *Environmental Planning Instrument — Land Zoning*; VIC, QLD and the
-others publish equivalents (Vicmap Planning, QLD Spatial). No licence fee, no
-API key for the open layers.
+**Read [`ZONING_BY_JURISDICTION.md`](./ZONING_BY_JURISDICTION.md) before acting
+on this section.** An earlier version of it reasoned from NSW and asserted that
+"VIC, QLD and the others publish equivalents". They do not, and the differences
+decide the work:
 
-We already hold the coordinates, so the work is a point-in-polygon query per
-property, not an address-matching problem. Local government area comes from the
-same family of boundary services.
+- **NSW is the smallest identifiable mainland state in this corpus** — 115
+  reports (10%). QLD (402, 36%), WA (347, 31%) and VIC (207, 19%) are 86% of the
+  business, so a plan that starts with NSW starts with a tenth of it.
+- **QLD publishes no statewide zoning at all.** Zoning is set by each local
+  government's planning scheme. The state layer that looks like zoning
+  (`PlanningCadastre/LandUse`) is ALUMC land **use**, and binding it to a report
+  would print "agriculture" where the client needs a zone name.
+- **WA's free service forbids commercial use.** The SLIP public terms restrict
+  the data to "personal and non-commercial use". The right layer exists
+  (DPLH-071, Local Planning Scheme Zones and Reserves) and we may not currently
+  put it in a client PDF.
+- **VIC and NSW are both CC BY**, statewide, and permit commercial use with
+  attribution. They are the cheap, clean cases.
 
-**Cost:** engineering only. **Caveats to confirm per state:** attribution and
-licence terms for re-publishing a zone code in a client PDF; rate limits;
-currency of each layer; and that the eight jurisdictions are done one at a time
-rather than assumed uniform. Coverage is bounded by the 93% that have
-coordinates, and the 87 reports without them need geocoding first (Google Maps
-is already wired — 1,506 calls logged).
+We already hold coordinates on 1,112 of 1,199 reports, so the query is
+point-in-polygon rather than address matching — and the jurisdiction router must
+be geographic too, since a state token appears in only ~30% of addresses.
+
+**Cost:** engineering for VIC and NSW; a licence conversation for WA; a
+per-council aggregation for QLD. The 87 reports without coordinates need
+geocoding first (Google Maps is already wired — 1,506 calls logged).
 
 ### 2. Domain API property endpoints
 
@@ -118,10 +127,14 @@ This is the right answer for branches 1–4 and 6–7 — and by its own scoping
 
 1. **Done** — the read-path heal, which puts land size, build size, car spaces
    and construction year onto 150-odd reports today at zero cost.
-2. **Next, if wanted** — NSW zoning + LGA from the free spatial service, keyed on
-   stored coordinates, behind `data_provenance` so every value carries its source
-   and confidence exactly as the Cotality scaffolding already specifies. One
-   state first, to prove the shape, then the rest.
+2. **Next, if wanted** — zoning and LGA from government spatial services, keyed
+   on stored coordinates, behind `data_provenance` so every value carries its
+   source, confidence and licence exactly as the Cotality scaffolding already
+   specifies. Per-jurisdiction plan and order in
+   [`ZONING_BY_JURISDICTION.md`](./ZONING_BY_JURISDICTION.md): start the WA
+   licence conversation immediately (31% of volume, blocked on terms rather than
+   engineering), build VIC first to prove the shape, and treat QLD as a
+   four-council problem rather than a 77-council one.
 3. **Only then** — decide Domain vs Cotality on the *attribute* question, which
    is a commercial call about how much operator typing to remove, not a
    correctness one.
