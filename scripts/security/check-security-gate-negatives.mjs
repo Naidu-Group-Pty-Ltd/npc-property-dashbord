@@ -108,6 +108,16 @@ const CASES = [
     replace: 'uploadPath = `${path}',
   },
   {
+    gate: 'check-migration-version-collisions.mjs',
+    file: 'supabase/migrations/MIGRATION_VERSION_COLLISIONS.json',
+    what: 'a real migration-version collision is dropped from the frozen inventory',
+    // The baseline is what makes the gate quiet about 42 historical collisions;
+    // if losing an entry did not turn it red, the inventory would be a place to
+    // hide a new one.
+    find: '"version": "20261112000000"',
+    replace: '"version": "20261112999999"',
+  },
+  {
     gate: 'check-edge-column-names.mjs',
     file: 'supabase/functions/market-updates-embed-backfill/index.ts',
     what: 'an Edge Function selects a column its table does not have',
