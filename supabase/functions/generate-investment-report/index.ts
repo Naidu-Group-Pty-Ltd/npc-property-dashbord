@@ -8,6 +8,7 @@ import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shar
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
 import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
+import { demographicsStatBlocks } from '../_shared/reports/censusPromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
@@ -3160,32 +3161,8 @@ Suburb Investment Snapshot: [SUBURB NAME], [STATE]
 [Include market cycle analysis and trends]
 
 # 4. Demographics
-**Population Statistics:**
-| Metric | Value | State Average | National Average |
-|--------|-------|---------------|------------------|
-| Total Population | XX,XXX | - | - |
-| Population Density | XX per km² | XX per km² | XX per km² |
-| Population Growth (5yr) | +/-X.X% | +/-X.X% | +/-X.X% |
-| Median Age | XX years | XX years | XX years |
-| Families with Children | XX.X% | XX.X% | XX.X% |
-| Couples without Children | XX.X% | XX.X% | XX.X% |
-| Single Occupants | XX.X% | XX.X% | XX.X% |
 
-**Income & Employment:**
-| Metric | Value | State Average |
-|--------|-------|---------------|
-| Median Household Income | $X,XXX/week | $X,XXX/week |
-| Median Annual Income | $XX,XXX | $XX,XXX |
-| Employment Rate | XX.X% | XX.X% |
-| Unemployment Rate | X.X% | X.X% |
-| SEIFA Index (IRSAD) | XXX (Decile X) | - |
-
-**Top Industries:**
-1. [Industry] - XX.X%
-2. [Industry] - XX.X%
-3. [Industry] - XX.X%
-4. [Industry] - XX.X%
-5. [Industry] - XX.X%
+${demographicsStatBlocks(enhancedData)}
 
 # 5. Infrastructure & Amenities
 **Education:**
@@ -3776,48 +3753,9 @@ Write 2-3 paragraphs in plain English explaining how the current cash rate of ${
 
 # Demographics & Demand Drivers
 
-**Population & Employment Statistics:**
+${demographicsStatBlocks(enhancedData)}
 
-| Metric | Value | Data Source |
-|--------|-------|-------------|
-| Labor Force Size | ${enhancedData.demographics?.employment?.laborForce || 'XX,XXX'} | ABS Employment Data |
-| Employment Rate | ${enhancedData.demographics?.employment?.employmentRate || 'XX.X'}% | ABS (2025) |
-| Unemployment Rate | ${enhancedData.demographics?.income?.unemploymentRate || 'X.X'}% | ABS (2025) |
-| Participation Rate | ${enhancedData.demographics?.employment?.laborForceParticipation || 'XX.X'}% | ABS (2025) |
-| Median Weekly Income | $${enhancedData.demographics?.income?.medianWeeklyIncome || 'X,XXX'} | ABS (2025) |
-| Median Annual Income | $${enhancedData.demographics?.income?.medianHouseholdIncome || 'XX,XXX'} | ABS (2025) |
-| Annual Income Growth (last 12 months) | +${enhancedData.demographics?.income?.incomeGrowth || 'X.X'}% | ABS (2025) |
-
-**Socioeconomic Profile (SEIFA Indices):**
-
-| Index | Score | Decile | Rating |
-|-------|-------|--------|--------|
-| IRSAD | ${enhancedData.seifaData?.irsad?.score || 'XXX'} | ${enhancedData.seifaData?.irsad?.decile || 'X'}/10 | ${enhancedData.seifaData?.irsad?.rating || 'Moderate Advantage'} |
-| IRSD | ${enhancedData.seifaData?.irsd?.score || 'XXX'} | ${enhancedData.seifaData?.irsd?.decile || 'X'}/10 | ${enhancedData.seifaData?.irsd?.rating || 'Moderate Disadvantage'} |
-| IER | ${enhancedData.seifaData?.ier?.score || 'XXX'} | ${enhancedData.seifaData?.ier?.decile || 'X'}/10 | ${enhancedData.seifaData?.ier?.rating || 'Moderate Education/Occupation'} |
-| IEO | ${enhancedData.seifaData?.ieo?.score || 'XXX'} | ${enhancedData.seifaData?.ieo?.decile || 'X'}/10 | ${enhancedData.seifaData?.ieo?.rating || 'Moderate Economic Resources'} |
-
-[Suburb] demonstrates [socioeconomic assessment], positioning the area at [comparative level] across income, education, and occupation dimensions. The IRSAD score of [XXX] (Decile [X]/10) indicates [interpretation]. This socioeconomic profile supports [demand implications].
-
-**Employment & Industry Breakdown:**
-
-| Industry | Workforce % | Growth Rate |
-|----------|-------------|-------------|
-| Professional Services | ${enhancedData.employmentData?.industries?.[0]?.percentage || 'XX.X'}% | +${enhancedData.employmentData?.industries?.[0]?.growth || 'X.X'}% |
-| Healthcare & Social Assistance | ${enhancedData.employmentData?.industries?.[1]?.percentage || 'XX.X'}% | +${enhancedData.employmentData?.industries?.[1]?.growth || 'X.X'}% |
-| Retail Trade | ${enhancedData.employmentData?.industries?.[2]?.percentage || 'XX.X'}% | +${enhancedData.employmentData?.industries?.[2]?.growth || 'X.X'}% |
-| Education & Training | ${enhancedData.employmentData?.industries?.[3]?.percentage || 'XX.X'}% | +${enhancedData.employmentData?.industries?.[3]?.growth || 'X.X'}% |
-| Construction | ${enhancedData.employmentData?.industries?.[4]?.percentage || 'XX.X'}% | +${enhancedData.employmentData?.industries?.[4]?.growth || 'X.X'}% |
-
-**Job Growth Trends:**
-
-| Time Period | Growth Rate | Data Source |
-|-------------|-------------|-------------|
-| Annual Growth | +${enhancedData.employmentData?.annualGrowth || 'X.X'}% | ABS (2025) |
-| 3-Year Growth | +${enhancedData.employmentData?.threeYearGrowth || 'X.X'}% | ABS (2025) |
-| 5-Year Growth | +${enhancedData.employmentData?.fiveYearGrowth || 'XX.X'}% | ABS (2025) |
-
-Employment growth has been [assessment], with [XX.X]% cumulative growth over five years. [Leading industry] leads job creation at [X.X]% annual growth, followed by [secondary industry] at [X.X]%. This employment dynamism reflects structural shifts toward [sector types], directly supporting rental demand from workers employed at [nearby employment hubs][citation].
+Interpret the socioeconomic profile in one short paragraph: what the SEIFA deciles above indicate about the area's position across income, education and occupation, and what that implies for demand. Discuss only indexes that appear in the table.
 
 **Demand Drivers (150+ words required):**
 

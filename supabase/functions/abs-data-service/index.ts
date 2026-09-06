@@ -5,6 +5,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { sourceUnavailable } from "../_shared/sourceUnavailable.pure.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { censusDemographicsResponse } from '../_shared/absCensusProjection.pure.ts';
 
 /**
  * ABS demographic data — or, honestly, the absence of it.
@@ -90,17 +91,33 @@ Deno.serve(async (req) => {
     console.log(`[abs-data-service] Authenticated user: ${userId}`);
     console.log('Fetching ABS data for:', { postcode, state });
 
-    // The only data this service may serve is data a real integration wrote.
-    // `data_quality = 'live'` is the mark of one; every fabricated row
-    // carried 'estimated' and was purged by migration, and this filter keeps
-    // any straggler written by a still-deployed old revision unservable.
-    if (postcode && state) {
-      const cached = await getLiveCachedData(supabase, postcode, state);
-      if (cached) {
-        console.log('✅ Live cache HIT for', postcode);
+    // The real thing: the ABS's own Census figures for this postal area,
+    // loaded from the published DataPack by `abs-poa-ingest` and projected
+    // through one shared module. No profile, no Math.random(), no
+    // "estimate" — a postcode the Census does not cover is answered
+    // `unavailable`, never approximated from a neighbour.
+    const poa = String(postcode ?? '').trim();
+    if (/^\d{4}$/.test(poa)) {
+      const { data: row, error } = await supabase
+        .from('abs_census_poa')
+        .select('*')
+        .eq('poa', poa)
+        .maybeSingle();
+      if (error) {
+        console.error('abs_census_poa read failed:', error);
+        return new Response(JSON.stringify(sourceUnavailable(
+          'abs-demographics',
+          'provider_error',
+          'The ABS Census reference table could not be read — demographic figures are unavailable for this request.',
+        )), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      if (row) {
         return new Response(JSON.stringify({
           success: true,
-          data: { ...cached.data, dataSource: 'ABS Census Cache', dataQuality: cached.data_quality, cached: true },
+          data: censusDemographicsResponse(row),
         }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -108,14 +125,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // No fabrication behind this line: no profile, no Math.random(), no
-    // "estimate". No API call happens either, so nothing is logged to
-    // api_health_log — recording a successful ABS call that was never made
-    // is how this service's failure stayed invisible for its whole life.
     return new Response(JSON.stringify(sourceUnavailable(
       'abs-demographics',
-      'source_not_integrated',
-      'ABS Census data is not yet integrated for this deployment — demographic figures are unavailable rather than estimated. See the header of abs-data-service/index.ts for the acquisition path.',
+      'no_data_for_location',
+      `The ABS Census holds no postal-area data for "${poa || 'no postcode supplied'}" — demographic figures are unavailable rather than estimated.`,
     )), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -132,26 +145,3 @@ Deno.serve(async (req) => {
     });
   }
 });
-
-async function getLiveCachedData(supabase: any, postcode: string, state: string) {
-  try {
-    const { data: cached, error } = await supabase
-      .from('abs_census_cache')
-      .select('*')
-      .eq('postcode', postcode)
-      .eq('state', state.toUpperCase())
-      .eq('dataset', 'demographics')
-      .eq('data_quality', 'live')
-      .gt('expires_at', new Date().toISOString())
-      .maybeSingle();
-
-    if (error) {
-      console.error('Cache query error:', error);
-      return null;
-    }
-    return cached ?? null;
-  } catch (error) {
-    console.error('Error reading cache:', error);
-    return null;
-  }
-}

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "repository-static-analysis",
-  "edge_function_count": 425,
-  "config_declared_function_count": 425,
+  "edge_function_count": 426,
+  "config_declared_function_count": 426,
   "registry_function_count": 425,
   "verify_jwt_false_count": 339,
   "exposure_class_counts": {
