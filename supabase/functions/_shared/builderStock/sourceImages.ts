@@ -231,6 +231,27 @@ import {
  * the same answer when it is next asked — and nothing requeues the settled
  * ones for this bump alone.
  *
+ * 22 READS WHAT THE OLD READER COULD NOT AFFORD, AND WHAT IT WOULD NOT SEE.
+ * Three changes, measured on the four rows the fleet still refused. The
+ * Lumina brochures elect one 3556x2000 JPEG whose decode alone costs 3.1 s —
+ * past the worker's ~3 s kill — so a picture whose header states more than
+ * four megapixels is no longer decoded inside the invocation that walks the
+ * document (its kind stays unknown; its eligibility is settled by the sweep
+ * through the new block-resolution JPEG reading, ~0.9 s for the same
+ * thumbnail), and lots 55 and 58 elect in about a second. Lot 1004 Five
+ * Farms links a per-design brochure whose page 1 states every token of
+ * "Enzo 10.5" with three package facts and designates Lot 1002 — the
+ * builder's specimen lot — and the design-cover rule refused any page naming
+ * a lot; the page names the design itself, so it now qualifies (its lot may
+ * lend no token to the design's name, and a lot-less design page still
+ * outranks it). And Lot 502 Mambourin's document designates the lot's own
+ * photo-less floor-plan page as the property cover, which then vetoed the
+ * design cover with the render standing beside it: the design page is now
+ * consulted whenever the property's own paths ELECTED nothing, not merely
+ * where they found nothing. Every election that succeeded at 21 re-derives
+ * to the same answer — re-run on the live library's own documents — so the
+ * bump reopens only what was refused.
+ *
  * 21 STOPS PAYING FOR AN ELECTION ALREADY DECIDED. A document whose text
  * names no candidate page cannot elect a primary — `coverSearchPages` is a
  * superset of every page the role decision can designate — and the election
