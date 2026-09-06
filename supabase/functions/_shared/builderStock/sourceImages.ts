@@ -231,6 +231,17 @@ import {
  * the same answer when it is next asked — and nothing requeues the settled
  * ones for this bump alone.
  *
+ * 21 STOPS PAYING FOR AN ELECTION ALREADY DECIDED. A document whose text
+ * names no candidate page cannot elect a primary — `coverSearchPages` is a
+ * superset of every page the role decision can designate — and the election
+ * nevertheless sent it through the full-document walk: materialising,
+ * flattening and classifying pictures whose only fate was the refusal
+ * already decided. On Lot 709 Verve's 13-page brochure that waste was ~2.6 s
+ * of a ~2.9 s recovery, the worker died inside it on every attempt — before
+ * any wall-clock deadline could answer for it — and the v20 budget burned to
+ * nothing exactly as 19's had. The same document now refuses honestly in
+ * ~0.3 s, and the count starts again for attempts that can finally finish.
+ *
  * 20 IS 19 WITH THE DEADLINE ACTUALLY IN FRONT OF THE QUESTION. Lot 709
  * Verve's branch spent its four v19 attempts in the minutes between the
  * recovery deadline merging and the fleet serving it — every one a

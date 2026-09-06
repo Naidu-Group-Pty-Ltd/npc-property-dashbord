@@ -180,3 +180,29 @@ describe('every path that elects a cover reads the pixels', () => {
     }
   });
 });
+
+/**
+ * A DOCUMENT NAMING NO CANDIDATE PAGE DECODES NOTHING.
+ *
+ * `coverSearchPages` is a superset of every page the role decision can
+ * designate, so an empty answer decides the refusal before a raster is
+ * touched. Measured, 6 September 2026, on Lot 709 Verve's 13-page brochure:
+ * the unscoped walk was ~2.6 s of a ~2.9 s recovery — spent materialising,
+ * flattening and classifying pictures whose only fate was the refusal
+ * already decided — and the worker died inside that waste on every attempt.
+ */
+describe('a document naming no candidate page decodes nothing', () => {
+  it('the election path returns before discovery when no page can be designated', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'supabase/functions/_shared/builderStock', 'pdfSourcePhoto.ts'), 'utf8');
+    const body = source.slice(
+      source.indexOf('async function selectPdfPropertyPrimaryHoldingSlot'),
+      source.indexOf('export async function discoverPdfSourceAssets('),
+    );
+    const guardAt = body.indexOf('if (!searchPages.length)');
+    const discoverAt = body.indexOf('discoverPdfSourceAssetsHoldingSlot(');
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(discoverAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(discoverAt);
+  });
+});
