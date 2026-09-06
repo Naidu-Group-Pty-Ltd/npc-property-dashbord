@@ -139,11 +139,18 @@ describe('every de-fabricated service refuses instead of inventing', () => {
     expect(src).toMatch(/if \(!floodUnavailable && !bushfireUnavailable\) \{\s*\n\s*await cacheRiskData/);
   });
 
-  it('rba caches nothing when the live retrieval failed', () => {
+  it('rba serves the loaded statistical tables and refuses when they are empty', () => {
+    // The M-stream removed the whole failure mode this test used to pin:
+    // there is no live retrieval and no 24h cache to poison any more. The
+    // service reads rba_observations (loaded by rba-tables-ingest) and an
+    // empty store answers sourceUnavailable — never a remembered figure.
     const src = service('rba-data-service');
-    expect(src).toContain('if (!freshData) return null;');
-    // And the handler turns that null into an unavailable answer, not success.
-    expect(src).toContain('if (!rbaData) {');
+    const code = stripComments(src);
+    expect(code.toLowerCase()).not.toContain('perplexity');
+    expect(code).not.toContain('economic_data_cache');
+    expect(code).toContain("from('rba_observations')");
+    expect(code).toContain('if (!reading) {');
+    expect(code).toContain("sourceUnavailable(");
   });
 });
 
