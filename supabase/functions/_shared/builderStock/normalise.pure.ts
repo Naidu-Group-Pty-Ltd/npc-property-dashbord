@@ -95,7 +95,10 @@ type FieldKey =
   | 'bedrooms' | 'bathrooms' | 'car_spaces' | 'property_type'
   | 'land_size_sqm' | 'building_size_sqm' | 'price' | 'availability_status'
   | 'expected_completion' | 'description' | 'image_url' | 'builder_name'
-  | 'house_design';
+  | 'house_design'
+  // One column stating all three counts — "BED // BATH // CAR": "3 / 2 / 2".
+  // Not a record field: the switch parses it into the three that are.
+  | 'bed_bath_car';
 
 /**
  * Header text is compared with punctuation, spacing and case removed, so
@@ -182,6 +185,15 @@ alias('bathrooms', 'bath', 'baths', 'bathroom', 'bathrooms', 'ba', 'no of bathro
 alias('car_spaces',
   'car', 'cars', 'car space', 'car spaces', 'garage', 'garages', 'parking',
   'parking spaces', 'carports');
+/*
+ * ALL THREE COUNTS IN ONE CELL. The live master stocklist writes
+ * `BED // BATH // CAR` with values like `3 / 2 / 2` — 81 of 81 rows on the
+ * 6 September 2026 upload carried it, and every one landed in `unmapped`, so
+ * not one card showed a bedroom. The slashes vanish in `normaliseHeader`, so
+ * all these spellings are already one key.
+ */
+alias('bed_bath_car',
+  'bed bath car', 'beds baths cars', 'bed bath cars', 'bed bath car spaces');
 
 alias('property_type',
   'type', 'property type', 'dwelling type', 'product', 'product type',
@@ -304,7 +316,28 @@ for (const field of [
 
 /** The field a header maps onto, or null when we do not recognise it. */
 export function fieldForHeader(raw: unknown): string | null {
-  return HEADER_ALIASES[normaliseHeader(raw)] ?? null;
+  const key = normaliseHeader(raw);
+  const exact = HEADER_ALIASES[key];
+  if (exact) return exact;
+  /*
+   * A STOCKLIST VERSIONS ITS OWN COLUMNS, AND THE VERSION IS NOT MEANING.
+   *
+   * The live master stocklist heads its price column `Package Price - V002` —
+   * the suffix is the sheet's own revision, bumped when the builder reissues
+   * it — and the exact lookup above therefore missed a heading whose alias
+   * (`package price`) this table has known all along. 81 of 81 rows priced in
+   * the sheet showed "Price not stated" on their cards, while three showed a
+   * STALE price a V001 sheet had written before the suffix appeared.
+   *
+   * So a trailing version token is stripped and the lookup retried — and only
+   * into a KNOWN alias, never into a guess: `Build Price - V002` strips to
+   * `build price`, which this table deliberately does not know (a component
+   * is not the package price), and stays unmapped exactly as before. A `V002`
+   * in the middle of a heading (`... - V002 Contract Type`) is untouched.
+   */
+  const versioned = key.match(/^(.*?)v\d{1,4}$/);
+  if (versioned) return HEADER_ALIASES[versioned[1]] ?? null;
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -500,6 +533,23 @@ export function normaliseStockRow(
       case 'bedrooms': record.bedrooms = clampCount(coerceNumber(value)); break;
       case 'bathrooms': record.bathrooms = clampCount(coerceNumber(value)); break;
       case 'car_spaces': record.car_spaces = clampCount(coerceNumber(value)); break;
+      case 'bed_bath_car': {
+        /*
+         * Exactly three counts, in the order the heading states, or nothing
+         * at all: "3 / 2" has not said which of the three it dropped, and a
+         * partial write would put the bathrooms in the car spaces. `??=`, so
+         * a dedicated Bed/Bath/Car column wins whichever side of this one it
+         * sits on — its own case overwrites when it comes later, and holds
+         * when it came first.
+         */
+        const parts = raw.split('/').map((part) => clampCount(coerceNumber(part)));
+        if (parts.length === 3 && parts.every((part) => part !== null)) {
+          record.bedrooms ??= parts[0];
+          record.bathrooms ??= parts[1];
+          record.car_spaces ??= parts[2];
+        }
+        break;
+      }
       case 'property_type': record.property_type = coercePropertyType(value); break;
       case 'house_design': record.house_design = text(value, 120); break;
       case 'land_size_sqm': record.land_size_sqm = clampArea(coerceNumber(value)); break;
