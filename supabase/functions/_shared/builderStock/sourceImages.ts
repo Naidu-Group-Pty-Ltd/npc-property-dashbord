@@ -231,6 +231,14 @@ import {
  * the same answer when it is next asked — and nothing requeues the settled
  * ones for this bump alone.
  *
+ * 20 IS 19 WITH THE DEADLINE ACTUALLY IN FRONT OF THE QUESTION. Lot 709
+ * Verve's branch spent its four v19 attempts in the minutes between the
+ * recovery deadline merging and the fleet serving it — every one a
+ * pre-deadline hang the reaper ended, none an answer about the document.
+ * The deadline is live now, so the count starts again for a question that
+ * can finally be answered for. Nothing else changes; only the affected row
+ * is requeued.
+ *
  * 19 ADMITS THE MODEST FACADE THE PIXEL FLOOR REFUSED. Measured, 6 September
  * 2026, on the Luxton Thornhill Gardens brochures: the designated cover page
  * draws the property's facade from a 480x339 JPEG at 17% of the page —
