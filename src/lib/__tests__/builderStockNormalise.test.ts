@@ -37,6 +37,80 @@ describe('header aliasing', () => {
     expect(fieldForHeader('Deposit Required')).toBeNull();
     expect(fieldForHeader('Commission %')).toBeNull();
   });
+
+  /*
+   * THE LIVE MASTER STOCKLIST'S OWN HEADINGS, VERBATIM. Measured on the
+   * 6 September 2026 upload: 81 of 81 rows carried `Package Price - V002` and
+   * `BED // BATH // CAR`, every value landed in `unmapped`, and every card
+   * read "Price not stated" with no bedroom in sight — while three rows showed
+   * a STALE price a V001 sheet had written before the suffix appeared.
+   */
+  it('a heading may carry the sheet\'s own version suffix', () => {
+    expect(fieldForHeader('Package Price - V002')).toBe('price');
+    expect(fieldForHeader('Package Price - V003')).toBe('price');
+    expect(fieldForHeader('Status V2')).toBe('availability_status');
+  });
+
+  it('the version strip lands only on a KNOWN alias, never on a guess', () => {
+    // Components of the package price have no field on purpose — see the
+    // alias table — and versioning them must not change that.
+    expect(fieldForHeader('Build Price - V002')).toBeNull();
+    expect(fieldForHeader('Land Price')).toBeNull();
+    // A version in the MIDDLE of a heading is part of the heading.
+    expect(fieldForHeader('[VG] MASTER STOCKLIST - V002 Contract Type')).toBeNull();
+    // A document-link column is not the property's image, versioned or not.
+    expect(fieldForHeader('Brochure V002')).toBeNull();
+  });
+
+  it('recognises the combined BED // BATH // CAR column', () => {
+    expect(fieldForHeader('BED // BATH // CAR')).toBe('bed_bath_car');
+    expect(fieldForHeader('Beds/Baths/Cars')).toBe('bed_bath_car');
+  });
+});
+
+describe('the combined BED // BATH // CAR value', () => {
+  it('parses the three counts in stated order', () => {
+    const record = normaliseStockRow({ Lot: '927', 'BED // BATH // CAR': '3 / 2 / 2' });
+    expect(record?.bedrooms).toBe(3);
+    expect(record?.bathrooms).toBe(2);
+    expect(record?.car_spaces).toBe(2);
+    expect(record?.unmapped['BED // BATH // CAR']).toBeUndefined();
+  });
+
+  it('writes NOTHING unless exactly three counts parse', () => {
+    // "3 / 2" has not said which of the three it dropped; a partial write
+    // would put the bathrooms in the car spaces.
+    for (const value of ['3 / 2', '3 / 2 / 2 / 1', 'TBA', '3 / two / 2', '3 / / 2']) {
+      const record = normaliseStockRow({ Lot: '1', 'BED // BATH // CAR': value });
+      expect(record?.bedrooms, `"${value}" must not set bedrooms`).toBeNull();
+      expect(record?.bathrooms, `"${value}" must not set bathrooms`).toBeNull();
+      expect(record?.car_spaces, `"${value}" must not set car spaces`).toBeNull();
+    }
+  });
+
+  it('a dedicated column beats the combined one, whichever side it sits on', () => {
+    const before = normaliseStockRow({ Lot: '1', Beds: '4', 'BED // BATH // CAR': '3 / 2 / 2' });
+    expect(before?.bedrooms).toBe(4);
+    expect(before?.bathrooms).toBe(2);
+    const after = normaliseStockRow({ Lot: '1', 'BED // BATH // CAR': '3 / 2 / 2', Beds: '4' });
+    expect(after?.bedrooms).toBe(4);
+    expect(after?.bathrooms).toBe(2);
+  });
+
+  it('the versioned package price reaches the record as the price', () => {
+    const record = normaliseStockRow({
+      Lot: '927',
+      'Package Price - V002': '$780,050',
+      'Land Price': '$423,500',
+      'Build Price - V002': '$356,550',
+    });
+    expect(record?.price).toBe(780050);
+    // A bare figure needs no display string — see `coercePrice`.
+    expect(record?.price_display).toBeNull();
+    // The components stay in the audit record, visibly unplaced.
+    expect(record?.unmapped['Land Price']).toBe('$423,500');
+    expect(record?.unmapped['Build Price - V002']).toBe('$356,550');
+  });
 });
 
 describe('coercion never invents', () => {
