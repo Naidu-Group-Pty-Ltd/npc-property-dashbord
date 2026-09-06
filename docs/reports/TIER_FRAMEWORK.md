@@ -106,7 +106,8 @@ and Phase 3's fix.
    it; the dead `TIER_CONFIG` section lists deleted; the Briefing trimmed to its
    own structure and given the sources section its tier promises.
 3. **Sectioned record** — per-section storage + abstracts; assembly by id;
-   heading-string matching deleted.
+   heading-string matching deleted. *In progress (§21): resolution and the
+   partition primitive are in; storage and assembly are not.*
 4. **Tier formats** — Financial/Due Diligence/Briefing/Snapshot as first-class
    formats with proportional shells; the suburb-scope Primary registry;
    decision B's rename.
