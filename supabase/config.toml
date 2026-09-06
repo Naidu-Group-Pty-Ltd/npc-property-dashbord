@@ -268,6 +268,11 @@ request_timeout = 1500
 [functions.abs-data-service]
 verify_jwt = false
 
+# The crime reference-data ingest: same internal-secret / per-state
+# sealed-bootstrap auth as abs-poa-ingest (see the function header).
+[functions.crime-data-ingest]
+verify_jwt = true
+
 # The ABS reference-data ingest: internal-secret / sealed-bootstrap auth
 # inside; the gateway JWT stays on in front of it.
 [functions.abs-poa-ingest]

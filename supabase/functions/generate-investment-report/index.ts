@@ -10,6 +10,7 @@ import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS
 import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
 import { demographicsStatBlocks } from '../_shared/reports/censusPromptBlocks.pure.ts';
 import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure.ts';
+import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
@@ -2869,6 +2870,32 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }
       }
 
+      // QLD's crime register is LGA-keyed and the phase-1 crime call ran
+      // before any LGA was known — so once the cadastre has named the shire,
+      // ask again with it. NSW resolves in phase 1 by postcode; this second
+      // ask exists only for the LGA-keyed register.
+      const qldLga = enhancedData.planningData?.parcel?.status === 'ok'
+        ? enhancedData.planningData?.parcel?.lga
+        : null;
+      if (!enhancedData.crimeStatistics && state === 'QLD' && qldLga) {
+        try {
+          const crimeResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ suburb, state, postcode, lga: qldLga })
+          }, 20000, 'crime-statistics-service');
+          if (crimeResponse.ok) {
+            const crimeBody = await crimeResponse.json();
+            if (crimeBody.success && crimeBody.data) {
+              enhancedData = { ...enhancedData, crimeStatistics: crimeBody.data };
+              console.log('✓ QLD crime statistics fetched via cadastre LGA:', qldLga);
+            }
+          }
+        } catch (error: any) {
+          console.log('⚠️ QLD crime retry skipped:', error?.message?.substring(0, 80));
+        }
+      }
+
       // Calculate investment score - property OR area scoring
       if (!isAreaReport && effectivePurchasePrice > 0) {
         // Property-specific scoring
@@ -3262,17 +3289,8 @@ ${demographicsStatBlocks(enhancedData)}
 | Climate Risks | [assessment] | [heatwaves, storms, etc.] |
 
 # 8. Crime & Safety
-| Metric | Value | Comparison to State |
-|--------|-------|-------------------|
-| Crime Rate per 100k | XXX | [above/below average] |
-| Safety Score | XX/100 | - |
-| Trend (3-year) | [Improving/Stable/Worsening] | - |
 
-**Crime Breakdown:**
-| Category | Percentage | Trend |
-|----------|-----------|-------|
-
-[Include safety commentary]
+${crimeStatBlocks(enhancedData)}
 
 ---
 
@@ -3954,30 +3972,7 @@ Long-term climate considerations include potential increases in cooling costs du
 
 # Crime & Safety
 
-**Crime Statistics:**
-
-| Metric | Value | Comparison |
-|--------|-------|------------|
-| Overall Crime Rating | ${enhancedData.crimeStatistics?.overallRating || 'Medium'} | ${enhancedData.crimeStatistics?.comparedToStateAverage || 'X% higher/lower than state average'} |
-| Rate per 100,000 people | ${enhancedData.crimeStatistics?.ratePer100k || 'X,XXX'} | Latest 12 months |
-| Safety Score | ${enhancedData.crimeStatistics?.safetyScore || 'XX'}/100 | - |
-| Year-on-Year Change | ${enhancedData.crimeStatistics?.yoyChange || '-X.X'}% | - |
-| 3-Year Trend | ${enhancedData.crimeStatistics?.threeYearTrend || '-X.X'}% | [Improving/Stable/Worsening] |
-
-**Crime Profile Analysis:**
-
-| Offence Category | Incidents | Percentage |
-|-----------------|-----------|------------|
-| Property Offences | ${enhancedData.crimeStatistics?.breakdown?.property?.incidents || 'X,XXX'} | ${enhancedData.crimeStatistics?.breakdown?.property?.percentage || 'XX'}% |
-| Violent Offences | ${enhancedData.crimeStatistics?.breakdown?.violent?.incidents || 'XXX'} | ${enhancedData.crimeStatistics?.breakdown?.violent?.percentage || 'XX'}% |
-| Drug Offences | ${enhancedData.crimeStatistics?.breakdown?.drug?.incidents || 'XXX'} | ${enhancedData.crimeStatistics?.breakdown?.drug?.percentage || 'XX'}% |
-| Public Order Offences | ${enhancedData.crimeStatistics?.breakdown?.publicOrder?.incidents || 'X,XXX'} | ${enhancedData.crimeStatistics?.breakdown?.publicOrder?.percentage || 'XX'}% |
-
-[Suburb]'s crime profile reflects typical suburban characteristics, with property offences ([XX]%) representing the largest category, primarily comprising theft, break-and-enter, and motor vehicle theft incidents. Violent offences account for [XX]% of incidents, [comparison to property crimes]. The overall crime rate of [X,XXX] per 100,000 population is approximately [X]% [higher/lower] than the [State] state average; however, the critical positive indicator is the 3-year [direction] trend of [X.X]%, indicating [interpretation].
-
-The year-on-year change of [X.X]% suggests [trend assessment]. The safety score of [XX]/100 positions [Suburb] as a [safety assessment] suburb, consistent with [suburb type] areas. For investment purposes, the [declining/stable/increasing] crime trend is [significance assessment].
-
-**Data Source:** [State] Bureau of Crime Statistics and Research (BOCSAR), [URL]
+${crimeStatBlocks(enhancedData)}
 
 ---
 
