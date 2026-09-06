@@ -189,10 +189,19 @@ export interface SectionDefinition {
    *
    * Measured from the `##` headings of the 1,199 stored reports, which is why
    * the list is untidy: numbered and unnumbered forms of one name, trailing
-   * colons, and the emoji headings 746 legacy Compass reports carry. Nothing
-   * routes on these in Phase 2; Phase 3's assembly reads them so no consumer
-   * keeps its own regex — which is how `TITLED_SECTION_CHARTS`, `SPLIT_ROUTES`
-   * and `sourceHeadings` became three opinions about the same heading.
+   * colons, and the emoji headings 746 legacy Compass reports carry.
+   * `partitionByRegistry` reads them so no consumer keeps its own regex — which
+   * is how `TITLED_SECTION_CHARTS`, `SPLIT_ROUTES` and `sourceHeadings` became
+   * three opinions about the same heading.
+   *
+   * **An alias is a heading a document uses as a SECTION. A sub-heading is
+   * not an alias.** The legacy generator promotes its sub-headings to H2 —
+   * `Strengths`, `Weaknesses`, `Opportunities` and `Threats` under SWOT;
+   * `Market Commentary:` and `Yield Commentary:` under their sections; the
+   * whole `11.1 …` / `15.1 …` family — and listing those here would make each
+   * one OPEN a section, fragmenting one SWOT into four. They are absorbed by
+   * `partitionByRegistry` into the section that was open when they appeared,
+   * which puts them exactly where they belong and costs nothing.
    */
   aliases: readonly string[];
   /** Absent tier ⇒ excluded from that tier. */
@@ -390,7 +399,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       '⚖️ PROFESSIONAL DISCLAIMER', 'Disclaimer', 'Source Appendix', 'Appendix',
       'Market Data Sources', 'Market Data Sources & Data Transparency',
       'Sources & Data Transparency', '13. Sources & Data Transparency', 'Data Sources',
-      'Data Transparency Statement', 'SOURCES & REFERENCES',
+      'Data Transparency Statement', 'SOURCES & REFERENCES', 'Disclaimer & Data Limitations',
     ],
     purpose:
       'What the document rests on and what it is not: sources with dates and the advice disclaimer. A source that was not used is omitted rather than listed.',
@@ -539,6 +548,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       'Employment, Income & Affordability Profile', 'Employment & Economic Linkages',
       'Major Industries & Job Growth', 'Employment & Industry Breakdown',
       'Job Growth Trends', 'Current Economic Context', 'Economic Context',
+      'Population & Employment Statistics',
       'State Economic Overview',
     ],
     purpose: 'What people there do for a living, what they earn, and whether this price is affordable against it.',
@@ -652,6 +662,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     provenance: 'measured',
     aliases: [
       'Planning, Zoning and Title Due Diligence', 'Zoning', 'Planning', 'Property & Zoning',
+      'Zoning & Planning Analysis',
       'Government Policy & Regulation',
     ],
     purpose:
@@ -727,6 +738,10 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     aliases: [
       'Purchase Costs & Annual Holding Cost Breakdown', 'Purchase & Ongoing Costs (Annual)',
       'Purchase & Ongoing Costs', 'Costs for Investors', '6. Costs for Investors',
+      // The legacy Compass's section 9 is one container over costs, yield, loan
+      // and cashflow. It resolves to the head of the group it contains, the
+      // same way the Compass's merged `Demand Drivers` resolves to `population`.
+      'Financial Analysis',
     ],
     purpose: 'What it costs to buy and what it costs to hold, per year, from the recorded calculation.',
     tiers: {
@@ -770,6 +785,11 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     aliases: [
       'Sensitivity & Scenario Testing', 'Sensitivity Analysis', 'Interest Rate Sensitivity',
       'Structural Cashflow Deficit',
+      // The legacy generator's own longer spellings of the same two sections.
+      // Not reachable by the qualifier rule, which deliberately refuses a bare
+      // space as a separator.
+      'Interest Rate Sensitivity and Debt Serviceability Pressure',
+      'Structural Cashflow Deficit Requiring Ongoing Investor Capital Support',
     ],
     purpose: 'What a rate move or a rent move does to the position — the recorded grid, not a re-derivation.',
     tiers: {
@@ -787,6 +807,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       '10-Year Projection Commentary', 'Property Value Projections',
       'Rental Income Projections', 'Cumulative Cashflow Projections',
       'Capital Appreciation Potential', 'Leveraged Equity Accumulation',
+      'Leveraged Equity Accumulation Through Debt Reduction',
       'Projection Assumptions',
     ],
     purpose: 'Value, rent, cashflow and equity year by year under the recorded scenarios.',
@@ -851,7 +872,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     id: 'opportunities',
     canonicalLabel: 'Top 3 Opportunities',
     provenance: 'authored',
-    aliases: ['Top 3 Opportunities', 'Key Opportunities & Risks', '12. Key Opportunities & Risks'],
+    aliases: ['Top 3 Opportunities', 'Top 3 Investment Opportunities', 'Key Opportunities & Risks', '12. Key Opportunities & Risks'],
     purpose: 'The three things that could go better than the base case, each in a sentence or two.',
     tiers: {
       briefing: { depth: 'required', order: 18, label: 'Top 3 Opportunities', producer: authored('condense.briefing') },
@@ -862,7 +883,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     id: 'risks',
     canonicalLabel: 'Top 3 Risks',
     provenance: 'authored',
-    aliases: ['Top 3 Risks'],
+    aliases: ['Top 3 Risks', 'Top 3 Investment Risks'],
     purpose: 'The three things most likely to go worse, each with what would show it early.',
     tiers: {
       briefing: { depth: 'required', order: 19, label: 'Top 3 Risks', producer: authored('condense.briefing') },
@@ -1024,16 +1045,25 @@ export function mergesForTier(tier: ReportTier): Array<{ id: SectionId; into: Se
 /**
  * Strip a heading down to what identifies it.
  *
- * Case, a leading `N.` ordinal, a leading emoji and a trailing colon all vary
- * across the corpus for the same section — `1. Location Overview`, `⚖️
- * PROFESSIONAL DISCLAIMER` and `Market Commentary:` are the bare headings with
- * decoration — and every consumer that rolled its own normalisation counted
- * them separately.
+ * Case, a leading ordinal, a leading emoji and a trailing colon all vary across
+ * the corpus for the same section — `1. Location Overview`, `⚖️ PROFESSIONAL
+ * DISCLAIMER` and `Market Commentary:` are bare headings with decoration — and
+ * every consumer that rolled its own normalisation counted them separately.
+ *
+ * An ordinal is EITHER multi-level (`11.1 `) OR punctuated (`9. `, `12) `), and
+ * never a bare number followed by a space. The first version required the
+ * punctuation, so `9. Financial Analysis` normalised and `11.1 Public Transport
+ * Network` did not — and the legacy generator numbers its sub-sections in
+ * exactly that second style, which cost 3.5 points of instance coverage on its
+ * own. Simply making the punctuation optional goes too far the other way and
+ * eats the leading number of a real name: `2026 Market Review` would normalise
+ * to `market review`. No corpus heading has that shape today, which is why it
+ * is worth closing now rather than after one does.
  */
 export function normaliseHeading(heading: string): string {
   return (heading || '')
     .replace(/^[^\p{Letter}\p{Number}]+/u, '')
-    .replace(/^\d+(?:\.\d+)*[.)]\s*/, '')
+    .replace(/^(?:\d+(?:\.\d+)+|\d+[.)])\s+/, '')
     .replace(/\s*:\s*$/, '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -1058,12 +1088,159 @@ for (const definition of SECTION_REGISTRY) {
   }
 }
 
-/** Which section a heading belongs to, or null. Exact match after normalisation. */
+/**
+ * Aliases longest-first, so a qualified heading matches the most specific name.
+ *
+ * `Sensitivity Analysis (interest rate, rent, vacancy)` must resolve through
+ * `Sensitivity Analysis` and not through some shorter alias that also happens to
+ * prefix it. Sorting once here is what makes the qualifier rule below safe.
+ */
+const aliasesByLength = [...aliasIndex.keys()].sort((a, b) => b.length - a.length);
+
+/**
+ * A known name followed by a parenthetical or dashed qualifier.
+ *
+ * The corpus is full of these — `Property Value Projections (AUD)`, `Cashflow
+ * Analysis - Interest-Only Scenario (Year 1)`, `Education Facilities (Extended
+ * List)` — and they are the same section as the bare name with a unit, a
+ * scenario or a scope bolted on. Worth 4.0 points of instance coverage.
+ *
+ * The separator must be a bracket or a dash with a space around it, never a
+ * bare space: `Market Positioning` prefixes `Market Position` and matching on a
+ * space alone would let any section swallow a longer, different one.
+ */
+function qualifiedMatch(normalised: string): SectionId | null {
+  for (const alias of aliasesByLength) {
+    if (
+      normalised.startsWith(`${alias} (`) ||
+      normalised.startsWith(`${alias} - `) ||
+      normalised.startsWith(`${alias} – `) ||
+      normalised.startsWith(`${alias} — `) ||
+      normalised.startsWith(`${alias}: `)
+    ) {
+      return aliasIndex.get(alias) ?? null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Which section a heading belongs to, or null.
+ *
+ * Exact match after normalisation, then the qualifier rule. **Null is a real
+ * answer and callers must handle it** — measured over the 1,199-row corpus,
+ * 966 distinct H2 headings resolve to 38 sections, and the residue is not
+ * noise: it is the legacy generator's SUB-headings promoted to H2
+ * (`Strengths`, `Market Commentary:`, `15.1 Loan Assumptions`) plus furniture
+ * that is not a section at all (`📞 CONTACT US`, on 761 reports). See
+ * `partitionByRegistry` for the rule that keeps them.
+ */
 export function sectionIdForHeading(heading: string): SectionId | null {
-  return aliasIndex.get(normaliseHeading(heading)) ?? null;
+  const key = normaliseHeading(heading);
+  return aliasIndex.get(key) ?? qualifiedMatch(key);
 }
 
 /** Every normalised heading the registry knows, with the section that owns it. */
 export function knownHeadings(): ReadonlyMap<string, SectionId> {
   return aliasIndex;
+}
+
+// ─── Partitioning a stored document by section ──────────────────────────────
+
+/**
+ * Whether a heading's own numbering says it is a SUB-heading.
+ *
+ * The legacy generator numbers top-level sections `1.` … `13.` and their
+ * sub-sections `11.1`, `15.1`, `4.2`. That depth is real information and the
+ * normaliser throws it away, which matters because a sub-heading's *text* often
+ * resolves perfectly well: `11.1 Public Transport Network` reduces to `public
+ * transport network`, a genuine alias of `transport`. Treating it as a section
+ * would cut the parent section in half at that point.
+ *
+ * So depth decides, and text does not get a vote: two or more levels is a
+ * sub-heading, whatever it says.
+ */
+export function isSubHeadingByNumbering(heading: string): boolean {
+  return /^\s*\d+\.\d+[.)]?\s+/.test(heading || '');
+}
+
+export interface PartitionedSection {
+  id: SectionId;
+  /** The heading as the document actually spelled it. */
+  heading: string;
+  /** Everything under it, including any unrecognised sub-headings. */
+  body: string;
+}
+
+export interface DocumentPartition {
+  /** Anything before the first recognised section — a title block, usually. */
+  preamble: string;
+  sections: PartitionedSection[];
+  /** Unrecognised H2s, with the section that absorbed each. Never dropped. */
+  absorbed: Array<{ heading: string; into: SectionId | null }>;
+}
+
+/**
+ * Split a stored `report_content` into registry sections.
+ *
+ * **An unrecognised heading is content belonging to the section above it, never
+ * a section and never a deletion.** That rule is the whole design, and it is
+ * forced by measurement rather than chosen: of 966 distinct H2 headings in the
+ * corpus, resolution reaches 68.2% of instances, and essentially all of the
+ * remainder are sub-headings the legacy generator emitted at H2 — `Strengths`,
+ * `Weaknesses`, `Opportunities`, `Market Commentary:`, `15.1 Cashflow
+ * Commentary`, `11.1 Public Transport Network`. A partition that dropped what
+ * it could not name would discard nearly a third of every legacy document.
+ *
+ * The same rule is why this returns `absorbed`: an unrecognised heading is
+ * kept, and also *reported*, so a new one showing up in production is visible
+ * rather than silently swallowed.
+ *
+ * Text before the first recognised heading is the preamble — legacy documents
+ * open with an H1 title block and often a `📞 CONTACT US` H2, and attributing
+ * those to whichever section happens to follow would put marketing furniture
+ * inside a client's verdict.
+ *
+ * **A section id may appear more than once, and repeats are kept in order.**
+ * Measured on production briefing `89b451f6`: 29 headings resolving to 21
+ * distinct sections, with `marketPosition` four times, `tenYear` three times,
+ * and `loan`, `scorecard` and `environmentalRisk` twice each — the legacy
+ * document spreads one section across several headings. Collapsing them here
+ * would silently reorder a client's document and merge bodies that were written
+ * apart; whether to fold them, and how, is a decision for the storage step that
+ * consumes this, not for the reader that splits the text.
+ *
+ * Verified against four real documents spanning both engines and three tiers
+ * (39.6k, 48.4k, 14.4k and 51.6k characters): every one round-trips with its
+ * non-whitespace content conserved exactly.
+ */
+export function partitionByRegistry(markdown: string): DocumentPartition {
+  const lines = (markdown || '').split('\n');
+  const sections: PartitionedSection[] = [];
+  const absorbed: DocumentPartition['absorbed'] = [];
+  const preamble: string[] = [];
+  let current: { id: SectionId; heading: string; body: string[] } | null = null;
+
+  for (const line of lines) {
+    const h2 = /^##\s+(.+?)\s*$/.exec(line);
+    if (h2) {
+      // Numbering outranks text. `11.1 Public Transport Network` resolves to
+      // `transport` on its words alone, and opening a section there would split
+      // section 11 in two at its own sub-heading.
+      const id = isSubHeadingByNumbering(h2[1]) ? null : sectionIdForHeading(h2[1]);
+      if (id) {
+        if (current) sections.push({ id: current.id, heading: current.heading, body: current.body.join('\n').trim() });
+        current = { id, heading: h2[1], body: [] };
+        continue;
+      }
+      // Unrecognised: keep the heading where it stands, inside whatever is open.
+      absorbed.push({ heading: h2[1], into: current?.id ?? null });
+      (current ? current.body : preamble).push(line);
+      continue;
+    }
+    (current ? current.body : preamble).push(line);
+  }
+  if (current) sections.push({ id: current.id, heading: current.heading, body: current.body.join('\n').trim() });
+
+  return { preamble: preamble.join('\n').trim(), sections, absorbed };
 }

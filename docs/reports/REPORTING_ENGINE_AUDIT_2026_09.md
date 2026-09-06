@@ -1580,3 +1580,98 @@ problem, and Phase 3 fixes it by assembling from stored sections rather than
 re-reading a sibling document.
 
 Pinned by `sectionRegistry.spec.ts` (136) and `tierRegistryAdoption.spec.ts` (11).
+
+---
+
+## §21 — Phase 3, part 1: can the registry recognise what production wrote?
+
+Phase 3 assembles documents from the registry instead of by matching heading
+strings. Before any of that could be designed, one number had to be measured:
+**how much of the corpus does the registry actually recognise?** If assembly by
+id cannot name a heading, that heading's content is lost.
+
+### The measurement
+
+Every `##` heading in the 1,199 stored reports: **966 distinct headings, 10,752
+instances** — for a product with 38 sections.
+
+| resolver | headings | instances |
+|---|---|---|
+| as Phase 2 shipped it | 278/966 (28.8%) | 6,529/10,752 (60.7%) |
+| + multi-level ordinal fix | 295 (30.5%) | 6,898 (64.2%) |
+| + qualified variants | 400 (41.4%) | 7,330 (68.2%) |
+| + six section aliases (final) | — | **73.3%** on the committed fixture |
+
+### The 966:38 ratio is the finding
+
+The residue is not a set of sections the registry forgot. It is:
+
+- **sub-headings the legacy generator promotes to H2** — `Strengths`,
+  `Weaknesses`, `Opportunities`, `Threats` under SWOT; `Market Commentary:`,
+  `Yield Commentary:`, `Loan Assumptions:` under their sections; the whole
+  `11.1 …` / `15.1 …` / `4.2 …` family;
+- **furniture that is not a section at all** — `📞 CONTACT US`, on 761 reports.
+
+That decides the design. A partition that dropped what it could not name would
+discard nearly a third of every legacy document; one that treated each
+unrecognised heading as a section would fragment one SWOT into four. So:
+
+> **An unrecognised heading is content belonging to the section above it. Never
+> a section, never a deletion.**
+
+`partitionByRegistry` implements it, and reports what it absorbed so a genuinely
+new heading is visible rather than silently swallowed.
+
+### Three rules that fell out of the measurement
+
+**A sub-heading must not be an alias.** Adding `Strengths` to the alias table
+would make it *open* a section, splitting SWOT into four. The absorb rule puts
+it exactly where it belongs and costs nothing — so an alias is only ever a
+heading a document uses as a section.
+
+**Numbering outranks text.** `11.1 Public Transport Network` reduces to `public
+transport network`, a genuine alias of `transport` — and opening a section there
+cuts section 11 in half at its own sub-heading. The legacy generator numbers
+top-level sections `1.` … `13.` and sub-sections `11.1`, `15.1`, `4.2`, so
+`isSubHeadingByNumbering` treats two or more levels as a sub-heading whatever
+the words say.
+
+**A section id may repeat, and repeats are kept in order.** Production briefing
+`89b451f6` carries 29 headings resolving to 21 sections, with `marketPosition`
+four times and `tenYear` three. Collapsing them in the reader would merge bodies
+written apart and reorder a client's document; how to fold them belongs to the
+storage step, not to the text splitter.
+
+### Two defects fixed
+
+`normaliseHeading` required trailing punctuation after an ordinal
+(`\d+(\.\d+)*[.)]`), so `9. Financial Analysis` normalised and `11.1 Public
+Transport Network` did not — worth **3.5 points** of instance coverage. The
+obvious fix, making the punctuation optional, overshoots: it would strip the
+leading number of a real name, turning `2026 Market Review` into `market
+review`. The rule shipped instead is that an ordinal is EITHER multi-level
+(`11.1 `) OR punctuated (`9. `), never a bare number and a space. No corpus
+heading has that shape today, which is the moment to close it rather than after
+one arrives.
+
+Qualified variants did not resolve at all — `Property Value Projections (AUD)`,
+`Cashflow Analysis - Interest-Only Scenario (Year 1)`, `Education Facilities
+(Extended List)`. Worth **4.0 points**. The separator must be a bracket, dash or
+colon and never a bare space, or `Market Position` would swallow `Market
+Positioning`.
+
+### Verified against real documents
+
+Four production documents spanning both engines and three tiers — 39.6k, 48.4k,
+14.4k and 51.6k characters — partition with their non-whitespace content
+**conserved exactly**. The compass-40 document resolves to precisely its 11
+declared sections; the legacy Compass to 11 plus one absorbed heading (its own
+title, correctly left in the preamble).
+
+`fixtures/corpusHeadings.json` is the committed heading inventory: every heading
+carried by two or more reports, scrubbed of the twelve singletons that named a
+property address. It makes coverage a CI number rather than a one-off
+measurement — a regression shows up as a failing floor instead of a quietly
+thinner report.
+
+Pinned by `corpusPartition.spec.ts` (21).
