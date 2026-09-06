@@ -391,6 +391,12 @@ jobs:
       - name: Deno type-check every Edge Function entry point (WP-14)
         run: node scripts/security/check-edge-functions.mjs
 
+      # No invented figures in the report pipeline: Math.random() is
+      # allowlisted per file with a reviewed purpose, and the de-fabricated
+      # data services must keep answering "unavailable" rather than inventing.
+      - name: Fabricated-data gate
+        run: node scripts/security/check-fabricated-data.mjs
+
       # Guards the save below. An EMPTY cache must never be banked: a cache key
       # can be written once, and an exact hit does not consult `restore-keys` —
       # so an empty entry under this key would make every future run on this

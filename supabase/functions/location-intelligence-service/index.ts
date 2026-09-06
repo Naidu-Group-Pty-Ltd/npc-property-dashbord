@@ -6,6 +6,8 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { assessAuPoint } from "../_shared/auGeoSanity.pure.ts";
 import { buildAuGeocodeQuery } from "../_shared/auGeocodeQuery.pure.ts";
+import { sourceUnavailable, isSourceUnavailable } from "../_shared/sourceUnavailable.pure.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -64,14 +66,18 @@ Deno.serve(async (req) => {
     const googleMapsApiKey = Deno.env.get('GOOGLE_MAPS_API_KEY');
     
     if (!googleMapsApiKey) {
-      console.warn('⚠️ Google Maps API key not configured. Using mock data.');
-      const mockData = generateMockLocationData(input);
-      return new Response(JSON.stringify({ 
-        success: true, 
-        data: mockData,
-        usingMockData: true,
-        message: 'Using sample data - Configure GOOGLE_MAPS_API_KEY for real data'
-      }), {
+      // No key means no measurement, and no measurement means no data. The
+      // old branch here answered with `generateMockLocationData` — invented
+      // school names, an invented station, a Math.random() walk score and
+      // Sydney's coordinates — as HTTP 200 `success: true`, which is how a
+      // deployment with a missing credential shipped fiction into client
+      // reports and reported itself healthy while doing it.
+      console.warn('⚠️ GOOGLE_MAPS_API_KEY not configured — location intelligence unavailable.');
+      return new Response(JSON.stringify(sourceUnavailable(
+        'location-intelligence',
+        'not_configured',
+        'GOOGLE_MAPS_API_KEY is not configured — location intelligence is unavailable for this deployment.',
+      )), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -113,48 +119,31 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } catch (apiError) {
+      // A provider failure is a fact about this request, and the caller can
+      // retry it. Sample data is a fact about no property at all.
       console.error('❌ Google Maps API error:', apiError);
-      console.log('Falling back to mock data due to API error');
-      
-      const mockData = generateMockLocationData(input);
-      return new Response(JSON.stringify({ 
-        success: true, 
-        data: mockData,
-        usingMockData: true,
-        message: 'Google Maps API error - using sample data',
-        error: apiError instanceof Error ? apiError.message : 'Unknown API error'
-      }), {
+      return new Response(JSON.stringify(sourceUnavailable(
+        'location-intelligence',
+        'provider_error',
+        `Google Maps could not be reached or answered unusably — location intelligence is unavailable for this request. (${apiError instanceof Error ? apiError.message : 'unknown error'})`,
+      )), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
   } catch (error) {
+    // This used to build a mock profile for a property at 'Unknown, 2000,
+    // NSW' and return it 200 `success: true` — a crash dressed as data. A
+    // crash is a 500.
     console.error('❌ Critical error in location intelligence service:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to analyze location';
-    
-    // Return mock data on critical error
-    try {
-      const mockData = generateMockLocationData({ address: 'Unknown', postcode: '2000', state: 'NSW' });
-      return new Response(JSON.stringify({ 
-        success: true,
-        data: mockData,
-        usingMockData: true,
-        error: errorMessage,
-        message: 'Error occurred - using sample data'
-      }), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    } catch {
-      return new Response(JSON.stringify({ 
-        error: errorMessage,
-        success: false 
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    return new Response(JSON.stringify({
+      ...internalError(error, 'location-intelligence-service'),
+      success: false,
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 });
 
@@ -241,8 +230,18 @@ async function fetchLocationIntelligence(
       );
       
       if (transportResponse.ok) {
-        publicTransportData = await transportResponse.json();
-        console.log('✓ Public transport data fetched successfully');
+        const transportBody = await transportResponse.json();
+        // The transport service historically answered with a bare payload —
+        // no `success` wrapper — so its new refusal envelope would read as a
+        // payload full of undefineds here, and `transportInfo` below would
+        // have preferred it over Google's real, coordinate-measured transit
+        // results. An honest refusal must leave the real fallback standing.
+        if (isSourceUnavailable(transportBody)) {
+          console.log('Public transport service unavailable, will use Google transit data');
+        } else {
+          publicTransportData = transportBody;
+          console.log('✓ Public transport data fetched successfully');
+        }
       } else {
         console.warn('Public transport service returned error, will use Google data');
       }
@@ -640,50 +639,4 @@ function calculateAmenityScores(amenities: any): AmenityScore[] {
   });
 
   return scores;
-}
-
-function generateMockLocationData(input: LocationIntelligenceInput) {
-  return {
-    coordinates: { lat: -33.8688, lng: 151.2093 },
-    commute: {
-      durationMinutes: Math.floor(Math.random() * 30) + 20,
-      distanceKm: Math.floor(Math.random() * 20) + 5,
-      mode: 'estimated'
-    },
-    walkScore: Math.floor(Math.random() * 40) + 60,
-    amenities: [
-      { category: 'Public Transport', count: 3, nearest: 'Train Station', distance: 0.8, score: 85 },
-      { category: 'Schools', count: 5, nearest: 'Primary School', distance: 1.2, score: 80 },
-      { category: 'Healthcare', count: 2, nearest: 'Medical Centre', distance: 1.5, score: 70 },
-      { category: 'Shopping', count: 4, nearest: 'Shopping Centre', distance: 2.1, score: 75 },
-      { category: 'Recreation', count: 6, nearest: 'Park', distance: 0.5, score: 90 }
-    ],
-    transport: {
-      nearestStation: 'Central Station',
-      distanceToStation: 0.8,
-      stationsWithin2km: 3
-    },
-    schools: {
-      nearestSchool: 'Local Primary School',
-      distanceToSchool: 1.2,
-      schoolsWithin3km: 5,
-      topSchools: [
-        { name: 'Primary School A', distance: 1.2, rating: 4.5 },
-        { name: 'High School B', distance: 2.3, rating: 4.3 },
-        { name: 'Private College C', distance: 2.8, rating: 4.7 }
-      ]
-    },
-    healthcare: {
-      nearestHospital: 'Community Hospital',
-      distanceToHospital: 3.2,
-      facilitiesWithin5km: 2
-    },
-    lifestyle: {
-      shoppingCenters: 4,
-      parks: 6,
-      restaurants: 15,
-      nearestShopping: 'Local Shopping Centre',
-      nearestPark: 'Community Park'
-    }
-  };
 }

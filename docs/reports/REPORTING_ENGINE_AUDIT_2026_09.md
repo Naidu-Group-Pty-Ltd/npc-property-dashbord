@@ -1883,3 +1883,181 @@ consumer inspects `usingMockData`, and it only `console.warn`s while using the
 data anyway; `regenerate-report-qualitative` does not check it at all. That is
 a larger behaviour change than the one made here and is recorded rather than
 taken unilaterally.
+
+---
+
+## §24 — The invented data behind the reports (2026-09-06)
+
+§23 found one fabricator (`generateMockLocationData`) while fixing the
+geocoder. Sweeping for the class found **seven of the nine external-data
+services** behind report generation answering "I don't know" by inventing —
+and every one of them reported as normal operation, which is why the class
+survived the platform's whole life. This section is the record of what was
+measured, what was removed, and what now guards the door.
+
+### The measurements, service by service
+
+**`abs-data-service` — the worst of them.** It never called the ABS at all:
+its four live-API functions (`fetchPopulationData`, `fetchIncomeData`,
+`fetchHousingData`, `fetchEmploymentData`) had **no caller anywhere**. Every
+request was answered by one of THREE invented profiles for the whole of
+Australia (eleven named postcodes were "high-income metro"; NT/TAS/SA were
+"regional"; everywhere else "standard suburban") with `Math.random()` jitter
+on population, density, income, age and rent, labelled
+`source: 'ABS Census 2021 estimates'` — then **cached for 30 days and served
+back as `'ABS Census Cache'`**, the fabrication laundering itself into a
+cache hit, while `api_health_log` recorded a successful `abs-census` call
+that was never made. In production:
+
+- **849 of 1,199 stored reports, across 500 distinct properties, carry the
+  identical profile**: growth 2.5%, unemployment 3.5%, owner-occupiers
+  69.8%, participation 68.4% — every suburb in the country, the same suburb.
+- `10 Chester Street` holds **20 reports with 20 different populations**
+  (16,245 → 38,773), median income $99,003 → $141,343, rent $520 → $689.
+  Regenerating a report re-rolled the demographics.
+
+**`public-transport-service`.** Eight per-state "fetchers" that ignored the
+coordinate entirely: every NSW property was 450m from Central Station with
+lines T1–T8; every VIC property 250m from a Swanston Street tram; every
+state a hard-coded landmark list with an invented `qualityScore` — which
+drove up to 30 points of every report's walk score through
+location-intelligence, overriding Google's real, coordinate-measured transit
+results. Its error path invented a *different* answer ("Unknown", 999m,
+score 25).
+
+**`abs-employment-service`.** A labour-force size of
+`15000 * (0.5 + Math.random() * 0.5)` — a random number of workers —
+hard-coded tables for five states (TAS, NT and the ACT silently received
+NSW's figures), canned job growth (`+2.8%` annual, everywhere), a fixed
+occupation breakdown, and a canned `futureOutlook: 'Positive'` paragraph for
+every suburb in the country, all under `dataSource: 'Australian Bureau of
+Statistics (ABS)'`, `dataset: '6202.0 - Labour Force, Australia'`.
+
+**`crime-statistics-service`.** Postcode bands invented **counts of
+offences** ("Break and Enter: N"), a safety score, and "22% higher than
+state average" — a comparison against a statistic nobody computed. Its
+per-state fetchers did call the open-data catalogues, then discarded the
+response at a `// TODO` and fell through to the invention. An invented crime
+figure defames a suburb or falsely reassures a buyer; either way it is
+libel-shaped.
+
+**`climate-data-service`.** One climate per state — every property in NSW
+shared one annual rainfall (1,150mm) from Bourke to Bondi — cached **365
+days**. Its own comment conceded there was no source ("BoM's open data
+delivery is currently suspended … We'll use climate zone patterns").
+
+**`abs-seifa-service`.** Real attempts against the ABS API and data.gov.au,
+then a fallback that assigned socio-economic deciles from postcode folklore
+("Eastern suburbs decile 10, Western Sydney decile 4") with scores derived
+as `900 + decile × 10` and the sibling indexes as ±constants.
+
+**`school-data-service`.** Real directory + real Google Places, then a final
+fallback that invented **named institutions** — `"${suburb} Public School"`,
+ICSEA guessed from a postcode list, 450 students — schools that do not
+exist, in a client's report.
+
+**`rba-data-service`.** A real live path (domain-filtered search over
+rba.gov.au/abs.gov.au, temperature 0, range-validated, cited). But all four
+failure exits returned a cash rate **hard-coded at 4.10%** and stamped with
+**today's date** — over a year stale at removal, presented as current, with
+an `isFallback: true` flag that nothing anywhere read.
+
+**`risk-assessment-service`.** The most real of the nine — AFRIP flood
+queries and actual state bushfire-mapping services. But its fallbacks
+invented: any suburb whose *name* contained "hills", "ranges" or "forest"
+was rated **Extreme** bushfire risk (Baulkham Hills and Surry Hills alike);
+fifteen suburb-name fragments decided flood risk by substring (anything
+containing "kew" inherited Maribyrnong's flood history); and an outage was
+cached for 180 days.
+
+**The caches, in total:** `abs_census_cache` 123 rows, `climate_data_cache`
+1,237, `crime_statistics_cache` 140, `transport_data_cache` 639 — **2,139
+rows, 100% `data_quality = 'estimated'`, zero live**. No real fetch ever
+completed in any of the four. (`risk_assessment_cache`: 169 rows, 100%
+live — AFRIP is real.)
+
+**The clean counter-example:** `domain-data-service`. Real API; on failure,
+`success: false` with a status-only `fallbackData` carrying no figures. The
+pattern existed in-repo the whole time.
+
+### The rule, and what changed
+
+**A source that cannot answer says so.** A missing section is a visible
+absence a reader can weigh; an invented one is a defect nobody can detect,
+because every downstream figure is computed from it correctly. This is the
+same asymmetry the AML programme records as "refusal is visible, a confident
+clear against nothing is not".
+
+- **`_shared/sourceUnavailable.pure.ts`** is the one honest answer:
+  `{ success: false, data: null, unavailable: true, service, reason,
+  message }` at HTTP 200, with four reasons that each name a different
+  remedy (`not_configured`, `provider_error`, `source_not_integrated`,
+  `no_data_for_location`). No field on it can carry a figure.
+- Every generator is **deleted, not bypassed** — a dormant generator is one
+  code path away from coming back (the agreements programme's rule). The
+  real paths (AFRIP, state bushfire mapping, schools directory, Google
+  Places, Domain, the RBA live retrieval, the two SEIFA attempts) are
+  untouched.
+- Both report pipelines already attach data only on `success && data`
+  (verified at every call site; no `fetchServiceWithFallback` caller passes
+  a fallback value), so a refusal lands in the exact path taken when a
+  service is unreachable, and the existing coverage flags record it.
+- Public-transport's consumer needed one guard: that service historically
+  returned a **bare** payload, so the envelope would have read as data —
+  `isSourceUnavailable()` in location-intelligence keeps the refusal from
+  outranking Google's real transit results.
+- Risk-assessment keeps its composite shape (a real flood reading can stand
+  beside an unavailable bushfire one): its fallbacks now return `level:
+  'Unknown'` with the reason and the official source, and **an outage is
+  never cached**.
+- Migration `20261112020000` purges the 2,139 fabricated cache rows —
+  filtered on `data_quality = 'estimated'` so anything a real integration
+  writes survives — and `abs-data-service` reads its cache `live`-only, so a
+  straggler row from a not-yet-redeployed old revision cannot be served
+  either.
+- `api_health_log` is no longer told a story: nothing logs a successful
+  call that was never made.
+
+### What guards the door
+
+`scripts/security/check-fabricated-data.mjs`, wired into `ci.yml` and
+`security:test` (gate 56; the gates-wired check counts it):
+
+1. A **`Math.random()` ratchet** over `supabase/functions/` — every
+   occurrence must be named in
+   `supabase/functions-registry/math-random-allowlist.json` with a reviewed
+   purpose (jitter, ids, SVG handles); counts may only fall. Comments are
+   stripped first, because the removal deliberately left the history in
+   comments.
+2. The ten de-fabricated services must keep their honest-absence contract
+   and must not reintroduce any generator by name.
+
+The negative-test harness proves the gate bites: a mutation reintroducing
+`getMockABSData(` fails it (38 controls removed → 38 gates failed).
+`src/lib/reports/__tests__/fabricatedDataRemoval.spec.ts` pins the same
+contracts in the verify job, plus the consumer guards and the purge
+migration's shape.
+
+### What this costs, and what fills the hole
+
+New reports will carry **absent** demographics, employment, climate, crime,
+SEIFA and transport-detail sections until real integrations exist, and
+that is the point: the sections were never real. The acquisition paths are
+recorded at the head of each service — ABS Census 2021 GCP DataPacks by POA
+(CC BY 4.0; G01/G02 carry exactly the promised fields) loaded on the
+sanctions-register pattern; ABS 6202.0 for employment; BoM climate averages
+by station; BOCSAR/CSA/QPS et al. for crime; GTFS feeds for transport. The
+live ABS SDMX API could not be verified from this environment (egress
+blocked), and an unverified parser of a statistical agency's API is how the
+last version of `abs-data-service` started.
+
+**Stored reports are untouched.** The 1,085 rows carrying fabricated
+demographics are delivered records; repairing history is a separate,
+explicit decision, exactly as with §23's coordinates.
+
+### Also noted
+
+`admin-user-management` generates a temporary password with
+`Math.random()` — not report data, but not a CSPRNG either. Flagged in the
+allowlist as a hardening follow-up (`crypto.getRandomValues()`), with its
+entry pinned so it cannot grow.

@@ -4,6 +4,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { sourceUnavailable } from '../_shared/sourceUnavailable.pure.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -52,8 +53,24 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch SEIFA data from ABS Data API
+    // Fetch SEIFA data from ABS Data API / data.gov.au — the two real
+    // attempts. There is no third path any more: `generateSEIFAEstimate`
+    // used to assign socio-economic deciles from postcode folklore (Eastern
+    // Suburbs decile 10, "Western Sydney" decile 4) with scores derived as
+    // `900 + decile*10`, labelled "Estimated based on ABS SEIFA patterns".
+    // A ranking of a neighbourhood's disadvantage is not something this
+    // platform may invent.
     const seifaData = await fetchSEIFAData(postcode, state);
+
+    if (!seifaData) {
+      return new Response(JSON.stringify(sourceUnavailable(
+        'abs-seifa',
+        'provider_error',
+        'SEIFA indexes could not be retrieved from the ABS or data.gov.au for this postcode — socio-economic figures are unavailable rather than estimated.',
+      )), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     return new Response(JSON.stringify({ 
       success: true, 
@@ -185,13 +202,13 @@ async function fetchSEIFAData(postcode: string, state?: string) {
       console.log('data.gov.au fetch failed:', dataGovError.message);
     }
 
-    // Fallback: Generate reasonable estimates based on postcode patterns
-    console.log('Using SEIFA estimates for postcode:', postcode);
-    return generateSEIFAEstimate(postcode, state);
+    // Neither real source answered. There is nothing honest to return.
+    console.log('SEIFA unavailable for postcode:', postcode);
+    return null;
 
   } catch (error: any) {
     console.error('Error fetching SEIFA data:', error);
-    return generateSEIFAEstimate(postcode, state);
+    return null;
   }
 }
 
@@ -393,95 +410,6 @@ function calculateDecile(score: number): number {
   if (score < 1150) return 8;
   if (score < 1200) return 9;
   return 10;
-}
-
-function generateSEIFAEstimate(postcode: string, state?: string): any {
-  console.log(`⚠️ Generating SEIFA estimates for postcode ${postcode}, state: ${state}`);
-  console.log('Note: This is estimated data. Real API data could not be retrieved.');
-  
-  // Generate reasonable estimates based on postcode patterns
-  // This is used when real data is unavailable
-  
-  const postcodeNum = parseInt(postcode);
-  let decile = 5; // Default to middle
-  
-  // Sydney (2000-2999)
-  if (postcodeNum >= 2000 && postcodeNum < 3000) {
-    // Eastern suburbs and North Shore are higher
-    if ([2026, 2027, 2028, 2030, 2061, 2065, 2088, 2089, 2090].includes(postcodeNum)) {
-      decile = 10;
-    } else if (postcodeNum >= 2000 && postcodeNum <= 2100) {
-      decile = 8;
-    } else if (postcodeNum >= 2200 && postcodeNum <= 2300) {
-      decile = 4; // Western Sydney
-    } else {
-      decile = 6;
-    }
-  }
-  // Melbourne (3000-3999)
-  else if (postcodeNum >= 3000 && postcodeNum < 4000) {
-    if ([3142, 3144, 3181, 3101, 3141].includes(postcodeNum)) {
-      decile = 10;
-    } else if (postcodeNum <= 3100) {
-      decile = 8;
-    } else if (postcodeNum >= 3800) {
-      decile = 5;
-    } else {
-      decile = 6;
-    }
-  }
-  // Brisbane (4000-4999)
-  else if (postcodeNum >= 4000 && postcodeNum < 5000) {
-    if ([4000, 4006, 4007, 4066, 4101].includes(postcodeNum)) {
-      decile = 9;
-    } else {
-      decile = 6;
-    }
-  }
-  // Adelaide (5000-5999)
-  else if (postcodeNum >= 5000 && postcodeNum < 6000) {
-    decile = 6;
-  }
-  // Perth (6000-6999)
-  else if (postcodeNum >= 6000 && postcodeNum < 7000) {
-    if ([6000, 6009, 6010, 6011].includes(postcodeNum)) {
-      decile = 8;
-    } else {
-      decile = 6;
-    }
-  }
-  
-  const score = 900 + (decile * 10);
-  
-  return {
-    postcode,
-    state: state || 'Unknown',
-    irsad: {
-      score: score,
-      decile: decile,
-      description: getSEIFADescription(decile)
-    },
-    irsd: {
-      score: score - 20,
-      decile: decile,
-      description: 'Index of Relative Socio-economic Disadvantage'
-    },
-    ier: {
-      score: score + 10,
-      decile: decile,
-      description: 'Index of Economic Resources'
-    },
-    ieo: {
-      score: score + 20,
-      decile: decile,
-      description: 'Index of Education and Occupation'
-    },
-    summary: getSEIFASummary(decile),
-    dataSource: 'Estimated based on ABS SEIFA patterns',
-    dataQuality: 'estimated',
-    lastUpdated: '2021 Census (estimated)',
-    note: 'SEIFA indexes rank areas based on socio-economic advantage and disadvantage. Decile 10 = most advantaged, Decile 1 = most disadvantaged. This is an estimate - actual ABS data requires postcode-level access.'
-  };
 }
 
 function getSEIFADescription(decile: number | null): string {
