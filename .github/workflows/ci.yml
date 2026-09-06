@@ -496,6 +496,13 @@ jobs:
       - name: Migration security invariants (WP-17)
         run: node scripts/security/check-migration-security.mjs
 
+      # A migration version is a PRIMARY KEY in supabase_migrations.schema_migrations,
+      # so two files sharing one compete for a single row and the loser can never be
+      # told apart from applied. That is how the agent-fee columns came to be missing
+      # from the prime while the ledger said their version had run.
+      - name: A migration version names exactly one file
+        run: node scripts/security/check-migration-version-collisions.mjs
+
       # WP-18: 329 catch blocks across 275 functions returned the caught error
       # to the caller. A Postgres message names tables, columns and constraints;
       # at that scale it is a readable map of the database, and provoking a 500

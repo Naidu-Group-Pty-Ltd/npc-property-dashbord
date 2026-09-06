@@ -170,6 +170,7 @@
     "security:gates-wired": "node scripts/security/check-gates-wired.mjs",
     "security:verify-jwt-declared": "node scripts/security/check-verify-jwt-declared.mjs",
     "security:migrations": "node scripts/security/check-migration-security.mjs",
+    "security:migration-versions": "node scripts/security/check-migration-version-collisions.mjs",
     "security:error-disclosure": "node scripts/security/check-error-disclosure.mjs",
     "security:mass-assignment": "node scripts/security/check-mass-assignment.mjs",
     "security:baseline-invariants": "node scripts/security/check-baseline-invariants.mjs",
