@@ -37,7 +37,7 @@
  *  reminders_configure     { instance_id, auto_reminder_enabled, due_date? }
  *  reminders_run_due       (cron) — escalates gentle → firm → broker_notified for stale doc requests
  */
-import { createClient } from "npm:@supabase/supabase-js@2.55.0";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.55.0";
 import {
   canAccessFinanceClient,
 } from '../_shared/financePortalObjectAuthz.ts';
@@ -85,7 +85,7 @@ function pick(payload: any, allow: string[]) {
   for (const k of allow) if (k in payload) out[k] = payload[k];
   return out;
 }
-async function isCronCall(req: Request, supabase: ReturnType<typeof createClient>, rawBody: string): Promise<boolean> {
+async function isCronCall(req: Request, supabase: SupabaseClient, rawBody: string): Promise<boolean> {
   const configured = Deno.env.get('FINANCE_PORTAL_CRON_SECRET') ?? '';
   const presented = req.headers.get('x-cron-secret') ?? '';
   if (
