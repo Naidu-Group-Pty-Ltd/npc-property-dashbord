@@ -13,13 +13,12 @@ import {
   calculateKeyMetrics,
   calculateMonthlyPayment,
   calculateSensitivityAnalysis,
-  generateConvergenceProjections,
   generateProjections,
-  getDefaultCpiProjections,
   getInterestRateByLVR,
   type CpiProjection,
   type LoanCalculationInput,
 } from '../_shared/reports/investment/financialEngine.pure.ts';
+import { cpiProjectionsFromMeasured, quarterLabel } from '../_shared/rbaReading.pure.ts';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -283,34 +282,39 @@ async function calculateStampDutyWithConcessions(
 }
 
 /**
- * Fetch CPI projections from the economic_data_cache table.
- * Returns year-by-year CPI forecasts for 10-year projection models.
+ * The 10-year CPI path expenses are indexed against: a named assumption
+ * (`cpiProjectionsFromMeasured`, the one implementation) converging from
+ * the measured year-ended CPI — G1's own GCPIAGYP, loaded from the RBA
+ * statistical tables — toward the RBA target midpoint. This used to read a
+ * 24-hour cache of a search model's answer and, failing that, run the same
+ * convergence arithmetic silently, labelled nowhere; a projection whose
+ * label claims a forecast nobody read is a fabrication, so the label now
+ * says "Assumption" on every year, including the no-reading flat path.
  */
 async function fetchCpiProjections(supabase: any): Promise<CpiProjection[]> {
   try {
-    const { data: cachedData, error } = await supabase
-      .from('economic_data_cache')
-      .select('data')
-      .eq('data_type', 'rba_indicators')
-      .gt('expires_at', new Date().toISOString())
-      .maybeSingle();
+    const { data: rows, error } = await supabase
+      .from('rba_observations')
+      .select('obs_date, value')
+      .eq('series_id', 'GCPIAGYP')
+      .order('obs_date', { ascending: false })
+      .limit(1);
 
-    if (error || !cachedData?.data) {
-      console.log('[financial-calculator] No cached CPI projections, using defaults');
-      return getDefaultCpiProjections();
+    if (error || !rows || rows.length === 0) {
+      console.log('[financial-calculator] No measured CPI loaded — flat target-midpoint assumption');
+      return cpiProjectionsFromMeasured(null);
     }
 
-    const cpiProjections = cachedData.data?.cpiProjections;
-    if (Array.isArray(cpiProjections) && cpiProjections.length > 0) {
-      console.log(`[financial-calculator] Using ${cpiProjections.length} cached CPI projections`);
-      return cpiProjections;
-    }
-
-    // Fall back to deriving from current CPI
-    const currentCpi = cachedData.data?.inflation?.annual || 2.5;
-    return generateConvergenceProjections(currentCpi);
+    const latest = rows[0] as { obs_date: string; value: unknown };
+    const value = Number(latest.value);
+    if (!Number.isFinite(value)) return cpiProjectionsFromMeasured(null);
+    return cpiProjectionsFromMeasured({
+      value,
+      period: latest.obs_date.slice(0, 7),
+      periodLabel: quarterLabel(latest.obs_date),
+    });
   } catch (err) {
-    console.error('[financial-calculator] Error fetching CPI projections:', err);
-    return getDefaultCpiProjections();
+    console.error('[financial-calculator] Error reading measured CPI:', err);
+    return cpiProjectionsFromMeasured(null);
   }
 }

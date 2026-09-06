@@ -2366,3 +2366,55 @@ with their windows, hazard rows only where the risk services returned a
 real level, and instructs the model to name no climate zone and rate no
 unmeasured hazard. The suburb snapshot's placeholder risk table got the
 same treatment.
+
+## §30 — Macro figures from the RBA's own tables, not a search model (2026-09-06)
+
+**Q3 of the confirmed queue.** The Current Economic Context section was the
+last place a report's figures came from a model rather than a register:
+`rba-data-service` asked Perplexity for "exact current values", coerced
+absences with `|| 0` (a 0.0% unemployment rate), stamped every figure with
+the retrieval date, and labelled a ten-year CPI path "RBA SMP forecast"
+whether or not any forecast had been read — while the generator printed
+hardcoded fallbacks (`|| '4.10'` on the cash rate, a year stale against the
+real 4.35%) under a heading that said "VERIFIED ECONOMIC DATA", and
+`financial-calculator-service` indexed real dollar arithmetic against the
+model's projections.
+
+The figures now come from three published RBA statistical tables — F1.1
+(cash rate target), G1 (consumer price inflation) and F5 (indicator lending
+rates) — parsed by `_shared/rbaTables.pure.ts` from layouts transcribed off
+the real files, loaded into `rba_observations`/`rba_series_meta`, and
+composed by `_shared/rbaReading.pure.ts`. The acquisition log is
+`docs/reports/MACRO_SOURCES.md`. What was measured before anything was
+written: **rba.gov.au 403s this project's egress** (Akamai, all three CSVs,
+probe deployed and executed), so the ingest takes the sanctions-register
+shape — `scripts/rba/load-rba-tables.mjs` downloads where egress works and
+POSTs the text verbatim; ALL parsing is server-side, refusal-shaped
+(layout drift, truncation floors, per-units plausibility bounds, absent
+wanted series), and **an empty value cell is an absent observation, never
+zero** — G1 pre-prints future ABS reference periods with empty cells, and
+reading one as 0 prints a 100-point CPI collapse.
+
+The reading serves every figure with its own reference period ("4.35%,
+monthly average, August 2026"; "3.9% year-ended, June quarter 2026") and
+each table's own publication date; the cash rate's last move is dated by
+arithmetic on the series (June 2026, 4.31 → 4.35), never asserted as a
+board decision; the investor lending rates the old path never had are
+served beside the owner-occupier ones (investor standard variable 9.35%,
+July 2026). **GDP, unemployment and participation left the response and
+the prompt entirely** — these tables do not measure them, a test asserts
+the vocabulary is absent, and the prompt block forbids the model from
+stating them (the timeliness stream brings measured labour figures). The
+CPI path the financial engine indexes against is now
+`cpiProjectionsFromMeasured` — the ONE implementation, the engine's silent
+local convergence copy deleted — and every year's label begins
+"Assumption —"; a test asserts no year can claim SMP, Treasury or
+forecast.
+
+Loaded and verified in production before merge: 11 series, 3,518
+observations via the shipped loader; the per-table bootstrap arms sealed
+(re-POST without the secret answers 403); the service's four-year window
+measured at 394 rows against PostgREST's 1,000-row cap; and the store's
+figures re-checked by SQL (4.35 / 3.9 / 9.35). The stale search-model
+cache entry (`economic_data_cache`, `rba_indicators`, fetched 2026-09-04)
+was purged — nothing reads or writes it any more.

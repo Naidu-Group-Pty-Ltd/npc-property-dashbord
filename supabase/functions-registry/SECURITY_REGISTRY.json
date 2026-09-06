@@ -2419,6 +2419,13 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "rba-tables-ingest": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "RBA statistical-tables ingest (F1.1/G1/F5). The CSV text arrives IN the POST body because rba.gov.au 403s this project's egress; all parsing server-side with refusal-shaped bounds. Gateway JWT on; inside, internal edge secret (bearer or X-Cron-Secret) or the per-table self-sealing empty-table bootstrap. Writes only rba_series_meta/rba_observations/rba_sync."
+    },
     "reclassify-property": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",

@@ -88,6 +88,14 @@ export interface InterestRateInfo {
   lmiEstimate: number;
 }
 
+/**
+ * The 10-year CPI path expenses are indexed against. Produced ONLY by
+ * `cpiProjectionsFromMeasured` in `_shared/rbaReading.pure.ts` — a named
+ * assumption converging from the measured year-ended CPI toward the RBA
+ * target midpoint. The convergence arithmetic used to live here too, as a
+ * silent unlabelled fallback; two copies of one assumption is how they
+ * drift.
+ */
 export interface CpiProjection {
   year: number;
   cpiPercent: number;
@@ -337,21 +345,6 @@ export function generateProjections(
     });
   }
 
-  return projections;
-}
-
-export function getDefaultCpiProjections(): CpiProjection[] {
-  return generateConvergenceProjections(2.5);
-}
-
-export function generateConvergenceProjections(currentCpi: number): CpiProjection[] {
-  const target = 2.5;
-  const projections = [];
-  for (let year = 1; year <= 10; year++) {
-    const convergenceFactor = 1 - Math.pow(0.8, year);
-    const projected = currentCpi + (target - currentCpi) * convergenceFactor;
-    projections.push({ year, cpiPercent: Math.round(projected * 10) / 10 });
-  }
   return projections;
 }
 

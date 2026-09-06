@@ -278,6 +278,13 @@ verify_jwt = true
 [functions.abs-poa-ingest]
 verify_jwt = true
 
+# The RBA statistical-tables ingest: CSV text arrives in the POST body
+# (rba.gov.au refuses this project's egress), parsed server-side; internal
+# secret via X-Cron-Secret / per-table sealed-bootstrap auth inside, the
+# gateway JWT on in front.
+[functions.rba-tables-ingest]
+verify_jwt = true
+
 [functions.rba-data-service]
 verify_jwt = false
 

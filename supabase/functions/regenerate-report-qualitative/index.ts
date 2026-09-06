@@ -600,7 +600,9 @@ async function fetchEnhancedData(
 
     if (!rbaResponse.ok) return;
     const rbaData = await rbaResponse.json();
-    if (rbaData?.data) {
+    // Attach only a real reading: an honest refusal is {success:false,
+    // data:null} and must leave economics absent, never half-attached.
+    if (rbaData?.success && rbaData?.data) {
       enhancedData.economics = rbaData.data;
     }
   });
@@ -886,17 +888,29 @@ function buildEnhancedDataContext(enhancedData: EnhancedData, propertyAddress: s
 `;
   }
 
-  // Economic context
+  // Economic context — measured RBA statistical-table figures with their
+  // own reference periods; a line renders only where a figure exists (the
+  // old block fell back to a hardcoded cash rate, and GDP/unemployment
+  // are not in these tables at all).
   if (enhancedData.economics) {
     const econ = enhancedData.economics;
-    context += `
-**ECONOMIC DATA (RBA):**
-- Cash Rate: ${econ.cashRate?.current || '4.35'}%
-- Annual Inflation: ${econ.inflation?.annual || 'N/A'}%
-- GDP Growth: ${econ.indicators?.gdpGrowth || 'N/A'}%
-- Unemployment Rate: ${econ.indicators?.unemploymentRate || 'N/A'}%
-- House Price Growth: ${econ.indicators?.housePriceGrowth || 'N/A'}%
+    const lines: string[] = [];
+    const fig = (f: { value?: number; periodLabel?: string } | null | undefined): string | null =>
+      typeof f?.value === 'number' && f?.periodLabel ? `${f.value}% (${f.periodLabel})` : null;
+    const cash = fig(econ.cashRate?.current);
+    if (cash) lines.push(`- Cash Rate Target: ${cash}, monthly average — RBA table F1.1`);
+    const cpi = fig(econ.inflation?.yearEnded);
+    if (cpi) lines.push(`- Inflation (headline CPI, year-ended): ${cpi} — RBA table G1`);
+    const trimmed = fig(econ.inflation?.trimmedMeanYearEnded);
+    if (trimmed) lines.push(`- Inflation (trimmed mean, year-ended): ${trimmed} — RBA table G1`);
+    const ooVar = fig(econ.lendingRates?.ownerOccupier?.standardVariable);
+    if (ooVar) lines.push(`- Standard variable housing rate (owner-occupier): ${ooVar} — RBA table F5`);
+    if (lines.length > 0) {
+      context += `
+**ECONOMIC DATA (RBA statistical tables — use only these figures, with their periods; do NOT state GDP, unemployment or any macro figure not listed):**
+${lines.join('\n')}
 `;
+    }
   }
 
   // Location intelligence
@@ -1850,7 +1864,7 @@ YOUR DEDICATED PROPERTY PARTNER
       dataSources.push('**Australian Bureau of Statistics (ABS)** - Census 2021 demographic data including population, income, employment, and housing statistics');
     }
     if (enhancedData.economics) {
-      dataSources.push('**Reserve Bank of Australia (RBA)** - Current cash rate, inflation data, GDP growth, and economic indicators');
+      dataSources.push('**Reserve Bank of Australia (RBA)** - Statistical tables F1.1, G1 and F5: cash rate target, consumer price inflation, and housing lending rates');
     }
     if (enhancedData.seifaData) {
       dataSources.push('**SEIFA (Socio-Economic Indexes for Areas)** - ABS socioeconomic advantage/disadvantage indices');

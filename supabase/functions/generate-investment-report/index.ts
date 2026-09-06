@@ -12,6 +12,7 @@ import { demographicsStatBlocks } from '../_shared/reports/censusPromptBlocks.pu
 import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure.ts';
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
+import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
@@ -3808,17 +3809,7 @@ Current market conditions are influenced by the National House Price Growth Rate
 
 # Current Economic Context
 
-**VERIFIED ECONOMIC DATA (use these exact figures — sourced ${enhancedData.economics?.retrievedAt ? `on ${new Date(enhancedData.economics.retrievedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}` : 'from latest available data'}):**
-
-| Indicator | Current Value | Source |
-|-----------|--------------|--------|
-| RBA Cash Rate | ${enhancedData.economics?.cashRate?.current || '4.10'}% | ${enhancedData.economics?.cashRate?.source || 'RBA'} |
-| Annual Inflation (CPI) | ${enhancedData.economics?.inflation?.annual || '2.4'}% | ${enhancedData.economics?.inflation?.source || 'ABS'} |
-| Core Inflation (Trimmed Mean) | ${enhancedData.economics?.inflation?.core || '2.9'}% | ABS |
-| GDP Growth | ${enhancedData.economics?.indicators?.gdpGrowth || '1.3'}% | ABS |
-| National Unemployment | ${enhancedData.economics?.indicators?.unemploymentRate || '4.1'}% | ABS Labour Force |
-
-Write 2-3 paragraphs in plain English explaining how the current cash rate of ${enhancedData.economics?.cashRate?.current || '4.10'}% and inflation at ${enhancedData.economics?.inflation?.annual || '2.4'}% affect mortgage costs, borrowing capacity, and property demand in practical terms. Avoid jargon — explain as you would to a client sitting across the table. Connect these macro conditions specifically to the property's local market. Do NOT put a "What This Means" heading or any other commentary label above them.
+${macroEconomicBlock(enhancedData)}
 
 ---
 
