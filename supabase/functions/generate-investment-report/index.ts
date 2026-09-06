@@ -11,6 +11,7 @@ import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
 import { demographicsStatBlocks } from '../_shared/reports/censusPromptBlocks.pure.ts';
 import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure.ts';
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
+import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
@@ -2560,19 +2561,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           return null;
         }) : Promise.resolve({ success: false, serviceName: 'abs-employment-service', error: 'Missing state' }),
 
-        // 7. Climate data
-        state ? fetchServiceWithFallback('climate-data-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/climate-data-service`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ suburb, state, postcode })
-          }, 25000, 'climate-data-service');
-          if (response.ok) {
-            const data = await response.json();
-            return data.success ? data.data : null;
-          }
-          return null;
-        }) : Promise.resolve({ success: false, serviceName: 'climate-data-service', error: 'Missing state' }),
+        // 7. Climate data is coordinate-keyed (SILO grid) and the verified
+        // coordinate does not exist yet in phase 1 — it is fetched after
+        // location intelligence below. This slot keeps the results array
+        // aligned with serviceNames.
+        Promise.resolve({ success: false, serviceName: 'climate-data-service', error: 'Missing coordinates (fetched after location intelligence)' }),
       ];
 
       // Execute all Phase 1 fetches in parallel
@@ -2867,6 +2860,34 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           }
         } catch (error: any) {
           console.log('⚠️ Planning data skipped:', error?.message?.substring(0, 80));
+        }
+      }
+
+      // Climate is read from SILO at the verified coordinate, which exists
+      // only now — the phase-1 slot above deliberately skipped.
+      const climateCoords = enhancedData.locationIntelligence?.coordinates;
+      if (climateCoords?.lat && climateCoords?.lng) {
+        try {
+          const climateResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/climate-data-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              latitude: climateCoords.lat,
+              longitude: climateCoords.lng,
+              state: state,
+              suburb: suburb,
+              postcode: postcode
+            })
+          }, 40000, 'climate-data-service');
+          if (climateResponse.ok) {
+            const climateBody = await climateResponse.json();
+            if (climateBody.success && climateBody.data) {
+              enhancedData = { ...enhancedData, climateData: climateBody.data };
+              console.log('✓ Climate reading fetched (SILO grid cell)');
+            }
+          }
+        } catch (error: any) {
+          console.log('⚠️ Climate reading skipped:', error?.message?.substring(0, 80));
         }
       }
 
@@ -3281,12 +3302,8 @@ ${demographicsStatBlocks(enhancedData)}
 [Income potential and rental growth expectations]
 
 # 7. Environmental & Risk Factors
-| Risk Type | Assessment | Details |
-|-----------|-----------|---------|
-| Flood Risk | [Low/Medium/High] | [explanation] |
-| Bushfire Risk | [Low/Medium/High] | [explanation] |
-| Coastal Erosion | [Low/Medium/High] | [explanation if applicable] |
-| Climate Risks | [assessment] | [heatwaves, storms, etc.] |
+
+${climateStatBlocks(enhancedData)}
 
 # 8. Crime & Safety
 
@@ -3941,32 +3958,7 @@ The opening of [Station] in [Year] fundamentally transformed the suburb's transp
 
 # Environmental Risks & Climate
 
-**Climate Profile:**
-
-| Metric | Value | Data Source |
-|--------|-------|-------------|
-| Climate Zone | ${enhancedData.climateData?.climateZone || 'Temperate'} | Bureau of Meteorology |
-| Annual Average Temperature | ${enhancedData.climateData?.temperature?.annual || 'XX.X'}°C | BoM |
-| Summer Temperature | ${enhancedData.climateData?.temperature?.summer || 'XX.X'}°C | BoM |
-| Winter Temperature | ${enhancedData.climateData?.temperature?.winter || 'XX.X'}°C | BoM |
-| Annual Rainfall | ${enhancedData.climateData?.rainfall?.annual || 'X,XXX'} mm | BoM |
-| Humidity | ${enhancedData.climateData?.humidity?.annual || 'XX'}% | BoM |
-
-**Extreme Weather Risk Assessment:**
-
-| Risk Type | Assessment | Details |
-|-----------|------------|---------|
-| Heatwaves | ${enhancedData.riskAssessment?.heatwaveRisk?.level || 'Moderate to High'} | ${enhancedData.riskAssessment?.heatwaveRisk?.description || 'Typical for region; increasing frequency due to climate change'} |
-| Bushfire | ${enhancedData.riskAssessment?.bushfireRisk?.level || 'High'} | ${enhancedData.riskAssessment?.bushfireRisk?.description || 'Requires verification with state Rural Fire Service for specific property rating'} |
-| Flooding | ${enhancedData.riskAssessment?.floodRisk?.level || 'Moderate'} | ${enhancedData.riskAssessment?.floodRisk?.description || 'General flood information available through council and AFRIP'} |
-| Storms | ${enhancedData.riskAssessment?.stormRisk?.level || 'Moderate'} | Thunderstorms and severe weather typical in summer months |
-| Cyclones | ${enhancedData.riskAssessment?.cycloneRisk?.level || 'Low'} | Not applicable to inland locations |
-
-**Climate Risk Commentary (150+ words required):**
-
-[Suburb] experiences a [climate zone] climate with [rainfall level] rainfall ([X,XXX] mm annually), concentrated in the [peak months] period. Heatwaves represent a [risk level] risk, consistent with [region description], with potential for increasing frequency due to climate change. Bushfire risk is rated as [level] for [State], though specific property-level risk assessment requires verification with the [State] Rural Fire Service (RFS). Flooding risk is [level]; property-specific flood assessment requires property coordinates and consultation with [Council] or AFRIP.
-
-Long-term climate considerations include potential increases in cooling costs during summer months, possible insurance premium adjustments reflecting bushfire risk, and maintenance implications for properties in high-risk bushfire zones. These factors should be incorporated into long-term ownership cost projections and risk management strategies.
+${climateStatBlocks(enhancedData)}
 
 ---
 
