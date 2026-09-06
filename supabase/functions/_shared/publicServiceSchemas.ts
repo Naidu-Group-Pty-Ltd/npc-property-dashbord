@@ -83,6 +83,18 @@ export const PublicTransportRequest = z.object({
 }).strict();
 
 /**
+ * `planning-data-service` — the coordinate is the question; the locality
+ * fields only order which jurisdiction's layers are preferred when two
+ * boundary polygons both claim a point.
+ */
+export const PlanningDataRequest = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  state: optionalField(stateField),
+  postcode: optionalField(postcodeField),
+}).strict();
+
+/**
  * 8 KiB. A locality lookup that needs more than this is not a locality lookup,
  * and on an endpoint with no authentication the ceiling should be the smallest
  * one that cannot inconvenience a real caller.

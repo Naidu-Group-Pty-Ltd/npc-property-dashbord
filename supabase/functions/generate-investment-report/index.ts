@@ -9,6 +9,7 @@ import { insertTargetedNotification } from '../_shared/notify.ts';
 import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
 import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
 import { demographicsStatBlocks } from '../_shared/reports/censusPromptBlocks.pure.ts';
+import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
@@ -2417,6 +2418,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       employmentData?: any;
       climateData?: any;
       schoolData?: any;
+      planningData?: any;
     }
     
     let enhancedData: EnhancedData = {};
@@ -2835,6 +2837,36 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }
       } catch (error: any) {
         console.error('❌ Location intelligence fetch failed:', error?.message || 'Unknown error');
+      }
+
+      // Planning & development intelligence — zoning, parcel, state
+      // development instruments and DA activity from the jurisdiction's own
+      // planning services. It keys on the verified coordinate the location
+      // step just resolved, so a report with no trustworthy coordinate gets
+      // an honest absence rather than another jurisdiction's zone.
+      const planningCoords = enhancedData.locationIntelligence?.coordinates;
+      if (planningCoords?.lat && planningCoords?.lng) {
+        try {
+          const planningResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/planning-data-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              latitude: planningCoords.lat,
+              longitude: planningCoords.lng,
+              state: state,
+              postcode: postcode
+            })
+          }, 45000, 'planning-data-service');
+          if (planningResponse.ok) {
+            const planningBody = await planningResponse.json();
+            if (planningBody.success && planningBody.data) {
+              enhancedData = { ...enhancedData, planningData: planningBody.data };
+              console.log('✓ Planning data fetched:', { jurisdiction: planningBody.data.jurisdiction });
+            }
+          }
+        } catch (error: any) {
+          console.log('⚠️ Planning data skipped:', error?.message?.substring(0, 80));
+        }
       }
 
       // Calculate investment score - property OR area scoring
@@ -3690,6 +3722,10 @@ Based on our comprehensive analysis, this property is [suitable/moderately suita
 - Local Government Area (LGA): [Name] Council
 - Statistical Areas: [Suburb] falls within the broader [Area] Statistical Area Level 2 (SA2)
 
+**Planning & Development (measured at this property's coordinate):**
+
+${planningStatBlocks(enhancedData)}
+
 **Suburb Character & Lifestyle:**
 
 [Suburb] presents [description of blend/character]. The suburb features [specific details about streets, properties, land parcels][citation]. A diversity level of [XX.X]% reflects the [description of composition][citation].
@@ -3716,7 +3752,7 @@ The suburb benefits from excellent service frequency, with peak hour services op
 
 **Population & Development Trends:**
 
-[Suburb] is experiencing [description of growth]. The suburb's future prospects are described as [assessment], with planned infrastructure and residential developments set to [impact]. Population growth is being driven by [factors][citation].
+Write this from the Planning & Development block above and the demographics tables only. Where the development-application figures are present, discuss what they show — volume, stated investment, dwellings proposed, the largest projects — attributed to the DA register and its period. Where they are absent, state the absence in one sentence. Do NOT name planned infrastructure, projects or developments that do not appear in the data above.
 
 ---
 
