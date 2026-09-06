@@ -2061,3 +2061,134 @@ explicit decision, exactly as with §23's coordinates.
 `Math.random()` — not report data, but not a CSPRNG either. Flagged in the
 allowlist as a hardening follow-up (`crypto.getRandomValues()`), with its
 entry pinned so it cannot grow.
+
+---
+
+## §25 — The real data arrives: ABS Census by postal area (2026-09-06)
+
+§24 removed the invented demographics; this section records their
+replacement with the Australian Bureau of Statistics' own figures — loaded,
+verified, and serving. The sections that used to be fabricated
+(demographics, employment, SEIFA) are now **real, postcode-level, and
+labelled with their true reference period**.
+
+### What was loaded, and how it was verified
+
+Two published ABS sources (both CC BY 4.0):
+
+- **2021 Census GCP DataPack, POA level, Australia** — tables G01 (persons),
+  G02 (medians and averages), G37 (tenure), G46 (labour force status), G54
+  (industry of employment), G60 (occupation). Every column name was
+  transcribed from the pack's own metadata workbook, never guessed, and a
+  wrong name throws at parse — the Airtable lesson, enforced.
+- **SEIFA 2021, Postal Area indexes** — all four indexes with scores and
+  deciles. The workbook's column order is **IRSD first, then IRSAD** — read
+  from the header and verified at parse time, because the platform's old
+  fabricated shape listed IRSAD first, and assuming that order would have
+  swapped *advantage* for *disadvantage* on every report.
+
+Verification is refusal-shaped and ran before any write: a zero-row parse
+refuses; a POA count outside Australia's range refuses; a national
+population sum away from the Census's 25.42M refuses; a failed SEIFA join
+refuses. The load that passed:
+
+| | |
+|---|---|
+| census rows | **2,643** postal areas |
+| national population (sum) | **25,422,756** (the Census counted 25,422,788; POAs exclude the migratory/offshore remainder) |
+| SEIFA rows | **2,627**, all matched to census POAs |
+| spot checks | POA 2150 medians byte-identical to the raw G02 row; Point Piper (2027) IRSAD decile 10 at $3,027/wk household income; Sydney CBD 71% renters with IER decile 1 |
+
+Two independent implementations of the parse (a Node scaffold and the
+shipped `_shared/absPoaIngest.pure.ts`) produced identical summaries on the
+same files before the scaffold was deleted.
+
+### Where the loader lives, and why
+
+**`abs-poa-ingest` is an edge function** — the loader runs where the
+credentials and the egress already live. That is the corrected form of the
+sanctions-register lesson: a repository-secret loader "has never had the
+secret it needs to write", and this sandbox's proxy cannot even reach
+`api.data.abs.gov.au` — but Supabase's own egress fetched the DataPack from
+abs.gov.au without complaint. Two invocations
+(`{"stage":"seifa"}`, `{"stage":"census"}`) download, parse, verify and
+upsert; the split exists because the single-pass version exceeded the edge
+worker's memory (WORKER_RESOURCE_LIMIT, first invocation, recorded in the
+function header). Refreshing for the 2026 Census (releases mid-2027) is:
+update two URLs and the reference period, deploy, invoke.
+
+Auth is the internal edge secret — or, exactly once, an **empty database**:
+the bootstrap arm that permitted the first load seals itself the moment
+`abs_census_poa` holds a row, and re-opening it would take deleting the
+reference data, which already requires the service role. The sources are
+public and the write is an idempotent upsert of that public data.
+
+Also learned on the way, at the cost of one refused invocation each:
+Supabase's bundler only imports from its CDN allowlist (SheetJS ships from
+its own CDN; the last npm-registry release, 0.18.5, was verified to parse
+the real workbook identically before being pinned), and PostgREST caps a
+read at max-rows — a `.limit(5000)` silently returned 1,000 and the census
+stage refused a database that was loaded, so the key read paginates.
+
+### What serves it
+
+`abs_census_poa` and `abs_seifa_poa` (RLS-enabled, service-read), with the
+load recorded in `abs_poa_sync`. Three services now read them through one
+projection module, `_shared/absCensusProjection.pure.ts`:
+
+- **`abs-data-service`** serves population, medians (age, rent, household /
+  personal / family income, mortgage), tenure rates and employment
+  structure, labelled `ABS Census 2021 (POA xxxx)`.
+- **`abs-employment-service`** serves the local labour force: rates with
+  **named denominators** (employment rate = employed ÷ labour force; the
+  employment-to-population ratio published under its own name — the
+  fabricated predecessor blurred them), industries sorted by measured
+  employment, the occupation breakdown, and the personal-income median.
+- **`abs-seifa-service`** serves the four indexes from the loaded register.
+  Its two never-verified live-API attempts were deleted — one walked the
+  whole country's SDMX inside a 5-second timeout by construction.
+
+A postcode the Census does not cover answers `no_data_for_location` through
+the §24 envelope — real absence, never a neighbour's figures.
+
+### Accuracy and timeliness, reconciled
+
+Census figures are 2021 **because they are 2021** — the most current
+authoritative postcode-level source until the 2026 Census releases — and
+every block carries `referencePeriod` so no figure wears a date it does not
+have. Current *conditions* stay on the live RBA retrieval beside them. The
+annualised incomes are weekly medians × 52 and say so. And where one census
+cannot measure change, **no change is asserted**: there is no growth field
+anywhere in the projection, and the prompts now say so out loud.
+
+### The prompts stopped lying about their tables
+
+The generator's Demographics section used to hard-code its industry rows —
+"Professional Services" was row one and "Construction" row five **for every
+suburb in the country**, filled from `industries[0..4]` regardless of what
+those indexes held — sourced everything as "ABS (2025)", and fell back to
+ratings that asserted ("Moderate Advantage") precisely when there was no
+data. `_shared/reports/censusPromptBlocks.pure.ts` composes those tables
+from the data now: real industry names sorted by measured share, true
+vintage labels, rows only where figures exist (law 2), one honest line when
+nothing is available, and an explicit instruction that no growth figure may
+be asserted because none is measured. The suburb-scope prompt's placeholder
+skeleton and the regeneration function's growth lines got the same
+treatment.
+
+### What remains fabrication-free but not yet real
+
+- **Crime** — BOCSAR (NSW) answers this sandbox (200); VIC's CSA 403s
+  scripted clients (the DFAT class). Per-state loads with per-state
+  reference periods are the next `abs-poa-ingest`-shaped build.
+- **Climate** — BoM 403s scripted clients; SILO (Queensland government,
+  BoM-derived) is blocked from this sandbox's proxy but untested from
+  Supabase egress, which today proved able to reach what the sandbox
+  cannot.
+- **Transport detail** — the section already carries real coordinate-based
+  Google transit results; GTFS adds route/frequency depth later.
+
+Until built, those sections stay honestly absent under §24's envelope. The
+`abs-poa-ingest` pattern — fetch where egress lives, parse through a pure
+module under test, refuse the implausible, record the sync, label the
+vintage — is the template each should follow.

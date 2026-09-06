@@ -268,6 +268,11 @@ request_timeout = 1500
 [functions.abs-data-service]
 verify_jwt = false
 
+# The ABS reference-data ingest: internal-secret / sealed-bootstrap auth
+# inside; the gateway JWT stays on in front of it.
+[functions.abs-poa-ingest]
+verify_jwt = true
+
 [functions.rba-data-service]
 verify_jwt = false
 

@@ -3,6 +3,8 @@ import { internalError } from '../_shared/errorResponse.ts';
 import { parseJsonBody } from '../_shared/validate.ts';
 import { LocalityRequest, PUBLIC_SERVICE_MAX_BODY_BYTES } from '../_shared/publicServiceSchemas.ts';
 import { sourceUnavailable } from '../_shared/sourceUnavailable.pure.ts';
+import { censusEmploymentResponse } from '../_shared/absCensusProjection.pure.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 /**
  * ABS employment data — honestly: none is integrated yet.
@@ -67,10 +69,42 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Local employment structure from the loaded Census table — real,
+    // postcode-level, labelled with its reference period. A postcode the
+    // Census does not cover is answered `unavailable`, never given a state
+    // average wearing its name.
+    const poa = String(postcode ?? '').trim();
+    if (/^\d{4}$/.test(poa)) {
+      const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      const { data: row, error } = await supabase
+        .from('abs_census_poa')
+        .select('*')
+        .eq('poa', poa)
+        .maybeSingle();
+      if (error) {
+        console.error('abs_census_poa read failed:', error);
+        return new Response(JSON.stringify(sourceUnavailable(
+          'abs-employment',
+          'provider_error',
+          'The ABS Census reference table could not be read — employment figures are unavailable for this request.',
+        )), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      if (row) {
+        return new Response(JSON.stringify({
+          success: true,
+          data: censusEmploymentResponse(row, suburb, state),
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     return new Response(JSON.stringify(sourceUnavailable(
       'abs-employment',
-      'source_not_integrated',
-      'ABS labour force data is not yet integrated for this deployment — employment figures are unavailable rather than estimated. See the header of abs-employment-service/index.ts for the acquisition path.',
+      'no_data_for_location',
+      `The ABS Census holds no postal-area data for "${poa || 'no postcode supplied'}" — employment figures are unavailable rather than estimated.`,
     )), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

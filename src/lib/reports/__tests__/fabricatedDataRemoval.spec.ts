@@ -202,7 +202,14 @@ describe('the cache purge', () => {
     }
   });
 
-  it('the abs cache read serves live rows only', () => {
-    expect(service('abs-data-service')).toContain(".eq('data_quality', 'live')");
+  it('the abs services read the loaded Census reference tables', () => {
+    // The interregnum's live-only cache read was replaced by the real thing:
+    // abs_census_poa / abs_seifa_poa, loaded from the ABS's published files
+    // by abs-poa-ingest and projected through one shared module.
+    expect(service('abs-data-service')).toContain("from('abs_census_poa')");
+    expect(service('abs-employment-service')).toContain("from('abs_census_poa')");
+    expect(service('abs-seifa-service')).toContain("from('abs_seifa_poa')");
+    expect(service('abs-data-service')).toContain('censusDemographicsResponse');
+    expect(service('abs-employment-service')).toContain('censusEmploymentResponse');
   });
 });

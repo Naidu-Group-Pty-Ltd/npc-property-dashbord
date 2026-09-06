@@ -936,15 +936,22 @@ function buildEnhancedDataContext(enhancedData: EnhancedData, propertyAddress: s
 `;
   }
 
-  // Employment data
+  // Employment data — Census structure only. The old block listed 1/3/5-year
+  // job growth here, which no integrated source measures; three "N/A" growth
+  // lines beside real figures read as blanks a model should fill, which is
+  // an invitation to invent. Growth is omitted and expressly forbidden.
   if (enhancedData.employmentData) {
     const emp = enhancedData.employmentData;
+    const industries = (emp.majorIndustries ?? emp.industries)?.slice(0, 3)
+      .map((i: any) => `${i.name} (${i.percentage}%)`).join(', ');
     context += `
-**EMPLOYMENT & JOB GROWTH:**
-- Annual Growth: ${emp.annualGrowth || 'N/A'}%
-- 3-Year Growth: ${emp.threeYearGrowth || 'N/A'}%
-- 5-Year Growth: ${emp.fiveYearGrowth || 'N/A'}%
-- Top Industries: ${emp.industries?.slice(0, 3).map((i: any) => `${i.name} (${i.percentage}%)`).join(', ') || 'N/A'}
+**EMPLOYMENT (${emp.dataSource || 'ABS Census'}):**
+- Employment Rate (of labour force): ${emp.employmentRate ?? 'N/A'}%
+- Unemployment Rate: ${emp.unemploymentRate ?? 'N/A'}%
+- Participation Rate: ${emp.participationRate ?? 'N/A'}%
+- Labour Force Size: ${emp.laborForceSize ?? 'N/A'}
+- Top Industries: ${industries || 'N/A'}
+- No employment time-series is available: do NOT assert job-growth figures.
 `;
   }
 
