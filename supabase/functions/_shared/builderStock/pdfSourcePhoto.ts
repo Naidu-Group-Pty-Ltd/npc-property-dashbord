@@ -649,6 +649,35 @@ async function selectPdfPropertyPrimaryHoldingSlot(
     structuralCoverPage: options.structuralCoverPage ?? null,
     identityHints: options.identityHints ?? [],
   });
+  /*
+   * NO CANDIDATE PAGE MEANS NO ELECTION, SO NOTHING IS DECODED.
+   *
+   * `coverSearchPages` is a SUPERSET of every page `assignPdfMediaRoles` can
+   * designate — the property covers, the design covers and the structural
+   * page all come from it — so an empty answer here decides the outcome
+   * before a byte of raster is touched: no page can be the cover, no picture
+   * can be primary, and the caller records exactly the refusal it records
+   * today.
+   *
+   * WHAT RUNNING ON ANYWAY COST, MEASURED 6 SEPTEMBER 2026. "EMPTY MEANS
+   * EVERY PAGE" is the right reading for discovery's own callers, but through
+   * THIS path it sent a document nothing could elect into a full-document
+   * walk — materialising rasters, flattening pages, classifying pixels — and
+   * on Lot 709 Verve's 13-page brochure that was ~2.6 s of the ~2.9 s total,
+   * spent producing assets whose only fate was the refusal already decided
+   * above. The worker died inside that waste on every attempt, faster than
+   * any wall-clock deadline could answer for it, and the branch burned its
+   * whole budget without one honest verdict. The same document now refuses
+   * in ~0.3 s.
+   */
+  if (!searchPages.length) {
+    const recovered = await recoverCompressedObjects(bytes);
+    return {
+      assets: [],
+      primary: null,
+      pageOrderAuthoritative: pageOrderIsAuthoritative(bytes, recovered),
+    };
+  }
   const found = await discoverPdfSourceAssetsHoldingSlot(bytes, {
     maxPages: options.maxPages,
     pages: searchPages,
