@@ -88,6 +88,56 @@ describe('the combined BED // BATH // CAR value', () => {
     }
   });
 
+  it('an unreadable cell stays VISIBLE as unplaced', () => {
+    // The first version of the parser consumed the cell and wrote nothing
+    // anywhere, so 32 live rows' counts vanished with no audit trail and the
+    // failing shapes had to be recovered from the sheet itself. ("TBA" is
+    // not this: `text()` reads it as not-stated before any parser runs.)
+    const record = normaliseStockRow({ Lot: '1', 'BED // BATH // CAR': '3 / two / 2' });
+    expect(record?.unmapped['BED // BATH // CAR']).toBe('3 / two / 2');
+  });
+
+  it('reads the doubled-slash typo the live sheet writes on 15 rows', () => {
+    // "3 / 2/ / 2" — the heading's own // style leaking into a value. A
+    // doubled slash contributes an EMPTY part, not a value, so it is
+    // dropped before the exactly-three rule is applied.
+    const record = normaliseStockRow({ Lot: '606', 'BED // BATH // CAR': '3 / 2/ / 2' });
+    expect(record?.bedrooms).toBe(3);
+    expect(record?.bathrooms).toBe(2);
+    expect(record?.car_spaces).toBe(2);
+  });
+
+  it('sums a dual-occupancy cell per position, and never invents the missing one', () => {
+    // Verbatim from the live sheet (11 rows): two dwellings, counts in the
+    // heading's bed/bath/car order. Both lines state beds and baths; only
+    // Nest 1 states a car — so the car count is UNSTATED for the package,
+    // not zero, and the card omits it rather than guessing.
+    const record = normaliseStockRow({
+      Lot: '324', 'BED // BATH // CAR': 'Nest 1 = 3 + 2 + 1\nNest 2 = 1 + 1',
+    });
+    expect(record?.bedrooms).toBe(4);
+    expect(record?.bathrooms).toBe(3);
+    expect(record?.car_spaces).toBeNull();
+  });
+
+  it('sums the car spaces too once every dwelling states them', () => {
+    const record = normaliseStockRow({
+      Lot: '1', 'BED // BATH // CAR': 'Nest 1 = 3 + 2 + 2\nNest 2 = 1 + 1 + 1',
+    });
+    expect(record?.bedrooms).toBe(4);
+    expect(record?.bathrooms).toBe(3);
+    expect(record?.car_spaces).toBe(3);
+  });
+
+  it('refuses a dual-occupancy cell with an unreadable line, whole', () => {
+    const record = normaliseStockRow({
+      Lot: '1', 'BED // BATH // CAR': 'Nest 1 = 3 + 2 + 1\nNest 2 = one + 1',
+    });
+    expect(record?.bedrooms).toBeNull();
+    expect(record?.bathrooms).toBeNull();
+    expect(record?.car_spaces).toBeNull();
+  });
+
   it('a dedicated column beats the combined one, whichever side it sits on', () => {
     const before = normaliseStockRow({ Lot: '1', Beds: '4', 'BED // BATH // CAR': '3 / 2 / 2' });
     expect(before?.bedrooms).toBe(4);

@@ -535,19 +535,28 @@ export function normaliseStockRow(
       case 'car_spaces': record.car_spaces = clampCount(coerceNumber(value)); break;
       case 'bed_bath_car': {
         /*
-         * Exactly three counts, in the order the heading states, or nothing
-         * at all: "3 / 2" has not said which of the three it dropped, and a
-         * partial write would put the bathrooms in the car spaces. `??=`, so
-         * a dedicated Bed/Bath/Car column wins whichever side of this one it
-         * sits on — its own case overwrites when it comes later, and holds
-         * when it came first.
+         * `??=`, so a dedicated Bed/Bath/Car column wins whichever side of
+         * the combined one it sits on — its own case overwrites when it
+         * comes later, and holds when it came first. The shapes themselves
+         * are `parseBedBathCar`'s.
          */
-        const parts = raw.split('/').map((part) => clampCount(coerceNumber(part)));
-        if (parts.length === 3 && parts.every((part) => part !== null)) {
-          record.bedrooms ??= parts[0];
-          record.bathrooms ??= parts[1];
-          record.car_spaces ??= parts[2];
+        const combined = parseBedBathCar(raw);
+        if (!combined) {
+          /*
+           * BACK TO THE AUDIT RECORD. A recognised heading whose value could
+           * not be read must stay visible as exactly that: the first version
+           * of this case consumed the cell and wrote nothing anywhere, so 32
+           * live rows' counts vanished without a trace and the shapes below
+           * had to be recovered from the sheet itself rather than from the
+           * record that is kept for precisely this.
+           */
+          const key = String(header).slice(0, 80);
+          if (Object.keys(record.unmapped).length < 40) record.unmapped[key] = raw.slice(0, 300);
+          break;
         }
+        if (combined.bedrooms !== null) record.bedrooms ??= combined.bedrooms;
+        if (combined.bathrooms !== null) record.bathrooms ??= combined.bathrooms;
+        if (combined.car_spaces !== null) record.car_spaces ??= combined.car_spaces;
         break;
       }
       case 'property_type': record.property_type = coercePropertyType(value); break;
@@ -591,6 +600,86 @@ function clampCount(value: number | null): number | null {
   if (value === null) return null;
   if (value < 0 || value > 20) return null;
   return Math.round(value * 10) / 10;
+}
+
+/**
+ * The combined BED // BATH // CAR cell, in the shapes the live sheet writes.
+ *
+ * MEASURED, 6 September 2026, on the master stocklist's 98 data rows —
+ * every distinct value, counted:
+ *
+ *   25×  "4 / 2 / 2"                         the plain form
+ *   15×  "3 / 2/ / 2"                        a doubled slash — a typo
+ *   13×  "3 / 2 / 2"
+ *   11×  "Nest 1 = 3 + 2 + 1␤Nest 2 = 1 + 1" dual occupancy, two dwellings
+ *    7×  "3 / 2 / 1"
+ *    5×  "Nest 1 = 3 + 2 + 2␤Nest 2 = 1 + 1"
+ *    2×  "3  /  2  /  2"
+ *    1×  each of "3 / 2 / 1 ", "5 / 2 / 2", "Nest 1 = 2 + 2 + 1…", ""
+ *
+ * THE PLAIN FORM is three counts in the heading's own order. A doubled slash
+ * contributes an EMPTY part, not a value, so empties are dropped before the
+ * count — which reads the 15 typo rows correctly and still refuses "3 / 2"
+ * (two values have not said which of the three is missing) and "3 / / 2"
+ * (dropping the empty leaves two).
+ *
+ * THE DUAL-OCCUPANCY FORM is one line per dwelling, each `label = counts`
+ * with the counts in the same bed/bath/car order. The card describes the
+ * PACKAGE, so positions are summed across dwellings — and a position some
+ * dwelling does not state is NOT a zero, it is unstated, so that position
+ * answers null and the card simply omits it: "Nest 2 = 1 + 1" states one
+ * bed and one bath, and asserting the package's car count from a line that
+ * names no cars would be a guess wearing a sum's clothing.
+ *
+ * Anything else answers null and the caller keeps the cell visible in
+ * `unmapped`, which is how the next shape gets found.
+ */
+function parseBedBathCar(raw: string): {
+  bedrooms: number | null; bathrooms: number | null; car_spaces: number | null;
+} | null {
+  /*
+   * One segment per dwelling. The cell is written as one LINE per dwelling,
+   * but `text()` collapses a row's whitespace — newlines included — before
+   * any value reaches a parser, so the boundary cannot be the newline: a new
+   * segment begins wherever a label runs up to an `=`, which reads the cell
+   * identically in both shapes.
+   */
+  const segments = raw.split(/\r?\n/)
+    .flatMap((line) => line.split(/(?=\b[A-Za-z][^=+]{0,40}=)/))
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (segments.length && segments.every((segment) => segment.includes('='))) {
+    const perSegment: Array<number[] | null> = segments.map((segment) => {
+      const counts = segment.slice(segment.indexOf('=') + 1)
+        .split('+')
+        .map((part) => clampCount(coerceNumber(part)));
+      return counts.length >= 2 && counts.length <= 3
+        && counts.every((count) => count !== null)
+        ? counts as number[]
+        : null;
+    });
+    if (perSegment.some((counts) => counts === null)) return null;
+    const summed = (position: number): number | null => {
+      let total = 0;
+      for (const counts of perSegment as number[][]) {
+        if (counts.length <= position) return null;
+        total += counts[position];
+      }
+      return clampCount(total);
+    };
+    return {
+      bedrooms: summed(0), bathrooms: summed(1), car_spaces: summed(2),
+    };
+  }
+
+  const parts = raw.split('/')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => clampCount(coerceNumber(part)));
+  if (parts.length === 3 && parts.every((part) => part !== null)) {
+    return { bedrooms: parts[0], bathrooms: parts[1], car_spaces: parts[2] };
+  }
+  return null;
 }
 
 function clampArea(value: number | null): number | null {
