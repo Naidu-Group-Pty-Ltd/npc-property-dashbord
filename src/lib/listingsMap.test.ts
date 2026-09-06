@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PropertyListing } from '@/lib/airtable';
 import {
+  buildBasemapCatalog,
   buildHeatModel,
   calibrateHeatMax,
   computePriceTiers,
@@ -18,6 +19,7 @@ import {
   propertyGlyph,
   PROPERTY_GLYPHS,
   quantile,
+  sanitiseMapboxToken,
   summariseCluster,
   tierMixGradientStops,
   type ClusterMember,
@@ -562,5 +564,77 @@ describe('formatting', () => {
     expect(escapeHtml('<img src=x onerror="alert(1)">')).toBe(
       '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;',
     );
+  });
+});
+
+describe('basemap catalogue', () => {
+  const allUrls = (catalog: ReturnType<typeof buildBasemapCatalog>): string[] =>
+    Object.values(catalog).flatMap((def) => [def.url, def.labelsUrl ?? '']);
+
+  it('never serves a CARTO basemap — anonymous CARTO tiles are "API KEY REQUIRED" watermarks', () => {
+    for (const url of [
+      ...allUrls(buildBasemapCatalog(null)),
+      ...allUrls(buildBasemapCatalog('pk.test-token')),
+    ]) {
+      expect(url).not.toContain('cartocdn');
+      expect(url).not.toContain('carto.com');
+    }
+  });
+
+  it('never points at openstreetmap.org tile servers, which block apps by policy', () => {
+    for (const url of allUrls(buildBasemapCatalog(null))) {
+      expect(url).not.toContain('tile.openstreetmap.org');
+    }
+  });
+
+  it('defaults every basemap to keyless Esri services over https', () => {
+    const catalog = buildBasemapCatalog(null);
+    for (const def of Object.values(catalog)) {
+      expect(def.url.startsWith('https://server.arcgisonline.com/')).toBe(true);
+      // Esri's scheme is row-before-column; {x}/{y} here would fetch the
+      // wrong hemisphere and read as "tiles missing".
+      expect(def.url).toContain('/tile/{z}/{y}/{x}');
+      // No credential slots and no {s} subdomain shards.
+      expect(def.url).not.toContain('{s}');
+      expect(def.url).not.toContain('access_token');
+    }
+    // The dark canvas base is unlabelled by design — the reference layer
+    // carries the place names, so it must travel with it.
+    expect(catalog.dark.labelsUrl).toContain('World_Dark_Gray_Reference');
+    expect(catalog.dark.dark).toBe(true);
+    expect(catalog.light.dark).toBe(false);
+    // Native ceilings: street cartography reaches parcel zooms, the canvas
+    // stops at 16 and upscales, imagery is unchanged from before.
+    expect(catalog.light.maxNativeZoom).toBe(19);
+    expect(catalog.dark.maxNativeZoom).toBe(16);
+    expect(catalog.satellite.maxNativeZoom).toBe(18);
+  });
+
+  it('upgrades street and midnight to Mapbox when a public token is published', () => {
+    const catalog = buildBasemapCatalog('pk.abc-123._sig');
+    for (const def of [catalog.light, catalog.dark]) {
+      expect(def.url.startsWith('https://api.mapbox.com/styles/v1/mapbox/')).toBe(true);
+      // 256px tiles keep Leaflet's default grid maths; {r} is the retina slot.
+      expect(def.url).toContain('/tiles/256/{z}/{x}/{y}{r}');
+      expect(def.url).toContain('access_token=pk.abc-123._sig');
+      expect(def.attribution).toContain('Mapbox');
+    }
+    expect(catalog.dark.dark).toBe(true);
+    // Satellite promises imagery and has never broken — it stays on Esri.
+    expect(catalog.satellite).toEqual(buildBasemapCatalog(null).satellite);
+  });
+
+  it('refuses anything but a public pk. token, so a secret cannot ship in the bundle', () => {
+    expect(sanitiseMapboxToken('pk.valid_Token-1.x')).toBe('pk.valid_Token-1.x');
+    expect(sanitiseMapboxToken('  pk.padded  ')).toBe('pk.padded');
+    expect(sanitiseMapboxToken('sk.secret-token')).toBeNull();
+    expect(sanitiseMapboxToken('pk.')).toBeNull();
+    expect(sanitiseMapboxToken('pk.has space')).toBeNull();
+    expect(sanitiseMapboxToken('pk.braces{r}')).toBeNull();
+    expect(sanitiseMapboxToken('')).toBeNull();
+    expect(sanitiseMapboxToken(undefined)).toBeNull();
+    expect(sanitiseMapboxToken(42)).toBeNull();
+    // A refused token falls back to the keyless catalogue, not to CARTO.
+    expect(buildBasemapCatalog('sk.secret-token')).toEqual(buildBasemapCatalog(null));
   });
 });

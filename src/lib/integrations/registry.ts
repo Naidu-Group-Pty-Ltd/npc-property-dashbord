@@ -753,7 +753,10 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
   {
     id: 'mapbox',
     name: 'Mapbox',
-    description: 'Vector basemaps, heatmap styling and geocoding for the marketplace map.',
+    // Server-side workflow credential only. The marketplace map's basemaps are
+    // keyless (Esri) and upgrade via the build-time VITE_MAPBOX_ACCESS_TOKEN
+    // public token instead — a secret stored here is unreadable to the browser.
+    description: 'Mapbox geocoding and map APIs for workflow automations.',
     category: 'property_data',
     tags: ['maps', 'tiles', 'heatmap', 'geocoding'],
     docsUrl: 'https://docs.mapbox.com',

@@ -629,6 +629,141 @@ export function calibrateHeatMax(
 }
 
 /* -------------------------------------------------------------------------- */
+/* Basemap catalogue                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where the map's ground comes from, and why it is exactly these providers.
+ *
+ * The Street and Midnight basemaps used to be CARTO's raster tiles
+ * (`basemaps.cartocdn.com`), which stopped serving anonymous traffic: every
+ * tile now comes back stamped "API KEY REQUIRED", so the marketplace map drew
+ * its pins and heat surface over a wall of watermarks. A key cannot fix that
+ * here — this dashboard is cloned per tenant, and a provisioned clone has
+ * nowhere to inherit a CARTO account from.
+ *
+ * The defaults therefore have to work with NO credential at all, which rules
+ * more out than it sounds like:
+ *
+ * - openstreetmap.org's own tile servers are run by volunteers and actively
+ *   block apps — probing from this project's egress returned their literal
+ *   "403 Access blocked · App is not following the tile usage policy" tile.
+ *   Defaulting a commercial product onto them plants the next watermark.
+ * - Esri's classic tile services (`server.arcgisonline.com`) serve anonymous
+ *   traffic without fuss and are ALREADY this map's satellite provider — the
+ *   one basemap that kept working. Street and Midnight now ride the same
+ *   host: World_Street_Map for daylight, and the Dark Gray Canvas pair for
+ *   Midnight, which is drawn by Esri specifically as a ground for thematic
+ *   overlays — exactly what a heat surface needs. Its one cost is a native
+ *   ceiling of z16; past that Leaflet upscales, and parcel-level scrutiny is
+ *   what the Satellite basemap (native z18) is for.
+ *
+ * A deployment that wants deeper-zoom, retina vector cartography can publish
+ * a Mapbox PUBLIC token at build time (`VITE_MAPBOX_ACCESS_TOKEN`); Street
+ * and Midnight then upgrade to Mapbox's streets/dark styles. Satellite stays
+ * on Esri either way — imagery is what it promises, and it has never broken.
+ */
+export interface BasemapDefinition {
+  id: Exclude<BasemapId, 'auto'>;
+  url: string;
+  attribution: string;
+  /** A second tile layer of place labels drawn over an unlabelled base. */
+  labelsUrl?: string;
+  maxNativeZoom: number;
+  /** Tiles are dark, so overlays need the inverted treatment. */
+  dark: boolean;
+}
+
+export type BasemapCatalog = Record<Exclude<BasemapId, 'auto'>, BasemapDefinition>;
+
+const ESRI_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services';
+
+const OSM_CREDIT =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+const ESRI_ATTRIBUTION = `Tiles &copy; Esri &mdash; Esri, HERE, Garmin, ${OSM_CREDIT}`;
+const MAPBOX_ATTRIBUTION =
+  `&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a> ${OSM_CREDIT} ` +
+  '<a href="https://apps.mapbox.com/feedback/">Improve this map</a>';
+
+/**
+ * Only a Mapbox PUBLIC token (`pk.…`) may reach the browser. Anything with a
+ * `VITE_` prefix is inlined into the bundle and is therefore public, which is
+ * fine for a `pk.` token — that is what they are for — and never fine for an
+ * `sk.` secret, so a secret pasted into the variable by mistake is refused
+ * here rather than shipped to every visitor. The character check also keeps
+ * the value safe to splice into Leaflet's `{z}/{x}/{y}` URL template, whose
+ * braces are substitution syntax.
+ */
+export function sanitiseMapboxToken(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return /^pk\.[A-Za-z0-9._-]+$/.test(trimmed) ? trimmed : null;
+}
+
+function mapboxStyleUrl(styleId: string, token: string): string {
+  // The explicit `/256/` tile size keeps Leaflet's default grid maths; the
+  // 512px default would need a zoomOffset. `{r}` is Leaflet's retina slot,
+  // which Mapbox answers with @2x tiles.
+  return (
+    `https://api.mapbox.com/styles/v1/mapbox/${styleId}/tiles/256/{z}/{x}/{y}{r}` +
+    `?access_token=${encodeURIComponent(token)}`
+  );
+}
+
+export function buildBasemapCatalog(mapboxToken?: string | null): BasemapCatalog {
+  const token = sanitiseMapboxToken(mapboxToken);
+
+  const satellite: BasemapDefinition = {
+    id: 'satellite',
+    // Esri's tile scheme is {z}/{y}/{x} — row before column.
+    url: `${ESRI_TILES}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
+    labelsUrl: `${ESRI_TILES}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
+    attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
+    maxNativeZoom: 18,
+    dark: true,
+  };
+
+  if (token) {
+    return {
+      light: {
+        id: 'light',
+        url: mapboxStyleUrl('streets-v12', token),
+        attribution: MAPBOX_ATTRIBUTION,
+        maxNativeZoom: 22,
+        dark: false,
+      },
+      dark: {
+        id: 'dark',
+        url: mapboxStyleUrl('dark-v11', token),
+        attribution: MAPBOX_ATTRIBUTION,
+        maxNativeZoom: 22,
+        dark: true,
+      },
+      satellite,
+    };
+  }
+
+  return {
+    light: {
+      id: 'light',
+      url: `${ESRI_TILES}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`,
+      attribution: ESRI_ATTRIBUTION,
+      maxNativeZoom: 19,
+      dark: false,
+    },
+    dark: {
+      id: 'dark',
+      url: `${ESRI_TILES}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+      labelsUrl: `${ESRI_TILES}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+      attribution: ESRI_ATTRIBUTION,
+      maxNativeZoom: 16,
+      dark: true,
+    },
+    satellite,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Misc                                                                        */
 /* -------------------------------------------------------------------------- */
 
