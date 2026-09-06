@@ -112,6 +112,22 @@ Airtable returns `undefined` for a column that does not exist exactly as it does
 that is empty, so a mistyped name is invisible — that file's header records what that cost
 last time.
 
+**The Listings key is one key across the prime and every clone, and the
+Integrations page cannot touch it.** Read
+[`AIRTABLE_KEY_OWNERSHIP.md`](./docs/integrations/AIRTABLE_KEY_OWNERSHIP.md)
+before touching `AIRTABLE_TOKEN`, the Airtable card in
+`src/lib/integrations/registry.ts`, or `update-integration-secret`. That card
+used to alias its `AIRTABLE_API_KEY` field onto `AIRTABLE_TOKEN` and write it
+into the project environment through the Management API — so a key typed on
+the Integrations page silently superseded the one `airtable-proxy`,
+`listings-cache`, `listing-images` and `listing-enrichment` run on. The six
+pipeline names are listed once, in `_shared/listingsPipelineSecrets.pure.ts`,
+managed by Mission Control (forwarded to every clone), and refused by the
+write endpoint before the allow-list with a message that names the rule. The
+page's Airtable card is the **workflow** connection, under its own names
+(`AIRTABLE_API_KEY`, `AIRTABLE_WORKFLOW_BASE_ID`), and the workflow catalog
+reads only those.
+
 ## What the API gateway checks (`verify_jwt`)
 Read [`docs/security/VERIFY_JWT.md`](./docs/security/VERIFY_JWT.md) before
 changing a `verify_jwt` line in `supabase/config.toml`, the deploy workflow's

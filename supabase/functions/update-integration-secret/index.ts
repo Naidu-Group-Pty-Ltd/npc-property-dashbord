@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbid
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireStepUp } from '../_shared/stepUp.ts';
 import { ALLOWED_INTEGRATION_SECRETS } from '../_shared/integrationSecrets.ts';
+import { listingsPipelineRefusal } from '../_shared/listingsPipelineSecrets.pure.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
@@ -116,6 +117,15 @@ Deno.serve(async (req) => {
       // Validate secret name format
       if (!SECRET_NAME_REGEX.test(secret.name)) {
         validationErrors.push(`Invalid secret name format: ${secret.name}`);
+        continue;
+      }
+
+      // The Listings pipeline's names are refused BEFORE the allowlist, and
+      // said in the operator's terms: "not in allowlist" reads as a typo, and
+      // this is a rule. See listingsPipelineSecrets.pure.ts.
+      const managed = listingsPipelineRefusal(secret.name);
+      if (managed) {
+        validationErrors.push(managed);
         continue;
       }
 
