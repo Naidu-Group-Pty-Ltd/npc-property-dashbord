@@ -134,12 +134,71 @@ export type PackageOutcome =
   | { status: 'unreachable'; detail: string };
 
 /**
+ * How long one branch's recovery may run before it is answered for.
+ *
+ * WHY A DEADLINE AT ALL, MEASURED 6 SEPTEMBER 2026. Lot 709 Verve's brochure
+ * elects in seconds through this exact pipeline on the same bytes, and in
+ * production the claim that started it died ~85 seconds in with no error, no
+ * kill status and no verdict — the isolate was simply shut down mid-item, and
+ * the standing attempt read as a destroyed worker. Every step in here is
+ * individually bounded (the fetch at 30 s total, the parse in single-digit
+ * seconds) and the SUM was not: a dynamic import that never settles, a
+ * response that stalls between chunks, a stream that neither ends nor errors
+ * — any of them holds the awaiting item past the tick budget, and what kills
+ * the worker then writes nothing down.
+ *
+ * 75 seconds: past every legitimate completion this pipeline has measured
+ * (the heaviest live document finishes in under ten), inside the ~90-second
+ * item budget, so the answer is written by US rather than by the reaper.
+ *
+ * A DEADLINE IS AN `unreachable`, NEVER AN INSPECTION. The document was not
+ * read to the end, so nothing may be banked against it — `unreachable`
+ * records nothing, retries on its own budget, and retires as a fact about
+ * our access. The racer's loser keeps running to no effect: this function
+ * writes nothing anywhere, so a late completion is a discarded value.
+ */
+const RECOVERY_DEADLINE_MS = 75_000;
+
+async function withRecoveryDeadline(
+  work: Promise<PackageOutcome>,
+  ms: number,
+): Promise<PackageOutcome> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<PackageOutcome>((resolve) => {
+    timer = setTimeout(() => resolve({
+      status: 'unreachable',
+      detail: `The package could not be read inside ${Math.round(ms / 1000)} seconds, `
+        + 'so this attempt records nothing about the document.',
+    }), ms);
+  });
+  try {
+    return await Promise.race([work, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Find, fetch and extract the one image a row's own package document leads with.
  *
  * `label` is the row's own name — it carries both the lot and the house
  * design, and both have to appear on the document before it is accepted.
+ *
+ * The whole of it runs under `withRecoveryDeadline`, so a step that hangs
+ * becomes an answer the caller can record instead of a worker the platform
+ * reaps mid-claim.
  */
 export async function recoverPackageImage(
+  input: Parameters<typeof recoverPackageImageInner>[0],
+  deps: Parameters<typeof recoverPackageImageInner>[1] & { deadlineMs?: number } = {},
+): Promise<PackageOutcome> {
+  return await withRecoveryDeadline(
+    recoverPackageImageInner(input, deps),
+    deps.deadlineMs ?? RECOVERY_DEADLINE_MS,
+  );
+}
+
+async function recoverPackageImageInner(
   input: {
     packageUrl: string;
     label: string;
