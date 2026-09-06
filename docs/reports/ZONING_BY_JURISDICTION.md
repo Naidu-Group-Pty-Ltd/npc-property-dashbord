@@ -1,154 +1,268 @@
-# Zoning, land and council data — one plan per Australian jurisdiction
+# Land, zoning and council data — the national picture, verified by execution
 
-Scoped 2026-09-06 against the live corpus and each jurisdiction's actual data
-service. It supersedes the single-state sketch in
-[`PROPERTY_ATTRIBUTE_ACQUISITION.md`](./PROPERTY_ATTRIBUTE_ACQUISITION.md),
-which reasoned from NSW and asserted that "the other states publish
-equivalents". They do not, and the differences decide the work.
+Revised 2026-09-06. **Every table below was produced by running the query, not
+by reading documentation.** The first version of this document was written from
+service descriptions and got three things materially wrong; those corrections
+are marked. Endpoints, parameters and returned values are reproducible.
 
-## Where the business actually is
+---
 
-State resolved from `location_intelligence.coordinates`, which 1,112 of the
-1,199 stored reports carry:
+## 0. Correction first: 16.5% of stored coordinates are not in Australia
 
-| jurisdiction | reports | share |
+The earlier state split was computed from `location_intelligence.coordinates`
+without checking those coordinates were in the country. They are not always:
+
+| check | reports |
+|---|---|
+| with coordinates | 1,112 |
+| **inside Australia** (lat −44…−9, lng 112…154) | **929** |
+| **outside Australia** | **183 (16.5%)** |
+| of those: western hemisphere (lng < 0) | 135 |
+| of those: northern hemisphere | 159 |
+| of those: near New Zealand | 15 |
+
+Real examples from the corpus: `Lota` geocoded to **−37.09, −73.15** (Chile);
+`1 Fauna Street` to **−43.58, 172.55** (Christchurch, NZ); `23 Collins Road` to
+**−37.82, 175.28** (Hamilton, NZ).
+
+### The mechanism, proven
+
+| address contains | reports | outside Australia |
 |---|---|---|
-| **QLD** | 402 | 36.2% |
-| **WA** | 347 | 31.2% |
-| **VIC** | 207 | 18.6% |
-| NSW | 115 | 10.3% |
-| NT / other | 15 | 1.3% |
-| SA | 11 | 1.0% |
-| TAS | 9 | 0.8% |
-| QLD/NSW border (Gold Coast–Tweed) | 6 | 0.5% |
+| state **and** postcode | 284 | **1 (0.4%)** |
+| state only | 22 | 0 (0.0%) |
+| postcode only | 38 | 2 (5.3%) |
+| **neither** | **768** | **180 (23.4%)** |
 
-**NSW is the smallest identifiable mainland state in this corpus.** QLD, WA and
-VIC together are 86%. Any plan that starts with NSW starts with a tenth of the
-business, and the first version of this scope did exactly that.
+An address with any locality anchor geocodes correctly. A bare street address —
+69% of the corpus — is wrong about a quarter of the time, because the geocoder
+returns a global best match.
 
-Note the resolution method. A state token (`NSW`, `VIC`, …) appears in only
-about 30% of `property_address` values; adding a postcode-range fallback still
-leaves 776 unresolved. The coordinate resolves 93%. **The router must be
-geographic, not textual.**
+### The cause, located
 
-## What each jurisdiction actually publishes
+Four geocoding call sites, and they disagree:
 
-| | zoning source | statewide? | licence | commercial use |
-|---|---|---|---|---|
-| **VIC** | Vicmap Planning — Planning Scheme Zone Polygon (WFS/WMS, DataVic) | yes, standardised under the Victoria Planning Provisions | **CC BY 4.0** | **yes**, with attribution |
-| **NSW** | ePlanning *Environmental Planning Instrument — Land Zoning* (ArcGIS REST, weekly) | yes | **CC BY** | **yes**, with attribution |
-| **WA** | SLIP `Property_and_Planning` MapServer — layer **112** Local Planning Scheme Zones & Reserves (DPLH-071), layer **111** R-Codes, layer **48** Region Scheme | yes, where a Local Planning Scheme exists | SLIP public terms: *"only use this data for your personal and non-commercial use"* | **NO — blocked** |
-| **QLD** | **none at state level.** Zoning is set by each local government's planning scheme | no | per council | per council |
-| SA | Planning and Design Code (single statewide code since 2021) | yes | to confirm | to confirm |
-| TAS | Tasmanian Planning Scheme (statewide standard zones) | yes | to confirm | to confirm |
-| ACT | Territory Plan zones (single jurisdiction) | yes | to confirm | to confirm |
-| NT | NT Planning Scheme (single scheme) | yes | to confirm | to confirm |
-
-### Two traps worth naming
-
-**QLD's state service looks like zoning and is not.**
-`spatial-gis.information.qld.gov.au/.../PlanningCadastre/LandUse/MapServer` is
-the *Queensland Land Use* layer, classified to the Australian Land Use and
-Management Classification. It is land **use**, not planning **zone**. Bound to a
-report it would print "agriculture" where the client needs "Rural Residential
-Zone" from the council's scheme — a plausible, wrong figure, which is worse
-than an absent one.
-
-**WA's free service forbids the thing we do with it.** Layer 112 is exactly the
-data required, and the public SLIP terms restrict it to personal,
-non-commercial use, with reproduction and derivative works needing written
-authorisation from the custodian. This platform renders commercial client-facing
-PDFs. Free is not the same as usable, and this is the single most important
-correction to the earlier scope.
-
-### QLD is not a 77-council problem
-
-Within the 402 QLD reports:
-
-| region | reports | share of QLD |
+| call site | country restriction | effect |
 |---|---|---|
-| Brisbane / Moreton Bay / Ipswich | 160 | 39.2% |
-| Sunshine Coast / Noosa | 93 | 22.8% |
-| Gold Coast / Logan / Redland | 11 | 2.7% |
-| Townsville | 9 | 2.2% |
-| Central QLD | 7 | 1.7% |
-| other QLD | 128 | 31.4% |
+| `resolve-listing-coordinates` | `components=country:AU` | filtered ✓ |
+| `parse-property-pdf` | `region=au` + `components=country:AU` | filtered ✓ |
+| `_shared/builderStock/images.ts` | `region=au` only | **bias, not a filter** ⚠ |
+| **`location-intelligence-service`** | **none** | **unfiltered** ✗ |
 
-Roughly **62% of QLD volume sits in about four local government areas**, and
-several of those publish their planning-scheme zone layers as open data. So the
-realistic QLD path is: cover the handful of councils that carry the volume, and
-disclose the rest — not attempt all 77.
+`location-intelligence-service` is the one that writes the coordinates the
+reports carry. `region=au` biases ranking; only `components=country:AU`
+restricts. Three of four sites got it right and the fourth is the one that
+matters here.
 
-## The rules this has to be built to
+> **This blocks the whole coordinate-keyed programme.** Any zoning or cadastre
+> lookup keyed on these coordinates would query the wrong jurisdiction for up to
+> one report in six, and return *nothing* rather than an error — indistinguishable
+> from "this property has no zoning". Fix the geocoder and re-resolve the 183
+> before building anything on top.
 
-**1. The router is geographic, and bounding boxes are not good enough.** The
-tables above were produced with rectangular latitude/longitude buckets, which is
-fine for sizing a problem and unfit for deciding which government's law applies
-to a client's property. Production must resolve jurisdiction by point-in-polygon
-against an authoritative boundary, or by asking the candidate jurisdiction's own
-service and accepting its answer. Six reports already sit on the Gold
-Coast–Tweed border, where a rectangle gets it wrong.
+### Corrected state distribution (Australian coordinates only, n = 929)
 
-**2. Two fields, never one.** Store the **verbatim** local code (`GRZ1`, `R2`,
-`Low density residential`, `Residential R20`) *and* a normalised national
-family (`low-density residential`). The verbatim code is what a conveyancer
-checks and the only thing that is legally meaningful; the family is what lets a
-client compare a Victorian report with a Queensland one. **The family must never
-be printed as though it were the zone.** Zoning vocabularies are not comparable
-across states — VIC's GRZ, NSW's R2, WA's R-codes and QLD's per-council names
-are different systems, and silently harmonising them is how a report tells a
-client something untrue.
+| jurisdiction | reports | share | previously stated |
+|---|---|---|---|
+| **QLD** | 408 | **43.9%** | 36% |
+| **VIC** | 207 | 22.3% | 19% |
+| **WA** | 179 | **19.3%** | 31% ← inflated by 168 foreign points |
+| NSW / ACT | 115 | 12.4% | 10% |
+| SA | 11 | 1.2% | 1% |
+| TAS | 7 | 0.8% | 0.8% |
+| NT | 2 | 0.2% | — |
 
-**3. A spatial layer is indicative; the certificate is the instrument.** The Due
-Diligence tier's value is telling a client what to verify and where. Each report
-must name the jurisdiction's actual instrument — NSW s10.7 planning certificate,
-VIC s.199 Land Information Certificate, QLD council planning and development
-certificates, WA equivalents — rather than presenting a queried polygon as
-settled fact.
+WA was overstated by 168 reports because the earlier bucket used `lng < 129`,
+which is satisfied by every western-hemisphere longitude. QLD is the dominant
+jurisdiction at nearly 44%.
 
-**4. Licence is a gate, checked per source before a value is printed.**
-`data_provenance.licence_tag` already exists for this. A value whose source
-forbids commercial redistribution must not reach a client PDF, however
-successfully it was fetched. WA is currently in that state.
+---
 
-**5. Coverage is disclosed, never inferred.** A jurisdiction with no usable
-source says so on the page. The absent row is honest; a guessed one is not
-(law 2).
+## 1. What each jurisdiction actually returns — executed
 
-**6. Overlays are separable from zoning, and QLD proves why.** Even where the
-State publishes no zoning, it publishes hazard layers — QLD's
-`spatial-gis.information.qld.gov.au` carries **FloodCheck** and historic flood
-lines statewide. Flood, bushfire and heritage overlays drive more of a due
-diligence conclusion than the zone code does, and they can be delivered on a
-different schedule from zoning. Do not block the hazard work on the zoning work.
+Each row below is a live query against a real corpus coordinate.
 
-**7. Currency travels with the value.** Update cadence differs by source (NSW
-weekly; VIC periodic; QLD per council). Every value carries `fetched_at` and is
-rendered "as at" that date.
+### NSW — zoning ✅ free, commercial use permitted
 
-## Suggested order
+`28 Bligh Street, Muswellbrook NSW 2333` → `-32.257687, 150.8934483`
 
-Sequenced by *business volume against difficulty*, with the long-lead item
-started first even though it lands later:
+```
+GET mapprod3.environment.nsw.gov.au/arcgis/rest/services/ePlanning/
+    Planning_Portal_Principal_Planning/MapServer/19/query
+    ?geometry=150.8934483,-32.257687&geometryType=esriGeometryPoint
+    &inSR=4326&spatialRel=esriSpatialRelIntersects&f=json
+```
 
-| step | jurisdiction | why here |
+| field | value |
+|---|---|
+| EPI_NAME | Muswellbrook Local Environmental Plan 2009 |
+| **LGA_NAME** | **MUSWELLBROOK** |
+| **SYM_CODE** | **R1** |
+| LAY_CLASS | General Residential |
+| CURRENCY_DATE | 2023-06-09 |
+
+Licence CC BY. **The LGA comes back with the zone**, so council area is free here.
+
+### VIC — zoning ✅ free (CC BY 4.0), commercial use permitted
+
+`1 Boxer Drive, Wyndham Vale VIC 3024` → `-37.866888, 144.6194495`
+
+```
+GET opendata.maps.vic.gov.au/geoserver/wfs?service=WFS&version=2.0.0
+    &request=GetFeature&typeNames=open-data-platform:plan_zone
+    &outputFormat=application/json
+    &CQL_FILTER=INTERSECTS(geom,SRID=4326;POINT(144.6194495 -37.866888))
+```
+
+| field | value |
+|---|---|
+| **lga** | **WYNDHAM** |
+| **zone_code** | **UGZ8** |
+| zone_description | URBAN GROWTH ZONE - SCHEDULE 8 |
+| gaz_begin_date | 2014-07-17 |
+| ufi_created | 2025-08-21 |
+
+### WA — zoning ⚠ works, but licence-blocked
+
+`1 Hazlett Street, Kalannie WA 6468` → `-30.365141, 117.1194347`, SLIP layer 112:
+
+| field | value |
+|---|---|
+| **lga** | **Shire of Dalwallinu** |
+| scheme_nam / scheme_no | DALWALLINU / 2 |
+| **zone** | **Residential** |
+| gazettal_d | 2014-02-06 |
+
+Technically ideal. The SLIP public terms restrict the data to *"personal and
+non-commercial use"*, with derivative works requiring written authorisation.
+**This platform renders commercial client PDFs, so this is unusable as-is.**
+
+### QLD — zoning ❌ does not exist at state level
+
+The `PlanningCadastre` folder contains **no zoning service**. Enumerated live:
+
+```
+AreasOfRegionalInterest · CoastalManagement · CoordinatedProjects ·
+LandParcelPropertyFramework · LandUse · PriorityDevelopmentAreas ·
+ResidentialLandSupply · StateDevelopmentAreas · StatePlanning
+```
+
+`PlanningCadastre/LandUse` is the **Queensland Land Use** layer, classified to
+the Australian Land Use and Management Classification. It is land *use*, not
+planning *zone*. Bound to a report it would print "agriculture" where the client
+needs a zone name — a plausible wrong figure, worse than an absent one.
+
+Queensland zoning is set by each local government's planning scheme.
+
+---
+
+## 2. The finding that changes the plan: cadastre ≠ zoning
+
+Chasing zoning in QLD led to the cadastre, which answers a different and
+partly more valuable question. Same Moranbah coordinate, layer 4:
+
+```
+GET spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/
+    LandParcelPropertyFramework/MapServer/4/query
+    (geometry as JSON: {"x":148.0452959,"y":-22.0043462,
+     "spatialReference":{"wkid":4326}})
+```
+
+| field | value |
+|---|---|
+| **lot_area** | **809.0** |
+| **shire_name** | **Isaac Regional** |
+| lotplan | 45M9738 |
+| lot / plan | 45 / M9738 |
+| **tenure** | **Freehold** |
+| locality | Moranbah |
+
+For the largest jurisdiction in the corpus, with no zoning service at all, the
+free state cadastre returns **land size, council area, the legal parcel
+identifier and tenure** — four of the attributes this programme is chasing.
+
+### And the pattern inverts
+
+| jurisdiction | zoning | cadastre attributes |
 |---|---|---|
-| 0 | **WA — licence** | Start immediately and in parallel: 31% of volume is blocked on a written authorisation or SLIP subscription, and procurement has lead time, not engineering. |
-| 1 | **VIC** | 19%, CC BY 4.0, statewide standardised zones and overlays. The cheapest place to prove the architecture end to end. |
-| 2 | **NSW** | 10%, CC BY, same shape as VIC. Confirms the multi-jurisdiction router on a second vocabulary. |
-| 3 | **QLD hazard** | FloodCheck statewide, no zoning dependency. Delivers due-diligence value to 36% of the corpus without waiting for council aggregation. |
-| 4 | **WA** | Build once the licence lands. |
-| 5 | **QLD zoning** | The four council areas carrying ~62% of QLD volume, then disclose the tail. |
-| 6 | SA, TAS, ACT, NT | 4% combined; each is a single statewide scheme, so each is small. |
+| **QLD** | ❌ none at state level | ✅ authoritative `lot_area`, `shire_name`, lot/plan, tenure |
+| **NSW** | ✅ free, CC BY, incl. LGA | ⚠ `lotidstring` (B//DP156945) but only a computed `shape_Area` |
+| **VIC** | ✅ free, CC BY 4.0 | ❌ open parcel/property layers return **identifiers only** (pfi/ufi) — no area, no lot/plan, no LGA |
+| **WA** | ⚠ licence-blocked | ⚠ same SLIP licence |
+
+**No jurisdiction is good at both, and the strengths are opposite.** QLD is best
+for cadastre and worst for zoning; VIC is best for zoning and worst for
+cadastre. So the plan cannot be organised per state — it is a matrix of
+**(jurisdiction × attribute)**, and each cell needs its own source, licence and
+confidence.
+
+### Surveyed area is not computed area
+
+QLD returns `lot_area: 809.0` — a surveyed figure. NSW's cadastre layer returns
+only `shape_Area: 1081.5`, the polygon's computed area in the layer's projection
+units. For a due-diligence document these are different claims: one is the area
+on title, the other is what the boundary geometry happens to enclose. **They must
+not be published under the same label**, and a computed area needs saying so.
+
+---
+
+## 3. Rules this must be built to
+
+1. **Fix the geocoder before anything else.** `components=country:AU` in
+   `location-intelligence-service`, reject any result outside Australia, and
+   re-resolve the 183 bad rows. Everything else keys on coordinates.
+2. **The jurisdiction router is geographic and must not use bounding boxes.**
+   Rectangles put Chile in Western Australia in this very document's first
+   draft. Resolve by point-in-polygon against an authoritative boundary, or take
+   the answering service's own LGA/state field.
+3. **Two fields, never one.** Store the verbatim local code (`R1`, `UGZ8`,
+   `Residential`) *and* a normalised national family. NSW returned `R1 / General
+   Residential` and VIC `UGZ8 / Urban Growth Zone – Schedule 8` for equivalent
+   suburban land: different legal systems, not different spellings. **The family
+   must never be printed as though it were the zone.**
+4. **Label the provenance of area.** Surveyed lot area and computed polygon area
+   are different facts.
+5. **Licence is a gate checked before a value reaches a PDF**, not a footnote.
+   `data_provenance.licence_tag` exists for this. WA is currently barred.
+6. **Coverage is disclosed, never inferred.** A cell with no usable source says
+   so (law 2).
+7. **Overlays are separable from zoning.** QLD publishes `StatePlanning` and
+   FloodCheck statewide with no zoning dependency, and flood/bushfire drive more
+   of a due-diligence conclusion than the zone code does.
+8. **A spatial layer is indicative; the certificate is the instrument** — NSW
+   s10.7, VIC s.199 Land Information Certificate, QLD council planning and
+   development certificates. The Due Diligence tier's value is naming what to
+   verify and where.
+
+---
+
+## 4. Order of work
+
+| step | what | why here |
+|---|---|---|
+| **0** | **Geocoder fix + re-resolve 183 rows** | Blocks everything; one parameter and a bounds check. |
+| **1** | **QLD cadastre** — land area, LGA, lot/plan, tenure | 44% of the corpus, free, authoritative, and delivers four attributes without touching zoning. |
+| **2** | **VIC + NSW zoning** | 35% combined, both CC BY, both verified working above. |
+| **3** | **NSW cadastre / lot ID** | Free; area needs the surveyed-vs-computed caveat. |
+| **4** | **QLD hazard** (`StatePlanning`, FloodCheck) | Statewide, no zoning dependency. |
+| **5** | **WA licence** | 19%, blocked on terms not engineering — start the conversation in parallel with step 1, since it is procurement lead time. |
+| **6** | **QLD zoning by council** | Per-scheme aggregation for the LGAs carrying volume. |
+| **7** | **VIC cadastre attributes, SA / TAS / NT** | VIC's attributed parcel data is licensed; the three small jurisdictions are ~2% combined. |
 
 Every step writes through `data_provenance` with source, confidence, licence tag
-and fetch time — the envelope `cotality-service` already specifies — so the
-report can state what it knows, how it knows it and when it last checked.
+and fetch time — the envelope `cotality-service` already specifies.
 
-## What this does not change
+---
 
-Cotality remains the answer for verified property attributes, AVM, sales and
-rental history. It is **not** the answer for zoning: its own scoping brief puts
-planning at *"Cotality (partial) + state portals"* with a fallback of *"state
-portals only"*. A signed Cotality licence would still leave this document's work
-to do.
+## 5. What this means for the vendor question
+
+Cotality remains the answer for AVM, sales and rental history. It is **not** the
+answer for zoning — its own scoping brief puts planning at *"Cotality (partial)
++ state portals"*, fallback *"state portals only"*. And for land area, council
+area, lot/plan and tenure, **QLD's free cadastre already returns better data
+than a vendor would need to be paid for**, at least for 44% of the corpus.
+
+The honest sequence is: fix the geocoder, harvest what the free cadastre and
+planning services give per cell of the matrix, and let the residue define the
+vendor requirement — rather than buying a licence to cover gaps that free
+government data already fills.
