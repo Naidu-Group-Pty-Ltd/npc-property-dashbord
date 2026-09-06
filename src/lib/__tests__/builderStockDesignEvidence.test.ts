@@ -18,6 +18,12 @@
  * the card back without this module's help (cases D and E).
  */
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import {
+  designOfRecordOrRow,
+} from '../../../supabase/functions/_shared/builderStock/builderSuppliedImage.pure';
 
 import {
   designIdentityIsDistinctive, findDesignCoverPages, findPropertyCoverPages,
@@ -58,6 +64,65 @@ const media = (pages: number[]) => pages.map((page, index) => ({
 // ---------------------------------------------------------------------------
 // The heading maps generically
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// The design has to REACH the election, and for a year it never did
+// ---------------------------------------------------------------------------
+
+describe('the design reaches the election whichever shape the caller holds', () => {
+  /*
+   * THE DEFECT THIS PINS. Everything below in this file passed while the
+   * feature produced nothing at all: 438 primary images across the live
+   * database at evidence levels 1, 2 and 3, and not one at level 4. The
+   * settler read `record.source_row.house_design`, and the value it is handed
+   * is the normalised record ITSELF — `storedSourceRows` unwraps the column
+   * before returning it — so `house_design` sat at the top level, the nested
+   * read answered undefined, and the design never reached the election.
+   *
+   * Null is also the honest answer for a row stating no design, which is why
+   * nothing anywhere reported a fault.
+   *
+   * These cases use a REAL `normaliseStockRow` output rather than a
+   * hand-written object, because a hand-written stand-in is precisely what
+   * would have been written in the broken shape and passed.
+   */
+  const rowFor = (extra: Record<string, string>) =>
+    normaliseStockRow({ Lot: '1004', Development: 'Five Farms', ...extra });
+
+  it('reads the normalised record the repair path actually holds', () => {
+    const record = rowFor({ 'House Design': 'Enzo 10.5' });
+    expect(record.house_design).toBe('Enzo 10.5');
+    // The shape with no `source_row` key at all — the one that answered null.
+    expect((record as { source_row?: unknown }).source_row).toBeUndefined();
+    expect(designOfRecordOrRow(record)).toBe('Enzo 10.5');
+  });
+
+  it('and the database row that keeps the same record nested', () => {
+    const stored = { id: 'item-1', source_row: rowFor({ 'House Design': 'Enzo 8.5' }) };
+    expect(designOfRecordOrRow(stored)).toBe('Enzo 8.5');
+  });
+
+  it('recovers a design a row carries only as an unmapped HOUSE column', () => {
+    const record = normaliseStockRow({ Lot: '55', HOUSE: 'VGU19' });
+    expect(designOfRecordOrRow(record)).toBe('VGU19');
+  });
+
+  it('still answers null where the row genuinely states no design', () => {
+    expect(designOfRecordOrRow(rowFor({}))).toBeNull();
+    expect(designOfRecordOrRow(null)).toBeNull();
+    expect(designOfRecordOrRow({ source_row: null })).toBeNull();
+  });
+
+  it('the settler asks through that one reader rather than its own copy', () => {
+    // A private one-shape copy is exactly what was wrong; a second copy would
+    // be free to drift back to it without any behavioural test noticing.
+    const source = readFileSync(join(
+      process.cwd(), 'supabase/functions/_shared/builderStock/repairSourceImages.ts',
+    ), 'utf8');
+    expect(source).toContain('designOfRecordOrRow');
+    expect(source).not.toMatch(/function designOf\s*\(/);
+  });
+});
 
 describe('house design is a canonical field, mapped by heading like any other', () => {
   it.each([
