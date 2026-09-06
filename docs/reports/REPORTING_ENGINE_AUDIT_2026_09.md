@@ -1746,3 +1746,140 @@ routing weaknesses. They cannot fix a section whose source data does not exist.
 The registry now says which is which, so the next increment can build assembly
 for the sections that can be assembled without implying the others are one
 refactor away.
+
+---
+
+## §23 — The coordinate every location figure is measured from (2026-09-06)
+
+Phase 3's measurement of what the record holds (§22) asked what is *absent*.
+This asks a harder question about what is *present*: is the stored figure the
+right one? For the location section the answer is available, because every
+property in this corpus is in Australia and a coordinate outside it is not an
+unusual property — it is a wrong answer.
+
+### The measurement
+
+Of the 1,112 stored investment reports carrying
+`location_intelligence.coordinates`:
+
+| | reports | share |
+|---|---:|---:|
+| inside the Australian bounding box | 929 | 83.5% |
+| **outside Australia** | **183** | **16.5%** |
+| **exactly Sydney CBD (−33.8688, 151.2093), to four decimals** | **64** | **5.8%** |
+
+Sydney CBD to four decimals is not a coincidence; it was this service's
+hard-coded failure value. Together, **247 of 1,112 reports — 22% — carry a
+coordinate that is either not in Australia or is the geocoder's way of saying
+it gave up.**
+
+The twelve most-repeated foreign points, with the address that produced each:
+
+| address as stored | resolved to | reports |
+|---|---|---:|
+| `Keystone Drive` | Blacksburg, Virginia | 8 |
+| `124 First Avenue` | Manhattan, New York | 7 |
+| `Walbrook Drive` | Knoxville, Tennessee | 7 |
+| `Prophets Street` | Bulacan, Philippines | 7 |
+| `590 Walker Street` | Manhattan, New York | 7 |
+| `40 Avondale Road` | Auckland, New Zealand | 6 |
+| `84-85 Pacific Boulevard` | Long Island, New York | 6 |
+| `4 Lilac Close` | Bristol, England | 5 |
+| `44 Frederick Street` | Edinburgh, Scotland | 5 |
+| `63 Lakeview Drive` | North Carolina | 5 |
+| `7 Kinghorn Street` | City of London | 4 |
+| `25 Acacia Avenue` | Ottawa, Canada | 4 |
+
+### Why this was invisible
+
+Every figure in a report's location section — the amenity counts, the nearest
+school and its rating, the walk score, the CBD commute — is measured *from the
+coordinate*, by real Google Places and Distance Matrix calls that succeed. A
+wrong coordinate does not make them fail. It makes them describe somewhere
+else, accurately. A report for a property in Perth carrying Sydney's schools
+and Sydney's walk score contains no error a reader can see, no `N/A`, and
+nothing the placeholder scrub or the fact-checker can catch: the numbers are
+real, they are just about a different place. This is the same failure class as
+`cotality-scoping.md`'s note on score clustering, and it is the reason that
+note existed.
+
+### Four faults, each sufficient on its own
+
+**1 · The question had no locality.** The service is handed `suburb`,
+`postcode` and `state`, and spent them on the CBD lookup and the
+public-transport call. The one request that actually needed a locality — the
+geocode — was given `input.address` alone. Split by what the address itself
+said:
+
+| the address names… | reports | landed outside Australia |
+|---|---:|---:|
+| a state **and** a postcode | 283 | **1** (0.4%) |
+| neither | 768 | **180** (23.4%) |
+
+That is the cause. A bare street name exists in every English-speaking
+country, and Google was not malfunctioning — it was asked an ambiguous
+question and returned one of its correct answers.
+
+**2 · No country filter.** `components=country:AU` is a filter;
+`region=au` is only a bias, and the request carried neither.
+
+**3 · Nothing checked the answer.** `auGeoSanity.pure.ts` — country box, land
+mask, state cross-check — already existed and is already applied by
+`resolve-listing-coordinates`. This geocoder did not ask it.
+
+**4 · Failure returned Sydney CBD.** Not an error, not a null: a coordinate,
+indistinguishable downstream from a real one.
+
+Faults 1 and 2 are not alternatives, which is the trap here. The country
+filter *alone* only relocates the error: `Keystone Drive` restricted to
+Australia resolves to some Keystone Drive here, in the wrong suburb, inside
+the country box, past every gate. Composing the query is what makes the answer
+right rather than merely local.
+
+### What changed
+
+- `_shared/auGeocodeQuery.pure.ts` composes the query from the parts the
+  service already holds, never repeating one the address already spells.
+- The request now sends `components=country:AU` **and** `region=au`.
+- The answer goes through `assessAuPoint` — the shared gate, not a second
+  bounding box written beside it.
+- An unresolved address returns `success: false, resolved: false` with a
+  reason, **not** the sample-data branch: sample data is a fact about no
+  property, an unresolvable address is a fact about this one, and a caller
+  must be able to tell them apart.
+- A caller-*supplied* coordinate goes through the same gate, because the
+  stored rows are where the 183 live and handing one back is the door a fix on
+  the fetch path alone would leave open.
+
+Both report consumers already guard on `success && data`, so a refusal lands
+them in the path they take when the service is unreachable:
+`enhancedData.locationIntelligence` stays undefined, where the existing
+coverage flag records it.
+
+### The trade this makes, stated plainly
+
+A refused geocode means the location section is **absent** rather than wrong.
+That is the intended direction — a reader can see an absent section and cannot
+see a correct-looking figure measured from the wrong continent — but it is a
+real cost and the expected volume is small: the 283 addresses that already
+name a state and a postcode geocoded correctly 282 times, and the 768 that
+name neither will now be asked *with* their locality rather than without it.
+The expected outcome for most of the 183 is a **correct** coordinate, not an
+absent one.
+
+### Two things deliberately not done here
+
+**No backfill.** The 247 stored rows are untouched; nothing is re-geocoded and
+no vendor call is spent. Fixing forward stops the fault reproducing; repairing
+the record is a separate, authorised decision.
+
+**`generateMockLocationData` is untouched and remains a live defect.** It is
+reachable on three branches — no API key, a Google API error, and the
+top-level catch — and each returns **HTTP 200 with `success: true`** carrying
+invented school names (`Primary School A`, `High School B`,
+`Private College C`), an invented `Central Station`, a random walk score
+(`Math.random()`), a random commute, and Sydney's coordinates. Exactly one
+consumer inspects `usingMockData`, and it only `console.warn`s while using the
+data anyway; `regenerate-report-qualitative` does not check it at all. That is
+a larger behaviour change than the one made here and is recorded rather than
+taken unilaterally.
