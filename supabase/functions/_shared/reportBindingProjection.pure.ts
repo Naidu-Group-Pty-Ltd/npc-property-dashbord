@@ -122,6 +122,7 @@ export interface InvestmentReportRowLike {
   property_address?: string | null;
   report_tier?: string | null;
   property_specs?: Record<string, unknown> | null;
+  manual_overrides?: Record<string, unknown> | null;
   financial_calculations?: Record<string, unknown> | null;
   investment_score?: Record<string, unknown> | null;
   updated_at?: string | null;
@@ -242,15 +243,18 @@ function recommendationAction(headline: string | undefined): string | undefined 
  * writes, and the other is a by-product of the finance run.
  */
 function specReader(
-  specs: Record<string, unknown>,
-  fallback: Record<string, unknown>,
+  ...sources: Array<Record<string, unknown>>
 ): (...keys: string[]) => unknown {
   return (...keys: string[]): unknown => {
-    for (const key of keys) {
-      if (specs[key] !== undefined && specs[key] !== null) return specs[key];
-    }
-    for (const key of keys) {
-      if (fallback[key] !== undefined && fallback[key] !== null) return fallback[key];
+    // Source order is precedence, and it is checked source-by-source rather
+    // than key-by-key: the first SOURCE that answers any of the keys wins, so
+    // a stored spec is never overridden by an operator's entry for the same
+    // attribute under a different spelling.
+    for (const source of sources) {
+      for (const key of keys) {
+        const v = source[key];
+        if (v !== undefined && v !== null && v !== '') return v;
+      }
     }
     return undefined;
   };
@@ -414,13 +418,38 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   const assumptions = obj(fin.assumptions);
 
   // ── property ──────────────────────────────────────────────────────────────
-  const spec = specReader(specs, obj(fin.propertySpecs));
+  // Three sources, in precedence order, and the third one is a repair.
+  //
+  // `property_specs` is what the generator wrote and what every template binds.
+  // Measured across all 1,199 stored reports, six of its nine attributes have
+  // never held a value: parking, year_built, building_size_sqm, land_size_sqm,
+  // council_area and zoning are empty on every row.
+  //
+  // Four of those six were never missing. Operators type them into the manual
+  // inputs panel and they land in `manual_overrides` — land size on 150
+  // reports, build size on 145, car spaces on 155, construction year on 29 —
+  // under different spellings (`landSizeSqm`/`landSize`,
+  // `buildSizeSqm`/`buildSize`, `carSpaces`, `constructionYear`) from the ones
+  // `property_specs` uses. Nothing ever copied them across, so a Property
+  // Identity table rendered blank on 150 reports whose operator had entered the
+  // land size by hand.
+  //
+  // This is healed on READ, the same way `reconcileStoredFinancials` heals the
+  // financial fold above: the stored row is never rewritten, every report
+  // already issued gains the figure its operator supplied, and the write path
+  // is fixed separately. Overrides come LAST, so a real stored spec always
+  // wins.
+  //
+  // Zoning and council area are the other two, and no source has them — not
+  // specs, not overrides, not any table in the schema. See
+  // docs/reports/PROPERTY_ATTRIBUTE_ACQUISITION.md.
+  const spec = specReader(specs, obj(fin.propertySpecs), obj(row.manual_overrides));
   const property: Record<string, unknown> = {};
   put(property, 'address', str(row.property_address));
   put(property, 'type', str(spec('property_type', 'propertyType')));
-  put(property, 'yearBuilt', num(spec('year_built', 'yearBuilt')) ?? str(spec('year_built', 'yearBuilt')));
-  put(property, 'landArea', num(spec('land_size_sqm', 'landSizeSqm')));
-  put(property, 'buildingArea', num(spec('building_size_sqm', 'buildingSizeSqm', 'buildSizeSqm')));
+  put(property, 'yearBuilt', num(spec('year_built', 'yearBuilt', 'constructionYear')) ?? str(spec('year_built', 'yearBuilt', 'constructionYear')));
+  put(property, 'landArea', num(spec('land_size_sqm', 'landSizeSqm', 'landSize')));
+  put(property, 'buildingArea', num(spec('building_size_sqm', 'buildingSizeSqm', 'buildSizeSqm', 'buildSize')));
   put(property, 'zoning', str(spec('zoning')));
   put(property, 'council', str(spec('council_area', 'councilArea')));
   put(property, 'configuration', configuration(spec));
