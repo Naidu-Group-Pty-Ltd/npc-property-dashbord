@@ -55,6 +55,7 @@
  * submission is the retry.
  */
 
+import { meteredFetch } from '../../meteredFetch.ts';
 import {
   classifyStandaloneHttpError,
   isAllowedMediaUrl,
@@ -138,7 +139,9 @@ async function postMultipart(
 ): Promise<StandaloneCallResult> {
   let res: Response;
   try {
-    res = await fetch(`${DIDIT_API_BASE}${path}`, {
+    // Metered for the same reason as the hosted client: each standalone call
+    // spends the fleet's forwarded key and is recharged per tenant.
+    res = await meteredFetch(`${DIDIT_API_BASE}${path}`, {
       method: 'POST',
       headers: {
         'x-api-key': apiKey,
@@ -149,7 +152,7 @@ async function postMultipart(
       },
       body: form,
       signal: AbortSignal.timeout(STANDALONE_TIMEOUT_MS),
-    });
+    }, { secretName: 'DIDIT_API_KEY', feature: `aml/idv-standalone${path.split('?')[0]}` });
   } catch (e) {
     const err = e as Error;
     const aborted = err?.name === 'TimeoutError' || err?.name === 'AbortError';
