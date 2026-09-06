@@ -382,6 +382,28 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose:
       'The property as facts in a table — type, bed/bath/car, land, configuration, suburb, LGA. Recorded, never authored, and internally consistent everywhere it appears.',
+    // MEASURED 2026-09-06, across all 1,199 stored reports. `property_specs`
+    // carries nine attributes and the projection publishes all of them; six
+    // have never held a value on any report:
+    //
+    //   property_type      1,071        parking              0
+    //   bedrooms             651        year_built           0
+    //   bathrooms            633        building_size_sqm    0
+    //                                   land_size_sqm        0
+    //                                   council_area         0
+    //                                   zoning               0
+    //
+    // So this spine section is substantially empty on every document the
+    // product has ever issued: `property.landArea`, `property.buildingArea`,
+    // `property.yearBuilt`, `property.zoning` and `property.council` resolve to
+    // nothing, and `configuration` renders without a car count because parking
+    // is always absent. It is not a wiring fault — no table in the schema holds
+    // residential land size, council area or zoning — so the fix is data the
+    // platform does not acquire, upstream of the reporting engine.
+    //
+    // Recorded here rather than in a document because this is the section that
+    // promises those rows, and law 2 is that a labelled row is a promise a
+    // figure follows it.
     tiers: {
       compass: { depth: 'spine', order: 4, label: 'Property & Locality Snapshot', producer: authored('generator.compass') },
       briefing: { depth: 'spine', order: 4, surface: 'document', producer: projection('property.*') },
@@ -666,11 +688,35 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       'Government Policy & Regulation',
     ],
     purpose:
-      'Zone, overlays, easements, title, and what must be confirmed on the certificate before contract. On the Due Diligence tier this is the defining section — it appeared on 1 of 11 produced reports.',
+      'Zone, overlays, easements, title, and what must be confirmed on the certificate before contract. On the Due Diligence tier this is the defining section — and nothing can currently produce it; see the gap below.',
     tiers: {
       compass: merged('riskDashboard'),
       briefing: merged('riskDashboard'),
-      strategic: { depth: 'required', order: 15, label: 'Planning, Zoning and Title Due Diligence', producer: routed('dueDiligence', 13) },
+      // DECLARED GAP. It appeared on 1 of the 11 Due Diligence reports ever
+      // produced, and neither available producer can fix that:
+      //
+      //  - ROUTING cannot, because the Compass parent has no planning section
+      //    to route. The Compass folds planning into Risk Dashboard, which this
+      //    registry states two lines above; there is nothing there to match.
+      //  - COMPOSITION cannot, because the record holds no planning data.
+      //    Measured across all 1,199 stored reports: `property_specs` carries a
+      //    `zoning` key on 1,071 of them and a zoning VALUE on **zero**;
+      //    `council_area` and `land_size_sqm` are likewise present-but-empty on
+      //    every row; and `location_intelligence`, present on 1,112, holds only
+      //    amenities, commute, coordinates, healthcare, lifestyle, schools,
+      //    transport and walkScore — no planning, zoning, overlays, title or
+      //    environmental keys at all.
+      //
+      // Nor is it a wiring problem. No table in the schema carries residential
+      // zoning, land size or council area: `zoning` exists only on
+      // `commercial_properties` and `industrial_properties`, a different
+      // product. The platform does not acquire this data, so the fix is
+      // upstream of the reporting engine and cannot be made here.
+      //
+      // Declaring a producer it does not have would be exactly the failure this
+      // registry exists to stop — a declaration nothing can honour — so the
+      // tier keeps its promise and the gap is named.
+      strategic: { depth: 'required', order: 15, label: 'Planning, Zoning and Title Due Diligence', producer: null },
     },
   },
 
@@ -954,7 +1000,18 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
  * dependency by assembling from stored sections instead of re-reading a sibling
  * document; law 4 is the rule it is enforcing.
  */
-export const PRODUCER_GAPS: readonly string[] = [];
+export const PRODUCER_GAPS: readonly string[] = [
+  // The Due Diligence tier's defining section, with nothing able to produce it.
+  // Routing cannot (the Compass parent folds planning into Risk Dashboard, so
+  // there is no section to route) and composition cannot (the record holds no
+  // planning data: a zoning VALUE on 0 of 1,199 reports, `council_area` and
+  // `land_size_sqm` present-but-empty on every row, and no planning, zoning,
+  // overlay, title or environmental key anywhere in `location_intelligence`).
+  // No table in the schema carries residential zoning either, so this is a data
+  // the platform does not acquire, and the fix is upstream of the reporting
+  // engine. See the placement in `planning` for the full measurement.
+  'strategic:planning',
+];
 
 // ─── Readers ────────────────────────────────────────────────────────────────
 

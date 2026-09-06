@@ -1675,3 +1675,74 @@ measurement — a regression shows up as a failing floor instead of a quietly
 thinner report.
 
 Pinned by `corpusPartition.spec.ts` (21).
+
+---
+
+## §22 — What the record does not hold
+
+Phase 3's next step was per-section storage. Measuring what could actually be
+stored found something that changes the programme's priorities, so it is
+recorded before any of that is built.
+
+### The Due Diligence tier's defining section cannot be produced at all
+
+`Planning, Zoning and Title Due Diligence` appears on **1 of the 11** Due
+Diligence reports ever produced. Neither available producer can fix it:
+
+- **Routing cannot.** The Compass parent folds planning into Risk Dashboard —
+  the registry states this — so there is no section in the parent to route.
+- **Composition cannot.** The record holds no planning data. Across all 1,199
+  stored reports, `property_specs` carries a `zoning` key on 1,071 and a zoning
+  **value on zero**; `location_intelligence`, present on 1,112, holds only
+  `amenities`, `commute`, `coordinates`, `healthcare`, `lifestyle`, `schools`,
+  `transport` and `walkScore` — no planning, zoning, overlay, title or
+  environmental key at all.
+
+Nor is it a wiring fault: no table in the schema carries residential zoning,
+land size or council area. `zoning` exists only on `commercial_properties` and
+`industrial_properties`, a different product. **The platform does not acquire
+this data**, so the fix is upstream of the reporting engine.
+
+It is now a declared gap (`PRODUCER_GAPS = ['strategic:planning']`) rather than
+a placement claiming a producer that cannot produce. The tier keeps its promise
+and the registry stops asserting something it cannot honour.
+
+### Six of nine property attributes have never held a value
+
+`property_specs`, measured over all 1,199 reports:
+
+| attribute | reports with a value | | attribute | reports with a value |
+|---|---|---|---|---|
+| `property_type` | 1,071 | | `parking` | **0** |
+| `bedrooms` | 651 | | `year_built` | **0** |
+| `bathrooms` | 633 | | `building_size_sqm` | **0** |
+| | | | `land_size_sqm` | **0** |
+| | | | `council_area` | **0** |
+| | | | `zoning` | **0** |
+
+`reportBindingProjection` publishes all nine. So `property.landArea`,
+`property.buildingArea`, `property.yearBuilt`, `property.zoning` and
+`property.council` resolve to nothing on every document the product has ever
+issued, and `configuration` renders without a car count because parking is
+always absent.
+
+**`propertyIdentity` is a spine section** — mandatory in every tier — and it is
+substantially empty on every report. Law 2 says a labelled row is a promise that
+a figure follows it; this is that law failing at the data layer rather than the
+rendering one, which is why no amount of template or assembly work reaches it.
+
+### And the financial model is thinner than it looks
+
+`financial_calculations` is present on **202 of 1,199** reports (17%). Every
+composed financial chapter — the Phase 1 work — is bounded by that. It is
+correct on the rows that have a calculation and silently absent on the rest,
+which is the designed behaviour, but it means the Financial tier's substance
+exists for fewer than a fifth of the corpus.
+
+### What this means for Phase 3
+
+Per-section storage and assembly by id remain worth building, and they fix the
+routing weaknesses. They cannot fix a section whose source data does not exist.
+The registry now says which is which, so the next increment can build assembly
+for the sections that can be assembled without implying the others are one
+refactor away.
