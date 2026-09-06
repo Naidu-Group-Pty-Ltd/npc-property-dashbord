@@ -273,6 +273,29 @@ async function readStage1Images(
   return byItem;
 }
 
+/**
+ * Which image row each item is pointing at RIGHT NOW — read after the
+ * re-point so the demote below can spare exactly the row still drawing the
+ * card. See the comment above the demote loop for why the order matters.
+ */
+async function readPrimaryImageIds(
+  db: any,
+  stockItemIds: string[],
+): Promise<Map<string, string | null>> {
+  const pointed = new Map<string, string | null>();
+  const ids = [...new Set(stockItemIds)];
+  for (let index = 0; index < ids.length; index += STAGE1_CHUNK) {
+    const { data } = await db
+      .from('builder_stock_items')
+      .select('id, primary_image_id')
+      .in('id', ids.slice(index, index + STAGE1_CHUNK));
+    for (const row of (data ?? []) as Array<{ id: string; primary_image_id: string | null }>) {
+      pointed.set(row.id, row.primary_image_id ?? null);
+    }
+  }
+  return pointed;
+}
+
 function referenceKey(item: ExistingItem): string | null {
   const value = item.external_reference?.trim().toLowerCase();
   return value || null;
@@ -1507,11 +1530,41 @@ export async function repairSourceImagesForUpload(
     ? new Map<string, Array<{ id: string; processing_status: string;
       source_reference: string | null; source_detail: Record<string, unknown> | null }>>()
     : await readStage1Images(db, itemIdsInOrder);
+  /*
+   * THE CARD'S STANDING IMAGE OUTLIVES ITS OWN RE-DERIVATION.
+   *
+   * The demote used to run BEFORE the primary was re-chosen, and a freshly
+   * stored replacement is not displayable until its eligibility and
+   * sanitization stamps exist — so for the whole of that window the item had
+   * no primary at all and the live card read "Finding a picture…" about a
+   * property whose picture was fine minutes earlier. Measured, 6 September
+   * 2026: every version bump rolls a re-derivation across the settled fleet
+   * one row at a time, and each row's turn blanked its card for minutes (Lot
+   * 516 Winterset was the one caught on screen).
+   *
+   * So the pointer moves FIRST, and the demote then skips whichever row is
+   * still being pointed at: a stale-version primary keeps drawing the card
+   * until the pass whose replacement is actually displayable takes over, at
+   * which point the old row stops being the pointer and is demoted exactly
+   * as before. A background re-derivation becomes invisible — the swap is
+   * the only observable event. The deliberate trade, stated: an image this
+   * run could not re-prove now stands until its replacement lands rather
+   * than vanishing immediately; withdrawal-with-nothing-better still happens
+   * the moment the pointer row itself stops being chosen for any other
+   * reason, and every non-pointer stale row is demoted exactly as it always
+   * was.
+   */
+  for (const itemId of touched) {
+    const primary = await chooseAndStorePrimaryImage(db, itemId);
+    if (primary && primary !== (primaryBefore.get(itemId) ?? null)) outcome.primaryUpdated += 1;
+  }
+  const pointedNow = await readPrimaryImageIds(db, [...new Set(itemIdsInOrder)]);
   for (const itemId of new Set(itemIdsInOrder)) {
     const proven = provenByItem.get(itemId) ?? new Set<string>();
 
     for (const row of stage1ByItem.get(itemId) ?? []) {
       if (row.processing_status !== 'ready') continue;
+      if (row.id === pointedNow.get(itemId)) continue;
       const reference = String(row.source_reference ?? '');
       if (proven.has(reference)) continue;
       const version = Number((row.source_detail ?? {}).provenance_version ?? 0);
@@ -1525,11 +1578,6 @@ export async function repairSourceImagesForUpload(
       });
       outcome.demoted += 1;
     }
-  }
-
-  for (const itemId of touched) {
-    const primary = await chooseAndStorePrimaryImage(db, itemId);
-    if (primary && primary !== (primaryBefore.get(itemId) ?? null)) outcome.primaryUpdated += 1;
   }
 
   /**
@@ -1717,8 +1765,17 @@ async function repairPdfUpload(
     }
     const proven = provenByItem.get(item.id) ?? new Set<string>();
 
+    // Re-point FIRST, then spare the row still drawing the card — the same
+    // order as the row path above, for the same measured reason: demoting
+    // the standing primary before its replacement is displayable blanks the
+    // live card for the whole eligibility-and-sanitization window.
+    const primary = await chooseAndStorePrimaryImage(db, item.id);
+    if (primary && primary !== (item.primary_image_id ?? null)) outcome.primaryUpdated += 1;
+    const pointedRow = primary ?? item.primary_image_id ?? null;
+
     for (const row of stage1ByItem.get(item.id) ?? []) {
       if (row.processing_status !== 'ready') continue;
+      if (row.id === pointedRow) continue;
       if (proven.has(String(row.source_reference ?? ''))) continue;
       if (Number((row.source_detail ?? {}).provenance_version ?? 0) >= PROVENANCE_VERSION) continue;
       await demoteUnprovenSourceImage(db, {
@@ -1728,9 +1785,6 @@ async function repairPdfUpload(
       });
       outcome.demoted += 1;
     }
-
-    const primary = await chooseAndStorePrimaryImage(db, item.id);
-    if (primary && primary !== (item.primary_image_id ?? null)) outcome.primaryUpdated += 1;
   }
 
   return outcome;
