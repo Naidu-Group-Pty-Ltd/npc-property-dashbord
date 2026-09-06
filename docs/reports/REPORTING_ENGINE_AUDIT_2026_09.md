@@ -2327,3 +2327,42 @@ worker (the NSW stage streams the zip's single deflate entry located from
 the central directory — verified byte-identical to the whole-string parse
 before deploying). Other states answer `no_data_for_location` naming
 their real register; VIC's CSA refuses scripted clients, the DFAT class.
+
+## §29 — Climate arrives: SILO at the property's own grid cell (2026-09-06)
+
+Q2 of the confirmed queue. The §24 climate fabricator (one rainfall for
+all of NSW, Bourke to Bondi, cached 365 days) is replaced by the
+Queensland Government's SILO Data Drill: monthly values interpolated onto
+a ~5 km grid from Bureau of Meteorology observations, CC BY 4.0 with the
+licence stated in the response itself. One request per grid cell covers
+1991 → the last complete month; `climateReading.pure.ts` computes the
+Bureau's standard **1991–2020 normals** and refuses a normal over a hole,
+an implausible value (the sentinel guard), a headerless error page or a
+truncated series.
+
+Three honesty rules carry the reading: the hottest, coldest, wettest and
+driest months are **named from the data**, never assumed to be January and
+July (executed: Wyndham Vale's wettest month is November — the western
+Melbourne rain shadow — while Brisbane's is February); the recent 12
+complete months are compared **like for like** against the same calendar
+months' normal, never "this year so far" against a full-year figure; and
+the basis is disclosed — an interpolated grid value, not a station record,
+with the SILO/BoM attribution its licence asks for.
+
+Executed against the live service for three corpus coordinates before
+shipping (Brisbane 1,103.8 mm, Parramatta 890.3 mm, Wyndham Vale
+458.9 mm annual normals, all with recent windows through 2026-08). The
+service caches per grid cell (`climate_normals_cache`, 30-day TTL, applied
+in production), answers honestly without a coordinate, and a transport
+failure or refused parse is `unavailable` and never cached.
+
+The prompt honesty extends to the whole **Environmental Risks & Climate**
+section: the old template attributed placeholder fallbacks to the Bureau
+(`climateZone || 'Temperate'`, `XX.X°C` cells labelled BoM) and RATED
+hazards nothing measures (`Storms | Moderate`, `Cyclones | Low` as
+literals, heatwave/bushfire/flood falling back to asserted levels exactly
+when no assessment existed). `climateStatBlocks` renders measured figures
+with their windows, hazard rows only where the risk services returned a
+real level, and instructs the model to name no climate zone and rate no
+unmeasured hazard. The suburb snapshot's placeholder risk table got the
+same treatment.
