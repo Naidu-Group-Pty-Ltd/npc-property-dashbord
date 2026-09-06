@@ -285,6 +285,16 @@ verify_jwt = true
 [functions.rba-tables-ingest]
 verify_jwt = true
 
+# The ABS regional-population ingest: fetches the release datacube itself
+# (abs.gov.au answers this project's egress); internal secret /
+# sealed-bootstrap auth inside, the gateway JWT on in front.
+[functions.abs-regional-ingest]
+verify_jwt = true
+
+# Public-class locality service (parseJsonBody-bounded), like its siblings.
+[functions.abs-regional-service]
+verify_jwt = false
+
 [functions.rba-data-service]
 verify_jwt = false
 

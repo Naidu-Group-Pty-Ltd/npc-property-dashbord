@@ -13,6 +13,7 @@ import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
+import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
@@ -2422,6 +2423,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       climateData?: any;
       schoolData?: any;
       planningData?: any;
+      regionalTrends?: any;
     }
     
     let enhancedData: EnhancedData = {};
@@ -2892,6 +2894,35 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }
       }
 
+      // Regional trends (the SA2's measured population series and growth)
+      // are likewise coordinate-keyed: the service resolves the containing
+      // SA2 and serves its own ERP series.
+      const regionalCoords = enhancedData.locationIntelligence?.coordinates;
+      if (regionalCoords?.lat && regionalCoords?.lng) {
+        try {
+          const regionalResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/abs-regional-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              latitude: regionalCoords.lat,
+              longitude: regionalCoords.lng,
+              state: state,
+              suburb: suburb,
+              postcode: postcode
+            })
+          }, 30000, 'abs-regional-service');
+          if (regionalResponse.ok) {
+            const regionalBody = await regionalResponse.json();
+            if (regionalBody.success && regionalBody.data) {
+              enhancedData = { ...enhancedData, regionalTrends: regionalBody.data };
+              console.log('✓ Regional trends fetched (SA2):', regionalBody.data?.sa2?.name);
+            }
+          }
+        } catch (error: any) {
+          console.log('⚠️ Regional trends skipped:', error?.message?.substring(0, 80));
+        }
+      }
+
       // QLD's crime register is LGA-keyed and the phase-1 crime call ran
       // before any LGA was known — so once the cadastre has named the shire,
       // ask again with it. NSW resolves in phase 1 by postcode; this second
@@ -3244,6 +3275,8 @@ Suburb Investment Snapshot: [SUBURB NAME], [STATE]
 # 4. Demographics
 
 ${demographicsStatBlocks(enhancedData)}
+
+${regionalTrendBlocks(enhancedData)}
 
 # 5. Infrastructure & Amenities
 **Education:**
@@ -3788,7 +3821,9 @@ The suburb benefits from excellent service frequency, with peak hour services op
 
 **Population & Development Trends:**
 
-Write this from the Planning & Development block above and the demographics tables only. Where the development-application figures are present, discuss what they show — volume, stated investment, dwellings proposed, the largest projects — attributed to the DA register and its period. Where they are absent, state the absence in one sentence. Do NOT name planned infrastructure, projects or developments that do not appear in the data above.
+${regionalTrendBlocks(enhancedData)}
+
+Write this from the population-trend table above, the Planning & Development block and the demographics tables only. Where the development-application figures are present, discuss what they show — volume, stated investment, dwellings proposed, the largest projects — attributed to the DA register and its period. Where they are absent, state the absence in one sentence. Do NOT name planned infrastructure, projects or developments that do not appear in the data above.
 
 ---
 
@@ -4463,9 +4498,9 @@ Base case scenario projects Property Value of $[X,XXX,XXX] at Year 10, represent
 
 Over 10 years, principal repayment reduces loan balance from $[X,XXX,XXX] to approximately $[XXX,XXX], building equity of $[XXX,XXX] independent of property appreciation. Combined with capital appreciation, total wealth accumulation reaches $[XXX,XXX]-$[X,XXX,XXX] across projection scenarios. This debt reduction is automatic and inevitable, creating forced savings discipline. Accumulated equity provides optionality for future portfolio expansion, home renovation, or accessing capital during market stress periods.
 
-### Sustained Employment Growth Driving Rental Demand (+[X.X]% annually, +[XX.X]% over 5 years)
+### Population and Employment Base Driving Rental Demand
 
-Strong local job growth across professional services (+[X.X]%), healthcare (+[X.X]%), and education (+[X.X]%) creates sustained demand for rental properties from employed professionals. Labor force participation rate of [XX.X]% and unemployment rate of [X.X]% indicate tight labor market supporting wage growth and rental affordability. Median income of $[XX,XXX] annually positions renters comfortably within serviceability parameters for $[XXX]/week rental commitments. Continued population growth driven by employment expansion supports rental demand resilience, reducing vacancy risk and providing uplift potential as rents normalize toward market levels.
+Write this from the measured population-trend table (the SA2's ERP levels and growth windows) and the Census demographics/employment tables above — the population change, the area's employment profile, incomes and rental serviceability. Use ONLY figures those tables carry, with their stated windows and sources. Do NOT assert an annual job-growth percentage, a current unemployment rate, or a participation rate — none is measured here — and do NOT extrapolate the population trend beyond its measured windows.
 
 ### Structural Cashflow Deficit Requiring Ongoing Investor Capital Support
 
