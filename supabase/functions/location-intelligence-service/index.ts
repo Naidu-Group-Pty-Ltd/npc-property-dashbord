@@ -4,6 +4,8 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { assessAuPoint } from "../_shared/auGeoSanity.pure.ts";
+import { buildAuGeocodeQuery } from "../_shared/auGeocodeQuery.pure.ts";
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -78,12 +80,33 @@ Deno.serve(async (req) => {
     console.log('✓ Google Maps API key found, fetching real data...');
     
     try {
-      const locationData = await fetchLocationIntelligence(input, googleMapsApiKey);
+      const location = await fetchLocationIntelligence(input, googleMapsApiKey);
+
+      if (!location.resolved) {
+        // Deliberately NOT the mock branch below. An address we cannot place
+        // is a fact about this property; sample data is a fact about no
+        // property, and the caller cannot tell them apart. Both report
+        // consumers already guard on `success && data`, so this lands them in
+        // the path they take when the service is unreachable — the location
+        // section is absent, and `enhancedData.locationIntelligence` stays
+        // undefined where the coverage flag can see it.
+        console.warn('[location-intelligence-service] unresolved:', location.reason);
+        return new Response(JSON.stringify({
+          success: false,
+          resolved: false,
+          reason: location.reason,
+          message: UNRESOLVED_MESSAGE[location.reason],
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       console.log('✓ Location intelligence data fetched successfully');
-      
+
       return new Response(JSON.stringify({ 
         success: true, 
-        data: locationData,
+        data: location.data,
         usingMockData: false 
       }), {
         status: 200,
@@ -135,15 +158,53 @@ Deno.serve(async (req) => {
   }
 });
 
-async function fetchLocationIntelligence(input: LocationIntelligenceInput, apiKey: string) {
-  let coordinates: { lat: number; lng: number };
+/**
+ * Why an unresolved location is its own answer.
+ *
+ * Every figure below — the amenity counts, the nearest school, the walk
+ * score, the CBD commute — is measured *from the coordinate*. A wrong
+ * coordinate does not make them fail; it makes them describe somewhere else,
+ * accurately, and there is nothing in the numbers for a reader to catch.
+ * So the coordinate is a precondition, and when it cannot be established
+ * this returns the reason instead of a profile.
+ */
+type UnresolvedReason = 'address_not_resolved' | 'supplied_coordinates_rejected';
 
-  // Get coordinates from address if not provided
-  if (!input.lat || !input.lng) {
-    coordinates = await geocodeAddress(input.address, apiKey);
+const UNRESOLVED_MESSAGE: Record<UnresolvedReason, string> = {
+  address_not_resolved:
+    'The address could not be resolved to a location in Australia — location intelligence is unavailable for this property.',
+  supplied_coordinates_rejected:
+    'The supplied coordinates are not a location in Australia — location intelligence is unavailable for this property.',
+};
+
+type LocationIntelligenceResult =
+  | { resolved: true; data: Record<string, unknown> }
+  | { resolved: false; reason: UnresolvedReason };
+
+async function fetchLocationIntelligence(
+  input: LocationIntelligenceInput,
+  apiKey: string,
+): Promise<LocationIntelligenceResult> {
+  let coordinates: { lat: number; lng: number } | null;
+  let reason: UnresolvedReason;
+
+  if (Number.isFinite(input.lat) && Number.isFinite(input.lng)) {
+    // A supplied coordinate goes through the same gate as a fetched one.
+    // These arrive from stored rows, and the stored rows are where the 183
+    // out-of-country points live — trusting the caller here would let the
+    // fault back in through the one door the fix did not cover.
+    const verdict = assessAuPoint(input.lat as number, input.lng as number, input.state);
+    coordinates = verdict.ok ? { lat: input.lat as number, lng: input.lng as number } : null;
+    if (!coordinates) {
+      console.warn(`[location-intelligence-service] supplied point rejected (${verdict.reason})`);
+    }
+    reason = 'supplied_coordinates_rejected';
   } else {
-    coordinates = { lat: input.lat, lng: input.lng };
+    coordinates = await geocodeAddress(input, apiKey);
+    reason = 'address_not_resolved';
   }
+
+  if (!coordinates) return { resolved: false, reason };
 
   console.log('Coordinates:', coordinates);
 
@@ -249,7 +310,7 @@ async function fetchLocationIntelligence(input: LocationIntelligenceInput, apiKe
     stationsWithin2km: transitData.count
   };
 
-  return {
+  const data = {
     coordinates,
     commute: commuteData,
     walkScore,
@@ -278,31 +339,106 @@ async function fetchLocationIntelligence(input: LocationIntelligenceInput, apiKe
       nearestPark: recreationData.results[0]?.name || 'N/A'
     }
   };
+
+  return { resolved: true, data };
 }
 
-async function geocodeAddress(address: string, apiKey: string) {
+/**
+ * Resolve an address to a coordinate, or to nothing.
+ *
+ * **183 of the 1,112 stored reports that carry a coordinate carry one outside
+ * Australia** — Blacksburg Virginia, Manhattan, Knoxville, Bristol,
+ * Edinburgh, Auckland, Ottawa, Bulacan — and **64 more carry Sydney CBD to
+ * four decimal places**, which is this function's old failure value. Together
+ * that is 22% of the corpus. Four faults stacked, and each one produced a
+ * confident, plausible, unfalsifiable answer rather than an error:
+ *
+ *  1. **The question had no locality.** `input.suburb`, `input.postcode` and
+ *     `input.state` were all in hand and all spent elsewhere; the geocode got
+ *     `input.address` alone, which for 768 of these rows is a bare street
+ *     name. `Keystone Drive` is a real street in most English-speaking
+ *     countries. This is the fault that caused 180 of the 183 —
+ *     see `auGeocodeQuery.pure.ts` for the split.
+ *  2. **The request carried no country filter.** `components=country:AU` is a
+ *     filter; `region=au` is only a bias, and this had neither.
+ *  3. **Nothing checked the answer.** Every property this product reports on
+ *     is in Australia, which makes an unusually strong invariant available: a
+ *     geocode in Edinburgh is not an unusual listing, it is a wrong answer.
+ *  4. **Failure returned Sydney CBD.** Everything below then computed the
+ *     schools, hospitals, parks, walk score and CBD commute *of Sydney* and
+ *     returned them as the subject property's. Real Google data, correctly
+ *     fetched, about a place up to 4,000km away, with nothing in the response
+ *     to say so.
+ *
+ * Faults 1 and 2 are not alternatives. The filter alone only relocates the
+ * error: `Keystone Drive` restricted to Australia resolves to some Keystone
+ * Drive here, in the wrong suburb, inside the country box, past every gate.
+ *
+ * The gate is `assessAuPoint` — the same one `resolve-listing-coordinates`
+ * applies, rather than a second bounding box written here: country bounds,
+ * then the land mask (every rectangle around Australia contains sea), then
+ * the record's own state when it names one.
+ *
+ * Unresolved returns **null**, and null means the location section is absent
+ * rather than wrong. That is the trade this makes deliberately: a reader can
+ * see an absent section, and cannot see a correct-looking figure measured
+ * from the wrong continent.
+ */
+async function geocodeAddress(
+  input: LocationIntelligenceInput,
+  apiKey: string,
+): Promise<{ lat: number; lng: number } | null> {
+  // The suburb, postcode and state were already in hand — used for the CBD
+  // lookup and the transport call, and withheld from the one request that
+  // needed them. See `auGeocodeQuery.pure.ts` for the split that measures it.
+  const address = buildAuGeocodeQuery(input);
+  if (!address) {
+    console.warn('[location-intelligence-service] no address to geocode');
+    return null;
+  }
+
   try {
-    const encodedAddress = encodeURIComponent(address);
+    const params = new URLSearchParams({
+      address,
+      // A filter, not a bias. `region=au` alone would only have expressed a
+      // preference, and this had neither.
+      components: 'country:AU',
+      region: 'au',
+      key: apiKey,
+    });
     const response = await meteredFetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedAddress}&key=${apiKey}`
+      `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`
     );
 
     if (!response.ok) {
-      throw new Error('Geocoding failed');
+      console.warn('[location-intelligence-service] geocode HTTP', response.status);
+      return null;
     }
 
     const data = await response.json();
-    
-    if (data.results && data.results.length > 0) {
-      const location = data.results[0].geometry.location;
-      return { lat: location.lat, lng: location.lng };
+    const location = data?.results?.[0]?.geometry?.location;
+    const lat = Number(location?.lat);
+    const lng = Number(location?.lng);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      console.warn('[location-intelligence-service] geocode returned no point:', data?.status ?? 'unknown');
+      return null;
     }
+
+    const verdict = assessAuPoint(lat, lng, input.state);
+    if (!verdict.ok) {
+      // Named rather than swallowed: `outside_australia`, `offshore` and
+      // `wrong_state` are different faults with different remedies, and the
+      // log is the only place anybody will see which one happened.
+      console.warn(`[location-intelligence-service] geocode rejected (${verdict.reason}) for state ${input.state ?? 'unknown'}`);
+      return null;
+    }
+
+    return { lat, lng };
   } catch (error) {
     console.error('Geocoding error:', error);
+    return null;
   }
-
-  // Return default Sydney coordinates if geocoding fails
-  return { lat: -33.8688, lng: 151.2093 };
 }
 
 async function fetchNearbyPlaces(
