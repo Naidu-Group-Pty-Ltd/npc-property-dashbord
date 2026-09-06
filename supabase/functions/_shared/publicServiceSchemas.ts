@@ -108,6 +108,19 @@ export const CrimeStatisticsRequest = z.object({
 }).strict();
 
 /**
+ * `abs-regional-service` — the coordinate is the question (the SA2 that
+ * contains it is resolved server-side); the locality fields remain accepted
+ * for the honest no-coordinate refusal and the Australia gate.
+ */
+export const RegionalTrendsRequest = z.object({
+  suburb: optionalField(localityField),
+  state: optionalField(stateField),
+  postcode: optionalField(postcodeField),
+  latitude: optionalField(z.number().min(-90).max(90)),
+  longitude: optionalField(z.number().min(-180).max(180)),
+}).strict();
+
+/**
  * `planning-data-service` — the coordinate is the question; the locality
  * fields only order which jurisdiction's layers are preferred when two
  * boundary polygons both claim a point.

@@ -22,6 +22,20 @@
       "reviewed": true,
       "notes": "ABS reference-data ingest. Gateway JWT on; inside, internal edge secret or the self-sealing empty-table bootstrap arm (see function header). Reads public ABS files; writes only the abs_* reference tables."
     },
+    "abs-regional-ingest": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "ABS Regional population (ERP by SA2) ingest \u2014 fetches the release datacube from abs.gov.au itself (measured reachable from this project); parsing server-side with refusal-shaped bounds incl. the national-total plausibility anchor. Gateway JWT on; inside, internal edge secret (bearer or X-Cron-Secret) or the self-sealing empty-table bootstrap. Writes only abs_sa2_meta/abs_sa2_population/abs_regional_sync."
+    },
+    "abs-regional-service": {
+      "verify_jwt": false,
+      "exposure_class": "public",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "Regional trends reading: resolves the coordinate to its SA2 (ABS ASGS2021 geoserver, cached per ~110 m cell) and serves the loaded ERP series and growth. parseJsonBody-bounded like the other public locality services; refuses honestly without a coordinate."
+    },
     "abs-seifa-service": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",

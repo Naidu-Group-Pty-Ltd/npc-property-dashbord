@@ -2418,3 +2418,45 @@ measured at 394 rows against PostgREST's 1,000-row cap; and the store's
 figures re-checked by SQL (4.35 / 3.9 / 9.35). The stale search-model
 cache entry (`economic_data_cache`, `rba_indicators`, fetched 2026-09-04)
 was purged — nothing reads or writes it any more.
+
+## §31 — The first measured growth figures: ERP by the property's own SA2 (2026-09-06)
+
+**Q4 of the confirmed queue, first half.** Every "population growth" figure
+in every report was model memory: the Census tables carry 2021 levels and
+no trend, and the prompts asked for growth prose anyway — the Demand
+Drivers skeleton went as far as demanding an annual job-growth percentage,
+a participation rate and an unemployment rate no source measured.
+
+Population is measured now. `abs-regional-ingest` fetches the ABS Regional
+population datacube itself (abs.gov.au answers this project's egress —
+probed before building; the ABS SDMX API and the SALM hosts refuse it) and
+`_shared/absRegional.pure.ts` parses ERP at 30 June per SA2, 2001–2025,
+refusal-shaped: drifted headers, a broken year run, an implausible count
+or value, or a latest-year national total outside the measured
+plausibility anchor (27,613,654) all refuse the load; the file's ".."
+marker is an absent observation, never zero (Norfolk Island's
+pre-inclusion years — the one SA2 that carries it), while a measured 0 is
+a real value. Loaded in production before merge: 2,454 SA2s, 61,335
+observations — 61,350 minus Norfolk's 15 absences, the count being the
+rule working.
+
+The reading is the property's OWN area: `abs-regional-service` resolves
+the coordinate to its SA2 through the ABS ASGS2021 geoserver (measured
+reachable; cached per ~110 m cell, transport failures never cached) and
+serves that SA2's series with 1/5/10-year growth windows that render only
+where both endpoints were measured, never bridging a hole and never rating
+growth against a zero base. Executed end-to-end on the real workbook: the
+Parramatta test coordinate's SA2 (125041717 "Parramatta - North") reads
+14,904 residents at 30 June 2025, +478 (+3.31%) in a year, +74.21% over
+ten — figures of exactly the kind reports used to invent, now carrying
+their windows and release.
+
+The unemployment half (SALM, DEWR) is one operator action from done and
+deliberately not guessed at: every vantage this programme holds is refused
+at the IP level by DEWR's hosts, no reachable mirror carries the current
+file, and the parser doctrine (transcribe from the real file, refuse
+drift) cannot be satisfied against a file nobody can reach.
+`docs/reports/REGIONAL_TRENDS.md` records the gate; the service serves
+`unemployment: null`; the prompt blocks FORBID stating a rate; and the
+Demand Drivers skeleton that demanded invented labour figures is rewritten
+to draw only on measured tables.
