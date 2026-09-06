@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { sourceUnavailable } from '../_shared/sourceUnavailable.pure.ts';
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -32,7 +33,25 @@ Deno.serve(async (req) => {
     console.log(`[rba-data-service] Authenticated user: ${userId}`);
 
     const rbaData = await fetchRBADataWithCache(supabase);
-    
+
+    if (!rbaData) {
+      // The live retrieval failed and there is no honest substitute. The old
+      // `getFallbackData()` answered here with a cash rate hard-coded at
+      // 4.10% and stamped with TODAY'S date — over a year stale by the time
+      // it was removed, presented as current, and nothing anywhere read the
+      // `isFallback` flag it carried. A stale rate wearing today's date is
+      // worse than no rate: every financial projection downstream inherits
+      // it invisibly.
+      return new Response(JSON.stringify(sourceUnavailable(
+        'rba-economics',
+        'provider_error',
+        'Live RBA/ABS economic indicators could not be retrieved — economic data is unavailable for this request rather than served stale.',
+      )), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response(JSON.stringify({ 
       success: true, 
       data: rbaData 
@@ -79,6 +98,11 @@ async function fetchRBADataWithCache(supabase: any) {
 
   const freshData = await fetchLiveEconomicData();
 
+  // Nothing real arrived, so there is nothing to cache and nothing to serve.
+  // Caching a failure for 24 hours would pin the outage; caching a fallback
+  // was how a hard-coded rate got served as a fresh cache hit.
+  if (!freshData) return null;
+
   // Cache for 24 hours
   console.log('💾 Caching economic data for 24 hours...');
   const { error: insertError } = await supabase
@@ -105,8 +129,8 @@ async function fetchLiveEconomicData() {
   const perplexityApiKey = Deno.env.get('PERPLEXITY_API_KEY');
   
   if (!perplexityApiKey) {
-    console.warn('⚠️ PERPLEXITY_API_KEY not set, using fallback data');
-    return getFallbackData();
+    console.warn('⚠️ PERPLEXITY_API_KEY not set — economic data unavailable');
+    return null;
   }
 
   try {
@@ -168,7 +192,7 @@ Return ONLY valid JSON in this exact format, no other text:
     if (!response.ok) {
       const errText = await response.text();
       console.error('❌ Perplexity API error:', response.status, errText);
-      return getFallbackData();
+      return null;
     }
 
     const data = await response.json();
@@ -182,7 +206,7 @@ Return ONLY valid JSON in this exact format, no other text:
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       console.error('❌ Could not extract JSON from Perplexity response');
-      return getFallbackData();
+      return null;
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
@@ -190,7 +214,7 @@ Return ONLY valid JSON in this exact format, no other text:
     // Validate the parsed data has reasonable values
     if (!parsed.cashRate?.current || parsed.cashRate.current < 0 || parsed.cashRate.current > 20) {
       console.error('❌ Parsed cash rate seems invalid:', parsed.cashRate?.current);
-      return getFallbackData();
+      return null;
     }
 
     const today = new Date().toISOString().split('T')[0];
@@ -238,7 +262,7 @@ Return ONLY valid JSON in this exact format, no other text:
 
   } catch (error) {
     console.error('❌ Error fetching live economic data:', error);
-    return getFallbackData();
+    return null;
   }
 }
 
@@ -277,50 +301,4 @@ function processCpiProjections(
   }
   
   return projections;
-}
-
-function getFallbackData() {
-  const today = new Date().toISOString().split('T')[0];
-  const currentCpi = 2.4;
-  const target = 2.5;
-  
-  // Generate convergence projections from current CPI toward target
-  const cpiProjections = [];
-  for (let year = 1; year <= 10; year++) {
-    const convergenceFactor = 1 - Math.pow(0.8, year);
-    const projected = currentCpi + (target - currentCpi) * convergenceFactor;
-    cpiProjections.push({
-      year,
-      cpiPercent: Math.round(projected * 10) / 10,
-      source: year <= 3 ? 'Near-term estimate (fallback)' : 'Long-term convergence to RBA target (fallback)',
-    });
-  }
-  
-  return {
-    cashRate: {
-      current: 4.10,
-      previous: 4.35,
-      change: -0.25,
-      lastUpdate: today,
-      source: 'RBA Official Cash Rate (fallback — could not fetch live data)',
-    },
-    inflation: {
-      annual: currentCpi,
-      quarterly: 0.9,
-      core: 2.9,
-      target: 2.5,
-      lastUpdate: today,
-      source: 'ABS Consumer Price Index (fallback — could not fetch live data)',
-    },
-    cpiProjections,
-    indicators: {
-      gdpGrowth: 1.3,
-      unemploymentRate: 4.1,
-      participationRate: 67.0,
-      lastUpdate: today,
-      source: 'ABS / RBA (fallback — could not fetch live data)',
-    },
-    retrievedAt: new Date().toISOString(),
-    isFallback: true,
-  };
 }

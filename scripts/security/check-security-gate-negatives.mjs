@@ -44,6 +44,18 @@ const root = resolve(process.cwd());
  */
 const CASES = [
   {
+    // The fabricated-data gate must notice a deleted generator coming back.
+    // This mutation re-points the ABS service's honest refusal at the ghost
+    // `getMockABSData(` — the invented-demographics generator removed on
+    // 2026-09-06 — which trips the ghost-name check whatever else survives.
+    gate: 'check-fabricated-data.mjs',
+    file: 'supabase/functions/abs-data-service/index.ts',
+    what: 'the ABS demographics fabricator returns',
+    find: 'sourceUnavailable(',
+    replace: 'getMockABSData(',
+    all: true,
+  },
+  {
     gate: 'check-agent-tool-policies.mjs',
     file: 'supabase/functions/ai-dashboard-agent/index.ts',
     what: 'agent trace log stops checking for the superadmin role',
