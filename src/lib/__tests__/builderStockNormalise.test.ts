@@ -138,6 +138,45 @@ describe('the combined BED // BATH // CAR value', () => {
     expect(record?.car_spaces).toBeNull();
   });
 
+  it('reads the Notion list\'s labelled Configuration column', () => {
+    // Verbatim from the live Notion stock list: the heading is
+    // "Configuration" and every count names itself.
+    const record = normaliseStockRow({
+      Property: 'Lot 12 Example St', Configuration: '4 Bed 2 Bath 2 Car',
+    });
+    expect(record?.bedrooms).toBe(4);
+    expect(record?.bathrooms).toBe(2);
+    expect(record?.car_spaces).toBe(2);
+  });
+
+  it('sums a labelled dual occupancy by label, cars included', () => {
+    // Also verbatim: two dwellings joined by "+", every count labelled — so
+    // unlike the positional Nest form, the car total IS stated and is
+    // summed.
+    const record = normaliseStockRow({
+      Property: 'Lot 9 Example St',
+      Configuration: '3 Bed 2 Bath 1 Car + 2 Bed 1 Bath 1 Car',
+    });
+    expect(record?.bedrooms).toBe(5);
+    expect(record?.bathrooms).toBe(3);
+    expect(record?.car_spaces).toBe(2);
+  });
+
+  it('a label the cell never uses stays null, and a street name is not a car', () => {
+    const record = normaliseStockRow({
+      Property: 'Lot 9 Example St', Configuration: '4 Bed 2 Bath',
+    });
+    expect(record?.bedrooms).toBe(4);
+    expect(record?.bathrooms).toBe(2);
+    expect(record?.car_spaces).toBeNull();
+    // "2 Carrara" must not read as two car spaces: the label words are an
+    // explicit list with a word boundary, not a prefix match.
+    const street = normaliseStockRow({
+      Property: 'Lot 9', Configuration: '2 Carrara',
+    });
+    expect(street?.car_spaces).toBeNull();
+  });
+
   it('a dedicated column beats the combined one, whichever side it sits on', () => {
     const before = normaliseStockRow({ Lot: '1', Beds: '4', 'BED // BATH // CAR': '3 / 2 / 2' });
     expect(before?.bedrooms).toBe(4);

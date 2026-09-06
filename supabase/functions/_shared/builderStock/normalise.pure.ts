@@ -193,7 +193,10 @@ alias('car_spaces',
  * all these spellings are already one key.
  */
 alias('bed_bath_car',
-  'bed bath car', 'beds baths cars', 'bed bath cars', 'bed bath car spaces');
+  'bed bath car', 'beds baths cars', 'bed bath cars', 'bed bath car spaces',
+  // A Notion stock list heads the same column "Configuration", writing
+  // "4 Bed 2 Bath 2 Car" — measured 6 September 2026, 17 of 18 rows.
+  'configuration');
 
 alias('property_type',
   'type', 'property type', 'dwelling type', 'product', 'product type',
@@ -637,6 +640,35 @@ function clampCount(value: number | null): number | null {
 function parseBedBathCar(raw: string): {
   bedrooms: number | null; bathrooms: number | null; car_spaces: number | null;
 } | null {
+  /*
+   * THE LABELLED FORM, first because it is self-describing: every count
+   * names what it counts, so counts are summed BY LABEL and a dual
+   * occupancy can state all three totals — "3 Bed 2 Bath 1 Car + 2 Bed
+   * 1 Bath 1 Car" (a Notion stock list, measured 6 September 2026, 3 of
+   * 18 rows; the other 14 are the single-dwelling "4 Bed 2 Bath 2 Car")
+   * is five beds, three baths, two cars. A label the cell never uses stays
+   * null, and the label words are an explicit list so "2 Carrara" can
+   * never read as two car spaces.
+   */
+  const labelled = [...raw.matchAll(
+    /(\d+(?:\.\d+)?)\s*(bed(?:room)?s?|bath(?:room)?s?|cars?|carports?)\b/gi)];
+  if (labelled.length) {
+    const sums: Record<'bed' | 'bath' | 'car', number | null> = {
+      bed: null, bath: null, car: null,
+    };
+    for (const match of labelled) {
+      const label = match[2].toLowerCase().startsWith('bed') ? 'bed'
+        : match[2].toLowerCase().startsWith('bath') ? 'bath'
+          : 'car';
+      sums[label] = (sums[label] ?? 0) + Number(match[1]);
+    }
+    return {
+      bedrooms: clampCount(sums.bed),
+      bathrooms: clampCount(sums.bath),
+      car_spaces: clampCount(sums.car),
+    };
+  }
+
   /*
    * One segment per dwelling. The cell is written as one LINE per dwelling,
    * but `text()` collapses a row's whitespace — newlines included — before
