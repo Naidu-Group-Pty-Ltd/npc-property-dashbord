@@ -231,6 +231,18 @@ import {
  * the same answer when it is next asked — and nothing requeues the settled
  * ones for this bump alone.
  *
+ * 19 ADMITS THE MODEST FACADE THE PIXEL FLOOR REFUSED. Measured, 6 September
+ * 2026, on the Luxton Thornhill Gardens brochures: the designated cover page
+ * draws the property's facade from a 480x339 JPEG at 17% of the page —
+ * nearly three times the share floor, photographic detail — and the 600x400
+ * pixel floor refused it, so lots 313 and 318 were told their own brochures
+ * present no photograph while a person sees the house instantly. The floor
+ * is 360x270 now; everything it was carrying is refused by the floors that
+ * actually describe it (the icons and the logo lockup die on share, the
+ * floor plan dies at the election on its own pixels), and every negative
+ * banked at 18 against such a document was judged with the photograph
+ * excluded before anything looked at it.
+ *
  * 18 IS 17 FOR THE ATTEMPTS THE ORPHAN SPENT. The v17 budget did its job for
  * three of the five — 810 and 801 elected the house, 324 re-proved its own
  * picture — and was consumed whole on the two whose brochures carry one
