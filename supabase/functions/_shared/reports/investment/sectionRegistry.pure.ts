@@ -507,6 +507,14 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       'Comparable Market Evidence', '8. Comparable Market Evidence',
       'Recent Comparable Sales', 'Recent Comparable Rentals', 'Price Trends & Growth',
       'Price, Rent & Yield Market Positioning',
+      // Measured at H1 across the corpus 2026-09-07 (see `detectSectionLevel`):
+      // the legacy 36-section document writes its market material as
+      // `3. Historical Price Growth` / `4. Historical Rent Growth`, without the
+      // `Table` suffix the registry already knew, on 577 and 575 reports. The
+      // suffixed forms stay — they are the same section under the H2 cohort's
+      // spelling.
+      'Historical Price Growth', 'Historical Rent Growth',
+      'Property Market Data', 'Market Performance',
     ],
     purpose: 'Where this property sits in its local market — medians, growth, days on market, and the comparables that anchor them.',
     tiers: {
@@ -542,6 +550,8 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       'Population & Household Characteristics', 'Population & Development Trends',
       'Population & Housing Demand', 'Population, Household Growth & Demographic Fit',
       'Demographics & Economics', 'Demographics, SEIFA, Employment & Demand',
+      // The H1 cohort's own spellings, on 572 and 18 reports.
+      'Demographic & Economic Data', 'Demographics',
     ],
     purpose: 'Who wants to live here and why — population, household formation and the demographic fit for this dwelling.',
     tiers: {
@@ -610,6 +620,10 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       'Shopping & Dining Facilities', 'Healthcare Facilities',
       'Infrastructure & Amenities', '4. Infrastructure & Amenities',
       'Amenities & Infrastructure', 'Location & Amenities',
+      // `12. Amenity Scores`, on 578 reports — the most-carried heading in the
+      // corpus that the registry could not name until the H1 half of it was
+      // measured.
+      'Amenity Scores',
     ],
     purpose: 'What is nearby and how good it is — retail, healthcare, recreation and everyday liveability.',
     tiers: {
@@ -749,6 +763,9 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       'Crime Profile Analysis', 'Crime Trends', 'Climate Profile',
       'Climate Risk Commentary', 'Extreme Weather Risk Assessment',
       'Crime, Climate & Environmental Risk Register',
+      // 446 and 17 reports at H1. `Crime Breakdown by Category` above is the
+      // same section under the spelling the H2 cohort uses.
+      'Crime Breakdown', 'Environmental & Risk Factors',
     ],
     purpose: 'Flood, bushfire, heat, coastal and crime — each with its source, its measured level and its insurance consequence.',
     tiers: {
@@ -784,6 +801,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     aliases: [
       'Purchase Costs & Annual Holding Cost Breakdown', 'Purchase & Ongoing Costs (Annual)',
       'Purchase & Ongoing Costs', 'Costs for Investors', '6. Costs for Investors',
+      'Cost Breakdown Analysis',
       // The legacy Compass's section 9 is one container over costs, yield, loan
       // and cashflow. It resolves to the head of the group it contains, the
       // same way the Compass's merged `Demand Drivers` resolves to `population`.
@@ -817,6 +835,13 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       'Loan Structure, Repayments & Cashflow Impact', 'Loan Structure & Repayment Analysis',
       'Loan Analysis (P&I and Interest-Only)', 'LVR Projections', 'Cashflow Analysis',
       'Projected Loan-to-Value Ratio (LVR) - Year 10',
+      // The legacy document splits the loan across three H1 sections, 574
+      // reports each. `Interest-Only Loan` is deliberately bare so the
+      // qualifier rule reaches `Interest-Only Loan (First 5 Years)`; the cost is
+      // that the same words used as a colon sub-heading on 17 reports open a
+      // second `loan` occurrence, which the storage step carries in document
+      // order rather than merging.
+      'Principal & Interest Loan', 'Interest-Only Loan', 'Final Loan-to-Value Ratio (LVR)',
     ],
     purpose: 'Loan size, LVR, repayments on both structures, and the weekly position that falls out of them.',
     tiers: {
@@ -1233,8 +1258,63 @@ export interface DocumentPartition {
   /** Anything before the first recognised section — a title block, usually. */
   preamble: string;
   sections: PartitionedSection[];
-  /** Unrecognised H2s, with the section that absorbed each. Never dropped. */
+  /**
+   * Unrecognised headings AT the section level, with the section that absorbed
+   * each. Never dropped. Headings deeper than the section level are ordinary
+   * sub-structure and are not reported — the corpus averages 36 H3s a
+   * document, so reporting them would bury the signal this field exists for.
+   */
   absorbed: Array<{ heading: string; into: SectionId | null }>;
+  /** The heading level this document uses for its sections. See `detectSectionLevel`. */
+  level: SectionHeadingLevel;
+}
+
+/** Markdown heading level at which a document names its sections. */
+export type SectionHeadingLevel = 1 | 2;
+
+export interface SectionLevelVerdict {
+  level: SectionHeadingLevel;
+  /** Registry sections resolved at each candidate level. */
+  resolved: Record<SectionHeadingLevel, number>;
+}
+
+/**
+ * Decide which heading level a document uses for its sections, by asking which
+ * level's headings actually resolve to registry sections.
+ *
+ * **This exists because the corpus is bimodal and the first version of the
+ * partition only saw half of it.** Measured across all 1,192 stored reports
+ * carrying content (2026-09-07):
+ *
+ * | cohort | reports | avg H1 | avg H2 | avg H3 |
+ * |---|---|---|---|---|
+ * | H2-poor | 698 (58.6%) | **33.2** | 1.8 | 2.0 |
+ * | H2-rich | 494 (41.4%) | 9.8 | 19.2 | 36.3 |
+ *
+ * The H2-poor majority writes its sections as H1 — `# 1. Location Overview`
+ * through `# 36. Demographic & Economic Data` — and carries at most a
+ * `## 📞 CONTACT US` / `## ⚖️ PROFESSIONAL DISCLAIMER` pair at H2. A partition
+ * hard-coded to `##` finds **zero** sections in those documents and returns the
+ * entire report as preamble, which is indistinguishable from a report with no
+ * structure at all. 51.8% of the corpus has furniture-only H2s and a further
+ * 6.2% has no H2 whatsoever.
+ *
+ * Resolution count is the signal rather than heading count: H3 sub-headings
+ * outnumber sections in the H2-rich cohort, so "most headings" would pick the
+ * wrong level. A tie resolves to 2, which preserves the behaviour every
+ * document verified before this measurement relied on.
+ */
+export function detectSectionLevel(markdown: string): SectionLevelVerdict {
+  const resolved: Record<SectionHeadingLevel, number> = { 1: 0, 2: 0 };
+  for (const line of (markdown || '').split('\n')) {
+    const m = /^(#{1,2})[ \t]+(.+?)[ \t]*$/.exec(line);
+    if (!m) continue;
+    const level = (m[1].length === 1 ? 1 : 2) as SectionHeadingLevel;
+    const text = m[2];
+    if (isSubHeadingByNumbering(text)) continue;
+    if (sectionIdForHeading(text)) resolved[level] += 1;
+  }
+  return { level: resolved[1] > resolved[2] ? 1 : 2, resolved };
 }
 
 /**
@@ -1271,7 +1351,15 @@ export interface DocumentPartition {
  * (39.6k, 48.4k, 14.4k and 51.6k characters): every one round-trips with its
  * non-whitespace content conserved exactly.
  */
-export function partitionByRegistry(markdown: string): DocumentPartition {
+export function partitionByRegistry(
+  markdown: string,
+  forceLevel?: SectionHeadingLevel,
+): DocumentPartition {
+  // The level is a property of the document, not a constant. Hard-coding `##`
+  // is what made the first version blind to 59% of the corpus.
+  const level = forceLevel ?? detectSectionLevel(markdown).level;
+  const headingAtLevel = level === 1 ? /^#[ \t]+(.+?)[ \t]*$/ : /^##[ \t]+(.+?)[ \t]*$/;
+
   const lines = (markdown || '').split('\n');
   const sections: PartitionedSection[] = [];
   const absorbed: DocumentPartition['absorbed'] = [];
@@ -1279,25 +1367,30 @@ export function partitionByRegistry(markdown: string): DocumentPartition {
   let current: { id: SectionId; heading: string; body: string[] } | null = null;
 
   for (const line of lines) {
-    const h2 = /^##\s+(.+?)\s*$/.exec(line);
-    if (h2) {
+    const at = headingAtLevel.exec(line);
+    if (at) {
       // Numbering outranks text. `11.1 Public Transport Network` resolves to
       // `transport` on its words alone, and opening a section there would split
       // section 11 in two at its own sub-heading.
-      const id = isSubHeadingByNumbering(h2[1]) ? null : sectionIdForHeading(h2[1]);
+      const id = isSubHeadingByNumbering(at[1]) ? null : sectionIdForHeading(at[1]);
       if (id) {
         if (current) sections.push({ id: current.id, heading: current.heading, body: current.body.join('\n').trim() });
-        current = { id, heading: h2[1], body: [] };
+        current = { id, heading: at[1], body: [] };
         continue;
       }
-      // Unrecognised: keep the heading where it stands, inside whatever is open.
-      absorbed.push({ heading: h2[1], into: current?.id ?? null });
+      // Unrecognised at the section level: keep the heading where it stands,
+      // inside whatever is open, and report it so a genuinely new section
+      // heading is visible rather than silently swallowed.
+      absorbed.push({ heading: at[1], into: current?.id ?? null });
       (current ? current.body : preamble).push(line);
       continue;
     }
+    // Everything else — prose, tables, and headings at any other level — is
+    // content of the section that is open. A `##` inside an H1-sectioned
+    // document is sub-structure, not a section.
     (current ? current.body : preamble).push(line);
   }
   if (current) sections.push({ id: current.id, heading: current.heading, body: current.body.join('\n').trim() });
 
-  return { preamble: preamble.join('\n').trim(), sections, absorbed };
+  return { preamble: preamble.join('\n').trim(), sections, absorbed, level };
 }

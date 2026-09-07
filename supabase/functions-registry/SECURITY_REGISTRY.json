@@ -2573,6 +2573,13 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "report-sections-index": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "Per-section index over stored investment reports (Phase 3). Derives an addressable projection of investment_reports.report_content with _shared/reports/investment/sectionStorage.pure.ts and writes ONLY investment_report_sections / investment_report_section_index \u2014 never a client report. Gateway JWT on; inside, the internal edge secret (bearer or X-Cron-Secret) or the per-REPORT self-sealing arm (a report with no index row may be indexed once without it; force always needs the secret). An index is written only where re-assembly proves it lossless, and the stored counts describe what is stored."
+    },
     "request-lead-magnet": {
       "verify_jwt": false,
       "exposure_class": "public",

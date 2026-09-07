@@ -2518,3 +2518,85 @@ register refuses this project's egress too** (403 from Supabase, matching
 the sandbox), so Victoria stays honestly absent. SA's and NT's open-data
 portals DO answer from this vantage — the first reachable route to those
 two registers, unbuilt for now.
+
+---
+
+## §33 — Phase 3, part C: a stored report becomes addressable (2026-09-07)
+
+Full account: [`SECTION_STORAGE.md`](./SECTION_STORAGE.md).
+
+Part B built `partitionByRegistry` and verified it against four real documents
+spanning both engines and three tiers. Part C's first act was to run it over
+**all 1,199 stored reports**, and that measurement overturned the primitive.
+
+### The partition was blind to 70% of the corpus
+
+It read `##` headings only — as did the coverage fixture that vouched for it,
+and both were wrong about the same thing.
+
+| | reports | share |
+|---|---|---|
+| sections written at **H1** | **842** | **70.2%** |
+| sections written at H2 | 357 | 29.8% |
+
+The majority is the legacy 36-section document, `# 1. Location Overview` …
+`# 36. Demographic & Economic Data`, carrying at most a `## 📞 CONTACT US` /
+`## ⚖️ PROFESSIONAL DISCLAIMER` pair at H2. **A partition hard-coded to `##`
+finds zero sections in 842 documents and hands back each whole report as
+preamble** — indistinguishable from a report with no structure at all.
+
+`detectSectionLevel` now decides per document, by asking which level's headings
+**resolve to registry sections** rather than by counting headings: H3
+sub-headings outnumber sections in the H2 cohort (36 a document), so "most
+headings" picks the wrong level. A tie resolves to 2, preserving every
+previously verified behaviour.
+
+### The coverage guard was measuring a quarter of what it claimed
+
+`fixtures/corpusHeadings.json` was H2-only for the same reason, so §21's
+percentage was computed over **10,185 heading instances while 26,860 sat
+outside it**. Ten headings the registry could not name carried more than 400
+reports each and none of them could have surfaced — `12. Amenity Scores` on
+578, `22. Principal & Interest Loan` on 541, `28. Final Loan-to-Value Ratio
+(LVR)` on 541.
+
+Thirteen aliases were added from that inventory. Across all 575 fixture rows
+they are **purely additive**: 30 headings gained a section, **0 changed section
+and 0 lost one**. H1 instance resolution went **78.9% → 96.0%**, and the corpus
+gained **4,692 addressable sections** — 26,581 → 31,273, 22.2 → 26.1 a report.
+The fixture carries `level` now and both halves; its H1 side has a floor of ten
+reports rather than two, because below ten that inventory is dominated by title
+blocks naming a client's property, which are neither sections nor ours to keep
+in a repository.
+
+Two section headings are deliberately **not** named and are frozen with the
+reason, the way `PRODUCER_GAPS` is: `37. Methodology Notes`, because the corpus
+writes it as a colon sub-heading on 31 reports against 22 as a section and
+normalisation cannot tell them apart; and `6. Investment Insights`, a real
+section on 17 reports whose target the corpus does not settle.
+
+### The storage rules
+
+- **A repeat is an occurrence, never a merge.** The key is `(report_id,
+  ordinal)`. Briefing `89b451f6` carries `marketPosition` four times; keying on
+  `(report_id, section_id)` would silently collapse a client's document.
+- **An index is written only where re-assembly proves it lossless**, and a
+  report that fails gets a row saying so with **no** section rows. Measured:
+  **1,199 of 1,199 conserve**; nothing was refused.
+- **The stored counts describe what is stored** — a refused report reads zero,
+  because `total_sections = 21` beside no rows is the shape this programme
+  removes.
+- **9 reports (0.8%) yield no section** and are indexed as preamble-only, which
+  is a truthful description rather than a failure.
+
+### The deployment was checked against this repository, not assumed to match it
+
+`report-sections-index` answers a `sample` — it partitions text it is handed and
+reads nothing — and every response carries a `registry` digest, a SHA-256 over
+every normalised alias and the section it owns. The 2026-09-07 deployment
+returned digest `976341c1…`, 226 headings, and a fixture index identical field
+for field with the local run, before a single row was written.
+
+Nothing reads the index yet: `sectionIdForHeading` still has no consumer in a
+shipped document path, so these aliases changed the index and no client's
+report. Assembling a tier's document *from* stored sections is the next part.
