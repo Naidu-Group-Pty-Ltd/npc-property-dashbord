@@ -543,7 +543,17 @@ Deno.serve(async (req: Request) => {
         result: 'deferred: not enough of this invocation left to finish it',
         error: null,
         retryAfterSeconds: 0,
+        // Nothing advanced — the stage was never entered.
         progressed: false,
+        /*
+         * But the CLAIM already incremented the backoff counter, and this
+         * property did nothing to earn it: the invocation ran short, which is
+         * our scheduling and not its document. Left standing, a handful of
+         * these would push a perfectly healthy row to a 32-minute backoff and
+         * slow the very queue this loop exists to speed up. So the row goes
+         * back exactly as it was found.
+         */
+        resetAttempts: true,
       });
       break;
     }
