@@ -64,7 +64,35 @@ address from the same parts itself before geocoding, so the map is fixed with
 or without this. This fix stops the SOURCE RECORD being degraded, which matters
 for every other consumer of Airtable and for anyone reading the base directly.
 
+## Patching a LIVE export instead of the repo blueprint
+
+`npc-email-1-new.original.json` is not an export of every scenario that runs
+this pipeline. Measured 7 September 2026 against scenario 5979783 in team
+2731020, that scenario has 85 modules to the snapshot's 91, and only 25 of the
+85 they share are byte-identical once designer metadata is ignored. The six
+extra instances are one `gemini-ai:createACompletionGeminiPro` -- a package the
+live scenario does not use at all -- plus a second `firecrawl:Scrape`, a second
+`http:ActionSendData`, a seventh `openai-gpt-3:CreateCompletion`, a seventh
+`json:ParseJSON` and a second `regexp:Parser`.
+
+That last one is the forwarded-sender fix (module 200), and it is what makes a
+wholesale import tempting and wrong: the snapshot carries a repair somebody
+wants alongside fifty-nine unrelated configuration changes, in one indivisible
+act. Importing it would not apply this fix; it would replace the scenario with
+a different one and start a Gemini call nobody asked for.
+
+The live scenario's `lastEdit` equals its `created`, so it has never been
+hand-edited and cannot have drifted into that state -- the two blueprints
+describe different deployments, and the ids in this repository's docs
+(`9618493`, team `528268`) are not reachable from every Make connection.
+
+Pass `--input`/`--output` to patch an export taken from the scenario you are
+actually about to write to. The transformation is the same; only the base
+differs.
+
 Run:  python3 docs/integrations/blueprints/apply-address-fix.py
+      python3 docs/integrations/blueprints/apply-address-fix.py \
+          --input live.json --output live.patched.json
 """
 
 from __future__ import annotations
@@ -78,6 +106,32 @@ HERE = pathlib.Path(__file__).parent
 ORIGINAL = HERE / "npc-email-1-new.original.json"
 UPGRADED = HERE / "npc-email-1-new.upgraded.json"
 SENDER_FIX = HERE / "apply-sender-fix.py"
+
+# Module 200's improved pattern, from `apply-sender-fix.py`.
+#
+# Only the sender NAME differs in behaviour. Measured against six realistic
+# forwarded headers, both patterns extract the same `fwd_email` in all six --
+# including the two exclusions (our own gmail forwarders and any
+# @npcservices.com.au address). What changes is that a header reading
+#
+#     From: Jane Smith [EXTERNAL] <jane@raywhite.com.au>
+#
+# captures `Jane Smith [EXTERNAL]` under the old pattern and `Jane Smith` under
+# this one, because `[` joins the excluded set and an optional bracketed token
+# is consumed between the name and the address. The agent's name is what gets
+# stored, so the tag would otherwise travel into Airtable.
+#
+# The named groups are unchanged (`fwd_name`, `fwd_email`), which is what makes
+# the swap safe: every downstream `{{200.fwd_name}}` / `{{200.fwd_email}}`
+# reference keeps resolving.
+SENDER_PATTERN = (
+    r"[\s\S]*(?:Begin forwarded message|Forwarded message|Original Message)"
+    r"[\s\S]*[\n>]From[ \t]*:[ \t]*(?<fwd_name>[^<\[\n]{0,150}?)[ \t]*"
+    r"(?:\[[^\]\n]*\][ \t]*)?<?[ \t]*(?<fwd_email>"
+    r"(?!(?:lavankenobi|naidu\.rugesh)@gmail\.com)"
+    r"(?![A-Za-z0-9._%+-]+@npcservices\.com\.au)"
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})"
+)
 
 # The two Google Maps geocode modules, and the feeder each one reads its
 # listing from.
@@ -139,25 +193,14 @@ def walk(node, on_module) -> None:
             walk(value, on_module)
 
 
-def main() -> int:
-    if not ORIGINAL.exists():
-        print(f"missing {ORIGINAL}", file=sys.stderr)
-        return 1
+def _patch(blueprint: dict, sender_regex: bool = False) -> list[str]:
+    """Apply D1 and D2 to a blueprint in place, returning what changed.
 
-    # CHAINED, not standalone. `apply-sender-fix.py` also rebuilds
-    # `npc-email-1-new.upgraded.json` from the original, so running this on its
-    # own would silently drop the forwarded-sender repair that file carries.
-    # Rebuild that first, then patch its output.
-    result = subprocess.run(
-        [sys.executable, str(SENDER_FIX)], capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        print(result.stdout + result.stderr, file=sys.stderr)
-        print("apply-sender-fix.py failed; not patching", file=sys.stderr)
-        return 1
-    print("re-applied the forwarded-sender fix first (it writes the same file)\n")
-
-    blueprint = json.loads(UPGRADED.read_text())
+    `sender_regex` additionally swaps module 200's pattern for the improved
+    one. Off by default: it is a separate repair, and bundling an unrequested
+    change into a production automation write is how a fix stops being
+    reviewable.
+    """
     changes: list[str] = []
 
     def patch(module: dict) -> None:
@@ -193,7 +236,67 @@ def main() -> int:
                     f"D2 module {mid}: no longer overwrites {', '.join(sorted(stripped))}"
                 )
 
+
     walk(blueprint, patch)
+
+    if sender_regex:
+        def swap(module: dict) -> None:
+            if module.get("id") != 200 or module.get("module") != "regexp:Parser":
+                return
+            params = module.get("parameters")
+            if not isinstance(params, dict) or params.get("pattern") == SENDER_PATTERN:
+                return
+            params["pattern"] = SENDER_PATTERN
+            changes.append(
+                "S1 module 200: sender pattern now strips a bracketed tag from the name"
+            )
+        walk(blueprint, swap)
+
+    return changes
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(argv if argv is not None else sys.argv[1:])
+    source = target = None
+    sender_regex = "--sender-regex" in args
+    if "--input" in args:
+        source = pathlib.Path(args[args.index("--input") + 1])
+        target = pathlib.Path(args[args.index("--output") + 1]) if "--output" in args else source
+
+    if source is not None:
+        # Patch the given export in place. No chaining: the caller's file is
+        # already whatever that scenario currently is, and re-applying the
+        # sender fix to it could undo a repair somebody made in Make.
+        blueprint = json.loads(source.read_text())
+        changes = _patch(blueprint, sender_regex=sender_regex)
+        if not changes:
+            print("nothing matched in the given blueprint", file=sys.stderr)
+            return 1
+        target.write_text(json.dumps(blueprint, separators=(",", ":"), ensure_ascii=False))
+        print(f"wrote {target}\n")
+        for change in changes:
+            print(f"  - {change}")
+        return 0
+
+    if not ORIGINAL.exists():
+        print(f"missing {ORIGINAL}", file=sys.stderr)
+        return 1
+
+    # CHAINED, not standalone. `apply-sender-fix.py` also rebuilds
+    # `npc-email-1-new.upgraded.json` from the original, so running this on its
+    # own would silently drop the forwarded-sender repair that file carries.
+    # Rebuild that first, then patch its output.
+    result = subprocess.run(
+        [sys.executable, str(SENDER_FIX)], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(result.stdout + result.stderr, file=sys.stderr)
+        print("apply-sender-fix.py failed; not patching", file=sys.stderr)
+        return 1
+    print("re-applied the forwarded-sender fix first (it writes the same file)\n")
+
+    blueprint = json.loads(UPGRADED.read_text())
+    changes = _patch(blueprint)
 
     if not changes:
         print("nothing matched — the blueprint may already be patched", file=sys.stderr)
