@@ -87,7 +87,10 @@ describe('the settler claims serially and never pre-claims a batch', () => {
     // handed back at the same stage with no progress — the recovery never
     // begins, so no attempt is spent and nothing is recorded about the link.
     const loop = settler.slice(settler.indexOf('for (;;) {'));
-    expect(loop).toMatch(/if \(remaining < reserveFor\(next\.item\.image_work_stage\)\)/);
+    // The reserve is still what decides whether the work may START; the
+    // document allowance was added beside it and must not displace it.
+    expect(loop).toMatch(/remaining < reserveFor\(next\.item\.image_work_stage\)/);
+    expect(loop).toMatch(/const remaining = startedAt \+ BUDGET_MS - Date\.now\(\);/);
     expect(loop).toMatch(/progressed: false/);
     expect(loop).toMatch(/nextStage: readStage\(next\.item\.image_work_stage\)/);
   });
@@ -133,5 +136,59 @@ describe('concurrency is a property of the runtime, never of the backlog', () =>
     expect(migration).toMatch(/v_dispatch := 2;/);
     // The shape that caused the collapse: one worker per outstanding item.
     expect(migration).not.toMatch(/v_dispatch := least\(greatest\(v_item_work/);
+  });
+});
+
+/**
+ * The serial loop's own cost, which the loop introduced.
+ *
+ * MEASURED 7 SEPTEMBER 2026 on Lot 608 Acclaim Estate (`1nMsonm9`) — the one
+ * property of seventy-eight that did not recover when the runtime re-arm
+ * landed. Its brochure reads in 0.84 s and carries its facade render on page
+ * one; the document was never the problem. Read six times in one process,
+ * resident memory went 50 → 173 → 236 → 247 → 254 → 287 → 318 MB: the FIFTH
+ * document crosses an Edge Function's ~256 MB ceiling, and the property in
+ * the chair at that moment collects a surviving attempt record for a fault
+ * that belongs to the invocation.
+ *
+ * A clock cannot see this — every one of those reads is under a second — so
+ * the budget is counted in documents.
+ */
+describe('one isolate opens a bounded number of documents', () => {
+  const settler = read('supabase/functions/builder-stock-image-settler/index.ts');
+
+  it('stops short of the measured crossing rather than at it', () => {
+    const m = settler.match(/HEAVY_DOCUMENTS_PER_INVOCATION\s*=\s*(\d+)/);
+    expect(m, 'the budget must be a named constant').not.toBeNull();
+    const budget = Number(m![1]);
+    // Five is where the ceiling was crossed; the budget leaves real margin and
+    // is still more than the one-claim-per-invocation this loop replaced.
+    expect(budget).toBeGreaterThan(1);
+    expect(budget).toBeLessThan(5);
+  });
+
+  it('counts only the stage that decodes', () => {
+    expect(settler).toMatch(/const isHeavy\s*=\s*\(stage: string\): boolean\s*=>\s*stage === 'source'/);
+    // Counted where the property is actually taken, both for the first claim
+    // and for every one the loop takes after it.
+    expect(settler).toMatch(/if \(isHeavy\(claimed\.image_work_stage\)\) heavyDocuments \+= 1;/);
+    expect(settler).toMatch(/isHeavy\(next\.item\.image_work_stage\)\s*\n?\s*&& heavyDocuments >= HEAVY_DOCUMENTS_PER_INVOCATION/);
+  });
+
+  it('hands the claim back untouched, exactly as the short-clock path does', () => {
+    const idx = settler.indexOf('spentOnDocuments || remaining <');
+    expect(idx).toBeGreaterThan(0);
+    const block = settler.slice(idx, idx + 1400);
+    // The row goes back at its own stage, having done nothing, and must not
+    // carry the backoff its claim incremented: the invocation ran out of
+    // allowance, which is our scheduling and not the property's document.
+    expect(block).toContain('nextStage: readStage(next.item.image_work_stage)');
+    expect(block).toContain('progressed: false');
+    expect(block).toContain('resetAttempts: true');
+  });
+
+  it('says which limit it hit, because one column carries both', () => {
+    expect(settler).toContain('deferred: this invocation has opened its allowance of documents');
+    expect(settler).toContain('deferred: not enough of this invocation left to finish it');
   });
 });

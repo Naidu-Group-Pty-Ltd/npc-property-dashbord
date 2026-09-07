@@ -429,6 +429,33 @@ Deno.serve(async (req: Request) => {
     const LIGHT_STAGE_RESERVE_MS = 20_000;
     const reserveFor = (stage: string): number =>
       stage === 'source' ? HEAVY_STAGE_RESERVE_MS : LIGHT_STAGE_RESERVE_MS;
+
+    /*
+     * HOW MANY DOCUMENTS ONE ISOLATE MAY OPEN, and why a clock is not enough.
+     *
+     * The serial loop above fixed throughput and introduced this: an isolate
+     * that reads several PDFs never gives the memory back, so the invocation
+     * dies of ACCUMULATION rather than of any one document. The property in
+     * the chair when it happens takes the blame — a surviving attempt record
+     * naming a document that was never the problem.
+     *
+     * MEASURED 7 SEPTEMBER 2026, Lot 608 Acclaim Estate (`1nMsonm9`), the one
+     * property of seventy-eight that did not recover. Its brochure reads in
+     * 0.84 s and its facade render is on page 1; run six times in one process,
+     * resident memory went 50 → 173 → 236 → 247 → 254 → 287 → 318 MB. The
+     * FIFTH document crosses an Edge Function's ~256 MB ceiling. Each one is
+     * individually cheap and the isolate is dead by the fifth all the same,
+     * which is exactly the shape of the four kills that document collected.
+     *
+     * Three, so the invocation stops two documents before the crossing rather
+     * than at it. Light stages are not counted: eligibility, sanitization and
+     * fallback decode nothing, and it is decoding that accumulates — counting
+     * them would give back the throughput this loop exists to win.
+     */
+    const HEAVY_DOCUMENTS_PER_INVOCATION = 3;
+    const isHeavy = (stage: string): boolean => stage === 'source';
+    let heavyDocuments = 0;
+
     let claimed = itemClaim.item;
     let settledCount = 0;
     let lastSettlement: Awaited<ReturnType<typeof settleClaimedItem>> | null = null;
@@ -443,6 +470,7 @@ Deno.serve(async (req: Request) => {
      * unless ten seconds remain — could be starved indefinitely while the
      * counter that would have retired it never advanced.
      */
+    if (isHeavy(claimed.image_work_stage)) heavyDocuments += 1;
     const settlement = await settleClaimedItem(supabase, claimed, {
       deadlineAt: startedAt + BUDGET_MS - 10_000,
       repairBudget: newRepairBudget(),
@@ -537,10 +565,14 @@ Deno.serve(async (req: Request) => {
      * it were an answer about the link.
      */
     const remaining = startedAt + BUDGET_MS - Date.now();
-    if (remaining < reserveFor(next.item.image_work_stage)) {
+    const spentOnDocuments = isHeavy(next.item.image_work_stage)
+      && heavyDocuments >= HEAVY_DOCUMENTS_PER_INVOCATION;
+    if (spentOnDocuments || remaining < reserveFor(next.item.image_work_stage)) {
       await completeItemWork(supabase, next.item.id, {
         nextStage: readStage(next.item.image_work_stage),
-        result: 'deferred: not enough of this invocation left to finish it',
+        result: spentOnDocuments
+          ? 'deferred: this invocation has opened its allowance of documents'
+          : 'deferred: not enough of this invocation left to finish it',
         error: null,
         retryAfterSeconds: 0,
         // Nothing advanced — the stage was never entered.
