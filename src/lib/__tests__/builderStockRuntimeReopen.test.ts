@@ -1,0 +1,184 @@
+/**
+ * Builder stock — the re-arm has to reach the QUEUE, not just the branch.
+ *
+ * THE GAP THIS EXISTS FOR. `RUNTIME_VERSION` resets `attemptsSoFar`, which
+ * makes a branch askable again. On its own that changes nothing: the queue
+ * only claims rows whose `image_work_stage <> 'settled'`, and the six
+ * properties of upload `bd7a0ef5` are settled. The only thing that pulls a
+ * settled row back is `reopen_builder_stock_stranded_items`, and it reopens on
+ * exactly two grounds — an image re-judged after the row concluded, or the
+ * ladder GENERATION moving. A runtime bump moves neither.
+ *
+ * MEASURED against production for all six rows before the fix:
+ *   image_work_stage = settled, primary_image_id = null,
+ *   reopens_on_generation = false, reopens_on_image = false
+ *
+ * So the counter reset and nothing ever asked. These tests pin the SQL
+ * predicate that closes it — evaluated here as the migration writes it, over
+ * the branch shapes production actually holds.
+ */
+import { describe, expect, it } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  RUNTIME_VERSION,
+} from '../../../supabase/functions/_shared/builderStock/runtimeVersion.pure';
+
+const MIGRATION = 'supabase/migrations/20261113100000_builder_stock_runtime_reopen.sql';
+const sql = readFileSync(join(process.cwd(), MIGRATION), 'utf8');
+
+/**
+ * The migration's own predicate, in TypeScript.
+ *
+ * A faithful transcription rather than a second opinion: each clause below is
+ * asserted to exist in the SQL by the tests underneath, so the two cannot
+ * drift into disagreeing about which rows reopen.
+ */
+const branchReopens = (v: Record<string, unknown>, runtime: number): boolean => {
+  const stamped = Number(v.runtime_version ?? 0);
+  if (v.result === 'package_recovery_attempt') return stamped < runtime;
+  if (v.result === 'no_deterministic_image') {
+    return 'runtime_version' in v && stamped < runtime;
+  }
+  return false;
+};
+const rowReopens = (
+  row: { stage: string; hasImage: boolean; branches: Record<string, unknown>[] },
+  runtime = RUNTIME_VERSION,
+): boolean => row.stage === 'settled' && !row.hasImage
+  && row.branches.some((b) => branchReopens(b, runtime));
+
+const OLD = RUNTIME_VERSION - 1;
+
+describe('a six-style row goes settled → claimable', () => {
+  it('a branch killed by the old worker reopens the row', () => {
+    // Verbatim shape from production: attempts at the kill limit, no verdict,
+    // and no runtime field at all because it predates the stamp.
+    expect(rowReopens({
+      stage: 'settled', hasImage: false,
+      branches: [{ result: 'package_recovery_attempt', attempts: 4 }],
+    })).toBe(true);
+  });
+
+  it('and so does a retirement stamped with the runtime that failed', () => {
+    expect(rowReopens({
+      stage: 'settled', hasImage: false,
+      branches: [{
+        result: 'no_deterministic_image', exhaustion: 'operational',
+        runtime_version: OLD,
+      }],
+    })).toBe(true);
+  });
+
+  it('the reopened row lands on the SOURCE rung, where recovery runs', () => {
+    // `eligibility` — what the sibling reopen uses — would skip the package
+    // recovery entirely and settle blank again immediately.
+    expect(sql).toMatch(/SET image_work_stage = 'source'/);
+  });
+
+  it('and its queue columns are cleared so it is claimable at once', () => {
+    expect(sql).toMatch(/image_work_next_attempt_at = now\(\)/);
+    expect(sql).toMatch(/image_work_claim_until = NULL/);
+    expect(sql).toMatch(/image_work_attempts = 0/);
+  });
+});
+
+describe('and nothing else moves', () => {
+  it('a document that ANSWERED is left alone', () => {
+    expect(rowReopens({
+      stage: 'settled', hasImage: false,
+      branches: [{ result: 'no_deterministic_image', exhaustion: 'inspected' }],
+    })).toBe(false);
+  });
+
+  it('a DEAD LINK is left alone — no stamp, so no re-chase', () => {
+    // `recordPackageUnreachable` writes `operational` without a runtime,
+    // because a faster worker cannot open a 404.
+    expect(rowReopens({
+      stage: 'settled', hasImage: false,
+      branches: [{ result: 'no_deterministic_image', exhaustion: 'operational' }],
+    })).toBe(false);
+  });
+
+  it('a row that already HAS its picture is protected', () => {
+    // Measured: of 91 live rows, 7 match the branch predicate and one of them
+    // holds a picture found on another branch. Reopening it would discard a
+    // good card to re-ask a question already answered.
+    expect(rowReopens({
+      stage: 'settled', hasImage: true,
+      branches: [{ result: 'package_recovery_attempt', attempts: 4 }],
+    })).toBe(false);
+    expect(sql).toMatch(/AND i\.primary_image_id IS NULL/);
+  });
+
+  it('a row still working is not disturbed mid-ladder', () => {
+    expect(rowReopens({
+      stage: 'source', hasImage: false,
+      branches: [{ result: 'package_recovery_attempt', attempts: 4 }],
+    })).toBe(false);
+    expect(sql).toMatch(/AND i\.image_work_stage = 'settled'/);
+  });
+
+  it('a failure from the CURRENT runtime stands — this is not a free retry', () => {
+    expect(rowReopens({
+      stage: 'settled', hasImage: false,
+      branches: [{
+        result: 'no_deterministic_image', exhaustion: 'operational',
+        runtime_version: RUNTIME_VERSION,
+      }],
+    })).toBe(false);
+  });
+});
+
+describe('the migration is dated where it will actually be applied', () => {
+  /*
+   * MEASURED THE HARD WAY, 7 SEPTEMBER 2026. These migrations first shipped
+   * timestamped from the wall clock — `20260907…` — and the deploy reported
+   * SUCCESS while applying none of them: this repository forward-dates its
+   * migrations, the latest applied was `20261112010000`, and anything sorting
+   * below that is treated as history and skipped. The column did not exist,
+   * the reopen function did not exist, and the dispatcher still fanned out to
+   * ten. A migration below the high-water mark is not a migration; it is a
+   * file.
+   */
+  const migrations = readdirSync(join(process.cwd(), 'supabase/migrations'))
+    .filter((f) => /^\d{14}_.*\.sql$/.test(f));
+  const highWater = migrations
+    .map((f) => f.slice(0, 14))
+    .filter((v) => !v.startsWith('202609'))
+    .sort()
+    .at(-1)!;
+
+  it.each([
+    '20261113100000_builder_stock_runtime_reopen.sql',
+    '20261113100001_builder_stock_settler_fixed_concurrency.sql',
+  ])('%s sorts at or above the rest of the tree', (name) => {
+    expect(migrations).toContain(name);
+    expect(name.slice(0, 14) >= highWater.slice(0, 8) + '000000').toBe(true);
+  });
+
+  it('and the reopen still precedes the tick that calls it', () => {
+    // Ordering within the pair matters as much as their floor: the tick's
+    // body names a function the earlier file creates.
+    expect('20261113100000' < '20261113100001').toBe(true);
+  });
+});
+
+describe('the SQL and the TypeScript cannot drift apart', () => {
+  it('the migration sets the same runtime version the code compiles against', () => {
+    const set = sql.match(/SET image_runtime_version = (\d+)/);
+    expect(set).not.toBeNull();
+    expect(Number(set![1])).toBe(RUNTIME_VERSION);
+  });
+
+  it('the predicate keys on the stamp, which is what separates ours from theirs', () => {
+    expect(sql).toMatch(/v \? 'runtime_version'/);
+    expect(sql).toMatch(/package_recovery_attempt/);
+  });
+
+  it('and the tick actually calls it, or the whole thing is inert again', () => {
+    const tick = readFileSync(join(process.cwd(),
+      'supabase/migrations/20261113100001_builder_stock_settler_fixed_concurrency.sql'), 'utf8');
+    expect(tick).toMatch(/PERFORM public\.reopen_builder_stock_runtime_failures\(\);/);
+  });
+});

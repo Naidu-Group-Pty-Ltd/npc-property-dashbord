@@ -157,6 +157,8 @@ export default function BuilderStockList() {
   const workingImages = countWorkingImages(records.map((item) => ({
     hasImage: !!item.primary_image_id,
     sourceDocuments: item.source_documents ?? 0,
+    unprocessedDocuments: item.source_documents_unprocessed ?? 0,
+    unreachableDocuments: item.source_documents_unreachable ?? 0,
     workStage: item.image_work_stage,
   })));
   const uploads = uploadsQuery.data?.records ?? [];

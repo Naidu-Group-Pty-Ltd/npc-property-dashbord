@@ -27,6 +27,7 @@
  *   another builder's stock even if two rows happen to read alike.
  */
 import { classifyFetchedSource, classifyStockFile } from './fileTypes.pure.ts';
+import { RUNTIME_VERSION } from './runtimeVersion.pure.ts';
 import { PROCESSED_LIFECYCLE } from './stockLifecycle.pure.ts';
 import { detectDocumentMime } from '../immutableDocuments.ts';
 import { extractStockFile } from './extract.ts';
@@ -1067,6 +1068,10 @@ export async function repairSourceImagesForUpload(
     const packageUrl = branch.url;
     const question = {
       provenanceVersion: PROVENANCE_VERSION,
+      // What the extractor understands, and — separately — how reliably this
+      // worker can open a document at all. See `runtimeVersion.pure.ts`: only
+      // records of OUR OWN failures compare the second one.
+      runtimeVersion: RUNTIME_VERSION,
       packageReference: packageUrl,
       sourceAnchor: anchor ?? null,
     };
