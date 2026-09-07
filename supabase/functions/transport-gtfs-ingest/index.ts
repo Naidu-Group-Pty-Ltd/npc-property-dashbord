@@ -135,17 +135,25 @@ Deno.serve(async (req) => {
   // The bootstrap arm is PER FEED, for the reason the crime ingest's is per
   // STATE: a whole-table emptiness gate seals on the first feed loaded and
   // locks every remaining feed out of its own first load.
-  // Measured the hard way on the first run: without the `.eq('feed', ...)`
-  // this counts the WHOLE table, so loading nt_darwin sealed nt_alice and
-  // qld_seq out of their own first load with a 403 — the exact fault the
-  // comment above describes. The filter is what makes the arm per-feed.
+  // Two things this got wrong, both found by running it rather than reading
+  // it. Without the `.eq('feed', ...)` it counted the WHOLE table, so loading
+  // nt_darwin sealed nt_alice and qld_seq out of their own first load with a
+  // 403 — the exact fault the comment above describes.
+  //
+  // And counting ANY row for the feed sealed it on its own FAILURE. NSW needs
+  // more than one invocation; the first died at 117,000 of 171,061 and left a
+  // `running` row, and the resume was then refused — a feed could be locked
+  // permanently half-loaded, which is the worst of the three states. What
+  // seals a feed is a load that SUCCEEDED; until then a resume or a retry is
+  // still part of its first load.
   if (!authorised && stage !== 'probe' && stage !== 'digest') {
     const { count, error } = await supabase
       .from('transport_feed_syncs')
       .select('id', { count: 'exact', head: true })
-      .eq('feed', stage);
+      .eq('feed', stage)
+      .eq('status', 'succeeded');
     if (!error && (count ?? 0) === 0) {
-      console.log(`[transport-gtfs-ingest] bootstrap arm: no ${stage} load recorded yet, permitted`);
+      console.log(`[transport-gtfs-ingest] bootstrap arm: no successful ${stage} load yet, permitted`);
       authorised = true;
     }
   } else if (!authorised) {
