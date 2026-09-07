@@ -1368,6 +1368,28 @@ relevant one before touching that format — each records defects that only a
 render against production data revealed, and each names the legacy generators
 that must stay.
 
+**Public transport is real now, and the archive is addressed rather than
+downloaded.** Read [`TRANSPORT_SOURCES.md`](./docs/reports/TRANSPORT_SOURCES.md)
+before touching `_shared/gtfsFeed.pure.ts`, `_shared/transportReading.pure.ts`,
+`transport-gtfs-ingest` or `public-transport-service`. It replaces audit
+Section 24's clearest fabricator — eight per-state "fetchers" that ignored the
+coordinate, so every NSW property was 450m from Central Station, cached 30 days
+and driving up to 30 points of every report's walk score. NSW's published
+bundle is 292,247,414 bytes and `shapes.txt` is 77% of it, so the loader reads
+the zip's central directory from a range-fetched tail and takes `stops.txt`
+alone: **1.467%, byte-exact against the declared size**. 185,177 stops across
+four networks. Three rules bite. **A station and its platforms are ONE place** —
+thirteen production rows within 1.6 km of Parramatta all carry
+`parent_station: 215020`, and a nearest-eight over rows lists six platforms of
+one station as six stops; grouping is by the publisher's own field, never by
+name similarity. **A stop found is a fact about the area; no stop found is a
+fact about the FEEDS** — a Perth property is outside every loaded network, not
+poorly served, so `outside_loaded_networks` is its own verdict and Victoria
+stays declared-but-unloaded (PTV nests deflated per-mode archives) rather than
+vanishing. And **nothing returns a score or a mode**: the invented
+`qualityScore` is what corrupted the walk score, and mode lives behind a 399 MB
+member, so both are named as not measured on every answer.
+
 **Recorded crime now covers four states, and the fourth one changed its
 classification mid-series.** Read
 [`CRIME_SOURCES.md`](./docs/reports/CRIME_SOURCES.md) before touching
