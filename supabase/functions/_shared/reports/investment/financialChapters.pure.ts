@@ -38,6 +38,7 @@ import {
   operatingExpensesFrom,
   reconcileStoredFinancials,
 } from './financialEngine.pure.ts';
+import { rentIsEstablished } from './rentalEvidence.pure.ts';
 import {
   composeScoreBreakdownSection,
   composeSwotSection,
@@ -153,6 +154,14 @@ function rentalAndYield(fin: Record<string, unknown>): ComposedChapter | null {
     ? Math.round(weeklyRent * (occupancyWeeks ?? 52))
     : num(income.annualRent);
 
+  // A yield is the rent divided by the price. Where the record establishes no
+  // rent, the rent rows above suppress themselves and these two must follow —
+  // otherwise the section reads "Recorded rental income and the yields it
+  // produces" over a table containing yields and no income, which is a return
+  // asserted on an income the record does not hold. One rule, asked here and
+  // in the two other renderers that print a yield.
+  const founded = rentIsEstablished(income);
+
   const table = twoCol(['Metric', 'Value'], [
     ['Weekly rent', money(weeklyRent)],
     [
@@ -161,8 +170,8 @@ function rentalAndYield(fin: Record<string, unknown>): ComposedChapter | null {
         : 'Annual rent',
       money(annualRent),
     ],
-    ['Gross rental yield', pct(metrics.grossRentalYield)],
-    ['Net rental yield', pct(metrics.netRentalYield)],
+    ['Gross rental yield', founded ? pct(metrics.grossRentalYield) : undefined],
+    ['Net rental yield', founded ? pct(metrics.netRentalYield) : undefined],
   ]);
 
   return chapter(5, 'Rental Assessment, Gross Yield & Net Yield',

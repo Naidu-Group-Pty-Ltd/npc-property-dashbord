@@ -90,6 +90,7 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
     propertyType,
     isFirstHomeBuyer = false,
     isNewBuild = false,
+    buildType,
     borrowerType = 'investor'
   } = input;
 
@@ -113,7 +114,9 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
     state,
     supabase,
     isFirstHomeBuyer,
-    isNewBuild
+    isNewBuild,
+    borrowerType,
+    buildType,
   );
 
   // Calculate ongoing costs. Reviewed figures arrive as INPUT so the totals,
@@ -237,6 +240,8 @@ async function calculateStampDutyWithConcessions(
   supabase: any,
   isFirstHomeBuyer: boolean,
   isNewBuild: boolean,
+  borrowerType: 'owner_occupier' | 'investor' = 'investor',
+  buildType?: 'existing_property' | 'new_build' | 'land_only',
 ): Promise<StampDutyResult> {
   const jurisdiction = coerceState(state);
   const { schedule, source, rejectedReason } = await resolveSchedule(jurisdiction, supabase);
@@ -244,7 +249,23 @@ async function calculateStampDutyWithConcessions(
     console.warn(`[financial-calculator-service] ${jurisdiction} using built-in schedule: ${rejectedReason}`);
   }
 
-  const category = isNewBuild ? 'new' : 'established';
+  // WHAT is being bought. `vacant_land` has always existed in the engine and
+  // every state schedule declares a `vacantLand` first-home concession; this
+  // caller computed only two of the three, so those schedules were
+  // unreachable. Category affects first-home relief only — verified by
+  // execution across every state and price for a non-FHB buyer, zero
+  // differences — so a non-FHB assessment is unchanged by this line.
+  const category = buildType === 'land_only'
+    ? 'vacant_land'
+    : (buildType === 'new_build' || isNewBuild) ? 'new' : 'established';
+
+  // WHO is buying. `borrowerType` already picks the interest rate on this same
+  // request; the duty assessment hardcoded `owner_occupier` and so put an
+  // investor on the owner-occupier scale. Measured 2026-09-07: 143 stored
+  // reports declare an investor, and in QLD that understated duty by exactly
+  // $7,175 at every price tested (ACT $2,992; VIC $3,100 below its $550k
+  // owner-occupier ceiling; the other five states share one scale).
+  const intent = borrowerType === 'owner_occupier' ? 'owner_occupier' : 'investor';
 
   // Duty before relief, so the response can still report what the concession
   // was worth. The engine is asked twice rather than reverse-engineering the
@@ -252,7 +273,7 @@ async function calculateStampDutyWithConcessions(
   const gross = calculateStampDuty({
     propertyValue,
     state: jurisdiction,
-    intent: 'owner_occupier',
+    intent,
     category,
     schedule,
   });
@@ -260,7 +281,7 @@ async function calculateStampDutyWithConcessions(
   const assessed = calculateStampDuty({
     propertyValue,
     state: jurisdiction,
-    intent: 'owner_occupier',
+    intent,
     category,
     isFirstHomeBuyer,
     schedule,

@@ -115,6 +115,7 @@ import {
 import { stripBakedCover } from './reports/investment/narrativeClean.pure.ts';
 import { planningChartContext, vizDirectiveRenderer } from './reports/vizFigures.pure.ts';
 import { reconcileStoredFinancials } from './reports/investment/financialEngine.pure.ts';
+import { rentIsEstablished } from './reports/investment/rentalEvidence.pure.ts';
 import { gradedDetailLine, gradedLine } from './reports/investment/scoreSections.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
@@ -479,8 +480,14 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(financials, 'annualRent', weeklyRent !== undefined && occupancyWeeks !== undefined
     ? weeklyRent * occupancyWeeks
     : undefined);
-  put(financials, 'grossYield', num(metrics.grossRentalYield));
-  put(financials, 'netYield', num(metrics.netRentalYield));
+  // A yield rests on a rent. Where the record establishes none, these describe
+  // nothing — and this projection is the widest of the four readers, feeding
+  // every bound template AND the recorded-facts block the model is handed, so
+  // an unfounded yield published here becomes a figure the model then repeats
+  // as authoritative. One rule, `rentIsEstablished`, asked by all four.
+  const yieldIsFounded = rentIsEstablished(income);
+  put(financials, 'grossYield', yieldIsFounded ? num(metrics.grossRentalYield) : undefined);
+  put(financials, 'netYield', yieldIsFounded ? num(metrics.netRentalYield) : undefined);
   put(financials, 'cashOnCash', num(metrics.cashOnCashReturn));
   put(financials, 'weeklyNet', num(metrics.weeklyNet));
   put(financials, 'annualNet', num(metrics.annualNet));
