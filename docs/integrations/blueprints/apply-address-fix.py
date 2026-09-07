@@ -107,6 +107,32 @@ ORIGINAL = HERE / "npc-email-1-new.original.json"
 UPGRADED = HERE / "npc-email-1-new.upgraded.json"
 SENDER_FIX = HERE / "apply-sender-fix.py"
 
+# Module 200's improved pattern, from `apply-sender-fix.py`.
+#
+# Only the sender NAME differs in behaviour. Measured against six realistic
+# forwarded headers, both patterns extract the same `fwd_email` in all six --
+# including the two exclusions (our own gmail forwarders and any
+# @npcservices.com.au address). What changes is that a header reading
+#
+#     From: Jane Smith [EXTERNAL] <jane@raywhite.com.au>
+#
+# captures `Jane Smith [EXTERNAL]` under the old pattern and `Jane Smith` under
+# this one, because `[` joins the excluded set and an optional bracketed token
+# is consumed between the name and the address. The agent's name is what gets
+# stored, so the tag would otherwise travel into Airtable.
+#
+# The named groups are unchanged (`fwd_name`, `fwd_email`), which is what makes
+# the swap safe: every downstream `{{200.fwd_name}}` / `{{200.fwd_email}}`
+# reference keeps resolving.
+SENDER_PATTERN = (
+    r"[\s\S]*(?:Begin forwarded message|Forwarded message|Original Message)"
+    r"[\s\S]*[\n>]From[ \t]*:[ \t]*(?<fwd_name>[^<\[\n]{0,150}?)[ \t]*"
+    r"(?:\[[^\]\n]*\][ \t]*)?<?[ \t]*(?<fwd_email>"
+    r"(?!(?:lavankenobi|naidu\.rugesh)@gmail\.com)"
+    r"(?![A-Za-z0-9._%+-]+@npcservices\.com\.au)"
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})"
+)
+
 # The two Google Maps geocode modules, and the feeder each one reads its
 # listing from.
 GEOCODE_MODULES = {124: 123, 81: 115}
@@ -167,8 +193,14 @@ def walk(node, on_module) -> None:
             walk(value, on_module)
 
 
-def _patch(blueprint: dict) -> list[str]:
-    """Apply D1 and D2 to a blueprint in place, returning what changed."""
+def _patch(blueprint: dict, sender_regex: bool = False) -> list[str]:
+    """Apply D1 and D2 to a blueprint in place, returning what changed.
+
+    `sender_regex` additionally swaps module 200's pattern for the improved
+    one. Off by default: it is a separate repair, and bundling an unrequested
+    change into a production automation write is how a fix stops being
+    reviewable.
+    """
     changes: list[str] = []
 
     def patch(module: dict) -> None:
@@ -206,12 +238,27 @@ def _patch(blueprint: dict) -> list[str]:
 
 
     walk(blueprint, patch)
+
+    if sender_regex:
+        def swap(module: dict) -> None:
+            if module.get("id") != 200 or module.get("module") != "regexp:Parser":
+                return
+            params = module.get("parameters")
+            if not isinstance(params, dict) or params.get("pattern") == SENDER_PATTERN:
+                return
+            params["pattern"] = SENDER_PATTERN
+            changes.append(
+                "S1 module 200: sender pattern now strips a bracketed tag from the name"
+            )
+        walk(blueprint, swap)
+
     return changes
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
     source = target = None
+    sender_regex = "--sender-regex" in args
     if "--input" in args:
         source = pathlib.Path(args[args.index("--input") + 1])
         target = pathlib.Path(args[args.index("--output") + 1]) if "--output" in args else source
@@ -221,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
         # already whatever that scenario currently is, and re-applying the
         # sender fix to it could undo a repair somebody made in Make.
         blueprint = json.loads(source.read_text())
-        changes = _patch(blueprint)
+        changes = _patch(blueprint, sender_regex=sender_regex)
         if not changes:
             print("nothing matched in the given blueprint", file=sys.stderr)
             return 1
