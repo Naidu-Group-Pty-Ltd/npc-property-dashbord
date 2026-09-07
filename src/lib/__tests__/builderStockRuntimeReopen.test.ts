@@ -18,13 +18,13 @@
  * the branch shapes production actually holds.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   RUNTIME_VERSION,
 } from '../../../supabase/functions/_shared/builderStock/runtimeVersion.pure';
 
-const MIGRATION = 'supabase/migrations/20260907053700_builder_stock_runtime_reopen.sql';
+const MIGRATION = 'supabase/migrations/20261113100000_builder_stock_runtime_reopen.sql';
 const sql = readFileSync(join(process.cwd(), MIGRATION), 'utf8');
 
 /**
@@ -130,6 +130,40 @@ describe('and nothing else moves', () => {
   });
 });
 
+describe('the migration is dated where it will actually be applied', () => {
+  /*
+   * MEASURED THE HARD WAY, 7 SEPTEMBER 2026. These migrations first shipped
+   * timestamped from the wall clock — `20260907…` — and the deploy reported
+   * SUCCESS while applying none of them: this repository forward-dates its
+   * migrations, the latest applied was `20261112010000`, and anything sorting
+   * below that is treated as history and skipped. The column did not exist,
+   * the reopen function did not exist, and the dispatcher still fanned out to
+   * ten. A migration below the high-water mark is not a migration; it is a
+   * file.
+   */
+  const migrations = readdirSync(join(process.cwd(), 'supabase/migrations'))
+    .filter((f) => /^\d{14}_.*\.sql$/.test(f));
+  const highWater = migrations
+    .map((f) => f.slice(0, 14))
+    .filter((v) => !v.startsWith('202609'))
+    .sort()
+    .at(-1)!;
+
+  it.each([
+    '20261113100000_builder_stock_runtime_reopen.sql',
+    '20261113100001_builder_stock_settler_fixed_concurrency.sql',
+  ])('%s sorts at or above the rest of the tree', (name) => {
+    expect(migrations).toContain(name);
+    expect(name.slice(0, 14) >= highWater.slice(0, 8) + '000000').toBe(true);
+  });
+
+  it('and the reopen still precedes the tick that calls it', () => {
+    // Ordering within the pair matters as much as their floor: the tick's
+    // body names a function the earlier file creates.
+    expect('20261113100000' < '20261113100001').toBe(true);
+  });
+});
+
 describe('the SQL and the TypeScript cannot drift apart', () => {
   it('the migration sets the same runtime version the code compiles against', () => {
     const set = sql.match(/SET image_runtime_version = (\d+)/);
@@ -144,7 +178,7 @@ describe('the SQL and the TypeScript cannot drift apart', () => {
 
   it('and the tick actually calls it, or the whole thing is inert again', () => {
     const tick = readFileSync(join(process.cwd(),
-      'supabase/migrations/20260907053708_builder_stock_settler_fixed_concurrency.sql'), 'utf8');
+      'supabase/migrations/20261113100001_builder_stock_settler_fixed_concurrency.sql'), 'utf8');
     expect(tick).toMatch(/PERFORM public\.reopen_builder_stock_runtime_failures\(\);/);
   });
 });
