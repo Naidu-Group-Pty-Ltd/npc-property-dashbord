@@ -2893,6 +2893,13 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "transport-gtfs-ingest": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "Public transport GTFS ingest (TfNSW, TransLink SEQ, NT DIPL Darwin and Alice Springs). Reads one member out of each publisher's own archive by HTTP range rather than downloading it -- NSW's is 292 MB and only stops.txt is fetched. Gateway JWT on; inside, internal edge secret or the per-feed self-sealing bootstrap, which seals on a load that SUCCEEDED so a killed load can still resume. Reads public files; writes only transport_stops/transport_feed_syncs. The probe and digest stages read and write nothing."
+    },
     "update-ghl-opportunity-stage": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",

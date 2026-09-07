@@ -2699,3 +2699,90 @@ layer will not publish.
 
 VIC still refuses every vantage; WA, TAS and ACT remain unverified and are
 answered `no_data_for_location` naming their real register.
+
+---
+
+## §35 — The last fabricator is replaced: real transport stops (2026-09-07)
+
+Full account: [`TRANSPORT_SOURCES.md`](./TRANSPORT_SOURCES.md).
+
+§24 named six acquisition paths. Demographics, SEIFA, climate, crime and the
+macro figures are real; employment is stalled on SALM's IP-level refusal. The
+sixth, **public transport, had never been started** — and it was the clearest
+fabricator of the six: eight per-state "fetchers" that ignored the coordinate
+entirely, so every NSW property was 450m from Central Station with the T1–T8
+lines and every VIC property 250m from a Swanston Street tram. That invention
+was cached for 30 days and drove **up to 30 points of every report's walk
+score** through `location-intelligence-service`.
+
+`transport_stops` now holds **185,177 real stops** across four networks, each
+loaded from the operator's own published GTFS feed.
+
+### The archive is addressed, not downloaded
+
+The constraint that shaped everything. NSW's bundle is **292,247,414 bytes**
+and VIC's 319,320,298 — neither fits the crime-ingest pattern. But
+`shapes.txt` alone is 77% of NSW's download and answers nothing about what is
+near a property, while `stops.txt` is 4.09 MB compressed.
+
+Every publisher measured honours HTTP range requests and a zip's central
+directory sits at the END, so the archive is addressed rather than fetched:
+read the tail, parse the directory, take one member. **1.467% of NSW's
+archive, in 5.2 seconds, inflating byte-exact to the 16,997,242 bytes the
+archive declares.** That is the difference between this fitting in an Edge
+Function and not.
+
+### What only real data revealed: a station is not its platforms
+
+Within 1.6 km of the Parramatta test coordinate the table holds **thirteen
+rows all carrying `parent_station: 215020`** — Platforms 1–4, Stands A1, A2,
+B1–B3, Darcy St, two KAR Fizwilliam St and a TXI Fizwilliam St. A
+nearest-eight over the rows lists six platforms of one station and calls them
+six stops. Grouping by the publisher's own `parent_station` collapses sixteen
+real rows to six places, named by the station rather than the platform.
+
+### The rule that governs an empty answer
+
+**A stop found is a fact about the area; no stop found is a fact about the
+FEEDS.** A Perth property is not badly served — it is outside every network
+loaded, and saying "no stops nearby" about it is the
+confident-answer-against-nothing failure this programme has removed twice.
+`outside_loaded_networks` is therefore a distinct verdict returned as
+`no_data_for_location` naming the networks held, and coverage is decided by
+measured distance rather than by a state name.
+
+Victoria is **declared and deliberately not loaded**: PTV nests eight per-mode
+archives inside one zip, each deflated rather than stored, so a member cannot
+be range-addressed without inflating up to 139 MB. It keeps its entry with
+`loadable: false` and a rendered reason, because a feed that vanished would
+let an empty answer read as "no public transport in Victoria".
+
+### Nothing returns a score, and mode is absent
+
+The invented `qualityScore` is what corrupted the walk score, and a score from
+stop counts alone would be the same invention in new clothes — a stop served
+hourly counts the same as one served every four minutes. Mode is NULL on every
+row because it lives behind `stop_times.txt` (399 MB uncompressed for NSW), so
+the reading omits it rather than guessing from a stop's name. `notMeasured`
+says both on every answer, including a full one.
+
+### Three faults the loader found by running rather than by being read
+
+**The bootstrap arm counted the whole table**, so loading `nt_darwin` sealed
+`nt_alice` and `qld_seq` out of their own first load — the exact fault its own
+comment described. **Counting any row then sealed a feed on its FAILURE**: NSW
+was killed at 117,000 of 171,061, left a `running` row, and refused its own
+resume, which could lock a feed permanently half-loaded. And **`HEAD` is not
+how you ask an archive's length** — TransLink answers HEAD with no
+`content-length` while answering a ranged GET with `Content-Range:
+bytes 0-0/37356493`, so a perfectly range-addressable feed was written off.
+
+A fourth belongs to the tooling rather than the data: a deployed Supabase
+function **cannot hash its own sources** (they are compiled away; every
+`import.meta.url` read answers "path not found"), so the fidelity check
+digests what the modules DO. Repo and deployment agree on
+`47d61cace23e474dddc827ce80326037207c33772080903085e28568f4e57e41`.
+
+SA, TAS and ACT refuse a scripted client from every vantage this project
+holds; WA's feed URL was not resolved. They are answered
+`no_data_for_location`, naming the networks that are held.
