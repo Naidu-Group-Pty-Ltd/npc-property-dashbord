@@ -263,3 +263,161 @@ Raising a number is not automatically wrong. It is a question with an answer:
 could this have called the canonical module? If it genuinely could not — the
 quantity is different, or the inputs are shaped differently — say which in the
 commit and move the number.
+
+---
+
+## 5. The `0.00%` yield: two rents, in two scopes
+
+*Diagnosed and fixed 2026-09-07. See
+`_shared/reports/investment/rentalEvidence.pure.ts`.*
+
+**83 stored reports print a `0.00%` rental yield**, in shapes like
+`| Gross Rental Yield | $0 ÷ $390,000 × 100 | 0.00% |`. 74 of them had no rent
+supplied by the customer. The zero flowed onward: the annual income line
+printed `$0`, the *net* yield printed a confident negative number that was
+really just the costs, and the model was then told to "USE THESE EXACTLY - DO
+NOT RECALCULATE".
+
+### Why it happened
+
+The generator resolved the rent **twice**, and only one of them could see a
+looked-up value.
+
+| variable | resolved from | who reads it |
+| --- | --- | --- |
+| `effectiveWeeklyRent` | `overrides.weeklyRent \|\| propertyDetails.weeklyRent \|\| 0` | every prompt line, both pre-calculated yields |
+| `calcWeeklyRent` | `effectiveWeeklyRent \|\| weeklyRent \|\| 0` | the calculator, the projections, every stored figure |
+
+`weeklyRent` — the SQM market lookup — is declared **inside the enrichment
+block** and is out of scope by the time the prompt is assembled. So a report
+whose rent came from the lookup had correct projections beside a document that
+said the yield was zero. Four prompt lines had already been patched by hand
+with `effectiveWeeklyRent || enhancedData.financials?.income?.weeklyRent ||
+'XXX'` — someone had seen the symptom — but the yields, the annual income and
+four further lines were not, and a per-line patch cannot fix a figure computed
+once from the wrong variable.
+
+**A third consumer had the same defect**: the investment scoring service was
+handed `weeklyRent: effectiveWeeklyRent || 0`, so it derived a yield from zero
+and scored the property as earning nothing. Measured impact is modest — mean
+score 47.5 on the affected reports against 48.9 elsewhere — but it is the same
+bug in a figure that reaches the reader.
+
+### The rule
+
+**There is one rent.** It is resolved once, from the same chain the calculator
+used, and it carries whether it is established at all. When it is not, every
+figure derived from it is ABSENT rather than zero, and the prompt says so
+instead of handing the model a nought to reason from.
+
+Three things make the change safe to adopt on a path that runs on every
+investment report ever generated:
+
+- **Ordering is the calculator's own** — override, then listing, then the rent
+  the projections actually used. Where a rent was typed or carried, this
+  returns the same number the old expression did, so a report with rental
+  evidence is unchanged to the digit. The spec asserts that against the old
+  expression rather than against an idea of it.
+- **Arithmetic keeps its zero.** Management fees are a percentage OF the rent,
+  so no rent means no fee exactly as before. Only the figures a reader is
+  *shown* become absent.
+- **The `%` sign moved inside the formatter.** Every call site read
+  `${preCalculatedGrossYield}%`, so a null there would have printed `null%` —
+  the shape of a defect rather than a disclosure.
+
+### The directive that travels with an absent yield
+
+A model handed a blank where a number should be will fill it; that is what it
+is for. `absentRentDirective` therefore forbids the estimate AND says what to
+write instead, because a prohibition with no permitted action is one a model
+routes around. It explicitly still allows qualitative discussion of the rental
+market — what it forbids is attaching a number to *this* property's rent.
+
+### One thing deliberately NOT adopted
+
+The pre-calculated yields keep their `.toFixed(2)`; they are not routed through
+`propertyMetrics.grossYield`. Swept over **2,207,223 realistic (rent, price)
+pairs**, `Math.round(x * 100) / 100` and `toFixed(2)` disagree on **2,763** of
+them — half-way values like `1.105` printing as `1.10` one way and `1.11` the
+other. That is 0.125% of documents shifted by a hundredth of a point for no
+reader's benefit. The canonical module owns the *definition*; the generator
+owns the *presentation*, and the difference is recorded here so nobody
+"unifies" them later without knowing it moves documents.
+
+---
+
+## 6. The deposit/loan contradiction: healed on read, not migrated
+
+*Diagnosed and fixed 2026-09-07. See `healFinanceIdentity` in
+`_shared/reports/investment/financialEngine.pure.ts`.*
+
+**21 stored reports** carry a finance block that describes two different deals:
+a deposit taken at one LVR beside a loan taken at another. The clearest row —
+
+| field | value |
+| --- | --- |
+| `initialCosts.propertyValue` | $672,000 |
+| `initialCosts.deposit` | $134,400 — 20% |
+| `initialCosts.loanAmount` | $604,800 — **90%** |
+| `keyMetrics.lvr` | 80 |
+| `loanDetails.lvr` | **90** |
+| `manual_overrides.loanToValueRatio` | 80 |
+| `manual_overrides.loanAmount` | **$537,600** |
+
+— shows a client a deposit and a loan that together exceed what they are buying
+by **$67,200**, while their own recorded input names the right loan. The
+written analysis then repeats "90% LVR" nine to twelve times, because the loan
+block is what the model was handed.
+
+### The live path is already fixed
+
+The cause was the pre-rework override splat: a writer that wrote some leaves of
+a recomputed block and left others stale. `manage-investment-reports` now
+recomputes through the engine before every save. That is not an assumption —
+**17 reports carried an LVR override in August and September and all 17 are
+consistent**, against 10 broken out of 33 in April–June.
+
+### `keyMetrics.lvr` is the arbiter
+
+What remained was the history, and the naive repair — "the loan is stale,
+re-derive it from price minus deposit" — is wrong: on one row it is the
+*deposit* that is stale, and that repair would have invented a third figure.
+
+The engine derives `keyMetrics.lvr` as `(propertyValue − deposit) /
+propertyValue` from the inputs it was actually given, so it is a witness to
+which half is sound. Whichever of the deposit and the loan agrees with it
+survives; the other is re-derived from the identity. Where **neither** agrees,
+nothing is healed — a repair that cannot say which figure is sound is just a
+third opinion, and `financeIdentityBreaches` discloses it instead.
+
+Verified against all 21 rows: **17 heal the loan, 1 heals the deposit, 3 are
+left alone.** Of the 13 that carry an independent witness — the customer's own
+`manual_overrides.loanAmount` — **13 agree with the healed figure and none
+contradict it.**
+
+### Healed on read, so nothing is overwritten
+
+The heal lives in `reconcileStoredFinancials`, which the register, the PDF
+renderer, the comparison and both cash-flow projections already call. So the
+repair reaches every reader of all 21 rows **without a migration and without
+overwriting a single stored byte** — and it is reversible by deleting code
+rather than by restoring a backup. A spec asserts the input object is not
+mutated.
+
+Two placement rules matter. It runs **after** the series heal, because the
+projections' ROI denominator is the stored deposit and re-basing a ten-year
+table on a healed one would rewrite rows this repair has no business touching.
+It runs **before** the upfront total, because that total *is* the deposit plus
+the acquisition lines and must follow.
+
+The same function also runs at the **write** boundary in
+`manage-investment-reports`, on the two paths where the recompute is skipped
+(display-only overrides, or a calculator that could not be reached) and the
+client's own object is stored. A record that is right at rest is worth more
+than one that is right only when something remembers to reconcile it.
+
+### What is left
+
+Three rows stay broken at rest and are disclosed rather than repaired: two
+where neither half agrees with the stated LVR, and one whose stored purchase
+price is **$3**. Nothing here will guess for them.
