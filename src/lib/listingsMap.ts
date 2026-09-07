@@ -76,6 +76,34 @@ export function describeGeocodePrecision(precision: string | null | undefined): 
   }
 }
 
+/**
+ * Why a pin is imprecise, said in terms of the RECORD rather than the provider.
+ *
+ * `describeGeocodePrecision` reports how well the geocoder matched. That is the
+ * right answer when the record held a full address and the provider could not
+ * place it — but useless when the record never had a street number to offer,
+ * which is the ordinary state of 30 live listings and 68 of 124 builder lots
+ * (an estate lot has no number until its plan is registered).
+ *
+ * Saying "approximate" about both hides the difference between "we could not
+ * find it" and "nobody has told us yet", and only the second is something an
+ * operator can act on.
+ */
+export function describeAddressCompleteness(
+  precision: string | null | undefined,
+): string | null {
+  switch (precision) {
+    case 'street':
+      return 'Street known, no street number on record';
+    case 'locality':
+      return 'Suburb only — no street on record';
+    case 'none':
+      return 'No address on record';
+    default:
+      return null;
+  }
+}
+
 
 export function getStoredListingPoint(listing: PropertyListing): GeoPoint | null {
   const lat = toFiniteNumber(listing.latitude);

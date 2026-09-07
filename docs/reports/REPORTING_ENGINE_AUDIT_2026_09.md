@@ -2824,3 +2824,145 @@ sealed themselves the moment every feed had loaded** — when a maintainer most
 needs them, and making `probe_candidates` unusable by construction since it
 exists for networks that are not loaded. They are permitted behind the gateway
 JWT now; the per-feed seal on the load stages is untouched.
+
+## §36 — One definition per figure, and the first arithmetic check the product has ever had (2026-09-07)
+
+Full detail: [`DERIVED_FIGURES.md`](./DERIVED_FIGURES.md).
+
+Every report states three numbers a client acts on that the property record
+does not contain — gross rental yield, net rental yield, loan-to-value ratio.
+Nothing checked any of them after the model wrote it. `runQAValidation`'s seven
+rules are page band, keyword presence, placeholders, editorial labels,
+duplicate headings and section counts: **no rule in this product had ever
+compared a number.**
+
+**The divergence was mostly not a bug, and finding that out changed the work.**
+Gross yield is computed in six places, net yield in four, LVR in eight. But
+`liveProjectionRow.ts` divides the settlement loan by the purchase price while
+the strategy surfaces divide the remaining balance by today's value — those are
+*different quantities*, origination LVR and current LVR, and they coincide only
+at settlement. Collapsing them onto one definition would have destroyed a real
+distinction and silently changed documents. What was missing was a NAME for
+each and a way to say which you meant, so in
+`_shared/reports/metrics/propertyMetrics.pure.ts` **the basis is part of the
+call**, the answer carries its basis back, and `labelFor` prints "Gross yield
+(on purchase price)" rather than a bare "Gross yield". Two rules travel with
+it: **absent is never zero** — 84 of 1,072 stored reports print a `0.00%`
+yield, 206 times, because the rent was unknown — and **net yield is unlevered
+while cash-on-cash is not**, pinned by a test showing the same property at
+3.39% and −1.73% depending on whether interest was wrongly swept into the cost
+base.
+
+`reconcileFacts` now judges all three, and they are the strongest possible
+targets because the prompt does not merely supply them, it orders their use
+("USE THESE EXACTLY - DO NOT RECALCULATE"). The call site passes the exact
+variables the prompt interpolates, because recomputing them would only prove
+that two formulas agree. Three things had to be right. **Tolerance is absolute
+for a percentage** — a 2% relative band on 4.83 is ±0.097, which rejects the
+ordinary rounding "5%" — so yields carry 0.25 points and LVR 0.5. **The
+vocabulary was measured**: 543 of 2,153 gross mentions are a working column
+(`| Gross Rental Yield | $33,800 ÷ $700,000 × 100 | 4.83% |`), so the pattern
+must cross arithmetic, and it is bounded by never crossing a newline, a `%`, or
+a second `yield`. And **a wide gap alone is not enough** — the corpus long tail
+read "gross rental yield provides substantial buffering against interest rate
+increases. A 1%" as the figure — so the value must arrive either through a
+delimiter (a table pipe, a colon, an `=`) or sitting adjacent to the label. A
+verb may never introduce the number.
+
+**LVR is the one place a value-after-label rule had to be refused.** `LVR, 6.5%`
+and `LVR at 6.5%` are the interest rate; `banks cap LVR at 95%` is policy;
+`| Final LVR | 52% |` is the correct *current* LVR at year ten. A prose-connective
+rule read 22 of 57 reports as contradicted and almost all of it was the
+detector. Admitting only the value-first form and structurally-connected label
+forms doubled coverage (57 reports → 115) and cut disagreement to 10.
+
+Those 10 are all one real defect, and it is not the model's. **14 of 143 stored
+reports contradict themselves inside `financial_calculations`**: a deposit
+taken at 20% of the price beside a loan taken at 90% of it, `keyMetrics.lvr`
+of 80 beside `loanDetails.lvr` of 90. On one, the deposit and the loan come to
+$739,200 against a $672,000 purchase — the client is shown two lines that
+exceed what they are buying by $67,200 — while the customer's own override says
+80% and names the right loan. The written analysis then says "90% LVR" nine to
+twelve times, because the loan block is what the model was handed.
+`financeIdentityBreaches` states the three identities a finance block cannot
+break and still describe one deal, and discloses them beside the prose
+findings. It is deliberately **not** repaired here: the engine itself is
+self-consistent, so a later merge is putting the two halves out of step, and
+finding which one is a change to how a report is generated that deserves its
+own evidence.
+
+`derivedFigureDefinitions.spec.ts` is a ratchet rather than a ban — 22 modules,
+53 inline definitions, frozen. It does not forbid the copies, because most of
+them are the real distinction above; it fixes their number so the next one is a
+decision somebody makes rather than a line somebody adds. Stamp duty had
+exactly this shape and reached four *different* answers before anyone compared
+them.
+
+## §37 — The 0.00% yield, and the record that described two deals (2026-09-07)
+
+Full detail: [`DERIVED_FIGURES.md`](./DERIVED_FIGURES.md) §5 and §6. Both were
+found by §36's reconciliation and both are now fixed at the cause.
+
+**The yield: two rents, in two scopes.** 83 stored reports print a `0.00%`
+rental yield, 74 of them with no rent supplied by the customer, and the zero
+flowed onward — annual income `$0`, a *net* yield that was a confident negative
+number made of nothing but costs, and a model ordered to "USE THESE EXACTLY".
+The generator resolved the rent twice: `effectiveWeeklyRent` knew only what a
+person typed, while the SQM market lookup landed in `calcWeeklyRent`, declared
+**inside the enrichment block** and out of scope by the time the prompt was
+assembled. So a report whose rent came from the lookup had correct projections
+beside a document saying the yield was zero. Four prompt lines had already been
+patched by hand with `|| enhancedData.financials?.income?.weeklyRent` — someone
+had seen the symptom — but a per-line patch cannot fix a figure computed once
+from the wrong variable. **A third consumer had it too**: the investment
+scoring service was handed `weeklyRent: effectiveWeeklyRent || 0` and scored
+the property as earning nothing (mean score 47.5 against 48.9 elsewhere).
+
+`rentalEvidence.pure.ts` resolves **one** rent, in the calculator's own order,
+carrying whether it is established at all; where it is not, every figure
+derived from it is absent and the prompt forbids an estimate while still
+permitting qualitative discussion — a prohibition with no permitted action is
+one a model routes around. Three things make it safe on a path that has run on
+every investment report ever generated: the ordering returns the same number
+the old expression did wherever a rent was typed or carried (the spec asserts
+that against the old expression, not against an idea of it); arithmetic keeps
+its zero, because management fees are a percentage OF the rent; and the `%`
+sign moved INSIDE the formatter, since every call site read
+`${preCalculatedGrossYield}%` and a null there would have printed `null%`.
+
+One thing was deliberately **not** adopted, and measuring is what settled it.
+Routing the pre-calculated yields through `propertyMetrics.grossYield` would be
+the tidier call, but swept over 2,207,223 realistic (rent, price) pairs its
+`Math.round(x * 100) / 100` disagrees with `toFixed(2)` on **2,763** of them —
+half-way values like 1.105 printing as 1.10 one way and 1.11 the other. That is
+0.125% of documents shifted by a hundredth for no reader's benefit. The module
+owns the definition; the generator owns the presentation.
+
+**The finance identity: healed on read, not migrated.** 21 stored reports carry
+a deposit taken at one LVR beside a loan taken at another — on one, $134,400
+and $604,800 against a $672,000 purchase, exceeding it by $67,200 while the
+customer's own override names the right loan ($537,600). The live path is
+already sound: `manage-investment-reports` recomputes through the engine, and
+**17 reports carried an LVR override in August and September and all 17 are
+consistent**, against 10 broken of 33 in April–June. What remained was history.
+
+The naive repair is wrong. "The loan is stale, re-derive it from price minus
+deposit" invents a third figure on the one row where it is the *deposit* that
+is stale. **`keyMetrics.lvr` is the arbiter** — the engine derives it from the
+inputs it was actually given — so whichever half agrees with it survives and
+the other is re-derived; where NEITHER agrees, nothing is healed, because a
+repair that cannot say which figure is sound is just a third opinion. Verified
+against all 21: 17 heal the loan, 1 heals the deposit, 3 are left alone, and of
+the 13 carrying an independent witness (`manual_overrides.loanAmount`) **13
+agree and none contradict**.
+
+It lives in `reconcileStoredFinancials`, which the register, the PDF renderer,
+the comparison and both cash-flow projections already call — so the repair
+reaches every reader of all 21 rows **without a migration and without
+overwriting a stored byte**, reversible by deleting code rather than restoring
+a backup. Placement is load-bearing: after the series heal (the projections'
+ROI denominator is the stored deposit, and re-basing a ten-year table would
+rewrite rows this has no business touching) and before the upfront total (which
+IS the deposit plus the acquisition lines and must follow). The same function
+runs at the write boundary too, on the two paths where the recompute is skipped
+and the client's own object is stored.

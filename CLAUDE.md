@@ -139,6 +139,32 @@ one of the twenty-six listings sharing `104 Grubb Avenue, Traralgon`;
 `ListingStackPager` is what keeps the count badge's promise, and it is never
 drawn for a stack of one.
 
+**The address a pin and a card are built from is COMPOSED, never inherited.**
+Read [`ADDRESS_COMPOSITION.md`](./docs/listings/ADDRESS_COMPOSITION.md) before
+touching `_shared/listingAddress.pure.ts`,
+`_shared/builderStockAddress.pure.ts` or the `address` line in
+`projectAirtableRecord`. Airtable decomposes every address — `Unit Number`,
+`Street Number`, `Street Name`, `Street Type` — and **97 of 139 live listings
+can build a street line from those parts**, which had **zero call sites** in
+the frontend: the projection did `Address ?? Full Address` and everything
+downstream took that string. It disagrees with the parts because of a loop at
+the source — Make geocodes `{{address}},{{suburb}}` (no street number, no
+state, no postcode), Google answers with the suburb centroid, and a second
+model call re-parses that answer and writes **eight** address columns back over
+the extraction. So `Full Address` reads `Cobblebank VIC 3338, Australia` on a
+record that knows `Mortlock Street`, and 202 of 1,019 cached geocodes collapse
+onto 95 points. Three rules bite. **The parts outrank any formatted string** —
+a `formatted_address` describes what the provider MATCHED, which is smaller
+than what the source said. **Precision is measured** (`address` / `street` /
+`locality` / `none`), because 30 listings genuinely carry only a suburb and no
+parsing invents a street number that was never in the email. And for builder
+stock, **a bare leading number is a LOT, not a street number** — measured: of
+the 44 rows opening with a number that also carry a `lot_number`, it equals the
+lot in 44 and differs in none, at every magnitude. Calling a lot a street
+number puts the pin on somebody else's house. The Make repair is
+`blueprints/apply-address-fix.py`, which **chains from `apply-sender-fix.py`**
+because both write the same file.
+
 **The Listings key is one key across the prime and every clone, and the
 Integrations page cannot touch it.** Read
 [`AIRTABLE_KEY_OWNERSHIP.md`](./docs/integrations/AIRTABLE_KEY_OWNERSHIP.md)
@@ -1299,6 +1325,79 @@ the ACT steps **down** at $1.455m, and NT is quadratic below $525k. A rate chang
 is a data edit in `schedules.pure.ts` plus a regenerated seed — never a hand-written
 one. The weekly sweep flags stale schedules and **never writes a rate**; the doc
 explains why that asymmetry is deliberate.
+
+## The three numbers a client acts on
+Read [`docs/reports/DERIVED_FIGURES.md`](./docs/reports/DERIVED_FIGURES.md)
+before touching `_shared/reports/metrics/propertyMetrics.pure.ts`, the yield or
+LVR detectors in `factReconciliation.pure.ts`, or any inline yield/LVR
+arithmetic. Gross yield, net yield and LVR are derived — the record contains
+none of them — and **nothing in this product had ever compared a number**:
+`runQAValidation`'s seven rules are page band, keyword presence, placeholders,
+editorial labels, duplicate headings and section counts, every one structural.
+
+The finding that shaped the fix: **the divergence was mostly not a bug.** Six
+gross-yield sites, four net, eight LVR — but `liveProjectionRow.ts` divides the
+settlement loan by the purchase price while the strategy surfaces divide the
+remaining balance by today's value, and those are *different quantities*
+(origination LVR, current LVR) that coincide only at settlement. Collapsing
+them onto one definition would have destroyed a real distinction and silently
+changed documents. So **basis is part of the call**, never a default, the
+answer carries its basis back, and `labelFor` prints "Gross yield (on purchase
+price)". Two rules travel with it — **absent is never zero** (84 of 1,072
+stored reports print a `0.00%` yield, because the rent was unknown) and **net
+yield is unlevered while cash-on-cash is not**.
+
+Three rules bite in the reconciliation. **Tolerance is absolute for a
+percentage** — a 2% relative band on 4.83 is ±0.097, which rejects the ordinary
+rounding "5%" — so yields carry 0.25 points and LVR 0.5. **A verb may never
+introduce the number**: 543 of 2,153 gross mentions are a working column
+(`| Gross Rental Yield | $33,800 ÷ $700,000 × 100 | 4.83% |`) so the pattern
+must cross arithmetic, but the corpus long tail read "gross rental yield
+provides substantial buffering against interest rate increases. A 1%" as the
+figure, so the value must arrive through a delimiter or sit adjacent to the
+label. And **LVR refuses the value-after-label form altogether** — `LVR, 6.5%`
+and `LVR at 6.5%` are the interest rate, `banks cap LVR at 95%` is policy, and
+`| Final LVR | 52% |` is the correct CURRENT LVR at year ten; admitting only
+value-first and structurally-connected forms doubled coverage and cut
+disagreement from 22 of 57 reports to 10 of 115.
+
+Those 10 are one real defect and it is not the model's: **21 stored reports
+contradict themselves**, carrying a deposit at one LVR beside a loan at
+another — on one, the two lines exceed the purchase price by $67,200 while the
+customer's own override names the right loan — after which the analysis says
+"90% LVR" up to twelve times because the loan block is what it was handed.
+`derivedFigureDefinitions.spec.ts` is a **ratchet, not a ban** — 22 modules, 53
+inline definitions, frozen — because most of the copies are the real
+distinction above and what needed fixing was the slope.
+
+Both of those were then fixed at the cause, and §5–§6 of the same doc carry
+them. **There is one rent** (`rentalEvidence.pure.ts`): the generator resolved
+it twice, and the SQM lookup landed in a variable scoped INSIDE the enrichment
+block, so 83 reports printed `0.00%` beside projections built on a real rent —
+and the scoring service, handed the same zero, scored the property as earning
+nothing. Where no rent is established every figure derived from it is now
+absent, and the prompt forbids an estimate while still permitting qualitative
+discussion, because a prohibition with no permitted action is one a model
+routes around. Two rules bite: **arithmetic keeps its zero** (management fees
+are a percentage OF the rent) so only what a reader is *shown* changes, and the
+**`%` sign lives inside the formatter**, since every call site read
+`${preCalculatedGrossYield}%` and a null there prints `null%`. The yields keep
+their `.toFixed(2)` rather than adopting `propertyMetrics` — measured over
+2,207,223 pairs the two roundings disagree on 2,763, so unifying them would
+shift 0.125% of documents by a hundredth for nobody's benefit.
+
+**The finance identity is healed on READ, never migrated.**
+`healFinanceIdentity` lives in `reconcileStoredFinancials`, which the register,
+the PDF renderer, the comparison and both projections already call — so all 21
+rows repair for every reader with no migration and no stored byte overwritten.
+**`keyMetrics.lvr` is the arbiter**: whichever of the deposit and the loan
+agrees with it survives and the other is re-derived, and where neither agrees
+nothing is healed, because a repair that cannot say which figure is sound is
+just a third opinion. Verified on all 21 — 17 heal the loan, 1 the deposit, 3
+left alone; of the 13 with an independent witness, 13 agree and none
+contradict. Placement is load-bearing: **after** the series heal (the ROI
+denominator is the stored deposit) and **before** the upfront total (which is
+the deposit plus the acquisition lines).
 
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
