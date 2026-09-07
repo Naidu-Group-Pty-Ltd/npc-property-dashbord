@@ -1,5 +1,6 @@
 import { assessAuPoint } from './auGeoSanity.pure.ts';
 import { assessAuPostcodePoint } from './auPostcodeGeo.pure.ts';
+import { isAustraliaCentroid } from './geocodeGranularity.pure.ts';
 
 /**
  * "May this coordinate be plotted for this record?" — asked once, in one place.
@@ -30,6 +31,15 @@ import { assessAuPostcodePoint } from './auPostcodeGeo.pure.ts';
  *    only gate that catches a Sunshine Coast property geocoded to Cairns:
  *    both are Queensland and both are on land.
  *
+ * A third check joined them later, and it is the one that catches a wrong
+ * answer rather than a wrong record: the **country centroid**. `country:AU`
+ * does not make an unmatched address fail, it answers with the centre of the
+ * continent — so `London` and `Pittsburgh` became a tidy cluster in the desert,
+ * inside Australia, on land, contradicting no state. It is checked here rather
+ * than only where the provider replies, because by the time a coordinate is
+ * being served it may have come from a cache written before anyone knew to
+ * look, and a cached wrong answer outlives the bug that made it.
+ *
  * The failure mode is deliberately asymmetric. A coordinate that fails is not
  * an error and is never served — it is simply not an answer, and the caller
  * falls through to the geocoder, which is restricted to `country:AU` and then
@@ -44,6 +54,8 @@ export function isTrustworthyAuPoint(
 ): boolean {
   if (lat === null || lat === undefined || lng === null || lng === undefined) return false;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  // The provider's "I found nothing" answer, wherever it reaches us from.
+  if (isAustraliaCentroid(lat, lng)) return false;
   if (!assessAuPoint(lat, lng, state).ok) return false;
   return assessAuPostcodePoint(lat, lng, postcode).ok;
 }
