@@ -1361,16 +1361,43 @@ and `LVR at 6.5%` are the interest rate, `banks cap LVR at 95%` is policy, and
 value-first and structurally-connected forms doubled coverage and cut
 disagreement from 22 of 57 reports to 10 of 115.
 
-Those 10 are one real defect and it is not the model's: **14 of 143 stored
-reports contradict themselves**, carrying a deposit at 20% of the price beside
-a loan at 90% of it and two different LVRs for one loan — on one, the deposit
-and loan exceed the purchase price by $67,200 — after which the analysis says
+Those 10 are one real defect and it is not the model's: **21 stored reports
+contradict themselves**, carrying a deposit at one LVR beside a loan at
+another — on one, the two lines exceed the purchase price by $67,200 while the
+customer's own override names the right loan — after which the analysis says
 "90% LVR" up to twelve times because the loan block is what it was handed.
-`financeIdentityBreaches` discloses it and deliberately does not repair it; the
-engine is self-consistent, so a later merge is at fault and finding it deserves
-its own evidence. `derivedFigureDefinitions.spec.ts` is a **ratchet, not a
-ban** — 22 modules, 53 inline definitions, frozen — because most of the copies
-are the real distinction above and what needed fixing was the slope.
+`derivedFigureDefinitions.spec.ts` is a **ratchet, not a ban** — 22 modules, 53
+inline definitions, frozen — because most of the copies are the real
+distinction above and what needed fixing was the slope.
+
+Both of those were then fixed at the cause, and §5–§6 of the same doc carry
+them. **There is one rent** (`rentalEvidence.pure.ts`): the generator resolved
+it twice, and the SQM lookup landed in a variable scoped INSIDE the enrichment
+block, so 83 reports printed `0.00%` beside projections built on a real rent —
+and the scoring service, handed the same zero, scored the property as earning
+nothing. Where no rent is established every figure derived from it is now
+absent, and the prompt forbids an estimate while still permitting qualitative
+discussion, because a prohibition with no permitted action is one a model
+routes around. Two rules bite: **arithmetic keeps its zero** (management fees
+are a percentage OF the rent) so only what a reader is *shown* changes, and the
+**`%` sign lives inside the formatter**, since every call site read
+`${preCalculatedGrossYield}%` and a null there prints `null%`. The yields keep
+their `.toFixed(2)` rather than adopting `propertyMetrics` — measured over
+2,207,223 pairs the two roundings disagree on 2,763, so unifying them would
+shift 0.125% of documents by a hundredth for nobody's benefit.
+
+**The finance identity is healed on READ, never migrated.**
+`healFinanceIdentity` lives in `reconcileStoredFinancials`, which the register,
+the PDF renderer, the comparison and both projections already call — so all 21
+rows repair for every reader with no migration and no stored byte overwritten.
+**`keyMetrics.lvr` is the arbiter**: whichever of the deposit and the loan
+agrees with it survives and the other is re-derived, and where neither agrees
+nothing is healed, because a repair that cannot say which figure is sound is
+just a third opinion. Verified on all 21 — 17 heal the loan, 1 the deposit, 3
+left alone; of the 13 with an independent witness, 13 agree and none
+contradict. Placement is load-bearing: **after** the series heal (the ROI
+denominator is the stored deposit) and **before** the upfront total (which is
+the deposit plus the acquisition lines).
 
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything

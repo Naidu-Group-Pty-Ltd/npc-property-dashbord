@@ -21,6 +21,11 @@ import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercen
 import { applyDisplayOverrides, buildAnnualCostOverrides, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { reconcileFacts, factFindingToFlag } from '../_shared/reports/investment/factReconciliation.pure.ts';
 import { financeIdentityBreaches } from '../_shared/reports/metrics/propertyMetrics.pure.ts';
+import {
+  absentRentDirective,
+  resolveRentalEvidence,
+  statedYield,
+} from '../_shared/reports/investment/rentalEvidence.pure.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
@@ -2968,7 +2973,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             body: JSON.stringify({
               property: {
                 price: effectivePurchasePrice,
-                weeklyRent: effectiveWeeklyRent || 0,
+                // The scorer derives a yield from this, so handing it 0 for a
+                // property whose rent came from the market lookup scored it as
+                // earning nothing. Same resolution the calculator used —
+                // `financials.income.weeklyRent` is the exact rental input
+                // every projection describes. (Declared inline rather than
+                // hoisting `rentalEvidence` up here: this handler already has
+                // a documented TDZ trap from a const declared further down.)
+                weeklyRent: effectiveWeeklyRent
+                  || toFiniteNumber(enhancedData.financials?.income?.weeklyRent)
+                  || 0,
                 propertyType: propertyDetails?.propertyType || 'house',
                 bedrooms: modelledBeds,
                 bathrooms: modelledBaths
@@ -3635,8 +3649,28 @@ Produce a comprehensive statewide investment analysis following the structure ab
     // PRE-CALCULATED YIELD VALUES - Recalculated using OVERRIDDEN expense values
     // These values MUST be used exactly in the report, not recalculated by AI
     // ============================================================================
-    const effectiveOccupancyRate = mergedOverrides.occupancyRate || 52; // weeks per year
-    const annualRentIncome = effectiveWeeklyRent * effectiveOccupancyRate;
+    // ONE rent, resolved once. `effectiveWeeklyRent` knows only what a person
+    // typed; the market lookup lands in `financials.income.weeklyRent`, which
+    // is the exact rental input every projection describes. Those were two
+    // different rents in two different scopes, and the lookup could never
+    // reach the document — which is how 83 stored reports came to print a
+    // `0.00%` yield beside projections built on a real rent. See
+    // `_shared/reports/investment/rentalEvidence.pure.ts`.
+    const rentalEvidence = resolveRentalEvidence({
+      overrideWeeklyRent: mergedOverrides.weeklyRent,
+      listingWeeklyRent: propertyDetails?.weeklyRent,
+      calculatedWeeklyRent: enhancedData.financials?.income?.weeklyRent,
+      occupancyWeeks: mergedOverrides.occupancyRate,
+    });
+    const effectiveOccupancyRate = rentalEvidence.occupancyWeeks; // weeks per year
+    // The rent every line quotes. Identical to the old `effectiveWeeklyRent`
+    // wherever one was typed or carried, so a report with rental evidence is
+    // unchanged to the digit.
+    const quotedWeeklyRent = rentalEvidence.weeklyRent;
+    // Arithmetic still needs a number: management fees are a percentage OF the
+    // rent, so no rent means no fee, exactly as before. Only the figures a
+    // reader is shown become absent rather than zero.
+    const annualRentIncome = rentalEvidence.annualRent ?? 0;
 
     // Coerce potentially string-based overrides to numbers (prevents incorrect totals like "1000" + "1500")
     const toNumberOr = (value: any, fallback: number): number => {
@@ -3645,10 +3679,26 @@ Produce a comprehensive statewide investment analysis following the structure ab
       return Number.isFinite(n) ? n : fallback;
     };
     
-    // Calculate Gross Yield from overridden values
-    const preCalculatedGrossYield = effectivePurchasePrice > 0 
+    // A yield is a fact about rent. With no rent established there is no
+    // yield, and `0.00%` is not that — it is the claim that the property earns
+    // nothing, which then travelled into the prompt under an order to use it
+    // exactly. `null` here means the figure is omitted and said to be
+    // unavailable; the record's own figure is still accepted as a fallback,
+    // but only when it is a real one.
+    //
+    // The `.toFixed(2)` is deliberate and must stay. Routing this through
+    // `propertyMetrics.grossYield` would be the tidier call, but its
+    // `Math.round(x * 100) / 100` disagrees with `toFixed` on half-way values
+    // — measured, 2,763 of 2,207,223 realistic (rent, price) pairs, e.g.
+    // 1.105 printing as 1.10 here and 1.11 there. That is 0.125% of documents
+    // shifted by a hundredth for no reader's benefit.
+    const recordedYield = (v: unknown): string | null => {
+      const n = toFiniteNumber(v);
+      return n !== undefined && n > 0 ? n.toFixed(2) : null;
+    };
+    const preCalculatedGrossYield = rentalEvidence.established && effectivePurchasePrice > 0
       ? ((annualRentIncome / effectivePurchasePrice) * 100).toFixed(2)
-      : enhancedData.financials?.keyMetrics?.grossRentalYield || '0.00';
+      : recordedYield(enhancedData.financials?.keyMetrics?.grossRentalYield);
     
     // CRITICAL FIX: Recalculate Net Yield using OVERRIDDEN expense values
     // Net Yield = (Annual Rent - Total Annual Costs) / Purchase Price * 100
@@ -3666,11 +3716,14 @@ Produce a comprehensive statewide investment analysis following the structure ab
     const totalAnnualCostsForNetYield = effectiveCouncilRates + effectiveWaterRates + effectiveStrataFees + 
       effectiveLandlordInsurance + effectiveMaintenance + effectivePmDollar;
     
-    const preCalculatedNetYield = effectivePurchasePrice > 0
+    // Same rule, and it bites harder here: with no rent, rent-less-costs is
+    // just the costs, so the old code printed a CONFIDENT NEGATIVE yield —
+    // a number that looks like analysis and is an artefact of a missing input.
+    const preCalculatedNetYield = rentalEvidence.established && effectivePurchasePrice > 0
       ? (((annualRentIncome - totalAnnualCostsForNetYield) / effectivePurchasePrice) * 100).toFixed(2)
-      : enhancedData.financials?.keyMetrics?.netRentalYield || '0.00';
+      : recordedYield(enhancedData.financials?.keyMetrics?.netRentalYield);
     
-    console.log(`📊 Pre-calculated Yields: Gross=${preCalculatedGrossYield}%, Net=${preCalculatedNetYield}%`);
+    console.log(`📊 Pre-calculated Yields: Gross=${statedYield(preCalculatedGrossYield)}, Net=${statedYield(preCalculatedNetYield)} (rent source: ${rentalEvidence.source})`);
     console.log(`📊 Net Yield Calculation: ($${annualRentIncome} rent - $${totalAnnualCostsForNetYield} costs) / $${effectivePurchasePrice} = ${preCalculatedNetYield}%`);
     console.log(`📊 Annual Costs Breakdown: Council=$${effectiveCouncilRates}, Water=$${effectiveWaterRates}, Strata=$${effectiveStrataFees}, Insurance=$${effectiveLandlordInsurance}, Maintenance=$${effectiveMaintenance}, PM=$${effectivePmDollar}`);
     console.log(`📅 Occupancy: ${effectiveOccupancyRate} weeks/year (${((effectiveOccupancyRate/52)*100).toFixed(0)}%)`);
@@ -3702,10 +3755,13 @@ Your role is to produce comprehensive, professional-grade investment reports fol
 3. PROPERTY TYPE: Use the standardized property type "${standardizedPropertyType}" consistently throughout the report - never switch terminology.
 
 **PRE-CALCULATED FINANCIAL VALUES (USE THESE EXACTLY - DO NOT RECALCULATE):**
-- Gross Rental Yield: ${preCalculatedGrossYield}%
-- Net Rental Yield: ${preCalculatedNetYield}%
-- Annual Rental Income: $${annualRentIncome.toLocaleString()} (based on ${effectiveOccupancyRate} weeks @ $${effectiveWeeklyRent}/week)
+- Gross Rental Yield: ${statedYield(preCalculatedGrossYield)}
+- Net Rental Yield: ${statedYield(preCalculatedNetYield)}
+- Annual Rental Income: ${rentalEvidence.established
+  ? `$${annualRentIncome.toLocaleString()} (based on ${effectiveOccupancyRate} weeks @ $${quotedWeeklyRent}/week)`
+  : 'Not established — no rental evidence for this property'}
 - Occupancy Rate: ${effectiveOccupancyRate} weeks per year (${((effectiveOccupancyRate/52)*100).toFixed(0)}% occupancy)
+${absentRentDirective(rentalEvidence)}
 
 **PRE-CALCULATED ANNUAL COSTS (USE THESE EXACTLY - DO NOT SUBSTITUTE WITH DEFAULTS):**
 - Council Rates: $${effectiveCouncilRates.toLocaleString()}/year
@@ -3757,9 +3813,9 @@ This executive summary provides a high-level overview of the investment opportun
 | Property Address | ${formattedInput} |
 | Property Type | ${standardizedPropertyType} |
 | Purchase Price | $${effectivePurchasePrice?.toLocaleString() || 'X,XXX,XXX'} |
-| Estimated Weekly Rent | $${effectiveWeeklyRent || 'XXX'} |
-| Gross Rental Yield | ${preCalculatedGrossYield}% |
-| Net Rental Yield | ${preCalculatedNetYield}% |
+| Estimated Weekly Rent | ${quotedWeeklyRent ? `$${quotedWeeklyRent}` : 'Not established'} |
+| Gross Rental Yield | ${statedYield(preCalculatedGrossYield)} |
+| Net Rental Yield | ${statedYield(preCalculatedNetYield)} |
 
 **Investment Highlights:**
 
@@ -4177,9 +4233,9 @@ The rental analysis below is based on suburb-level median rental data and the sp
 
 | Property Type | Estimated Weekly Rent | Annual Rental Income |
 |--------------|----------------------|---------------------|
-| ${effectiveBeds || 'X'}-Bed ${standardizedPropertyType} | $${effectiveWeeklyRent || (enhancedData.financials?.income?.weeklyRent) || 'XXX'} - $${(effectiveWeeklyRent || enhancedData.financials?.income?.weeklyRent || 0) + 50 || 'XXX'} | $${annualRentIncome.toLocaleString() || 'XX,XXX'} - $${(annualRentIncome + (50 * effectiveOccupancyRate)).toLocaleString() || 'XX,XXX'} |
+| ${effectiveBeds || 'X'}-Bed ${standardizedPropertyType} | ${quotedWeeklyRent ? `$${quotedWeeklyRent} - $${quotedWeeklyRent + 50}` : 'Not established'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()} - $${(annualRentIncome + (50 * effectiveOccupancyRate)).toLocaleString()}` : 'Not established'} |
 
-**Selected Rental Assumption:** $${effectiveWeeklyRent || enhancedData.financials?.income?.weeklyRent || 'XXX'}/week × ${effectiveOccupancyRate} weeks = $${annualRentIncome.toLocaleString() || 'XX,XXX'} annually (${effectiveOccupancyRate === 52 ? '100% occupancy' : `${((effectiveOccupancyRate/52)*100).toFixed(0)}% occupancy`})
+**Selected Rental Assumption:** ${rentalEvidence.established ? `$${quotedWeeklyRent}/week × ${effectiveOccupancyRate} weeks = $${annualRentIncome.toLocaleString()} annually (${effectiveOccupancyRate === 52 ? '100% occupancy' : `${((effectiveOccupancyRate/52)*100).toFixed(0)}% occupancy`})` : 'No rental evidence was available for this property, so no rental income is assumed and no yield is stated.'}
 
 **IMPORTANT: All calculations use ${effectiveOccupancyRate} weeks/year occupancy (${((effectiveOccupancyRate/52)*100).toFixed(0)}%). Do NOT interpret this as ${effectiveOccupancyRate}% occupancy - it is ${effectiveOccupancyRate} WEEKS per year.**
 
@@ -4187,24 +4243,24 @@ The rental analysis below is based on suburb-level median rental data and the sp
 
 | Metric | Calculation | Value |
 |--------|-------------|-------|
-| Annual Rental Income | $${effectiveWeeklyRent || enhancedData.financials?.income?.weeklyRent || 'XXX'} × ${effectiveOccupancyRate} weeks | $${annualRentIncome.toLocaleString() || 'XX,XXX'} |
+| Annual Rental Income | ${rentalEvidence.established ? `$${quotedWeeklyRent} × ${effectiveOccupancyRate} weeks` : 'No rental evidence'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
 | Property Price | Reference value | $${effectivePurchasePrice?.toLocaleString() || (enhancedData.financials?.initialCosts?.propertyValue?.toLocaleString()) || 'X,XXX,XXX'} |
-| **Gross Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${preCalculatedGrossYield}%** |
+| **Gross Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${statedYield(preCalculatedGrossYield)}** |
 
 **Net Rental Yield Calculation (USE THESE EXACT VALUES):**
 
 | Metric | Calculation | Value |
 |--------|-------------|-------|
-| Annual Income | $${effectiveWeeklyRent || enhancedData.financials?.income?.weeklyRent || 'XXX'} × ${effectiveOccupancyRate} weeks | $${annualRentIncome.toLocaleString() || 'XX,XXX'} |
+| Annual Income | ${rentalEvidence.established ? `$${quotedWeeklyRent} × ${effectiveOccupancyRate} weeks` : 'No rental evidence'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
 | Annual Expenses | Mgmt + Maintenance + Rates + Insurance${effectiveStrataFees ? ' + Strata' : ''} (excludes land tax — owner-specific) | $${totalAnnualCostsForNetYield.toLocaleString()} |
-| Net Annual Return | Income - Expenses | $${(annualRentIncome - totalAnnualCostsForNetYield).toLocaleString()} |
-| **Net Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${preCalculatedNetYield}%** |
+| Net Annual Return | Income - Expenses | ${rentalEvidence.established ? `$${(annualRentIncome - totalAnnualCostsForNetYield).toLocaleString()}` : 'Not established'} |
+| **Net Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${statedYield(preCalculatedNetYield)}** |
 
 **Yield Comparison to Benchmarks:**
 
 | Benchmark | Gross Yield | Net Yield | Comparison |
 |-----------|-------------|-----------|------------|
-| This Property | ${preCalculatedGrossYield}% | ${preCalculatedNetYield}% | - |
+| This Property | ${statedYield(preCalculatedGrossYield)} | ${statedYield(preCalculatedNetYield)} | - |
 | ${suburb || 'Suburb'} Median | [X.XX]% | [X.XX]% | [Above/Below] |
 | LGA Average | [X.XX]% | [X.XX]% | [Above/Below] |
 | ${state || 'State'} Average | [X.XX]% | [X.XX]% | [Above/Below] |
@@ -4212,7 +4268,9 @@ The rental analysis below is based on suburb-level median rental data and the sp
 
 **Yield Commentary:**
 
-The gross rental yield of ${preCalculatedGrossYield}% and net yield of ${preCalculatedNetYield}% reflect typical [Suburb] residential rental returns. These yields are [comparison to other areas]. The [modest/strong] rental yield positioning suggests this property is primarily suitable for investors prioritizing [capital growth/rental income], typical of [suburb characteristics].
+${rentalEvidence.established
+  ? `The gross rental yield of ${statedYield(preCalculatedGrossYield)} and net yield of ${statedYield(preCalculatedNetYield)} reflect typical [Suburb] residential rental returns. These yields are [comparison to other areas]. The [modest/strong] rental yield positioning suggests this property is primarily suitable for investors prioritizing [capital growth/rental income], typical of [suburb characteristics].`
+  : 'No rental evidence was available for this property, so no gross or net yield can be stated. Describe the suburb\'s rental market qualitatively and state plainly that a yield for this property could not be established. Do NOT estimate one.'}
 
 ---
 
@@ -4255,7 +4313,7 @@ Note: Blended calculation for annual presentation; actual P&I repayments decline
 
 | Item | Amount (AUD) |
 |------|--------------|
-| Gross Rental Income (${effectiveOccupancyRate} weeks @ $${effectiveWeeklyRent}/wk) | $${annualRentIncome.toLocaleString() || 'XX,XXX'} |
+| Gross Rental Income ${rentalEvidence.established ? `(${effectiveOccupancyRate} weeks @ $${quotedWeeklyRent}/wk)` : '(no rental evidence)'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
 | Less: P&I Loan Repayment | ($${(enhancedData.financials?.loanDetails?.monthlyPayment ? enhancedData.financials.loanDetails.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'}) |
 | Less: Council Rates | ($${effectiveCouncilRates?.toLocaleString() || enhancedData.financials?.annualCosts?.councilRates?.toLocaleString() || 'X,XXX'}) |
 | Less: Water Rates | ($${effectiveWaterRates?.toLocaleString() || enhancedData.financials?.annualCosts?.waterRates?.toLocaleString() || 'XXX'}) |
@@ -4269,7 +4327,7 @@ ${isStrataProperty ? `| Less: Body Corporate/Strata | ($${effectiveStrataFees?.t
 
 | Item | Amount (AUD) |
 |------|--------------|
-| Gross Rental Income (${effectiveOccupancyRate} weeks @ $${effectiveWeeklyRent}/wk) | $${annualRentIncome.toLocaleString() || 'XX,XXX'} |
+| Gross Rental Income ${rentalEvidence.established ? `(${effectiveOccupancyRate} weeks @ $${quotedWeeklyRent}/wk)` : '(no rental evidence)'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
 | Less: Interest-Only Repayment | ($${(enhancedData.financials?.loanDetails?.interestOnlyPayment ? enhancedData.financials.loanDetails.interestOnlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'}) |
 | Less: Council Rates | ($${effectiveCouncilRates?.toLocaleString() || enhancedData.financials?.annualCosts?.councilRates?.toLocaleString() || 'X,XXX'}) |
 | Less: Water Rates | ($${effectiveWaterRates?.toLocaleString() || enhancedData.financials?.annualCosts?.waterRates?.toLocaleString() || 'XXX'}) |

@@ -2897,3 +2897,72 @@ them are the real distinction above; it fixes their number so the next one is a
 decision somebody makes rather than a line somebody adds. Stamp duty had
 exactly this shape and reached four *different* answers before anyone compared
 them.
+
+## §37 — The 0.00% yield, and the record that described two deals (2026-09-07)
+
+Full detail: [`DERIVED_FIGURES.md`](./DERIVED_FIGURES.md) §5 and §6. Both were
+found by §36's reconciliation and both are now fixed at the cause.
+
+**The yield: two rents, in two scopes.** 83 stored reports print a `0.00%`
+rental yield, 74 of them with no rent supplied by the customer, and the zero
+flowed onward — annual income `$0`, a *net* yield that was a confident negative
+number made of nothing but costs, and a model ordered to "USE THESE EXACTLY".
+The generator resolved the rent twice: `effectiveWeeklyRent` knew only what a
+person typed, while the SQM market lookup landed in `calcWeeklyRent`, declared
+**inside the enrichment block** and out of scope by the time the prompt was
+assembled. So a report whose rent came from the lookup had correct projections
+beside a document saying the yield was zero. Four prompt lines had already been
+patched by hand with `|| enhancedData.financials?.income?.weeklyRent` — someone
+had seen the symptom — but a per-line patch cannot fix a figure computed once
+from the wrong variable. **A third consumer had it too**: the investment
+scoring service was handed `weeklyRent: effectiveWeeklyRent || 0` and scored
+the property as earning nothing (mean score 47.5 against 48.9 elsewhere).
+
+`rentalEvidence.pure.ts` resolves **one** rent, in the calculator's own order,
+carrying whether it is established at all; where it is not, every figure
+derived from it is absent and the prompt forbids an estimate while still
+permitting qualitative discussion — a prohibition with no permitted action is
+one a model routes around. Three things make it safe on a path that has run on
+every investment report ever generated: the ordering returns the same number
+the old expression did wherever a rent was typed or carried (the spec asserts
+that against the old expression, not against an idea of it); arithmetic keeps
+its zero, because management fees are a percentage OF the rent; and the `%`
+sign moved INSIDE the formatter, since every call site read
+`${preCalculatedGrossYield}%` and a null there would have printed `null%`.
+
+One thing was deliberately **not** adopted, and measuring is what settled it.
+Routing the pre-calculated yields through `propertyMetrics.grossYield` would be
+the tidier call, but swept over 2,207,223 realistic (rent, price) pairs its
+`Math.round(x * 100) / 100` disagrees with `toFixed(2)` on **2,763** of them —
+half-way values like 1.105 printing as 1.10 one way and 1.11 the other. That is
+0.125% of documents shifted by a hundredth for no reader's benefit. The module
+owns the definition; the generator owns the presentation.
+
+**The finance identity: healed on read, not migrated.** 21 stored reports carry
+a deposit taken at one LVR beside a loan taken at another — on one, $134,400
+and $604,800 against a $672,000 purchase, exceeding it by $67,200 while the
+customer's own override names the right loan ($537,600). The live path is
+already sound: `manage-investment-reports` recomputes through the engine, and
+**17 reports carried an LVR override in August and September and all 17 are
+consistent**, against 10 broken of 33 in April–June. What remained was history.
+
+The naive repair is wrong. "The loan is stale, re-derive it from price minus
+deposit" invents a third figure on the one row where it is the *deposit* that
+is stale. **`keyMetrics.lvr` is the arbiter** — the engine derives it from the
+inputs it was actually given — so whichever half agrees with it survives and
+the other is re-derived; where NEITHER agrees, nothing is healed, because a
+repair that cannot say which figure is sound is just a third opinion. Verified
+against all 21: 17 heal the loan, 1 heals the deposit, 3 are left alone, and of
+the 13 carrying an independent witness (`manual_overrides.loanAmount`) **13
+agree and none contradict**.
+
+It lives in `reconcileStoredFinancials`, which the register, the PDF renderer,
+the comparison and both cash-flow projections already call — so the repair
+reaches every reader of all 21 rows **without a migration and without
+overwriting a stored byte**, reversible by deleting code rather than restoring
+a backup. Placement is load-bearing: after the series heal (the projections'
+ROI denominator is the stored deposit, and re-basing a ten-year table would
+rewrite rows this has no business touching) and before the upfront total (which
+IS the deposit plus the acquisition lines and must follow). The same function
+runs at the write boundary too, on the two paths where the recompute is skipped
+and the client's own object is stored.
