@@ -139,6 +139,32 @@ one of the twenty-six listings sharing `104 Grubb Avenue, Traralgon`;
 `ListingStackPager` is what keeps the count badge's promise, and it is never
 drawn for a stack of one.
 
+**The address a pin and a card are built from is COMPOSED, never inherited.**
+Read [`ADDRESS_COMPOSITION.md`](./docs/listings/ADDRESS_COMPOSITION.md) before
+touching `_shared/listingAddress.pure.ts`,
+`_shared/builderStockAddress.pure.ts` or the `address` line in
+`projectAirtableRecord`. Airtable decomposes every address — `Unit Number`,
+`Street Number`, `Street Name`, `Street Type` — and **97 of 139 live listings
+can build a street line from those parts**, which had **zero call sites** in
+the frontend: the projection did `Address ?? Full Address` and everything
+downstream took that string. It disagrees with the parts because of a loop at
+the source — Make geocodes `{{address}},{{suburb}}` (no street number, no
+state, no postcode), Google answers with the suburb centroid, and a second
+model call re-parses that answer and writes **eight** address columns back over
+the extraction. So `Full Address` reads `Cobblebank VIC 3338, Australia` on a
+record that knows `Mortlock Street`, and 202 of 1,019 cached geocodes collapse
+onto 95 points. Three rules bite. **The parts outrank any formatted string** —
+a `formatted_address` describes what the provider MATCHED, which is smaller
+than what the source said. **Precision is measured** (`address` / `street` /
+`locality` / `none`), because 30 listings genuinely carry only a suburb and no
+parsing invents a street number that was never in the email. And for builder
+stock, **a bare leading number is a LOT, not a street number** — measured: of
+the 44 rows opening with a number that also carry a `lot_number`, it equals the
+lot in 44 and differs in none, at every magnitude. Calling a lot a street
+number puts the pin on somebody else's house. The Make repair is
+`blueprints/apply-address-fix.py`, which **chains from `apply-sender-fix.py`**
+because both write the same file.
+
 **The Listings key is one key across the prime and every clone, and the
 Integrations page cannot touch it.** Read
 [`AIRTABLE_KEY_OWNERSHIP.md`](./docs/integrations/AIRTABLE_KEY_OWNERSHIP.md)

@@ -807,9 +807,17 @@ function ListingsMarketplace({
    * house-and-land estates in the same picture.
    */
   const [showBuilderStockOnMap, setShowBuilderStockOnMap] = useState(true);
-  const builderStockLayer = useBuilderStockMapListings(
-    viewMode === 'map' && showBuilderStockOnMap,
-  );
+  /**
+   * Fetched whenever the MAP is open, never gated on the toggle.
+   *
+   * It was gated on the toggle, and that made the control delete itself:
+   * switching the layer off emptied `listings`, which made `available` false,
+   * which unmounted the chip — so the only way back was reloading the page.
+   * Whether this deployment HAS builder stock and whether the reader wants to
+   * SEE it are different questions, and only the first one may decide whether
+   * a control is drawn.
+   */
+  const builderStockLayer = useBuilderStockMapListings(viewMode === 'map');
 
   const builderStockAvailable = builderStockLayer.listings.length > 0 || builderStockLayer.isLoading;
 

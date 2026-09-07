@@ -1,4 +1,5 @@
 import type { BuilderStockItem } from '@/lib/builderStock';
+import { builderStockAddress } from '../../supabase/functions/_shared/builderStockAddress.pure';
 import type { PropertyListing } from '@/lib/airtable';
 
 /**
@@ -97,6 +98,15 @@ const trimmed = (value: string | null | undefined): string | undefined => {
 
 export function builderStockToMapListing(item: BuilderStockItem): PropertyListing {
   const title = builderStockTitle(item);
+  /**
+   * The address, taken apart before it is asked of anyone.
+   *
+   * `address_line` was handed to the geocoder whole — lot prefix, estate name
+   * and `[Stradbroke 180]` design suffix included — which is not a question a
+   * provider can answer at street level, so every lot in a release landed on
+   * its suburb's centroid and stacked on one pin. See builderStockAddress.
+   */
+  const composed = builderStockAddress(item);
   return {
     id: builderStockMapId(item.id),
     title,
@@ -117,17 +127,31 @@ export function builderStockToMapListing(item: BuilderStockItem): PropertyListin
     // Geography — the only part the map strictly needs. No coordinates exist
     // on this table, so they are deliberately absent and the resolver earns
     // them the same way it does for a listing with none.
-    address: trimmed(item.address_line),
-    suburb: trimmed(item.suburb),
-    state: trimmed(item.state),
-    zipCode: trimmed(item.postcode),
+    // The parsed street line, not the raw list entry. `address` is what the
+    // resolver geocodes, so this is the whole of the fix.
+    // Every parsed value goes back through `trimmed` so an absent field stays
+    // `undefined` rather than becoming `null`: the projection's own rule is
+    // that a missing field must not be a value, and the two are distinguished
+    // by callers.
+    address: trimmed(composed.street) ?? trimmed(item.address_line),
+    addressPrecision: composed.precision,
+    suburb: trimmed(composed.parsed.suburb) ?? trimmed(item.suburb),
+    state: trimmed(composed.parsed.state) ?? trimmed(item.state),
+    // 93 of 124 rows carry a postcode inside the text and 2 have it in the
+    // column. The postcode is what stops `Donnybrook` resolving to WA.
+    zipCode: trimmed(item.postcode) ?? trimmed(composed.parsed.postcode),
+    streetNumber: trimmed(composed.parsed.streetNumber),
+    streetName: trimmed(composed.parsed.streetName),
+    streetType: trimmed(composed.parsed.streetType),
     latitude: null,
     longitude: null,
     beds: item.bedrooms ?? null,
     baths: item.bathrooms ?? null,
     carSpaces: item.car_spaces ?? null,
     landSizeSqm: item.land_size_sqm ?? null,
-    lotNumber: trimmed(item.lot_number),
+    lotNumber: trimmed(item.lot_number) ?? trimmed(composed.parsed.lotNumber),
+    /** The estate's marketing name — shown to a reader, never geocoded. */
+    estateName: trimmed(composed.parsed.estate),
     listingStatus: trimmed(item.availability_status),
     createdAt: item.created_at,
   } as PropertyListing;
