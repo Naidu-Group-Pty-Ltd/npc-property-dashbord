@@ -456,14 +456,14 @@ Deno.serve(async (req) => {
           trading_name: trimmed(body.trading_name),
           org_type: orgType,
           abn, acn,
-          contact_email: trimmed(body.contact_email)?.toLowerCase() ?? null,
+          contact_email: contactEmail,
           contact_phone: trimmed(body.contact_phone),
           website: trimmed(body.website),
           address_line1: trimmed(body.address_line1),
           address_line2: trimmed(body.address_line2),
           suburb: trimmed(body.suburb),
           state: state ? state.toUpperCase() : null,
-          postcode: trimmed(body.postcode),
+          postcode,
           notes: trimmed(body.notes),
           updated_by: adminUserId,
         };
@@ -475,7 +475,11 @@ Deno.serve(async (req) => {
           const { data, error } = await supabase.from('builder_organisations')
             .insert({ ...payload, status: 'pending_activation', is_active: false, created_by: adminUserId })
             .select(ORG_SELECT).single();
-          if (error) throw error;
+          if (error) {
+            const refused = organisationWriteFailure(error);
+            if (refused) return json(refused, 409, cors);
+            throw error;
+          }
           auditRows.push({ action: 'builder_organisation_created', entity_id: data.id });
           return json({ organisation: data }, 200, cors);
         }
