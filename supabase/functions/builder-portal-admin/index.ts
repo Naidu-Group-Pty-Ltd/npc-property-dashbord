@@ -501,7 +501,11 @@ Deno.serve(async (req) => {
         const { data, error } = await supabase.from('builder_organisations')
           .update(payload).eq('id', organisationId).eq('row_version', expectedVersion)
           .select(ORG_SELECT).maybeSingle();
-        if (error) throw error;
+        if (error) {
+          const refused = organisationWriteFailure(error);
+          if (refused) return json(refused, 409, cors);
+          throw error;
+        }
         if (!data) {
           return json({ error: 'Concurrent update detected', code: 'stale_write' }, 409, cors);
         }
