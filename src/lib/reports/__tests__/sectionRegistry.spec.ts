@@ -42,10 +42,15 @@ import {
   type SectionId,
   type TierPlacement,
 } from '../investment/sectionRegistry.pure';
-import { composeFinancialChapters } from '../investment/financialChapters.pure';
+import {
+  composeFinancialChapters,
+  composeFinancialSnapshotSection,
+} from '../investment/financialChapters.pure';
 import {
   composeScoreBreakdownSection,
+  composeScoreDimensionsSection,
   composeSwotSection,
+  composeVerdictSection,
 } from '../investment/scoreSections.pure';
 import {
   FIN_SECTION_ORDER,
@@ -281,19 +286,33 @@ describe('every declared section names a producer that resolves', () => {
 
     if (producer.kind === 'composed') {
       const [, ref] = producer.ref.split('#');
-      if (producer.ref.startsWith('financialChapters')) {
+      if (producer.ref.startsWith('financialChapters') && /^\d+$/.test(ref)) {
         // Run it. A declared ordinal that the composer never emits from a full
         // record is a section the tier promises and nothing writes.
         const chapter = composedChapters.find((c) => c.ordinal === Number(ref));
         expect(chapter, `composeFinancialChapters emits no ordinal ${ref}`).toBeTruthy();
         expect(chapter!.heading).toBe(label);
         expect(chapter!.markdown.startsWith(`## ${label}`)).toBe(true);
+      } else if (producer.ref.startsWith('financialChapters')) {
+        // A named composer in the same module — the Snapshot's one financial
+        // table, which is not one of the Financial tier's numbered chapters.
+        const fn = ref === 'composeFinancialSnapshotSection'
+          ? composeFinancialSnapshotSection
+          : null;
+        expect(fn, `financialChapters has no export ${ref}`).toBeTruthy();
+        const markdown = fn!(FIN, label!);
+        expect(markdown, `${ref} produced nothing from a full record`).toBeTruthy();
+        expect(markdown!.startsWith(`## ${label}`)).toBe(true);
       } else if (producer.ref.startsWith('scoreSections')) {
         const fn = ref === 'composeScoreBreakdownSection'
           ? composeScoreBreakdownSection
           : ref === 'composeSwotSection'
             ? composeSwotSection
-            : null;
+            : ref === 'composeVerdictSection'
+              ? composeVerdictSection
+              : ref === 'composeScoreDimensionsSection'
+                ? composeScoreDimensionsSection
+                : null;
         expect(fn, `scoreSections has no export ${ref}`).toBeTruthy();
         const markdown = fn!(SCORE, label!);
         expect(markdown, `${ref} produced nothing from a full score`).toBeTruthy();
@@ -380,17 +399,38 @@ describe('the competing definitions are expressible in registry ids', () => {
     }
   });
 
-  it('the snapshot guide asks for exactly the headings the registry declares, in order', () => {
+  it('the snapshot guide asks for exactly its authored headings, in order', () => {
+    // This used to compare the guide against EVERY declared heading, because
+    // the snapshot composed nothing and the two lists were the same list. Three
+    // of its nine sections are composed from the record now — `Investment
+    // Score`, `Score Breakdown` and `Financial Snapshot` — so the contract is
+    // the briefing's: the guide asks for the authored ones and no others.
+    //
+    // The "no others" half is what matters. A guide that still asked for a
+    // composed heading would get the model's version written, kept by the trim
+    // (it is declared), and then replaced during assembly — or, if the ids ever
+    // drifted, printed twice with different figures in each copy.
     const guide = structureGuide('snapshot');
-    const asked = [...guide.matchAll(/^##\s+(.+?)\s*$/gm)].map((m) => m[1]);
-    // The guide's own wording may qualify a heading — `Score Breakdown
-    // (simplified)` — so compare on the declared prefix, which is what
-    // `trimToDeclaredSections` matches on.
-    const declared = markdownHeadingsForTier('snapshot');
-    expect(asked.length).toBe(declared.length);
-    asked.forEach((heading, i) => {
-      expect(normaliseHeading(heading).startsWith(normaliseHeading(declared[i]))).toBe(true);
-    });
+    const asked = [...guide.matchAll(/^##\s+(.+?)\s*$/gm)].map((m) => normaliseHeading(m[1]));
+    const declared = sectionsForTier('snapshot')
+      .filter((s) => s.surface === 'markdown' && s.placement.producer?.kind === 'authored')
+      .map((s) => normaliseHeading(s.label));
+    expect(asked).toEqual(declared);
+  });
+
+  it('the snapshot composes its three numeric sections from the record', () => {
+    // The Snapshot was the only member of the family composing nothing, while
+    // four of its nine authored sections were numeric. `Key Market Stats` stays
+    // authored on purpose: median price, vacancy rate, days on market and walk
+    // score are not in `financial_calculations`, so composing it would mean
+    // inventing a source.
+    const composed = sectionsForTier('snapshot')
+      .filter((s) => s.placement.producer?.kind === 'composed')
+      .map((s) => s.id);
+    expect(composed).toEqual(['verdict', 'scorecard', 'financialSnapshot']);
+    expect(
+      sectionsForTier('snapshot').find((s) => s.id === 'marketStats')?.placement.producer?.kind,
+    ).toBe('authored');
   });
 
   it('the briefing guide asks for exactly its authored headings, in order', () => {

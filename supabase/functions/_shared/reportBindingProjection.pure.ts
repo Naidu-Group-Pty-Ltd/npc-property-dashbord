@@ -101,9 +101,16 @@
  * a client's financial report, which is why it was measured rather than
  * inferred.
  *
- * Weekly figures are `annual / 52` — a unit conversion, not a model. The one
- * modelled value is `annualRent`, which uses the report's own stated
- * `occupancyWeeks` rather than assuming 52.
+ * Weekly figures are `annual / 52` — a unit conversion, not a model.
+ *
+ * `annualRent` is the CONTRACTUAL rent (`weeklyRent × 52`, or the record's own
+ * `income.annualRent`), because that is the basis the stored yields rest on and
+ * the figure a template prints as a bare "p.a." beside the weekly rent. It used
+ * to be `weeklyRent × occupancyWeeks` — a third quantity agreeing with neither
+ * the record nor the yield beside it. The occupancy assumption keeps its own
+ * figure under `annualRentAtOccupancy`; `rentBasis.pure.ts` decides both, and
+ * the composed financial chapters read the same module so the tile and the
+ * table cannot drift.
  */
 import { renderMarkdown } from './reports/markdown.pure.ts';
 import {
@@ -115,6 +122,7 @@ import {
 import { stripBakedCover } from './reports/investment/narrativeClean.pure.ts';
 import { planningChartContext, vizDirectiveRenderer } from './reports/vizFigures.pure.ts';
 import { reconcileStoredFinancials } from './reports/investment/financialEngine.pure.ts';
+import { readAnnualRent } from './reports/investment/rentBasis.pure.ts';
 import { rentIsEstablished } from './reports/investment/rentalEvidence.pure.ts';
 import { gradedDetailLine, gradedLine } from './reports/investment/scoreSections.pure.ts';
 
@@ -476,10 +484,23 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(financials, 'deposit', num(initial.deposit));
   put(financials, 'loanAmount', num(loan.loanAmount) ?? num(initial.loanAmount));
   put(financials, 'weeklyRent', weeklyRent);
-  // The report's own occupancy assumption, not a flat 52 weeks.
-  put(financials, 'annualRent', weeklyRent !== undefined && occupancyWeeks !== undefined
-    ? weeklyRent * occupancyWeeks
-    : undefined);
+  // Two annual rents, named apart, from the module the composed chapters also
+  // ask. `annualRent` is the CONTRACTUAL rent, because that is what the yields
+  // below rest on (measured: 149 of 153 stored gross yields are `weeklyRent ×
+  // 52`, and 18 of 18 stored `income.annualRent` values are too) and because
+  // this is the figure a template prints as a bare "p.a." beside the weekly
+  // rent. It used to be `weeklyRent × occupancyWeeks`, which agreed with
+  // neither: on 62 of 153 reports the KPI tile's annual rent could not produce
+  // the gross yield printed with it, by $1,832 on average and $2,600 at worst.
+  //
+  // The occupancy assumption keeps its figure under its own name. And where a
+  // report states no occupancy at all — 44 of 170 with a weekly rent — the
+  // contractual reading still answers, so the tile's "p.a." note stops
+  // rendering as the empty string.
+  const rent = readAnnualRent(income, assumptions);
+  put(financials, 'annualRent', rent.contractual);
+  put(financials, 'annualRentAtOccupancy', rent.atOccupancy);
+  put(financials, 'annualRentAtOccupancyLabel', rent.occupancyLabel);
   // A yield rests on a rent. Where the record establishes none, these describe
   // nothing — and this projection is the widest of the four readers, feeding
   // every bound template AND the recorded-facts block the model is handed, so

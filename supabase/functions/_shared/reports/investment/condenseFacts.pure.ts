@@ -71,7 +71,15 @@ export function buildRecordedFactsBlock(p: RecordedFactsSource): string | null {
 
   add('Purchase price', money(fin.purchasePrice));
   add('Weekly rent', money(fin.weeklyRent));
+  // The contractual rent, which is the basis the two yields below it rest on.
+  // A model told to "copy these exactly" will put both in one table, so they
+  // have to reconcile: this block used to carry an occupancy-adjusted rent
+  // beside a 52-week yield, which no reader could divide into the other.
   add('Annual rent', money(fin.annualRent));
+  // The occupancy assumption, under the label the projection gives it rather
+  // than as a second, quieter "Annual rent".
+  add(str(fin.annualRentAtOccupancyLabel) ?? 'Annual rent at assumed occupancy',
+    money(fin.annualRentAtOccupancy));
   add('Gross yield', pct(fin.grossYield));
   add('Net yield', pct(fin.netYield));
   add('Weekly cash position', money(fin.weeklyNet));

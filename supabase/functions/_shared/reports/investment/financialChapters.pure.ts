@@ -38,6 +38,7 @@ import {
   operatingExpensesFrom,
   reconcileStoredFinancials,
 } from './financialEngine.pure.ts';
+import { readAnnualRent } from './rentBasis.pure.ts';
 import { rentIsEstablished } from './rentalEvidence.pure.ts';
 import {
   composeScoreBreakdownSection,
@@ -147,12 +148,13 @@ function rentalAndYield(fin: Record<string, unknown>): ComposedChapter | null {
   const assumptions = obj(fin.assumptions);
 
   const weeklyRent = num(income.weeklyRent);
-  const occupancyWeeks = num(assumptions.occupancyWeeks);
-  // The same derivation the binding projection uses, so this table and the
-  // verdict page's tiles state the same annual figure.
-  const annualRent = weeklyRent !== undefined
-    ? Math.round(weeklyRent * (occupancyWeeks ?? 52))
-    : num(income.annualRent);
+  // Both annual rents, from the one module the binding projection also asks —
+  // so this table and the verdict page's tiles state the same figures under
+  // the same names. They used to share a derivation instead of a module, and
+  // it was the occupancy-adjusted one published bare as "Annual rent": on
+  // `1/27D Mitchell Street` this table read $30,000 two rows above a 5.67%
+  // yield that rests on $31,200.
+  const rent = readAnnualRent(income, assumptions);
 
   // A yield is the rent divided by the price. Where the record establishes no
   // rent, the rent rows above suppress themselves and these two must follow —
@@ -164,12 +166,12 @@ function rentalAndYield(fin: Record<string, unknown>): ComposedChapter | null {
 
   const table = twoCol(['Metric', 'Value'], [
     ['Weekly rent', money(weeklyRent)],
-    [
-      occupancyWeeks !== undefined && occupancyWeeks !== 52
-        ? `Annual rent (${occupancyWeeks} occupied weeks)`
-        : 'Annual rent',
-      money(annualRent),
-    ],
+    // The contractual rent, which is what the yields two rows below rest on.
+    ['Annual rent', money(rent.contractual)],
+    // The occupancy assumption, as its own row rather than as a quieter
+    // definition of the row above it. `twoCol` drops a row with no value, so a
+    // report assuming a full year adds nothing here.
+    [rent.occupancyLabel ?? 'Annual rent at assumed occupancy', money(rent.atOccupancy)],
     ['Gross rental yield', founded ? pct(metrics.grossRentalYield) : undefined],
     ['Net rental yield', founded ? pct(metrics.netRentalYield) : undefined],
   ]);
@@ -382,4 +384,58 @@ export function composeFinancialChapters(
   return chapters
     .filter((c): c is ComposedChapter => c !== null)
     .sort((a, b) => a.ordinal - b.ordinal);
+}
+
+/**
+ * The Snapshot's `Financial Snapshot` — one short table from the same healed
+ * record the chapters above are built from.
+ *
+ * The Snapshot was the only member of the Compass family composing NOTHING:
+ * briefing 7 sections from the record, financial 8, snapshot 0 — while four of
+ * its nine model-authored sections were numeric. Its guide named six metrics to
+ * "choose from" and the recorded-facts block carried five of them; the sixth,
+ * `10-Year Projected Value`, had no authority in the block at all, so a model
+ * asked for it had to compute one.
+ *
+ * This is deliberately NOT the briefing's five financial chapters. A Snapshot
+ * is five pages and its financial section is one table; composing the long form
+ * into it would blow the tier's budget, which is a different defect rather than
+ * a fix. The rules are the chapters': every figure typed from the record, a
+ * labelled row is a promise, and a yield is withheld where no rent is
+ * established.
+ */
+export function composeFinancialSnapshotSection(
+  financialCalculations: unknown,
+  heading: string,
+): string | null {
+  const fin = obj(reconcileStoredFinancials(financialCalculations).fin);
+  const income = obj(fin.income);
+  const metrics = obj(fin.keyMetrics);
+  const initial = obj(fin.initialCosts);
+  const projectionRows = obj(fin.projections);
+
+  const rent = readAnnualRent(income, obj(fin.assumptions));
+  const founded = rentIsEstablished(income);
+
+  // The tenth year of the base-case series, which the record holds and the
+  // facts block never carried — so this is the one figure the guide asked for
+  // that a model could only have produced by projecting it itself.
+  const moderate = Array.isArray(projectionRows.moderate) ? projectionRows.moderate : [];
+  const finalYear = moderate.length ? obj(moderate[moderate.length - 1]) : {};
+  const horizonYear = num(finalYear.year);
+
+  const table = twoCol(['Metric', 'Value'], [
+    ['Purchase price', money(initial.propertyValue)],
+    ['Weekly rent', money(income.weeklyRent)],
+    ['Annual rent', money(rent.contractual)],
+    ['Gross yield', founded ? pct(metrics.grossRentalYield) : undefined],
+    ['Net yield', founded ? pct(metrics.netRentalYield) : undefined],
+    ['Annual cash position (pre-tax)', money(metrics.annualNet)],
+    [
+      horizonYear !== undefined ? `Projected value, year ${horizonYear}` : 'Projected value',
+      money(finalYear.propertyValue),
+    ],
+  ]);
+
+  return table.length ? [`## ${heading}`, '', ...table].join('\n') + '\n' : null;
 }

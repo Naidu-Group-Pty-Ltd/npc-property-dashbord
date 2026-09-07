@@ -276,6 +276,12 @@ const composedFn = (fn: string): SectionProducer => ({
   ref: `scoreSections.pure.ts#${fn}`,
 });
 
+/** A named composer in a module other than `scoreSections`. */
+const composedFrom = (file: string, fn: string): SectionProducer => ({
+  kind: 'composed',
+  ref: `${file}#${fn}`,
+});
+
 export type AuthoringGuide = 'condense.briefing' | 'condense.snapshot' | 'generator.compass';
 
 const authored = (guide: AuthoringGuide): SectionProducer => ({ kind: 'authored', ref: guide });
@@ -365,7 +371,11 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     tiers: {
       compass: { depth: 'spine', order: 3, label: 'Executive Verdict', producer: authored('generator.compass') },
       briefing: { depth: 'spine', order: 3, label: 'Executive Summary', producer: authored('condense.briefing') },
-      snapshot: { depth: 'spine', order: 5, label: 'Investment Score', producer: authored('condense.snapshot') },
+      // Composed, not asked of the model: the guide it replaces said
+      // `Recommendation: [BUY/HOLD/SELL]` while the engine issues HOLD,
+      // CAUTION, HOLD/BUY or BUY — SELL is never issued and CAUTION is never
+      // offered, so answering the guide meant changing the verdict.
+      snapshot: { depth: 'spine', order: 5, label: 'Investment Score', producer: composedFn('composeVerdictSection') },
       financial: { depth: 'spine', order: 3, label: 'Client Investment Decision Summary', producer: routed('financial', 1) },
       strategic: { depth: 'spine', order: 3, label: 'Client Property & Location Snapshot', producer: routed('dueDiligence', 1) },
     },
@@ -912,7 +922,9 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     tiers: {
       compass: { depth: 'optional', order: 12, surface: 'document', producer: projection('recommendation.gradedDetailLine') },
       briefing: { depth: 'required', order: 16, label: 'Investment Score Breakdown', producer: composedFn('composeScoreBreakdownSection') },
-      snapshot: { depth: 'required', order: 6, label: 'Score Breakdown', producer: authored('condense.snapshot') },
+      // Composed: the guide listed all five dimensions with no omission rule
+      // beside it, and the record withholds the ones it could not score.
+      snapshot: { depth: 'required', order: 6, label: 'Score Breakdown', producer: composedFn('composeScoreDimensionsSection') },
       financial: { depth: 'required', order: 14, label: 'Financial Investment Scorecard', producer: composed(12) },
     },
   },
@@ -998,7 +1010,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     aliases: ['Financial Snapshot'],
     purpose: 'Price, weekly rent, gross and net yield, annual cashflow and the ten-year value — from the recorded figures only.',
     tiers: {
-      snapshot: { depth: 'required', order: 7, label: 'Financial Snapshot', producer: authored('condense.snapshot') },
+      snapshot: { depth: 'required', order: 7, label: 'Financial Snapshot', producer: composedFrom('financialChapters.pure.ts', 'composeFinancialSnapshotSection') },
     },
   },
 ];
