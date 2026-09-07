@@ -16,6 +16,7 @@ import {
   Crosshair,
   ExternalLink,
   Flame,
+  HardHat,
   Layers,
   LayoutGrid,
   Loader2,
@@ -80,6 +81,7 @@ import {
   type PropertyGlyph,
 } from '@/lib/listingsMap';
 import { PIN_GLYPH_LABELS, PIN_GLYPH_PATHS, pinGlyphSvg } from './listingPinGlyphs';
+import { isBuilderStockMapId } from '@/lib/builderStockMapPoint';
 import { displayPrice, formatArea } from '@/lib/listingDisplay';
 import { listingContact } from '@/lib/listingContact';
 import { ListingHero } from './ListingHero';
@@ -172,6 +174,19 @@ interface ListingsMapViewProps {
    * gallery.
    */
   images?: Record<string, StoredListingImage[]>;
+  /**
+   * The builder-stock layer's controls. Absent where the deployment has no
+   * builder stock — the toggle is drawn only when there is something to toggle,
+   * because a control that switches nothing on is worse than no control.
+   */
+  builderStock?: {
+    available: boolean;
+    shown: boolean;
+    onToggle: (next: boolean) => void;
+    count: number;
+    /** The layer could not be read. The map still draws every listing. */
+    failed: boolean;
+  };
 }
 
 interface ListingMarker {
@@ -605,7 +620,17 @@ function PinGlyphSwatch({ glyph }: { glyph: PropertyGlyph }) {
   );
 }
 
-function PinLegend({ tiers }: { tiers: PriceTiers | null }) {
+function PinLegend({
+  tiers,
+  hasBuilderStock,
+}: {
+  tiers: PriceTiers | null;
+  /**
+   * The builder line is drawn only when builder stock is actually on the map.
+   * A key to a mark nobody can see is noise, and this legend is already dense.
+   */
+  hasBuilderStock: boolean;
+}) {
   return (
     <div className="space-y-2.5">
       {tiers && (
@@ -636,6 +661,18 @@ function PinLegend({ tiers }: { tiers: PriceTiers | null }) {
           ))}
         </ul>
       </div>
+
+      {hasBuilderStock && (
+        <div className="space-y-1.5">
+          <p className={LEGEND_HEADING}>Pin icon · source</p>
+          <ul className="flex flex-wrap gap-x-3 gap-y-1.5">
+            <li className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <PinGlyphSwatch glyph="builder" />
+              {PIN_GLYPH_LABELS.builder}
+            </li>
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -728,7 +765,9 @@ function ResultsPanel({
         <ul className="min-h-0 flex-1 divide-y divide-border/40 overflow-y-auto">
           {sorted.map(({ listing }) => {
             const tier = priceTier(listing.price, tiers);
-            const glyph = propertyGlyph(listing.propertyType);
+            const glyph = isBuilderStockMapId(listing.id)
+              ? 'builder'
+              : propertyGlyph(listing.propertyType);
             const active = listing.id === selectedId;
             const locality = [listing.suburb, listing.state].filter(Boolean).join(' ');
             const beds = listing.beds ?? listing.bedrooms;
@@ -933,7 +972,12 @@ const ListingMarkers = memo(function ListingMarkers({
       {markers.map(({ listing, position, precision }) => {
         const label = formatCompactAud(listing.price);
         const tier = priceTier(listing.price, tiers);
-        const glyph = propertyGlyph(listing.propertyType);
+        // Builder stock is marked by WHERE IT CAME FROM, not by its type:
+        // a builder's house and an agent's house are the same property
+        // type and a reader needs to tell the two offers apart.
+        const glyph = isBuilderStockMapId(listing.id)
+          ? 'builder'
+          : propertyGlyph(listing.propertyType);
         const approx = describeGeocodePrecision(precision).tier === 'area';
         const pinState: PinState =
           listing.id === selectedId ? 'active' : listing.id === hoveredId ? 'peek' : 'idle';
@@ -1287,7 +1331,13 @@ function ListingPopupCard({
 /* Main view                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export function ListingsMapView({ listings, onSelectListing, onEmailAgent, images }: ListingsMapViewProps) {
+export function ListingsMapView({
+  listings,
+  onSelectListing,
+  onEmailAgent,
+  images,
+  builderStock,
+}: ListingsMapViewProps) {
   // Stable identity for the marker layer; see ListingMarkersProps.imagesRef.
   const imagesRef = useRef<Record<string, StoredListingImage[]> | undefined>(images);
   imagesRef.current = images;
@@ -1710,6 +1760,14 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
     { value: 'wide', label: 'Wide', title: 'Broad radius, regional patterns' },
   ];
 
+  // Does the plotted set actually contain builder stock? Asked of the
+  // markers rather than of a prop, so the legend cannot claim a mark the
+  // map is not drawing.
+  const hasBuilderStock = useMemo(
+    () => markers.some((m) => isBuilderStockMapId(m.listing.id)),
+    [markers],
+  );
+
   const plottedSummary = `${markers.length} of ${listings.length} plotted`;
   const panelOpen = panelState === 'open' && markers.length > 0;
 
@@ -1913,6 +1971,39 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
             </button>
           )}
 
+          {builderStock?.available && (
+            <button
+              type="button"
+              onClick={() => builderStock.onToggle(!builderStock.shown)}
+              aria-pressed={builderStock.shown}
+              title={
+                builderStock.shown
+                  ? 'Hide builder and developer stock'
+                  : 'Show builder and developer stock on the map'
+              }
+              className={cn(
+                'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-md backdrop-blur transition-colors',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+                builderStock.shown
+                  ? 'border-primary/50 bg-primary text-primary-foreground'
+                  : 'border-border/60 bg-background/85 text-foreground hover:bg-muted/60',
+              )}
+            >
+              <HardHat className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="tabular-nums">{builderStock.count}</span> builder
+            </button>
+          )}
+
+          {builderStock?.failed && (
+            <span
+              className="flex items-center gap-1.5 rounded-full border border-warning/40 bg-background/85 px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-md backdrop-blur"
+              role="status"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 text-warning" aria-hidden="true" />
+              Builder stock unavailable
+            </span>
+          )}
+
           {unmapped.length > 0 && !isResolving && (
             <Popover>
               <PopoverTrigger asChild>
@@ -2083,7 +2174,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
 
               {showPins && (
                 <div className="border-t border-border/50 pt-2">
-                  <PinLegend tiers={tiers} />
+                  <PinLegend tiers={tiers} hasBuilderStock={hasBuilderStock} />
                 </div>
               )}
             </div>
@@ -2115,7 +2206,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
 
           {legendOpen && (
             <div className="px-3 pb-3">
-              <PinLegend tiers={tiers} />
+              <PinLegend tiers={tiers} hasBuilderStock={hasBuilderStock} />
             </div>
           )}
         </div>

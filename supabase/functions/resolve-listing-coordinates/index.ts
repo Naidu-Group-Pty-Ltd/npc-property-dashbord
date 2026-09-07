@@ -3,6 +3,7 @@ import { verifyAuth, createForbiddenResponse, createUnauthorizedResponse, create
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { assessAuPoint } from '../_shared/auGeoSanity.pure.ts';
+import { isTrustworthyAuPoint } from '../_shared/auPointTrust.pure.ts';
 import { assessAuPostcodePoint } from '../_shared/auPostcodeGeo.pure.ts';
 import { assessAgainstConsensus, type GeoPointLike } from '../_shared/geoConsensus.pure.ts';
 import {
@@ -14,9 +15,33 @@ import {
 
 // Resolves map coordinates for property listings WITHOUT any browser-side
 // geocoding. Order of resolution per listing:
-//   1. Coordinates already supplied by the source record (no lookup).
+//   1. Coordinates already supplied by the source record -- ACCEPTED ONLY IF
+//      THEY LAND IN AUSTRALIA. See recordPointIsTrustworthy below.
 //   2. Cache hit in public.listing_geocodes.
 //   3. Google Geocoding API (server key), result written to the cache.
+//
+// Step 1 used to be an unconditional `continue`: any record carrying a numeric
+// latitude/longitude was served verbatim, because `validPoint` asks only
+// whether a number is a coordinate at all (|lat| <= 90, |lng| <= 180) -- which
+// is true of every point on Earth. The three gates below it (country:AU on the
+// provider call, assessAuPoint, assessAuPostcodePoint, the suburb consensus)
+// therefore protected only the geocoded path, and the one path nobody checked
+// was the one carrying data this product does not control.
+//
+// Intake writes those coordinates, and it geocodes bare locality names with no
+// country restriction, so Australian localities land on their overseas
+// namesakes: `Ripley` in Missouri, `Kerry` in Ireland, `York` in Yorkshire,
+// `Blenheim` in New Zealand, and an `Alfred Road` in London on a record whose
+// state column says VIC. 17 of 120 live listings were affected. None of them
+// drew a wrong pin -- the browser runs assessAuPoint too, so it discarded them
+// -- but "discarded" is why the marketplace reported 29 unmapped listings and
+// why those properties were invisible on the map.
+//
+// The rule: a coordinate the record supplies is a HINT, not an answer. It is
+// trusted where it is consistent with the record's own Australian geography,
+// and where it is not the listing falls through to the geocoder -- which is
+// restricted to country:AU and then re-checked -- so a bad hint costs one
+// lookup instead of one lost property.
 
 interface ListingInput {
   id: string;
@@ -117,8 +142,19 @@ Deno.serve(async (req) => {
       const lat = numeric(listing.latitude);
       const lng = numeric(listing.longitude);
       if (validPoint(lat, lng)) {
-        results.push({ id, lat: lat as number, lng: lng as number, source: 'record' });
-        continue;
+        // The same three questions the geocoded path answers, asked of the
+        // record's own claim. A hint that fails is dropped rather than served,
+        // and the listing continues to the lookup below.
+        const trustworthy = isTrustworthyAuPoint(
+          lat,
+          lng,
+          clean(listing.state, 60) || null,
+          clean(listing.postcode, 8) || null,
+        );
+        if (trustworthy) {
+          results.push({ id, lat: lat as number, lng: lng as number, source: 'record' });
+          continue;
+        }
       }
 
       const query = buildQuery(listing);
