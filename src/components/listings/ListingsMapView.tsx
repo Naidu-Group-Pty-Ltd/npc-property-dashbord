@@ -1,5 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Circle, MapContainer, TileLayer, Marker, Popup, ScaleControl, useMap } from 'react-leaflet';
+import {
+  AttributionControl,
+  Circle,
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  ScaleControl,
+  useMap,
+} from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
@@ -220,6 +229,15 @@ type PinVariant = 'chip' | 'pin' | 'ghost';
  * Midnight used to come from — started answering anonymous requests with an
  * "API KEY REQUIRED" watermark baked into every tile.
  */
+/**
+ * Leaflet's own credit, minus the Ukrainian flag SVG its default attribution
+ * prefix carries in 1.9.x. The library is still credited, as its licence asks;
+ * the flag is upstream editorial and reads, on a property marketplace, as a
+ * statement about the listings rather than about the mapping library.
+ */
+const LEAFLET_CREDIT =
+  '<a href="https://leafletjs.com" title="A JavaScript library for interactive maps">Leaflet</a>';
+
 const BASEMAP_DEFS = BASEMAP_CATALOG;
 
 const BASEMAP_LABELS: Record<BasemapId, string> = {
@@ -1820,7 +1838,20 @@ export function ListingsMapView({
           fadeAnimation={!reducedMotion}
           markerZoomAnimation={!reducedMotion}
           style={{ height: '100%', width: '100%' }}
+          /*
+            Leaflet 1.9 injects a Ukrainian flag SVG of its own into the
+            attribution control, beside the word "Leaflet". It is an upstream
+            solidarity emblem rather than anything about this map's data, and on
+            a property marketplace a national flag in the corner reads as a
+            statement about the listings — it was reported as one. `prefix`
+            replaces the whole built-in string, so the library is still credited
+            (its licence asks for that) and the flag is simply not drawn. The
+            tile providers' own attributions are untouched; they come from each
+            TileLayer.
+          */
+          attributionControl={false}
         >
+          <AttributionControl position="bottomright" prefix={LEAFLET_CREDIT} />
           <TileLayer
             key={basemap.id}
             attribution={basemap.attribution}
