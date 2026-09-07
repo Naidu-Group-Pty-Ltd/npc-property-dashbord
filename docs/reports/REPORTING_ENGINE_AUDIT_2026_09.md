@@ -2966,3 +2966,92 @@ rewrite rows this has no business touching) and before the upfront total (which
 IS the deposit plus the acquisition lines and must follow). The same function
 runs at the write boundary too, on the two paths where the recompute is skipped
 and the client's own object is stored.
+
+## §38 — Portfolio: deterministic code becomes the sole numerical authority (2026-09-07)
+
+Full detail: [`PORTFOLIO_TRUST_BOUNDARY.md`](./PORTFOLIO_TRUST_BOUNDARY.md).
+
+The Portfolio generator handed the model the portfolio's own metrics and then
+asked for numbers back in its JSON schema — rate-sensitivity impacts, current
+cashflow, current repayments, projected value and equity, borrowing-capacity
+utilisation. **It was not doing arithmetic**, and the corpus shows something
+worse than inaccuracy: the field does not hold one quantity. Every client with
+a stored sensitivity block holds interest-only loans, so the true step is exact
+(`balance × Δ ÷ 12`) and needs no term — and measured against those loans, of
+the 13 blocks whose loans carry a recorded structure, **4 encode the monthly
+level *after* the rise, 3 encode the change itself, and 6 are wrong under both
+readings** (best-case error: median $718 a month, $10,611 at worst). All of
+them print under the same PDF label. One report's +2% figure ($0.15) is smaller
+than its +1% ($1,010.15), which no rate rise can produce. One
+`currentMonthlyCashflow` differed by $492 a month from the `portfolioMetrics`
+figure sitting beside it in the same object. **A field that means two things is
+not repairable by prompt wording**, which is why the fix moves the producer
+rather than the instructions.
+
+**The trace came first, and it changed the design twice.** Two different fields
+share the name `interestRateSensitivity` — a numeric object read only by the
+pdf-lib generator, and a PROSE string under `riskAssessment` read by the
+WeasyPrint normaliser; conflating them would have blanked a risk row. And
+**there is no loan term in this data model** — not unpopulated, no such column,
+while `loan_repayment_amount` exists and is populated on 0 of 47 loans.
+
+That last fact splits the mathematics rather than being worked around. An
+interest-only loan is exact as `balance × rate ÷ 12` — verified against the
+data, where `monthly_interest_repayment` equals that expression for 20 of 20
+interest-only loans and 0 of 21 principal-and-interest ones, which is how we
+know it is not the same quantity there. A P&I loan needs a term to amortise and
+is **refused rather than assumed**: a thirty-year guess on a loan with eight
+years left misstates both the payment and the shock. A group containing any
+unmodellable loan is unavailable in whole, because a figure covering three
+loans of four understates the exposure while sitting beside the portfolio's
+full debt. Across the 23 clients holding loans that is 15 exact and 8 absent —
+a strict improvement on a figure produced for all 23 and wrong for most. The
+remedy for the rest is a data change (capture a loan term), named and out of
+scope.
+
+**Fifteen deterministic fields left the model's schema.** Not computed and then
+compared — *not asked*, so there is nothing to overwrite and nothing to
+reconcile. `healthScore` and `diversificationScore` stay model-authored and are
+bounded 0–100 on the way out, **dropped rather than clamped** when out of
+range, because clamping 250 to 100 publishes an excellent rating the model
+never gave. Cashflow has one authority: the assembly assigns
+`portfolioMetrics.netMonthlyCashflow` directly, so no second derivation exists
+to disagree with it.
+
+Three rules carry it. **The persisted shape did not change** — both renderers
+read the same paths and the new fields are additive — so historical rows still
+render, and the renderer hides a figure only on an explicit `available ===
+false`, which a stored row does not carry. That was checked by execution rather
+than by reading the guard: across all 26 stored reports, 0 carry an `available`
+flag, 26 of 26 hold a numeric projected value, and every capacity and
+sensitivity block that exists holds numeric figures — nothing stored loses a
+number, and no backfill was run. **`projectedMonthlyCashflow` is
+typed `null` so it cannot be set**: projecting it needs a rent-growth and an
+expense-growth assumption this repository does not have, and capital growth is
+not rental growth. And **`formatCurrency(null)` returned `'$0'`**, so an
+unavailable figure would have printed `$0/mo` — a rate shock of zero reads as
+"rates rising costs you nothing", the exact inversion this work exists to end;
+the KPI boxes distinguish "Not available" from "Not projected" now and draw the
+reason beneath. **That component draws the block twice** — into the PDF and
+again on screen, from the same object, through the same helper — and the first
+attempt healed only the pdf-lib path, so the review a client is shown before
+the document exists went on printing `$0/mo`. The invariant is stated over the
+whole file for that reason, and an absent cashflow is no longer painted green
+by `safeNumber(null) >= 0`.
+
+**The label now says which quantity it is showing.** "IF RATES RISE +1%" is
+true of both readings the corpus contains, which is exactly why it could sit
+over either without looking wrong. A calculated row reads "+1%: MONTHLY CHANGE";
+a historical row — one with no `available` flag — keeps the wording it shipped
+with, because relabelling it would be a second guess about which quantity it
+holds, and the point of this change is to stop guessing.
+
+The tests deliberately do **not** assert that the +2% impact is twice the +1%.
+That was an audit sanity band, not an invariant: a principal-and-interest
+payment is convex in the rate. Six invariants pin the rest — no default term,
+rate or structure exists to fill a gap with; no rate figure can reach the page
+as a currency zero; the absence explanation is drawn on an explicit
+`available === false` and never on a falsy check, so a historical row still
+renders; the persisted paths both renderers read did not move; and the negative
+sign convention is asserted in the type, in prose beside the field, and in the
+arithmetic. Each was mutation-checked against the change it forbids.
