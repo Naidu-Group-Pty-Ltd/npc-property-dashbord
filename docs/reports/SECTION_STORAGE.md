@@ -113,6 +113,31 @@ and **no section rows**. Half an index is worse than none: a caller reading
 
 Measured: **1,199 of 1,199 stored reports conserve.** Nothing was refused.
 
+And the proof was taken twice, the second time against the **stored rows**
+rather than against the function's own report of them. The whole corpus is
+indexed in production; re-assembling each document **in SQL** — `preamble ||
+string_agg(marker || heading || body order by ordinal)` — and comparing it
+whitespace-stripped against `investment_reports.report_content` gives
+**1,199 of 1,199 exact, 0 mismatched**. That is a different implementation from
+the one that wrote the rows, so it catches what an in-memory check cannot:
+truncation at the column, a lost row, a wrong ordinal.
+
+| | |
+|---|---|
+| reports with content | 1,199 |
+| indexed | 1,199 |
+| `conserves = true` | 1,199 (0 refused) |
+| re-assemble exactly, in SQL | 1,199 / 1,199 |
+| section rows | 31,273 |
+| distinct section ids in use | 37 |
+| deepest repeat of one id in one report | 10 |
+| H1-sectioned documents | 842 |
+| preamble-only documents | 9 |
+
+Ten occurrences of one section id in a single report is the corpus's answer to
+why repeats are never merged. It is not a pathology to be normalised away — it
+is what the legacy generator wrote, and the index has to be able to say so.
+
 ### The stored counts describe what is stored
 
 A refused report stores zero sections and its counts read zero. A labelled row

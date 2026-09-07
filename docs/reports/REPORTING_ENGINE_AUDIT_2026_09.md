@@ -2582,7 +2582,14 @@ section on 17 reports whose target the corpus does not settle.
   `(report_id, section_id)` would silently collapse a client's document.
 - **An index is written only where re-assembly proves it lossless**, and a
   report that fails gets a row saying so with **no** section rows. Measured:
-  **1,199 of 1,199 conserve**; nothing was refused.
+  **1,199 of 1,199 conserve**; nothing was refused. The whole corpus is now
+  indexed in production — 31,273 section rows across 37 distinct ids, the
+  deepest repeat being **10 occurrences of one id in a single report** — and
+  re-assembling every document **in SQL** from the stored rows reproduces its
+  non-whitespace content exactly, **1,199 of 1,199, 0 mismatched**. That second
+  proof runs on a different implementation from the one that wrote the rows,
+  which is what makes it worth taking: it sees truncation at the column, a lost
+  row and a wrong ordinal, and the in-memory check cannot.
 - **The stored counts describe what is stored** — a refused report reads zero,
   because `total_sections = 21` beside no rows is the shape this programme
   removes.
