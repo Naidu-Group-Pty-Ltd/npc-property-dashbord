@@ -40,6 +40,9 @@ DECLARE
 BEGIN
   PERFORM public.publish_ready_builder_stock_uploads();
   PERFORM public.reopen_builder_stock_stranded_items();
+  -- And the properties a superseded worker failed on, which the sibling above
+  -- cannot see: it reopens on a changed ladder, this on a changed runtime.
+  PERFORM public.reopen_builder_stock_runtime_failures();
 
   SELECT marketplace_eligibility_version, image_sanitization_version
     INTO v_target, v_sanitization

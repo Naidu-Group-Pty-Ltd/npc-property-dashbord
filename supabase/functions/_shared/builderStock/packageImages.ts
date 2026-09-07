@@ -158,7 +158,7 @@ export type PackageOutcome =
  * our access. The racer's loser keeps running to no effect: this function
  * writes nothing anywhere, so a late completion is a discarded value.
  */
-const RECOVERY_DEADLINE_MS = 75_000;
+export const RECOVERY_DEADLINE_MS = 75_000;
 
 async function withRecoveryDeadline(
   work: Promise<PackageOutcome>,

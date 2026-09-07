@@ -34,14 +34,27 @@ describe('the four states a pictureless row can honestly be in', () => {
     expect(stockImageProgress({ ...settled, unreadDocuments: 0 })).toBe('none_found');
   });
 
-  it('a document we could not read is its OWN state, never "no picture"', () => {
-    expect(stockImageProgress({ ...settled, unreadDocuments: 1 })).toBe('unreadable');
+  it('a document OUR processing failed on is its own state, never "no picture"', () => {
+    expect(stockImageProgress({ ...settled, unprocessedDocuments: 1 })).toBe('unreadable');
+  });
+
+  it('a document that could not be REACHED is a different state again', () => {
+    // The one failure on this list a builder can act on, so it must not be
+    // worded like the one they cannot.
+    expect(stockImageProgress({ ...settled, unreachableDocuments: 1 }))
+      .toBe('source_unavailable');
+  });
+
+  it('our own failure outranks a dead link, because ours asks nothing of them', () => {
+    expect(stockImageProgress({
+      ...settled, unprocessedDocuments: 1, unreachableDocuments: 1,
+    })).toBe('unreadable');
   });
 
   it('one unread document among several outranks the others being empty', () => {
     // The row has NOT established that its documents name no picture while one
     // of them has never been opened.
-    expect(stockImageProgress({ ...settled, sourceDocuments: 4, unreadDocuments: 1 }))
+    expect(stockImageProgress({ ...settled, sourceDocuments: 4, unprocessedDocuments: 1 }))
       .toBe('unreadable');
   });
 });
@@ -73,8 +86,30 @@ describe('what those states are allowed to say out loud', () => {
     }
   });
 
-  it('it tells the reader it is being retried, so the state is not read as final', () => {
-    expect(STOCK_IMAGE_PROGRESS_DETAIL.unreadable).toMatch(/automatically/i);
+  it('OUR failure promises no retry and sends nobody to check their link', () => {
+    /*
+     * The first version of this state said "retried automatically" and "check
+     * the link still opens" in one breath. Both were wrong: the retry is a
+     * promise about our own release schedule, and the link is fine — sending
+     * the builder to inspect a document that was never the problem is the
+     * softer version of the lie this state exists to end.
+     */
+    const detail = STOCK_IMAGE_PROGRESS_DETAIL.unreadable;
+    expect(detail).not.toMatch(/automatic|retr(y|ied|ies)/i);
+    expect(detail).not.toMatch(/check the link|shared|moved|deleted/i);
+  });
+
+  it('and the dead-link state DOES point at the link, because that one is theirs', () => {
+    const detail = STOCK_IMAGE_PROGRESS_DETAIL.source_unavailable;
+    expect(detail).toMatch(/link/i);
+    // But it never claims the document was read and found wanting.
+    expect(detail).not.toMatch(/was read|were read|none of them presents/i);
+  });
+
+  it('neither failure state is worded as a finding about the document', () => {
+    for (const state of ['unreadable', 'source_unavailable'] as const) {
+      expect(STOCK_IMAGE_PROGRESS_LABEL[state]).not.toMatch(/no picture in/i);
+    }
   });
 
   it('the inspected state keeps its claim, because there it is true', () => {
@@ -88,30 +123,41 @@ describe('counting unread documents from stored provenance', () => {
     source_anchor: null, provenance_version: 23, ...over,
   });
 
-  it('counts a killed branch — the shape the six were left in', () => {
+  it('counts a killed branch as OURS — the shape the six were left in', () => {
     const stored = { branches: { a: branch({ result: 'package_recovery_attempt', attempts: 4 }) } };
-    expect(unreadDocumentCount(stored)).toBe(1);
+    expect(unreadDocumentCount(stored)).toEqual({ unprocessed: 1, unreachable: 0 });
   });
 
-  it('counts an operational retirement', () => {
+  it('a STAMPED operational retirement is ours', () => {
+    const stored = { branches: {
+      a: branch({
+        result: 'no_deterministic_image', exhaustion: 'operational', runtime_version: 1,
+      }),
+    } };
+    expect(unreadDocumentCount(stored)).toEqual({ unprocessed: 1, unreachable: 0 });
+  });
+
+  it('an UNSTAMPED operational retirement is the link\'s', () => {
+    // Both kinds are `operational`; the stamp is the only honest separator,
+    // and it is the same field the runtime re-arm keys on — so the screen and
+    // the queue cannot disagree about which documents are ours to fix.
     const stored = { branches: {
       a: branch({ result: 'no_deterministic_image', exhaustion: 'operational' }),
     } };
-    expect(unreadDocumentCount(stored)).toBe(1);
+    expect(unreadDocumentCount(stored)).toEqual({ unprocessed: 0, unreachable: 1 });
   });
 
-  it('does NOT count a document that answered', () => {
+  it('does NOT count a document that answered, as either', () => {
     const stored = { branches: {
       a: branch({ result: 'no_deterministic_image', exhaustion: 'inspected' }),
       b: branch({ result: 'no_deterministic_image', exhaustion: 'inspected' }),
     } };
-    expect(unreadDocumentCount(stored)).toBe(0);
+    expect(unreadDocumentCount(stored)).toEqual({ unprocessed: 0, unreachable: 0 });
   });
 
   it('is silent on anything it does not recognise rather than guessing', () => {
-    expect(unreadDocumentCount(null)).toBe(0);
-    expect(unreadDocumentCount({})).toBe(0);
-    expect(unreadDocumentCount({ branches: null })).toBe(0);
-    expect(unreadDocumentCount('nonsense')).toBe(0);
+    for (const input of [null, {}, { branches: null }, 'nonsense']) {
+      expect(unreadDocumentCount(input)).toEqual({ unprocessed: 0, unreachable: 0 });
+    }
   });
 });

@@ -80,6 +80,8 @@ import {
   settleFallbackImages, MAX_FALLBACK_ITEMS_PER_TICK,
 } from '../_shared/builderStock/settleFallbackImages.ts';
 import { previewSanitization } from '../_shared/builderStock/previewSanitization.ts';
+import { RECOVERY_DEADLINE_MS } from '../_shared/builderStock/packageImages.ts';
+import { readStage } from '../_shared/builderStock/settleItemImages.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 import { storeVerifiedWebImages } from '../_shared/builderStock/webImageStore.ts';
@@ -406,7 +408,27 @@ Deno.serve(async (req: Request) => {
      * So concurrency comes down to two and the work per invocation goes up:
      * fewer isolates, each doing more, each holding one document at a time.
      */
-    const RESERVE_FOR_ANOTHER_MS = 30_000;
+    /*
+     * ENOUGH TIME TO FINISH, NOT MERELY SOME TIME LEFT.
+     *
+     * The first version of this reserved a flat 30 s, which proves nothing: a
+     * source-stage claim can legitimately spend `RECOVERY_DEADLINE_MS`
+     * (75 s) before it answers, and the recovery does not consult the item's
+     * deadline — so an item claimed at the 70 s mark could still be running
+     * at 145 s, past a 100 s budget, and be killed mid-flight. That is the
+     * exact failure this whole change removes, reintroduced by the throughput
+     * fix.
+     *
+     * So the reserve is DERIVED from the worst case rather than chosen, and
+     * it is per-stage because the stages are not alike: only `source` runs a
+     * package recovery. The write-back allowance matches the one the per-item
+     * deadline already holds back.
+     */
+    const WRITE_BACK_RESERVE_MS = 10_000;
+    const HEAVY_STAGE_RESERVE_MS = RECOVERY_DEADLINE_MS + WRITE_BACK_RESERVE_MS;
+    const LIGHT_STAGE_RESERVE_MS = 20_000;
+    const reserveFor = (stage: string): number =>
+      stage === 'source' ? HEAVY_STAGE_RESERVE_MS : LIGHT_STAGE_RESERVE_MS;
     let claimed = itemClaim.item;
     let settledCount = 0;
     let lastSettlement: Awaited<ReturnType<typeof settleClaimedItem>> | null = null;
@@ -499,11 +521,32 @@ Deno.serve(async (req: Request) => {
      * the invocation stops cleanly and the next tick picks the queue up —
      * nothing is held, nothing is lost.
      */
-    if (Date.now() > startedAt + BUDGET_MS - RESERVE_FOR_ANOTHER_MS) break;
+    if (Date.now() > startedAt + BUDGET_MS - LIGHT_STAGE_RESERVE_MS) break;
     const next = await claimOneImageWorkItem(supabase, {
       leaseSeconds: Math.ceil(BUDGET_MS / 1000) + 20,
     });
     if (!next.available || !next.item) break;
+
+    /*
+     * THE STAGE IS ONLY KNOWN ONCE CLAIMED, so a claim that turns out to be
+     * too expensive for the time left is HANDED BACK rather than started.
+     * Released at the same stage with no progress, so the next tick takes it
+     * with a full budget; the recovery never begins, so no branch attempt is
+     * spent and nothing is recorded about the document. Doing the work with
+     * too little clock would either kill the worker or bank a timeout as if
+     * it were an answer about the link.
+     */
+    const remaining = startedAt + BUDGET_MS - Date.now();
+    if (remaining < reserveFor(next.item.image_work_stage)) {
+      await completeItemWork(supabase, next.item.id, {
+        nextStage: readStage(next.item.image_work_stage),
+        result: 'deferred: not enough of this invocation left to finish it',
+        error: null,
+        retryAfterSeconds: 0,
+        progressed: false,
+      });
+      break;
+    }
     claimed = next.item;
     }
 

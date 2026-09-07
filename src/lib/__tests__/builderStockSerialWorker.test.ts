@@ -21,6 +21,9 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  RECOVERY_DEADLINE_MS,
+} from '../../../supabase/functions/_shared/builderStock/packageImages';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
@@ -46,12 +49,47 @@ describe('the settler claims serially and never pre-claims a batch', () => {
     expect(claims.length).toBe(2);
   });
 
-  it('stops before starting work it cannot finish inside the budget', () => {
-    // A linked package may spend up to the recovery deadline before it
-    // answers, so starting one with little time left would guarantee the very
-    // mid-flight kill this change removes.
-    expect(settler).toMatch(/RESERVE_FOR_ANOTHER_MS/);
-    expect(settler).toMatch(/if \(Date\.now\(\) > startedAt \+ BUDGET_MS - RESERVE_FOR_ANOTHER_MS\) break;/);
+  it('reserves enough for the WORST CASE, not merely some time', () => {
+    /*
+     * THE ARITHMETIC, WHICH A FLAT RESERVE DID NOT SATISFY. A source-stage
+     * claim can legitimately spend `RECOVERY_DEADLINE_MS` before it answers,
+     * and the recovery does not consult the item's deadline. A flat 30 s
+     * reserve therefore permitted a claim at the 70 s mark that could still
+     * be running at 145 s — past a 100 s budget, killed mid-flight, which is
+     * the failure this change exists to remove.
+     *
+     * So the numbers are asserted, not the existence of a constant.
+     */
+    const num = (name: string): number => {
+      const m = settler.match(new RegExp(`${name} = ([0-9_]+)`));
+      if (!m) throw new Error(`${name} not found`);
+      return Number(m[1].replace(/_/g, ''));
+    };
+    const budget = num('BUDGET_MS');
+    const writeBack = num('WRITE_BACK_RESERVE_MS');
+    const light = num('LIGHT_STAGE_RESERVE_MS');
+    // The heavy reserve is DERIVED from the recovery ceiling, not chosen.
+    expect(settler).toMatch(
+      /HEAVY_STAGE_RESERVE_MS = RECOVERY_DEADLINE_MS \+ WRITE_BACK_RESERVE_MS/);
+    const heavy = RECOVERY_DEADLINE_MS + writeBack;
+
+    // A heavy item started at the threshold can finish and still be written.
+    expect(heavy).toBeGreaterThanOrEqual(RECOVERY_DEADLINE_MS + writeBack);
+    // And the budget must be able to hold one at all.
+    expect(budget).toBeGreaterThanOrEqual(heavy);
+    // A light stage needs less, but never less than the write-back itself.
+    expect(light).toBeGreaterThan(writeBack);
+    expect(light).toBeLessThan(heavy);
+  });
+
+  it('refuses a claim it cannot finish instead of starting it', () => {
+    // The stage is only known once claimed, so an over-expensive claim is
+    // handed back at the same stage with no progress — the recovery never
+    // begins, so no attempt is spent and nothing is recorded about the link.
+    const loop = settler.slice(settler.indexOf('for (;;) {'));
+    expect(loop).toMatch(/if \(remaining < reserveFor\(next\.item\.image_work_stage\)\)/);
+    expect(loop).toMatch(/progressed: false/);
+    expect(loop).toMatch(/nextStage: readStage\(next\.item\.image_work_stage\)/);
   });
 });
 

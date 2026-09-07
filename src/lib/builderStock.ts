@@ -169,8 +169,9 @@ export interface BuilderStockItem {
    */
   source_documents?: number;
   /**
-   * How many of those documents we could not READ — a failure of ours or a
-   * link that does not open, never a finding about the document.
+   * How many of those documents we could not read, split by whose failure it
+   * was: `unprocessed` is ours, `unreachable` is the link's. Never a finding
+   * about the document itself.
    *
    * A count and nothing else. Why a document could not be read is the
    * pipeline's own vocabulary — a kill, a memory ceiling, a timeout, a retry
@@ -179,7 +180,8 @@ export interface BuilderStockItem {
    * `source_documents` because "we never read it" and "we read it and it
    * showed no house" call for opposite actions.
    */
-  source_documents_unread?: number;
+  source_documents_unprocessed?: number;
+  source_documents_unreachable?: number;
   builder_organisation?: { id: string; legal_name: string; trading_name: string | null } | null;
   selection_count?: number;
   latest_selection?: {

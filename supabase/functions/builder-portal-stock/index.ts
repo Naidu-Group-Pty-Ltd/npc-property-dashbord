@@ -1926,7 +1926,7 @@ async function decorateItems(
    * document the pipeline would not read, or none where it would find five.
    */
   const documentsByItem = new Map<string, number>();
-  const unreadByItem = new Map<string, number>();
+  const unreadByItem = new Map<string, { unprocessed: number; unreachable: number }>();
   for (const row of rows ?? []) {
     const unmapped = (row?.source_row as { unmapped?: Record<string, string> } | null)?.unmapped;
     documentsByItem.set(
@@ -1950,11 +1950,15 @@ async function decorateItems(
      */
     source_documents: documentsByItem.get(String(item.id)) ?? 0,
     /*
-     * And how many of them we FAILED to read, which is a different fact from
-     * how many exist and from what they said. A count, never a reason — see
-     * `unreadDocumentCount`: the mechanism stays on this side.
+     * And how many we could not read, split by WHOSE failure it was. Counts,
+     * never reasons — see `unreadDocumentCount`: the mechanism stays on this
+     * side. They are two fields because they lead to two different sentences,
+     * and one of those sentences asks the builder to go and check something.
      */
-    source_documents_unread: unreadByItem.get(String(item.id)) ?? 0,
+    source_documents_unprocessed:
+      unreadByItem.get(String(item.id))?.unprocessed ?? 0,
+    source_documents_unreachable:
+      unreadByItem.get(String(item.id))?.unreachable ?? 0,
     // The builder's activation signal: how many Command Centre selections this
     // property has, and where the most recent one is up to.
     selection_count: (selectionsByItem.get(item.id) ?? []).length,

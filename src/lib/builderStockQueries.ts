@@ -123,7 +123,8 @@ export function useBuilderStockItems(
       return countWorkingImages(records.map((item) => ({
         hasImage: !!item.primary_image_id,
         sourceDocuments: item.source_documents ?? 0,
-        unreadDocuments: item.source_documents_unread ?? 0,
+        unprocessedDocuments: item.source_documents_unprocessed ?? 0,
+        unreachableDocuments: item.source_documents_unreachable ?? 0,
         workStage: item.image_work_stage,
       }))) > 0
         ? STOCK_WORKING_POLL_MS
