@@ -2460,3 +2460,61 @@ drift) cannot be satisfied against a file nobody can reach.
 `unemployment: null`; the prompt blocks FORBID stating a rate; and the
 Demand Drivers skeleton that demanded invented labour figures is rewritten
 to draw only on measured tables.
+
+## §32 — The regeneration path had drifted out of parity (2026-09-07)
+
+Found while taking stock after the timeliness stream: **a regenerated
+report was not the same report.** `regenerate-report-qualitative` is the
+path a client's report takes when an operator revises it, and it had
+fallen behind the generator on every stream shipped this programme.
+
+Four faults, each of which reported as normal operation:
+
+**It read shapes the services no longer produce.** The context block
+composed its own crime and climate prose from the pre-rework fields —
+`crime.safetyScore`, `crime.comparisonToState`, `climate.climateZone`,
+`climate.temperature.summer/winter`, `climate.rainfall.annual`. The crime
+rework deleted that vocabulary outright (a spec bans the word
+`safetyScore` from the module) and the climate rework deleted zone naming
+because naming a zone is exactly what the fabricator did. So eight
+labelled rows rendered **"N/A" on every regenerated report** — the "blank
+a model should fill" invitation this programme exists to remove, sitting
+in the one path nobody re-read after the reworks.
+
+**It asked a coordinate-keyed service without the coordinate.** Climate
+was called with `{suburb, state, postcode}`; since the SILO rewrite made
+the coordinate the question, that call could only ever answer
+`no_data_for_location`. Climate was unconditionally absent from every
+regenerated report.
+
+**It never asked two services at all** — planning and regional trends were
+not on the path, so a regenerated report silently lost the zoning block
+and the population trends a freshly generated one carries.
+
+**It misnamed five of its own sources** in the client-facing attribution
+list: climate credited straight to the *Bureau of Meteorology* (it is
+SILO, the Queensland Government's BoM-derived grid, whose CC BY 4.0
+licence asks for its own attribution), schools to *ACARA/MySchool* and
+*NAPLAN* (a schools directory and Google Places), employment to the *ABS
+Labour Force Survey* (the Census), market data to *Domain/CoreLogic*
+(CoreLogic is deliberately not integrated), and crime to *safety scores*
+that no longer exist. A misnamed source is a fabricated citation, and it
+sat under the heading "This report utilises data from the following
+authoritative sources".
+
+The fix is the doctrine, not a patch: **one rendering per reading.** Both
+paths now import the same five prompt blocks (`crimeStatBlocks`,
+`climateStatBlocks`, `planningStatBlocks`, `regionalTrendBlocks`,
+`macroEconomicBlock`) rather than keeping private copies; the three
+coordinate-keyed services are asked together after `locationTask`
+resolves, with the coordinate, mirroring the generator (including its
+QLD second-chance crime ask once the cadastre names the shire); and every
+attribution names the register that actually served the block.
+`regenerationParity.spec.ts` pins all four rules — a repo-wide sweep
+confirmed this path was the last live reader of the deleted shapes.
+
+Also measured while here, and recorded rather than acted on: **VIC's crime
+register refuses this project's egress too** (403 from Supabase, matching
+the sandbox), so Victoria stays honestly absent. SA's and NT's open-data
+portals DO answer from this vantage — the first reachable route to those
+two registers, unbuilt for now.

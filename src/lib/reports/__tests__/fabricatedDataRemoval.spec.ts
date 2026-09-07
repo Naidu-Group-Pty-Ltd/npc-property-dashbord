@@ -168,12 +168,31 @@ describe('consumer guards', () => {
 
   it('regeneration attaches only on success && data', () => {
     const src = read('supabase/functions/regenerate-report-qualitative/index.ts');
+    // The per-call-site guards, for the services fetched by locality.
     for (const guard of [
       'absData?.success && absData?.data',
       'employmentData?.success && employmentData?.data',
-      'climateData?.success && climateData?.data',
     ]) {
       expect(src).toContain(guard);
+    }
+    // The coordinate-keyed services (climate, planning, regional trends and
+    // the QLD crime retry) share ONE fetch helper, so the same rule is
+    // enforced once rather than copied per call site — the helper yields
+    // the payload only on success && data, and null otherwise, which is
+    // what makes `if (data) enhancedData.X = data` safe. Asserting the
+    // helper is stricter than asserting three duplicate expressions: a new
+    // coordinate-keyed service inherits the guard instead of needing its
+    // own copy, and cannot be added without one.
+    expect(src).toContain('return parsed?.success && parsed?.data ? parsed.data : null;');
+    for (const [field, service] of [
+      ['climateData', 'climate-data-service'],
+      ['planningData', 'planning-data-service'],
+      ['regionalTrends', 'abs-regional-service'],
+      ['crimeStatistics', 'crime-statistics-service'],
+    ] as const) {
+      // Assigned from the helper's return value, never from a raw body.
+      expect(src, `${field} must be attached from the guarded helper`)
+        .toMatch(new RegExp(`const data = await ask\\([^;]*${service}[\\s\\S]{0,200}?enhancedData\\.${field} = data;`));
     }
   });
 
