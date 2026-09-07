@@ -64,7 +64,24 @@ address from the same parts itself before geocoding, so the map is fixed with
 or without this. This fix stops the SOURCE RECORD being degraded, which matters
 for every other consumer of Airtable and for anyone reading the base directly.
 
+## Patching a LIVE export instead of the repo blueprint
+
+`npc-email-1-new.original.json` is a snapshot and it has gone stale: measured
+7 September 2026 against scenario 5979783 in team 2731020, the live scenario
+has 85 modules to the snapshot's 91, lacks six of them entirely (an HTTP
+sender, an OpenAI completion, a JSON parser, a Gemini completion, a regexp
+parser and a Firecrawl scrape), and only 25 of the 85 shared modules are
+byte-identical once designer metadata is ignored.
+
+So importing the snapshot over a live scenario would not apply this fix -- it
+would REPLACE that scenario with a different one, adding two billable vendor
+calls nobody asked for. Pass `--input`/`--output` to patch an export taken from
+the scenario you are actually about to write to. The transformation is the
+same; only the base differs.
+
 Run:  python3 docs/integrations/blueprints/apply-address-fix.py
+      python3 docs/integrations/blueprints/apply-address-fix.py \
+          --input live.json --output live.patched.json
 """
 
 from __future__ import annotations
@@ -139,25 +156,8 @@ def walk(node, on_module) -> None:
             walk(value, on_module)
 
 
-def main() -> int:
-    if not ORIGINAL.exists():
-        print(f"missing {ORIGINAL}", file=sys.stderr)
-        return 1
-
-    # CHAINED, not standalone. `apply-sender-fix.py` also rebuilds
-    # `npc-email-1-new.upgraded.json` from the original, so running this on its
-    # own would silently drop the forwarded-sender repair that file carries.
-    # Rebuild that first, then patch its output.
-    result = subprocess.run(
-        [sys.executable, str(SENDER_FIX)], capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        print(result.stdout + result.stderr, file=sys.stderr)
-        print("apply-sender-fix.py failed; not patching", file=sys.stderr)
-        return 1
-    print("re-applied the forwarded-sender fix first (it writes the same file)\n")
-
-    blueprint = json.loads(UPGRADED.read_text())
+def _patch(blueprint: dict) -> list[str]:
+    """Apply D1 and D2 to a blueprint in place, returning what changed."""
     changes: list[str] = []
 
     def patch(module: dict) -> None:
@@ -193,7 +193,52 @@ def main() -> int:
                     f"D2 module {mid}: no longer overwrites {', '.join(sorted(stripped))}"
                 )
 
+
     walk(blueprint, patch)
+    return changes
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(argv if argv is not None else sys.argv[1:])
+    source = target = None
+    if "--input" in args:
+        source = pathlib.Path(args[args.index("--input") + 1])
+        target = pathlib.Path(args[args.index("--output") + 1]) if "--output" in args else source
+
+    if source is not None:
+        # Patch the given export in place. No chaining: the caller's file is
+        # already whatever that scenario currently is, and re-applying the
+        # sender fix to it could undo a repair somebody made in Make.
+        blueprint = json.loads(source.read_text())
+        changes = _patch(blueprint)
+        if not changes:
+            print("nothing matched in the given blueprint", file=sys.stderr)
+            return 1
+        target.write_text(json.dumps(blueprint, separators=(",", ":"), ensure_ascii=False))
+        print(f"wrote {target}\n")
+        for change in changes:
+            print(f"  - {change}")
+        return 0
+
+    if not ORIGINAL.exists():
+        print(f"missing {ORIGINAL}", file=sys.stderr)
+        return 1
+
+    # CHAINED, not standalone. `apply-sender-fix.py` also rebuilds
+    # `npc-email-1-new.upgraded.json` from the original, so running this on its
+    # own would silently drop the forwarded-sender repair that file carries.
+    # Rebuild that first, then patch its output.
+    result = subprocess.run(
+        [sys.executable, str(SENDER_FIX)], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(result.stdout + result.stderr, file=sys.stderr)
+        print("apply-sender-fix.py failed; not patching", file=sys.stderr)
+        return 1
+    print("re-applied the forwarded-sender fix first (it writes the same file)\n")
+
+    blueprint = json.loads(UPGRADED.read_text())
+    changes = _patch(blueprint)
 
     if not changes:
         print("nothing matched — the blueprint may already be patched", file=sys.stderr)
