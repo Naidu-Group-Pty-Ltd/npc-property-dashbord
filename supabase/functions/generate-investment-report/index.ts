@@ -19,6 +19,7 @@ import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun a
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
+import { reconcileNearestSchool, reconcileSchoolDistances } from '../_shared/reports/schoolDistance.pure.ts';
 import { reconcileFacts, factFindingToFlag } from '../_shared/reports/investment/factReconciliation.pure.ts';
 import { financeIdentityBreaches } from '../_shared/reports/metrics/propertyMetrics.pure.ts';
 import {
@@ -3781,6 +3782,13 @@ Produce a comprehensive statewide investment analysis following the structure ab
     const cumOptimistic = cumulativeCashFlow(enhancedData.financials?.projections?.optimistic);
     const allScenariosCashNegative = cumConservative < 0 && cumModerate < 0 && cumOptimistic < 0;
 
+    // The distances the RECORD will keep. `location-intelligence-service` and
+    // `school-data-service` each measure their own, and both used to reach the
+    // report — the prompt quoted the second while every stored, projected and
+    // rendered surface reads the first, so a client read "0.29 km" from a
+    // record holding 0.21. See `_shared/reports/schoolDistance.pure.ts`.
+    const storedSchools = enhancedData.locationIntelligence?.schools?.topSchools;
+
     const _brandPp = await getBrandConfig();
     const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.
 Your role is to produce comprehensive, professional-grade investment reports following the EXACT structure, length, and format of our reference template.
@@ -3967,19 +3975,19 @@ The combination of [employment factor], [income factor], and [unemployment facto
 
 | School Name | Distance | Type |
 |-------------|----------|------|
-| ${enhancedData.schoolData?.nearestSchool?.name || '[School Name]'} | ${enhancedData.schoolData?.nearestSchool?.distance || 'X.XX'} km | ${enhancedData.schoolData?.nearestSchool?.type || 'Early Learning'} |
+| ${reconcileNearestSchool(enhancedData.schoolData?.nearestSchool, storedSchools)?.name || '[School Name]'} | ${reconcileNearestSchool(enhancedData.schoolData?.nearestSchool, storedSchools)?.distance || 'X.XX'} km | ${enhancedData.schoolData?.nearestSchool?.type || 'Early Learning'} |
 
 **Top-Rated Schools in Local Area:**
 
 | School Name | Distance | Type |
 |-------------|----------|------|
-${enhancedData.schoolData?.topSchools?.slice(0, 5).map((s: any) => `| ${s.name} | ${s.distance} km | ${s.type} |`).join('\n') || '| [School 1] | Nearby | Government |'}
+${reconcileSchoolDistances(enhancedData.schoolData?.topSchools, storedSchools).slice(0, 5).map((s: any) => `| ${s.name} | ${s.distance} km | ${s.type} |`).join('\n') || '| [School 1] | Nearby | Government |'}
 
 **Education Facilities (Extended List):**
 
 | School Name | Distance | Type |
 |-------------|----------|------|
-${enhancedData.schoolData?.allSchools?.slice(0, 7).map((s: any) => `| ${s.name} | ${s.distance} km | ${s.type} |`).join('\n') || '| [School 1] | X.XX km | Government |'}
+${reconcileSchoolDistances(enhancedData.schoolData?.allSchools, storedSchools).slice(0, 7).map((s: any) => `| ${s.name} | ${s.distance} km | ${s.type} |`).join('\n') || '| [School 1] | X.XX km | Government |'}
 
 **Secondary Education:**
 
