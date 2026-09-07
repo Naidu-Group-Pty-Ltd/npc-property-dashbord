@@ -20,6 +20,7 @@ import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportM
 import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { reconcileFacts, factFindingToFlag } from '../_shared/reports/investment/factReconciliation.pure.ts';
+import { financeIdentityBreaches } from '../_shared/reports/metrics/propertyMetrics.pure.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
@@ -6151,8 +6152,44 @@ YOUR DEDICATED PROPERTY PARTNER
           purchasePrice: factNum(mergedOverrides.purchasePrice) ?? factNum(propertyDetails?.price),
           weeklyRent: factNum(mergedOverrides.weeklyRent) ?? factNum(propertyDetails?.weeklyRent),
           landSizeSqm: factNum(mergedOverrides.landSizeSqm) ?? factNum(propertyDetails?.landSize),
+          // The three figures the prompt does not merely supply but ORDERS the
+          // use of — "PRE-CALCULATED FINANCIAL VALUES (USE THESE EXACTLY - DO
+          // NOT RECALCULATE)". These exact variables are what the prompt
+          // interpolates, so the reconciliation reads the same number the
+          // model was handed rather than a second computation of it, which is
+          // the whole point: a second computation would only prove that two
+          // formulas agree.
+          grossYieldPct: toFiniteNumber(preCalculatedGrossYield),
+          netYieldPct: toFiniteNumber(preCalculatedNetYield),
+          lvrPct: toFiniteNumber(effectiveLvr),
         });
         factFlags = factFindings.map(factFindingToFlag);
+
+        // The other half of the same question. Above asks whether the prose
+        // agrees with the record; this asks whether the record agrees with
+        // ITSELF — a deposit and a loan that do not add to the purchase price,
+        // or two different LVRs for one loan. Measured on 2026-09-07: 14 of
+        // 143 stored reports break at least one of those, and on those reports
+        // the model wrote the loan block's LVR rather than the key metrics',
+        // which is how a contradiction inside the record becomes a wrong
+        // number on a client's page.
+        const identity = financeIdentityBreaches({
+          purchasePrice: enhancedData.financials?.initialCosts?.propertyValue ?? effectivePurchasePrice,
+          deposit: enhancedData.financials?.initialCosts?.deposit,
+          loanAmount: enhancedData.financials?.initialCosts?.loanAmount,
+          keyMetricsLvr: enhancedData.financials?.keyMetrics?.lvr,
+          loanDetailsLvr: enhancedData.financials?.loanDetails?.lvr,
+        });
+        for (const breach of identity) {
+          factFlags.push({
+            type: 'fact',
+            severity: 'warning',
+            field: `finance_identity.${breach.rule}`,
+            message: breach.message,
+            value: { expected: breach.expected, found: breach.found, occurrences: 1, snippet: '' },
+          });
+        }
+
         if (factFlags.length) {
           console.warn(`⚠️ Fact reconciliation: ${factFlags.length} contradiction(s) — ${factFlags.map((f) => f.field).join(', ')}`);
         }
