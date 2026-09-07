@@ -56,6 +56,7 @@
  */
 
 import { meteredFetch } from '../../meteredFetch.ts';
+import { resolveStandaloneRoute } from './diditStandaloneRoute.pure.ts';
 import {
   classifyStandaloneHttpError,
   isAllowedMediaUrl,
@@ -137,22 +138,50 @@ export interface StandaloneCallResult {
 async function postMultipart(
   apiKey: string, path: string, form: FormData,
 ): Promise<StandaloneCallResult> {
+  /*
+   * Direct to the vendor where this deployment holds the vendor key, and
+   * through Mission Control where it does not — see
+   * `diditStandaloneRoute.pure.ts` for why a tenant deliberately holds no
+   * Didit credential.
+   */
+  const route = resolveStandaloneRoute({
+    path,
+    apiKey,
+    apiBase: DIDIT_API_BASE,
+    missionControlUrl: Deno.env.get('MISSION_CONTROL_URL'),
+    cloneApiKey: Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'),
+  });
+  if (route.via === 'unconfigured') {
+    throw new DiditStandaloneError('provider_not_configured', route.why, null, false);
+  }
+  // Whatever secret this route carries is the one to keep out of error text.
+  const secret = route.secret;
+
   let res: Response;
   try {
-    // Metered for the same reason as the hosted client: each standalone call
-    // spends the fleet's forwarded key and is recharged per tenant.
-    res = await meteredFetch(`${DIDIT_API_BASE}${path}`, {
+    const init: RequestInit = {
       method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        Accept: 'application/json',
-        // Content-Type is deliberately ABSENT. `fetch` derives
-        // `multipart/form-data; boundary=…` from the FormData body; writing it
-        // here would drop the boundary and make every request unparseable.
-      },
+      headers: route.headers,
+      // Content-Type is deliberately ABSENT from `route.headers`. `fetch`
+      // derives `multipart/form-data; boundary=…` from the FormData body;
+      // writing it would drop the boundary and make every request
+      // unparseable — and the broker forwards that same header onward, so the
+      // rule holds across the hop.
       body: form,
       signal: AbortSignal.timeout(STANDALONE_TIMEOUT_MS),
-    }, { secretName: 'DIDIT_API_KEY', feature: `aml/idv-standalone${path.split('?')[0]}` });
+    };
+    /*
+     * Metered HERE only on the direct route. A brokered call is metered by
+     * Mission Control, which is the side that actually spends the vendor key;
+     * doing both bills the tenant twice, which this repository's own rule
+     * names as worse than not billing.
+     */
+    res = route.meter
+      ? await meteredFetch(route.url, init, {
+        secretName: 'DIDIT_API_KEY',
+        feature: `aml/idv-standalone${path.split('?')[0]}`,
+      })
+      : await fetch(route.url, init);
   } catch (e) {
     const err = e as Error;
     const aborted = err?.name === 'TimeoutError' || err?.name === 'AbortError';
@@ -162,7 +191,7 @@ async function postMultipart(
       aborted ? 'timeout' : 'provider_unavailable',
       aborted
         ? `didit ${path} timed out after ${STANDALONE_TIMEOUT_MS}ms`
-        : `didit ${path} unreachable: ${redact(String(err?.message ?? e), apiKey)}`,
+        : `didit ${path} unreachable: ${redact(String(err?.message ?? e), secret)}`,
       null,
       true,
     );
@@ -173,7 +202,7 @@ async function postMultipart(
     const category = classifyStandaloneHttpError(res.status, detail);
     throw new DiditStandaloneError(
       category,
-      `didit ${path} returned ${res.status}${detail ? `: ${redact(detail, apiKey)}` : ''}`,
+      `didit ${path} returned ${res.status}${detail ? `: ${redact(detail, secret)}` : ''}`,
       res.status,
       // A non-2xx is a decision Didit made and told us about; the documented
       // billing unit is a 200 response.

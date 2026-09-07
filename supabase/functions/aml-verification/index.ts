@@ -1119,7 +1119,22 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
               // emit status.updated, but NPC ignores those rather than opening
               // a second result path. Reporting these would send an operator
               // hunting for a secret that is correctly absent.
-              DIDIT_API_KEY: Boolean(Deno.env.get("DIDIT_API_KEY")),
+              //
+              // The credential half is reported by ROUTE, for the same reason.
+              // A tenant deliberately holds no Didit key — one would let it
+              // list every other tenant's verifications — and reaches the
+              // vendor through Mission Control instead. Reporting
+              // `DIDIT_API_KEY: false` on such a deployment names a fault that
+              // is not one and hides the two names that would actually be
+              // missing if it broke.
+              ...(Boolean(Deno.env.get("DIDIT_API_KEY"))
+                ? { DIDIT_API_KEY: true }
+                : {
+                  MISSION_CONTROL_URL: Boolean(Deno.env.get("MISSION_CONTROL_URL")),
+                  MISSION_CONTROL_CLONE_API_KEY: Boolean(
+                    Deno.env.get("MISSION_CONTROL_CLONE_API_KEY"),
+                  ),
+                }),
               DIDIT_LIVENESS_THRESHOLD: Boolean(Deno.env.get("DIDIT_LIVENESS_THRESHOLD")),
               DIDIT_FACE_MATCH_THRESHOLD: Boolean(Deno.env.get("DIDIT_FACE_MATCH_THRESHOLD")),
             } : {
