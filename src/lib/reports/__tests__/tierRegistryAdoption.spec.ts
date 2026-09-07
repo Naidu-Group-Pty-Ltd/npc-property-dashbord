@@ -167,7 +167,18 @@ describe('a trim that would empty the prose is refused', () => {
   it('one surviving authored section is enough', () => {
     expect(authoredSurvives(doc(['Risk Overview']), 'briefing')).toBe(true);
     // The guide's own qualified spelling still matches, as the trim does.
-    expect(authoredSurvives(doc(['Score Breakdown (simplified)']), 'snapshot')).toBe(true);
+    expect(authoredSurvives(doc(['Top 3 Opportunities']), 'snapshot')).toBe(true);
+  });
+
+  it('a snapshot of nothing but its composed sections has not survived either', () => {
+    // `Score Breakdown` used to be this tier's example of a qualified authored
+    // heading. It is composed from the record now, along with `Investment
+    // Score` and `Financial Snapshot` — so, exactly like the briefing's
+    // chapters above, a document containing only those three is our own output
+    // and says nothing about whether the model followed the guide.
+    const composedOnly = doc(['Investment Score', 'Score Breakdown', 'Financial Snapshot']);
+    expect(headingsOf(composedOnly)).toHaveLength(3);
+    expect(authoredSurvives(composedOnly, 'snapshot')).toBe(false);
   });
 
   it('the edge function keeps the untrimmed text in that state', () => {

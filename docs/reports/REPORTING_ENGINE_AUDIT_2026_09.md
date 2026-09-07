@@ -3216,3 +3216,159 @@ is why the generator's own "render ONCE" instruction and any exact-match dedup
 miss them. And **19 of 35 reports using `::: stat` (54%) draw at least one card
 with a label, a unit, a sub-caption and no value.** Both wait on whether
 surfacing the notices makes them self-evident first.
+
+## §41 — Stage 3: the derived reports agree with the record, and with each other (2026-09-07)
+
+Stage 3 of the staged validation programme — **Align Subsidiary / Derived
+Reports**. The Compass family is one parent and four children:
+
+| variant | engine | rows | producers (registry) |
+| --- | --- | ---: | --- |
+| `compass` | `generate-investment-report` | 1,109 | 3 projection, 11 authored |
+| `briefing` | condense (model) | 23 | 3 projection, 10 authored, **7 composed** |
+| `snapshot` | condense (model) | 26 | 2 projection, **9 authored, 0 composed** |
+| `financial` | fork (deterministic) | 11 | 2 projection, 9 routed, **8 composed** |
+| `strategic` | fork (deterministic) | 11 | 2 projection, 16 routed, 1 composed |
+
+### The corpus could not answer the question
+
+**All 71 derived reports predate the code that produces them.** The
+`condenseFacts` fix landed 2026-09-04 07:39:50; the newest child of any variant
+is 2026-09-04 05:53:15. `reconcileFacts` landed 2026-09-02 and only **3**
+compass reports have been generated since 2026-08-20.
+
+So the stored documents testify about engines that no longer exist. Two figures
+that looked like live defects — a briefing stating a score of 60 where the
+record says 62, a snapshot stating five `/100` figures the record does not hold
+— are pre-fix artefacts of exactly the defect `condenseFacts` was built to end.
+Stage 3 was therefore done by **executing the current modules against real
+parent rows**, chiefly `1/27D Mitchell Street` (`0478c410`).
+
+### 1. One annual rent, and the basis it is stated on
+
+`reportBindingProjection` published `annualRent = weeklyRent × occupancyWeeks`,
+and `financialChapters.rentalAndYield` copied that derivation deliberately so
+"this table and the verdict page's tiles state the same annual figure". They
+did. Both disagreed with the **yield printed beside them**:
+
+> | Weekly rent | $600 |
+> | Annual rent (50 occupied weeks) | $30,000 |
+> | Gross rental yield | 5.67% |
+
+$30,000 ÷ $550,000 is 5.45%. The 5.67% is $31,200 ÷ $550,000 — the rent at 52
+weeks. Two rows apart, in one four-row table, on the deterministic path.
+
+What the record says, measured across the completed corpus:
+
+| question | answer |
+| --- | ---: |
+| stored `income.annualRent` equals `weeklyRent × 52` | 18 of 18 |
+| ... equals `weeklyRent × occupancyWeeks` | 0 of 18 |
+| stored `grossRentalYield` rests on `weeklyRent × 52` | 149 of 153 |
+| reports with `occupancyWeeks < 52` whose yield is still on 52 | 61 of 62 |
+
+`rentBasis.pure.ts` is the one module that answers both questions and names
+each: `contractual` (what a yield rests on, and what belongs beside a weekly
+rent under a bare "p.a.") and `atOccupancy` (what the assumption expects to
+collect), the latter present only when the report states an occupancy that is
+not 52. The projection, the composed chapters and the recorded-facts block all
+read it.
+
+Effect on the corpus, computed over the 153 reports carrying a weekly rent, a
+gross yield and a price:
+
+| | before | after |
+| --- | ---: | ---: |
+| published no annual rent at all | 27 | **0** |
+| annual rent reconciles with the yield beside it | 64 | **149** |
+| diverges | 62 | **4** |
+
+The remaining 4 are records whose stored yield rests on neither basis. That is a
+record-level inconsistency of the `healFinanceIdentity` family (§36), not
+something this change introduced or can resolve.
+
+### 2. The Snapshot was the only member of the family composing nothing
+
+Briefing 7 sections from the record, Financial 8, Snapshot **0** — while four of
+its nine model-authored sections were numeric. Its structure guide asked for:
+
+```
+## Investment Score
+- Recommendation: [BUY/HOLD/SELL]
+
+## Score Breakdown (simplified)
+| Component | Score |
+- Growth, Location, Yield, Demand, Risk
+```
+
+Two things are wrong with that, and both are the record contradicting the guide.
+
+**The verdict vocabulary does not exist.** The engine issues `HOLD` (855
+reports), `CAUTION` (99), `HOLD/BUY` (33) and `BUY` (2). `SELL` is never issued;
+`CAUTION` is never offered; `HOLD/BUY` cannot be spelled in three words. A model
+handed `HOLD/BUY - Moderate investment potential` and told to choose one of
+three must change the recommendation to answer.
+
+**The five components are not five.** The record marks a dimension it could not
+score `excluded: true`, `weight: 0` and `hasData: false`, with a placeholder
+`score` of 50 that is not a score. Both the projection and the composed briefing
+section already withhold those correctly. The guide enumerated all five with no
+omission rule — while the two sections either side of it had one — and the facts
+block hands the model three. Exclusions are the **current** state rather than a
+legacy rarity: 17 of 992 reports overall, but **16 of the 17 generated since
+August 2026**.
+
+`Investment Score`, `Score Breakdown` and `Financial Snapshot` are composed from
+the record now and removed from the guide. `Key Market Stats` stays authored on
+purpose: median price, vacancy rate, days on market and walk score are not in
+`financial_calculations`, and composing it would mean inventing a source.
+
+Two things the composed sections add that the guide could not ask for. The
+ten-year projected value was in the guide's metric list and in **no** facts
+block, so a model asked for it had to project one itself; it is read from
+`projections.moderate` now. And the score's **partial coverage** is disclosed —
+`InvestmentReportViewer` and `InvestmentGradeSummary` have always shown
+`coverage.partialLabel` when `coverageRatio < 1`, so staff reading the record
+were told the score rests on 3 of 5 dimensions and the client reading the
+document was not.
+
+### 3. Composed sections were appended, never placed
+
+`trimToDeclaredSections` filters and has never reordered, and the composed
+chapters were appended after everything the model wrote. So the Briefing's
+financial tables, score breakdown and SWOT — registry orders 11–17 — printed
+after `Recommendation` (20) and after `Market Data Sources` (90). Reproduced by
+execution:
+
+| before | after |
+| --- | --- |
+| … Top 3 Risks, Recommendation, Market Data Sources, **Purchase Costs**, Rental Assessment, Loan Structure, Sensitivity, 10-Year Cashflow, Investment Score Breakdown, SWOT | … Risk Overview, **Purchase Costs**, Rental Assessment, Loan Structure, Sensitivity, 10-Year Cashflow, Investment Score Breakdown, SWOT, Top 3 Opportunities, Top 3 Risks, Recommendation, Market Data Sources |
+
+`tierAssembly.pure.ts` places every section at its declared order. It runs
+**after** the trim rather than replacing it: the trim drops an undeclared
+heading with its body, which is what stops a condensed report carrying the
+parent's own 36 headings, while `partitionByRegistry` absorbs an unrecognised
+heading into whichever section is open — right for reading a stored document,
+wrong for enforcing a structure guide. A section it cannot place is appended and
+**named** rather than dropped.
+
+### Named and not fixed
+
+**No child is fact-reconciled.** `reconcileFacts` has exactly one caller, the
+parent generator, and 0 of 71 children carry a validation flag of any type (the
+corpus holds `error`, `quality`, `structure` and `warning`; `fact` appears
+nowhere, on any report, because only 3 parents postdate it). Composing the
+snapshot's numeric sections removes the model's authority over the figures a
+reconciliation would have checked, which is the stronger fix; extending the
+detector to the children is the first candidate for the next stage, and it
+should not be done until the detector has production mileage on the parent.
+
+### Verification
+
+Executed against the real parent row rather than a fixture: the composed rental
+chapter, the three composed snapshot sections and both tiers' assembled section
+order. 22 new tests. Two existing registry contracts were renegotiated
+deliberately — the snapshot guide test now asserts it asks for exactly its
+**authored** headings (the briefing's contract, and the stronger one, since it
+also forbids the guide asking for a section we compose), and the producer
+resolver learned two new shapes.

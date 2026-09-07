@@ -109,28 +109,92 @@ export function gradedDetailLine(score: unknown): string | undefined {
  * dimension table — or null when the record holds no score. Rows appear only
  * for dimensions that carried data (a labelled row is a promise).
  */
+/**
+ * The verdict itself — grade, score, the record's own recommendation, and the
+ * coverage note where the score does not rest on every dimension.
+ *
+ * Null when the record carries no grade or no total: a verdict section with no
+ * verdict in it is a heading over nothing.
+ *
+ * The coverage line is not a new disclosure. `InvestmentReportViewer` has
+ * always shown `investment_score.coverage.partialLabel` whenever
+ * `coverageRatio < 1`, and `InvestmentGradeSummary` shows it too — so staff
+ * looking at the record are told the score is partial and the client reading
+ * the generated document was not. Same field, same words, one more surface.
+ */
+function verdictLines(score: Record<string, unknown>): string[] | null {
+  const grade = str(score.grade);
+  const total = num(score.totalScore);
+  if (!grade || total === undefined) return null;
+
+  const lines = [`**Grade:** ${grade} · **Score:** ${Math.round(total)}/100`];
+  const rec = str(score.recommendation);
+  if (rec) lines.push('', `**Recommendation:** ${rec}`);
+
+  const coverage = isRecord(score.coverage) ? score.coverage : undefined;
+  const ratio = coverage ? num(coverage.coverageRatio) : undefined;
+  const partial = coverage ? str(coverage.partialLabel) : undefined;
+  if (partial && ratio !== undefined && ratio < 1) lines.push('', `_${partial}._`);
+
+  return lines;
+}
+
+/** The weighted dimensions table. Empty when the record scored none of them. */
+function dimensionLines(score: Record<string, unknown>): string[] {
+  const dims = breakdownEntries(score).filter((d) => d.score !== undefined);
+  if (!dims.length) return [];
+  const rows = ['| Dimension | Weight | Score |', '| --- | --- | --- |'];
+  for (const d of dims) {
+    const label = d.label.charAt(0).toUpperCase() + d.label.slice(1);
+    rows.push(`| ${label} | ${d.weight !== undefined ? `${Math.round(d.weight)}%` : '—'} | ${Math.round(d.score!)}/100 |`);
+  }
+  return rows;
+}
+
+/**
+ * Grade, score and recommendation on their own — the Snapshot's `Investment
+ * Score` section, which the tier used to ask a model to write.
+ *
+ * That guide said `Recommendation: [BUY/HOLD/SELL]`. The engine's actual
+ * vocabulary is `HOLD` (855 reports), `CAUTION` (99), `HOLD/BUY` (33) and `BUY`
+ * (2): **`SELL` is never issued, `CAUTION` is never offered, and `HOLD/BUY`
+ * cannot be spelled in three words.** A model asked to choose one of three from
+ * a record that says a fourth must change the recommendation to answer.
+ */
+export function composeVerdictSection(score: unknown, heading: string): string | null {
+  if (!isRecord(score)) return null;
+  const body = verdictLines(score);
+  return body ? [`## ${heading}`, '', ...body].join('\n') + '\n' : null;
+}
+
+/**
+ * The dimensions table on its own — the Snapshot's `Score Breakdown`.
+ *
+ * The guide it replaces listed `Growth, Location, Yield, Demand, Risk` with no
+ * omission rule beside it, while the two sections either side of it had one.
+ * The record withholds a dimension it could not score — `excluded: true`,
+ * `weight: 0` and a placeholder `score` of 50 that is not a score — on 16 of
+ * the 17 reports generated since August 2026. A model handed three figures and
+ * told to produce five rows fills the other two.
+ */
+export function composeScoreDimensionsSection(score: unknown, heading: string): string | null {
+  if (!isRecord(score)) return null;
+  const rows = dimensionLines(score);
+  return rows.length ? [`## ${heading}`, '', ...rows].join('\n') + '\n' : null;
+}
+
+/** Verdict and dimensions under one heading — the Briefing's `scorecard`. */
 export function composeScoreBreakdownSection(
   score: unknown,
   heading: string,
 ): string | null {
   if (!isRecord(score)) return null;
-  const grade = str(score.grade);
-  const total = num(score.totalScore);
-  if (!grade || total === undefined) return null;
+  const body = verdictLines(score);
+  if (!body) return null;
 
-  const lines: string[] = [`## ${heading}`, ''];
-  lines.push(`**Grade:** ${grade} · **Score:** ${Math.round(total)}/100`);
-  const rec = str(score.recommendation);
-  if (rec) lines.push('', `**Recommendation:** ${rec}`);
-
-  const dims = breakdownEntries(score).filter((d) => d.score !== undefined);
-  if (dims.length) {
-    lines.push('', '| Dimension | Weight | Score |', '| --- | --- | --- |');
-    for (const d of dims) {
-      const label = d.label.charAt(0).toUpperCase() + d.label.slice(1);
-      lines.push(`| ${label} | ${d.weight !== undefined ? `${Math.round(d.weight)}%` : '—'} | ${Math.round(d.score!)}/100 |`);
-    }
-  }
+  const rows = dimensionLines(score);
+  const lines = [`## ${heading}`, '', ...body];
+  if (rows.length) lines.push('', ...rows);
   return lines.join('\n') + '\n';
 }
 

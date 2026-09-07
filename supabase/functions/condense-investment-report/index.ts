@@ -1,8 +1,14 @@
 import { buildRecordedFactsBlock } from '../_shared/reports/investment/condenseFacts.pure.ts';
-import { composeFinancialChapters } from '../_shared/reports/investment/financialChapters.pure.ts';
-import { composeScoreBreakdownSection, composeSwotSection } from '../_shared/reports/investment/scoreSections.pure.ts';
+import { composeFinancialChapters, composeFinancialSnapshotSection } from '../_shared/reports/investment/financialChapters.pure.ts';
+import {
+  composeScoreBreakdownSection,
+  composeScoreDimensionsSection,
+  composeSwotSection,
+  composeVerdictSection,
+} from '../_shared/reports/investment/scoreSections.pure.ts';
 import { stripPlaceholderRows, trimToDeclaredSections } from '../_shared/reports/investment/derivedHygiene.pure.ts';
 import { authoredHeadingsForTier, markdownHeadingsForTier } from '../_shared/reports/investment/sectionRegistry.pure.ts';
+import { assembleInDeclaredOrder, type ComposedPlacement } from '../_shared/reports/investment/tierAssembly.pure.ts';
 import { stripEditorialLabelsFromMarkdown } from '../_shared/compassPostProcessor.ts';
 import { projectInvestmentReport, type InvestmentReportRowLike } from '../_shared/reportBindingProjection.pure.ts';
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
@@ -122,19 +128,11 @@ REPORT STRUCTURE (~5 PAGES):
 - Choose from: Median Price, Rental Yield, Vacancy Rate, Capital Growth, Days on Market, Walk Score
 - Include ONLY metrics whose value is stated in the report or the recorded figures; omit the rest — never write N/A
 
-## Investment Score
-- Grade: [Letter Grade]
-- Score: [X]/100
-- Recommendation: [BUY/HOLD/SELL]
-
-## Score Breakdown (simplified)
-| Component | Score |
-- Growth, Location, Yield, Demand, Risk
-
-## Financial Snapshot
-| Metric | Value |
-- Choose from: Purchase Price, Weekly Rent, Gross Yield, Net Yield, Annual Cashflow, 10-Year Projected Value
-- Include ONLY metrics whose value is known from the recorded figures or the report; omit the rest — never write N/A
+DO NOT WRITE: Investment Score, Score Breakdown, or Financial Snapshot. Those
+three sections are composed from the stored record after you finish and are
+inserted in their proper place. Anything you write under those headings is
+discarded. Do not restate the grade, the score out of 100, the recommendation
+or the score components anywhere else either.
 
 ## Top 3 Opportunities
 - Brief bullet points (1-2 sentences each)
@@ -594,6 +592,10 @@ IMPORTANT:
     // of the parent's own headings: 17 H2s and 2.5× the format's length on
     // row 8c6edc56) with nothing to catch it.
     let postProcessReport: unknown = null;
+    // Sections composed from the record, addressed by the registry id that
+    // decides where each one goes. Collected for both condensed tiers and
+    // placed by `assembleInDeclaredOrder` below.
+    const composedPlacements: ComposedPlacement[] = [];
     let qaReport: unknown = null;
     const hygiene: Record<string, unknown> = {};
     try {
@@ -611,25 +613,46 @@ IMPORTANT:
         // newest briefing. The parent's score and calculations were copied
         // onto this child above, so the composed sections and the templated
         // KPI tiles read the same record.
-        const composed: string[] = [];
+        //
+        // Each chapter is tagged with the section id the registry places it at.
+        // The map is here rather than in the composer because the composer
+        // answers to the Financial tier's layout and the registry answers to
+        // the Briefing's.
+        const CHAPTER_SECTION_ID: Record<number, ComposedPlacement['id']> = {
+          4: 'purchaseHolding', 5: 'rentalYield', 6: 'loan', 8: 'sensitivity', 9: 'tenYear',
+        };
         for (const ch of composeFinancialChapters(
           { financialCalculations: parentReport.financial_calculations, investmentScore: parentReport.investment_score },
           { scenarios: 'primary' },
         )) {
           // 12 and 14 are the FIN-titled scorecard and SWOT; the briefing
           // carries them under its own headings below.
-          if (ch.ordinal === 12 || ch.ordinal === 14) continue;
-          composed.push(ch.markdown);
+          const id = CHAPTER_SECTION_ID[ch.ordinal];
+          if (id) composedPlacements.push({ id, markdown: ch.markdown });
         }
         const scoreSection = composeScoreBreakdownSection(parentReport.investment_score, 'Investment Score Breakdown');
-        if (scoreSection) composed.push(scoreSection);
+        if (scoreSection) composedPlacements.push({ id: 'scorecard', markdown: scoreSection });
         const swotSection = composeSwotSection(parentReport.investment_score, 'SWOT Analysis');
-        if (swotSection) composed.push(swotSection);
-        if (composed.length) {
-          condensedContent = `${condensedContent.trimEnd()}\n\n${composed.join('\n\n')}`;
-        }
-        hygiene.composed_sections = composed.length;
+        if (swotSection) composedPlacements.push({ id: 'swot', markdown: swotSection });
       }
+
+      // The Snapshot composes too, and until now composed NOTHING — the only
+      // member of the family that did not. Briefing 7 sections from the record,
+      // Financial 8, Snapshot 0, while four of its nine model-authored sections
+      // were numeric. Three of those four are figures the record holds outright,
+      // so they are typed from it here; `Key Market Stats` stays authored
+      // because median price, vacancy rate, days on market and walk score are
+      // NOT in `financial_calculations` and composing them would mean inventing
+      // a source, which is the worse failure.
+      if (targetTier === 'snapshot') {
+        const verdictSection = composeVerdictSection(parentReport.investment_score, 'Investment Score');
+        if (verdictSection) composedPlacements.push({ id: 'verdict', markdown: verdictSection });
+        const dimsSection = composeScoreDimensionsSection(parentReport.investment_score, 'Score Breakdown');
+        if (dimsSection) composedPlacements.push({ id: 'scorecard', markdown: dimsSection });
+        const finSection = composeFinancialSnapshotSection(parentReport.financial_calculations, 'Financial Snapshot');
+        if (finSection) composedPlacements.push({ id: 'financialSnapshot', markdown: finSection });
+      }
+      hygiene.composed_sections = composedPlacements.length;
 
       // Trim to what the tier declares — on BOTH condensed tiers now.
       //
@@ -646,22 +669,19 @@ IMPORTANT:
       // NONE. Phase 1 re-cut the guide and shipped no enforcement, so the guide
       // was aspirational; the snapshot got both halves and the briefing got one.
       //
-      // The trim runs after the composed chapters are appended because their
-      // headings are declared too — `markdownHeadingsForTier` returns the
-      // authored and composed sections together, which is the reason the list
-      // has to come from the registry rather than from either call site.
+      // The trim runs on the model's own output, BEFORE the composed sections
+      // are placed — they are ours and always declared, so including them here
+      // would only make the "did the model follow the guide" question answer
+      // itself.
       if (targetTier === 'briefing' || targetTier === 'snapshot') {
         const declared = markdownHeadingsForTier(targetTier);
         const trimmed = trimToDeclaredSections(condensedContent, declared);
         // A trim that keeps nothing the MODEL wrote is not a trim, it is a
         // deletion: the briefing would go out as its composed financial tables
-        // with no case attached to them. The question has to be asked of the
-        // authored headings alone — the composed chapters are appended by us
-        // and always match, so "something survived" is satisfied by our own
-        // output and says nothing about whether the model followed the guide.
-        // In that state, keep the untrimmed text and record it: a stub is worse
-        // than a document with the wrong headings, and the count belongs in the
-        // log rather than in a client's hands.
+        // with no case attached to them. In that state, keep the untrimmed text
+        // and record it: a stub is worse than a document with the wrong
+        // headings, and the count belongs in the log rather than in a client's
+        // hands.
         const authored = authoredHeadingsForTier(targetTier).map((h) => h.toLowerCase());
         const survivors = [...trimmed.markdown.matchAll(/^##\s+(.+?)\s*$/gm)]
           .map((m) => m[1].toLowerCase().replace(/\s+/g, ' ').trim());
@@ -672,6 +692,31 @@ IMPORTANT:
         } else {
           hygiene.sections_trim_skipped = trimmed.dropped;
         }
+
+        // Place every section in the order the registry declares, composed
+        // ones included. They used to be appended after everything the model
+        // wrote — so the Briefing's financial tables, score breakdown and SWOT
+        // printed after `Recommendation` (order 20) and after `Market Data
+        // Sources` (order 90), when the registry places them at 11-17. The
+        // trim filters and has never reordered.
+        //
+        // Assembly runs only where the trim actually ran: on untrimmed text a
+        // foreign heading is ABSORBED into whichever section is open rather
+        // than dropped, and the fallback append keeps the composed sections in
+        // the document rather than losing them to a structural safety check.
+        if (composedPlacements.length || keptAny) {
+          if (keptAny) {
+            const assembled = assembleInDeclaredOrder(condensedContent, composedPlacements, targetTier);
+            condensedContent = assembled.markdown;
+            hygiene.sections_placed = assembled.placed;
+            hygiene.sections_authored = assembled.authored;
+            if (assembled.unplaced.length) hygiene.sections_unplaced = assembled.unplaced;
+          } else if (composedPlacements.length) {
+            condensedContent = `${condensedContent.trimEnd()}\n\n${composedPlacements.map((c) => c.markdown).join('\n\n')}`;
+            hygiene.sections_appended_untrimmed = composedPlacements.length;
+          }
+        }
+
         const stripped = stripEditorialLabelsFromMarkdown(condensedContent);
         condensedContent = stripped.markdown;
         hygiene.editorial_blocks_removed = stripped.removedBlocks;
