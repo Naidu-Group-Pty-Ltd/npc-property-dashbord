@@ -42,6 +42,30 @@ export type StockImageProgress =
   | 'working'
   /** Finished, and the row attaches no document to read a picture out of. */
   | 'no_document'
+  /**
+   * Finished, and at least one of this row's documents was never actually
+   * READ — we could not open it, or opening it failed.
+   *
+   * SEPARATE FROM `none_found` BECAUSE IT IS A DIFFERENT SENTENCE ABOUT A
+   * DIFFERENT THING. `none_found` is a finding about the builder's document;
+   * this is a fact about us reaching it. Collapsing the two is what told six
+   * properties on the 7 September upload that their brochures contained no
+   * photograph, when the brochures each hold a facade render that this same
+   * extractor elects in about a second — the worker had died reading them and
+   * the card reported that as the document's own answer.
+   *
+   * It never names a mechanism. A crash, a memory ceiling, a timeout and a
+   * retry count are this pipeline's vocabulary and a builder can do nothing
+   * with any of them; what they are owed is that the document has not been
+   * read yet and that this is being retried.
+   */
+  | 'unreadable'
+  /**
+   * Finished, and one of this row's documents could not be REACHED — it 404s,
+   * it wants a sign-in, it is not a document. A fact about the link, and the
+   * one failure on this list a builder can actually act on.
+   */
+  | 'source_unavailable'
   /** Finished, the documents were read, and none of them names a picture. */
   | 'none_found';
 
@@ -57,6 +81,16 @@ export interface StockImageProgressInput {
    * than the silence it replaces.
    */
   workStage?: string | null;
+  /**
+   * How many of this row's documents OUR processing failed on. Supplied by
+   * the server, which is the only side that can see why a branch stopped; the
+   * client is handed a count and never a reason, so no mechanism can reach a
+   * screen through this field.
+   */
+  unprocessedDocuments?: number;
+  /** How many could not be reached at all — a 404, a sign-in wall, not a
+   *  document. Counted apart because only this one is the builder's to fix. */
+  unreachableDocuments?: number;
 }
 
 /** What this property's imagery honestly amounts to right now. */
@@ -69,7 +103,26 @@ export function stockImageProgress(input: StockImageProgressInput): StockImagePr
    */
   const stage = typeof input.workStage === 'string' ? input.workStage.trim() : '';
   if (stage && stage !== SETTLED_WORK_STAGE) return 'working';
-  return input.sourceDocuments > 0 ? 'none_found' : 'no_document';
+  if (input.sourceDocuments <= 0) return 'no_document';
+  /*
+   * A DOCUMENT WE NEVER READ IS NOT A DOCUMENT THAT SAID NOTHING, and this is
+   * the one line that keeps those two apart on screen. Checked before
+   * `none_found`, because a row where one document failed and the others were
+   * read has NOT established that its documents name no picture.
+   */
+  /*
+   * OUR FAILURE FIRST, because the two call for opposite things from the
+   * reader. A document we could not PROCESS is ours to fix and asking the
+   * builder to check their link would send them after a file that is fine; a
+   * document we could not REACH is theirs, and telling them it is retried
+   * automatically would be false — an unreachable link retires on its own
+   * budget and a better worker never re-chases it.
+   */
+  const unprocessed = Number(input.unprocessedDocuments ?? 0);
+  if (Number.isFinite(unprocessed) && unprocessed > 0) return 'unreadable';
+  const unreachable = Number(input.unreachableDocuments ?? 0);
+  if (Number.isFinite(unreachable) && unreachable > 0) return 'source_unavailable';
+  return 'none_found';
 }
 
 /**
@@ -85,7 +138,9 @@ export const STOCK_IMAGE_PROGRESS_LABEL: Record<StockImageProgress, string> = {
   drawn: 'Image ready',
   working: 'Finding a picture…',
   no_document: 'No brochure on this row',
-  none_found: 'No picture in the documents',
+  unreadable: 'Picture not available yet',
+  source_unavailable: 'A linked document could not be opened',
+  none_found: 'No picture in the supplied documents',
 };
 
 export const STOCK_IMAGE_PROGRESS_DETAIL: Record<StockImageProgress, string> = {
@@ -94,6 +149,20 @@ export const STOCK_IMAGE_PROGRESS_DETAIL: Record<StockImageProgress, string> = {
     + 'This finishes on its own — the page updates when it does.',
   no_document: 'This stock list attaches no brochure or plan to this property. '
     + 'Add a link to its row and the photograph is read from it.',
+  /*
+   * NEUTRAL AND TERMINAL, and deliberately asks the builder for nothing. The
+   * documents on this row are fine; we did not finish reading one. Promising
+   * a retry would be a promise about our own release schedule, and pointing
+   * at the link would send somebody to check a file that was never the
+   * problem — which is the softer version of the lie this state exists to
+   * end. So it says only what is true, and offers the one act that always
+   * works.
+   */
+  unreadable: 'This property does not have a picture from its documents yet. '
+    + 'You can add one with “Add picture”.',
+  source_unavailable: 'A document linked on this row could not be opened — it '
+    + 'may have been moved, deleted, or not shared. Check the link opens for '
+    + 'anyone with it, or add a picture with “Add picture”.',
   none_found: 'Every document on this row was read and none of them presents a '
     + "photograph of this property. Add a picture with “Add picture”, or link a "
     + 'brochure that shows the house.',
@@ -135,4 +204,56 @@ export function countArrivingUploads(
   return uploads.filter(
     (upload) => !upload.deleted_at && uploadIsArriving(upload.status),
   ).length;
+}
+
+/**
+ * How many of a row's documents we could not read, SPLIT BY WHOSE FAILURE.
+ *
+ * THE ONE PLACE THAT LOOKS AT WHY A BRANCH STOPPED, and it is deliberately
+ * server-side: the client is handed the resulting COUNT and never the reason,
+ * so a mechanism — a kill, a memory ceiling, a timeout, an attempt tally —
+ * has no route to a screen.
+ *
+ * `unprocessed` is ours: a step that began and never returned, or a
+ * retirement stamped with the runtime that failed. `unreachable` is the
+ * link's: a 404, a sign-in wall, something that is not a document. They are
+ * counted apart because they call for opposite things from the reader — one
+ * is ours to fix and asks nothing, the other is worth checking a link over.
+ *
+ * An `inspected` retirement is NEITHER: that one was read, and what it says
+ * about the document is true.
+ */
+export function unreadDocumentCount(storedProvenance: unknown): {
+  unprocessed: number; unreachable: number;
+} {
+  const root = storedProvenance as { branches?: Record<string, unknown> } | null;
+  const branches = root && typeof root === 'object' ? root.branches : null;
+  if (!branches || typeof branches !== 'object') return { unprocessed: 0, unreachable: 0 };
+  let unprocessed = 0;
+  let unreachable = 0;
+  for (const value of Object.values(branches)) {
+    if (!value || typeof value !== 'object') continue;
+    const record = value as {
+      result?: unknown; exhaustion?: unknown; runtime_version?: unknown;
+    };
+    // A step that began and never came back: the shape a kill leaves.
+    if (record.result === 'package_recovery_attempt') { unprocessed += 1; continue; }
+    if (record.result !== 'no_deterministic_image') continue;
+    if (record.exhaustion !== 'operational') continue;
+    /*
+     * BOTH KINDS ARE `operational`, AND THE STAMP IS WHAT SEPARATES THEM.
+     * `recordPackageUnprocessable` writes a `runtime_version` because the
+     * worker is what failed; `recordPackageUnreachable` deliberately does not,
+     * because a 404 is not something a better worker opens. That single field
+     * is therefore the honest test for whose failure this was — and it is the
+     * same field the runtime re-arm keys on, so the screen and the queue
+     * cannot disagree about which documents are ours to fix.
+     */
+    if (record.runtime_version === undefined || record.runtime_version === null) {
+      unreachable += 1;
+    } else {
+      unprocessed += 1;
+    }
+  }
+  return { unprocessed, unreachable };
 }

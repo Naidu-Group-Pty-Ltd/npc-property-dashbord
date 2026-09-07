@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1020,
+  "migration_files": 1022,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -431,6 +431,7 @@
     "function:public.release_migration_job_lock",
     "function:public.release_workflow_trigger_event",
     "function:public.relink_emails_on_client_email_change",
+    "function:public.reopen_builder_stock_runtime_failures",
     "function:public.reopen_builder_stock_stranded_items",
     "function:public.reopen_legal_matter",
     "function:public.replay_integration_dead_letter",
