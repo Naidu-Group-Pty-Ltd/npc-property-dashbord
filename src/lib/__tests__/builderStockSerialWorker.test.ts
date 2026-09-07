@@ -129,7 +129,7 @@ describe('the whole heavy PDF path is behind one slot', () => {
 describe('concurrency is a property of the runtime, never of the backlog', () => {
   it('the dispatcher starts a fixed small number of workers', () => {
     const migration = read(
-      'supabase/migrations/20261113100001_builder_stock_settler_fixed_concurrency.sql');
+      'supabase/migrations/20261113110001_builder_stock_settler_fixed_concurrency.sql');
     expect(migration).toMatch(/v_dispatch := 2;/);
     // The shape that caused the collapse: one worker per outstanding item.
     expect(migration).not.toMatch(/v_dispatch := least\(greatest\(v_item_work/);
