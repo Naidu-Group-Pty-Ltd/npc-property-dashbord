@@ -76,7 +76,11 @@ export function crimeStatBlocks(input: CrimePromptInput): string {
       const before = num(cat['previous12Months']);
       if (!offence || now === null) return null;
       const change = num(cat['changePct']);
-      return `| ${offence} | ${fmtInt(now)} | ${before !== null ? fmtInt(before) : ''} | ${change !== null ? fmtPct(change) : '—'} |`;
+      // A blank cell in a labelled column reads as missing data. An absent
+      // prior window is not missing — it is a comparison that does not exist,
+      // and the note beneath the table says why.
+      const priorCell = before !== null ? fmtInt(before) : 'not comparable';
+      return `| ${offence} | ${fmtInt(now)} | ${priorCell} | ${change !== null ? fmtPct(change) : '—'} |`;
     })
     .filter((r): r is string => r !== null)
     .slice(0, 14);
@@ -85,12 +89,29 @@ export function crimeStatBlocks(input: CrimePromptInput): string {
       `| Offence | Last 12 months | Previous 12 months | Change |\n|---|---|---|---|\n${rows.join('\n')}`,
     );
   }
+  // Any note a stored row carries about its own comparability travels with
+  // the figures, once, in the register's own words. SAPOL's July 2025
+  // reclassification is the case this exists for: its Level 2 categories have
+  // no like-for-like prior year, and a model given a blank cell and no reason
+  // will reach for one.
+  const notes = [...new Set(
+    categories.map((cat) => str(cat['seriesNote'])).filter((n): n is string => n !== null),
+  )];
+  for (const note of notes) parts.push(`Note on comparability: ${note}`);
+
   if (str(c['state']) === 'QLD') {
     parts.push('The first three rows (Offences Against the Person / Against Property / Other Offences) are the register’s own divisions and together make up the total; the rows beneath are categories inside them — never add the two levels together.');
   }
 
+  if (str(c['state']) === 'SA') {
+    parts.push('The first two rows (Offences Against Property / Against the Person) are SAPOL\u2019s own top-level groupings and together make up the total; the rows beneath are the finer categories inside them \u2014 never add the two levels together.');
+  }
+  if (str(c['state']) === 'NT') {
+    parts.push('The NT register publishes by reporting region rather than by suburb or postcode, and no population is published for that geography \u2014 so there is no per-capita rate here. Say the figures are for the region, and do not present them as the suburb\u2019s own.');
+  }
+
   parts.push(
-    'Discuss only the recorded figures above, attributed to their source and reference period. Do NOT compute or assert a safety score, a rating, a ranking, or any figure not in this table; a change percentage is movement in recorded counts, not a statement about safety.',
+    'Discuss only the recorded figures above, attributed to their source and reference period. Do NOT compute or assert a safety score, a rating, a ranking, or any figure not in this table; a change percentage is movement in recorded counts, not a statement about safety. Where a row reads "not comparable", say that no comparison exists rather than implying no change.',
   );
   return parts.join('\n\n');
 }
