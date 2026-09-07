@@ -166,6 +166,49 @@ const digitsOnly = (value: unknown): string | null => {
   return raw ? raw.replace(/[^0-9]/g, '') || null : null;
 };
 
+/**
+ * A refused organisation write, said in words.
+ *
+ * The organisation create/update path writes the table directly rather than
+ * through a guarded command, so its failures arrived as raw PostgreSQL faults
+ * and the outer catch flattened every one of them into "Internal error" — which
+ * is what an administrator saw when they created an organisation whose legal
+ * name, ABN or ACN already existed, or whose postcode/e-mail the column
+ * refused. Nothing was wrong with the request the operator could not have
+ * fixed; they were simply never told.
+ *
+ * Returns null for a fault that is genuinely ours, so an unrecognised error
+ * stays opaque.
+ */
+const ORG_CONSTRAINT_MESSAGE: Array<[RegExp, string]> = [
+  [/builder_organisations_legal_name_key/, 'An organisation with this legal name already exists.'],
+  [/builder_organisations_abn_key/, 'Another organisation is already recorded against this ABN.'],
+  [/builder_organisations_acn_key/, 'Another organisation is already recorded against this ACN.'],
+  [/builder_organisations_postcode_check|postcode/, 'Postcode must be four digits.'],
+  [/contact_email/, 'Enter a valid contact email address.'],
+  [/builder_organisations_abn_check|abn/, 'ABN must be 11 digits.'],
+  [/builder_organisations_acn_check|acn/, 'ACN must be 9 digits.'],
+  [/legal_name/, 'A legal name is required.'],
+  [/org_type/, 'Choose an organisation type.'],
+  [/state/, 'State must be an Australian state or territory.'],
+];
+
+const organisationWriteFailure = (
+  error: { message?: string; details?: string; code?: string } | null | undefined,
+): { error: string; code: string } | null => {
+  if (!error) return null;
+  const text = `${error.message ?? ''} ${error.details ?? ''}`;
+  const isConstraint = error.code === '23505' || error.code === '23514'
+    || error.code === '23502' || /duplicate key value|violates check constraint|null value in column/.test(text);
+  if (!isConstraint) return null;
+  for (const [pattern, message] of ORG_CONSTRAINT_MESSAGE) {
+    if (pattern.test(text)) {
+      return { error: message, code: error.code === '23505' ? 'duplicate' : 'invalid_field' };
+    }
+  }
+  return { error: 'Some of these organisation details were refused. Check the fields and try again.', code: 'invalid_field' };
+};
+
 /** Column allow-lists. No handler ever selects `*`. */
 const ORG_SELECT = `id, legal_name, trading_name, org_type, abn, acn, contact_email,
   contact_phone, website, address_line1, address_line2, suburb, state, postcode,
