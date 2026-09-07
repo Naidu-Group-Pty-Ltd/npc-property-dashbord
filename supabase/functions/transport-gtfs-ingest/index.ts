@@ -1,9 +1,30 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { internalError } from '../_shared/errorResponse.ts';
 import {
-  GTFS_FEEDS, ZIP_TAIL_BYTES, feedByKey, findMember, memberDataStart,
-  readZipDirectoryFromTail, type GtfsFeed, type ZipMember,
+  AUSTRALIA_BBOX, COORD_RATIO_FLOOR_ROWS, GTFS_FEEDS, IMPOSSIBLE_COORD_TOLERANCE,
+  ZIP_TAIL_BYTES, assertNotTruncated, feedByKey, findMember, memberDataStart,
+  parseGtfsCsv, projectStops, readZipDirectoryFromTail,
+  type GtfsFeed, type ZipMember,
 } from '../_shared/gtfsFeed.pure.ts';
+
+/**
+ * A fixed input for `digest`, carrying every shape the real feeds actually
+ * contain: NT's unquoted values with a leading space on the coordinate, NSW's
+ * fully-quoted row, a column ORDER that differs from NSW's, a row of the
+ * wrong width, a coordinate outside Australia, and a repeated stop_id.
+ *
+ * Its parse is part of the digest, so two deployments agreeing on this string
+ * agree on the parser's behaviour where it is hardest to get right.
+ */
+const DIGEST_SAMPLE = [
+  'stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,location_type,parent_station',
+  '12,004,"Trower Road after Bradshaw Terrace",, -12.369522, 130.883003,0,',
+  '"2533211","2533211","Kiama Station, Platform 1","","-34.67255547","150.85455900","","253330"',
+  'G268012,,"Brinagee St At Gunbar St",,0.0,0.0,1,',
+  '12,004,"A repeat of the first id",, -12.369522, 130.883003,0,',
+  'short,row,only',
+  '99,,"No name test",, -23.742994, 133.867567,,',
+].join('\n');
 
 /**
  * Load published GTFS feeds into `transport_stops` — the loader IS this
@@ -48,13 +69,24 @@ async function ranged(url: string, start: number, end: number): Promise<Uint8Arr
   return new Uint8Array(await r.arrayBuffer());
 }
 
+/**
+ * The archive's length, asked with a one-byte range rather than a HEAD.
+ *
+ * TransLink answers HEAD with no `content-length` at all while answering a
+ * ranged GET with `Content-Range: bytes 0-0/37356493` and
+ * `accept-ranges: bytes`. Reading HEAD alone therefore reported a perfectly
+ * range-addressable feed as un-addressable — a fault in this loader rather
+ * than in the publisher, and one only a real request could find.
+ */
 async function totalSize(url: string): Promise<number> {
-  const r = await fetch(url, { method: 'HEAD', headers: { 'User-Agent': UA } });
-  if (!r.ok) throw new Error(`HEAD failed: HTTP ${r.status}`);
-  const n = Number(r.headers.get('content-length'));
-  if (!Number.isFinite(n) || n <= 0) {
-    throw new Error('no content-length — a chunked archive cannot be range-addressed');
-  }
+  const r = await fetch(url, { headers: { Range: 'bytes=0-0', 'User-Agent': UA } });
+  await r.body?.cancel();
+  if (r.status !== 206) throw new Error(`range request not honoured on probe: HTTP ${r.status}`);
+  const cr = r.headers.get('content-range') ?? '';
+  const m = /\/(\d+)\s*$/.exec(cr);
+  if (!m) throw new Error(`Content-Range did not carry a total length: "${cr}"`);
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) throw new Error(`implausible archive length in "${cr}"`);
   return n;
 }
 
@@ -103,24 +135,75 @@ Deno.serve(async (req) => {
   // The bootstrap arm is PER FEED, for the reason the crime ingest's is per
   // STATE: a whole-table emptiness gate seals on the first feed loaded and
   // locks every remaining feed out of its own first load.
-  if (!authorised) {
+  // Measured the hard way on the first run: without the `.eq('feed', ...)`
+  // this counts the WHOLE table, so loading nt_darwin sealed nt_alice and
+  // qld_seq out of their own first load with a 403 — the exact fault the
+  // comment above describes. The filter is what makes the arm per-feed.
+  if (!authorised && stage !== 'probe' && stage !== 'digest') {
     const { count, error } = await supabase
       .from('transport_feed_syncs')
-      .select('id', { count: 'exact', head: true });
+      .select('id', { count: 'exact', head: true })
+      .eq('feed', stage);
     if (!error && (count ?? 0) === 0) {
-      console.log('[transport-gtfs-ingest] bootstrap arm: no feed loads recorded yet, permitted');
+      console.log(`[transport-gtfs-ingest] bootstrap arm: no ${stage} load recorded yet, permitted`);
       authorised = true;
     }
+  } else if (!authorised) {
+    // `probe` and `digest` read nothing and write nothing, so they are
+    // permitted while ANY feed is still unloaded — they are how a feed gets
+    // declared in the first place.
+    const { count, error } = await supabase
+      .from('transport_feed_syncs')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'succeeded');
+    if (!error && (count ?? 0) < GTFS_FEEDS.filter((f) => f.loadable).length) authorised = true;
   }
   if (!authorised) return json({ success: false, error: 'forbidden' }, 403);
 
   try {
+    // `digest` hashes the modules AS DEPLOYED. Deploying through the
+    // Management API means re-sending every dependency by hand, and a
+    // deployed copy that silently differs from the file it was built from is
+    // a fault this programme has already paid for once — so the deployment is
+    // SHOWN to be the repo's source rather than assumed to be. Compare
+    // against `sha256sum` on the checkout.
+    if (stage === 'digest') {
+      // Digests what the modules DO, not their source text. A first attempt
+      // read the files back through `import.meta.url` and every path answered
+      // "path not found": Supabase compiles the function and does not keep
+      // the sources on disk at runtime, so a source hash is not available to
+      // a deployed function at all. Behaviour is the better subject anyway —
+      // it is what a caller depends on, and `sectionRegistry`'s digest hashes
+      // a data structure for the same reason.
+      const canon = JSON.stringify({
+        feeds: GTFS_FEEDS,
+        bbox: AUSTRALIA_BBOX,
+        impossibleCoordTolerance: IMPOSSIBLE_COORD_TOLERANCE,
+        coordRatioFloorRows: COORD_RATIO_FLOOR_ROWS,
+        zipTailBytes: ZIP_TAIL_BYTES,
+        sample: projectStops(parseGtfsCsv(DIGEST_SAMPLE)),
+      });
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canon));
+      return json({
+        success: true,
+        stage: 'digest',
+        digest: Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join(''),
+        sampleResult: projectStops(parseGtfsCsv(DIGEST_SAMPLE)),
+      });
+    }
+
     if (stage === 'probe') {
       // Reads nothing and writes nothing. Its whole job is to answer whether
       // this egress can address these archives at all.
       const results = [];
       for (const feed of GTFS_FEEDS) {
         const started = Date.now();
+        // A feed this loader cannot address is reported as exactly that,
+        // never as one that answered nothing.
+        if (!feed.loadable) {
+          results.push({ feed: feed.key, reachable: false, loadable: false, reason: feed.unloadableReason, ms: 0 });
+          continue;
+        }
         try {
           const { bytes, member, total } = await readMember(feed, 'stops.txt');
           const firstLine = new TextDecoder().decode(bytes.subarray(0, 600)).split('\n')[0].replace(/^\uFEFF/, '').trim();
@@ -142,10 +225,115 @@ Deno.serve(async (req) => {
     }
 
     const feed = feedByKey(stage);
-    if (!feed) return json({ success: false, error: 'unknown_stage', stage }, 400);
-    return json({ success: false, error: 'load_not_implemented', stage: feed.key }, 501);
+    if (!feed) return json({ success: false, error: 'unknown_stage', stage, known: GTFS_FEEDS.map((f) => f.key) }, 400);
+    if (!feed.loadable) {
+      return json({ success: false, error: 'feed_not_loadable', stage: feed.key, reason: feed.unloadableReason }, 409);
+    }
+
+    // Resumable: 171,061 NSW stops do not insert inside one invocation, so a
+    // call writes what it can inside its budget and hands back the offset to
+    // resume from. Re-reading the archive costs ~5s and is paid again on each
+    // call, which is cheaper and less fragile than holding parsed state.
+    const offset = Math.max(0, Number(body?.offset ?? 0) | 0);
+    const budgetMs = Math.min(120_000, Math.max(10_000, Number(body?.budgetMs ?? 100_000) | 0));
+    const started = Date.now();
+
+    const { bytes, member, total } = await readMember(feed, 'stops.txt');
+    const parsed = parseGtfsCsv(new TextDecoder('utf-8').decode(bytes));
+    const { stops, audit } = projectStops(parsed);
+    assertNotTruncated(stops.length, feed.minStops, feed.key);
+
+    let syncId: string | null = null;
+    if (offset === 0) {
+      const { data: sync, error: syncError } = await supabase
+        .from('transport_feed_syncs')
+        .insert({
+          feed: feed.key,
+          status: 'running',
+          detail: {
+            archiveBytes: total,
+            fetchedBytes: member.compressedSize,
+            fetchedPercent: Number((100 * member.compressedSize / total).toFixed(3)),
+            audit,
+            sourceLabel: feed.sourceLabel,
+            licence: feed.licence,
+          },
+        })
+        .select('id')
+        .single();
+      if (syncError) throw new Error(`sync row insert failed: ${syncError.message}`);
+      syncId = (sync as { id: string }).id;
+
+      // Replaced wholesale: a stop withdrawn from the timetable must not go
+      // on being served as though it were still there.
+      const { error: clearError } = await supabase.from('transport_stops').delete().eq('feed', feed.key);
+      if (clearError) throw new Error(`clearing ${feed.key} failed: ${clearError.message}`);
+    }
+
+    const BATCH = 1_000;
+    let written = 0;
+    let i = offset;
+    for (; i < stops.length; i += BATCH) {
+      if (Date.now() - started > budgetMs) break;
+      const slice = stops.slice(i, i + BATCH).map((s) => ({
+        feed: feed.key,
+        stop_id: s.stopId,
+        stop_name: s.stopName,
+        lat: s.lat,
+        lon: s.lon,
+        location_type: s.locationType,
+        parent_station: s.parentStation,
+        // Not established by this feed's structure. Never a guessed mode.
+        route_type: null,
+        source_label: feed.sourceLabel,
+      }));
+      const { error: insertError } = await supabase
+        .from('transport_stops').upsert(slice, { onConflict: 'feed,stop_id' });
+      if (insertError) throw new Error(`insert at ${i} failed: ${insertError.message}`);
+      written += slice.length;
+    }
+
+    const done = i >= stops.length;
+    if (done) {
+      const { count } = await supabase
+        .from('transport_stops').select('feed', { count: 'exact', head: true }).eq('feed', feed.key);
+      await supabase.from('transport_feed_syncs')
+        .update({ status: 'succeeded', finished_at: new Date().toISOString(), stops_written: count ?? null })
+        .eq('feed', feed.key).eq('status', 'running');
+    }
+
+    return json({
+      success: true,
+      stage: feed.key,
+      archiveBytes: total,
+      fetchedBytes: member.compressedSize,
+      fetchedPercent: Number((100 * member.compressedSize / total).toFixed(3)),
+      parsedStops: stops.length,
+      audit,
+      offset,
+      written,
+      nextOffset: done ? null : i,
+      done,
+      syncId,
+      ms: Date.now() - started,
+    });
   } catch (e) {
     console.error('[transport-gtfs-ingest] failed:', e);
+    // A load that broke must be RECORDED as broken. Left at `running`, a
+    // half-written feed is indistinguishable from one still in progress, and
+    // the reading would serve a partial network as though it were complete —
+    // which is the whole failure class this replaces.
+    if (stage !== 'probe') {
+      const { error: markError } = await supabase
+        .from('transport_feed_syncs')
+        .update({
+          status: 'failed',
+          finished_at: new Date().toISOString(),
+          error: e instanceof Error ? e.message : String(e),
+        })
+        .eq('feed', stage).eq('status', 'running');
+      if (markError) console.error('[transport-gtfs-ingest] could not mark the sync failed:', markError.message);
+    }
     return json({ success: false, ...internalError(e, 'transport-gtfs-ingest') }, 500);
   }
 });

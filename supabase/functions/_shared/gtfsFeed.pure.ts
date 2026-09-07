@@ -53,10 +53,26 @@ export interface GtfsFeed {
   /** Licence as published, recorded so a re-check has something to compare. */
   readonly licence: string;
   /**
-   * A zip whose members are themselves zips (VIC publishes one per mode).
-   * Null for an ordinary GTFS archive.
+   * A zip whose members are themselves DEFLATED zips (VIC publishes one per
+   * mode). Reading a member of one means inflating the whole inner archive,
+   * which for VIC's two largest is 139 MB and 77 MB -- so a nested feed is
+   * declared and NOT loaded, with `loadable: false` naming the reason.
    */
   readonly nested: boolean;
+  /**
+   * Whether this loader can address the feed at all. A feed that cannot be
+   * loaded stays declared rather than deleted, so the reading can say which
+   * networks it does not hold instead of an empty answer reading as "no
+   * public transport here".
+   */
+  readonly loadable: boolean;
+  /** Why, when `loadable` is false. Rendered, never inferred. */
+  readonly unloadableReason?: string;
+  /**
+   * Measured stop count floor. A truncated download decompresses and parses
+   * cleanly; the count is the only thing that gives it away.
+   */
+  readonly minStops: number;
 }
 
 /**
@@ -67,19 +83,25 @@ export interface GtfsFeed {
 export const GTFS_FEEDS: readonly GtfsFeed[] = [
   {
     key: 'nsw_sydney',
-    label: 'Greater Sydney (Transport for NSW)',
+    label: 'Greater Sydney and regional NSW (Transport for NSW)',
     url: 'https://opendata.transport.nsw.gov.au/data/dataset/d1f68d4f-b778-44df-9823-cf2fa922e47f/resource/67974f14-01bf-47b7-bfa5-c7f2f8a950ca/download/full_greater_sydney_gtfs_static_0.zip',
     sourceLabel: 'Transport for NSW Open Data (CC BY 4.0)',
     licence: 'Creative Commons Attribution',
     nested: false,
+    loadable: true,
+    // 171,061 usable of 171,064 measured 2026-09-07.
+    minStops: 50_000,
   },
   {
-    key: 'vic_ptv',
-    label: 'Victoria (Public Transport Victoria)',
-    url: 'https://data.ptv.vic.gov.au/downloads/gtfs.zip',
-    sourceLabel: 'Public Transport Victoria GTFS',
-    licence: 'to be confirmed against the publisher',
-    nested: true,
+    key: 'qld_seq',
+    label: 'South East Queensland (TransLink)',
+    url: 'https://gtfsrt.api.translink.com.au/GTFS/SEQ_GTFS.zip',
+    sourceLabel: 'TransLink South East Queensland GTFS',
+    licence: 'Creative Commons Attribution',
+    nested: false,
+    loadable: true,
+    // 13,119 rows measured 2026-09-07.
+    minStops: 4_000,
   },
   {
     key: 'nt_darwin',
@@ -88,6 +110,9 @@ export const GTFS_FEEDS: readonly GtfsFeed[] = [
     sourceLabel: 'NT DIPL public bus GTFS (CC BY)',
     licence: 'Creative Commons Attribution',
     nested: false,
+    loadable: true,
+    // 898 measured 2026-09-07.
+    minStops: 300,
   },
   {
     key: 'nt_alice',
@@ -96,8 +121,29 @@ export const GTFS_FEEDS: readonly GtfsFeed[] = [
     sourceLabel: 'NT DIPL public bus GTFS (CC BY)',
     licence: 'Creative Commons Attribution',
     nested: false,
+    loadable: true,
+    // 99 measured 2026-09-07.
+    minStops: 40,
+  },
+  {
+    key: 'vic_ptv',
+    label: 'Victoria (Public Transport Victoria)',
+    url: 'https://data.ptv.vic.gov.au/downloads/gtfs.zip',
+    sourceLabel: 'Public Transport Victoria GTFS',
+    licence: 'to be confirmed against the publisher',
+    nested: true,
+    loadable: false,
+    unloadableReason:
+      'PTV publishes eight per-mode archives nested inside one zip, each DEFLATED rather than stored, '
+      + 'so a member cannot be range-addressed without inflating its whole inner archive -- 139 MB and '
+      + '77 MB for the two largest. Declared so the reading can say Victoria is not held rather than '
+      + 'answer as though it found nothing.',
+    minStops: 0,
   },
 ];
+
+/** Feeds this loader can actually address. */
+export const LOADABLE_FEEDS: readonly GtfsFeed[] = GTFS_FEEDS.filter((f) => f.loadable);
 
 export function feedByKey(key: string): GtfsFeed | null {
   return GTFS_FEEDS.find((f) => f.key === key) ?? null;
@@ -196,4 +242,210 @@ export function findMember(members: readonly ZipMember[], name: string): ZipMemb
   return members.find((m) => m.name.toLowerCase() === lower)
     ?? members.find((m) => m.name.toLowerCase().endsWith('/' + lower))
     ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// The CSV inside, and what a usable stop is
+// ---------------------------------------------------------------------------
+
+/**
+ * Split GTFS CSV into header-keyed records.
+ *
+ * Mapping is by header NAME and never by position, because the feeds disagree
+ * about order and about which columns exist at all. Measured 2026-09-07:
+ *
+ *   NSW   stop_id,stop_code,stop_name,stop_lat,stop_lon,location_type,...
+ *   NT    stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,...
+ *
+ * `stop_lat` is the 4th field in one and the 5th in the other, and Alice
+ * Springs carries a `parent_station` that Darwin does not -- two feeds from
+ * the same publisher. A positional reader silently loads stop_desc as a
+ * latitude.
+ *
+ * Values are trimmed: NT publishes unquoted with a leading space on every
+ * coordinate (` -12.369522`).
+ */
+export function parseGtfsCsv(text: string): Array<Record<string, string>> {
+  const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  const rows: string[][] = [];
+  let field = '';
+  let row: string[] = [];
+  let quoted = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (quoted) {
+      if (c === '"') {
+        if (src[i + 1] === '"') { field += '"'; i++; } else { quoted = false; }
+      } else { field += c; }
+      continue;
+    }
+    if (c === '"') { quoted = true; continue; }
+    if (c === ',') { row.push(field); field = ''; continue; }
+    if (c === '\n' || c === '\r') {
+      if (c === '\r' && src[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.length > 1 || row[0] !== '') rows.push(row);
+      row = [];
+      continue;
+    }
+    field += c;
+  }
+  row.push(field);
+  if (row.length > 1 || row[0] !== '') rows.push(row);
+
+  if (rows.length === 0) return [];
+  const header = rows[0].map((h) => h.trim());
+  const out: Array<Record<string, string>> = [];
+  for (let r = 1; r < rows.length; r++) {
+    // A row of a different width is a shape defect, not a value: counted by
+    // the caller rather than padded, because padding invents a column.
+    if (rows[r].length !== header.length) { out.push({ __malformed: String(rows[r].length) }); continue; }
+    const rec: Record<string, string> = {};
+    for (let c = 0; c < header.length; c++) rec[header[c]] = rows[r][c].trim();
+    out.push(rec);
+  }
+  return out;
+}
+
+/**
+ * The continental bounding box, used to reject a coordinate that cannot be a
+ * stop rather than to decide where a stop belongs.
+ *
+ * Deliberately generous: the NSW feed's real extent runs lon 138.5884 to
+ * 153.6213 and lat -37.8183 to -27.4643, because "Greater Sydney" includes
+ * NSW TrainLink coach terminals in Adelaide and Melbourne. Those are real
+ * stops and are kept.
+ */
+export const AUSTRALIA_BBOX = { minLat: -44.0, maxLat: -9.0, minLon: 112.0, maxLon: 154.0 } as const;
+
+/**
+ * Share of rows whose coordinate is impossible, past which the file is
+ * refused rather than loaded.
+ *
+ * Measured across the three feeds: 3 of NSW's 171,064 (0.0018%) and none at
+ * all in either NT feed. The three are real streets with broken positions --
+ * `G2583258` at lat 30.51656633 / lon -30.51657273 (the sign flipped and the
+ * longitude a copy of the latitude), `G2663247` "83 Pitt St" at lon
+ * -179.99891116, and `G268012` at exactly (0,0). A stop whose position is
+ * wrong cannot answer "how far is this from the property", so it is excluded
+ * AND COUNTED -- the SAPOL interstate-postcode rule.
+ *
+ * 0.1% is ~55x the measured worst case: generous enough that a normal release
+ * never trips it, tight enough that a feed which has changed its coordinate
+ * format refuses instead of loading nonsense.
+ */
+export const IMPOSSIBLE_COORD_TOLERANCE = 0.001;
+
+/** Below this many rows a share means nothing, so the ratio is not applied. */
+export const COORD_RATIO_FLOOR_ROWS = 500;
+
+export interface StopRow {
+  readonly stopId: string;
+  readonly stopName: string;
+  readonly lat: number;
+  readonly lon: number;
+  readonly locationType: number | null;
+  readonly parentStation: string | null;
+}
+
+export interface StopParseAudit {
+  readonly rows: number;
+  readonly usable: number;
+  /** Wrong field count for the header -- a shape defect. */
+  readonly malformed: number;
+  /** Missing id, name or either coordinate. */
+  readonly incomplete: number;
+  /** Parsed, but not a position on Earth this feed could serve. */
+  readonly impossibleCoord: number;
+  readonly duplicateIds: number;
+}
+
+export interface StopParseResult {
+  readonly stops: StopRow[];
+  readonly audit: StopParseAudit;
+}
+
+function intOrNull(v: string | undefined): number | null {
+  const s = (v ?? '').trim();
+  if (s === '') return null;
+  const n = Number(s);
+  return Number.isInteger(n) ? n : null;
+}
+
+/**
+ * Project parsed CSV records onto stops, refusing a file whose coordinates
+ * have stopped making sense.
+ *
+ * A duplicate `stop_id` keeps the FIRST occurrence: the key is (feed,
+ * stop_id) and a later row with the same id is the same object, so
+ * overwriting would make the load order decide the answer. None of the three
+ * feeds measured carries one.
+ */
+export function projectStops(records: ReadonlyArray<Record<string, string>>): StopParseResult {
+  const stops: StopRow[] = [];
+  const seen = new Set<string>();
+  let malformed = 0, incomplete = 0, impossible = 0, duplicates = 0;
+
+  for (const rec of records) {
+    if (rec.__malformed !== undefined) { malformed++; continue; }
+    const stopId = (rec.stop_id ?? '').trim();
+    const stopName = (rec.stop_name ?? '').trim();
+    const latText = (rec.stop_lat ?? '').trim();
+    const lonText = (rec.stop_lon ?? '').trim();
+    if (stopId === '' || stopName === '' || latText === '' || lonText === '') { incomplete++; continue; }
+
+    const lat = Number(latText);
+    const lon = Number(lonText);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) { incomplete++; continue; }
+    if (
+      lat < AUSTRALIA_BBOX.minLat || lat > AUSTRALIA_BBOX.maxLat ||
+      lon < AUSTRALIA_BBOX.minLon || lon > AUSTRALIA_BBOX.maxLon
+    ) { impossible++; continue; }
+
+    if (seen.has(stopId)) { duplicates++; continue; }
+    seen.add(stopId);
+
+    stops.push({
+      stopId,
+      stopName,
+      lat,
+      lon,
+      locationType: intOrNull(rec.location_type),
+      parentStation: ((rec.parent_station ?? '').trim() || null),
+    });
+  }
+
+  const rows = records.length;
+  if (rows >= COORD_RATIO_FLOOR_ROWS && impossible / rows > IMPOSSIBLE_COORD_TOLERANCE) {
+    throw new Error(
+      `${impossible} of ${rows} stops carry an impossible coordinate, past the measured `
+      + `${(IMPOSSIBLE_COORD_TOLERANCE * 100).toFixed(1)}% tolerance -- refusing rather than loading a feed `
+      + 'whose coordinate format has changed',
+    );
+  }
+  if (rows >= COORD_RATIO_FLOOR_ROWS && malformed / rows > IMPOSSIBLE_COORD_TOLERANCE) {
+    throw new Error(`${malformed} of ${rows} rows do not match the header width -- refusing`);
+  }
+
+  return {
+    stops,
+    audit: { rows, usable: stops.length, malformed, incomplete, impossibleCoord: impossible, duplicateIds: duplicates },
+  };
+}
+
+/**
+ * Refuse a load that is far smaller than the feed has been measured to be.
+ *
+ * A truncated download decompresses cleanly and parses cleanly; the only
+ * thing that gives it away is the count. Floors are set well under the
+ * measured sizes (NSW 171,064 stops, Darwin 898, Alice Springs 99) so a
+ * genuine timetable change never trips them.
+ */
+export function assertNotTruncated(usable: number, floor: number, feedKey: string): void {
+  if (usable < floor) {
+    throw new Error(
+      `${feedKey} yielded ${usable} usable stops, below the measured floor of ${floor} -- `
+      + 'treating this as a truncated or partial download rather than a shrunken network',
+    );
+  }
 }
