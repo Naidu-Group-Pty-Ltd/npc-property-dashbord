@@ -4,6 +4,7 @@ import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { assessAuPoint } from '../_shared/auGeoSanity.pure.ts';
 import { isTrustworthyAuPoint } from '../_shared/auPointTrust.pure.ts';
+import { assessGeocodeGranularity } from '../_shared/geocodeGranularity.pure.ts';
 import {
   cohortStateFrom,
   indexLocalities,
@@ -284,11 +285,12 @@ Deno.serve(async (req) => {
         if (
           hit.status === 'ok' &&
           validPoint(hit.lat, hit.lng) &&
-          // The Australian-geography gate, against the listing's own state. A
+          // The one plottability rule, against the listing's own state. A
           // stored answer that fails it is never served — a wrong pin with a
-          // cache behind it is the most durable kind of wrong.
-          assessAuPoint(hit.lat as number, hit.lng as number, item.state).ok &&
-          assessAuPostcodePoint(hit.lat as number, hit.lng as number, item.postcode).ok
+          // cache behind it is the most durable kind of wrong, and this cache
+          // holds answers written before the country-centroid fallback was
+          // understood.
+          isTrustworthyAuPoint(hit.lat, hit.lng, item.state, item.postcode)
         ) {
           results.push({
             id: item.id,
@@ -389,8 +391,25 @@ Deno.serve(async (req) => {
             const neighbours = item.suburb
               ? (neighboursBySuburb.get(item.suburb.toLowerCase()) ?? [])
               : [];
+            // What KIND of thing did the provider match? `country:AU` does not
+            // make an unmatched address fail — it returns the centre of the
+            // continent, with HTTP 200 and APPROXIMATE precision, and every
+            // gate below waves it through because the centre of Australia is
+            // inside Australia and on land. Granularity is the only check that
+            // can see it.
+            const granularity = assessGeocodeGranularity(
+              lat as number,
+              lng as number,
+              data.results[0]?.types,
+            );
+            if (!granularity.ok) {
+              console.warn(
+                `[resolve-listing-coordinates] refused a ${granularity.verdict} result: ${granularity.reason}`,
+              );
+            }
             const sane =
               validPoint(lat, lng) &&
+              granularity.ok &&
               assessAuPoint(lat as number, lng as number, item.state).ok &&
               // A geocode in the right state but the wrong end of it — the
               // postcode band is the only gate that can see this.
@@ -412,10 +431,12 @@ Deno.serve(async (req) => {
                 resolved_at: new Date().toISOString(),
               });
             } else if (validPoint(lat, lng)) {
-              // Google answered, but outside Australia or the listing's own
-              // state — a contaminated locality being taken at its word.
-              // Recorded as suspect so the sweep does not retry it forever,
-              // and never served as a coordinate.
+              // Google answered with a point that cannot be this property:
+              // outside Australia, outside the listing's own state, far from
+              // every verified neighbour, or no finer than the country — the
+              // last being what an unmatched overseas address gets under
+              // `country:AU`. Recorded as suspect so the sweep does not retry
+              // it forever, and never served as a coordinate.
               cacheMap.set(item.hash, { lat: null, lng: null, status: 'suspect', precision: null });
               inserts.push({
                 listing_hash: item.hash,

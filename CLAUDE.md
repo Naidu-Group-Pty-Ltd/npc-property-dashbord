@@ -112,6 +112,33 @@ Airtable returns `undefined` for a column that does not exist exactly as it does
 that is empty, so a mistyped name is invisible — that file's header records what that cost
 last time.
 
+**Where a pin goes is a different question again, and it took four rounds.**
+Read [`MAP_PIN_PLACEMENT.md`](./docs/listings/MAP_PIN_PLACEMENT.md) before
+touching `resolve-listing-coordinates`, any `_shared/au*.pure.ts`,
+`src/lib/listingsMap.ts` or `ListingsMapView`. The map has **never had an API
+key and must never need one** — a clone has nowhere to inherit a tile account
+from, and a `VITE_` token is inlined into every clone's bundle. Three rules
+bite. **`components=country:AU` does not restrict the SEARCH, it restricts the
+ANSWER**: an address it cannot match returns the centre of the continent with
+HTTP 200, which is inside Australia, on land, and contradicts no state — so
+`London` and `Pittsburgh` drew a tidy cluster in the desert, and that fault was
+introduced by the previous fix in this same area, which correctly stopped
+trusting their overseas coordinates and sent them to the geocoder instead.
+`geocodeGranularity.pure.ts` reads the provider's own `types`, refuses anything
+no finer than a state, and keeps `locality` acceptable because a suburb
+centroid is imprecise rather than wrong — refusing it would empty the map of
+every builder-stock item. **Only co-location may put more than one property
+behind one mark**: a proximity bubble is drawn at one member's coordinate while
+standing for properties hundreds of kilometres apart, so its position carries
+no information and it was read as a misplaced pin every time it was seen — two
+rounds were spent moving it to a better member, which worked and did not help.
+`groupByCoordinate` groups by exact coordinate, so a mark that says "26" is
+TRUE at every zoom and nothing is ever drawn where no property stands. And
+**removing clustering removed the spiderfy**, which was the only way to reach
+one of the twenty-six listings sharing `104 Grubb Avenue, Traralgon`;
+`ListingStackPager` is what keeps the count badge's promise, and it is never
+drawn for a stack of one.
+
 **The Listings key is one key across the prime and every clone, and the
 Integrations page cannot touch it.** Read
 [`AIRTABLE_KEY_OWNERSHIP.md`](./docs/integrations/AIRTABLE_KEY_OWNERSHIP.md)
