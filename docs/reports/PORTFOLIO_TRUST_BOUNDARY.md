@@ -109,13 +109,44 @@ Measured across the 23 clients who hold loans:
 
 $12,488,000 of principal-and-interest debt cannot be modelled without a term.
 
-**This is the correct outcome, not a regression.** Today the figure is produced
-for everyone and is wrong for most: of the 14 stored reports carrying it, only
-4 had a +1%/+2% pair inside a generous 1.9×–2.2× band, the observed ratio ran
-from 0.000 to 5.842, and against the loans themselves the model's +1% figure
-was out by $2,137 a month on average and $9,090 at worst — over $109,000 a
-year. Replacing a confidently wrong figure for 23 clients with an exact figure
-for 15 and an honest absence for 8 is a strict improvement.
+**This is the correct outcome, not a regression** — and what the stored
+reports actually show is worse than an accuracy problem.
+
+Every client holding a stored sensitivity block holds interest-only loans, so
+the true monthly interest step is exact (`balance × Δ ÷ 12`) and needs no term.
+Measured against those loans, over the 13 blocks whose loans carry a recorded
+repayment structure:
+
+| the stored figure is… | blocks |
+| --- | --- |
+| the LEVEL after the rise | 4 |
+| the CHANGE caused by the rise | 3 |
+| **neither — wrong under both readings** | **6** |
+
+**`plusOnePercentImpact` does not hold one quantity.** In four blocks it is the
+monthly amount *after* the rise — `2508.33 → 2425 → 2341.67`, an exact $83.33
+step on a $100,000 interest-only loan. In three it is the change itself —
+`1010 / 2020`, exact on $1,212,000. Both are drawn under the same PDF label, so
+neither a reader nor a downstream consumer can tell which one is on the page.
+
+The remaining six satisfy neither convention. Their best-case error is a median
+of $718 a month and $10,611 at worst, and one report's +2% figure ($0.15) is
+*smaller* than its +1% ($1,010.15) — which no rate rise can produce. Judged
+purely internally, with no reference to the loans at all, 5 of 18 informative
+blocks fail that test outright while 8 read as levels and 5 as changes.
+
+**No prompt wording repairs a field that means two things.** Replacing it with
+a figure produced by code — exact for 15 clients, honestly absent for 8 — is a
+strict improvement, and the sign convention becomes a property of the code
+rather than of whichever sentence the model read last.
+
+> **Correction.** An earlier revision of this document, and the two commits
+> that carried it, said the model's +1% figure was “out by $2,137 a month on
+> average and $9,090 at worst”. That comparison measured every stored value as
+> though it were a change, which charges the level-encoded blocks with an error
+> they do not have under their own convention. The measurements above replace
+> it: each block is judged under whichever reading suits it best, and the
+> finding is the inconsistency rather than the magnitude.
 
 **The real remedy is a data one**: capture a loan term on `client_properties`.
 That is named here as the thing which would restore the feature for the other
@@ -185,14 +216,37 @@ the producer changed. New fields are additive (`available`,
 `unavailableReason`, `unavailableExplanation`, `loansCovered`,
 `balanceCovered`, `projectedDebt`, `assumptionDetail`).
 
-**Historical rows are untouched and still render.** The renderer hides a figure
-only on an explicit `available === false`; a stored row from before this change
-has no such flag, so its numbers draw exactly as they did. No backfill was run.
+**Historical rows are untouched and still render**, verified by execution over
+the whole corpus rather than by reading the guard. The renderer hides a figure
+only on an explicit `available === false`, and across all **26** stored reports:
+**0** carry an `available` flag, so every one takes the legacy label and the
+legacy path; **26 of 26** hold a numeric `projections.projectedPortfolioValue`;
+**14 of 14** with a capacity block hold a numeric `utilisationPercentage`; and
+**14 of 14** with a sensitivity block hold a numeric `plusOnePercentImpact`.
+Nothing stored loses a figure. No backfill was run and no migration was
+written.
 
-**Rendering.** `monthlyFigureOrUnavailable` replaces `formatCurrency(x) + '/mo'`
-at the six sensitivity KPI boxes; the projection boxes distinguish "Not
-available" from "Not projected". The unavailable explanation is drawn beneath
-the boxes so a reader learns *why* rather than seeing a blank.
+**Rendering — and this component draws the block twice.**
+`monthlyFigureOrUnavailable` replaces `formatCurrency(x) + '/mo'` at the six
+sensitivity KPI boxes; the projection boxes distinguish "Not available" from
+"Not projected". The unavailable explanation is drawn beneath the boxes so a
+reader learns *why* rather than seeing a blank.
+
+The first attempt fixed only the pdf-lib path. `PortfolioAnalysisPDFGenerator`
+also renders the same block **on screen**, from the same object, through the
+same `formatCurrency` — so an unavailable figure went on printing `$0/mo` in
+the review a client is shown before the PDF is made. Both paths go through the
+helper now, and the invariant is stated over the whole file rather than over
+one call shape, because that is what the first version missed. An absent
+cashflow is also no longer painted green: `safeNumber(null)` is `0`, and `>= 0`
+coloured "Not available" as a healthy position.
+
+**And the label says which quantity it is.** "IF RATES RISE +1%" is true of a
+level and of a change alike, which is precisely why it could sit over either
+without looking wrong — the corpus above is what that costs. A calculated row
+now reads "+1%: MONTHLY CHANGE". A historical row keeps the wording it shipped
+with: relabelling it would be a second guess about which quantity it holds, and
+this change exists to stop guessing.
 
 ## 8. Known limitations
 

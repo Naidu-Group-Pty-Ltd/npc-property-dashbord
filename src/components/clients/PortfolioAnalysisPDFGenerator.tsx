@@ -181,13 +181,17 @@ interface PortfolioAnalysisData {
       twelveMonthActions: string[];
       optimisationScenarios: string[];
     };
+    // Computed on the server from the borrowing-capacity assessment, never by
+    // the model. The whole block is null when no assessment is on record, and
+    // `utilisationPercentage` is null when the assessment records no positive
+    // capacity — a ratio with a zero denominator is absent, not zero.
     borrowingCapacityUtilisation?: {
       totalDebtDeployed: number;
       estimatedCapacity: number;
       availableCapacity: number;
-      utilisationPercentage: number;
+      utilisationPercentage: number | null;
       commentary: string;
-    };
+    } | null;
     strategicRecommendations: {
       shortTerm: string[];
       mediumTerm: string[];
@@ -2587,10 +2591,20 @@ export function PortfolioAnalysisPDFGenerator({
           yPos = drawSubsectionHeader(page, 'Investment Properties — Impact on Rental Cashflow', yPos);
           
           const rateKpiWidth = (CONTENT_WIDTH - 20) / 3;
-          drawKPIBox(page, 'CURRENT NET CASHFLOW', monthlyFigureOrUnavailable(investRates.currentMonthlyCashflow), MARGIN_LEFT, yPos, rateKpiWidth, 
-            safeNumber(investRates.currentMonthlyCashflow) >= 0 ? SUCCESS_COLOR : DANGER_COLOR);
-          drawKPIBox(page, 'IF RATES RISE +1%', monthlyFigureOrUnavailable(investRates.plusOnePercentImpact), MARGIN_LEFT + rateKpiWidth + 10, yPos, rateKpiWidth, WARNING_COLOR);
-          drawKPIBox(page, 'IF RATES RISE +2%', monthlyFigureOrUnavailable(investRates.plusTwoPercentImpact), MARGIN_LEFT + (rateKpiWidth + 10) * 2, yPos, rateKpiWidth, DANGER_COLOR);
+          drawKPIBox(page, 'CURRENT NET CASHFLOW', monthlyFigureOrUnavailable(investRates.currentMonthlyCashflow), MARGIN_LEFT, yPos, rateKpiWidth,
+            investRates.currentMonthlyCashflow === null || investRates.currentMonthlyCashflow === undefined
+              ? SECONDARY_COLOR
+              : safeNumber(investRates.currentMonthlyCashflow) >= 0 ? SUCCESS_COLOR : DANGER_COLOR);
+          // The label states the convention. Historical rows are ambiguous —
+          // measured across the 14 stored reports, some encode the cashflow
+          // AFTER the rise and some the change itself, and both were stored in
+          // a field named `...Impact` and drawn under the same label. A row
+          // produced deterministically says which it is; a legacy row keeps
+          // the wording it was written under rather than being reinterpreted.
+          const shockLabel = (delta: string) =>
+            investRates.available === undefined ? `IF RATES RISE ${delta}` : `${delta}: MONTHLY CHANGE`;
+          drawKPIBox(page, shockLabel('+1%'), monthlyFigureOrUnavailable(investRates.plusOnePercentImpact), MARGIN_LEFT + rateKpiWidth + 10, yPos, rateKpiWidth, WARNING_COLOR);
+          drawKPIBox(page, shockLabel('+2%'), monthlyFigureOrUnavailable(investRates.plusTwoPercentImpact), MARGIN_LEFT + (rateKpiWidth + 10) * 2, yPos, rateKpiWidth, DANGER_COLOR);
           
           yPos -= 75;
           
@@ -2619,8 +2633,10 @@ export function PortfolioAnalysisPDFGenerator({
           
           const rateKpiWidth = (CONTENT_WIDTH - 20) / 3;
           drawKPIBox(page, 'CURRENT REPAYMENT', monthlyFigureOrUnavailable(ooRates.currentMonthlyRepayment), MARGIN_LEFT, yPos, rateKpiWidth, SECONDARY_COLOR);
-          drawKPIBox(page, 'IF RATES RISE +1%', monthlyFigureOrUnavailable(ooRates.plusOnePercentImpact), MARGIN_LEFT + rateKpiWidth + 10, yPos, rateKpiWidth, WARNING_COLOR);
-          drawKPIBox(page, 'IF RATES RISE +2%', monthlyFigureOrUnavailable(ooRates.plusTwoPercentImpact), MARGIN_LEFT + (rateKpiWidth + 10) * 2, yPos, rateKpiWidth, DANGER_COLOR);
+          const ooShockLabel = (delta: string) =>
+            ooRates.available === undefined ? `IF RATES RISE ${delta}` : `${delta}: MONTHLY CHANGE`;
+          drawKPIBox(page, ooShockLabel('+1%'), monthlyFigureOrUnavailable(ooRates.plusOnePercentImpact), MARGIN_LEFT + rateKpiWidth + 10, yPos, rateKpiWidth, WARNING_COLOR);
+          drawKPIBox(page, ooShockLabel('+2%'), monthlyFigureOrUnavailable(ooRates.plusTwoPercentImpact), MARGIN_LEFT + (rateKpiWidth + 10) * 2, yPos, rateKpiWidth, DANGER_COLOR);
           
           yPos -= 75;
           
@@ -2877,10 +2893,16 @@ export function PortfolioAnalysisPDFGenerator({
         
         yPos -= 75;
         
-        // Utilisation percentage bar
-        const utilPercent = safeNumber(bcUtil.utilisationPercentage, 0);
-        const utilColor = utilPercent < 60 ? SUCCESS_COLOR : utilPercent < 80 ? WARNING_COLOR : DANGER_COLOR;
-        
+        // Utilisation percentage bar. `utilisationPercentage` is null when the
+        // assessment records no positive capacity — safeNumber would make that
+        // "0% utilised" on a green bar, which reads as plenty of headroom.
+        const utilPercent = bcUtil.utilisationPercentage === null || bcUtil.utilisationPercentage === undefined
+          ? null
+          : safeNumber(bcUtil.utilisationPercentage, 0);
+        const utilColor = utilPercent === null
+          ? SECONDARY_COLOR
+          : utilPercent < 60 ? SUCCESS_COLOR : utilPercent < 80 ? WARNING_COLOR : DANGER_COLOR;
+
         page.drawText('Capacity Utilisation:', {
           x: MARGIN_LEFT,
           y: yPos,
@@ -2888,34 +2910,36 @@ export function PortfolioAnalysisPDFGenerator({
           font: helveticaFont,
           color: MUTED_COLOR,
         });
-        
-        page.drawText(`${utilPercent.toFixed(0)}%`, {
+
+        page.drawText(utilPercent === null ? 'Not available' : `${utilPercent.toFixed(0)}%`, {
           x: MARGIN_LEFT + 115,
           y: yPos,
           size: 12,
           font: helveticaBold,
           color: utilColor,
         });
-        
+
         yPos -= 20;
-        
-        // Draw utilisation bar
-        const barWidth = CONTENT_WIDTH;
-        page.drawRectangle({
-          x: MARGIN_LEFT,
-          y: yPos - 12,
-          width: barWidth,
-          height: 14,
-          color: rgb(0.92, 0.92, 0.92),
-        });
-        page.drawRectangle({
-          x: MARGIN_LEFT,
-          y: yPos - 12,
-          width: barWidth * Math.min(utilPercent / 100, 1),
-          height: 14,
-          color: utilColor,
-        });
-        
+
+        // Draw utilisation bar — only where there is a percentage to draw.
+        if (utilPercent !== null) {
+          const barWidth = CONTENT_WIDTH;
+          page.drawRectangle({
+            x: MARGIN_LEFT,
+            y: yPos - 12,
+            width: barWidth,
+            height: 14,
+            color: rgb(0.92, 0.92, 0.92),
+          });
+          page.drawRectangle({
+            x: MARGIN_LEFT,
+            y: yPos - 12,
+            width: barWidth * Math.min(utilPercent / 100, 1),
+            height: 14,
+            color: utilColor,
+          });
+        }
+
         yPos -= 35;
         
         // Commentary
@@ -3666,23 +3690,30 @@ export function PortfolioAnalysisPDFGenerator({
                           <div className="grid grid-cols-3 gap-4 text-center mb-2">
                             <div>
                               <p className="text-xs text-muted-foreground">Current Net Cashflow</p>
-                              <p className={`text-lg font-bold ${safeNumber(analysisData.analysis.interestRateSensitivity.investmentProperties.currentMonthlyCashflow) >= 0 ? 'text-success' : 'text-destructive'}`}>
-                                {formatCurrency(analysisData.analysis.interestRateSensitivity.investmentProperties.currentMonthlyCashflow)}/mo
+                              <p className={`text-lg font-bold ${analysisData.analysis.interestRateSensitivity.investmentProperties.currentMonthlyCashflow === null || analysisData.analysis.interestRateSensitivity.investmentProperties.currentMonthlyCashflow === undefined ? 'text-muted-foreground' : safeNumber(analysisData.analysis.interestRateSensitivity.investmentProperties.currentMonthlyCashflow) >= 0 ? 'text-success' : 'text-destructive'}`}>
+                                {monthlyFigureOrUnavailable(analysisData.analysis.interestRateSensitivity.investmentProperties.currentMonthlyCashflow)}
                               </p>
                             </div>
                             <div>
-                              <p className="text-xs text-muted-foreground">If Rates Rise +1%</p>
+                              <p className="text-xs text-muted-foreground">
+                                {analysisData.analysis.interestRateSensitivity.investmentProperties.available === undefined ? 'If Rates Rise +1%' : '+1%: Monthly Change'}
+                              </p>
                               <p className="text-lg font-bold text-warning">
-                                {formatCurrency(analysisData.analysis.interestRateSensitivity.investmentProperties.plusOnePercentImpact)}/mo
+                                {monthlyFigureOrUnavailable(analysisData.analysis.interestRateSensitivity.investmentProperties.plusOnePercentImpact)}
                               </p>
                             </div>
                             <div>
-                              <p className="text-xs text-muted-foreground">If Rates Rise +2%</p>
+                              <p className="text-xs text-muted-foreground">
+                                {analysisData.analysis.interestRateSensitivity.investmentProperties.available === undefined ? 'If Rates Rise +2%' : '+2%: Monthly Change'}
+                              </p>
                               <p className="text-lg font-bold text-destructive">
-                                {formatCurrency(analysisData.analysis.interestRateSensitivity.investmentProperties.plusTwoPercentImpact)}/mo
+                                {monthlyFigureOrUnavailable(analysisData.analysis.interestRateSensitivity.investmentProperties.plusTwoPercentImpact)}
                               </p>
                             </div>
                           </div>
+                          {analysisData.analysis.interestRateSensitivity.investmentProperties.available === false && analysisData.analysis.interestRateSensitivity.investmentProperties.unavailableExplanation && (
+                            <p className="text-xs text-muted-foreground mb-2">{analysisData.analysis.interestRateSensitivity.investmentProperties.unavailableExplanation}</p>
+                          )}
                           <p className="text-xs text-muted-foreground">{analysisData.analysis.interestRateSensitivity.investmentProperties.commentary}</p>
                         </div>
                       )}
@@ -3697,22 +3728,29 @@ export function PortfolioAnalysisPDFGenerator({
                               <div>
                                 <p className="text-xs text-muted-foreground">Current Repayment</p>
                                 <p className="text-lg font-bold">
-                                  {formatCurrency(analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.currentMonthlyRepayment)}/mo
+                                  {monthlyFigureOrUnavailable(analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.currentMonthlyRepayment)}
                                 </p>
                               </div>
                               <div>
-                                <p className="text-xs text-muted-foreground">If Rates Rise +1%</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.available === undefined ? 'If Rates Rise +1%' : '+1%: Monthly Change'}
+                                </p>
                                 <p className="text-lg font-bold text-warning">
-                                  {formatCurrency(analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.plusOnePercentImpact)}/mo
+                                  {monthlyFigureOrUnavailable(analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.plusOnePercentImpact)}
                                 </p>
                               </div>
                               <div>
-                                <p className="text-xs text-muted-foreground">If Rates Rise +2%</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.available === undefined ? 'If Rates Rise +2%' : '+2%: Monthly Change'}
+                                </p>
                                 <p className="text-lg font-bold text-destructive">
-                                  {formatCurrency(analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.plusTwoPercentImpact)}/mo
+                                  {monthlyFigureOrUnavailable(analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.plusTwoPercentImpact)}
                                 </p>
                               </div>
                             </div>
+                            {analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.available === false && analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.unavailableExplanation && (
+                              <p className="text-xs text-muted-foreground mb-2">{analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.unavailableExplanation}</p>
+                            )}
                             <p className="text-xs text-muted-foreground">{analysisData.analysis.interestRateSensitivity.ownerOccupiedProperties.commentary}</p>
                           </div>
                         </>
@@ -3853,16 +3891,26 @@ export function PortfolioAnalysisPDFGenerator({
                           <p className="text-xl font-bold text-success">{formatCurrency(analysisData.analysis.borrowingCapacityUtilisation.availableCapacity)}</p>
                         </div>
                       </div>
-                      <div className="w-full bg-muted rounded-full h-3 mb-2">
-                        <div
-                          className={`h-3 rounded-full ${
-                            safeNumber(analysisData.analysis.borrowingCapacityUtilisation.utilisationPercentage) < 60 ? 'bg-success' :
-                            safeNumber(analysisData.analysis.borrowingCapacityUtilisation.utilisationPercentage) < 80 ? 'bg-warning' : 'bg-destructive'
-                          }`}
-                          style={{ width: `${Math.min(safeNumber(analysisData.analysis.borrowingCapacityUtilisation.utilisationPercentage), 100)}%` }}
-                        />
-                      </div>
-                      <p className="text-xs text-muted-foreground text-center">{safeNumber(analysisData.analysis.borrowingCapacityUtilisation.utilisationPercentage).toFixed(0)}% utilised</p>
+                      {/* A null utilisation means the assessment records no positive
+                          capacity. safeNumber would draw that as "0% utilised" on a
+                          green bar — plenty of headroom, which is the opposite. */}
+                      {analysisData.analysis.borrowingCapacityUtilisation.utilisationPercentage === null
+                        || analysisData.analysis.borrowingCapacityUtilisation.utilisationPercentage === undefined ? (
+                        <p className="text-xs text-muted-foreground text-center">Utilisation not available</p>
+                      ) : (
+                        <>
+                          <div className="w-full bg-muted rounded-full h-3 mb-2">
+                            <div
+                              className={`h-3 rounded-full ${
+                                safeNumber(analysisData.analysis.borrowingCapacityUtilisation.utilisationPercentage) < 60 ? 'bg-success' :
+                                safeNumber(analysisData.analysis.borrowingCapacityUtilisation.utilisationPercentage) < 80 ? 'bg-warning' : 'bg-destructive'
+                              }`}
+                              style={{ width: `${Math.min(safeNumber(analysisData.analysis.borrowingCapacityUtilisation.utilisationPercentage), 100)}%` }}
+                            />
+                          </div>
+                          <p className="text-xs text-muted-foreground text-center">{safeNumber(analysisData.analysis.borrowingCapacityUtilisation.utilisationPercentage).toFixed(0)}% utilised</p>
+                        </>
+                      )}
                       {analysisData.analysis.borrowingCapacityUtilisation.commentary && (
                         <p className="text-sm text-muted-foreground mt-3">{analysisData.analysis.borrowingCapacityUtilisation.commentary}</p>
                       )}

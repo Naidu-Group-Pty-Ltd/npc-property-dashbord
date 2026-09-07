@@ -2,10 +2,14 @@
  * The Portfolio figures the record produces, and the ones it refuses to.
  *
  * Every rule here exists because the model was previously asked for these
- * numbers and got them wrong: of the 14 stored reports carrying a rate
- * sensitivity, only 4 had a +1%/+2% pair inside a generous 1.9×–2.2× band, and
- * against the loans themselves the +1% figure was out by $2,137 a month on
- * average and $9,090 at worst.
+ * numbers, and the stored corpus shows it was not doing arithmetic at all.
+ * Every client with a stored rate sensitivity holds interest-only loans, so
+ * the true step is exact (`balance × Δ ÷ 12`) and needs no term — and of the
+ * 13 blocks whose loans carry a recorded structure, 4 encode the monthly LEVEL
+ * after the rise, 3 encode the CHANGE itself, and 6 are wrong under both
+ * readings. All of them print under the same PDF label. A field that means two
+ * things cannot be repaired by prompt wording, which is why the producer moved
+ * rather than the instructions.
  *
  * Note what is deliberately NOT asserted anywhere below: that the +2% impact
  * is twice the +1%. That was an audit sanity band, not an invariant — a
@@ -345,5 +349,124 @@ describe('trust boundary in generate-portfolio-analysis', () => {
     // Clamping 250 to 100 would publish an excellent rating the model never
     // gave; dropping it is the honest failure.
     expect(source).toMatch(/n >= 0 && n <= 100/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit invariants
+//
+// Each of these pins a specific way the old behaviour could return. They are
+// not restatements of the arithmetic above — they are the rules that make an
+// absent figure legible and stop a missing input being filled in with a
+// plausible one.
+// ---------------------------------------------------------------------------
+
+describe('Portfolio audit invariants', () => {
+  const facts = readFileSync(
+    resolve(__dirname, '../../../../../supabase/functions/_shared/reports/portfolio/deterministicFacts.pure.ts'),
+    'utf8',
+  );
+  const generator = readFileSync(
+    resolve(__dirname, '../../../../../supabase/functions/generate-portfolio-analysis/index.ts'),
+    'utf8',
+  );
+  const renderer = readFileSync(
+    resolve(__dirname, '../../../../../src/components/clients/PortfolioAnalysisPDFGenerator.tsx'),
+    'utf8',
+  );
+  const normaliser = readFileSync(
+    resolve(__dirname, '../../../../../supabase/functions/_shared/reports/portfolio/normalise.pure.ts'),
+    'utf8',
+  );
+
+  it('holds no default a missing input could be filled in with', () => {
+    // A term, a market rate or an assumed repayment structure would each turn
+    // "we do not know" into a confident number. There is no such constant, and
+    // there must not be: this data model has no loan term column at all, so a
+    // default would be a guess dressed as a fact on every amortising loan.
+    for (const forbidden of [/LOAN_TERM/, /TERM_YEARS/, /DEFAULT_RATE/, /DEFAULT_INTEREST/, /ASSUMED_/]) {
+      expect(facts, `deterministicFacts declares ${forbidden}`).not.toMatch(forbidden);
+    }
+  });
+
+  it('never lets an unavailable rate figure reach the page as a currency zero', () => {
+    // formatCurrency(null) returns '$0', and a rate shock of $0 reads as
+    // "rates rising costs you nothing" — the exact inversion this work ends.
+    //
+    // This component draws the block TWICE: once into the PDF and once
+    // on-screen. An earlier revision fixed only the pdf-lib path, and the
+    // on-screen copy went on printing `$0/mo`, so the rule is stated over the
+    // whole file rather than over one call shape.
+    expect(
+      renderer,
+      'a sensitivity figure is still formatted without the unavailable helper',
+    ).not.toMatch(
+      /formatCurrency\([^)]*(?:plusOnePercentImpact|plusTwoPercentImpact|currentMonthlyCashflow|currentMonthlyRepayment)/,
+    );
+
+    // …and every site that draws one uses the helper. Twelve: six figures,
+    // drawn into the PDF and again on screen. A thirteenth has to be a
+    // decision somebody makes.
+    const drawn = renderer.match(
+      /monthlyFigureOrUnavailable\([^)]*(?:plusOnePercentImpact|plusTwoPercentImpact|currentMonthlyCashflow|currentMonthlyRepayment)/g,
+    ) ?? [];
+    expect(drawn.length).toBe(12);
+  });
+
+  it('does not colour an absent cashflow as a healthy one', () => {
+    // safeNumber(null) is 0, and `>= 0` then paints "Not available" green.
+    expect(renderer).toMatch(/currentMonthlyCashflow === null[\s\S]{0,120}SECONDARY_COLOR/);
+    expect(renderer).toMatch(/currentMonthlyCashflow === undefined \? 'text-muted-foreground'/);
+  });
+
+  it('does not draw an absent capacity utilisation as 0% on a green bar', () => {
+    // `utilisationPercentage` is null when the assessment records no positive
+    // capacity — a ratio with a zero denominator. safeNumber turns that into
+    // "0% utilised", which reads as plenty of headroom, on both paths.
+    expect(renderer).toMatch(/utilisationPercentage === null/);
+    expect(renderer).toContain("utilPercent === null ? 'Not available'");
+    expect(renderer).toContain('Utilisation not available');
+    // The bar is drawn only where there is a percentage for it to show.
+    expect(renderer).toMatch(/if \(utilPercent !== null\) \{/);
+  });
+
+  it('names which quantity a calculated rate row carries', () => {
+    // The stored corpus proves the label mattered: the same field held the
+    // level after the rise in some reports and the change in others, drawn
+    // under one heading. A calculated row now says "MONTHLY CHANGE"; a
+    // historical row (no `available` flag) keeps the wording it shipped with,
+    // because reinterpreting it would be a second guess about which it was.
+    expect(renderer).toMatch(/available === undefined \? `IF RATES RISE \$\{delta\}` : `\$\{delta\}: MONTHLY CHANGE`/);
+  });
+
+  it('explains an absence only when the absence is explicit', () => {
+    // `available === false` and not a falsy check: a historical row carries no
+    // flag at all, and must keep rendering exactly as it did.
+    expect(renderer).toContain('investRates.available === false');
+    expect(renderer).toContain('ooRates.available === false');
+    expect(renderer).not.toMatch(/!\s*investRates\.available/);
+    expect(renderer).not.toMatch(/!\s*ooRates\.available/);
+  });
+
+  it('leaves the persisted shape both renderers read exactly where it was', () => {
+    // The producer changed; the paths did not. A moved field would blank the
+    // WeasyPrint document while the pdf-lib one still worked.
+    for (const path of ['projectedPortfolioValue', 'projectedEquity', 'projectedMonthlyCashflow']) {
+      expect(normaliser, `${path} left the normaliser`).toContain(path);
+    }
+    expect(generator).toContain('interestRateSensitivity');
+    expect(generator).toContain('borrowingCapacityUtilisation');
+  });
+
+  it('states a worsening position as a negative number, in code and in the type', () => {
+    // The convention is load-bearing and reversible by a one-character edit,
+    // so it is written down beside the field as well as asserted above.
+    expect(facts).toMatch(/NEGATIVE means the client's monthly cash position is worse/);
+    const rise = portfolioRateSensitivity([
+      { loanRemaining: 600_000, interestRate: 6, repaymentType: 'interest_only' },
+    ]);
+    expect(rise.available).toBe(true);
+    expect(impactFor(rise, 1)).toBeLessThan(0);
+    expect(impactFor(rise, 2)).toBeLessThan(impactFor(rise, 1)!);
   });
 });
