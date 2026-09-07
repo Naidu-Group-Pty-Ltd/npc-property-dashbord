@@ -8,6 +8,30 @@
  * actually wrote. Measured over the 1,199 stored reports: **966 distinct H2
  * headings** for a product with 38 sections.
  *
+ * ## The fixture used to be half the corpus
+ *
+ * It carried H2 headings only, because the partition read `##` only. Both were
+ * wrong about the same thing: **70.2% of stored reports write their sections
+ * at H1** (`# 1. Location Overview` … `# 36. Demographic & Economic Data`), and
+ * that cohort's headings are the larger half by instances — 26,860 against
+ * 10,185. So this file measured 27% of the corpus's section headings and
+ * reported a coverage number about the rest of it.
+ *
+ * The consequence was not academic. Ten headings the registry could not name
+ * sat above 400 reports each — `12. Amenity Scores` on 578,
+ * `22. Principal & Interest Loan` on 541 — and none could show up here.
+ * Adding them lifted H1 resolution from 78.9% to 96.0% and reassigned nothing:
+ * across all 575 fixture rows, 30 headings gained a section and **0 changed
+ * section or lost one**.
+ *
+ * The fixture therefore carries `level` now, and every row is a heading
+ * production actually wrote at that level. Its H1 half has a floor of ten
+ * reports rather than two, because below ten the H1 inventory is dominated by
+ * document title blocks that name a client's property
+ * (`Investment Report: 68 Craigmore Drive, …`, on 2-9 reports each). A coverage
+ * instrument is not a corpus dump, and those are neither sections nor ours to
+ * keep in a repository.
+ *
  * That ratio is the finding. The legacy generator promotes its sub-headings to
  * H2 — `Strengths`, `Weaknesses`, `Opportunities` and `Threats` under SWOT;
  * `Market Commentary:` and `Yield Commentary:` under their own sections; the
@@ -36,9 +60,67 @@ import {
   sectionIdForHeading,
 } from '../investment/sectionRegistry.pure';
 
-const FIXTURE: Array<{ h: string; reports: number }> = JSON.parse(
+type HeadingRow = { h: string; reports: number; level: 1 | 2 };
+
+const FIXTURE: HeadingRow[] = JSON.parse(
   readFileSync(resolve(__dirname, 'fixtures/corpusHeadings.json'), 'utf8'),
 );
+
+/**
+ * Headings that are not sections, so the registry is right not to name them.
+ *
+ * One list, read by both coverage guards below. It was two — an inline
+ * `!== 'contact us'` in one and a longer allowance in the other — and they
+ * disagreed the moment the fixture grew: `REPORT TITLE`, on 570 reports, is
+ * furniture by one and a missing section by the other.
+ */
+const NOT_A_SECTION = (h: string): boolean => {
+  const n = normaliseHeading(h);
+  return (
+    h.trimEnd().endsWith(':') ||             // `Market Commentary:`, a sub-heading
+    isSubHeadingByNumbering(h) ||             // `11.1 Public Transport Network`
+    ['strengths', 'weaknesses', 'opportunities', 'threats'].includes(n) ||
+    // Marketing furniture and document title blocks. A title sits above the
+    // first section and is absorbed into the preamble, which is where it
+    // belongs — attributing it to whatever follows would put the letterhead
+    // inside a client's verdict.
+    [
+      'contact us',                                                    // 787 reports
+      'report title',                                                  // 570
+      'naidu property consulting services',                            // 403
+      'client investment feasibility & financial performance report',  // 11, the Financial fork
+      'property & location due diligence report',                      // 11, the Due Diligence fork
+    ].includes(n)
+  );
+};
+
+/**
+ * Section headings the registry deliberately does not name, and why.
+ *
+ * Frozen the way `PRODUCER_GAPS` and `edge-missing-names.txt` are: closing one
+ * means deleting its line, and a NEW unnamed section fails the guard below.
+ * The difference from `NOT_A_SECTION` is the whole point — these ARE sections,
+ * and saying so is more honest than filing them under furniture.
+ */
+const UNNAMED_SECTIONS: ReadonlyArray<{ h: string; why: string }> = [
+  {
+    h: '37. Methodology Notes',
+    // Naming it would cost more than it buys. `normaliseHeading` strips a
+    // trailing colon, so one alias covers both forms — and the corpus writes
+    // `Methodology Notes:` as a sub-heading on 31 reports against 22 that write
+    // it as a section. The alias would promote a sub-heading more often than it
+    // named a section.
+    why: 'the colon sub-heading form outnumbers the section form, 31 reports to 22',
+  },
+  {
+    h: '6. Investment Insights',
+    // It sits in an eight-section variant between `Demographics` and
+    // `Environmental & Risk Factors`, where either the verdict or the
+    // recommendation could live. The corpus does not settle which, and a
+    // registry that guesses is the thing this file exists to prevent.
+    why: 'a real section on 17 reports whose target the corpus does not settle',
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Normalisation
@@ -105,41 +187,47 @@ describe('a known name with a qualifier is the same section', () => {
 // ---------------------------------------------------------------------------
 
 describe('the registry recognises what production wrote', () => {
-  const resolved = FIXTURE.filter((r) => sectionIdForHeading(r.h) !== null);
   const unresolved = FIXTURE.filter((r) => sectionIdForHeading(r.h) === null);
-  const instances = (rows: typeof FIXTURE) => rows.reduce((s, r) => s + r.reports, 0);
+  const instances = (rows: HeadingRow[]) => rows.reduce((s, r) => s + r.reports, 0);
+  const coverage = (rows: HeadingRow[]) =>
+    (100 * instances(rows.filter((r) => sectionIdForHeading(r.h) !== null))) / instances(rows);
 
-  it('resolves a majority of heading instances, and the floor only rises', () => {
-    const pct = (100 * instances(resolved)) / instances(FIXTURE);
-    // A floor, not a target. It went 60.7 → 64.2 (ordinal fix) → 68.2
-    // (qualifiers) → here; Phase 3's assembly work should raise it further, and
-    // this fails if a change ever lowers it.
-    expect(pct).toBeGreaterThan(70);
+  // A floor per level, not a target, and each is stated as a separate number
+  // because one figure over both hides exactly what this file got wrong: a
+  // healthy blended percentage said nothing about the 70% of documents whose
+  // headings were not in the fixture at all.
+  it.each([
+    [1 as const, 95],
+    [2 as const, 75],
+  ])('resolves H%i heading instances above %i%%, and the floor only rises', (level, floor) => {
+    expect(coverage(FIXTURE.filter((r) => r.level === level))).toBeGreaterThan(floor);
   });
 
   it('the headings it cannot name are sub-headings and furniture, not sections', () => {
     // Every unresolved heading carried by 15+ reports, checked by eye against
-    // the corpus and recorded here. If a NEW one joins them, this fails and
-    // somebody looks at it — which is the point: an unrecognised section is a
-    // silent hole, and an unrecognised sub-heading is fine.
-    const looksStructural = (h: string) => {
-      const n = normaliseHeading(h);
-      return !(
-        h.trimEnd().endsWith(':') ||          // `Market Commentary:`
-        isSubHeadingByNumbering(h) ||          // `11.1 Public Transport Network`
-        ['strengths', 'weaknesses', 'opportunities', 'threats'].includes(n) ||
-        n === 'contact us'                     // marketing furniture, 761 reports
-      );
-    };
-    const loud = unresolved.filter((r) => r.reports >= 15 && looksStructural(r.h));
+    // the corpus. If a NEW one joins them, this fails and somebody looks at
+    // it — which is the point: an unrecognised section is a silent hole, and an
+    // unrecognised sub-heading is fine.
+    const known = new Set(UNNAMED_SECTIONS.map((u) => u.h));
+    const loud = unresolved.filter((r) => r.reports >= 15 && !NOT_A_SECTION(r.h) && !known.has(r.h));
     // Reported together rather than one at a time: the first failure of this
     // kind is rarely the only one, and a list is what somebody can act on.
     expect(loud.map((r) => `${r.reports}× ${r.h}`)).toEqual([]);
   });
 
+  it('every deliberately unnamed section is still unnamed, and still in the corpus', () => {
+    // The list can only shrink. Naming one means deleting its line; and an
+    // entry the corpus no longer carries is a stale excuse rather than a
+    // decision, so it has to go too.
+    for (const { h } of UNNAMED_SECTIONS) {
+      expect(sectionIdForHeading(h), `"${h}" now resolves — delete its UNNAMED_SECTIONS line`).toBeNull();
+      expect(FIXTURE.some((r) => r.h === h), `"${h}" is no longer in the corpus`).toBe(true);
+    }
+  });
+
   it('resolves every heading the current generators are declared to write', () => {
     // Anything on 100+ reports is structural rather than incidental.
-    const structural = FIXTURE.filter((r) => r.reports >= 100 && normaliseHeading(r.h) !== 'contact us');
+    const structural = FIXTURE.filter((r) => r.reports >= 100 && !NOT_A_SECTION(r.h));
     for (const r of structural) {
       expect(sectionIdForHeading(r.h), `"${r.h}" on ${r.reports} reports resolves to nothing`).toBeTruthy();
     }
@@ -236,6 +324,8 @@ describe('an unrecognised heading belongs to the section above it', () => {
   });
 
   it('handles an empty document', () => {
-    expect(partitionByRegistry('')).toEqual({ preamble: '', sections: [], absorbed: [] });
+    // Level 2 on a tie, which is what every document verified before the H1
+    // measurement relied on.
+    expect(partitionByRegistry('')).toEqual({ preamble: '', sections: [], absorbed: [], level: 2 });
   });
 });

@@ -291,6 +291,13 @@ verify_jwt = true
 [functions.abs-regional-ingest]
 verify_jwt = true
 
+# The per-section index over stored reports: derives an addressable projection
+# of investment_reports.report_content and writes only the two derived tables.
+# Internal secret (bearer or X-Cron-Secret) or the per-report self-sealing
+# bootstrap arm inside; the gateway JWT stays on in front of it.
+[functions.report-sections-index]
+verify_jwt = true
+
 # Public-class locality service (parseJsonBody-bounded), like its siblings.
 [functions.abs-regional-service]
 verify_jwt = false

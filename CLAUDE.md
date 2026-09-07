@@ -1368,6 +1368,24 @@ relevant one before touching that format — each records defects that only a
 render against production data revealed, and each names the legacy generators
 that must stay.
 
+**A stored report is addressable by section now.** Read
+[`SECTION_STORAGE.md`](./docs/reports/SECTION_STORAGE.md) before touching
+`_shared/reports/investment/sectionStorage.pure.ts`, `detectSectionLevel` /
+`partitionByRegistry` in `sectionRegistry.pure.ts`, the `report-sections-index`
+function or the two derived tables. `report_content` stays the source of truth
+and nothing writes to it; the index is a projection over it, and a report whose
+re-assembly cannot be proven lossless is left **unindexed** rather than half
+indexed. Two things bite. **The partition was blind to 70% of the corpus** — it
+read `##` only, and 842 of 1,199 stored reports write their sections at H1
+(`# 1. Location Overview` … `# 36. Demographic & Economic Data`), so it returned
+each of those whole documents as preamble; the coverage fixture that vouched for
+it was H2-only for the same reason, measuring 10,185 heading instances while
+26,860 sat outside it. And **a repeat is an occurrence, never a merge**: one
+briefing carries `marketPosition` four times, so the key is `(report_id,
+ordinal)` and re-assembly walks them in order. Verified by execution over the
+whole corpus — 1,199 of 1,199 conserve — and the deployment was checked against
+the repo by digest and sample rather than assumed to match it.
+
 **Investment Location & Property Fit** is the highest-volume format by an order
 of magnitude — 1,182 rows, 5-18 a week. Its *structure* is
 [`INVESTMENT_STRUCTURE.md`](./docs/reports/INVESTMENT_STRUCTURE.md), which is the
