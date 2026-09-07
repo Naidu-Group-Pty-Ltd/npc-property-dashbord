@@ -8,7 +8,7 @@ import { normaliseAuState } from '../_shared/auGeoSanity.pure.ts';
 import { normaliseCouncilTokens } from '../_shared/planning/developmentActivity.pure.ts';
 import type { CrimeSeriesRow } from '../_shared/crimeIngest.pure.ts';
 import {
-  nswCrimeReading, qldCrimeReading, stateContextFrom,
+  nswCrimeReading, ntCrimeReading, qldCrimeReading, saCrimeReading, stateContextFrom,
 } from '../_shared/crimeReading.pure.ts';
 
 /**
@@ -69,9 +69,9 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const rowsFor = async (st: 'NSW' | 'QLD', kind: string, area?: string) => {
+    const rowsFor = async (st: 'NSW' | 'QLD' | 'SA' | 'NT', kind: string, area?: string) => {
       let q = supabase.from('crime_reference')
-        .select('area, offence, months12, prior12, year_totals, latest_month, series_from, source')
+        .select('area, offence, months12, prior12, year_totals, latest_month, series_from, source, series_note')
         .eq('state', st).eq('area_kind', kind);
       if (area) q = q.eq('area', area);
       const { data, error } = await q;
@@ -80,12 +80,23 @@ Deno.serve(async (req) => {
         area: r.area,
         offence: r.offence,
         months12: r.months12,
-        prior12: r.prior12,
+        // Nullable on purpose: SAPOL's July 2025 reclassification means its
+        // Level 2 categories have no like-for-like prior year, and the row
+        // says so rather than carrying a number computed across it.
+        prior12: r.prior12 as number | null,
         yearTotals: r.year_totals as Record<string, number>,
         latestMonth: r.latest_month,
         seriesFrom: r.series_from,
         source: r.source as string,
+        seriesNote: (r.series_note as string | null) ?? null,
       }));
+    };
+
+    /** The state benchmark row, or nulls. Shared by the two postcode-keyed registers. */
+    const benchmarkFor = async (st: 'NSW' | 'SA') => {
+      const { data } = await supabase.from('crime_state_benchmarks')
+        .select('total12, population, rate_per_100k, denominator').eq('state', st).maybeSingle();
+      return data ?? null;
     };
 
     if (stateCode === 'NSW') {
@@ -161,8 +172,81 @@ Deno.serve(async (req) => {
       return json({ success: true, data: reading });
     }
 
+    // -----------------------------------------------------------------
+    // SA — SAPOL, postcode-keyed (the platform's own geography)
+    // -----------------------------------------------------------------
+    if (stateCode === 'SA') {
+      const poa = String(postcode ?? '').trim();
+      if (!/^\d{1,4}$/.test(poa)) {
+        return unavailable('no_data_for_location',
+          'The SA register is postcode-keyed and no postcode was supplied — crime figures are unavailable rather than approximated.');
+      }
+      // The register stores four-digit postcodes; SAPOL's own export drops the
+      // leading zero of 0872 in one path and keeps it in another, so a caller
+      // sending either spelling resolves to the one stored key.
+      const area = poa.padStart(4, '0');
+      const rows = await rowsFor('SA', 'postcode', area);
+      if (rows.length === 0) {
+        return unavailable('no_data_for_location',
+          `The SAPOL crime-statistics dataset holds no rows for postcode ${area} — recorded-crime figures are unavailable for this postal area rather than borrowed from a neighbour.`);
+      }
+      const stateRows = await rowsFor('SA', 'state_total');
+      const bench = await benchmarkFor('SA');
+      const { data: poaPop } = await supabase.from('abs_census_poa').select('population').eq('poa', area).maybeSingle();
+      const reading = saCrimeReading(
+        rows, area, rows[0].source,
+        {
+          area: (poaPop?.population as number | null) ?? null,
+          state: (bench?.population as number | null) ?? null,
+          vintage: '2021 Census usual residents (POA); the state rate uses ' +
+            ((bench?.denominator as string | null) ?? 'no stated denominator'),
+        },
+        (bench?.total12 as number | null) ?? null,
+        stateContextFrom(stateRows, 'SA'),
+      );
+      if (!reading) {
+        return unavailable('no_data_for_location', `No composable crime reading for postcode ${area}.`);
+      }
+      return json({ success: true, data: reading });
+    }
+
+    // -----------------------------------------------------------------
+    // NT — reporting region (the register publishes no postcode at all)
+    // -----------------------------------------------------------------
+    if (stateCode === 'NT') {
+      // Darwin, Palmerston, Alice Springs, Katherine, Tennant Creek and
+      // Nhulunbuy are the register's own regions, so an LGA or locality name
+      // resolves through the same normalised-token rule the QLD lookup uses.
+      // Everything else in the Territory is `NT Balance`, which this will not
+      // silently substitute: a property outside the six is answered honestly
+      // rather than given the whole Territory's remainder as if it were local.
+      const candidates = [lga, suburb].map((v) => String(v ?? '').trim()).filter((v) => v !== '');
+      if (candidates.length === 0) {
+        return unavailable('no_data_for_location',
+          'The NT register is keyed by reporting region (Darwin, Palmerston, Alice Springs, Katherine, Tennant Creek, Nhulunbuy) and neither a locality nor an LGA was supplied — figures are unavailable rather than guessed.');
+      }
+      const tokens = candidates.map((c) => normaliseCouncilTokens(c)).filter((t) => t !== '');
+      const { data, error } = await supabase.from('crime_reference')
+        .select('area, area_token').eq('state', 'NT').eq('area_kind', 'region').in('area_token', tokens);
+      if (error) throw new Error(`crime_reference read failed: ${error.message}`);
+      const areas = [...new Set((data ?? []).map((r) => r.area as string))];
+      if (areas.length !== 1) {
+        return unavailable('no_data_for_location',
+          `The NT register publishes recorded offences by reporting region, and "${candidates[0]}" is not one of them. ` +
+          'Figures are unavailable for this locality rather than taken from the Territory-wide remainder.');
+      }
+      const rows = await rowsFor('NT', 'region', areas[0]);
+      const stateRows = await rowsFor('NT', 'state_total');
+      const reading = ntCrimeReading(rows, areas[0], 'reporting region', rows[0]?.source ?? '',
+        stateContextFrom(stateRows, 'NT'));
+      if (!reading) {
+        return unavailable('no_data_for_location', `No composable crime reading for ${areas[0]}.`);
+      }
+      return json({ success: true, data: reading });
+    }
+
     return unavailable('no_data_for_location',
-      `No recorded-crime register is loaded for ${stateCode}. NSW (BOCSAR) and QLD (QPS) are integrated; VIC's Crime Statistics Agency refuses scripted clients and the remaining states' registers are not yet verified — figures for ${stateCode} are unavailable rather than estimated.`);
+      `No recorded-crime register is loaded for ${stateCode}. NSW (BOCSAR), QLD (QPS), SA (SAPOL) and NT (NT Police) are integrated; VIC's Crime Statistics Agency refuses scripted clients and WA, TAS and ACT are not yet verified — figures for ${stateCode} are unavailable rather than estimated.`);
   } catch (error: unknown) {
     console.error('Error in Crime Statistics service:', error);
     return json({ ...internalError(error, 'crime-statistics-service'), success: false }, 500);

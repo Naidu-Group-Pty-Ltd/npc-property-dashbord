@@ -1368,6 +1368,28 @@ relevant one before touching that format — each records defects that only a
 render against production data revealed, and each names the legacy generators
 that must stay.
 
+**Recorded crime now covers four states, and the fourth one changed its
+classification mid-series.** Read
+[`CRIME_SOURCES.md`](./docs/reports/CRIME_SOURCES.md) before touching
+`_shared/crimeIngest.pure.ts` (NSW/QLD), `_shared/crimeIngestSaNt.pure.ts`
+(SA/NT), the `crime-data-ingest` stages or `crime_reference`. The rule that
+carries the new half: **SAPOL reclassified its offences from 2025-07 and it is
+a reclassification, not a rename** — the Level 3 leaves moved too, so any
+crosswalk would be an invention and a year-on-year change computed across it
+would be a confident figure that is not like-for-like. SA is therefore stored
+at two grains: Level 1 (stable, measured continuous across the boundary)
+carries the comparison and six calendar years, and Level 2 carries `prior12`
+NULL with a `series_note` that reaches the reader. Three more things bite. The
+SAPOL catalogue holds **Family & Domestic Abuse files beside the crime files
+and its own note says the two must never be added** — the matcher recognises
+only the crime family. **A row the register declines to place is not a
+malformed row**: `NOT DISCLOSED` is 1.18–1.90% of every file and is counted
+and reported, while a wrong-shape row is capped at the measured 1-in-84,949.
+And **NT's alcohol/DV rows are a cross-tab, not a hierarchy** — the opposite
+of QLD's rollup trap, proved on every load (0 repeated cells, 0 `-` totals
+beside their parts) because the day that stops being true is the day summing
+silently double-counts.
+
 **A stored report is addressable by section now.** Read
 [`SECTION_STORAGE.md`](./docs/reports/SECTION_STORAGE.md) before touching
 `_shared/reports/investment/sectionStorage.pure.ts`, `detectSectionLevel` /

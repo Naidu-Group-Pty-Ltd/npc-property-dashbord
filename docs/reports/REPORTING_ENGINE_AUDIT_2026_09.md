@@ -2607,3 +2607,95 @@ for field with the local run, before a single row was written.
 Nothing reads the index yet: `sectionIdForHeading` still has no consumer in a
 shipped document path, so these aliases changed the index and no client's
 report. Assembling a tier's document *from* stored sections is the next part.
+
+---
+
+## §34 — Two more recorded-crime registers: SA and NT (2026-09-07)
+
+Full account: [`CRIME_SOURCES.md`](./CRIME_SOURCES.md).
+
+§32 recorded that SA's and NT's open-data portals answer this project's egress
+where VIC's refuses. They are integrated now, the same way NSW and QLD were:
+every column name transcribed from the real file, every bound measured from
+the real data, and a file that drifts refusing rather than loading something
+else. Eight files were parsed in full before a line of schema was written, and
+each parse was cross-checked against an independent implementation.
+
+### SAPOL reclassified its offences, and a crosswalk would have been an invention
+
+The finding that shaped the design. **From 2025-07 SAPOL changed its offence
+classification, and it is a reclassification rather than a rename.** Eight of
+its nine Level 2 categories changed name — `ACTS INTENDED TO CAUSE INJURY` →
+`ASSAULT`, `THEFT AND RELATED OFFENCES` → `THEFT`, `PROPERTY DAMAGE AND
+ENVIRONMENTAL` → `PROPERTY DAMAGE` — and the tempting move is a mapping.
+
+The Level 3 leaves say no. `THEFT` carries `Theft from retail premises`,
+`Theft from a person` and `Motor vehicle theft and related offences` where the
+old category carried `Theft from shop`, `Theft from motor vehicle` and
+`Theft/Illegal Use of MV`; `HARM OR ENDANGER PERSONS` (`Abduction and
+kidnapping`, `Acts that threaten, harass, or control`, `Driving causing
+serious injury`) corresponds to no single old category at all. **The
+boundaries moved.** A "change on the same window a year earlier" computed
+across a hand-made crosswalk would be a confident number that is not a
+like-for-like comparison — this programme's own failure class, arrived at
+through diligence rather than laziness.
+
+So SA is stored at two grains. **Level 1** (`OFFENCES AGAINST PROPERTY` /
+`AGAINST THE PERSON`) is stable in all seven published files and measured
+continuous across the boundary — the monthly series shows no step at 2025-07,
+property running ~6,900–8,000 a month either side and person ~2,100–2,700 —
+so it carries the total, the year-on-year change and six calendar years.
+**Level 2** is stored for the current classification only, with `prior12`
+NULL and a `series_note` saying why. 1,836 of SA's 2,527 postcode rows carry
+that null, and all 1,836 carry the note.
+
+`crime_reference.prior12` became nullable for this, and the report block
+renders `not comparable` rather than a blank cell — a blank reads as missing
+data, and a model handed a blank and no reason will reach for one.
+
+### Three more SAPOL quirks, and NT's opposite of the QLD trap
+
+**The catalogue holds a trap beside the data.** Sixteen Family & Domestic
+Abuse files sit next to the sixteen crime files, and SAPOL's own note is
+explicit that the FDA file is a SUBSET of the crime file for the same year and
+the two must not be added together. The matcher recognises only the crime
+family; every FDA name returns null.
+
+**One postcode arrives under two spellings** — `0872` with 699 offences and
+`872` with 9 more, one postal area split by an export that lost a leading
+zero. **And SAPOL records incidents outside the state**, 27–55 rows a year on
+NSW, VIC, QLD, WA and TAS postcodes; keeping them would put "2 recorded
+offences" against Sydney's postcode 2000 in a register that is not Sydney's.
+
+**NT's rows are a cross-tabulation, not a hierarchy** — the opposite of QLD's
+rollup trap, and measured rather than assumed: across 7,256 distinct (period,
+offence, area) keys, **0 carry a repeated (alcohol, DV) cell and 0 mix the `-`
+marker with Yes/No**, so summing them is exact. It is re-checked on every load.
+Its header carries `Offence type ` with a trailing space, transcribed exactly
+for the reason QPS's `Common Assault'` apostrophe is.
+
+### A row the register declines to place is not a malformed row
+
+The first parser conflated them and refused SAPOL's own data. `NOT DISCLOSED`
+in the postcode column is South Australia Police saying the location is not
+published — a stable feature of every file at **1.18%–1.90% of rows**. Rows of
+the wrong SHAPE are a different thing, and the measured worst case is ONE in
+84,949. They now have separate counters and separate caps, and the ratio
+checks do not run at all below 500 rows, because one unplaced row in four is
+25% and says nothing about whether a column moved. Truncation is asked
+separately, by the loader, against each register's own measured floor.
+
+### Loaded and verified in production
+
+Every figure the deployed function reported matched the local parse to the
+digit — 9,723 NT rows / 84,862 offences / 7,256 cross-tab keys, and SA's seven
+years at 83,304–98,687 rows each. Finalised: 2,527 SA postcode rows, 67 NT
+region rows and 181 SA2 rows. SA's benchmark names its denominator the way
+NSW's does: 116,151 offences over 1,790,479 2021 Census usual residents of the
+342 matched postal areas = 6,487 per 100k. NT keeps `population` null and
+offers count-change context only, because no population is published for a
+reporting region and a rate with an unnamed denominator is the one thing this
+layer will not publish.
+
+VIC still refuses every vantage; WA, TAS and ACT remain unverified and are
+answered `no_data_for_location` naming their real register.
