@@ -49,6 +49,7 @@ import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
 import { useListingCoordinates, type CoordinateFailure } from '@/hooks/useListingCoordinates';
 import { HeatLayer } from './ListingsHeatLayer';
 import {
+  BASEMAP_CATALOG,
   buildHeatModel,
   computePriceTiers,
   describeHeatLegend,
@@ -67,6 +68,7 @@ import {
   describeGeocodePrecision,
   summariseCluster,
   tierMixGradientStops,
+  type BasemapDefinition,
   type BasemapId,
   type ClusterMember,
   type GeoPoint,
@@ -197,45 +199,13 @@ type PinVariant = 'chip' | 'pin' | 'ghost';
 /* Basemaps                                                                    */
 /* -------------------------------------------------------------------------- */
 
-interface BasemapDefinition {
-  id: Exclude<BasemapId, 'auto'>;
-  url: string;
-  attribution: string;
-  labelsUrl?: string;
-  maxNativeZoom: number;
-  /** Tiles are dark, so overlays need the inverted treatment. */
-  dark: boolean;
-}
-
-const OSM_ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-const CARTO_ATTRIBUTION = '&copy; <a href="https://carto.com/attributions">CARTO</a>';
-
-const BASEMAP_DEFS: Record<Exclude<BasemapId, 'auto'>, BasemapDefinition> = {
-  light: {
-    id: 'light',
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-    attribution: `${OSM_ATTRIBUTION} ${CARTO_ATTRIBUTION}`,
-    maxNativeZoom: 19,
-    dark: false,
-  },
-  dark: {
-    id: 'dark',
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: `${OSM_ATTRIBUTION} ${CARTO_ATTRIBUTION}`,
-    maxNativeZoom: 19,
-    dark: true,
-  },
-  satellite: {
-    id: 'satellite',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    labelsUrl:
-      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-    attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
-    maxNativeZoom: 18,
-    dark: true,
-  },
-};
+/**
+ * The catalogue lives in `@/lib/listingsMap` with the reasoning attached: it
+ * is keyless Esri tile services throughout, because CARTO — where Street and
+ * Midnight used to come from — started answering anonymous requests with an
+ * "API KEY REQUIRED" watermark baked into every tile.
+ */
+const BASEMAP_DEFS = BASEMAP_CATALOG;
 
 const BASEMAP_LABELS: Record<BasemapId, string> = {
   auto: 'Match theme',

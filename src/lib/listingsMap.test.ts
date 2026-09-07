@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PropertyListing } from '@/lib/airtable';
 import {
+  BASEMAP_CATALOG,
   buildHeatModel,
   calibrateHeatMax,
   computePriceTiers,
@@ -562,5 +563,63 @@ describe('formatting', () => {
     expect(escapeHtml('<img src=x onerror="alert(1)">')).toBe(
       '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;',
     );
+  });
+});
+
+describe('basemap catalogue', () => {
+  const definitions = Object.values(BASEMAP_CATALOG);
+  const allUrls = definitions.flatMap((def) => [def.url, def.labelsUrl ?? '']).filter(Boolean);
+
+  it('never serves a CARTO basemap — anonymous CARTO tiles are "API KEY REQUIRED" watermarks', () => {
+    for (const url of allUrls) {
+      expect(url).not.toContain('cartocdn');
+      expect(url).not.toContain('carto.com');
+    }
+  });
+
+  it('never points at openstreetmap.org tile servers, which block apps by policy', () => {
+    for (const url of allUrls) {
+      expect(url).not.toContain('tile.openstreetmap.org');
+    }
+  });
+
+  it('carries no credential of any kind — every basemap is keyless', () => {
+    // A browser tile token is billable and a VITE_ value is inlined into the
+    // bundle, so a keyed provider here would spend the prime's vendor account
+    // for anyone who reads the page source. The security gate refuses it and
+    // this is the assertion that keeps one from creeping back in.
+    for (const url of allUrls) {
+      expect(url).not.toMatch(/access_token|api_?key|\bkey=|apikey/i);
+    }
+  });
+
+  it('serves every basemap from keyless Esri services over https', () => {
+    for (const def of definitions) {
+      expect(def.url.startsWith('https://server.arcgisonline.com/')).toBe(true);
+      // Esri's scheme is row-before-column; {x}/{y} here fetches the
+      // transpose, which draws the wrong part of the world rather than erroring.
+      expect(def.url).toContain('/tile/{z}/{y}/{x}');
+      // No {s} subdomain shards — Esri serves from the one host.
+      expect(def.url).not.toContain('{s}');
+    }
+  });
+
+  it('pairs the unlabelled dark canvas with its reference layer', () => {
+    expect(BASEMAP_CATALOG.dark.labelsUrl).toContain('World_Dark_Gray_Reference');
+    expect(BASEMAP_CATALOG.dark.dark).toBe(true);
+    expect(BASEMAP_CATALOG.light.dark).toBe(false);
+  });
+
+  it('declares each basemap\u2019s real native ceiling so Leaflet upscales instead of 404ing', () => {
+    expect(BASEMAP_CATALOG.light.maxNativeZoom).toBe(19);
+    expect(BASEMAP_CATALOG.dark.maxNativeZoom).toBe(16);
+    expect(BASEMAP_CATALOG.satellite.maxNativeZoom).toBe(18);
+  });
+
+  it('attributes every provider, which the licences require', () => {
+    for (const def of definitions) {
+      expect(def.attribution).toContain('Esri');
+      expect(def.attribution.length).toBeGreaterThan(10);
+    }
   });
 });

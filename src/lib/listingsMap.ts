@@ -629,6 +629,96 @@ export function calibrateHeatMax(
 }
 
 /* -------------------------------------------------------------------------- */
+/* Basemap catalogue                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where the map's ground comes from, and why it is exactly these providers.
+ *
+ * The Street and Midnight basemaps used to be CARTO's raster tiles
+ * (`basemaps.cartocdn.com`), which stopped serving anonymous traffic: every
+ * tile now comes back stamped "API KEY REQUIRED", so the marketplace map drew
+ * its pins and heat surface over a wall of watermarks. A key cannot fix that
+ * here — this dashboard is cloned per tenant, and a provisioned clone has
+ * nowhere to inherit a CARTO account from.
+ *
+ * Every basemap therefore has to work with NO credential at all, which rules
+ * more out than it sounds like:
+ *
+ * - openstreetmap.org's own tile servers are run by volunteers and actively
+ *   block apps — probing from this project's egress returned their literal
+ *   "403 Access blocked · App is not following the tile usage policy" tile.
+ *   Defaulting a commercial product onto them plants the next watermark.
+ * - Esri's classic tile services (`server.arcgisonline.com`) serve anonymous
+ *   traffic without fuss and are ALREADY this map's satellite provider — the
+ *   one basemap that kept working. Street and Midnight now ride the same
+ *   host: World_Street_Map for daylight, and the Dark Gray Canvas pair for
+ *   Midnight, which is drawn by Esri specifically as a ground for thematic
+ *   overlays — exactly what a heat surface needs. Its one cost is a native
+ *   ceiling of z16; past that Leaflet upscales, and parcel-level scrutiny is
+ *   what the Satellite basemap (native z18) is for.
+ *
+ * A keyed provider (Mapbox, MapTiler, CARTO with an account) is deliberately
+ * NOT offered as a build-time upgrade. Their browser tokens are billable and
+ * `VITE_`-prefixed values are inlined into the bundle, so a token published
+ * that way is lifted from the page source and spent by anyone — and per
+ * `docs/integrations/API_USAGE_METERING.md` a provisioned clone runs on the
+ * PRIME's vendor keys, so it would be the prime's money. That is the rule
+ * `scripts/security/check-client-bundle-secrets.mjs` enforces, and it refused
+ * exactly this. Deeper-zoom cartography needs a server-side proxy that keeps
+ * the credential in a Supabase function secret, not an env var in `src/`.
+ */
+export interface BasemapDefinition {
+  id: Exclude<BasemapId, 'auto'>;
+  url: string;
+  attribution: string;
+  /** A second tile layer of place labels drawn over an unlabelled base. */
+  labelsUrl?: string;
+  maxNativeZoom: number;
+  /** Tiles are dark, so overlays need the inverted treatment. */
+  dark: boolean;
+}
+
+export type BasemapCatalog = Record<Exclude<BasemapId, 'auto'>, BasemapDefinition>;
+
+const ESRI_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services';
+
+const OSM_CREDIT =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+const ESRI_ATTRIBUTION = `Tiles &copy; Esri &mdash; Esri, HERE, Garmin, ${OSM_CREDIT}`;
+
+export const BASEMAP_CATALOG: BasemapCatalog = {
+  light: {
+    id: 'light',
+    // Esri's tile scheme is {z}/{y}/{x} — row before column. Written {x}/{y}
+    // it fetches the transpose of the tile it meant to, which reads on screen
+    // as a map of the wrong part of the world rather than as an error.
+    url: `${ESRI_TILES}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`,
+    attribution: ESRI_ATTRIBUTION,
+    maxNativeZoom: 19,
+    dark: false,
+  },
+  dark: {
+    id: 'dark',
+    // The canvas base carries no place names by design; the reference layer
+    // supplies them, so the two always travel together.
+    url: `${ESRI_TILES}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+    labelsUrl: `${ESRI_TILES}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+    attribution: ESRI_ATTRIBUTION,
+    maxNativeZoom: 16,
+    dark: true,
+  },
+  satellite: {
+    id: 'satellite',
+    url: `${ESRI_TILES}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
+    labelsUrl: `${ESRI_TILES}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
+    attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
+    maxNativeZoom: 18,
+    dark: true,
+  },
+};
+
+/* -------------------------------------------------------------------------- */
 /* Misc                                                                        */
 /* -------------------------------------------------------------------------- */
 
