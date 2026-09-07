@@ -319,8 +319,19 @@ export function tierMixGradientStops(mix: TierShare[]): string {
 /* Property type glyphs (pin iconography)                                      */
 /* -------------------------------------------------------------------------- */
 
-export type PropertyGlyph = 'house' | 'apartment' | 'land' | 'commercial' | 'property';
+export type PropertyGlyph =
+  | 'house'
+  | 'apartment'
+  | 'land'
+  | 'commercial'
+  | 'property'
+  | 'builder';
 
+/**
+ * The property-TYPE key, which is what the legend lists. `builder` is
+ * deliberately absent: it is not a property type, it is where the record came
+ * from, so it is chosen by source and explained on its own legend line.
+ */
 export const PROPERTY_GLYPHS: PropertyGlyph[] = [
   'house',
   'apartment',

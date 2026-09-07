@@ -23,6 +23,8 @@ import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
 import { useListingImages } from '@/hooks/useListingImages';
 import { useListingCoordinates } from '@/hooks/useListingCoordinates';
 import { useBuilderStockMarketplaceFlag } from '@/hooks/useBuilderStockMarketplaceFlag';
+import { useBuilderStockMapListings } from '@/hooks/useBuilderStockMapListings';
+import { builderStockIdFromMapId } from '@/lib/builderStockMapPoint';
 
 /**
  * Builder Stock is a separate chunk: the Property Marketplace must not carry
@@ -390,7 +392,14 @@ export default function Listings() {
 
   const sectionTabs = <MarketplaceSectionTabs tab={tab} onChange={setTab} />;
 
-  if (tab === 'listings') return <ListingsMarketplace sectionTabs={sectionTabs} />;
+  if (tab === 'listings') {
+    return (
+      <ListingsMarketplace
+        sectionTabs={sectionTabs}
+        onOpenBuilderStock={() => setTab('builder_stock')}
+      />
+    );
+  }
 
   return (
     <div className={cn(LISTINGS_SHELL, 'space-y-5 md:space-y-7')}>
@@ -421,7 +430,14 @@ export default function Listings() {
 }
 
 
-function ListingsMarketplace({ sectionTabs }: { sectionTabs?: ReactNode } = {}) {
+function ListingsMarketplace({
+  sectionTabs,
+  onOpenBuilderStock,
+}: {
+  sectionTabs?: ReactNode;
+  /** Sends the reader to the Builder Stock tab for a stock pin. */
+  onOpenBuilderStock?: (stockItemId: string) => void;
+} = {}) {
   const { canEdit: canEditListings, canDelete: canDeleteListings } = useModulePermissions('listings');
   const { globalSearchQuery, setGlobalSearchQuery } = useSearch();
   const [selectedListings, setSelectedListings] = useState<Set<string>>(new Set());
@@ -783,6 +799,56 @@ function ListingsMarketplace({ sectionTabs }: { sectionTabs?: ReactNode } = {}) 
     return preFilteredListings.filter((listing) => listingHasPhotos(listing, listingsWithPhotos));
   }, [preFilteredListings, filters.hasPhotos, listingImagesResolving, listingsWithPhotos]);
 
+  /**
+   * Builder stock as a map layer. Defaults ON where the deployment has the
+   * feature: a builder's stock is marketplace supply like any other, and the
+   * whole point of the map is seeing what is available WHERE. The toggle
+   * exists because a reader comparing agent listings does not always want
+   * house-and-land estates in the same picture.
+   */
+  const [showBuilderStockOnMap, setShowBuilderStockOnMap] = useState(true);
+  const builderStockLayer = useBuilderStockMapListings(
+    viewMode === 'map' && showBuilderStockOnMap,
+  );
+
+  const builderStockAvailable = builderStockLayer.listings.length > 0 || builderStockLayer.isLoading;
+
+  /**
+   * What the map plots: the filtered listings, plus builder stock when the
+   * layer is on. Only the MAP gets the combined set — the list, table and
+   * gallery are the listings register and must not silently gain rows from
+   * another table.
+   */
+  const mapListings = useMemo(
+    () =>
+      showBuilderStockOnMap && builderStockLayer.listings.length > 0
+        ? [...filteredListings, ...builderStockLayer.listings]
+        : filteredListings,
+    [filteredListings, showBuilderStockOnMap, builderStockLayer.listings],
+  );
+
+  /**
+   * A pin can now belong to either table, so the click has to be routed. A
+   * builder stock id is prefixed and reversible (`builderStockMapPoint.ts`),
+   * which is what keeps the two id namespaces from colliding in the marker
+   * index; anything else is an ordinary listing.
+   */
+  const openMapRecord = useCallback(
+    (listing: PropertyListing) => {
+      const stockId = builderStockIdFromMapId(listing.id);
+      if (stockId) {
+        // Builder stock has no listing-detail modal — its record lives on the
+        // Builder Stock tab, which owns the enquiry and client-selection
+        // actions. The map hands the reader there rather than opening an
+        // empty modal over a property it cannot describe.
+        onOpenBuilderStock?.(stockId);
+        return;
+      }
+      openDetailsModal(listing);
+    },
+    [openDetailsModal, onOpenBuilderStock],
+  );
+
   const showListView = viewMode === 'list';
   const showTableView = viewMode === 'table';
   const showMapView = viewMode === 'map';
@@ -1064,10 +1130,17 @@ function ListingsMarketplace({ sectionTabs }: { sectionTabs?: ReactNode } = {}) 
         >
           <Suspense fallback={<div className="rounded-2xl border border-border/60 bg-card/60 p-10 text-center text-sm text-muted-foreground">Loading map…</div>}>
             <ListingsMapView
-              listings={filteredListings}
-              onSelectListing={openDetailsModal}
+              listings={mapListings}
+              onSelectListing={openMapRecord}
               onEmailAgent={openEmailAgent}
               images={listingImages}
+              builderStock={{
+                available: builderStockAvailable,
+                shown: showBuilderStockOnMap,
+                onToggle: setShowBuilderStockOnMap,
+                count: builderStockLayer.listings.length,
+                failed: builderStockLayer.failed,
+              }}
             />
           </Suspense>
         </ErrorBoundary>
