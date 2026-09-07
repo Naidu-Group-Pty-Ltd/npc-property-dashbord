@@ -165,10 +165,32 @@ describe('the migration is dated where it will actually be applied', () => {
 });
 
 describe('the SQL and the TypeScript cannot drift apart', () => {
-  it('the migration sets the same runtime version the code compiles against', () => {
-    const set = sql.match(/SET image_runtime_version = (\d+)/);
-    expect(set).not.toBeNull();
-    expect(Number(set![1])).toBe(RUNTIME_VERSION);
+  it('the migrations leave the database on the runtime the code compiles against', () => {
+    /*
+     * THE LAST WRITER DECIDES, not the first. Each runtime bump adds a
+     * migration that raises the column, so reading only the file that created
+     * it would pin the database to version 1 for ever while the code moved on
+     * — and the reopen function compares against the COLUMN. A bump that
+     * changes the constant and forgets its migration is inert; one that
+     * changes the migration and forgets the constant reopens work the running
+     * worker will retire again immediately. Both are caught here.
+     */
+    const dir = join(process.cwd(), 'supabase/migrations');
+    const settings = readdirSync(dir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort()
+      .flatMap((f) => {
+        const m = readFileSync(join(dir, f), 'utf8')
+          .match(/SET image_runtime_version = (\d+)/);
+        return m ? [{ file: f, value: Number(m[1]) }] : [];
+      });
+    expect(settings.length, 'no migration sets the runtime version').toBeGreaterThan(0);
+    expect(settings[settings.length - 1].value).toBe(RUNTIME_VERSION);
+    // And it only ever goes up: a later migration lowering it would silently
+    // re-retire everything an earlier bump reopened.
+    for (let i = 1; i < settings.length; i += 1) {
+      expect(settings[i].value).toBeGreaterThan(settings[i - 1].value);
+    }
   });
 
   it('the predicate keys on the stamp, which is what separates ours from theirs', () => {
