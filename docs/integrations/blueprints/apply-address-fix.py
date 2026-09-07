@@ -66,18 +66,29 @@ for every other consumer of Airtable and for anyone reading the base directly.
 
 ## Patching a LIVE export instead of the repo blueprint
 
-`npc-email-1-new.original.json` is a snapshot and it has gone stale: measured
-7 September 2026 against scenario 5979783 in team 2731020, the live scenario
-has 85 modules to the snapshot's 91, lacks six of them entirely (an HTTP
-sender, an OpenAI completion, a JSON parser, a Gemini completion, a regexp
-parser and a Firecrawl scrape), and only 25 of the 85 shared modules are
-byte-identical once designer metadata is ignored.
+`npc-email-1-new.original.json` is not an export of every scenario that runs
+this pipeline. Measured 7 September 2026 against scenario 5979783 in team
+2731020, that scenario has 85 modules to the snapshot's 91, and only 25 of the
+85 they share are byte-identical once designer metadata is ignored. The six
+extra instances are one `gemini-ai:createACompletionGeminiPro` -- a package the
+live scenario does not use at all -- plus a second `firecrawl:Scrape`, a second
+`http:ActionSendData`, a seventh `openai-gpt-3:CreateCompletion`, a seventh
+`json:ParseJSON` and a second `regexp:Parser`.
 
-So importing the snapshot over a live scenario would not apply this fix -- it
-would REPLACE that scenario with a different one, adding two billable vendor
-calls nobody asked for. Pass `--input`/`--output` to patch an export taken from
-the scenario you are actually about to write to. The transformation is the
-same; only the base differs.
+That last one is the forwarded-sender fix (module 200), and it is what makes a
+wholesale import tempting and wrong: the snapshot carries a repair somebody
+wants alongside fifty-nine unrelated configuration changes, in one indivisible
+act. Importing it would not apply this fix; it would replace the scenario with
+a different one and start a Gemini call nobody asked for.
+
+The live scenario's `lastEdit` equals its `created`, so it has never been
+hand-edited and cannot have drifted into that state -- the two blueprints
+describe different deployments, and the ids in this repository's docs
+(`9618493`, team `528268`) are not reachable from every Make connection.
+
+Pass `--input`/`--output` to patch an export taken from the scenario you are
+actually about to write to. The transformation is the same; only the base
+differs.
 
 Run:  python3 docs/integrations/blueprints/apply-address-fix.py
       python3 docs/integrations/blueprints/apply-address-fix.py \
