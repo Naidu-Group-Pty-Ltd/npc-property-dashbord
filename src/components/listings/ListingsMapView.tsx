@@ -77,6 +77,7 @@ import {
   resolveStack,
   stepStackIndex,
   PROPERTY_GLYPHS,
+  describeAddressCompleteness,
   describeGeocodePrecision,
   summariseStack,
   type BasemapDefinition,
@@ -1071,7 +1072,12 @@ function ListingPopupCard({
   onEmailAgent?: () => void;
 }) {
   const locality = [listing.suburb, listing.state, listing.zipCode].filter(Boolean).join(' ');
-  const precisionNote = describeGeocodePrecision(precision).note;
+  // What the provider managed, else what the record could offer. The second
+  // reading is the actionable one — "nobody has told us the street number" is
+  // a different problem from "we could not find the address we were given".
+  const precisionNote =
+    describeGeocodePrecision(precision).note
+    ?? describeAddressCompleteness(listing.addressPrecision);
   // The same decision the card and the table make, so one listing cannot read
   // "$1,599,000" in the grid and "Price undisclosed" in the popup.
   const price = displayPrice(listing);
@@ -1968,8 +1974,8 @@ export function ListingsMapView({
               aria-pressed={builderStock.shown}
               title={
                 builderStock.shown
-                  ? 'Hide builder and developer stock'
-                  : 'Show builder and developer stock on the map'
+                  ? `Hide the ${builderStock.count} builder and developer listings from the map`
+                  : `Show ${builderStock.count} builder and developer listings on the map`
               }
               className={cn(
                 'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-md backdrop-blur transition-colors',
@@ -1980,7 +1986,24 @@ export function ListingsMapView({
               )}
             >
               <HardHat className="h-3.5 w-3.5" aria-hidden="true" />
-              <span className="tabular-nums">{builderStock.count}</span> builder
+              {/*
+                Says what it DOES, not just how many there are. As a bare
+                "91 builder" it read as one of the counters beside it — a
+                statistic, not a switch — so nobody could tell what pressing it
+                would do, and pressing it appeared to delete listings.
+              */}
+              <span className="tabular-nums">{builderStock.count}</span> builder stock
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'ml-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide',
+                  builderStock.shown
+                    ? 'bg-primary-foreground/20 text-primary-foreground'
+                    : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {builderStock.shown ? 'on' : 'off'}
+              </span>
             </button>
           )}
 

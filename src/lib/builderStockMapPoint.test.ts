@@ -132,7 +132,14 @@ describe('builderStockToMapListing', () => {
     const mapped = builderStockToMapListing(
       item({ address_line: '12 Kerr St', suburb: 'Clyde', state: 'VIC', postcode: '3978' }),
     );
-    expect(mapped.address).toBe('12 Kerr St');
+    // The street line is PARSED now, and a bare leading number on builder
+    // stock is a lot rather than a street number — measured: of the 44 live
+    // rows that open with a number and also carry a `lot_number`, it equals
+    // the lot in all 44. So `12` is lot 12 on Kerr Street, and the geocoder is
+    // asked for the street rather than for a house that may belong to someone
+    // else. See builderStockAddress.pure.ts.
+    expect(mapped.address).toBe('Kerr Street');
+    expect(mapped.lotNumber).toBe('12');
     expect(mapped.suburb).toBe('Clyde');
     expect(mapped.state).toBe('VIC');
     expect(mapped.zipCode).toBe('3978');
