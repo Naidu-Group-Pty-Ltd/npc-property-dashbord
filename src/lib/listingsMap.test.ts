@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PropertyListing } from '@/lib/airtable';
 import {
-  buildBasemapCatalog,
+  BASEMAP_CATALOG,
   buildHeatModel,
   calibrateHeatMax,
   computePriceTiers,
@@ -19,7 +19,6 @@ import {
   propertyGlyph,
   PROPERTY_GLYPHS,
   quantile,
-  sanitiseMapboxToken,
   summariseCluster,
   tierMixGradientStops,
   type ClusterMember,
@@ -568,73 +567,59 @@ describe('formatting', () => {
 });
 
 describe('basemap catalogue', () => {
-  const allUrls = (catalog: ReturnType<typeof buildBasemapCatalog>): string[] =>
-    Object.values(catalog).flatMap((def) => [def.url, def.labelsUrl ?? '']);
+  const definitions = Object.values(BASEMAP_CATALOG);
+  const allUrls = definitions.flatMap((def) => [def.url, def.labelsUrl ?? '']).filter(Boolean);
 
   it('never serves a CARTO basemap — anonymous CARTO tiles are "API KEY REQUIRED" watermarks', () => {
-    for (const url of [
-      ...allUrls(buildBasemapCatalog(null)),
-      ...allUrls(buildBasemapCatalog('pk.test-token')),
-    ]) {
+    for (const url of allUrls) {
       expect(url).not.toContain('cartocdn');
       expect(url).not.toContain('carto.com');
     }
   });
 
   it('never points at openstreetmap.org tile servers, which block apps by policy', () => {
-    for (const url of allUrls(buildBasemapCatalog(null))) {
+    for (const url of allUrls) {
       expect(url).not.toContain('tile.openstreetmap.org');
     }
   });
 
-  it('defaults every basemap to keyless Esri services over https', () => {
-    const catalog = buildBasemapCatalog(null);
-    for (const def of Object.values(catalog)) {
+  it('carries no credential of any kind — every basemap is keyless', () => {
+    // A browser tile token is billable and a VITE_ value is inlined into the
+    // bundle, so a keyed provider here would spend the prime's vendor account
+    // for anyone who reads the page source. The security gate refuses it and
+    // this is the assertion that keeps one from creeping back in.
+    for (const url of allUrls) {
+      expect(url).not.toMatch(/access_token|api_?key|\bkey=|apikey/i);
+    }
+  });
+
+  it('serves every basemap from keyless Esri services over https', () => {
+    for (const def of definitions) {
       expect(def.url.startsWith('https://server.arcgisonline.com/')).toBe(true);
-      // Esri's scheme is row-before-column; {x}/{y} here would fetch the
-      // wrong hemisphere and read as "tiles missing".
+      // Esri's scheme is row-before-column; {x}/{y} here fetches the
+      // transpose, which draws the wrong part of the world rather than erroring.
       expect(def.url).toContain('/tile/{z}/{y}/{x}');
-      // No credential slots and no {s} subdomain shards.
+      // No {s} subdomain shards — Esri serves from the one host.
       expect(def.url).not.toContain('{s}');
-      expect(def.url).not.toContain('access_token');
     }
-    // The dark canvas base is unlabelled by design — the reference layer
-    // carries the place names, so it must travel with it.
-    expect(catalog.dark.labelsUrl).toContain('World_Dark_Gray_Reference');
-    expect(catalog.dark.dark).toBe(true);
-    expect(catalog.light.dark).toBe(false);
-    // Native ceilings: street cartography reaches parcel zooms, the canvas
-    // stops at 16 and upscales, imagery is unchanged from before.
-    expect(catalog.light.maxNativeZoom).toBe(19);
-    expect(catalog.dark.maxNativeZoom).toBe(16);
-    expect(catalog.satellite.maxNativeZoom).toBe(18);
   });
 
-  it('upgrades street and midnight to Mapbox when a public token is published', () => {
-    const catalog = buildBasemapCatalog('pk.abc-123._sig');
-    for (const def of [catalog.light, catalog.dark]) {
-      expect(def.url.startsWith('https://api.mapbox.com/styles/v1/mapbox/')).toBe(true);
-      // 256px tiles keep Leaflet's default grid maths; {r} is the retina slot.
-      expect(def.url).toContain('/tiles/256/{z}/{x}/{y}{r}');
-      expect(def.url).toContain('access_token=pk.abc-123._sig');
-      expect(def.attribution).toContain('Mapbox');
-    }
-    expect(catalog.dark.dark).toBe(true);
-    // Satellite promises imagery and has never broken — it stays on Esri.
-    expect(catalog.satellite).toEqual(buildBasemapCatalog(null).satellite);
+  it('pairs the unlabelled dark canvas with its reference layer', () => {
+    expect(BASEMAP_CATALOG.dark.labelsUrl).toContain('World_Dark_Gray_Reference');
+    expect(BASEMAP_CATALOG.dark.dark).toBe(true);
+    expect(BASEMAP_CATALOG.light.dark).toBe(false);
   });
 
-  it('refuses anything but a public pk. token, so a secret cannot ship in the bundle', () => {
-    expect(sanitiseMapboxToken('pk.valid_Token-1.x')).toBe('pk.valid_Token-1.x');
-    expect(sanitiseMapboxToken('  pk.padded  ')).toBe('pk.padded');
-    expect(sanitiseMapboxToken('sk.secret-token')).toBeNull();
-    expect(sanitiseMapboxToken('pk.')).toBeNull();
-    expect(sanitiseMapboxToken('pk.has space')).toBeNull();
-    expect(sanitiseMapboxToken('pk.braces{r}')).toBeNull();
-    expect(sanitiseMapboxToken('')).toBeNull();
-    expect(sanitiseMapboxToken(undefined)).toBeNull();
-    expect(sanitiseMapboxToken(42)).toBeNull();
-    // A refused token falls back to the keyless catalogue, not to CARTO.
-    expect(buildBasemapCatalog('sk.secret-token')).toEqual(buildBasemapCatalog(null));
+  it('declares each basemap\u2019s real native ceiling so Leaflet upscales instead of 404ing', () => {
+    expect(BASEMAP_CATALOG.light.maxNativeZoom).toBe(19);
+    expect(BASEMAP_CATALOG.dark.maxNativeZoom).toBe(16);
+    expect(BASEMAP_CATALOG.satellite.maxNativeZoom).toBe(18);
+  });
+
+  it('attributes every provider, which the licences require', () => {
+    for (const def of definitions) {
+      expect(def.attribution).toContain('Esri');
+      expect(def.attribution.length).toBeGreaterThan(10);
+    }
   });
 });

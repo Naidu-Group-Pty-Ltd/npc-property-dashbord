@@ -49,7 +49,7 @@ import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
 import { useListingCoordinates, type CoordinateFailure } from '@/hooks/useListingCoordinates';
 import { HeatLayer } from './ListingsHeatLayer';
 import {
-  buildBasemapCatalog,
+  BASEMAP_CATALOG,
   buildHeatModel,
   computePriceTiers,
   describeHeatLegend,
@@ -65,7 +65,6 @@ import {
   priceTier,
   propertyGlyph,
   PROPERTY_GLYPHS,
-  sanitiseMapboxToken,
   describeGeocodePrecision,
   summariseCluster,
   tierMixGradientStops,
@@ -201,16 +200,12 @@ type PinVariant = 'chip' | 'pin' | 'ghost';
 /* -------------------------------------------------------------------------- */
 
 /**
- * The catalogue lives in `@/lib/listingsMap` with the reasoning attached:
- * keyless Esri services by default (CARTO started watermarking anonymous
- * tiles "API KEY REQUIRED"), upgraded to Mapbox styles when the deployment
- * publishes a public `pk.` token at build time. `sanitiseMapboxToken` refuses
- * anything that is not a public token, so a pasted `sk.` secret is dropped
- * here rather than inlined into the bundle.
+ * The catalogue lives in `@/lib/listingsMap` with the reasoning attached: it
+ * is keyless Esri tile services throughout, because CARTO — where Street and
+ * Midnight used to come from — started answering anonymous requests with an
+ * "API KEY REQUIRED" watermark baked into every tile.
  */
-const BASEMAP_DEFS = buildBasemapCatalog(
-  sanitiseMapboxToken(import.meta.env.VITE_MAPBOX_ACCESS_TOKEN),
-);
+const BASEMAP_DEFS = BASEMAP_CATALOG;
 
 const BASEMAP_LABELS: Record<BasemapId, string> = {
   auto: 'Match theme',
