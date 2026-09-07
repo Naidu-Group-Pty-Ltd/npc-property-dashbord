@@ -7,6 +7,7 @@ import {
   composeVerdictSection,
 } from '../_shared/reports/investment/scoreSections.pure.ts';
 import { stripPlaceholderRows, trimToDeclaredSections } from '../_shared/reports/investment/derivedHygiene.pure.ts';
+import { scrubBlocks } from '../_shared/reports/investment/blockHygiene.pure.ts';
 import { authoredHeadingsForTier, markdownHeadingsForTier } from '../_shared/reports/investment/sectionRegistry.pure.ts';
 import { assembleInDeclaredOrder, type ComposedPlacement } from '../_shared/reports/investment/tierAssembly.pure.ts';
 import { stripEditorialLabelsFromMarkdown } from '../_shared/compassPostProcessor.ts';
@@ -727,6 +728,14 @@ IMPORTANT:
       condensedContent = scrubbed.markdown;
       hygiene.placeholder_rows_removed = scrubbed.removedRows;
       hygiene.placeholder_tables_removed = scrubbed.removedTables;
+
+      // The same rule for the two block types the row scrubber cannot see: a
+      // stat card with no value (the renderer draws its UNIT in display type)
+      // and a chart already drawn earlier in the document.
+      const blocks = scrubBlocks(condensedContent);
+      condensedContent = blocks.markdown;
+      hygiene.empty_stat_cards_removed = blocks.emptyStatCards;
+      hygiene.duplicate_directives_removed = blocks.duplicateDirectives;
 
       qaReport = runQAValidation(condensedContent, 'compass-40');
       console.log('Hygiene:', JSON.stringify(hygiene));

@@ -37,6 +37,7 @@ import {
   type ComposedChapter,
 } from '../_shared/reports/investment/financialChapters.pure.ts';
 import { stripPlaceholderRows } from '../_shared/reports/investment/derivedHygiene.pure.ts';
+import { scrubBlocks } from '../_shared/reports/investment/blockHygiene.pure.ts';
 import { stripEditorialLabelsFromMarkdown } from '../_shared/compassPostProcessor.ts';
 
 interface ParsedSection {
@@ -189,13 +190,21 @@ function finaliseVariantMarkdown(md: string): {
   markdown: string;
   editorialBlocksRemoved: number;
   placeholderRowsRemoved: number;
+  emptyStatCardsRemoved: number;
+  duplicateDirectivesRemoved: number;
 } {
   const stripped = stripEditorialLabelsFromMarkdown(md);
   const scrubbed = stripPlaceholderRows(stripped.markdown);
+  // The two block types the row scrubber cannot see. A fork routes the
+  // parent's own prose, so a card the parent left empty and a chart the parent
+  // drew twice both arrive here intact.
+  const blocks = scrubBlocks(scrubbed.markdown);
   return {
-    markdown: scrubbed.markdown,
+    markdown: blocks.markdown,
     editorialBlocksRemoved: stripped.removedBlocks,
     placeholderRowsRemoved: scrubbed.removedRows,
+    emptyStatCardsRemoved: blocks.emptyStatCards,
+    duplicateDirectivesRemoved: blocks.duplicateDirectives,
   };
 }
 
