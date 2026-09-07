@@ -199,6 +199,13 @@ export interface SuppliedEvidenceInput {
   /** The property's `source_provenance_result`, whatever shape it holds. */
   stored: unknown;
   provenanceVersion: number;
+  /**
+   * The runtime asking now — compared only against a stored
+   * `runtime_version`, which only OUR OWN failures carry. Without it this
+   * reader would go on treating a branch the settler is about to re-ask as
+   * a closed answer, and the two would disagree on screen.
+   */
+  runtimeVersion?: number;
   sourceAnchor: string | null;
   /**
    * Whether a builder-supplied image has already been accepted for this
@@ -424,6 +431,7 @@ export function readStoredRowEvidence(input: {
   sourceRow: unknown;
   stored: unknown;
   provenanceVersion: number;
+  runtimeVersion?: number;
   builderImageAccepted?: boolean;
 }): SuppliedEvidenceReading {
   const row = (input.sourceRow ?? null) as Record<string, unknown> | null;
@@ -434,6 +442,7 @@ export function readStoredRowEvidence(input: {
     branches: rowSourceBranches(unmappedWithRecoveredLinks(unmapped, row)),
     stored: input.stored,
     provenanceVersion: input.provenanceVersion,
+    runtimeVersion: input.runtimeVersion,
     sourceAnchor: anchor,
     builderImageAccepted: input.builderImageAccepted,
     linkDiscovery: readLinkDiscovery(row),

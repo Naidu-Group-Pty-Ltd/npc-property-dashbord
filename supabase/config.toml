@@ -273,6 +273,11 @@ verify_jwt = false
 [functions.crime-data-ingest]
 verify_jwt = true
 
+# The GTFS transport ingest: internal-secret / sealed-bootstrap auth in the
+# function, gateway JWT in front of it, exactly as the other ingests.
+[functions.transport-gtfs-ingest]
+verify_jwt = true
+
 # The ABS reference-data ingest: internal-secret / sealed-bootstrap auth
 # inside; the gateway JWT stays on in front of it.
 [functions.abs-poa-ingest]

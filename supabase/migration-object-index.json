@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1019,
+  "migration_files": 1022,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -431,6 +431,7 @@
     "function:public.release_migration_job_lock",
     "function:public.release_workflow_trigger_event",
     "function:public.relink_emails_on_client_email_change",
+    "function:public.reopen_builder_stock_runtime_failures",
     "function:public.reopen_builder_stock_stranded_items",
     "function:public.reopen_legal_matter",
     "function:public.replay_integration_dead_letter",
@@ -1784,6 +1785,8 @@
     "index:template_share_links_template_idx",
     "index:transaction_obligations_case_idx",
     "index:transaction_obligations_tx_idx",
+    "index:transport_feed_syncs_feed_started",
+    "index:transport_stops_lat_lon",
     "index:uniq_market_digests_period_start",
     "index:uq_aml_arrangement_assessment_operative",
     "index:uq_aml_consents_case_kind_version",
@@ -2478,6 +2481,8 @@
     "table:public.transaction_case_reconciliation_issues",
     "table:public.transaction_cases",
     "table:public.transport_data_cache",
+    "table:public.transport_feed_syncs",
+    "table:public.transport_stops",
     "table:public.user_permissions",
     "table:public.user_preferences",
     "table:public.user_roles",
