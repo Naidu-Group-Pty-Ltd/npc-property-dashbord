@@ -12,6 +12,9 @@
  * principal-and-interest payment is convex in the rate. The tests assert the
  * arithmetic, not the ratio.
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PROJECTION_SCENARIO,
@@ -285,5 +288,62 @@ describe('projecting the portfolio', () => {
     expect(p.projectedEquity).toBeNull();
     // The assumptions still stand, so a reader learns what would have been used.
     expect(p.assumptions.annualCapitalGrowthPercent).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The trust boundary, asserted against the generator's own source
+//
+// The architectural claim is that the model is never ASKED for these figures —
+// not asked and then checked. That is a property of the prompt schema, so it
+// is read from the source rather than inferred from behaviour.
+// ---------------------------------------------------------------------------
+
+describe('trust boundary in generate-portfolio-analysis', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../../../../supabase/functions/generate-portfolio-analysis/index.ts'),
+    'utf8',
+  );
+  // The JSON shape the model is asked to return, which is the only part of the
+  // file where a `"field": number` line is a request TO the model.
+  const schema = source.slice(source.indexOf('Format your response as valid JSON'));
+
+  it('asks the model for no deterministic figure', () => {
+    for (const field of [
+      'currentMonthlyCashflow', 'currentMonthlyRepayment',
+      'plusOnePercentImpact', 'plusTwoPercentImpact',
+      'projectedPortfolioValue', 'projectedEquity', 'projectedMonthlyCashflow',
+      'totalDebtDeployed', 'estimatedCapacity', 'availableCapacity', 'utilisationPercentage',
+    ]) {
+      expect(schema, `the model is still asked for ${field}`).not.toContain(`"${field}"`);
+    }
+  });
+
+  it('still asks the model for the two judgements it owns', () => {
+    expect(schema).toContain('"healthScore"');
+    expect(schema).toContain('"diversificationScore"');
+  });
+
+  it('keeps asking for the commentary that explains the calculated figures', () => {
+    expect(schema).toContain('"commentary"');
+    expect(schema).toContain('"plainEnglishSummary"');
+  });
+
+  it('supplies the calculated figures to the model as authoritative', () => {
+    expect(source).toContain('deterministicFactsBlock');
+    expect(source).toMatch(/THESE ARE AUTHORITATIVE/);
+    expect(source).toMatch(/DO NOT RECALCULATE/);
+  });
+
+  it('sources the investment cashflow from the portfolio metric, not the model', () => {
+    // §6: one authority, and the two can never disagree because there is only
+    // one derivation.
+    expect(source).toMatch(/currentMonthlyCashflow:\s*portfolioMetrics\.netMonthlyCashflow/);
+  });
+
+  it('bounds the two model-authored scores rather than clamping them', () => {
+    // Clamping 250 to 100 would publish an excellent rating the model never
+    // gave; dropping it is the honest failure.
+    expect(source).toMatch(/n >= 0 && n <= 100/);
   });
 });

@@ -125,17 +125,31 @@ interface PortfolioAnalysisData {
       marketRisks: string[];
       mitigationStrategies: string[];
     };
+    // Every figure here is now produced by the deterministic facts helper on
+    // the server, never by the model. `null` means the loan record could not
+    // support the calculation — a historical row simply has no `available`
+    // flag and its stored numbers render exactly as they did.
     interestRateSensitivity?: {
       investmentProperties?: {
-        currentMonthlyCashflow: number;
-        plusOnePercentImpact: number;
-        plusTwoPercentImpact: number;
+        currentMonthlyCashflow: number | null;
+        plusOnePercentImpact: number | null;
+        plusTwoPercentImpact: number | null;
+        available?: boolean;
+        unavailableReason?: string | null;
+        unavailableExplanation?: string | null;
+        loansCovered?: number;
+        balanceCovered?: number;
         commentary: string;
       };
       ownerOccupiedProperties?: {
-        currentMonthlyRepayment: number;
-        plusOnePercentImpact: number;
-        plusTwoPercentImpact: number;
+        currentMonthlyRepayment: number | null;
+        plusOnePercentImpact: number | null;
+        plusTwoPercentImpact: number | null;
+        available?: boolean;
+        unavailableReason?: string | null;
+        unavailableExplanation?: string | null;
+        loansCovered?: number;
+        balanceCovered?: number;
         commentary: string;
       };
       combinedCommentary: string;
@@ -154,9 +168,12 @@ interface PortfolioAnalysisData {
     };
     projections: {
       years: number;
-      projectedPortfolioValue: number;
-      projectedEquity: number;
-      projectedMonthlyCashflow: number;
+      projectedPortfolioValue: number | null;
+      projectedDebt?: number | null;
+      projectedEquity: number | null;
+      // Never projected: no rent or expense growth rate is recorded for a
+      // portfolio, and capital growth is not rental growth.
+      projectedMonthlyCashflow: number | null;
       assumptions: string[];
       plainEnglishSummary?: string;
     };
@@ -283,6 +300,20 @@ const safeNumber = (value: number | null | undefined, fallback: number = 0): num
   if (value === null || value === undefined || isNaN(value)) return fallback;
   return value;
 };
+
+/**
+ * A monthly figure, or the honest absence of one.
+ *
+ * `formatCurrency(null)` returns `'$0'`, which is right for a total that is
+ * genuinely nil and wrong for a figure the record could not establish. A rate
+ * shock of `$0/mo` reads as "rates rising costs you nothing" — the opposite of
+ * what an absent figure means. Deterministic Portfolio facts now return null
+ * where the loan data cannot support a calculation (see
+ * `_shared/reports/portfolio/deterministicFacts.pure.ts`), so this is the
+ * boundary that keeps that honest on the page.
+ */
+const monthlyFigureOrUnavailable = (value: number | null | undefined): string =>
+  value === null || value === undefined || isNaN(value) ? 'Not available' : `${formatCurrency(value)}/mo`;
 
 const safeArray = <T,>(arr: T[] | null | undefined): T[] => {
   return Array.isArray(arr) ? arr : [];
@@ -2556,12 +2587,19 @@ export function PortfolioAnalysisPDFGenerator({
           yPos = drawSubsectionHeader(page, 'Investment Properties — Impact on Rental Cashflow', yPos);
           
           const rateKpiWidth = (CONTENT_WIDTH - 20) / 3;
-          drawKPIBox(page, 'CURRENT NET CASHFLOW', formatCurrency(investRates.currentMonthlyCashflow) + '/mo', MARGIN_LEFT, yPos, rateKpiWidth, 
+          drawKPIBox(page, 'CURRENT NET CASHFLOW', monthlyFigureOrUnavailable(investRates.currentMonthlyCashflow), MARGIN_LEFT, yPos, rateKpiWidth, 
             safeNumber(investRates.currentMonthlyCashflow) >= 0 ? SUCCESS_COLOR : DANGER_COLOR);
-          drawKPIBox(page, 'IF RATES RISE +1%', formatCurrency(investRates.plusOnePercentImpact) + '/mo', MARGIN_LEFT + rateKpiWidth + 10, yPos, rateKpiWidth, WARNING_COLOR);
-          drawKPIBox(page, 'IF RATES RISE +2%', formatCurrency(investRates.plusTwoPercentImpact) + '/mo', MARGIN_LEFT + (rateKpiWidth + 10) * 2, yPos, rateKpiWidth, DANGER_COLOR);
+          drawKPIBox(page, 'IF RATES RISE +1%', monthlyFigureOrUnavailable(investRates.plusOnePercentImpact), MARGIN_LEFT + rateKpiWidth + 10, yPos, rateKpiWidth, WARNING_COLOR);
+          drawKPIBox(page, 'IF RATES RISE +2%', monthlyFigureOrUnavailable(investRates.plusTwoPercentImpact), MARGIN_LEFT + (rateKpiWidth + 10) * 2, yPos, rateKpiWidth, DANGER_COLOR);
           
           yPos -= 75;
+          
+          // Only an explicit `false` hides the figures: a historical row has no
+          // `available` flag and its stored numbers still render as they did.
+          if (investRates.available === false && investRates.unavailableExplanation) {
+            yPos = drawFormattedText(page, investRates.unavailableExplanation, MARGIN_LEFT, yPos, CONTENT_WIDTH, 9, 15, SECONDARY_COLOR);
+            yPos -= PARAGRAPH_SPACING;
+          }
           
           if (investRates.commentary) {
             yPos = drawFormattedText(page, investRates.commentary, MARGIN_LEFT, yPos, CONTENT_WIDTH, 9, 15, SECONDARY_COLOR);
@@ -2580,11 +2618,16 @@ export function PortfolioAnalysisPDFGenerator({
           yPos = drawSubsectionHeader(page, 'Owner-Occupied Properties — Impact on Home Loan Repayments', yPos, PRIMARY_COLOR);
           
           const rateKpiWidth = (CONTENT_WIDTH - 20) / 3;
-          drawKPIBox(page, 'CURRENT REPAYMENT', formatCurrency(ooRates.currentMonthlyRepayment) + '/mo', MARGIN_LEFT, yPos, rateKpiWidth, SECONDARY_COLOR);
-          drawKPIBox(page, 'IF RATES RISE +1%', formatCurrency(ooRates.plusOnePercentImpact) + '/mo', MARGIN_LEFT + rateKpiWidth + 10, yPos, rateKpiWidth, WARNING_COLOR);
-          drawKPIBox(page, 'IF RATES RISE +2%', formatCurrency(ooRates.plusTwoPercentImpact) + '/mo', MARGIN_LEFT + (rateKpiWidth + 10) * 2, yPos, rateKpiWidth, DANGER_COLOR);
+          drawKPIBox(page, 'CURRENT REPAYMENT', monthlyFigureOrUnavailable(ooRates.currentMonthlyRepayment), MARGIN_LEFT, yPos, rateKpiWidth, SECONDARY_COLOR);
+          drawKPIBox(page, 'IF RATES RISE +1%', monthlyFigureOrUnavailable(ooRates.plusOnePercentImpact), MARGIN_LEFT + rateKpiWidth + 10, yPos, rateKpiWidth, WARNING_COLOR);
+          drawKPIBox(page, 'IF RATES RISE +2%', monthlyFigureOrUnavailable(ooRates.plusTwoPercentImpact), MARGIN_LEFT + (rateKpiWidth + 10) * 2, yPos, rateKpiWidth, DANGER_COLOR);
           
           yPos -= 75;
+          
+          if (ooRates.available === false && ooRates.unavailableExplanation) {
+            yPos = drawFormattedText(page, ooRates.unavailableExplanation, MARGIN_LEFT, yPos, CONTENT_WIDTH, 9, 15, SECONDARY_COLOR);
+            yPos -= PARAGRAPH_SPACING;
+          }
           
           if (ooRates.commentary) {
             yPos = drawFormattedText(page, ooRates.commentary, MARGIN_LEFT, yPos, CONTENT_WIDTH, 9, 15, SECONDARY_COLOR);
@@ -2751,9 +2794,13 @@ export function PortfolioAnalysisPDFGenerator({
       
       // Projection KPI boxes with layperson-friendly labels
       const projKpiWidth = (CONTENT_WIDTH - 20) / 3;
-      drawKPIBox(page, 'ESTIMATED TOTAL VALUE', formatCurrency(projections?.projectedPortfolioValue), MARGIN_LEFT, yPos, projKpiWidth, PRIMARY_COLOR);
-      drawKPIBox(page, 'ESTIMATED EQUITY (WHAT YOU OWN)', formatCurrency(projections?.projectedEquity), MARGIN_LEFT + projKpiWidth + 10, yPos, projKpiWidth, SUCCESS_COLOR);
-      drawKPIBox(page, 'ESTIMATED MONTHLY INCOME', formatCurrency(projections?.projectedMonthlyCashflow) + '/mo', MARGIN_LEFT + (projKpiWidth + 10) * 2, yPos, projKpiWidth);
+      const projValue = projections?.projectedPortfolioValue;
+      const projEquity = projections?.projectedEquity;
+      drawKPIBox(page, 'ESTIMATED TOTAL VALUE', projValue === null || projValue === undefined ? 'Not available' : formatCurrency(projValue), MARGIN_LEFT, yPos, projKpiWidth, PRIMARY_COLOR);
+      drawKPIBox(page, 'ESTIMATED EQUITY (WHAT YOU OWN)', projEquity === null || projEquity === undefined ? 'Not available' : formatCurrency(projEquity), MARGIN_LEFT + projKpiWidth + 10, yPos, projKpiWidth, SUCCESS_COLOR);
+      // Cashflow is deliberately not projected — the assumptions list below
+      // states why, so the box says what happened rather than showing $0/mo.
+      drawKPIBox(page, 'ESTIMATED MONTHLY INCOME', projections?.projectedMonthlyCashflow === null || projections?.projectedMonthlyCashflow === undefined ? 'Not projected' : formatCurrency(projections.projectedMonthlyCashflow) + '/mo', MARGIN_LEFT + (projKpiWidth + 10) * 2, yPos, projKpiWidth);
       
       yPos -= 85;
       
@@ -3726,19 +3773,19 @@ export function PortfolioAnalysisPDFGenerator({
                       <div>
                         <p className="text-sm text-muted-foreground">Estimated Total Value</p>
                         <p className="text-xl font-bold text-primary">
-                          {formatCurrency(analysisData.analysis.projections.projectedPortfolioValue)}
+                          {analysisData.analysis.projections.projectedPortfolioValue === null || analysisData.analysis.projections.projectedPortfolioValue === undefined ? 'Not available' : formatCurrency(analysisData.analysis.projections.projectedPortfolioValue)}
                         </p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Estimated Equity (What You Own)</p>
                         <p className="text-xl font-bold text-success">
-                          {formatCurrency(analysisData.analysis.projections.projectedEquity)}
+                          {analysisData.analysis.projections.projectedEquity === null || analysisData.analysis.projections.projectedEquity === undefined ? 'Not available' : formatCurrency(analysisData.analysis.projections.projectedEquity)}
                         </p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Estimated Monthly Income</p>
                         <p className="text-xl font-bold">
-                          {formatCurrency(analysisData.analysis.projections.projectedMonthlyCashflow)}
+                          {analysisData.analysis.projections.projectedMonthlyCashflow === null || analysisData.analysis.projections.projectedMonthlyCashflow === undefined ? 'Not projected' : formatCurrency(analysisData.analysis.projections.projectedMonthlyCashflow)}
                         </p>
                       </div>
                     </div>

@@ -147,3 +147,60 @@ would therefore print `$0/mo` — the precise failure this work exists to end.
 The renderer must distinguish absent from zero. `normalise.pure.ts` already
 does this correctly (`toProjection` returns null rather than a zeroed block),
 and that is the philosophy being extended rather than replaced.
+
+---
+
+## 7. What the implementation did
+
+**`_shared/reports/portfolio/deterministicFacts.pure.ts`** is the arithmetic,
+pure and independently testable. It needs no Supabase, no HTTP and no model.
+
+**The model-facing schema no longer contains a single deterministic field.**
+Removed from model authority — not computed-then-compared, *not asked*:
+
+| block | fields removed |
+| --- | --- |
+| `interestRateSensitivity` | `currentMonthlyCashflow`, `currentMonthlyRepayment`, and both `plusOnePercentImpact` / `plusTwoPercentImpact` pairs (6) |
+| `projections` | `years`, `projectedPortfolioValue`, `projectedEquity`, `projectedMonthlyCashflow`, `assumptions` (5) |
+| `borrowingCapacityUtilisation` | `totalDebtDeployed`, `estimatedCapacity`, `availableCapacity`, `utilisationPercentage` (4) |
+
+Retained as model authority: `healthScore` and `diversificationScore` — both
+bounded to 0–100 on the way out, and **dropped rather than clamped** when out
+of range, because clamping 250 to 100 publishes an excellent rating the model
+never gave. Every classification, strength, concern, strategic role,
+recommendation and commentary field is untouched.
+
+**Assembly order.** Facts are computed before the prompt, supplied to the model
+in a block headed *"THESE ARE AUTHORITATIVE. EXPLAIN THEM; DO NOT RECALCULATE"*,
+and written into the persisted object after the model returns. Nothing is
+overwritten, because nothing was ever requested.
+
+**One authority for cashflow.** `interestRateSensitivity.investmentProperties.
+currentMonthlyCashflow` is assigned `portfolioMetrics.netMonthlyCashflow`
+directly. There is no second derivation, so the two cannot disagree — asserted
+by a test that reads the generator's source.
+
+**Persisted shape unchanged.** Both renderers keep reading the same paths; only
+the producer changed. New fields are additive (`available`,
+`unavailableReason`, `unavailableExplanation`, `loansCovered`,
+`balanceCovered`, `projectedDebt`, `assumptionDetail`).
+
+**Historical rows are untouched and still render.** The renderer hides a figure
+only on an explicit `available === false`; a stored row from before this change
+has no such flag, so its numbers draw exactly as they did. No backfill was run.
+
+**Rendering.** `monthlyFigureOrUnavailable` replaces `formatCurrency(x) + '/mo'`
+at the six sensitivity KPI boxes; the projection boxes distinguish "Not
+available" from "Not projected". The unavailable explanation is drawn beneath
+the boxes so a reader learns *why* rather than seeing a blank.
+
+## 8. Known limitations
+
+- **Sensitivity is unavailable for any portfolio holding a principal-and-interest
+  loan** — 8 of 23 clients — until a loan term is recorded. This is the single
+  data change that would restore it.
+- **`projectedMonthlyCashflow` is never calculated.** It is typed `null` so it
+  cannot be set. Restoring it requires a named rent-growth and expense-growth
+  assumption, which this repository does not have for a portfolio.
+- **Debt is held constant across the projection.** Exact for the 15 clients
+  whose loans are interest-only; stated openly for the rest.
