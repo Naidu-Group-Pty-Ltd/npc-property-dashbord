@@ -3134,3 +3134,85 @@ $650/week on vacant land), and 29 of 32 apartments carry a body-corporate
 override that supplies the real figure. And the spec caught **three call sites
 I had missed** and the edge gate caught **a fatal redeclaration I introduced**,
 which is what those gates are for.
+
+---
+
+## §40 — Stage 2: the renderer knew, and nobody asked (2026-09-07)
+
+Stage 1 read the corpus as data. Stage 2 read one report as a **document** —
+`28 Bligh Street, Muswellbrook NSW 2333`, 5 September, compass-40, the shape
+the generator writes today — and the two defects worth fixing were both
+already detected by code that exists.
+
+**A render that loses content says nothing.** `renderMarkdown` returns a
+complete degradation report: twenty-four notices covering truncation, rejected
+and ragged tables, dropped columns, rows, list items, headings, images, glyphs
+and figures, plus `degraded`. **Every caller throws it away.**
+`reportBindingProjection`, `reportQaProjection`,
+`marketIntelligenceProjection` and both converted-report renderers take
+`.blocks`, `.html` or `.lines` and read no notice at all; the investment
+renderer reads exactly **two of the twenty-four** (`figuresDrawn` /
+`figuresDropped`) and discards the rest — including every one that means a
+client's content did not reach the page.
+
+On the Muswellbrook report a table row written
+`… | General evidence only || Tenant stability …` — two rows concatenated by a
+stray `||` — renders with `tablesRagged: 1` and **`tableColumnsDropped: 5`**,
+and nothing anywhere is told. Across the corpus **12 reports carry that shape
+and 118 carry an unterminated row**, out of 1,138 with tables.
+
+`contentLosses` draws the line once: a notice that means content was **lost**
+is a problem; a notice that means content was **transformed** is not.
+`tablesLandscaped`, `listsFlattened`, `linksFlattened`,
+`glyphsTransliterated`, `urlsNeutralised`, `listRunsMerged` and
+`inlineSkipped` all keep the words, and reporting them would bury the ones that
+do not. `tablesRagged` is likewise silent because the loss it causes is
+counted separately as dropped columns — reporting both would double it. The
+losses join the `problems` list the spine validation already populates and
+count towards the `degraded` flag the plan already carried, so nothing new was
+built: a chapter dropped for budget, prose cut for length and content the
+markdown renderer could not carry are now the same kind of fact.
+
+**Two services measure the same distance and both reach the report.** The
+document says *"Muswellbrook Public School at 0.29 km"* and *"Pacific Brook
+Christian School, is 0.46 km away"*. Its own stored
+`location_intelligence.schools.topSchools` holds **0.21** and **0.42** for
+those schools. Neither is the model inventing: `school-data-service` measures
+its own distances and is interpolated into the prompt, while
+`location-intelligence-service` measures them separately into the column that
+is stored, projected and rendered. The model quotes the first; every
+downstream surface reads the second.
+
+The **stored** figure is the authority, because it is the one the record keeps.
+`schoolDistance.pure.ts` replaces a prompt distance wherever the record names
+the same school, and leaves a school the record does not name at the distance
+it arrived with — a reconciliation rather than a filter, because dropping the
+high school would lose a real fact to fix a disagreement it does not have.
+Nothing here judges which service measures better; that is a separate question
+about two great-circle implementations, and this one is only that a document
+must not state a figure its own record contradicts.
+
+**Three things this stage got wrong before it got them right.** A first render
+harness ran without the production figure renderer and reported that both
+charts were dropped and the Disclaimer heading discarded; wired as production
+does, `figuresDrawn: 2`, `figuresDropped: 0`, `headingsDroppedEmpty: 0` — none
+of it was real. The Sydney transport data in that report (Central Station,
+450 m, on a property 292 km away) is **pre-fix**: the GTFS work landed two days
+after it was generated. And the new spec caught a bug in the new module —
+`St Joseph's` keyed as `st joseph s` and never matched `St Josephs`, which is
+the one spelling difference these two services actually produce.
+
+**What the corpus does well** is worth recording beside that. The prompt
+carries `[School Name]` and `X.XX km` fallbacks and **not one of 1,180
+completed reports contains either**; the walk score's distance fallback
+correctly absorbs the new transport service's deliberate absence of a
+`qualityScore`; and the renderer's detection is complete and accurate — it was
+only ever unheard.
+
+Two things are named and not fixed. Chart duplication is **8 of 45
+chart-bearing reports (18%)**, worst three times, and the repeats are
+*near*-identical — different dash characters, `3,120` against `3120` — which
+is why the generator's own "render ONCE" instruction and any exact-match dedup
+miss them. And **19 of 35 reports using `::: stat` (54%) draw at least one card
+with a label, a unit, a sub-caption and no value.** Both wait on whether
+surfacing the notices makes them self-evident first.
