@@ -3372,3 +3372,113 @@ deliberately — the snapshot guide test now asserts it asks for exactly its
 **authored** headings (the briefing's contract, and the stronger one, since it
 also forbids the guide asking for a section we compose), and the producer
 resolver learned two new shapes.
+
+## §42 — Stage 4: a labelled block is a promise, and one correction (2026-09-07)
+
+Stage 4 of the staged validation programme — **Rendering and Presentation
+Validation**, carrying the three items Stage 2 named and deliberately left.
+
+### The correction first
+
+§40 recorded that "771 of 1,180 completed reports contain the firm's *general
+informational purposes only* wording in the model's prose", and this programme
+proposed stopping the prompt writing its own disclaimer. The count was right and
+the reading of it was wrong.
+
+Measured 2026-09-07: those 769 Compass reports carry the phrase at **93% of the
+way through the document on average, and 729 of them in the last 10%** — inside
+the disclaimer section, which is where a disclaimer belongs. It is not scattered
+through the analysis. And it was **last produced 2026-07-21**: of the 10 reports
+generated since August, zero contain it. The cohort is overwhelmingly December
+2025 (663 of 686 that month).
+
+The generator had already stopped doing the thing that was proposed to stop.
+
+What is live is smaller and different. On the newest report (`28 Bligh Street,
+Muswellbrook`, 5 Sep) the section reads:
+
+```
+### Disclaimer
+{{glance: ◆ General information only | ⚠ Not tailored to your personal
+  circumstances | ✓ Independent advice and due diligence are essential |
+  ★ Use alongside professional financial, legal and tax guidance}}
+```
+
+A heading called "Disclaimer" whose entire body is a decorative chip strip,
+while the operator's authored disclaimer (`global_report_settings.
+professional_disclaimer`, enabled) is set on its own branded back page by
+`render-investment-report-pdf`. That is a presentation question about a legal
+statement on a client document — whether four chips are an acceptable rendering
+of a disclaimer — and it is the operator's to answer, not this programme's. It
+is named here and deliberately unchanged.
+
+### 1. The stat card with no value
+
+`::: stat` draws the largest single element on a page. Measured across the 24
+Compass reports that use it: **23 of 71 cards (32%) carry a label, a unit and a
+sub-caption and no value**, on 15 of those 24 reports. Verbatim:
+
+```
+::: stat label="Nearest station access" unit="m" sub="Muswellbrook Station from local transport references"
+
+:::
+```
+
+The renderer draws `stat-value` unconditionally:
+
+```ts
+`<div class="stat-value">${esc(inner)}${unit ? `<span class="stat-unit">${unit}</span>` : ""}</div>`
+```
+
+So what a client receives is not a blank space. It is an oversized **"m"**, or
+an oversized **"/100"**, set in display type with a caption underneath
+explaining what it measures. **The unit becomes the statistic.**
+
+A card with nothing to state is not drawn — not a dash, not a zero, not the unit
+alone. A measured `0` is a statement and is kept.
+
+### 2. The chart drawn twice
+
+The generator's prompt tells it to render each figure once. 5 of the 26
+chart-bearing reports since June repeat a directive anyway, 7 redundant draws in
+all. The repeats are **near**-identical — a different dash character, `3,120`
+against `3120` — which is why the prompt's own instruction and any exact-match
+comparison both miss them. Normalisation is therefore the whole mechanism, and
+it is deliberately narrow: case, whitespace, dash variants and thousands
+separators. `{{bars: … 1-450}}` and `{{bars: … 1-451}}` remain two charts.
+
+### Where it runs, and why in two places
+
+`blockHygiene.pure.ts` holds both passes and one predicate. It is applied on the
+**write** path — the parent's `compassPostProcessor` (phase 7, on the assembled
+document, because a chart repeated across two sections is only visible once the
+sections are one string again), plus condense and fork — and on the **read**
+path, in the PDF renderer.
+
+Both ends, because the write path alone leaves the 15 reports already carrying
+an empty card, and those documents have been sent. That is the asymmetry
+`healFinanceIdentity` settled on in §36 and for the same reason. `stripPlaceholderRows`,
+the rule's existing enforcement on table rows, is called by condense and fork and
+has never been called on a parent at all — which is how this class survived on
+the Compass.
+
+One predicate shared by both ends is load-bearing rather than tidy: the
+renderer's fence pass is a plain `gm` regex with no code-fence awareness, so a
+`::: stat` inside a ``` block IS drawn as a card today. The scrubber matches
+exactly that set. A scrubber that were *smarter* than the renderer would leave a
+card the renderer then draws as a bare unit. That behaviour of the renderer is
+pre-existing and out of scope here; a test pins the agreement rather than the
+behaviour.
+
+### Named and not fixed
+
+- **The Disclaimer sub-section**, above — the operator's call.
+- **A bullet promising a continuation that never comes**: 5 occurrences across 5
+  of 33 reports (`- **NSW Government and Muswellbrook Shire Council**` with a
+  hard line break and then a blank line). Same family, small, and the fix is in
+  the prompt rather than in a scrubber.
+
+### Verification
+
+- 12 new tests, executed against the verbatim production blocks
+- `tsc --noEmit`, `security:edge-check` (339 against a 339 baseline) — clean

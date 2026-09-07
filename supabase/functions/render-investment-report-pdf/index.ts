@@ -12,6 +12,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
 import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSafety.ts";
 import { collectFootnoteDefinitions } from "./footnotes.ts";
+import { statCardHasValue } from "../_shared/reports/investment/blockHygiene.pure.ts";
 // Both are called by `wrapInsightSections` below and neither was imported, so
 // every call to `buildHtml` threw `ReferenceError: wrapInsightHeadingSections is
 // not defined` before WeasyPrint was ever reached. The modules exist and are
@@ -2040,6 +2041,17 @@ function applyEditorialMarkdown(md: string): string {
       if (name === "cols") return `\n<div class="two-col">\n\n${inner}\n\n</div>\n`;
       if (name === "stat") {
         // Inline oversized statistic block: ::: stat label="Median yield" unit="%"  → body = "4.8"
+        //
+        // A card with no value is not drawn. `stat-value` is unconditional, so
+        // an empty body used to print the UNIT in display type — an oversized
+        // "m" or "/100" with a caption underneath explaining what it measures.
+        // Measured 2026-09-07: 23 of 71 cards across 15 of 24 reports.
+        //
+        // Enforced here as well as in the write-path hygiene because this
+        // repairs the reports already stored, for every reader, with no
+        // migration — the same asymmetry `healFinanceIdentity` settled on. One
+        // predicate, shared, so the two ends cannot disagree about "empty".
+        if (!statCardHasValue(inner)) return "";
         const label = esc(attrs.label || "");
         const unit = esc(attrs.unit || "");
         const sub = esc(attrs.sub || "");
