@@ -616,7 +616,17 @@ export async function selectPdfPropertyPrimary(
   return withPdfDecodeSlot(() => selectPdfPropertyPrimaryHoldingSlot(bytes, options));
 }
 
-async function selectPdfPropertyPrimaryHoldingSlot(
+/**
+ * The election with the slot ALREADY HELD by the caller.
+ *
+ * Exported for `extractFromDocument`, which takes the slot once around the
+ * whole heavy path — the text read as well as the election — so the two
+ * stages of reading one document cannot be interleaved with another
+ * document's. Taking the slot twice in one call stack is a deadlock, not a
+ * bound, which is the entire reason this variant is separate from the
+ * wrapper above.
+ */
+export async function selectPdfPropertyPrimaryHoldingSlot(
   bytes: Uint8Array,
   options: {
     label?: string | null;

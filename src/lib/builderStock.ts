@@ -168,6 +168,18 @@ export interface BuilderStockItem {
    * reader conjures a document nobody attached.
    */
   source_documents?: number;
+  /**
+   * How many of those documents we could not READ — a failure of ours or a
+   * link that does not open, never a finding about the document.
+   *
+   * A count and nothing else. Why a document could not be read is the
+   * pipeline's own vocabulary — a kill, a memory ceiling, a timeout, a retry
+   * tally — and none of it belongs on a builder's screen; what belongs there
+   * is that the document has not been read yet. Kept apart from
+   * `source_documents` because "we never read it" and "we read it and it
+   * showed no house" call for opposite actions.
+   */
+  source_documents_unread?: number;
   builder_organisation?: { id: string; legal_name: string; trading_name: string | null } | null;
   selection_count?: number;
   latest_selection?: {

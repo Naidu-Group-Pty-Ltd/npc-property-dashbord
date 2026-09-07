@@ -34,8 +34,9 @@ import {
   DRIVE_FOLDER_MIME, type DriveEntry,
 } from './drivePackage.pure.ts';
 import {
-  selectPdfPropertyPrimary, type PdfPhotoProvenance,
+  selectPdfPropertyPrimaryHoldingSlot, type PdfPhotoProvenance,
 } from './pdfSourcePhoto.ts';
+import { withPdfDecodeSlot } from './pdfDecodeSlot.pure.ts';
 import { classifyBranch, sharedLinkFileUrl } from './sourceBranches.pure.ts';
 import { readPdfPageTextResult } from './pdfText.ts';
 import { MAX_SOURCE_IMAGE_BYTES, sniffImageContentType } from './sourceAssets.pure.ts';
@@ -689,6 +690,25 @@ async function extractFromDocument(
    * recorded as a finding — and only a document that was actually read may
    * answer `not_identified`.
    */
+  /*
+   * THE WHOLE HEAVY PATH, INSIDE ONE SLOT.
+   *
+   * The slot used to be taken by `selectPdfPropertyPrimary` alone — so the
+   * text read, which runs FIRST and parses the same multi-megabyte document,
+   * was never behind it. Measured 7 September 2026 on the six brochures that
+   * had failed: the text read costs 400–1,029 ms against the election's
+   * 670–1,215 ms, so very nearly half the heavy work stood outside the guard
+   * that exists to stop heavy work piling up. That is why a slot which had
+   * already proved the principle did not save them: N documents could be in
+   * their text stage together, and five concurrent reads peak at 429 MB
+   * against a 256 MB ceiling.
+   *
+   * Taken ONCE, around both stages, so one document is read from end to end
+   * before another begins. `selectPdfPropertyPrimaryHoldingSlot` is the
+   * variant that does not re-enter — taking the slot twice in one call stack
+   * is a deadlock rather than a bound.
+   */
+  return await withPdfDecodeSlot(async () => {
   const textResult = await readPageTexts(bytes);
   if (!textResult.ok) {
     return {
@@ -738,7 +758,7 @@ async function extractFromDocument(
     };
   }
   const pageTexts = textResult.pages;
-  const selection = await selectPdfPropertyPrimary(bytes, {
+  const selection = await selectPdfPropertyPrimaryHoldingSlot(bytes, {
     label,
     design,
     identityHints: identityHints ?? [],
@@ -785,4 +805,5 @@ async function extractFromDocument(
       role: photo.role,
     },
   };
+  });
 }

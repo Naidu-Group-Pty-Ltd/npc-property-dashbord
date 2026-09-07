@@ -41,6 +41,7 @@
  * to write down afterwards.
  */
 import { repairSourceImagesForUpload } from './repairSourceImages.ts';
+import { RUNTIME_VERSION } from './runtimeVersion.pure.ts';
 import { settleMarketplaceEligibility } from './settleMarketplaceEligibility.ts';
 import {
   settleImageSanitization, type RepairBudget,
@@ -505,6 +506,7 @@ async function readItemSuppliedEvidence(
       sourceRow: row.source_row,
       stored: row.source_provenance_result,
       provenanceVersion: PROVENANCE_VERSION,
+      runtimeVersion: RUNTIME_VERSION,
       builderImageAccepted,
     });
   } catch {

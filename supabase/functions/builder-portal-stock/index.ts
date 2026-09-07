@@ -23,6 +23,7 @@
  *   list_selections | acknowledge_selection
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+import { unreadDocumentCount } from '../_shared/builderStock/imageProgress.pure.ts';
 import { createCorsHeaders } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import {
@@ -1901,7 +1902,7 @@ async function decorateItems(
      * "No image yet", which reads as something the product is still doing.
      */
     supabase.from('builder_stock_items')
-      .select('id, source_row')
+      .select('id, source_row, source_provenance_result')
       .in('id', ids)
       .eq('organisation_id', organisationId),
   ]);
@@ -1925,11 +1926,17 @@ async function decorateItems(
    * document the pipeline would not read, or none where it would find five.
    */
   const documentsByItem = new Map<string, number>();
+  const unreadByItem = new Map<string, number>();
   for (const row of rows ?? []) {
     const unmapped = (row?.source_row as { unmapped?: Record<string, string> } | null)?.unmapped;
     documentsByItem.set(
       String(row.id),
       rowSourceBranches(unmapped).filter(isTraversableBranch).length,
+    );
+    unreadByItem.set(
+      String(row.id),
+      unreadDocumentCount((row as { source_provenance_result?: unknown })
+        ?.source_provenance_result ?? null),
     );
   }
 
@@ -1942,6 +1949,12 @@ async function decorateItems(
      * count rather than a list because an address is not needed to say so.
      */
     source_documents: documentsByItem.get(String(item.id)) ?? 0,
+    /*
+     * And how many of them we FAILED to read, which is a different fact from
+     * how many exist and from what they said. A count, never a reason — see
+     * `unreadDocumentCount`: the mechanism stays on this side.
+     */
+    source_documents_unread: unreadByItem.get(String(item.id)) ?? 0,
     // The builder's activation signal: how many Command Centre selections this
     // property has, and where the most recent one is up to.
     selection_count: (selectionsByItem.get(item.id) ?? []).length,

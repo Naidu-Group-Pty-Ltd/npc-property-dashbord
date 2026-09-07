@@ -379,10 +379,43 @@ Deno.serve(async (req: Request) => {
       itemQueueDrained = true;
     } else {
 
-    const claimed = itemClaim.item;
     /*
-     * The whole tick's wall clock goes to this one property, less a reserve to
-     * write the outcome down. That is the other half of the fix: the upload
+     * ONE PROPERTY AT A TIME, AND AS MANY AS THE CLOCK ALLOWS.
+     *
+     * The rule this preserves is the one the old single-item shape existed
+     * for: a worker must never hold a lease on a property it has not started.
+     * Claiming A, B, C, D up front and dying on A leaves B, C and D leased by
+     * a process that no longer exists, unlooked at until their leases expire.
+     * So nothing here is pre-claimed — the next property is claimed only
+     * after the previous one has been settled AND recorded, so exactly one
+     * lease is held at any instant and a kill still costs exactly one
+     * property. Identical blast radius, without the throughput ceiling.
+     *
+     * WHY THE CEILING HAD TO GO. Throughput used to be bought only by
+     * invoking more often, and concurrent invocations of one function share
+     * an isolate and its memory. Measured 7 September 2026 on upload
+     * `bd7a0ef5`: the scheduler dispatched up to TEN invocations a minute
+     * (`least(greatest(v_item_work, 1), 10)` — concurrency scaled off the
+     * backlog, so the larger the import the harder it hit), five concurrent
+     * 8 MB brochures peak at 429 MB against a 256 MB ceiling, and the isolate
+     * died. Seventy-eight properties took 161 minutes — 0.48 a minute, an
+     * order of magnitude under the design's own ceiling — because every kill
+     * threw away all the work in flight. The same six documents run one at a
+     * time elect in about a second each.
+     *
+     * So concurrency comes down to two and the work per invocation goes up:
+     * fewer isolates, each doing more, each holding one document at a time.
+     */
+    const RESERVE_FOR_ANOTHER_MS = 30_000;
+    let claimed = itemClaim.item;
+    let settledCount = 0;
+    let lastSettlement: Awaited<ReturnType<typeof settleClaimedItem>> | null = null;
+    let publication: Awaited<ReturnType<typeof publishUploadIfReady>> | null = null;
+
+    for (;;) {
+    /*
+     * The whole REMAINING wall clock goes to this one property, less a reserve
+     * to write the outcome down. That is the other half of the fix: the upload
      * walk gave each property a 12-second slice of which the preceding ones had
      * already spent most, so a linked-package recovery — which declines the bet
      * unless ten seconds remain — could be starved indefinitely while the
@@ -403,11 +436,6 @@ Deno.serve(async (req: Request) => {
      * with `available: false` therefore means the two halves disagree: the
      * property was claimed, the work was done, and nothing recorded it. It
      * stays leased until expiry and is then re-done, for ever.
-     *
-     * That exact state existed in production: 20261019000000 shipped
-     * `complete_builder_stock_image_work` with five arguments while this code
-     * calls it with six. There is no repair from in here — the migration has
-     * to land — so the job is to make it unmissable rather than to guess.
      */
     const completion = await completeItemWork(supabase, claimed.id, {
       nextStage: settlement.nextStage,
@@ -430,6 +458,9 @@ Deno.serve(async (req: Request) => {
       }, 503);
     }
 
+    settledCount += 1;
+    lastSettlement = settlement;
+
     /*
      * AND ASK WHETHER THIS PROPERTY'S UPLOAD CAN NOW BE PUBLISHED.
      *
@@ -439,58 +470,63 @@ Deno.serve(async (req: Request) => {
      * readiness rule lives inside the function, evaluated in the same statement
      * that flips the rows, so nothing can change between the check and the act.
      *
-     * A replacement upload therefore publishes itself, minutes after the
-     * builder closed the browser, with no operator anywhere in the loop.
-     */
-    let publication: Awaited<ReturnType<typeof publishUploadIfReady>> | null = null;
-    /*
-     * THE UPLOAD THAT IS WAITING, NOT THE ONE THAT IS SERVING.
-     *
-     * This used to read `claimed.upload_id` behind `lifecycle_status ===
-     * 'staged'`, and both halves were wrong for a replacement whose rows all
-     * MATCHED. Such a row is `active`, not staged, so the question was never
-     * asked; and its `upload_id` is still the OLD upload, because re-pointing
-     * it is step 1 of the cutover — so the one id in hand named the dataset
-     * already on screen. `pending_upload_id` is the upload holding this
-     * property's replacement values.
-     *
-     * This is now a fast path rather than the mechanism. The scheduler sweeps
-     * for ready uploads every tick, because an import whose rows all matched
-     * owes NO image work at all and therefore has no completed item to hang
-     * the question on — which is how a ready upload came to wait for ever.
+     * THE UPLOAD THAT IS WAITING, NOT THE ONE THAT IS SERVING. This used to
+     * read `claimed.upload_id` behind `lifecycle_status === 'staged'`, and both
+     * halves were wrong for a replacement whose rows all MATCHED.
      */
     const waitingUpload = claimed.pending_upload_id ?? (
       claimed.lifecycle_status === 'staged' ? claimed.upload_id : null);
     if (waitingUpload) {
-      publication = await publishUploadIfReady(supabase, waitingUpload);
-      if (publication.published) {
+      const published = await publishUploadIfReady(supabase, waitingUpload);
+      publication = published.published ? published : (publication ?? published);
+      if (published.published) {
         console.log('[builder-stock-image-settler] stock list published', {
           phase: 'publication',
           upload_id: waitingUpload,
-          promoted: publication.promoted,
-          archived: publication.archived,
+          promoted: published.promoted,
+          archived: published.archived,
         });
       }
+    }
+
+    /*
+     * ANOTHER ONE, ONLY IF THERE IS REAL TIME FOR IT.
+     *
+     * The reserve is sized on the work rather than on the average: a linked
+     * package may spend up to `RECOVERY_DEADLINE_MS` before it answers, so
+     * starting one with less than this left would guarantee the very
+     * mid-flight kill this whole change exists to remove. Below the reserve
+     * the invocation stops cleanly and the next tick picks the queue up —
+     * nothing is held, nothing is lost.
+     */
+    if (Date.now() > startedAt + BUDGET_MS - RESERVE_FOR_ANOTHER_MS) break;
+    const next = await claimOneImageWorkItem(supabase, {
+      leaseSeconds: Math.ceil(BUDGET_MS / 1000) + 20,
+    });
+    if (!next.available || !next.item) break;
+    claimed = next.item;
     }
 
     const pending = await readItemWorkPending(supabase);
     console.log('[builder-stock-image-settler] item tick', {
       phase: 'item_work',
-      stock_item_id: claimed.id,
-      stage: settlement.stage,
-      next_stage: settlement.nextStage,
-      progressed: settlement.progressed,
-      primary_set: settlement.primarySet,
+      settled: settledCount,
+      last_stock_item_id: claimed.id,
+      stage: lastSettlement?.stage,
+      next_stage: lastSettlement?.nextStage,
+      progressed: lastSettlement?.progressed,
+      primary_set: lastSettlement?.primarySet,
       claimable: pending.claimable,
       outstanding: pending.outstanding,
       ms: Date.now() - startedAt,
     });
 
     return json({
-      success: true, path: 'item_work', settled: 1,
-      stage: settlement.stage, nextStage: settlement.nextStage,
-      progressed: settlement.progressed, primarySet: settlement.primarySet,
-      error: settlement.error ?? undefined,
+      success: true, path: 'item_work', settled: settledCount,
+      stage: lastSettlement?.stage, nextStage: lastSettlement?.nextStage,
+      progressed: lastSettlement?.progressed ?? false,
+      primarySet: lastSettlement?.primarySet ?? false,
+      error: lastSettlement?.error ?? undefined,
       published: publication?.published ?? false,
       promoted: publication?.promoted ?? 0,
       archivedOnCutover: publication?.archived ?? 0,

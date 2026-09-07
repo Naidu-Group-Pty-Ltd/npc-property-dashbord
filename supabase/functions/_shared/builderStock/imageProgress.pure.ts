@@ -42,6 +42,24 @@ export type StockImageProgress =
   | 'working'
   /** Finished, and the row attaches no document to read a picture out of. */
   | 'no_document'
+  /**
+   * Finished, and at least one of this row's documents was never actually
+   * READ — we could not open it, or opening it failed.
+   *
+   * SEPARATE FROM `none_found` BECAUSE IT IS A DIFFERENT SENTENCE ABOUT A
+   * DIFFERENT THING. `none_found` is a finding about the builder's document;
+   * this is a fact about us reaching it. Collapsing the two is what told six
+   * properties on the 7 September upload that their brochures contained no
+   * photograph, when the brochures each hold a facade render that this same
+   * extractor elects in about a second — the worker had died reading them and
+   * the card reported that as the document's own answer.
+   *
+   * It never names a mechanism. A crash, a memory ceiling, a timeout and a
+   * retry count are this pipeline's vocabulary and a builder can do nothing
+   * with any of them; what they are owed is that the document has not been
+   * read yet and that this is being retried.
+   */
+  | 'unreadable'
   /** Finished, the documents were read, and none of them names a picture. */
   | 'none_found';
 
@@ -57,6 +75,13 @@ export interface StockImageProgressInput {
    * than the silence it replaces.
    */
   workStage?: string | null;
+  /**
+   * How many of this row's documents we FAILED to read — as opposed to read
+   * and found nothing in. Supplied by the server, which is the only side that
+   * can see why a branch stopped; the client is handed a count and never a
+   * reason, so no mechanism can reach a screen through this field.
+   */
+  unreadDocuments?: number;
 }
 
 /** What this property's imagery honestly amounts to right now. */
@@ -69,7 +94,16 @@ export function stockImageProgress(input: StockImageProgressInput): StockImagePr
    */
   const stage = typeof input.workStage === 'string' ? input.workStage.trim() : '';
   if (stage && stage !== SETTLED_WORK_STAGE) return 'working';
-  return input.sourceDocuments > 0 ? 'none_found' : 'no_document';
+  if (input.sourceDocuments <= 0) return 'no_document';
+  /*
+   * A DOCUMENT WE NEVER READ IS NOT A DOCUMENT THAT SAID NOTHING, and this is
+   * the one line that keeps those two apart on screen. Checked before
+   * `none_found`, because a row where one document failed and the others were
+   * read has NOT established that its documents name no picture.
+   */
+  const unread = Number(input.unreadDocuments ?? 0);
+  if (Number.isFinite(unread) && unread > 0) return 'unreadable';
+  return 'none_found';
 }
 
 /**
@@ -85,7 +119,8 @@ export const STOCK_IMAGE_PROGRESS_LABEL: Record<StockImageProgress, string> = {
   drawn: 'Image ready',
   working: 'Finding a picture…',
   no_document: 'No brochure on this row',
-  none_found: 'No picture in the documents',
+  unreadable: 'Could not read a document',
+  none_found: 'No picture in the supplied documents',
 };
 
 export const STOCK_IMAGE_PROGRESS_DETAIL: Record<StockImageProgress, string> = {
@@ -94,6 +129,10 @@ export const STOCK_IMAGE_PROGRESS_DETAIL: Record<StockImageProgress, string> = {
     + 'This finishes on its own — the page updates when it does.',
   no_document: 'This stock list attaches no brochure or plan to this property. '
     + 'Add a link to its row and the photograph is read from it.',
+  unreadable: 'One of the documents on this row could not be opened, so it has '
+    + 'not been read yet. This is retried automatically. If it keeps saying '
+    + 'this, check the link still opens and is shared, or add a picture with '
+    + '“Add picture”.',
   none_found: 'Every document on this row was read and none of them presents a '
     + "photograph of this property. Add a picture with “Add picture”, or link a "
     + 'brochure that shows the house.',
@@ -135,4 +174,38 @@ export function countArrivingUploads(
   return uploads.filter(
     (upload) => !upload.deleted_at && uploadIsArriving(upload.status),
   ).length;
+}
+
+/**
+ * How many of a row's documents we FAILED to read, from its stored provenance.
+ *
+ * THE ONE PLACE THAT LOOKS AT WHY A BRANCH STOPPED, and it is deliberately
+ * server-side: the client is handed the resulting COUNT and never the reason,
+ * so a mechanism — a kill, a memory ceiling, a timeout, an attempt tally —
+ * has no route to a screen.
+ *
+ * Two shapes count as unread, and neither is the document answering:
+ *
+ *   a retirement stamped `operational`   we could not open it, or opening it
+ *                                        destroyed the worker
+ *   a bare attempt record                a step that started and never came
+ *                                        back — the shape a kill leaves
+ *
+ * An `inspected` retirement is NOT counted: that one was read, and what it
+ * says about the document is true.
+ */
+export function unreadDocumentCount(storedProvenance: unknown): number {
+  const root = storedProvenance as { branches?: Record<string, unknown> } | null;
+  const branches = root && typeof root === 'object' ? root.branches : null;
+  if (!branches || typeof branches !== 'object') return 0;
+  let unread = 0;
+  for (const value of Object.values(branches)) {
+    if (!value || typeof value !== 'object') continue;
+    const record = value as { result?: unknown; exhaustion?: unknown };
+    if (record.result === 'package_recovery_attempt') { unread += 1; continue; }
+    if (record.result === 'no_deterministic_image' && record.exhaustion === 'operational') {
+      unread += 1;
+    }
+  }
+  return unread;
 }
