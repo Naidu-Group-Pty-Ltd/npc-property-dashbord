@@ -509,6 +509,15 @@ jobs:
       - name: A migration version names exactly one file
         run: node scripts/security/check-migration-version-collisions.mjs
 
+      # Catalog introspection brings a tenant up and never drops, so an object
+      # these migrations DELETE survives on every existing tenant while every
+      # parity stage — which reconciles on containment — reports a match. The
+      # index is what lets Mission Control tell this repository's leftover from
+      # the tenant's own object, so it has to stay current with the migrations
+      # it describes. Generated, never hand-edited.
+      - name: The migration object index is current
+        run: npm run migrations:index:check
+
       # WP-18: 329 catch blocks across 275 functions returned the caught error
       # to the caller. A Postgres message names tables, columns and constraints;
       # at that scale it is a readable map of the database, and provoking a 500
