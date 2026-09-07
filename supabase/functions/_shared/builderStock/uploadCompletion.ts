@@ -60,6 +60,14 @@ export const COMPLETABLE_UPLOAD_STATUSES = ['enriching', 'partially_complete'];
 /** Enrichment states meaning a property has not been through imagery yet. */
 export const UNFINISHED_ENRICHMENT_STATUSES = ['pending', 'enriching'];
 
+/**
+ * The item-work ladder's terminal rung.
+ *
+ * Named here rather than imported so this module keeps no dependency on the
+ * settler, and spelled once so the completion rule and its test cannot drift.
+ */
+export const SETTLED_ITEM_WORK_STAGE = 'settled';
+
 /** Uploads one settler tick will look at. Cheap reads, and resumable. */
 const MAX_UPLOADS_PER_PASS = 25;
 
@@ -167,6 +175,33 @@ export async function settleUploadCompletion(
     /*
      * The properties alone decide, and a FAILED count is not a count of zero:
      * a database fault must leave the upload exactly as it found it.
+     *
+     * AND A SETTLED LADDER IS FINISHED, WHATEVER THE LEGACY LATCH SAYS.
+     *
+     * `enrichment_status` is written by the fallback ladder, from the ladder's
+     * own opinion of whether a property still owes a rung. A property whose
+     * picture came from the builder's own document never needs that ladder, so
+     * nothing writes the column and it keeps the `pending` its import gave it —
+     * for ever. This question then answers "outstanding" about a property that
+     * has been finished for hours, and the upload can never be completed.
+     *
+     * MEASURED 7 SEPTEMBER 2026: 83 of 91 active properties across this
+     * deployment were `image_work_stage = 'settled'` and carrying their image
+     * while still reading `enrichment_status = 'pending'`, so 15 of the 17
+     * uploads made in two days sat at `enriching` permanently. A builder is
+     * told an import is still churning long after every photograph landed.
+     *
+     * `image_work_stage` is what actually does this work now and `settled` is
+     * its terminal rung, so it is asked here as well. The two are ANDed, which
+     * only ever makes completion more reachable: an upload that completes today
+     * still completes, and a property that is genuinely mid-ladder is still
+     * outstanding under either column.
+     *
+     * Deliberately NOT changed: how displayability is judged, what the ladder
+     * writes, and `readFallbackQueue`, which still selects on
+     * `enrichment_status` alone. Marking a property terminal in THAT queue is
+     * how one stops being offered the ladder it is owed, which is a worse
+     * failure than a stale label — so this reads the column and never writes it.
      */
     const { count, error: countError } = await db
       .from('builder_stock_items')
@@ -174,7 +209,8 @@ export async function settleUploadCompletion(
       .eq('organisation_id', upload.organisation_id)
       .eq('upload_id', uploadId)
       .eq('lifecycle_status', 'active')
-      .in('enrichment_status', UNFINISHED_ENRICHMENT_STATUSES);
+      .in('enrichment_status', UNFINISHED_ENRICHMENT_STATUSES)
+      .neq('image_work_stage', SETTLED_ITEM_WORK_STAGE);
     if (countError) return { status: null, refusal: 'read_failed' };
     if ((count ?? 0) > 0) return { status: null, refusal: 'items_outstanding' };
 

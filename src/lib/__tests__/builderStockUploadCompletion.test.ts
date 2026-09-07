@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import {
   ABANDONED_PARSE_MS, COMPLETABLE_UPLOAD_STATUSES, finalUploadStatus,
@@ -69,6 +69,20 @@ function fakeDb(
           filters.push((row) => values.map(String).includes(String(row[column])));
           return chain;
         },
+        /*
+         * `neq` is SQL `<>`, which is NULL — and therefore NOT TRUE — for a
+         * NULL column, so PostgREST drops those rows. Emulated exactly rather
+         * than plausibly: a double that is merely reasonable is how code and
+         * test come to agree while only the server disagrees.
+         *
+         * `builder_stock_items.image_work_stage` is NOT NULL DEFAULT 'source',
+         * so no production row reaches this branch; the fixtures carry the
+         * column for the same reason.
+         */
+        neq: (column: string, value: unknown) => {
+          filters.push((row) => row[column] != null && String(row[column]) !== String(value));
+          return chain;
+        },
         is: (column: string, value: unknown) => {
           filters.push((row) => (value === null ? row[column] == null : row[column] === value));
           return chain;
@@ -118,9 +132,15 @@ const upload = (over: Partial<UploadRow> = {}): UploadRow => ({
   records_failed: 0, deleted_at: null, ...over,
 });
 
+/*
+ * `image_work_stage` mirrors the real column, which is NOT NULL DEFAULT
+ * 'source'. A fixture that omitted it would exercise a row shape the table
+ * cannot hold.
+ */
 const settledItem = (over = {}) => ({
   upload_id: 'upload-1', organisation_id: 'org-1',
-  lifecycle_status: 'active', enrichment_status: 'complete', ...over,
+  lifecycle_status: 'active', enrichment_status: 'complete',
+  image_work_stage: 'settled', ...over,
 });
 
 const image = (stage: string, state: string, id = `img-${Math.random()}`) => ({
@@ -157,7 +177,8 @@ describe('settleUploadCompletion', () => {
   it('waits while any property is still owed enrichment', async () => {
     const { db, writes } = fakeDb(
       [upload()],
-      [settledItem(), settledItem({ enrichment_status: 'pending' })],
+      [settledItem(),
+        settledItem({ enrichment_status: 'pending', image_work_stage: 'source' })],
       [],
     );
     const outcome = await settleUploadCompletion(db, { uploadId: 'upload-1' });
@@ -214,8 +235,12 @@ describe('settleCompletedUploads', () => {
     const items = [
       settledItem({ upload_id: 'upload-1' }),
       settledItem({ upload_id: 'upload-2' }),
-      // upload-3 is still working.
-      settledItem({ upload_id: 'upload-3', enrichment_status: 'enriching' }),
+      // upload-3 is still working: its ladder has not reached the last rung.
+      settledItem({
+        upload_id: 'upload-3',
+        enrichment_status: 'enriching',
+        image_work_stage: 'fallback',
+      }),
     ];
     const { db, writes } = fakeDb(uploads, items, [image('uploaded_document', 'ready')]);
 
@@ -299,5 +324,81 @@ describe('an abandoned parse is not an import in flight', () => {
     );
     expect(source).toContain(
       "if (String(upload.status) === 'parsing' && !parseIsAbandoned(upload)) {");
+  });
+});
+
+/**
+ * The latch that never opened.
+ *
+ * `enrichment_status` is written by the fallback ladder from the ladder's own
+ * opinion of what a property still owes. A property whose picture came from
+ * the builder's own document never needs that ladder, so nothing ever writes
+ * the column and it keeps the `pending` its import gave it — for ever.
+ *
+ * MEASURED 7 SEPTEMBER 2026: 83 of 91 active properties were
+ * `image_work_stage = 'settled'` and carrying their image while still reading
+ * `enrichment_status = 'pending'`, so 15 of 17 uploads made in two days sat at
+ * `enriching` permanently. The two that did complete were first-time imports.
+ * A builder is told an import is still churning hours after every photograph
+ * has landed.
+ */
+describe('a settled ladder finishes a property, whatever the legacy latch says', () => {
+  it('completes an upload whose properties are settled but still read pending', async () => {
+    const { db, writes } = fakeDb(
+      [upload()],
+      [settledItem({ enrichment_status: 'pending' }),
+        settledItem({ enrichment_status: 'pending' })],
+      [image('uploaded_document', 'ready')],
+    );
+
+    const outcome = await settleUploadCompletion(db, { uploadId: 'upload-1' });
+
+    expect(outcome).toEqual({ status: 'complete' });
+    expect(writes[0].patch.status).toBe('complete');
+  });
+
+  it('still waits on a property whose ladder has NOT settled', async () => {
+    for (const stage of ['source', 'eligibility', 'sanitization', 'fallback']) {
+      const { db, writes } = fakeDb(
+        [upload()],
+        [settledItem(), settledItem({ enrichment_status: 'pending', image_work_stage: stage })],
+        [],
+      );
+      const outcome = await settleUploadCompletion(db, { uploadId: 'upload-1' });
+      expect(outcome, `stage ${stage} must still be outstanding`)
+        .toEqual({ status: null, refusal: 'items_outstanding' });
+      expect(writes).toHaveLength(0);
+    }
+  });
+
+  it('only ever makes completion MORE reachable, never less', async () => {
+    // Everything that completed before this rule existed still completes: the
+    // two conditions are ANDed, so a terminal `enrichment_status` alone is
+    // still enough however the ladder reads.
+    const { db, writes } = fakeDb(
+      [upload()],
+      [settledItem({ enrichment_status: 'complete', image_work_stage: 'fallback' }),
+        settledItem({ enrichment_status: 'failed', image_work_stage: 'source' })],
+      [image('uploaded_document', 'ready')],
+    );
+    const outcome = await settleUploadCompletion(db, { uploadId: 'upload-1' });
+    expect(outcome).toEqual({ status: 'complete' });
+    expect(writes).toHaveLength(1);
+  });
+
+  it('reads the column and never writes it, so the fallback queue is untouched', () => {
+    /*
+     * `readFallbackQueue` selects on `enrichment_status` alone. Marking a
+     * property terminal THERE is how one stops being offered a ladder it is
+     * still owed — a worse failure than a stale label — so this rule may only
+     * ever read the column.
+     */
+    const source = readFileSync(
+      join(process.cwd(), 'supabase/functions/_shared/builderStock/uploadCompletion.ts'),
+      'utf8',
+    );
+    expect(source).not.toMatch(/enrichment_status\s*:/);
+    expect(source).toContain(".in('enrichment_status', UNFINISHED_ENRICHMENT_STATUSES)");
+    expect(source).toContain(".neq('image_work_stage', SETTLED_ITEM_WORK_STAGE)");
   });
 });
