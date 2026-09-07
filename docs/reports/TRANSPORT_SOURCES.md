@@ -102,9 +102,51 @@ central directory parses, and whether the member inflates to its declared
 size. It writes nothing, and its answer is what admits a feed to the register
 at all.
 
-SA (Adelaide Metro), TAS and ACT (Transport Canberra) refuse a scripted client
-from this project's vantages and are not declared. WA's feed URL was not
-resolved.
+### The networks that are not held, measured from both vantages
+
+The first version of this document said SA, TAS and ACT "refuse a scripted
+client from this project's vantages" when they had only ever been tried from
+the repo sandbox. That asserted more than had been measured, about precisely
+the distinction `probe` exists to make — and it was luck rather than rigour
+that it turned out to be true. `GTFS_CANDIDATES` and the `probe_candidates`
+stage exist so the claim rests on evidence from the egress that would do the
+loading.
+
+Measured 2026-09-07, sandbox and Edge Function both:
+
+| candidate | sandbox | Edge Function | state |
+|---|---|---|---|
+| Adelaide Metro (SA) | HTTP 403 | **HTTP 403** | refused at the edge |
+| Transport Canberra (ACT) | HTTP 403 | **HTTP 403** | refused at the edge |
+| Metro Tasmania | HTTP 403 | **HTTP 403** | refused at the edge |
+| Transperth (WA) | page 200, no archive named | **page 200, no archive named** | address unresolved |
+
+**WA is a different state from the other three and is recorded as one.** Its
+published GTFS page answers 200 from both vantages, but the 82 KB of static
+HTML names no `.zip` and no GTFS address at all — the page is client-rendered
+— and a headless Chromium cannot reach the site from this environment either
+(`ERR_CONNECTION_RESET`). Transperth is not refusing the data; this project
+has not established where the archive lives. Calling that a refusal would
+repeat the same error in the other direction.
+
+A candidate is probed and **never loaded from that list**. Admitting one means
+moving it into `GTFS_FEEDS` with a measured stop floor, which cannot happen
+until a real parse has produced that number.
+
+The candidate list is FIXED. A probe that took a URL from the request body
+would be a server-side request forgery in a function holding service-role
+credentials — a far worse thing than an unprobed feed.
+
+### The diagnostics must not seal themselves
+
+`probe`, `probe_candidates` and `digest` were first gated on
+`succeeded < loadable feeds`, so they closed the moment every feed had loaded
+— which is exactly when a maintainer needs them, and which made
+`probe_candidates` unusable by construction, since it exists for networks that
+are *not* loaded. They are permitted behind the gateway JWT now: they write
+nothing, read nothing out of the database, and can reach only the fixed public
+addresses compiled into the deployment. The per-feed seal on the **load**
+stages is untouched.
 
 ## The columns differ between feeds — including two from one publisher
 

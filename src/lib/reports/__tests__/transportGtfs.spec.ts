@@ -25,6 +25,8 @@ import {
   parseGtfsCsv,
   projectStops,
   readZipDirectoryFromTail,
+  GTFS_CANDIDATES,
+  zipLinksIn,
 } from '../../../../supabase/functions/_shared/gtfsFeed.pure';
 import {
   COVERAGE_RADIUS_M,
@@ -414,5 +416,71 @@ describe('what is near a property', () => {
 
   it('keeps the coverage radius far wider than the walk radius', () => {
     expect(COVERAGE_RADIUS_M).toBeGreaterThan(NEARBY_RADIUS_M * 10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Candidates: networks not held, and the claim that had not been measured
+// ---------------------------------------------------------------------------
+
+describe('candidate feeds', () => {
+  it('never overlaps the loaded register', () => {
+    // A candidate is probed and never loaded. Admitting one means moving it
+    // into GTFS_FEEDS with a stop floor a real parse produced.
+    const loaded = new Set(GTFS_FEEDS.map((f) => f.key));
+    for (const c of GTFS_CANDIDATES) expect(loaded.has(c.key), c.key).toBe(false);
+  });
+
+  it('records what the sandbox measured, so a re-probe has a baseline', () => {
+    // The whole point of the list: SA, TAS and ACT were written off on one
+    // vantage's evidence, which asserted more than had been measured.
+    for (const c of GTFS_CANDIDATES) {
+      expect(c.sandboxResult, c.key).toBeTruthy();
+      expect(c.url, c.key).toMatch(/^https:\/\//);
+    }
+  });
+
+  it('keeps the probe list fixed rather than caller-supplied', () => {
+    // A probe taking a URL from the request body would be SSRF in a function
+    // holding service-role credentials. The list being a frozen constant is
+    // what makes the stage safe, so its shape is pinned here.
+    expect(Array.isArray(GTFS_CANDIDATES)).toBe(true);
+    expect(GTFS_CANDIDATES.length).toBeGreaterThan(0);
+    const keys = GTFS_CANDIDATES.map((c) => c.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('distinguishes an archive from a publisher page', () => {
+    // WA is reachable but names no archive; SA/ACT are refused outright.
+    // Collapsing the two would report Transperth as refusing data it has not
+    // been asked for.
+    const byKey = Object.fromEntries(GTFS_CANDIDATES.map((c) => [c.key, c]));
+    expect(byKey.sa_adelaide.kind).toBe('archive');
+    expect(byKey.act_canberra.kind).toBe('archive');
+    expect(byKey.wa_transperth.kind).toBe('page');
+    expect(byKey.tas_metro.kind).toBe('page');
+  });
+});
+
+describe('reading a publisher page for an archive address', () => {
+  it('finds a zip href and de-duplicates it', () => {
+    const html = '<a href="/a/google_transit.zip">x</a><a href="/a/google_transit.zip">y</a>';
+    expect(zipLinksIn(html)).toEqual(['/a/google_transit.zip']);
+  });
+
+  it('keeps a query string, because feeds are versioned that way', () => {
+    // NT's Darwin archive is published as google-transit-darwin.zip?v=0.34.1.
+    expect(zipLinksIn('<a href="https://h/x.zip?v=0.34.1">d</a>'))
+      .toEqual(['https://h/x.zip?v=0.34.1']);
+  });
+
+  it('returns nothing for a page that names no archive', () => {
+    // Transperth's page, measured: 82 KB of HTML with no .zip anywhere.
+    expect(zipLinksIn('<html><body><p>General Transit Feed Specification</p></body></html>')).toEqual([]);
+  });
+
+  it('is bounded, so a hostile page cannot return an unbounded list', () => {
+    const many = Array.from({ length: 50 }, (_, i) => `<a href="/f${i}.zip">n</a>`).join('');
+    expect(zipLinksIn(many).length).toBeLessThanOrEqual(12);
   });
 });

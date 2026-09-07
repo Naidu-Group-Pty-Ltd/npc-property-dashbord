@@ -449,3 +449,87 @@ export function assertNotTruncated(usable: number, floor: number, feedKey: strin
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Candidates: feeds not yet admitted to the register
+// ---------------------------------------------------------------------------
+
+/**
+ * Networks this platform does NOT hold, and the published address each would
+ * be loaded from.
+ *
+ * These exist because of a claim that was overstated when the first four feeds
+ * shipped: SA, TAS and ACT were described as refusing "this project's
+ * vantages" when they had only ever been tried from a developer sandbox. That
+ * is the very distinction the loader's own `probe` stage was built around —
+ * reaching a host from a sandbox says nothing about the Edge Function that
+ * runs the load — so the claim asserted more than had been measured.
+ *
+ * A candidate is probed from the real egress and is NEVER loaded from this
+ * list. Admitting one means moving it into `GTFS_FEEDS` with a measured stop
+ * floor, which cannot happen until a real parse has produced that number.
+ *
+ * The list is FIXED. A probe that took a URL from the request body would be a
+ * server-side request forgery in a function holding service-role credentials,
+ * which is a far worse thing than an unprobed feed.
+ */
+export interface GtfsCandidate {
+  readonly key: string;
+  readonly label: string;
+  readonly url: string;
+  /**
+   * `archive` — the published zip itself.
+   * `page` — the publisher's download page, because no catalogue this project
+   * can reach names the archive's address. The probe reports any `.zip` link
+   * it finds there; it never follows one.
+   */
+  readonly kind: 'archive' | 'page';
+  /** What was already measured about it, so a re-probe has a baseline. */
+  readonly sandboxResult: string;
+}
+
+export const GTFS_CANDIDATES: readonly GtfsCandidate[] = [
+  {
+    key: 'sa_adelaide',
+    label: 'Adelaide Metro (South Australia)',
+    url: 'https://gtfs.adelaidemetro.com.au/v1/static/latest.zip',
+    kind: 'archive',
+    sandboxResult: 'HTTP 403 with an XML body from this repo sandbox, 2026-09-07',
+  },
+  {
+    key: 'act_canberra',
+    label: 'Transport Canberra (ACT)',
+    url: 'https://www.transport.act.gov.au/googletransit/google_transit.zip',
+    kind: 'archive',
+    sandboxResult: 'HTTP 403 with an HTML body from this repo sandbox, 2026-09-07',
+  },
+  {
+    key: 'tas_metro',
+    label: 'Metro Tasmania',
+    url: 'https://www.transport.tas.gov.au/public_transport/gtfs-data',
+    kind: 'page',
+    sandboxResult: 'HTTP 403 from this repo sandbox; data.gov.au returns no Tasmanian GTFS package',
+  },
+  {
+    key: 'wa_transperth',
+    label: 'Transperth (Western Australia)',
+    url: 'https://www.transperth.wa.gov.au/timetables/general-transit-feed-specification',
+    kind: 'page',
+    sandboxResult: 'page reachable from this repo sandbox but names no archive; data.gov.au returns no Transperth GTFS package',
+  },
+];
+
+/**
+ * `.zip` addresses named by a publisher's download page.
+ *
+ * Bounded and de-duplicated: this reports what a page advertises so a real
+ * archive URL can be transcribed into the register by hand. Nothing here
+ * fetches what it finds — a link discovered on a page is a lead, not a feed.
+ */
+export function zipLinksIn(html: string, limit = 12): string[] {
+  const found = new Set<string>();
+  const re = /(?:href|src)\s*=\s*["']([^"']+\.zip(?:\?[^"']*)?)["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null && found.size < limit) found.add(m[1]);
+  return [...found];
+}

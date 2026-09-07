@@ -2783,6 +2783,44 @@ function **cannot hash its own sources** (they are compiled away; every
 digests what the modules DO. Repo and deployment agree on
 `47d61cace23e474dddc827ce80326037207c33772080903085e28568f4e57e41`.
 
-SA, TAS and ACT refuse a scripted client from every vantage this project
-holds; WA's feed URL was not resolved. They are answered
-`no_data_for_location`, naming the networks that are held.
+SA, TAS and ACT were reported as refusing "every vantage this project holds"
+when only the repo sandbox had tried them. That asserted more than had been
+measured, about exactly the distinction `probe` exists to make, and §35a
+corrects it.
+
+---
+
+## §35a — The claim that had not been measured (2026-09-07)
+
+§35 recorded SA, TAS and ACT as refusing "every vantage this project holds".
+Only one vantage had ever tried them: this repository's sandbox. The Edge
+Function that would actually do the loading had never asked — which is the
+precise distinction the loader's own `probe` stage was built around, and the
+reason SALM is stalled rather than guessed at. The claim happened to be right,
+and that is luck rather than rigour.
+
+`GTFS_CANDIDATES` and the `probe_candidates` stage exist so it rests on
+evidence. Measured from both vantages: Adelaide Metro, Transport Canberra and
+Metro Tasmania all answer **403 at the Edge Function too**, so the three are
+now genuinely established rather than assumed.
+
+**WA turns out to be a different state, and was being described as the same
+one.** Transperth's published GTFS page answers 200 from both vantages, but
+its 82 KB of static HTML names no archive at all (the page is client-rendered)
+and a headless Chromium cannot reach the site from this environment either.
+Transperth is not refusing the data; this project has not established where the
+archive lives. Recording that as a refusal would repeat the same error in the
+other direction.
+
+Two rules came out of it. **A candidate is probed and never loaded** —
+admitting one means moving it into `GTFS_FEEDS` with a stop floor a real parse
+produced. And **the candidate list is FIXED**: a probe taking a URL from the
+request body would be server-side request forgery in a function holding
+service-role credentials, which is far worse than an unprobed feed.
+
+It also caught a trap in the first version: `probe`, `probe_candidates` and
+`digest` were gated on `succeeded < loadable feeds`, so **the diagnostics
+sealed themselves the moment every feed had loaded** — when a maintainer most
+needs them, and making `probe_candidates` unusable by construction since it
+exists for networks that are not loaded. They are permitted behind the gateway
+JWT now; the per-feed seal on the load stages is untouched.
