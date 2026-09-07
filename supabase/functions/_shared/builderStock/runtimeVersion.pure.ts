@@ -63,4 +63,26 @@
  * slot at all — so half the heavy work was unprotected, which is why a slot
  * that had already proved the principle did not save these six.
  */
-export const RUNTIME_VERSION = 1;
+/**
+ * 2 — a bounded number of documents per invocation.
+ *
+ * Version 1 fixed the wrong half. Serial claiming and one slot over the whole
+ * heavy path stopped five properties of six from being killed, and the sixth
+ * — Lot 608 Acclaim Estate — collected four more kills under the new worker
+ * against a brochure that reads in 0.84 s and carries its facade render on
+ * page one. The document was never the problem, and neither was any single
+ * document: what version 1 introduced is that ONE ISOLATE now reads several
+ * PDFs and never gives the memory back.
+ *
+ * Measured, six reads of that brochure in one process: 50 -> 173 -> 236 ->
+ * 247 -> 254 -> 287 -> 318 MB. The fifth crosses an Edge Function's ~256 MB
+ * ceiling. Every read is under a second, so no clock could see it — the
+ * allowance had to be counted in documents, and it is
+ * `HEAVY_DOCUMENTS_PER_INVOCATION` in the settler.
+ *
+ * Raising this is what re-asks the one property version 1 wrongly retired.
+ * Measured against production before the bump, exactly one row qualifies:
+ * nothing that answered is touched, because only our own failures carry a
+ * stamp at all.
+ */
+export const RUNTIME_VERSION = 2;

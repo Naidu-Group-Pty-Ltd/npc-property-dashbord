@@ -43,8 +43,15 @@ import {
   RUNTIME_VERSION,
 } from '../../../supabase/functions/_shared/builderStock/runtimeVersion.pure';
 
-/** The runtime that was killed. Records written by it carry no stamp at all. */
-const KILLED_RUNTIME = RUNTIME_VERSION - 1;
+/**
+ * The runtime that wrote the fixture below — stated, not derived.
+ *
+ * Records from it carry no `runtime_version` key at all, which compares equal
+ * to zero, so this is 0 and stays 0 however far `RUNTIME_VERSION` advances.
+ * Deriving it as `RUNTIME_VERSION - 1` made these tests quietly assert
+ * something else the moment the runtime moved to 2.
+ */
+const KILLED_RUNTIME = 0;
 const PV = 23;
 
 const ANSWERED_A = 'https://drive.google.com/file/d/1EVweGf9xDt5G1y_oNDW8dwLhVqzmf6E4/view?usp=drive_link';
