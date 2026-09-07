@@ -76,7 +76,12 @@ describe('the deferral path in the settler asks for exactly that', () => {
   const settler = readFileSync(join(process.cwd(),
     'supabase/functions/builder-stock-image-settler/index.ts'), 'utf8');
   const loop = settler.slice(settler.indexOf('for (;;) {'));
-  const handback = loop.slice(loop.indexOf('if (remaining < reserveFor('));
+  /*
+   * Anchored on the guard's own condition rather than on the whole `if`,
+   * which now also carries the document allowance. Both limits release the
+   * claim the same way and this file is the assertion that they do.
+   */
+  const handback = loop.slice(loop.indexOf('const remaining = startedAt + BUDGET_MS'));
 
   it('releases the claim with the counter reset and no progress claimed', () => {
     expect(handback).toMatch(/resetAttempts: true/);
