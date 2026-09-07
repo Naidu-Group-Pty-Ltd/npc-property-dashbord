@@ -3055,3 +3055,82 @@ as a currency zero; the absence explanation is drawn on an explicit
 renders; the persisted paths both renderers read did not move; and the negative
 sign convention is asserted in the type, in prose beside the field, and in the
 arithmetic. Each was mutation-checked against the change it forbids.
+
+---
+
+## §39 — Stage 1: the record knows more than the report uses (2026-09-07)
+
+Three defects on the primary report family, each found by executing the real
+modules against the live corpus rather than by reading code, and each the same
+shape: **a fact the record holds is not used, or a figure the record cannot
+support is printed anyway.**
+
+**A yield outlived the rent it rests on.** Run against
+`Lot 2267 Hunza Road TRUGANINA`, whose `income` is null outright,
+`composeFinancialChapters` produced a section headed *"Rental Assessment,
+Gross Yield & Net Yield"*, strapline *"Recorded rental income and the yields it
+produces"* — containing two yields and no income. The weekly and annual rows
+had correctly suppressed themselves; the two figures computed FROM them had
+not. **The absence discipline was applied to the inputs and not to what depends
+on them**, which is the one arrangement that reads as a working page while
+asserting a return on an income the record does not hold.
+
+**Four readers print a yield**, and the fix is one rule they all ask:
+`rentIsEstablished` in `rentalEvidence.pure.ts`, the module that already owns
+the question. `financialChapters` (the FIN fork and condense), `toFinancial`
+(WeasyPrint), `reportBindingProjection` (every bound template) and
+`condenseFacts` (the block handed to the model) — the last of which is the
+widest consequence, because an unfounded yield published there comes back as a
+figure the model states as authoritative. A zero rent is deliberately NOT
+establishment: `income.weeklyRent === 0` is the shape the original 0.00% defect
+wrote, and admitting it would readmit every figure §37 removed. 16 stored
+reports were in that state; a report that HAS a rent renders byte-identical,
+asserted rather than assumed.
+
+**The duty assessment ignored two things the request already told it.**
+`financial-calculator-service` receives `borrowerType` — it picks the interest
+rate with it — and then hardcoded `intent: 'owner_occupier'` for stamp duty. So
+**143 stored reports that declare an investor were assessed on the
+owner-occupier scale.** Measured against the canonical engine at the twelve
+affected reports' own prices, QLD understates by **exactly $7,175** at every
+price (its home concession is a flat rebate); ACT by $2,992, VIC by $3,100
+below its $550k owner-occupier ceiling, and the other five states share one
+scale so nothing moves. The second is `PropertyCategory`, which has always had
+three values and every state schedule declares a `vacantLand` first-home
+concession — the caller only ever computed `isNewBuild ? 'new' : 'established'`,
+so those schedules were unreachable. That one is **latent, not realised**:
+category affects first-home relief only, verified by execution across every
+state and price for a non-FHB buyer with zero differences, and 0 stored reports
+are FHB-eligible. Both are now derived from what the request carries.
+
+**There were five property-type vocabularies in one flow.** The generator sent
+the raw string to three services with a silent `|| 'house'`;
+`overrides.pure.ts` normalised separately (`apartment` → `unit`, `villa` /
+`duplex` → `townhouse`); the scoring service defends itself with its own
+`apartment` branch and its own `|| 'house'`; and the prompt builds a sixth
+"standardised" label by substring. The engine's only use of the type is
+`strataFees = o.strataFees ?? (propertyType === 'unit' ? 4800 : 0)`, so
+`apartment` never matched and never drew the strata estimate — **264 of 1,071
+stored reports carry a type outside the engine's `house|unit|townhouse`
+vocabulary.**
+
+Three rules carry the fix. **One answer per request** —
+`effectivePropertyType`, taken by the calculator, the validation service and
+the scoring service. **`?? raw`, never `?? 'house'`** — a type that will not
+resolve stays unresolved, because `residential property` matches no branch and
+draws no adjustment, which is the honest neutral; defaulting it to a house
+would have awarded the scoring service's `+3` house bonus to 145 reports nobody
+has classified. And **the market rent lookup deliberately keeps the raw
+string**, annotated at the site: it selects a published rent SERIES, so its
+vocabulary is the market data's rather than the engine's, and mapping `villa`
+onto `townhouse` there would change which rent is looked up.
+
+Two things worth recording about the method. The realised exposure was
+**smaller than the mechanism** in two of the three cases, and both times the
+measurement corrected an earlier overstatement of mine — 81 land and
+house-and-land reports carry no financial block at all, so the engine never
+computed rent or residential duty on them (1 report did, `Mount Sylvia Road`,
+$650/week on vacant land), and 29 of 32 apartments carry a body-corporate
+override that supplies the real figure. And the spec caught **three call sites
+I had missed** and the edge gate caught **a fatal redeclaration I introduced**,
+which is what those gates are for.

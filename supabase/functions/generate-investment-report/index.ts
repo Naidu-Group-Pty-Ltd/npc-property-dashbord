@@ -18,7 +18,7 @@ import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
-import { applyDisplayOverrides, buildAnnualCostOverrides, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
+import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { reconcileFacts, factFindingToFlag } from '../_shared/reports/investment/factReconciliation.pure.ts';
 import { financeIdentityBreaches } from '../_shared/reports/metrics/propertyMetrics.pure.ts';
 import {
@@ -2286,6 +2286,25 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     const effectiveInterestRate = mergedOverrides.interestRate || propertyDetails?.interestRate || 6.5;
     const effectiveLoanTerm = mergedOverrides.loanTermYears || propertyDetails?.loanTermYears || 30;
     const effectiveIsFirstHomeBuyer = mergedOverrides.isFirstHomeBuyer || false;
+    // ONE property-type answer for every service on this request.
+    //
+    // Three call sites sent `propertyDetails?.propertyType || 'house'` — the
+    // raw string, with a silent fallback — while `overrides.pure.ts`
+    // normalised separately. `apartment` therefore never matched the only
+    // test the engine and the validation service make (`=== 'unit'`), so
+    // neither drew the strata estimate nor validated it; 264 of 1,071 stored
+    // reports carry a type outside the engine's vocabulary.
+    //
+    // `?? raw` rather than `?? 'house'` is the point. A type that will not
+    // resolve stays unresolved: `residential property` matches no branch and
+    // draws no adjustment, which is the honest neutral. Defaulting it to a
+    // house would award the scoring service's +3 house bonus to 145 reports
+    // nobody has classified.
+    const sourcePropertyType = (propertyDetails?.propertyType ?? mergedOverrides.propertyType) as unknown;
+    const effectivePropertyType = normalisePropertyType(sourcePropertyType)
+      ?? (typeof sourcePropertyType === 'string' && sourcePropertyType.trim()
+        ? sourcePropertyType.trim().toLowerCase()
+        : undefined);
     const effectiveBuildType = mergedOverrides.buildType || (propertyDetails?.isNewBuild ? 'new_build' : 'existing_property');
     const effectiveIsNewBuild = effectiveBuildType === 'new_build';
     const effectiveIsLandOnly = effectiveBuildType === 'land_only';
@@ -2664,6 +2683,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               suburb: suburb.replace(/-/g, ' '),
               state: state,
               postcode: postcode || '',
+              // Deliberately NOT `effectivePropertyType`. This selects a
+              // published rent SERIES, so its vocabulary is the market data's
+              // rather than the engine's — mapping `villa` onto `townhouse`
+              // here would change which rent is looked up, which is a
+              // different question from what the duty and cost engines model.
               propertyType: propertyDetails?.propertyType?.toLowerCase() || 'house',
               bedrooms: modelledBeds
             })
@@ -2715,9 +2739,21 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               weeklyRent: calcWeeklyRent,
               weeklyRentSource: rentSource,
               state: state,
-              propertyType: propertyDetails?.propertyType || 'house',
+              // ONE property-type vocabulary. This used to send the raw string
+              // with a silent `|| 'house'`, while `overrides.pure.ts`
+              // normalised separately — so `apartment` reached the engine as
+              // `apartment`, never matched its only test (`=== 'unit'`) and
+              // never drew the strata estimate. `undefined` for an
+              // unrecognised type is deliberate: an unresolved type is not a
+              // house, and the engine already treats a non-unit as no strata.
+              propertyType: normalisePropertyType(sourcePropertyType),
               isFirstHomeBuyer: effectiveIsFirstHomeBuyer,
               isNewBuild: effectiveIsNewBuild,
+              // WHAT is being bought, so the duty engine can reach its
+              // vacant-land schedules. Until now the build type reached only
+              // the model, as prose telling it to skip the rental sections,
+              // while the engine assessed residential duty regardless.
+              buildType: effectiveBuildType,
               // Reviewed figures go INTO the engine so the totals, series,
               // sensitivity and metrics all describe them; splatting them
               // over the response afterwards (the old way) left every
@@ -2777,7 +2813,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
                   councilRates: financialData.data.annualCosts.councilRates,
                   annualCosts: financialData.data.annualCosts,
                   state: state,
-                  propertyType: propertyDetails?.propertyType || 'house'
+                  propertyType: effectivePropertyType
                 })
               });
               
@@ -2983,7 +3019,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
                 weeklyRent: effectiveWeeklyRent
                   || toFiniteNumber(enhancedData.financials?.income?.weeklyRent)
                   || 0,
-                propertyType: propertyDetails?.propertyType || 'house',
+                propertyType: effectivePropertyType,
                 bedrooms: modelledBeds,
                 bathrooms: modelledBaths
               },

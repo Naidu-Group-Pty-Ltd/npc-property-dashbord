@@ -35,6 +35,14 @@ export interface LoanCalculationInput {
   propertyType: 'house' | 'unit' | 'townhouse';
   isFirstHomeBuyer?: boolean;
   isNewBuild?: boolean;
+  /**
+   * What is being bought. The duty engine has always had three categories
+   * (`established` | `new` | `vacant_land`) and every state schedule declares
+   * a `vacantLand` first-home concession; the caller only ever computed two of
+   * them, so the vacant-land schedules were unreachable. Absent means the
+   * `isNewBuild` flag decides, exactly as before.
+   */
+  buildType?: 'existing_property' | 'new_build' | 'land_only';
   borrowerType?: 'owner_occupier' | 'investor';
   // Capital growth rate - if provided, uses this instead of hardcoded scenarios
   // This allows researched capital growth from Perplexity to cascade into projections

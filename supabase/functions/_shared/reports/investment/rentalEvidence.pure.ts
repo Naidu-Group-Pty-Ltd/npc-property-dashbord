@@ -199,3 +199,47 @@ export function absentRentDirective(evidence: RentalEvidence): string {
     '',
   ].join('\n');
 }
+
+/**
+ * Does a stored `income` block establish a rent at all?
+ *
+ * ## Why this is here and not inlined at each renderer
+ *
+ * The rule above stops the GENERATOR quoting a rent it does not have. It said
+ * nothing about the figures DERIVED from that rent on the way back out, and
+ * the read path kept them: measured 2026-09-07 against
+ * `Lot 2267 Hunza Road TRUGANINA`, whose `income` is null outright,
+ * `composeFinancialChapters` renders
+ *
+ *     ## Rental Assessment, Gross Yield & Net Yield
+ *     Recorded rental income and the yields it produces against the purchase price.
+ *     | Gross rental yield | 4.05% |
+ *     | Net rental yield   | 2.57% |
+ *
+ * — a section headed "Recorded rental income" containing none, because the
+ * weekly and annual rows correctly suppressed themselves while the two
+ * figures computed FROM them did not. The absence discipline was applied to
+ * the inputs and not to what depends on them, which is the one arrangement
+ * that reads as a working page while asserting a return on an income the
+ * record does not hold. 16 stored reports are in that state.
+ *
+ * So the question is asked once, here, and the three renderers that print a
+ * yield ask it rather than each deciding — the same reason `healFinanceIdentity`
+ * lives beside the engine rather than in every reader.
+ *
+ * A zero rent is NOT establishment. `income.weeklyRent === 0` is the shape the
+ * original defect wrote, and treating it as evidence would readmit every
+ * `0.00%` this module exists to have removed.
+ */
+export function rentIsEstablished(income: unknown): boolean {
+  if (income === null || typeof income !== 'object') return false;
+  const r = income as Record<string, unknown>;
+  const positive = (v: unknown): boolean => {
+    const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v.replace(/[$,\s]/g, '')) : NaN;
+    return Number.isFinite(n) && n > 0;
+  };
+  return positive(r.weeklyRent)
+    || positive(r.annualRent)
+    || positive(r.grossAnnualRent)
+    || positive(r.annual);
+}
