@@ -1,9 +1,10 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { internalError } from '../_shared/errorResponse.ts';
 import {
-  AUSTRALIA_BBOX, COORD_RATIO_FLOOR_ROWS, GTFS_FEEDS, IMPOSSIBLE_COORD_TOLERANCE,
-  ZIP_TAIL_BYTES, assertNotTruncated, feedByKey, findMember, memberDataStart,
-  parseGtfsCsv, projectStops, readZipDirectoryFromTail,
+  AUSTRALIA_BBOX, COORD_RATIO_FLOOR_ROWS, GTFS_CANDIDATES, GTFS_FEEDS,
+  IMPOSSIBLE_COORD_TOLERANCE, ZIP_TAIL_BYTES, assertNotTruncated, feedByKey,
+  findMember, memberDataStart, parseGtfsCsv, projectStops,
+  readZipDirectoryFromTail, zipLinksIn,
   type GtfsFeed, type ZipMember,
 } from '../_shared/gtfsFeed.pure.ts';
 
@@ -146,7 +147,7 @@ Deno.serve(async (req) => {
   // permanently half-loaded, which is the worst of the three states. What
   // seals a feed is a load that SUCCEEDED; until then a resume or a retry is
   // still part of its first load.
-  if (!authorised && stage !== 'probe' && stage !== 'digest') {
+  if (!authorised && stage !== 'probe' && stage !== 'digest' && stage !== 'probe_candidates') {
     const { count, error } = await supabase
       .from('transport_feed_syncs')
       .select('id', { count: 'exact', head: true })
@@ -157,14 +158,18 @@ Deno.serve(async (req) => {
       authorised = true;
     }
   } else if (!authorised) {
-    // `probe` and `digest` read nothing and write nothing, so they are
-    // permitted while ANY feed is still unloaded — they are how a feed gets
-    // declared in the first place.
-    const { count, error } = await supabase
-      .from('transport_feed_syncs')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'succeeded');
-    if (!error && (count ?? 0) < GTFS_FEEDS.filter((f) => f.loadable).length) authorised = true;
+    // `probe`, `probe_candidates` and `digest` write nothing and read nothing
+    // out of the database, and they can reach only the fixed, public
+    // addresses compiled into this deployment — never a URL from the caller.
+    // Behind the gateway's JWT that exposes nothing, so they are permitted.
+    //
+    // They were gated on `succeeded < loadable feeds` at first, and that was
+    // wrong in a way worth keeping written down: the diagnostics SEALED
+    // THEMSELVES the moment every feed had loaded, which is exactly when a
+    // maintainer needs them. `probe_candidates` made it plainest — it exists
+    // for networks that are NOT loaded, so gating it on loaded ones could
+    // never have been right.
+    authorised = true;
   }
   if (!authorised) return json({ success: false, error: 'forbidden' }, 403);
 
@@ -198,6 +203,56 @@ Deno.serve(async (req) => {
         digest: Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join(''),
         sampleResult: projectStops(parseGtfsCsv(DIGEST_SAMPLE)),
       });
+    }
+
+    // Probes networks this platform does NOT hold, from the egress that would
+    // load them. It exists because SA, TAS and ACT were written off as
+    // refusing "this project's vantages" when only the developer sandbox had
+    // ever tried them — asserting more than had been measured, about exactly
+    // the distinction `probe` was built to make. Writes nothing, loads
+    // nothing, and takes no URL from the caller.
+    if (stage === 'probe_candidates') {
+      const results = [];
+      for (const c of GTFS_CANDIDATES) {
+        const started = Date.now();
+        try {
+          if (c.kind === 'archive') {
+            const total = await totalSize(c.url);
+            const tail = await ranged(c.url, Math.max(0, total - ZIP_TAIL_BYTES), total - 1);
+            const members = readZipDirectoryFromTail(tail, total);
+            results.push({
+              candidate: c.key,
+              reachable: true,
+              totalBytes: total,
+              members: members.map((m) => ({ name: m.name, unc: m.uncompressedSize, comp: m.compressedSize })),
+              sandboxResult: c.sandboxResult,
+              ms: Date.now() - started,
+            });
+          } else {
+            const r = await fetch(c.url, { headers: { 'User-Agent': UA } });
+            const body = r.ok ? (await r.text()).slice(0, 400_000) : '';
+            if (!r.ok) await r.body?.cancel();
+            results.push({
+              candidate: c.key,
+              reachable: r.ok,
+              status: r.status,
+              contentType: r.headers.get('content-type'),
+              zipLinks: r.ok ? zipLinksIn(body) : [],
+              sandboxResult: c.sandboxResult,
+              ms: Date.now() - started,
+            });
+          }
+        } catch (e) {
+          results.push({
+            candidate: c.key,
+            reachable: false,
+            reason: (e as Error).message,
+            sandboxResult: c.sandboxResult,
+            ms: Date.now() - started,
+          });
+        }
+      }
+      return json({ success: true, stage: 'probe_candidates', wrote: false, results });
     }
 
     if (stage === 'probe') {
