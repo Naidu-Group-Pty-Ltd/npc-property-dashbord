@@ -436,9 +436,20 @@ Deno.serve(async (req) => {
           return json({ error: 'state must be an Australian state or territory' }, 400, cors);
         }
         const abn = digitsOnly(body.abn);
-        if (abn && !/^[0-9]{11}$/.test(abn)) return json({ error: 'abn must be 11 digits' }, 400, cors);
+        if (abn && !/^[0-9]{11}$/.test(abn)) return json({ error: 'ABN must be 11 digits', code: 'invalid_field' }, 400, cors);
         const acn = digitsOnly(body.acn);
-        if (acn && !/^[0-9]{9}$/.test(acn)) return json({ error: 'acn must be 9 digits' }, 400, cors);
+        if (acn && !/^[0-9]{9}$/.test(acn)) return json({ error: 'ACN must be 9 digits', code: 'invalid_field' }, 400, cors);
+        // The column refuses these too; refusing them here is what turns a
+        // 500 into a sentence naming the field.
+        const postcode = trimmed(body.postcode);
+        if (postcode && !/^[0-9]{4}$/.test(postcode)) {
+          return json({ error: 'Postcode must be four digits', code: 'invalid_field' }, 400, cors);
+        }
+        const contactEmail = trimmed(body.contact_email)?.toLowerCase() ?? null;
+        if (contactEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail)) {
+          return json({ error: 'Enter a valid contact email address', code: 'invalid_field' }, 400, cors);
+        }
+
 
         const payload: Record<string, unknown> = {
           legal_name: legalName,
