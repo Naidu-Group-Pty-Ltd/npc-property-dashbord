@@ -1983,7 +1983,13 @@
       "owner": "market-intelligence",
       "reviewed": true
     },
-    "market-updates-archive": {
+    "market-source-probe": {
+    "verify_jwt": true,
+    "exposure_class": "human-authenticated",
+    "owner": "reporting-engine-program",
+    "reviewed": true
+  },
+  "market-updates-archive": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
       "owner": "market-intelligence",
