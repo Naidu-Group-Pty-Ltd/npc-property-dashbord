@@ -1,5 +1,5 @@
 /**
- * Builder stock — the PDF election's execution boundary.
+ * Builder stock — the PDF election's execution boundary. AN EXPERIMENT.
  *
  * WHY IT EXISTS, from the platform's own per-execution telemetry on 8
  * September 2026. A thirteen-property cold start killed the settler thirteen
@@ -9,17 +9,16 @@
  * the constraint, so no scheduling rule could have helped — an indivisible
  * 2.4 s task does not fit a 2.0 s budget.
  *
- * MEASURED AFTER THE MOVE, the same two documents through the same Edge entry:
- * user CPU 2.66 s in-process against 0.07 s via the worker, and resident
- * memory 315 MB against 141 MB. The election still happens; it happens where
- * there is CPU for it.
- *
- * The rule these tests exist to hold: it is an EXECUTION-LOCATION change. One
- * implementation decides which image wins, and a failure of the boundary is
- * never a finding about a builder's document.
+ * WHAT THIS BRANCH IS, AND IS NOT. It answers one question and wires nothing:
+ * can the EXACT existing election run inside a real Cloudflare Worker under
+ * the actual hosted limits? So the heavy half is lifted into one named unit,
+ * `electFromPdfBytes`, and a temporary probe Worker runs THAT unit — while
+ * production still calls it in this process, exactly as before. The tests
+ * below hold both halves of that: the probe cannot be a second extractor, and
+ * the settler cannot have started routing anywhere.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   ELECTION_CONTEXT_HEADER, ELECTION_TIMEOUT_MS, MAX_DOCUMENT_BYTES,
@@ -28,6 +27,9 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/pdfElectionBoundary.pure';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
+const here = (rel: string) => existsSync(join(process.cwd(), rel));
+
+const PROBE = 'cloudflare/builder-stock-pdf-probe/src/index.ts';
 
 /** Source with block and line comments removed, so prose is not evidence. */
 const stripComments = (source: string) => source
@@ -117,26 +119,39 @@ describe('the bounds are stated, not implied', () => {
 });
 
 describe('one implementation decides which image wins', () => {
-  const worker = read('builder-stock-pdf-service/main.ts');
+  const probe = read(PROBE);
   const election = read('supabase/functions/_shared/builderStock/pdfElection.ts');
 
-  it('the worker runs the shared module rather than its own copy', () => {
-    expect(worker).toContain("from '../supabase/functions/_shared/builderStock/pdfElection.ts'");
-    expect(worker).toContain('electFromPdfBytes(');
+  it('the probe runs the shared election rather than its own copy', () => {
+    expect(probe).toContain("from '../../../supabase/functions/_shared/builderStock/pdfElection.ts'");
+    expect(probe).toContain('electFromPdfBytes(');
   });
 
-  it('and the worker holds no election logic of its own', () => {
+  /*
+   * AND THE SHARED READER TOO. A first version of the probe passed its own
+   * `extractText` wrapper and answered `not_identified` on both documents
+   * where production answers `recovered`, because `readPdfPageTextResult` also
+   * appends each page's AcroForm FIELD text — which is what identifies the
+   * cover page on those two brochures. A probe that reimplements the reader
+   * measures its own reimplementation.
+   */
+  it('and the shared reader, so a verdict here is the verdict everywhere', () => {
+    expect(probe).toContain("from '../../../supabase/functions/_shared/builderStock/pdfText.ts'");
+    expect(probe).toContain('electFromPdfBytes(bytes, readPdfPageTextResult');
+  });
+
+  it('and the probe holds no election logic of its own', () => {
     // The judgements live in the shared modules. Anything in the CODE that
     // named a threshold, a page rule or a role would be a second extractor —
     // the prose above may of course discuss them.
-    const code = stripComments(worker);
+    const code = stripComments(probe);
     expect(code).not.toMatch(/coverPage|floorPlan|facade|threshold|score/i);
   });
 
   it('the shared module is what the Edge path calls too', () => {
     const pkg = read('supabase/functions/_shared/builderStock/packageImages.ts');
     expect(pkg).toContain("from './pdfElection.ts'");
-    expect(pkg).toContain('electFromPdfBytes(bytes, readPageTexts, context)');
+    expect(pkg).toContain('electFromPdfBytes(bytes, readPageTexts, {');
   });
 
   it('the election still takes the decode slot around the whole heavy path', () => {
@@ -147,101 +162,97 @@ describe('one implementation decides which image wins', () => {
   });
 });
 
-describe('the worker is not an open PDF processor', () => {
-  const worker = read('builder-stock-pdf-service/main.ts');
+describe('the probe is not an open PDF processor', () => {
+  const probe = read(PROBE);
 
   it('requires a bearer on everything but health', () => {
-    expect(worker).toContain("if (!auth.toLowerCase().startsWith('bearer ')");
-    expect(worker).toContain("json({ error: 'unauthorised' }, 401)");
+    expect(probe).toContain('auth !== `Bearer ${token}`');
+    expect(probe).toContain("json({ error: 'unauthorised' }, 401)");
   });
 
   it('refuses everything while the token is unset, rather than serving openly', () => {
-    expect(worker).toContain("json({ error: 'service_token_not_configured' }, 503)");
+    expect(probe).toContain("json({ error: 'probe_token_not_configured' }, 503)");
   });
 
   it('reads the token from the environment and never from source', () => {
-    expect(worker).toContain("Deno.env.get('BUILDER_STOCK_PDF_SERVICE_TOKEN')");
+    expect(probe).toContain('env.BUILDER_STOCK_PDF_PROBE_TOKEN');
     // A literal token would be a secret in source; the only literals here are
-    // env var names and error codes.
-    expect(worker).not.toMatch(/TOKEN\s*=\s*['"][A-Za-z0-9._-]{12,}['"]/);
+    // binding names and error codes.
+    expect(probe).not.toMatch(/TOKEN\s*[:=]\s*['"][A-Za-z0-9._-]{12,}['"]/);
   });
 
-  it('bounds the document both by the declared length and by what arrived', () => {
-    expect(worker).toContain("request.headers.get('content-length')");
-    expect(worker).toContain('bytes.length > MAX_DOCUMENT_BYTES');
+  it('bounds the document by what actually arrived', () => {
+    expect(probe).toContain('bytes.length > MAX_DOCUMENT_BYTES');
+    expect(probe).toContain("json({ error: 'bad_document'");
   });
 
-  it('answers health with an explicit version and protocol', () => {
-    expect(worker).toContain("url.pathname === '/health'");
-    expect(worker).toContain('version: VERSION');
-    expect(worker).toContain('protocol: PDF_ELECTION_PROTOCOL');
+  it('answers health with an explicit protocol, and says it is not production', () => {
+    expect(probe).toContain("url.pathname === '/health'");
+    expect(probe).toContain('protocol: PDF_ELECTION_PROTOCOL');
+    expect(probe).toContain('not production');
+  });
+
+  /*
+   * THE INSTRUMENT CARRIES ITS OWN CONTROL. A pass under a runtime that is
+   * not enforcing the memory ceiling proves nothing about the ceiling —
+   * measured on 8 September 2026, `wrangler dev --local` allocated 900 MB and
+   * answered 200, so the local pass is evidence of EXECUTION only. `/v1/alloc`
+   * is what asks the deployed runtime whether it is enforcing, and it is
+   * behind the same bearer as the election.
+   */
+  it('carries a calibration control, so a pass can be trusted', () => {
+    expect(probe).toContain("url.pathname === '/v1/alloc'");
+    // Behind the token: the bearer check precedes it.
+    expect(probe.indexOf("json({ error: 'unauthorised' }, 401)"))
+      .toBeLessThan(probe.indexOf("url.pathname === '/v1/alloc'"));
   });
 
   it('writes no state anywhere', () => {
     // No database client, no storage, no service-role key: this reads a
-    // document and answers. Every write stays in the Supabase path. Import
-    // PATHS legitimately contain "supabase" — the shared modules live there —
-    // so they are excluded and everything else is judged.
-    const code = stripComments(worker)
-      .split('\n').filter((line) => !line.trim().startsWith('import')
-        && !line.includes("from '../supabase/")).join('\n');
-    expect(code).not.toMatch(/supabase|createClient|SERVICE_ROLE|storage|\.from\(/i);
+    // document and answers. Every write stays in the Supabase path, which is
+    // where the import paths legitimately name it — so the imports are cut
+    // away and the worker's own body is judged.
+    const body = stripComments(probe.slice(probe.indexOf('interface Env')));
+    expect(body).not.toMatch(/supabase|createClient|SERVICE_ROLE|storage|\.from\(/i);
   });
 });
 
-describe('a boundary failure is never a finding about the document', () => {
-  const client = read('supabase/functions/_shared/builderStock/pdfElectionClient.ts');
-
-  it('reads every reader failure as unreachable, never not_identified', () => {
-    // `not_identified` is banked and suppresses the source until a version
-    // bump. An outage must never be recorded as "this brochure names no
-    // image", so the client may only ever produce it by relaying the worker.
-    const produced = [...client.matchAll(/status: '(\w+)'/g)].map((m) => m[1]);
-    const invented = produced.filter((s) => s !== 'unreachable' && s !== 'recovered');
-    expect(invented).toEqual([]);
-  });
-
-  it('relays the worker\'s own verdicts unchanged', () => {
-    expect(client).toContain("body.status === 'not_identified' || body.status === 'unreachable'");
-  });
-
-  it('refuses a protocol it does not speak instead of guessing', () => {
-    expect(client).toContain('Number(body.protocol) !== PDF_ELECTION_PROTOCOL');
-  });
-
-  it('bounds the wait and cleans the timer up on every path', () => {
-    expect(client).toContain('ELECTION_TIMEOUT_MS');
-    expect(client).toContain('} finally {');
-    expect(client).toContain('clearTimeout(timer)');
-  });
-
-  it('never copies the document to send it', () => {
-    // A `.slice()` would duplicate a 14 MB brochure in the isolate with the
-    // least room for it.
-    expect(client).not.toContain('bytes.slice()');
-    expect(client).toContain('body: bytes as unknown as BodyInit');
-  });
-});
-
-describe('the Edge keeps every write, and only sheds the CPU', () => {
+/*
+ * THE EXPERIMENT IS AN EXPERIMENT.
+ *
+ * A probe that quietly became a dependency would be the worst of both: an
+ * unproven platform in the settler's path, with the evidence for it still
+ * being gathered. So the separation is asserted rather than intended — every
+ * one of these would have to be deliberately undone to wire it up.
+ */
+describe('nothing in production routes anywhere', () => {
   const pkg = read('supabase/functions/_shared/builderStock/packageImages.ts');
 
-  it('still fetches, sniffs and applies the identity rules itself', () => {
-    // From the function's own body: `electViaService` also appears in the
-    // import block at the top of the file.
+  it('the Edge still fetches, sniffs and applies the identity rules itself', () => {
     const body = pkg.slice(pkg.indexOf('async function extractFromDocument'));
-    const before = body.slice(0, body.indexOf('electViaService'));
+    const before = body.slice(0, body.indexOf('electFromPdfBytes('));
     expect(before).toContain('await fetchPackage(url)');
     expect(before).toContain("String.fromCharCode(...bytes.subarray(0, 5)) !== '%PDF-'");
     expect(before).toContain('That link is an image rather than a package document');
   });
 
-  it('falls back to running it in-process when the worker is unconfigured', () => {
-    expect(pkg).toContain('pdfElectionServiceConfigured()');
-    expect(pkg).toContain('return await electFromPdfBytes(bytes, readPageTexts, context)');
+  it('and then runs the election in this process, with no route out', () => {
+    expect(stripComments(pkg)).not.toMatch(/electViaService|pdfElectionClient|ELECTION_CONTEXT_HEADER|PDF_SERVICE_URL|PDF_ELECTION_SERVICE/);
   });
 
-  it('keeps an injected reader in-process, so tests cannot reach the wire', () => {
-    expect(pkg).toContain('readPageTexts === readPdfPageTextResult');
+  it('there is no client module and no deployable service beside it', () => {
+    expect(here('supabase/functions/_shared/builderStock/pdfElectionClient.ts')).toBe(false);
+    expect(here('builder-stock-pdf-service')).toBe(false);
+    expect(here('.github/workflows/deploy-builder-stock-pdf-service.yml')).toBe(false);
+  });
+
+  /*
+   * AND NO RUNTIME BUMP. `RUNTIME_VERSION` is what re-arms the whole fleet
+   * against a processing-reliability change; bumping it for a boundary that
+   * has not been proven would spend a fleet-wide re-run on an experiment.
+   */
+  it('and the runtime is not re-armed for an unproven boundary', () => {
+    const runtime = read('supabase/functions/_shared/builderStock/runtimeVersion.pure.ts');
+    expect(runtime).toContain('export const RUNTIME_VERSION = 2;');
   });
 });

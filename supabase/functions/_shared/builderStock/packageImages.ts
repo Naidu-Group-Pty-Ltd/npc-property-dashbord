@@ -39,9 +39,6 @@ import {
 import { classifyBranch, sharedLinkFileUrl } from './sourceBranches.pure.ts';
 import { readPdfPageTextResult } from './pdfText.ts';
 import { electFromPdfBytes } from './pdfElection.ts';
-import {
-  electViaService, pdfElectionServiceConfigured,
-} from './pdfElectionClient.ts';
 import { MAX_SOURCE_IMAGE_BYTES, sniffImageContentType } from './sourceAssets.pure.ts';
 import { PRIMARY_ROLE, type SourceImageRoleAssignment } from './sourceImageRole.pure.ts';
 
@@ -712,32 +709,20 @@ async function extractFromDocument(
    * is a deadlock rather than a bound.
    */
   /*
-   * AND THE HEAVY HALF RUNS WHEREVER THERE IS CPU FOR IT.
+   * AND THE HEAVY HALF IS ONE NAMED UNIT NOW.
    *
    * Everything above is cheap and stays here: the fetch and its guarded
    * fetcher, the `%PDF-` sniff, and the rule that a link to an image is not a
    * package document. What follows — the text read and the election over the
    * same bytes — is the one indivisible unit measured to exceed an Edge
-   * Function's 2,000 ms CPU limit, so it is `electFromPdfBytes`, and
-   * `builder-stock-pdf-service` runs THAT module rather than a second
-   * implementation of it. See `pdfElection.ts` for the measurements.
-   */
-  const context = { label, identifiedBy, design, identityHints, documentName, url };
-  /*
-   * THE WORKER WHERE THERE IS CPU, THIS ISOLATE WHERE THERE IS NOT ONE.
+   * Function's 2,000 ms CPU limit, and it is `electFromPdfBytes`.
    *
-   * Configured, the election runs in `builder-stock-pdf-service` — the same
-   * `electFromPdfBytes`, so the same winners. Unconfigured, it runs here
-   * exactly as it always has, which is what makes this deployable before the
-   * worker exists and survivable if the worker is ever taken away.
-   *
-   * An injected reader means a TEST supplied the page texts, and a test's
-   * reader cannot travel over a wire — so those callers stay in-process by
-   * construction rather than by a flag. The production reader is the identity
-   * `readPdfPageTextResult`, which is exactly what the worker uses.
+   * Lifting it changed no behaviour: the same code, the same slot, the same
+   * winners. What it buys is that the unit can be RUN somewhere with CPU for
+   * it once a platform has been chosen and approved — which has not happened,
+   * so nothing here calls anywhere but this process.
    */
-  if (readPageTexts === readPdfPageTextResult && pdfElectionServiceConfigured()) {
-    return await electViaService(bytes, context, `${documentName}:${label}`);
-  }
-  return await electFromPdfBytes(bytes, readPageTexts, context);
+  return await electFromPdfBytes(bytes, readPageTexts, {
+    label, identifiedBy, design, identityHints, documentName, url,
+  });
 }
