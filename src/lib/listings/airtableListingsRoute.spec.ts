@@ -7,6 +7,7 @@ import {
   MAX_RECORD_IDS,
   describeListingsFailure,
   missionControlAnswered,
+  missionControlOrigin,
   missionControlRefusal,
   MISSION_CONTROL_ENDPOINT_HEADER,
   recordIdFormula,
@@ -444,8 +445,12 @@ describe('a failed read names the end that refused', () => {
 
   it('listings-cache carries the distinction out to the sync row', () => {
     // The sync row is the only record an operator sees for a cron-driven read,
-    // so a warning in a log the fleet page does not show is not enough.
-    expect(codeOf(cache)).toMatch(/error: describeListingsFailure\(/);
+    // so a warning in a log the fleet page does not show is not enough. The
+    // rule is that the walk's `error` comes from the classifier — not that it
+    // is spelled as one particular expression.
+    const walk = codeOf(cache);
+    expect(walk).toMatch(/const failure = describeListingsFailure\(config\.route, response\)/);
+    expect(walk).toMatch(/error: failure\.detail/);
   });
 
   it('neither consumer spells the code itself any more', () => {
@@ -551,5 +556,150 @@ describe('a brokered answer nobody marked never reached Mission Control', () => 
     expect(describeListingsFailure(un, { status: 0, headers: new Headers() }).end).toBe(
       'unconfigured',
     );
+  });
+});
+
+describe('MISSION_CONTROL_URL is an origin, and a path on it is the 404', () => {
+  /*
+   * Measured 8 Sep 2026. NPC Client Dashboard recorded `airtable_404` on every
+   * Listings sync while the two clones beside it were served normally, and it
+   * appeared in Mission Control's ledger zero times. Its deployed bundle
+   * carried the broker and composed the path correctly, and Mission Control's
+   * endpoint answers 401 (not 404) to an unknown key — so the request was
+   * reaching a URL nobody serves.
+   *
+   * Probed directly: `…/api/api/public/listings/tables` answers 404 with none
+   * of Mission Control's headers on it, and nothing is metered because no
+   * handler runs. A base of `…/api` composes exactly that.
+   */
+  it('trims a path and says what it trimmed', () => {
+    const r = missionControlOrigin('https://mc.example/api');
+    expect(r.origin).toBe('https://mc.example');
+    expect(r.trimmedPath).toBe('/api');
+  });
+
+  it('leaves a bare origin alone and reports no trim', () => {
+    const r = missionControlOrigin('https://mc.example');
+    expect(r.origin).toBe('https://mc.example');
+    expect(r.trimmedPath).toBeUndefined();
+  });
+
+  it('still trims trailing slashes, which it always did', () => {
+    expect(missionControlOrigin('https://mc.example///').origin).toBe('https://mc.example');
+    expect(missionControlOrigin('https://mc.example///').trimmedPath).toBeUndefined();
+  });
+
+  it('hands back an unparseable value rather than emptying it', () => {
+    // An empty string reads as "not configured" and sends an operator to the
+    // opposite remedy from the one they need.
+    expect(missionControlOrigin('mission-control').origin).toBe('mission-control');
+  });
+
+  it('the brokered route composes from the origin, never the path', () => {
+    const r = resolveListingsRoute({
+      airtableToken: null,
+      airtableBaseId: null,
+      missionControlUrl: 'https://mc.example/api',
+      cloneApiKey: 'ck_live',
+    });
+    expect(r.via).toBe('broker');
+    if (r.via !== 'broker') throw new Error('unreachable');
+    expect(r.missionControlUrl).toBe('https://mc.example');
+    expect(r.trimmedPath).toBe('/api');
+    expect(listingsRequestUrl(r, 'tables', 'tblX')).toContain(
+      'https://mc.example/api/public/listings/tables',
+    );
+    expect(listingsRequestUrl(r, 'tables', 'tblX')).not.toContain('/api/api/');
+  });
+
+  it('a failure names the URL that was addressed, and the trim', () => {
+    const r = resolveListingsRoute({
+      airtableToken: null,
+      airtableBaseId: null,
+      missionControlUrl: 'https://mc.example/api',
+      cloneApiKey: 'ck_live',
+    });
+    const f = describeListingsFailure(r, { status: 404, headers: new Headers() });
+    expect(f.end).toBe('not_mission_control');
+    expect(f.service).toContain('https://mc.example');
+    expect(f.detail).toContain('/api');
+  });
+
+  it('the code stays stable while the URL travels in detail', () => {
+    // The code is grepped and compared across ticks; anything variable in it
+    // makes two readings of the same fault look like two faults.
+    const withPath = resolveListingsRoute({
+      airtableToken: null, airtableBaseId: null,
+      missionControlUrl: 'https://a.example/api', cloneApiKey: 'ck',
+    });
+    const without = resolveListingsRoute({
+      airtableToken: null, airtableBaseId: null,
+      missionControlUrl: 'https://b.example', cloneApiKey: 'ck',
+    });
+    const a = describeListingsFailure(withPath, { status: 404, headers: new Headers() });
+    const b = describeListingsFailure(without, { status: 404, headers: new Headers() });
+    expect(a.code).toBe(b.code);
+    expect(a.service).not.toBe(b.service);
+  });
+
+  it('listings-cache carries the detail out to the sync row', () => {
+    expect(codeOf(cache)).toMatch(/failure\.detail \? `\$\{failure\.code\}; \$\{failure\.detail\}`/);
+  });
+});
+
+describe('a vendor status names the ROAD it came by', () => {
+  /*
+   * Both roads reach Airtable and both report its status, so `airtable_404`
+   * alone is true on either and distinguishes nothing.
+   *
+   * Measured 8 Sep 2026. NPC Client Dashboard answered `airtable_404` on every
+   * Listings sync for five hours while appearing ZERO times in Mission
+   * Control's ledger. Mission Control marks every answer it gives, so a
+   * brokered relay would have carried that mark — leaving only the direct
+   * road, taken because a withheld secret stops Mission Control FORWARDING a
+   * value and does not remove one already on the project. Every reading the
+   * clone produced was true. None of them said which road it had taken.
+   */
+  const DIRECT = resolveListingsRoute({
+    airtableToken: 'pat123', airtableBaseId: 'appNPC',
+    missionControlUrl: 'https://mc.example', cloneApiKey: 'ck_live',
+  });
+  const BROKER = resolveListingsRoute({
+    airtableToken: null, airtableBaseId: null,
+    missionControlUrl: 'https://mc.example', cloneApiKey: 'ck_live',
+  });
+  const marked = new Headers({ [MISSION_CONTROL_ENDPOINT_HEADER]: 'listings' });
+
+  it('names a direct read, and the two settings that put it on that road', () => {
+    const f = describeListingsFailure(DIRECT, { status: 404, headers: new Headers() });
+    expect(f.detail).toContain('directly');
+    expect(f.detail).toContain('AIRTABLE_TOKEN');
+    expect(f.detail).toContain('AIRTABLE_BASE_ID');
+  });
+
+  it('names a relay as Mission Control having made the call', () => {
+    const f = describeListingsFailure(BROKER, { status: 404, headers: marked });
+    expect(f.detail).toContain('brokered');
+  });
+
+  it('the two roads to the same status are told apart', () => {
+    const direct = describeListingsFailure(DIRECT, { status: 404, headers: new Headers() });
+    const relay = describeListingsFailure(BROKER, { status: 404, headers: marked });
+    // Same end, same code — the code is what gets compared across ticks and
+    // must not fork. The detail is what tells them apart.
+    expect(direct.end).toBe(relay.end);
+    expect(direct.code).toBe(relay.code);
+    expect(direct.detail).not.toBe(relay.detail);
+  });
+
+  it('no detail ever carries a credential', () => {
+    for (const f of [
+      describeListingsFailure(DIRECT, { status: 404, headers: new Headers() }),
+      describeListingsFailure(BROKER, { status: 404, headers: marked }),
+      describeListingsFailure(BROKER, { status: 404, headers: new Headers() }),
+    ]) {
+      expect(f.detail ?? '').not.toContain('pat123');
+      expect(f.detail ?? '').not.toContain('ck_live');
+    }
   });
 });
