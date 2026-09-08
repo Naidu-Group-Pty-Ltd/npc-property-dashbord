@@ -4199,3 +4199,82 @@ grain, vacancy and days-on-market — but it is now an improvement on a working
 dimension rather than the precondition for having one.
 
 Scoring V2 stays unwired, per the brief's §14.
+
+---
+
+## §48 — Backtesting the ABS growth layer: it works, and that is the problem (2026-09-08)
+
+§47 found a real, free, authoritative capital-growth source and recommended
+standing the Growth dimension on it. Requirement 12 of the brief says to
+backtest before wiring. Doing so changes the recommendation, and the reason is
+one the brief anticipated in its own §8.
+
+Method: the 992 scored reports, `scoringV2.pure.ts` **unmodified**, with
+`priceGrowth1Year` and `priceGrowth3Year` supplied from `ABS,RES_DWELL` for
+the report's state and dwelling type. Reads only; nothing written.
+
+### The grade becomes a statement about the state
+
+| state | n | growth subscore | composite min | median | max | spread |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| WA | 71 | **100** | 73 | **90** | 98 | 25 |
+| QLD | 52 | **100** | 66 | 82 | 91 | 25 |
+| VIC | 56 | 44 | 45 | 54 | 59 | 14 |
+| NSW | 13 | 35 | 46 | 53 | 55 | 9 |
+
+Growth carries 0.40 of the nominal weight and **every property in a state
+receives the identical figure**, so the within-state spread is 9–25 points
+while the between-state swing is 55. Under this layer the median Perth
+property is an **A+** and no Sydney property can reach **A** at all, whatever
+its merits.
+
+That fails the brief's own test. "Why is my property A+?" answered with
+"Greater Perth median house prices rose 18.8% last year" is a statement about
+Perth. "Why is mine C+?" answered with "Greater Sydney fell 2.1%" is a
+statement about Sydney. Neither is a defence of a grade awarded to a property.
+
+### Every A+ in that run is a renormalisation
+
+| the A/A+ cohort (119 of 216 resolvable) | |
+| --- | --- |
+| graded on 4 of 5 dimensions | 73 |
+| graded on **3 of 5** | 46 |
+| `weightCovered` values observed | **0.60, 0.70, 0.85** — never 1.00 |
+
+So not one A+ here rests on the full nominal evidence; each is ≤85% of it
+renormalised to 100%. Requirement 8 forbids precisely this — *"Do not simply
+renormalise 45% of evidence to 100% and allow an A+"* — and the backtest shows
+the gate is load-bearing rather than decorative. Arithmetic that renormalises
+correctly is still not a defensible grade when what it renormalises is thin.
+
+### A third finding, from the resolution attempt
+
+Only **216 of 992** reports could be resolved to a state from
+`property_address`, and the reason is not a parsing weakness: **743 of the 776
+unresolved carry no comma at all** — `6 Acer Court`, `1/27D Mitchell Street`,
+`Parmelia`, `The Glengarry Hotel (The Glen Pub)`. Bare street lines with no
+suburb, no state, no postcode.
+
+But 967 of 992 carry `location_intelligence.coordinates`. So the geography is
+recoverable, from the coordinate and never from the address string — and the
+join is already in the database: `abs_sa2_meta.gccsa_name` carries all fifteen
+region names **exactly** as `RES_DWELL` spells them ("Greater Sydney", "Rest of
+Vic.", "Australian Capital Territory"), so no correspondence needs inventing.
+Any growth layer must be keyed on the resolved coordinate.
+
+### What this changes
+
+The ABS layer is worth having and is not the Growth dimension. Three
+conclusions:
+
+1. **`RES_DWELL` belongs in the product as regional CONTEXT**, labelled as the
+   region's movement and carrying its own weight, never presented as this
+   property's capital growth.
+2. **Suburb-grain evidence is genuinely required** for a property-level growth
+   score that survives a client challenge. That is now measured rather than
+   asserted, and it is the case for the purchase §47 said was optional.
+3. **The evidence-confidence gate comes first, whatever the source.** On this
+   corpus it is the difference between a grade and a renormalisation, and no
+   data purchase substitutes for it.
+
+Scoring V2 stays unwired.
