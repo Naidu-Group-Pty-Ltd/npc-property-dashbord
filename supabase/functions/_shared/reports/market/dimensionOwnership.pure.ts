@@ -109,9 +109,9 @@ export const DIMENSION_OWNERSHIP: ReadonlyArray<OwnershipEntry> = [
   { input: 'walkScore', owner: 'location', forbiddenTo: [],
     rationale: 'Amenity accessibility on foot.' },
   { input: 'commuteTimeCBD', owner: 'location', forbiddenTo: [],
-    rationale: 'Accessibility to employment.' },
+    rationale: 'Accessibility to employment; a property of the place, not of its market.' },
   { input: 'schoolsNearby', owner: 'location', forbiddenTo: [],
-    rationale: 'Amenity.' },
+    rationale: 'Amenity that is fixed to the site and cannot be inferred from market performance.' },
   { input: 'state', owner: 'none', forbiddenTo: ['location', 'growth', 'demand', 'yield', 'risk'],
     rationale:
       'NOT a locational characteristic. The live scorer awards up to 15 points by state — every property '
