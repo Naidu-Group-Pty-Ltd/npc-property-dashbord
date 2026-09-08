@@ -84,7 +84,10 @@ export default {
         ok: Boolean(env.BUILDER_STOCK_PDF_PROBE_TOKEN),
         service: 'builder-stock-pdf-probe',
         protocol: PDF_ELECTION_PROTOCOL,
-        isolate: isolate(), invocation: invocations,
+        // Health runs BEFORE the counter and takes no number of its own: this
+        // is how many this isolate has served so far, which is what a reader
+        // of `/health` wants and is a snapshot rather than an identity.
+        isolate: isolate(), served: invocations,
         note: 'temporary probe; not production',
       }, env.BUILDER_STOCK_PDF_PROBE_TOKEN ? 200 : 503);
     }
@@ -93,7 +96,18 @@ export default {
     if (!token) return json({ error: 'probe_token_not_configured' }, 503);
     const auth = request.headers.get('authorization') ?? '';
     if (auth !== `Bearer ${token}`) return json({ error: 'unauthorised' }, 401);
+    /*
+     * CAPTURED AT ENTRY, not read at exit. The handler awaits for over a
+     * second between here and its response, and under concurrency a second
+     * request increments the shared counter in that gap — so reading
+     * `invocations` when the answer is built made two concurrent requests
+     * both report 17 while 16 appeared nowhere. Measured on the very first
+     * concurrent round this instrument ever ran, which is the point of
+     * running it: a number that does not identify its own request cannot
+     * show whether an isolate was recycled between two of them.
+     */
     invocations += 1;
+    const invocation = invocations;
 
     /*
      * A CONTROL, so the instrument can be trusted. A pass under a runtime
@@ -112,7 +126,7 @@ export default {
       }
       return json({
         allocated_mb: held.length, first: held[0][0],
-        isolate: isolate(), invocation: invocations,
+        isolate: isolate(), invocation,
       });
     }
 
@@ -142,7 +156,7 @@ export default {
     if (outcome.status === 'recovered') {
       return json({
         status: 'recovered', elapsed_ms: elapsedMs, document_bytes: bytes.length,
-        isolate: isolate(), invocation: invocations,
+        isolate: isolate(), invocation,
         reference: outcome.image.reference,
         content_type: outcome.image.contentType,
         image_bytes: outcome.image.bytes.length,
@@ -158,7 +172,7 @@ export default {
     }
     return json({
       status: outcome.status, elapsed_ms: elapsedMs, document_bytes: bytes.length,
-      isolate: isolate(), invocation: invocations,
+      isolate: isolate(), invocation,
       detail: 'detail' in outcome ? outcome.detail : undefined,
     });
   },

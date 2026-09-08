@@ -387,6 +387,49 @@ jobs:
       - name: Deno type-check the report template selection rules
         run: deno check supabase/functions/_shared/reports/reportTemplateSelection.pure.ts
 
+      # ---- TEMPORARY: the Builder Stock PDF feasibility probe ----------------
+      #
+      # DELETE THIS STEP WITH `cloudflare/builder-stock-pdf-probe/`. It exists
+      # only while one question is open: can the shared `electFromPdfBytes` run
+      # inside a real Cloudflare Worker under the hosted limits?
+      #
+      # WHY IT IS NOT UNDER `tsconfig.worker.json`. That gate exists for
+      # `builder-stock-image-worker`, whose stated premise is that it imports
+      # nothing. The probe breaks that premise on purpose — importing the
+      # SHARED election is the whole point of it — so it carries Deno-style
+      # `.ts` specifiers and a remote `esm.sh` import that a
+      # `moduleResolution: bundler` compiler cannot resolve. Relaxing that
+      # config would weaken the gate for the worker it was written for. So the
+      # probe is excluded there and validated HERE, by the two toolchains that
+      # actually compile it: it is not exempt from validation, it is validated
+      # differently because it is compiled differently.
+      #
+      # `deno check` walks the probe entry AND every `_shared` module behind
+      # it. Verified by mutation: a type error introduced in the probe and a
+      # type error introduced in `pdfElection.ts` both fail this command.
+      #
+      # The wrangler build is the half that resolves the `esm.sh` -> npm alias
+      # and produces the bundle a deploy would upload, so it catches what a
+      # typechecker cannot. It needs the probe's own dependency present, and
+      # that is load-bearing rather than incidental: measured 8 September 2026,
+      # with no `node_modules` under the probe the build FAILS (exit 1). It had
+      # only ever appeared to pass locally because a stray EXTRANEOUS
+      # `unpdf@0.12.1` was sitting in the repo root — declared by neither root
+      # manifest, and deleted by the `npm ci` every CI job runs. `npm ci`
+      # rather than `npm install` so the tree comes from the committed
+      # lockfile.
+      #
+      # wrangler is pinned: a temporary check that goes red on somebody else's
+      # release is noise rather than signal.
+      - name: TEMPORARY -- Builder Stock PDF probe (deno check + wrangler build)
+        env:
+          WRANGLER_SEND_METRICS: "false"
+        run: |
+          deno check cloudflare/builder-stock-pdf-probe/src/index.ts
+          npm ci --prefix cloudflare/builder-stock-pdf-probe --no-audit --no-fund
+          npx --yes wrangler@4.129.1 deploy --dry-run \
+            -c cloudflare/builder-stock-pdf-probe/wrangler.jsonc
+
       # WP-14: type-check every Edge Function entry point, not only shared modules.
       - name: Deno type-check every Edge Function entry point (WP-14)
         run: node scripts/security/check-edge-functions.mjs

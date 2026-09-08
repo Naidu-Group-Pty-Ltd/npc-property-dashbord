@@ -216,9 +216,27 @@ describe('the probe is not an open PDF processor', () => {
    * is the ceiling biting quietly.
    */
   it('reports which isolate answered, so a silent recycle cannot read as a pass', () => {
-    expect(probe).toContain('isolate: isolate(), invocation: invocations');
+    expect(probe).toContain('isolate: isolate(), invocation,');
     // Minted lazily: workerd refuses `crypto.randomUUID()` at module scope.
     expect(stripComments(probe)).not.toMatch(/^const \w+ = crypto\.randomUUID/m);
+  });
+
+  /*
+   * AND THE NUMBER IDENTIFIES ITS OWN REQUEST. The handler awaits for over a
+   * second between taking a number and answering, so reading the shared
+   * counter when the response is built reports whatever it has become since:
+   * measured on the first concurrent round this instrument ever ran, two
+   * requests both said 17 and 16 appeared nowhere. A number that cannot
+   * identify its request cannot show whether an isolate was recycled between
+   * two of them, which is the whole reading the memory question turns on.
+   */
+  it('takes its invocation number at entry rather than reading it at exit', () => {
+    expect(probe).toContain('invocations += 1;\n    const invocation = invocations;');
+    // Only `/health`, which runs before the counter, may read the shared value —
+    // and it says `served`, because a snapshot is not an identity.
+    const afterCounter = probe.slice(probe.indexOf('const invocation = invocations;'));
+    expect(afterCounter).not.toMatch(/invocation: invocations/);
+    expect(probe).toContain('served: invocations');
   });
 
   it('answers with a real digest, not a length, so identity is byte-for-byte', () => {
@@ -244,6 +262,68 @@ describe('the probe is not an open PDF processor', () => {
  * being gathered. So the separation is asserted rather than intended — every
  * one of these would have to be deliberately undone to wire it up.
  */
+/*
+ * THE HOSTED TEST IS SEQUENTIAL *AND* CONCURRENT.
+ *
+ * Cloudflare's ceiling is per-ISOLATE — "a single isolate can handle many
+ * concurrent requests" — so one document in flight may never approach it while
+ * two together do. A sequential-only pass would answer a question nobody
+ * asked. And exceeding the ceiling does not necessarily fail: the runtime
+ * "lets in-flight requests complete and creates a new isolate for subsequent
+ * requests", so the reading is not only whether the requests succeeded but
+ * whether the isolate that served them survived them.
+ */
+describe('the hosted acceptance exercises the isolate, not just the request', () => {
+  const runner = read('cloudflare/builder-stock-pdf-probe/run-probe.mjs');
+
+  it('runs the documents together for several rounds, after the sequential pass', () => {
+    expect(runner).toContain('Promise.all(LOTS.map((doc) => elect(doc,');
+    expect(runner).toContain("const rounds = Number(arg('rounds', '4'));");
+    // Concurrency after a sequential failure measures nothing new, and a second
+    // failure would read as a concurrency finding when it is not.
+    expect(runner).toContain('if (!seqPass)');
+    expect(runner).toContain('PHASE 3 — CONCURRENT: SKIPPED');
+  });
+
+  it('applies one acceptance rule to both phases rather than two', () => {
+    // Two implementations of "did this pass" is how two phases come to
+    // disagree about what they measured.
+    expect(runner.match(/const accepts = /g)).toHaveLength(1);
+    expect(runner.match(/async function elect\(/g)).toHaveLength(1);
+    expect(runner).toContain("r.status === 'recovered' && r.identical === true");
+  });
+
+  /*
+   * AND THE DETECTOR IS WHAT IS JUDGED, NOT THE PROSE AROUND IT. A first
+   * version of this test asserted the file merely CONTAINED `exceededMemory`,
+   * and both words also appear in the comment above the pattern and in the
+   * Workers Logs guidance — so removing either from the pattern itself left
+   * the test green. Two mutations survived on it. The pattern is read out of
+   * the source and matched on its own.
+   */
+  it('names a resource kill for what it is, including the hosted outcomes', () => {
+    const pattern = stripComments(runner)
+      .split('\n').find((l) => l.startsWith('const KILL = '));
+    expect(pattern).toBeDefined();
+    for (const outcome of ['exceededMemory', 'exceededCpu', '1102', 'exceeded resource limits']) {
+      expect(pattern).toContain(outcome);
+    }
+  });
+
+  it('records whether the isolate was recycled under load', () => {
+    expect(runner).toContain('isolates not seen in the sequential phase');
+    expect(runner).toContain('RECYCLED UNDER LOAD');
+  });
+
+  it('sends the reader to Workers Logs with the windows to look at', () => {
+    // A kill returns no body of ours; the invocation outcome exists only there.
+    expect(runner).toContain('WORKERS LOGS');
+    expect(runner).toContain('sequential: ');
+    expect(runner).toContain('concurrent: ');
+    expect(runner).toContain('wrangler tail builder-stock-pdf-probe');
+  });
+});
+
 describe('nothing in production routes anywhere', () => {
   const pkg = read('supabase/functions/_shared/builderStock/packageImages.ts');
 
@@ -311,6 +391,42 @@ describe('nothing in production routes anywhere', () => {
     expect(worker.exclude).toEqual(['cloudflare/builder-stock-pdf-probe']);
     // The real worker is still inside the gate.
     expect(here('cloudflare/builder-stock-image-worker/src/index.ts')).toBe(true);
+  });
+
+  /*
+   * AND THE REPLACEMENT CHECK IS ACTUALLY WIRED.
+   *
+   * This repo has already recorded the failure this guards: "a guard nobody
+   * runs still reads as coverage" — the Cloudflare worker's own test file sat
+   * beside a CI step that did not name it, and every proof in it ran on no
+   * runner. Excluding the probe from `tsconfig.worker.json` is only safe
+   * BECAUSE something else checks it, so the something else is asserted here
+   * rather than assumed.
+   */
+  it('CI validates the probe with the toolchains that actually compile it', () => {
+    const ci = read('.github/workflows/ci.yml');
+    const step = ci.slice(ci.indexOf('TEMPORARY -- Builder Stock PDF probe'));
+    expect(step).toContain('deno check cloudflare/builder-stock-pdf-probe/src/index.ts');
+    expect(step).toContain('npm ci --prefix cloudflare/builder-stock-pdf-probe');
+    expect(step).toContain('wrangler@');
+    expect(step).toContain('deploy --dry-run');
+    expect(step).toContain('-c cloudflare/builder-stock-pdf-probe/wrangler.jsonc');
+    // The wrangler build resolves the esm.sh -> npm alias from the probe's own
+    // dependency, so the lockfile `npm ci` reads has to be in the repository.
+    expect(here('cloudflare/builder-stock-pdf-probe/package-lock.json')).toBe(true);
+  });
+
+  /*
+   * AND THE EXISTING WORKER'S GATE IS UNTOUCHED. The rule this whole exercise
+   * runs on: adapt the experiment to the architecture, never the architecture
+   * to the experiment.
+   */
+  it('leaves the existing image worker under the strict typecheck', () => {
+    const ci = read('.github/workflows/ci.yml');
+    expect(ci).toContain('npx tsc --noEmit -p tsconfig.worker.json');
+    const worker = JSON.parse(read('tsconfig.worker.json'));
+    expect(worker.compilerOptions.strict).toBe(true);
+    expect(worker.compilerOptions.allowImportingTsExtensions).toBeUndefined();
   });
 
   it('and the runtime is not re-armed for an unproven boundary', () => {

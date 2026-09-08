@@ -73,11 +73,38 @@ context it does not have.
 allows it. The first genuine runtime difference this exercise has turned up,
 and not one a local Deno run could show.
 
+## How it is validated in CI
+
+The probe is excluded from `tsconfig.worker.json` — that gate exists for
+`builder-stock-image-worker`, whose stated premise is that it imports nothing,
+and relaxing it to accept this directory's Deno-style `.ts` specifiers and
+remote `esm.sh` import would weaken it for the worker it was written for. **The
+probe is not exempt from validation; it is validated by the toolchains that
+actually compile it**, in one temporary step in `ci.yml`'s `security` job:
+
+```sh
+deno check cloudflare/builder-stock-pdf-probe/src/index.ts
+npm ci --prefix cloudflare/builder-stock-pdf-probe --no-audit --no-fund
+npx --yes wrangler@4.129.1 deploy --dry-run \
+  -c cloudflare/builder-stock-pdf-probe/wrangler.jsonc
+```
+
+`deno check` walks the probe entry and every `_shared` module behind it —
+verified by mutation to fail on a type error in either. The wrangler build is
+the half that resolves the `esm.sh` → npm alias and produces the bundle a
+deploy would upload.
+
+**The install is load-bearing, not incidental.** With no `node_modules` under
+the probe the build FAILS (exit 1). It had only ever appeared to pass locally
+because a stray **extraneous** `unpdf@0.12.1` was sitting in the repo root —
+declared by neither root manifest, and deleted by the `npm ci` every CI job
+runs. The lockfile is committed so `npm ci` gets a pinned tree.
+
 ## Running it
 
 ```sh
 cd cloudflare/builder-stock-pdf-probe
-npm install
+npm ci
 printf 'BUILDER_STOCK_PDF_PROBE_TOKEN=probe-local-only\n' > .dev.vars
 npx wrangler dev --port 8788 --local
 ```
@@ -89,12 +116,24 @@ node cloudflare/builder-stock-pdf-probe/run-probe.mjs \
   --base http://127.0.0.1:8788 --token probe-local-only \
   --doc 516=/path/l516.pdf   --expect 516=/path/elected_l516.pdf.jpg \
   --doc 6706=/path/l6706.pdf --expect 6706=/path/elected_l6706.pdf.jpg \
-  --runs 4
+  --runs 4 --rounds 4
 ```
 
-`/v1/alloc?mb=N` is the calibration control and the runner asks it **first**.
-If a 900 MB allocation succeeds, that runtime is not enforcing the cap and its
-verdict on memory is worthless.
+### Three phases, and the order is the argument
+
+1. **Calibration** (`/v1/alloc`) — asked first, always. If a 900 MB allocation
+   succeeds, that runtime is not enforcing the cap and its verdict on memory is
+   worthless.
+2. **Sequential**, `--runs` each, one document in flight. Does the election run
+   at all, and does it elect the same picture every time?
+3. **Concurrent**, `--rounds` of both documents at once. **This is the phase
+   the 128 MB question turns on**, because the ceiling is per-isolate and a
+   single request never reaches it. It runs only if the sequential phase
+   passed — concurrency after a sequential failure measures nothing new and
+   would let a second failure read as a concurrency finding.
+
+`elect()` is the only place a request is made, so both phases are the same
+measurement rather than two that could disagree.
 
 ## To answer the real question
 
@@ -104,16 +143,30 @@ npx wrangler secret put BUILDER_STOCK_PDF_PROBE_TOKEN \
   -c cloudflare/builder-stock-pdf-probe/wrangler.jsonc
 node cloudflare/builder-stock-pdf-probe/run-probe.mjs \
   --base https://<worker>.<subdomain>.workers.dev --token <the secret> \
-  --doc 516=… --expect 516=… --doc 6706=… --expect 6706=… --runs 4
+  --doc 516=… --expect 516=… --doc 6706=… --expect 6706=… --runs 4 --rounds 4
 ```
 
 Read the calibration block first. If `/v1/alloc?mb=200` still succeeds there,
-stop — the instrument is still uncalibrated. If it is refused, the elections
-beside it mean something, and the answer is:
+stop — the instrument is uncalibrated.
 
-- every run `recovered`, one winner each, hash-identical, **one isolate** → yes
-- any `exceededMemory` / resource kill, or several isolates → no
+**Sequential acceptance:** every run `recovered`, one winner each,
+hash-identical to the deterministic output, one isolate.
 
-`observability` is on in `wrangler.jsonc`, so the invocation outcome
-(`exceededMemory`, `exceededCpu`, `ok`) is also readable in Workers Logs — which
-is the only place it appears when a kill returns no body at all.
+**Concurrent acceptance:** both requests `recovered` every round, both
+`#page2:Im0`, both hashes matching, **zero** resource kills or transport
+failures, and — the reading that matters — **no isolate appearing that the
+sequential phase did not see**. A fresh isolate under load means the ceiling
+was reached even though every request returned 200, because the runtime "lets
+in-flight requests complete and creates a new isolate for subsequent requests".
+
+**Then read Workers Logs.** A kill returns no body of ours, so the invocation
+outcome (`exceededMemory` / `exceededCpu` / `ok`) exists only there. The runner
+prints the UTC window of each phase. `observability` is on in `wrangler.jsonc`:
+
+```sh
+npx wrangler tail builder-stock-pdf-probe \
+  -c cloudflare/builder-stock-pdf-probe/wrangler.jsonc --format pretty
+```
+
+or Workers & Pages → builder-stock-pdf-probe → Metrics → Errors → Invocation
+Statuses.
