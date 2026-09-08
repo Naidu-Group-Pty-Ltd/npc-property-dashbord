@@ -207,6 +207,25 @@ describe('the probe is not an open PDF processor', () => {
       .toBeLessThan(probe.indexOf("url.pathname === '/v1/alloc'"));
   });
 
+  /*
+   * AND IT SAYS WHICH ISOLATE ANSWERED. Cloudflare's ceiling is per-isolate,
+   * and exceeding it does not necessarily fail: the runtime "lets in-flight
+   * requests complete and creates a new isolate for subsequent requests". So
+   * four sequential 200s can hide four silent recycles, and a status code
+   * cannot tell the difference. One isolate across every run is the pass; two
+   * is the ceiling biting quietly.
+   */
+  it('reports which isolate answered, so a silent recycle cannot read as a pass', () => {
+    expect(probe).toContain('isolate: isolate(), invocation: invocations');
+    // Minted lazily: workerd refuses `crypto.randomUUID()` at module scope.
+    expect(stripComments(probe)).not.toMatch(/^const \w+ = crypto\.randomUUID/m);
+  });
+
+  it('answers with a real digest, not a length, so identity is byte-for-byte', () => {
+    expect(probe).toContain("crypto.subtle.digest('SHA-256'");
+    expect(probe).toContain('image_sha256: await sha256Hex(');
+  });
+
   it('writes no state anywhere', () => {
     // No database client, no storage, no service-role key: this reads a
     // document and answers. Every write stays in the Supabase path, which is
@@ -251,6 +270,26 @@ describe('nothing in production routes anywhere', () => {
    * against a processing-reliability change; bumping it for a boundary that
    * has not been proven would spend a fleet-wide re-run on an experiment.
    */
+  /*
+   * THE DRIVER MAY NOT INVENT A CONTEXT EITHER. A plausible hand-written label
+   * with no design and no identity hints answered `not_identified` on both
+   * documents in ~300 ms rather than `recovered` in ~1,200 ms — no estate name
+   * to corroborate by, so no cover page is recognised, nothing is decoded, and
+   * the CPU-heavy half never runs. That is a correct answer to the wrong
+   * question, and it would have been recorded as a fact about Cloudflare.
+   */
+  it('the probe driver reads its context rather than inventing one', () => {
+    const runner = read('cloudflare/builder-stock-pdf-probe/run-probe.mjs');
+    expect(here('cloudflare/builder-stock-pdf-probe/contexts.json')).toBe(true);
+    expect(runner).toContain("readFileSync(new URL('./contexts.json'");
+    expect(runner).toContain('refusing to guess');
+    const contexts = JSON.parse(read('cloudflare/builder-stock-pdf-probe/contexts.json'));
+    for (const lot of ['516', '6706']) {
+      expect(contexts[lot].design).toBeTruthy();
+      expect(contexts[lot].identityHints.length).toBeGreaterThan(0);
+    }
+  });
+
   it('and the runtime is not re-armed for an unproven boundary', () => {
     const runtime = read('supabase/functions/_shared/builderStock/runtimeVersion.pure.ts');
     expect(runtime).toContain('export const RUNTIME_VERSION = 2;');

@@ -28,10 +28,49 @@ import { electFromPdfBytes } from '../../../supabase/functions/_shared/builderSt
 import { readPdfPageTextResult } from '../../../supabase/functions/_shared/builderStock/pdfText.ts';
 import {
   ELECTION_CONTEXT_HEADER, MAX_DOCUMENT_BYTES, PDF_ELECTION_PROTOCOL,
-  bytesToBase64, decodeElectionContext,
+  decodeElectionContext,
 } from '../../../supabase/functions/_shared/builderStock/pdfElectionBoundary.pure.ts';
 
 interface Env { BUILDER_STOCK_PDF_PROBE_TOKEN?: string }
+
+/*
+ * WHICH ISOLATE ANSWERED — the instrument the memory question actually needs.
+ *
+ * Cloudflare's own limits page: "Each isolate can consume up to 128 MB ... This
+ * limit is per-isolate, not per-invocation. A single isolate can handle many
+ * concurrent requests. When an isolate exceeds 128 MB, the Workers runtime lets
+ * IN-FLIGHT REQUESTS COMPLETE and creates a new isolate for subsequent
+ * requests."
+ *
+ * So a run that exceeds the ceiling does not necessarily fail. Four sequential
+ * elections could each return 200 with the right winner while the runtime
+ * silently discarded and rebuilt the isolate after every one — a pass that
+ * would collapse the moment two documents were in flight together. That is the
+ * isolate-versus-invocation distinction #2555 was blocked on, and a status code
+ * cannot see it.
+ *
+ * These two values can. They live at module scope, so they are minted when an
+ * isolate is created and survive as long as it does. Four elections reporting
+ * ONE `isolate` with `invocation` 1,2,3,4 is a real pass. Four different
+ * `isolate` values is the ceiling biting quietly.
+ */
+/*
+ * MINTED LAZILY, and that is workerd telling us something. `crypto.randomUUID()`
+ * at module scope is refused outright — "Asynchronous I/O ..., setting a
+ * timeout, and generating random values are not allowed within global scope" —
+ * which is the first hard difference this exercise has found between the two
+ * runtimes, and exactly the kind a local Deno run cannot show. So the id is
+ * minted on the isolate's first request instead. Same property: one value per
+ * isolate, for as long as that isolate lives.
+ */
+let isolateId: string | null = null;
+let invocations = 0;
+const isolate = () => (isolateId ??= crypto.randomUUID().slice(0, 8));
+
+const sha256Hex = async (bytes: Uint8Array) => {
+  const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+};
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -45,6 +84,7 @@ export default {
         ok: Boolean(env.BUILDER_STOCK_PDF_PROBE_TOKEN),
         service: 'builder-stock-pdf-probe',
         protocol: PDF_ELECTION_PROTOCOL,
+        isolate: isolate(), invocation: invocations,
         note: 'temporary probe; not production',
       }, env.BUILDER_STOCK_PDF_PROBE_TOKEN ? 200 : 503);
     }
@@ -53,6 +93,7 @@ export default {
     if (!token) return json({ error: 'probe_token_not_configured' }, 503);
     const auth = request.headers.get('authorization') ?? '';
     if (auth !== `Bearer ${token}`) return json({ error: 'unauthorised' }, 401);
+    invocations += 1;
 
     /*
      * A CONTROL, so the instrument can be trusted. A pass under a runtime
@@ -69,7 +110,10 @@ export default {
         block[0] = i & 0xff; block[block.length - 1] = i & 0xff;
         held.push(block);
       }
-      return json({ allocated_mb: held.length, first: held[0][0] });
+      return json({
+        allocated_mb: held.length, first: held[0][0],
+        isolate: isolate(), invocation: invocations,
+      });
     }
 
     if (url.pathname !== '/v1/elect' || request.method !== 'POST') {
@@ -98,16 +142,23 @@ export default {
     if (outcome.status === 'recovered') {
       return json({
         status: 'recovered', elapsed_ms: elapsedMs, document_bytes: bytes.length,
+        isolate: isolate(), invocation: invocations,
         reference: outcome.image.reference,
         content_type: outcome.image.contentType,
         image_bytes: outcome.image.bytes.length,
-        // Hashed rather than returned whole: the probe is comparing winners,
-        // not moving pictures around.
-        image_b64_sha_prefix: bytesToBase64(outcome.image.bytes).slice(0, 44),
+        /*
+         * DIGESTED RATHER THAN RETURNED WHOLE. The probe is comparing winners,
+         * not moving pictures around — and a length alone is not the
+         * byte-for-byte identity the acceptance asks for, so this is the real
+         * SHA-256 of the elected image and is compared against the digest of
+         * the deterministic output.
+         */
+        image_sha256: await sha256Hex(outcome.image.bytes),
       });
     }
     return json({
       status: outcome.status, elapsed_ms: elapsedMs, document_bytes: bytes.length,
+      isolate: isolate(), invocation: invocations,
       detail: 'detail' in outcome ? outcome.detail : undefined,
     });
   },

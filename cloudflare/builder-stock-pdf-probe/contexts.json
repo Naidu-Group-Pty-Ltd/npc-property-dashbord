@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "TEMPORARY — the election context for the two documents that exceed the Edge",
+    "Function's 2,000 ms CPU limit. NOT hand-written: produced by running the real",
+    "stockRecordLabel / stockIdentityHints / designOfRecordOrRow over the live",
+    "builder_stock_items rows, so the probe is handed exactly what production hands",
+    "the election and not an approximation of it.",
+    "",
+    "This matters more than it looks. A first run of the probe passed a thinner",
+    "context — a plausible label, no design, no identity hints — and BOTH documents",
+    "answered not_identified in ~300 ms instead of recovered in ~1,200 ms. That is a",
+    "correct answer to the wrong question: with no estate name to corroborate by,",
+    "the cover rule cannot recognise a page, so nothing is decoded and the CPU-heavy",
+    "half never runs. It would have been recorded as a Cloudflare result."
+  ],
+  "516": {
+    "label": "Lot 516, Manor Lakes",
+    "identifiedBy": "direct_link",
+    "design": "LX -M 19",
+    "identityHints": ["Winterset Lodge"],
+    "documentName": "l516.pdf",
+    "url": "https://example.invalid/l516.pdf"
+  },
+  "6706": {
+    "label": "Lot 6706, Beveridge",
+    "identifiedBy": "direct_link",
+    "design": "LX -M 18",
+    "identityHints": ["Mandalay Estate"],
+    "documentName": "l6706.pdf",
+    "url": "https://example.invalid/l6706.pdf"
+  }
+}
