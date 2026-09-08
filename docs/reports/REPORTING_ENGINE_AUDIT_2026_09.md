@@ -4581,3 +4581,99 @@ and the NSW Valuer General 502 — exactly as `directory.gov.au` and `aph.gov.au
 did during the PEP work, where the two egresses turned out to differ. Whether
 they answer the Supabase runtime is the open question, and it is the gate on
 whether any suburb-grain source is reachable without a purchase.
+
+---
+
+## §52 — What the Supabase runtime can actually reach (2026-09-08)
+
+The government suburb-grain sources were probed from **Supabase infrastructure**
+using `pg_net` (0.14.0), which is the same mechanism the platform's own
+scheduled HTTP already runs on. Read-only `GET`s; nothing written to any report.
+
+This matters because §48 recommended government sources as the free
+suburb-grain fallback on the strength of them answering *this repository's*
+development egress. They do not answer the platform's.
+
+### Measured
+
+| source | from Supabase | reading |
+| --- | --- | --- |
+| ABS `RES_DWELL` data | **200**, 43,854 bytes SDMX | works |
+| ABS dataflow catalogue | **200** | works |
+| VIC open-data **catalogue** (`discover.data.vic.gov.au`) | **200**, 11.5 KB JSON | works |
+| VIC median-house **file** (`land.vic.gov.au`) | **403** `<title>Just a moment…</title>` | Cloudflare JS challenge |
+| NSW Valuer General **index** | **200**, 26.6 KB | works |
+| NSW Valuer General **bulk zip** (`valuergeneral.nsw.gov.au/__psi/…`) | **403** `Just a moment…` | Cloudflare JS challenge |
+| QLD Government Statistician | **200**, 82 KB | works |
+| `data.qld.gov.au` API | **202**, empty body | bot interstitial |
+| `data.sa.gov.au` | **403**, and **403 again with a browser User-Agent** | IP-blocked |
+| Domain v2 | **401** "Unable to verify credentials" | reachable, needs credential |
+| Cotality `/property/au/v2/statistics/locality/…` | **401** "Access token is missing" | reachable, needs credential |
+
+### The pattern, and a correction
+
+**Catalogue and index pages are reachable; the bulk DATA FILES are behind
+Cloudflare bot challenges.** VIC and NSW both publish an openly licensed
+dataset whose landing page answers and whose file does not. `data.sa.gov.au`
+blocks the address range outright — and it answered **200** from the
+development egress, so this is the reverse of the assumption that the platform
+egress would be the more permissive one.
+
+One correction to record: the first NSW probe returned "Couldn't resolve host
+name", which looked like a block and was not. It used
+`www.valuation.property.nsw.gov.au`; the host is
+`valuation.property.nsw.gov.au` without the prefix, and it answers 200. The
+finding stands only because it was re-probed.
+
+A "Just a moment…" page is a JavaScript challenge. A server-side `fetch`
+cannot solve one by design — that is what it is for. So the free suburb-grain
+government route is **not automatable as a live fetch**. It remains viable
+exactly the way `abs_census_poa`, the crime registers and the GTFS feeds were
+loaded: an operator downloads the file, and a loader ingests it on a schedule.
+That is a periodic manual acquisition, not an API.
+
+**One caveat stated rather than glossed:** `pg_net` egresses from the database,
+and Edge Functions egress from Deno Deploy. The two are not guaranteed
+identical, and `market-source-probe` — now on `main` — is the definitive test
+for the runtime that generates reports. Cloudflare challenges are normally
+applied per ASN rather than per host, so the reading is expected to carry, but
+it is evidence about the database's egress until the edge probe runs.
+
+### Source qualification matrix
+
+| | ABS `RES_DWELL` | Domain v2 | Cotality | VIC / NSW files | SA |
+| --- | --- | --- | --- | --- | --- |
+| geographic precision | GCCSA + rest-of-state (15) | suburb + postcode | suburb (locality) | suburb | suburb |
+| dwelling-type precision | house vs attached | house vs unit | per product | house (VIC), all sales (NSW) | house |
+| history depth | **98 quarters, 2002→2026** | series per request | per product | 11 years (VIC) | multi-year |
+| transaction/sample depth | transfer counts | `numberSold` | per product | every sale (NSW) | counts |
+| freshness | quarterly, current | on demand | on demand | annual/quarterly | quarterly |
+| capital growth | **yes, measured** | yes (1yr; multi-year from the series) | yes (branch 4) | yes | yes |
+| demand | volume only | DOM, clearance, listings | DOM, vendor discount, stock | volume only | volume |
+| licence | open, attribution | commercial | commercial, **unverified** | CC-BY 4.0 | CC-BY |
+| runtime availability | **200** | 401 (credential) | 401 (credential) | **Cloudflare-blocked** | **IP-blocked** |
+| production suitability | benchmark/context only | primary candidate | primary candidate, licensing-gated | manual ingest | not available |
+
+### Recommended canonical ownership
+
+Per measure, not per provider — which is what the contract's per-measure
+provenance exists for:
+
+- **Capital growth (suburb)** — Domain or Cotality, whichever is credentialled
+  first. Neither is today.
+- **Demand (DOM, vacancy, listings, vendor discount)** — Domain or Cotality;
+  no government source publishes these at suburb grain.
+- **Regional benchmark** — **ABS `RES_DWELL`**, which is proven working, free
+  and openly licensed. It is the one source that needs no decision, and §48
+  already fixed its role as context and never as the property's score.
+- **State fallback** — VIC and NSW by scheduled manual ingest; SA unavailable
+  from this egress.
+
+### Licensing is now carried in the contract
+
+`EvidencePoint.licensingStatus` defaults to **`unverified`** and is never
+inferred. `mayReachClientReport` admits only `open` and
+`licensed_for_client_reports`, so a measure whose rights nobody has confirmed
+can be **scored in a shadow backtest and cannot be rendered or persisted as a
+derived metric**. That is what lets qualification proceed while Cotality's
+commercial questions stay open, without ever assuming an answer to them.

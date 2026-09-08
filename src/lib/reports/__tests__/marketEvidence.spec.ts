@@ -19,6 +19,8 @@ import {
   EVIDENCE_KEYS,
   GEOGRAPHIC_LEVELS,
   describePoint,
+  licensingOf,
+  mayReachClientReport,
   emptyEvidence,
   finestSubjectLevel,
   isFinerThan,
@@ -174,5 +176,41 @@ describe('a measure describes what it covered', () => {
   it('says so when the dwelling type was not matched', () => {
     expect(describePoint(point({ value: 1, dwellingType: 'any', dwellingTypeMatched: false })))
       .toContain('(dwelling type not matched)');
+  });
+});
+
+describe('licensing is a production gate, and it is never inferred', () => {
+  it('defaults to unverified when nothing says otherwise', () => {
+    // Assuming a right nobody confirmed is how a licence gets breached in a
+    // document that has already been emailed. Cotality's own scoping spec §4
+    // leaves redistribution for client-facing PDFs explicitly open.
+    expect(licensingOf(point({ value: 1 }))).toBe('unverified');
+    expect(mayReachClientReport(point({ value: 1 }))).toBe(false);
+  });
+
+  it('lets open government data through', () => {
+    const abs = point({ value: 1, provider: 'abs_res_dwell', licensingStatus: 'open' });
+    expect(mayReachClientReport(abs)).toBe(true);
+  });
+
+  it('lets positively licensed commercial data through', () => {
+    expect(mayReachClientReport(point({ value: 1, licensingStatus: 'licensed_for_client_reports' })))
+      .toBe(true);
+  });
+
+  it('refuses internal-only material even though it is licensed', () => {
+    // "We may use it" and "we may show it to a client" are different rights.
+    expect(mayReachClientReport(point({ value: 1, licensingStatus: 'internal_only' }))).toBe(false);
+  });
+
+  it('does not stop a measure being SCORED — only rendered', () => {
+    // The gate is on the document, not on the arithmetic: a shadow backtest
+    // may use unverified material, which is what lets qualification proceed
+    // while the commercial questions are still open.
+    const ev: MarketEvidence = {
+      ...emptyEvidence(SUBJECT),
+      growth3YearCagr: point({ value: 7.2, licensingStatus: 'unverified' }),
+    };
+    expect(presentPoints(ev).map((p) => p.key)).toEqual(['growth3YearCagr']);
   });
 });
