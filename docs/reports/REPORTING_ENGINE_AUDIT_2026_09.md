@@ -4414,3 +4414,71 @@ method. Three rules are pinned by tests:
 
 The module holds no score, grade, weight or confidence verdict — only the raw
 inputs a confidence calculation consumes. Nothing is wired.
+
+---
+
+## §50 — The credential audit trail was never written (2026-09-08)
+
+Found while tracing the Domain credential (§49) and fixed here as an isolated
+security correction, separate from any scoring change.
+
+### What was wrong
+
+`activity_logs.entity_type` is the Postgres enum `activity_entity_type`.
+`update-integration-secret` wrote `entity_type: 'settings'`, which is **not one
+of its 26 values**, and `await`ed the insert without reading its `error` — so
+PostgREST's `22P02` rejection was discarded and the handler returned
+`success: true`.
+
+**Every credential change ever made through the Integrations page failed to
+record who changed which secret, and told the operator it had worked.**
+Measured 2026-09-08: `activity_logs` holds **5,037 rows across 22 enum values**
+and not one `settings` row has ever existed, because not one could.
+
+A second instance had the same shape: `aml-verification` wrote
+`entity_type: 'aml_provider_config'` and discarded the error explicitly with
+`.then(() => undefined, () => undefined)`, so promoting the AML screening
+provider from simulator to live — a change to what the platform may do —
+recorded nothing either.
+
+An audit row that silently fails to write is worse than none, because the
+absence reads as *"nothing happened"* rather than *"nothing was recorded"*.
+
+### A correction on scope
+
+A first scan counted 108 invalid literals across 25 files and that was **wrong**
+— the pattern matched any `entity_type:` property, including AML purchasing
+structures (`Individual`, `Company`, `SMSF`) and the portal functions, which
+write to their own tables (`finance_portal_activity_log`,
+`solicitor_portal_activity_log`). Scoped to literals inside an actual
+`activity_logs` insert, the real count is **two**, both fixed here.
+
+### The fix
+
+`_shared/activityAudit.ts` is the one place that knows the vocabulary and the
+one way to write a row. Three rules:
+
+- **The vocabulary is checked before the write.** A PostgREST enum rejection is
+  an opaque runtime `22P02` on a path that may run rarely; `recordActivity`
+  throws a named error instead, and `check-activity-entity-types.mjs` makes it
+  a build failure. The guard reads `ACTIVITY_ENTITY_TYPES` from the module, so
+  a migration that extends the enum is declared in exactly one place.
+- **A failed audit write is reported, never swallowed.** `recordActivity`
+  returns an outcome rather than throwing for a database fault. For a secret
+  update the Management API write has *already* succeeded, so failing the
+  request would be a lie in the other direction — the response now carries
+  `auditLogged` and, when false, `auditError`.
+- **An audit row never carries a credential.** Metadata records secret
+  **names**; `assertNoSecretValues` refuses a value under a key matching
+  secret/token/password/api_key/credential.
+
+`entity_type: 'system'` is the enum's value for a platform-level change, which
+is what both call sites are.
+
+Verified by execution: the guard was re-run against the original defect and
+fails on it (`update-integration-secret/index.ts:227 entity_type: 'settings'`),
+then passes once restored. Test files are excluded from the scan, because a
+spec that feeds `'settings'` in to prove it is refused is the opposite of the
+defect. 12 new tests; edge type-check back to its 339 baseline.
+
+Secret-update behaviour is otherwise unchanged.
