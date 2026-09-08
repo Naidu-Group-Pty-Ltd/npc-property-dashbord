@@ -31,10 +31,20 @@
  * loop, and the report is the evidence.
  *
  * **It spends, and says so.** Unlike the probe, this sends real images and a
- * 2xx from any of the three is a billable unit. Measured 8 Sep 2026 the three
- * operations are free-tier at 500 each per calendar month with zero used, so
- * the expected cost is nothing — but the caller is told the difference rather
- * than left to assume the probe's guarantee still holds.
+ * 2xx from any of the three is a billable unit — at the STANDALONE prices,
+ * which carry no free allowance. Measured 8 Sep 2026, the `/v3/` endpoints
+ * this client calls meter as `id_verification_api` ($0.20),
+ * `passive_liveness_api` ($0.05) and `face_match_api` ($0.05), and not one
+ * `_api` counter on the account declares a `free_tier_limit`; the 500-a-month
+ * free tier belongs to the hosted SESSION features of the same names, which
+ * this deployment does not use. A complete verification is $0.30.
+ *
+ * The expected cost of THIS check is still nothing, for a different and
+ * weaker reason: its calls are refused, and a refused call is not counted
+ * (`passive_liveness_api` stood at 2 after the empty-form probe had run
+ * against three clones repeatedly). But "probably refused" is not the
+ * probe's "cannot succeed", so the report says `spends: true` and the caller
+ * has to ask for this by name.
  *
  * ## The image
  *
