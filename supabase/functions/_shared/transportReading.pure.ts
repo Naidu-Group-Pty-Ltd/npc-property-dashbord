@@ -297,3 +297,60 @@ export function readTransport(
     notMeasured,
   };
 }
+
+/**
+ * ME-5 items 14–15 — what a stored `location_intelligence.transport` may hold.
+ *
+ * The block used to be written from a per-state template: five constants that
+ * ignored the coordinate, 822 of them naming Sydney's "Central Station" 450 m
+ * away across all eight states and territories. Its keys — `qualityScore`,
+ * `serviceFrequency`, `routeCoverage`, `transportTypes`, `accessibility`,
+ * `summary` — are the fields a GTFS stops file cannot fill, which is exactly
+ * why they came to be invented. **Naming a field the source cannot answer is
+ * how a template gets written**, so this projection does not name them.
+ *
+ * The consuming edge function also read the transport service's whole
+ * `{ success, data }` envelope as if it were the payload, so
+ * `publicTransportData.stopsWithin1km.length` dereferenced undefined and threw
+ * for every location a loaded feed covers. Taking a `TransportReading` rather
+ * than an untyped body is what stops that recurring.
+ */
+export interface StoredTransportBlock {
+  readonly nearestStation: string;
+  /** Kilometres to the nearest boardable stop, or null when none was found. */
+  readonly distanceToStation: number | null;
+  readonly stopsWithin1km: number;
+  readonly radiusMetres: number;
+  readonly detailedStops: NearbyStop[];
+  readonly verdict: TransportVerdict;
+  readonly feeds: string[];
+  readonly sources: string[];
+  readonly notMeasured: string[];
+  readonly source: 'gtfs';
+}
+
+/** Field names the template wrote that no stops feed can support. */
+export const TEMPLATE_ONLY_TRANSPORT_FIELDS: readonly string[] = [
+  'qualityScore', 'serviceFrequency', 'routeCoverage', 'transportTypes',
+  'accessibility', 'realTimeAlerts', 'summary', 'distanceToStop', 'nearestStop',
+];
+
+/** Project a measured reading onto the block a report stores. */
+export function projectTransportForLocationIntelligence(
+  reading: TransportReading,
+): StoredTransportBlock {
+  return {
+    nearestStation: reading.nearest?.name ?? 'N/A',
+    distanceToStation: typeof reading.nearest?.metres === 'number'
+      ? Math.round(reading.nearest.metres / 100) / 10
+      : null,
+    stopsWithin1km: reading.countWithinRadius,
+    radiusMetres: reading.radiusMetres,
+    detailedStops: reading.stops,
+    verdict: reading.verdict,
+    feeds: reading.feeds,
+    sources: reading.sources,
+    notMeasured: reading.notMeasured,
+    source: 'gtfs',
+  };
+}
