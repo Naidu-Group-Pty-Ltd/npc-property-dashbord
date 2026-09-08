@@ -16,10 +16,13 @@
  * a name anything can read, which is the same limit `check-edge-column-names`
  * documents — narrow and honest beats broad and wrong.
  */
-import { globSync, readFileSync } from 'node:fs';
-import { resolve, relative } from 'node:path';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, resolve, relative, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const REPO = resolve(import.meta.dirname, '../..');
+// `fileURLToPath(import.meta.url)` rather than `import.meta.dirname`, which
+// needs Node 20.11+. Every sibling gate resolves the repo root this way.
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const SHARED = resolve(REPO, 'supabase/functions/_shared/activityAudit.ts');
 
 function declaredTypes() {
@@ -40,10 +43,30 @@ const VALID = declaredTypes();
 // would make the guard punish its own regression test.
 const IS_TEST = /(^|\/)__tests__\/|\.(spec|test)\.tsx?$/;
 
-const files = globSync('supabase/functions/**/*.ts', { cwd: REPO })
-  .concat(globSync('src/**/*.ts', { cwd: REPO }))
-  .concat(globSync('src/**/*.tsx', { cwd: REPO }))
-  .filter((f) => !IS_TEST.test(f));
+// A manual walk rather than `fs.globSync`, which only exists from Node 22 and
+// throws `SyntaxError: does not provide an export named 'globSync'` on the
+// Node 20 the workflows pin. Every sibling gate in this directory walks the
+// tree the same way; matching them keeps the whole set portable.
+function walk(dir, out = []) {
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return out; // A directory that is not checked out is not a finding.
+  }
+  for (const name of entries) {
+    if (name === 'node_modules' || name === 'dist' || name === '.git') continue;
+    const abs = join(dir, name);
+    if (statSync(abs).isDirectory()) walk(abs, out);
+    else if (/\.tsx?$/.test(name)) out.push(relative(REPO, abs));
+  }
+  return out;
+}
+
+const files = [
+  ...walk(resolve(REPO, 'supabase/functions')),
+  ...walk(resolve(REPO, 'src')),
+].filter((f) => !IS_TEST.test(f));
 
 const offences = [];
 for (const rel of files) {
