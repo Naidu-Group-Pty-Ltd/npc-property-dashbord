@@ -13,6 +13,9 @@ import {
 } from '@/lib/reports/risk/propertyRiskSchema.pure';
 import {
   compareOverheatingVariants,
+  MINIMUM_INDEPENDENT_CATEGORIES,
+  QUESTION_CATEGORY,
+  RISK_METHODOLOGY_STATUS,
   scorePropertyRisk,
   type OverheatingVariant,
 } from '@/lib/reports/risk/riskModelD.pure';
@@ -48,13 +51,45 @@ describe('property risk: type selects, never scores', () => {
   });
 
   describe('Model D — asset type contributes zero points', () => {
+    // These four share the `site` and `building` categories, so identical
+    // evidence is applicable to all of them and the scores are comparable.
     it.each([
-      ['House', 'Unit'], ['House', 'Land'], ['Apartment', 'Townhouse'], ['Duplex', 'House'],
-    ])('scores %s and %s identically when the evidence is identical', (a, b) => {
-      const answers = { site_hazard_exposure: 70 };
+      ['House', 'Unit'], ['Apartment', 'Townhouse'], ['Duplex', 'House'], ['House', 'villa'],
+    ])('scores %s and %s identically on evidence applicable to both', (a, b) => {
+      const answers = { site_hazard_exposure: 70, condition_and_maintenance: 90 };
       const x = scorePropertyRisk({ propertyType: a, answers, growth1Year: 6 });
       const y = scorePropertyRisk({ propertyType: b, answers, growth1Year: 6 });
+      expect(x.score).toBe(80);
       expect(x.score).toBe(y.score);
+    });
+
+    it('cannot compare a house with land on the same evidence — and that is the schema, not a score', () => {
+      // `condition_and_maintenance` is not an applicable question for land: the
+      // dwelling does not exist yet. So the same answers are not the same
+      // evidence, and the honest result is that land is not scoreable on them.
+      const answers = { site_hazard_exposure: 70, condition_and_maintenance: 90 };
+      const house = scorePropertyRisk({ propertyType: 'House', answers });
+      const land = scorePropertyRisk({ propertyType: 'Land', answers });
+      expect(house.score).toBe(80);
+      expect(land.score).toBeNull();
+      expect(land.observations.map((o) => o.questionId)).toEqual(['site_hazard_exposure']);
+    });
+
+    it('gives land the SAME score as a house when each is given its own two categories', () => {
+      // The decisive proof that the class contributes nothing: identical values
+      // across each class's own applicable categories produce an identical score.
+      const house = scorePropertyRisk({
+        propertyType: 'House',
+        answers: { site_hazard_exposure: 70, condition_and_maintenance: 90 },
+      });
+      const land = scorePropertyRisk({
+        propertyType: 'Land',
+        answers: { site_hazard_exposure: 70, construction_and_completion: 90 },
+      });
+      expect(house.eligibility.categoriesRepresented).toEqual(['building', 'site']);
+      expect(land.eligibility.categoriesRepresented).toEqual(['delivery', 'site']);
+      expect(house.score).toBe(80);
+      expect(land.score).toBe(80);
     });
 
     it('selects a different SCHEMA for each class even though the score is type-blind', () => {
@@ -77,13 +112,17 @@ describe('property risk: type selects, never scores', () => {
     it('reads no buyer facts at all — they are not even in the input type', () => {
       const withBuyerFields = {
         propertyType: 'House',
-        answers: { site_hazard_exposure: 70 },
+        answers: { site_hazard_exposure: 70, condition_and_maintenance: 90 },
         // These are not part of PropertyRiskInputs; if they leaked in, the two
         // results below would differ.
         lvr: 95, weeklyCashFlow: -900,
       } as unknown as Parameters<typeof scorePropertyRisk>[0];
       const withBuyer = scorePropertyRisk(withBuyerFields);
-      const without = scorePropertyRisk({ propertyType: 'House', answers: { site_hazard_exposure: 70 } });
+      const without = scorePropertyRisk({
+        propertyType: 'House',
+        answers: { site_hazard_exposure: 70, condition_and_maintenance: 90 },
+      });
+      expect(withBuyer.score).toBe(80);
       expect(withBuyer.score).toBe(without.score);
     });
   });
@@ -121,6 +160,77 @@ describe('property risk: type selects, never scores', () => {
     });
   });
 
+  describe('item 1 — an observation is not a dimension', () => {
+    it('refuses to let ONE answered question become the whole Risk score', () => {
+      const one = scorePropertyRisk({
+        propertyType: 'House', answers: { site_hazard_exposure: 90 },
+      });
+      // The observation is reported...
+      expect(one.observations).toEqual([
+        { questionId: 'site_hazard_exposure', category: 'site', value: 90 },
+      ]);
+      // ...and it does not become the score.
+      expect(one.score).toBeNull();
+      expect(one.eligibility.eligible).toBe(false);
+      expect(one.eligibility.reason).toMatch(/does not become the Risk dimension/);
+    });
+
+    it('counts two answers from the SAME category as one category', () => {
+      // Hazard and planning both describe the site.
+      const sameCategory = scorePropertyRisk({
+        propertyType: 'House',
+        answers: { site_hazard_exposure: 90, planning_constraints: 70 },
+      });
+      expect(QUESTION_CATEGORY.site_hazard_exposure).toBe('site');
+      expect(QUESTION_CATEGORY.planning_constraints).toBe('site');
+      expect(sameCategory.eligibility.categoriesRepresented).toEqual(['site']);
+      expect(sameCategory.score).toBeNull();
+    });
+
+    it('never lets a calm market INFLATE the property’s risk score', () => {
+      // The anchors sit at 100 below 12% growth, so averaging them in would
+      // raise every property's score in a quiet market — a fact about the
+      // market, not the property.
+      const calm = scorePropertyRisk({
+        propertyType: 'House',
+        answers: { site_hazard_exposure: 80, condition_and_maintenance: 80 },
+        growth1Year: 6,
+      }, 'D2_requires_a_peer');
+      expect(calm.score).toBe(80);
+      const noMarket = scorePropertyRisk({
+        propertyType: 'House',
+        answers: { site_hazard_exposure: 80, condition_and_maintenance: 80 },
+      }, 'D2_requires_a_peer');
+      expect(calm.score).toBe(noMarket.score);
+    });
+
+    it('composes a score once independent categories are represented', () => {
+      const twoCategories = scorePropertyRisk({
+        propertyType: 'House',
+        answers: { site_hazard_exposure: 90, condition_and_maintenance: 70 },
+      });
+      expect(twoCategories.eligibility.categoriesRepresented).toEqual(['building', 'site']);
+      expect(twoCategories.eligibility.eligible).toBe(true);
+      expect(twoCategories.score).toBe(80);
+    });
+
+    it('declares the minimum uncalibrated rather than presenting it as settled', () => {
+      expect(RISK_METHODOLOGY_STATUS).toBe('provisional / uncalibrated');
+      expect(MINIMUM_INDEPENDENT_CATEGORIES).toBe(2);
+      expect(scorePropertyRisk({ propertyType: 'House' }).eligibility.status)
+        .toBe('provisional / uncalibrated');
+    });
+
+    it('never lets an ineligible observation be D2’s doorway for overheating', () => {
+      const r = scorePropertyRisk(
+        { propertyType: 'House', answers: { site_hazard_exposure: 90 }, growth1Year: 30 },
+        'D2_requires_a_peer',
+      );
+      expect(r.overheating?.scored).toBe(false);
+      expect(r.score).toBeNull();
+    });
+  });
+
   describe('area signals another dimension owns are named, not scored', () => {
     it('excludes crime and socioeconomic from the scoreable set', () => {
       for (const cls of CLASSES) {
@@ -155,22 +265,30 @@ describe('property risk: type selects, never scores', () => {
       expect(alone.overheating?.scored).toBe(false);
 
       const withPeer = scorePropertyRisk(
-        { propertyType: 'House', answers: { site_hazard_exposure: 80 }, growth1Year: 30 },
+        {
+          propertyType: 'House',
+          // Two independent categories, so the property evidence is score-eligible.
+          answers: { site_hazard_exposure: 80, condition_and_maintenance: 80 },
+          growth1Year: 30,
+        },
         'D2_requires_a_peer',
       );
       expect(withPeer.overheating?.scored).toBe(true);
-      // Even admitted it is a minority contributor: the property evidence (80)
-      // keeps three quarters of the weight, so a 30% market pulls the score to
-      // 80×0.75 + 36.5×0.25 = 69.125 rather than dominating it.
-      expect(withPeer.score).toBeCloseTo(69.125, 3);
-      // Overheating alone would be 36.5 — the peer stops it running the score.
+      // Overheating can only deduct, and by at most 25 points: the property
+      // evidence is 80 and a 30% market (anchor 36.5) takes
+      // 80 − (63.5/100 × 25) = 64.125 off it rather than becoming the score.
+      expect(withPeer.score).toBeCloseTo(64.125, 3);
       expect(withPeer.score!).toBeGreaterThan(36.5);
       expect(withPeer.score!).toBeLessThan(80);
     });
 
     it('D1 never scores it, however hot the market', () => {
       const r = scorePropertyRisk(
-        { propertyType: 'House', answers: { site_hazard_exposure: 80 }, growth1Year: 30 },
+        {
+          propertyType: 'House',
+          answers: { site_hazard_exposure: 80, condition_and_maintenance: 80 },
+          growth1Year: 30,
+        },
         'D1_flag_only',
       );
       expect(r.overheating?.scored).toBe(false);
@@ -180,7 +298,11 @@ describe('property risk: type selects, never scores', () => {
 
     it('D3 keeps the signal in Growth and reads none of it under Risk', () => {
       const r = scorePropertyRisk(
-        { propertyType: 'House', answers: { site_hazard_exposure: 80 }, growth1Year: 30 },
+        {
+          propertyType: 'House',
+          answers: { site_hazard_exposure: 80, condition_and_maintenance: 80 },
+          growth1Year: 30,
+        },
         'D3_inside_growth',
       );
       expect(r.overheating?.scored).toBe(false);
@@ -230,7 +352,7 @@ describe('property risk: type selects, never scores', () => {
 
       // And the property risk is identical, which is the whole point: under the
       // live model this pair differs by 12.8 points of Risk.
-      const answers = { site_hazard_exposure: 70 };
+      const answers = { site_hazard_exposure: 70, condition_and_maintenance: 90 };
       expect(scorePropertyRisk({ propertyType: 'House', answers }).score)
         .toBe(scorePropertyRisk({ propertyType: 'House', answers }).score);
     });

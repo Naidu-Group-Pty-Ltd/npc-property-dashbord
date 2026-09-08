@@ -37,7 +37,30 @@
  * for risk finds nothing about an overheated market under the Risk heading.
  *
  * `compareOverheatingVariants` runs the comparison; the recommendation is
- * argued in the audit document, not asserted here.
+ * argued in the audit document, not asserted here. **D2 is provisional and
+ * uncalibrated** — no property-risk evidence exists to calibrate it against,
+ * so the methodology is not final and `RISK_METHODOLOGY_STATUS` says so.
+ *
+ * ## The SECOND renormalisation problem (ME-5.1 item 1)
+ *
+ * Removing asset type left a subtler version of the same fault. If exactly one
+ * property-risk question is answered, averaging over "the questions that were
+ * answered" makes that single observation **100% of the Risk dimension** — one
+ * hazard reading standing in for hazard, planning, condition, supply and
+ * completion together. That is renormalisation by another route.
+ *
+ * So **an observation is not a score**. The two are separated:
+ *
+ *   * `observations` — every property-specific measurement actually available,
+ *     always reported, however few;
+ *   * `eligibility` — whether enough INDEPENDENT property-risk evidence exists
+ *     to support a composite Risk score at all.
+ *
+ * A single hazard reading is shown as evidence and does not become the
+ * dimension. The minimum is deliberately **not** a number invented now:
+ * `MINIMUM_INDEPENDENT_CATEGORIES` is declared uncalibrated, and the honest
+ * position while no property-risk evidence exists is `Risk = null` regardless
+ * of what the threshold would be.
  */
 
 import {
@@ -51,6 +74,46 @@ import {
 export const RISK_MODEL_D_VERSION = '1.0.0';
 
 export type OverheatingVariant = 'D1_flag_only' | 'D2_requires_a_peer' | 'D3_inside_growth';
+
+/** The methodology is not final while nothing exists to calibrate it against. */
+export const RISK_METHODOLOGY_STATUS = 'provisional / uncalibrated' as const;
+
+/**
+ * Independent categories required before observations may compose a score.
+ *
+ * Deliberately uncalibrated. Two is the smallest number at which "composite"
+ * means anything at all, but it is a placeholder for a figure that can only be
+ * set against real property-risk data — which this deployment holds none of.
+ * `RISK_METHODOLOGY_STATUS` is the honest label until then.
+ */
+export const MINIMUM_INDEPENDENT_CATEGORIES = 2;
+
+/**
+ * Risk questions grouped by the independent thing they measure.
+ *
+ * Two answers from the same category are one category, not two: hazard and
+ * planning both describe the site, and counting them as independent evidence
+ * would re-admit the renormalisation this prevents.
+ */
+export const QUESTION_CATEGORY: Readonly<Record<string, string>> = {
+  site_hazard_exposure: 'site',
+  planning_constraints: 'site',
+  condition_and_maintenance: 'building',
+  strata_health: 'building',
+  local_unit_supply_concentration: 'local_market',
+  construction_and_completion: 'delivery',
+  title_and_registration_timing: 'delivery',
+};
+
+export interface RiskEligibility {
+  eligible: boolean;
+  /** Distinct independent categories with at least one answer. */
+  categoriesRepresented: string[];
+  minimumRequired: number;
+  status: typeof RISK_METHODOLOGY_STATUS;
+  /** Why a score is or is not available, in words a report can print. */
+  reason: string;
+}
 
 /** What Model D was given. Buyer facts are deliberately absent from this type. */
 export interface PropertyRiskInputs {
@@ -76,6 +139,13 @@ export interface PropertyRiskResult {
   questions: ReadonlyArray<RiskQuestion & { answered: boolean; value: number | null }>;
   /** Property-level questions answered, over those that could be. */
   coverage: { answered: number; scoreable: number };
+  /**
+   * Every property-specific measurement available, reported whether or not it
+   * is enough to score. An observation is evidence; it is not a dimension.
+   */
+  observations: Array<{ questionId: string; category: string; value: number }>;
+  /** Whether the observations may compose a Risk score at all. */
+  eligibility: RiskEligibility;
   /** The overheating reading, whether or not it scored. */
   overheating: { value: number | null; scored: boolean; statement: string } | null;
   statement: string;
@@ -114,7 +184,14 @@ export function scorePropertyRisk(
   if (!assetClass) {
     return {
       version: RISK_MODEL_D_VERSION, variant, assetClass: null, score: null,
-      questions: [], coverage: { answered: 0, scoreable: 0 }, overheating: null,
+      questions: [], coverage: { answered: 0, scoreable: 0 },
+      observations: [],
+      eligibility: {
+        eligible: false, categoriesRepresented: [],
+        minimumRequired: MINIMUM_INDEPENDENT_CATEGORIES, status: RISK_METHODOLOGY_STATUS,
+        reason: 'No risk schema applies, so no observation is even applicable.',
+      },
+      overheating: null,
       statement: 'The stored property type is a placeholder, so no risk schema applies and no '
         + 'property risk is assessed. This is a gap in the record, not a finding about the property.',
     };
@@ -124,9 +201,34 @@ export function scorePropertyRisk(
   const questions = SCHEMA_WITH_ANSWERS(assetClass, answers);
   const answered = scoreable.filter((q) => typeof answers[q.id] === 'number');
 
+  // --- observations, and whether they may compose a score ----------------
+  const observations = answered.map((q) => ({
+    questionId: q.id,
+    category: QUESTION_CATEGORY[q.id] ?? 'uncategorised',
+    value: answers[q.id],
+  }));
+  const categoriesRepresented = [...new Set(observations.map((o) => o.category))].sort();
+  const eligible = categoriesRepresented.length >= MINIMUM_INDEPENDENT_CATEGORIES;
+
+  const eligibility: RiskEligibility = {
+    eligible,
+    categoriesRepresented,
+    minimumRequired: MINIMUM_INDEPENDENT_CATEGORIES,
+    status: RISK_METHODOLOGY_STATUS,
+    reason: observations.length === 0
+      ? 'No property-specific risk measurement is available, so there is nothing to score.'
+      : eligible
+        ? `Observations span ${categoriesRepresented.length} independent categories `
+          + `(${categoriesRepresented.join(', ')}), so they may compose a Risk score.`
+        : `Only ${categoriesRepresented.length} independent category `
+          + `(${categoriesRepresented.join(', ')}) is measured. A single observation is reported `
+          + 'as evidence and does not become the Risk dimension — that would be the same '
+          + 'renormalisation, arrived at from the other direction.',
+  };
+
   // --- the property-level component ------------------------------------
-  const propertyScore = answered.length
-    ? answered.reduce((a, q) => a + answers[q.id], 0) / answered.length
+  const propertyScore = eligible
+    ? observations.reduce((a, o) => a + o.value, 0) / observations.length
     : null;
 
   // --- overheating, per variant ----------------------------------------
@@ -135,7 +237,9 @@ export function scorePropertyRisk(
 
   let overheatingScored = false;
   if (overheatingScore !== null) {
-    if (variant === 'D2_requires_a_peer') overheatingScored = answered.length > 0;
+    // D2's peer must itself be score-eligible: an ineligible single observation
+    // cannot become the doorway through which overheating scores.
+    if (variant === 'D2_requires_a_peer') overheatingScored = eligible;
     // D1 never scores it; D3 does not read it here at all.
   }
 
@@ -157,10 +261,18 @@ export function scorePropertyRisk(
               + 'single-indicator bias in place of a property-type one.',
         };
 
+  // Overheating can only ever SUBTRACT, and by a bounded amount.
+  //
+  // Averaging it in was wrong in the first draft of this module: the anchors are
+  // a penalty curve that sits at 100 below 12% growth, so blending it as a
+  // positive contributor RAISED the risk score of every property in a calm
+  // market — a systematic upward shift that is a fact about the market rather
+  // than about the property. Taking `min()` instead swings the other way and
+  // lets a hot market become the whole score, which is the renormalisation this
+  // item exists to prevent. A bounded deduction does neither.
+  const OVERHEATING_MAX_DEDUCTION = 25;
   const score = overheatingScored && propertyScore !== null && overheatingScore !== null
-    // Overheating is a minority contributor even when admitted: it is a market
-    // reading standing beside property evidence, not a peer of it.
-    ? propertyScore * 0.75 + overheatingScore * 0.25
+    ? Math.max(0, propertyScore - ((100 - overheatingScore) / 100) * OVERHEATING_MAX_DEDUCTION)
     : propertyScore;
 
   return {
@@ -170,11 +282,14 @@ export function scorePropertyRisk(
     score,
     questions,
     coverage: { answered: answered.length, scoreable: scoreable.length },
+    observations,
+    eligibility,
     overheating,
     statement: score === null
-      ? `No property-level risk evidence is held for a ${assetClass.replace(/_/g, ' ')}, so Risk `
-        + `is not assessed. ${scoreable.length} question(s) apply to this asset class and `
-        + `${answerableCount(assetClass)} can be answered by this deployment today.`
+      ? `Risk is not assessed for this ${assetClass.replace(/_/g, ' ')}. `
+        + `${scoreable.length} question(s) apply to this asset class, `
+        + `${answerableCount(assetClass)} can be answered by this deployment today, and `
+        + `${observations.length} observation(s) are available. ${eligibility.reason}`
       : `Assessed from ${answered.length} of ${scoreable.length} applicable property-risk `
         + 'question(s). The property type selected those questions and contributed no points.',
   };

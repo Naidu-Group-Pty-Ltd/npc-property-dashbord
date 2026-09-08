@@ -134,67 +134,147 @@ export function assessAddressInput(raw: unknown): AddressInputAssessment {
 }
 
 /**
- * Coordinates that are a failure value rather than a place.
+ * Coordinates this system has been OBSERVED to return as a failure value.
  *
- * Compared to four decimal places, which is roughly 11 m — close enough to
- * identify the literal constant and far tighter than any real property would
- * coincidentally match.
+ * `occurrences` is the measured count in the stored corpus of 1,114
+ * coordinates, not a suspicion. That distinction is the whole of ME-5.1 item 5:
+ * only measured failure behaviour may drive an automatic rejection, and a
+ * coordinate that merely looks suspicious gets review logic instead.
+ *
+ * Both entries here are measured. The continent centre was added on theory in
+ * the first draft of this module and then checked — it turns out 2 stored
+ * reports sit on it exactly, so it stays, with its evidence stated.
  */
-export const KNOWN_FAILURE_COORDINATES: ReadonlyArray<{
-  latitude: number; longitude: number; label: string; why: string;
-}> = [
+export interface FailureValue {
+  latitude: number;
+  longitude: number;
+  label: string;
+  /** How many stored coordinates sit on it exactly. Measured, never assumed. */
+  occurrences: number;
+  /** Localities a GENUINE property here would plausibly name. */
+  plausibleLocalityTerms: readonly string[];
+  why: string;
+}
+
+export const OBSERVED_FAILURE_COORDINATES: readonly FailureValue[] = [
   {
     latitude: -33.8688, longitude: 151.2093, label: 'Sydney CBD',
-    why: 'the geocoder’s former literal fallback; 64 stored reports sit on it exactly and none '
-      + 'of their addresses mentions Sydney',
+    occurrences: 64,
+    plausibleLocalityTerms: ['sydney', 'nsw', 'new south wales', '2000'],
+    why: 'the geocoder’s former literal fallback. All 64 stored reports on it lack any mention '
+      + 'of Sydney, and 26 carry an Airtable record id in place of an address',
   },
   {
     latitude: -25.2744, longitude: 133.7751, label: 'centre of the Australian continent',
+    occurrences: 2,
+    plausibleLocalityTerms: [],
     why: 'what a country-restricted geocode returns for an address it cannot match — inside '
-      + 'Australia, on land, and contradicting no state',
+      + 'Australia, on land, contradicting no state. Two stored reports sit on it exactly, and '
+      + 'no residential property exists there',
   },
 ];
 
+/** How confident we are that a coordinate is a failure rather than a place. */
+export type FailureVerdict =
+  /** Not on any observed failure value. */
+  | 'not_a_known_failure'
+  /** On one, and the context shows it is genuinely that place. */
+  | 'plausible_genuine_location'
+  /** On one, and context neither confirms nor refutes. Needs a human. */
+  | 'suspected_failure_value'
+  /** On one, and the context proves it is the fallback. */
+  | 'confirmed_failure_value';
+
+export interface CoordinateContext {
+  /** The address text the geocode was requested for. */
+  requestedAddress?: string | null;
+  /** Structured parts, where the record holds them. */
+  state?: string | null;
+  postcode?: string | null;
+  suburb?: string | null;
+}
+
 export interface CoordinateVerdict {
-  ok: boolean;
-  /** Set when the coordinate is a known failure value. */
+  verdict: FailureVerdict;
+  /** True only for `confirmed_failure_value`. Everything else is reviewable. */
+  rejectOutright: boolean;
   failureValue?: string;
   reason: string;
 }
 
 /**
- * Is this coordinate a location, or a failure value that looks like one?
+ * Adjudicate a coordinate that sits on an observed failure value.
  *
- * This runs BESIDE the country-box and state cross-checks rather than instead
- * of them: those catch a geocode that went abroad, and this catches one that
- * never happened.
+ * The rule ME-5.1 item 4 asks for: a fallback coordinate raises SUSPICION, and
+ * only context settles it. A genuine Sydney CBD property must still resolve —
+ * it would be absurd to make the busiest postcode in the country ungeocodable
+ * — so the coordinate alone never rejects.
+ *
+ * Confirmation requires positive evidence of failure: an input that is not an
+ * address at all, or a request that names a locality nowhere near the fallback.
  */
 export function assessCoordinateIsAPlace(
-  latitude: unknown, longitude: unknown,
+  latitude: unknown, longitude: unknown, context: CoordinateContext = {},
 ): CoordinateVerdict {
   const lat = typeof latitude === 'number' ? latitude : Number.NaN;
   const lng = typeof longitude === 'number' ? longitude : Number.NaN;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    return { ok: false, reason: 'The coordinate is not a usable position.' };
+    return {
+      verdict: 'confirmed_failure_value', rejectOutright: true,
+      reason: 'The coordinate is not a usable position.',
+    };
   }
-  const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
-  for (const f of KNOWN_FAILURE_COORDINATES) {
-    if (r4(lat) === r4(f.latitude) && r4(lng) === r4(f.longitude)) {
-      return {
-        ok: false,
-        failureValue: f.label,
-        reason: `This is ${f.label} to four decimal places — ${f.why}. It is a failure value, `
-          + 'not a measurement, and is not persisted as property geography.',
-      };
-    }
-  }
-  return { ok: true, reason: 'The coordinate is not a known failure value.' };
-}
 
-/** How a caller should record a refusal: recoverable, never silently dropped. */
-export interface GeocodeValidationFailure {
-  resolved: false;
-  recoverable: true;
-  code: 'input_not_an_address' | 'input_absent' | 'answer_is_a_failure_value';
-  detail: string;
+  const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
+  const hit = OBSERVED_FAILURE_COORDINATES.find(
+    (f) => r4(lat) === r4(f.latitude) && r4(lng) === r4(f.longitude),
+  );
+  if (!hit) {
+    return {
+      verdict: 'not_a_known_failure', rejectOutright: false,
+      reason: 'The coordinate is not on any observed failure value.',
+    };
+  }
+
+  const haystack = [
+    context.requestedAddress ?? '', context.state ?? '',
+    context.postcode ?? '', context.suburb ?? '',
+  ].join(' ').toLowerCase();
+
+  // Positive evidence of failure: the request was never an address.
+  const input = assessAddressInput(context.requestedAddress);
+  if (input.kind !== 'usable') {
+    return {
+      verdict: 'confirmed_failure_value', rejectOutright: true, failureValue: hit.label,
+      reason: `The coordinate is ${hit.label} exactly — ${hit.why} — and the request that `
+        + 'produced it was not an address. That is positive evidence of a fallback, not a '
+        + 'coincidence.',
+    };
+  }
+
+  // Positive evidence it is genuine: the request names this place.
+  const namesThePlace = hit.plausibleLocalityTerms.some((t) => t && haystack.includes(t));
+  if (namesThePlace) {
+    return {
+      verdict: 'plausible_genuine_location', rejectOutright: false, failureValue: hit.label,
+      reason: `The coordinate is ${hit.label} exactly, which is a known fallback — but the `
+        + 'request names that locality, so it is plausibly a genuine property there. It is '
+        + 'flagged for review rather than rejected.',
+    };
+  }
+
+  // A place nothing could genuinely be: no property exists at the continent centre.
+  if (hit.plausibleLocalityTerms.length === 0) {
+    return {
+      verdict: 'confirmed_failure_value', rejectOutright: true, failureValue: hit.label,
+      reason: `The coordinate is ${hit.label} exactly — ${hit.why}.`,
+    };
+  }
+
+  return {
+    verdict: 'suspected_failure_value', rejectOutright: false, failureValue: hit.label,
+    reason: `The coordinate is ${hit.label} exactly, which is a known fallback, and the request `
+      + 'neither names that locality nor is obviously not an address. It is held as suspected '
+      + 'rather than resolved, and needs a human or a stronger signal to settle.',
+  };
 }

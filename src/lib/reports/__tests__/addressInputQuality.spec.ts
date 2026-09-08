@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assessAddressInput,
   assessCoordinateIsAPlace,
-  KNOWN_FAILURE_COORDINATES,
+  OBSERVED_FAILURE_COORDINATES,
 } from '@/lib/reports/location/addressInputQuality.pure';
 
 /**
@@ -83,43 +83,72 @@ describe('address input quality', () => {
     });
   });
 
-  describe('a coordinate that is a known failure value is not a location', () => {
-    it('rejects Sydney CBD to four decimal places', () => {
-      const v = assessCoordinateIsAPlace(-33.8688, 151.2093);
-      expect(v.ok).toBe(false);
-      expect(v.failureValue).toBe('Sydney CBD');
-      expect(v.reason).toMatch(/none of their addresses mentions Sydney|64 stored reports/);
+  describe('a fallback coordinate raises suspicion; context settles it', () => {
+    it('confirms a failure when the request was not an address at all', () => {
+      // The real pairing: 26 reports whose address is an Airtable record id,
+      // every one of them on the Sydney CBD fallback.
+      const v = assessCoordinateIsAPlace(-33.8688, 151.2093, {
+        requestedAddress: 'Unknown Property (recekKBh9NIZaebhq)',
+      });
+      expect(v.verdict).toBe('confirmed_failure_value');
+      expect(v.rejectOutright).toBe(true);
+      expect(v.reason).toMatch(/positive evidence of a fallback/);
     });
 
-    it('rejects the centre of the continent', () => {
-      expect(assessCoordinateIsAPlace(-25.2744, 133.7751).ok).toBe(false);
+    it('does NOT reject a genuine Sydney CBD property on the coordinate alone', () => {
+      // The rule ME-5.1 item 4 asks for: the busiest postcode in the country
+      // must stay geocodable.
+      const v = assessCoordinateIsAPlace(-33.8688, 151.2093, {
+        requestedAddress: '1 Martin Place, Sydney NSW 2000',
+      });
+      expect(v.verdict).toBe('plausible_genuine_location');
+      expect(v.rejectOutright).toBe(false);
     });
 
-    it('accepts a genuine coordinate a few hundred metres from the fallback', () => {
-      // A real Sydney CBD property must still resolve; only the exact constant is refused.
-      expect(assessCoordinateIsAPlace(-33.8712, 151.2065).ok).toBe(true);
+    it('holds it as SUSPECTED when context neither confirms nor refutes', () => {
+      const v = assessCoordinateIsAPlace(-33.8688, 151.2093, {
+        requestedAddress: '42 Lowanna Drive',
+      });
+      expect(v.verdict).toBe('suspected_failure_value');
+      expect(v.rejectOutright).toBe(false);
+      expect(v.reason).toMatch(/needs a human or a stronger signal/);
     });
 
-    it('accepts ordinary Australian coordinates', () => {
+    it('rejects the continent centre outright — no property exists there', () => {
+      const v = assessCoordinateIsAPlace(-25.2744, 133.7751, {
+        requestedAddress: '42 Lowanna Drive',
+      });
+      expect(v.verdict).toBe('confirmed_failure_value');
+      expect(v.rejectOutright).toBe(true);
+    });
+
+    it('passes any coordinate that is not an observed failure value', () => {
       for (const [lat, lng] of [
-        [-21.9993496, 148.0641236],  // Moranbah QLD
-        [-31.9505, 115.8605 + 0.01], // near Perth
-        [-37.8136 + 0.02, 144.9631], // near Melbourne
+        [-21.9993496, 148.0641236],   // Moranbah QLD
+        [-33.8712, 151.2065],         // a few hundred metres from the fallback
+        [-31.9605, 115.8705],         // near Perth
       ]) {
-        expect(assessCoordinateIsAPlace(lat, lng).ok).toBe(true);
+        const v = assessCoordinateIsAPlace(lat, lng, { requestedAddress: '1 Some Street' });
+        expect(v.verdict).toBe('not_a_known_failure');
+        expect(v.rejectOutright).toBe(false);
       }
     });
 
     it('rejects a non-numeric coordinate rather than throwing', () => {
-      expect(assessCoordinateIsAPlace('x', 151).ok).toBe(false);
-      expect(assessCoordinateIsAPlace(null, undefined).ok).toBe(false);
+      expect(assessCoordinateIsAPlace('x', 151).rejectOutright).toBe(true);
+      expect(assessCoordinateIsAPlace(null, undefined).rejectOutright).toBe(true);
     });
 
-    it('documents every failure value it knows, with why', () => {
-      expect(KNOWN_FAILURE_COORDINATES.length).toBeGreaterThanOrEqual(2);
-      for (const f of KNOWN_FAILURE_COORDINATES) {
+    it('only lists failure values this system has been OBSERVED to return', () => {
+      // Item 5: measured failure behaviour drives rejection; a merely
+      // suspicious coordinate does not belong here.
+      expect(OBSERVED_FAILURE_COORDINATES.map((f) => [f.label, f.occurrences])).toEqual([
+        ['Sydney CBD', 64],
+        ['centre of the Australian continent', 2],
+      ]);
+      for (const f of OBSERVED_FAILURE_COORDINATES) {
+        expect(f.occurrences).toBeGreaterThan(0);
         expect(f.why.length).toBeGreaterThan(30);
-        expect(f.label.length).toBeGreaterThan(3);
       }
     });
   });
