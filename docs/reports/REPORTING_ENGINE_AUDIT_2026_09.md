@@ -6455,7 +6455,9 @@ separate step, and a test asserts the reading says so.
 ### 60.10 The one operator action
 
 > **Where:** the Command Centre, signed in as an administrator —
-> **Integrations** (`/admin/integrations`).
+> **Integrations** — reached from the sidebar under Administration. The route
+> is **`/integrations`**; there is no `/admin/integrations` and the router
+> 404s on it.
 >
 > **What to do:** press **Run source probe** at the top of the page. One click.
 > Nothing is written, no report or score is touched, and no credential value
@@ -6465,6 +6467,16 @@ separate step, and a test asserts the reading says so.
 > (which names read *set* / *not set*), the per-provider standing, and the
 > per-source verdict rows. Presence only. **Do not send a key, a fragment of
 > one, or a screenshot that includes one.**
+
+**Correction — this instruction named the wrong URL when first written.**
+ME-5.1 said `/admin/integrations`. `App.tsx` declares
+`<Route path="integrations">` and the navigation registry points at
+`/integrations`; loading `/admin/integrations` in a built bundle logs
+*"404 Error: User attempted to access non-existent route"* and renders the
+not-found page. An operator clicking the sidebar entry was never affected —
+that link has always been right — but an instruction naming a URL that 404s
+is one an operator cannot follow, and it is exactly the kind of detail that
+turns "the feature is missing" into a half-day investigation.
 
 Two things that answer are worth the click even though every credential slot is
 expected to be empty.
