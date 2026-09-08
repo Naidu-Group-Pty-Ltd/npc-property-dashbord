@@ -143,18 +143,32 @@ describe('the migration is dated where it will actually be applied', () => {
    */
   const migrations = readdirSync(join(process.cwd(), 'supabase/migrations'))
     .filter((f) => /^\d{14}_.*\.sql$/.test(f));
-  const highWater = migrations
-    .map((f) => f.slice(0, 14))
-    .filter((v) => !v.startsWith('202609'))
-    .sort()
-    .at(-1)!;
+
+  /*
+   * The mark these two had to clear, recorded rather than recomputed.
+   *
+   * It is the latest version PRODUCTION had applied on 7 September 2026, the
+   * measurement in the comment above, and it is a historical fact that cannot
+   * change. Deriving it from the tree instead — `max(every migration here)` —
+   * is what this test did first, and that is a different and much stronger
+   * claim: that no migration dated after these two may ever be added. It fails
+   * on the NEXT migration anybody writes, whatever it is and however correct,
+   * because a newer file raises the mark it is measured against. The first one
+   * to hit it was an unrelated AML change a day later.
+   *
+   * The rule worth keeping is the one that was measured: a migration below the
+   * mark already applied is skipped as history, so these two had to sort above
+   * it. A migration ABOVE them is not a violation — it is what every
+   * subsequent migration is supposed to look like.
+   */
+  const APPLIED_HIGH_WATER = '20261112010000';
 
   it.each([
     '20261113110000_builder_stock_runtime_reopen.sql',
     '20261113110001_builder_stock_settler_fixed_concurrency.sql',
-  ])('%s sorts at or above the rest of the tree', (name) => {
+  ])('%s sorts above the version production had already applied', (name) => {
     expect(migrations).toContain(name);
-    expect(name.slice(0, 14) >= highWater.slice(0, 8) + '000000').toBe(true);
+    expect(name.slice(0, 14) > APPLIED_HIGH_WATER).toBe(true);
   });
 
   it('and the reopen still precedes the tick that calls it', () => {
