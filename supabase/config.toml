@@ -1619,3 +1619,9 @@ verify_jwt = false
 
 [functions.template-import-finalize-worker]
 verify_jwt = false
+
+[functions.market-source-probe]
+# Read-only diagnostic. Guarded by the gateway AND by its own verifyAuth: it
+# reports which market-data credential NAMES are set (never a value) and probes
+# a fixed allow-list of source URLs. It writes nothing.
+verify_jwt = true

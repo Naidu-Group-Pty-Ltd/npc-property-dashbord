@@ -3931,3 +3931,653 @@ at all, so the Executive Verdict scorecard draws nothing on most of them, and
   corrected my own hypothesis about which variants it reaches
 - `vitest run` full suite green; `tsc`, `eslint`, `audit:style`,
   `security:edge-check` at its 339 baseline
+
+---
+
+## §46 — Evidence-Backed Scoring: what market data this platform actually has (2026-09-08)
+
+Step 1 of the Evidence-Backed Scoring brief is to trace the real Cotality
+entitlement and every other authoritative market source, on the instruction not
+to assume a vendor's public field list is what this application is entitled to.
+It is a gate: the Growth Evidence Layer cannot be built on a source that returns
+nothing.
+
+**There is no capital-growth evidence in this platform.** Both candidate
+sources are traced below, and neither has ever delivered a value.
+
+### Cotality / CoreLogic — scaffolding, never connected
+
+`supabase/functions/cotality-service/index.ts` says so in its own header:
+*"SCAFFOLDING ONLY. Status: awaiting sandbox credentials from Cotality."* While
+`COTALITY_API_KEY` is unset every branch returns a `modelled` envelope with
+`value: null` and confidence 0.3.
+
+Measured rather than taken on trust:
+
+| check | result |
+| --- | ---: |
+| `data_provenance` rows (where the envelope would persist) | **0** |
+| `cotality_*` / `corelogic_*` tables | **none exist** |
+| calls in `api_usage_log` (7 months, 20 services) | **0** |
+| callers of `cotality-service` anywhere in the repo | **0** |
+
+The only references outside the function are three comments in
+`investment-scoring-service` — `cotalityReady: true`, *"when cotality-service
+envelopes land"*. It is a placeholder for an integration that was never
+completed.
+
+### Domain — wired, called, and returns nothing
+
+`domain-data-service` is real code against a real endpoint:
+
+```
+https://api.domain.com.au/v1/suburbPerformanceStatistics/{state}/{suburb}
+  ?propertyCategory={house|unit}&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12
+```
+
+Its declared `SuburbPerformance` is close to exactly what the Growth and Demand
+dimensions need — `medianSoldPrice`, `numberSold`, `medianRentListingPrice`,
+`numberRented`, `daysOnMarket`, `auctionClearanceRate`, `annualGrowth`,
+`rentalYield` — at suburb + state + dwelling-type granularity. It **is** called
+by `generate-investment-report` (guarded on `suburb && state`).
+
+And it has never returned a value. The generator's own provenance record is the
+proof, because it stamps every source it attempted:
+
+```
+"seifa":     { source: abs_seifa,   confidence: 0.9  }
+"economics": { source: rba,         confidence: 0.9  }
+"employment":{ source: abs_employment, confidence: 0.9 }
+"crimeStatistics": { source: state_crime_data, confidence: 0.8 }
+"locationIntelligence": { source: google_maps, confidence: 0.95 }
+"marketData": null                          ← the only null
+```
+
+46 of the 68 reports since June carry the `marketData` key; **0 of 68 carry a
+non-null value**, and `demographics_data.marketData.medianPrice`,
+`.annualGrowth`, `.vacancyRate` and `.daysOnMarket` are absent on **all 992**
+scored reports.
+
+**Absence from `api_usage_log` is not the evidence here**, and saying so would
+repeat a mistake this programme has already made twice: `domain-data-service`
+uses a bare `fetch` rather than `meteredFetch`, so a working call would not
+appear there either. What is evidence is that it writes nothing to
+`api_health_log` while six sibling services do, which matches the code path
+where `DOMAIN_API_KEY` is unset — that branch returns `dataQuality:
+'unavailable'` *before* any fetch or logging.
+
+So the distinction that matters commercially: **this is most likely a missing
+credential, not a missing capability.** Domain's Suburb Performance
+Statistics product would supply most of the Growth and Demand layer. That is a
+procurement question, not an engineering one, and it should be settled before
+any further scoring work.
+
+### What the platform DOES hold
+
+| source | rows | what it can evidence |
+| --- | ---: | --- |
+| `abs_sa2_population` | **61,335** (2001–2025, 2,454 SA2s) | population growth at 1/3/5/10-year horizons, real CAGR |
+| `rba_observations` | 3,518 | macro rate and lending series |
+| `abs_census_poa` | 2,643 | income, tenure, household composition |
+| `abs_seifa_poa` | 2,627 | socio-economic advantage deciles |
+| `suburb_directory` | 18,519 | geography resolution |
+| `median_rent_cache` | 156 (38 suburbs) | rents, thin |
+
+Every one of these is a **growth driver**, not capital growth. Under the
+brief's own §2 distinction — *"population growth is not itself evidence that
+property values have grown"* — the platform can currently evidence the
+supporting half of the Growth dimension and **none of the primary half**.
+
+### The consequence for scoring
+
+A Growth dimension built only on population, SEIFA and macro series would be
+labelled Capital Growth while measuring none of it. That is the same class of
+defect as the placeholder 50 it replaces — a dimension asserting more than its
+evidence supports — and it would fail the brief's own test of surviving a
+client challenge.
+
+Scoring V2 therefore stops here, unwired, pending a decision on the market-data
+source. The arithmetic corrections are built and backtested (§45); what is
+missing is the evidence, and no amount of engineering substitutes for it.
+
+---
+
+## §47 — The wire is cut in four places, and the ABS answers (2026-09-08)
+
+§46 stopped at "there is no market-data credential" and put a procurement
+question to the owner. That was the right gate and the wrong stopping point:
+following the payload the rest of the way to the scorer shows that **restoring
+a credential would not have moved a single score**, and probing the public
+registers shows that the primary evidence the brief demands is available for
+nothing.
+
+### Part 1 — Four independent breaks between market data and a grade
+
+Each is fatal on its own. Each reports as normal operation.
+
+**1. No credential.** `domain-data-service` reads `DOMAIN_API_KEY` and returns
+HTTP 500 `Domain API key not configured` before any fetch. It is alone among
+its siblings in writing no `api_health_log` row — `abs-census` (2,441),
+`climate-data` (2,289), `crime-statistics` (1,747), `public-transport` (639),
+`bc-segment-engine` (194) and `risk-assessment` (172) all do, Domain has never
+written one. Consistent with the unset branch; not proof of it, because the
+function logs health only after a successful call.
+
+**2. The payload never reaches the scorer.** This is the break that matters.
+`generate-investment-report` stores the Domain response as
+`enhancedData.domainData` — a **sibling** of `demographics` — and then calls
+the scorer with:
+
+```ts
+body: JSON.stringify({
+  property: { … },
+  demographics: enhancedData.demographics,
+  locationIntelligence: enhancedData.locationIntelligence,
+  financials: enhancedData.financials
+})            // ← domainData is not here, and never has been
+```
+
+while every scorer reads
+
+```ts
+const marketData = demographics.marketData || financials.marketData || {};
+```
+
+— `investment-scoring-service` (twice: `transformScoringInput` and
+`transformAreaInput`), `_shared/investmentScoreEngine.ts`, and
+`backfill-investment-scores`. **No writer anywhere in the repository writes
+`marketData` under either key.**
+
+Measured across the whole corpus on 2026-09-08:
+
+| assertion | result |
+| --- | ---: |
+| reports stored | 1,199 |
+| distinct keys ever present in `demographics_data` | **7** — `dataQuality`, `dataSource`, `population`, `employment`, `income`, `housing`, `cached` |
+| `demographics_data ? 'marketData'` | **0** |
+| `financial_calculations ? 'marketData'` | **0** |
+| `data_sources->'marketData'` populated | **0** of 1,049 carrying the key |
+
+So `marketData` has evaluated to `{}` on every report this platform has ever
+generated, and `medianSuburbPrice`, `priceGrowth1Year`, `priceGrowth3Year`,
+`vacancyRate` and `daysOnMarket` have been `undefined` every time. This is the
+`aml.cases.tenant_id` class again — reading a name no writer writes, with
+nothing to report it — except in JSONB, where there is not even a 42703.
+
+**3. A name mismatch behind the disconnect.** Were the payload routed, Domain
+returns `medianSoldPrice`; the scorer reads `marketData.medianPrice`.
+`annualGrowth` and `daysOnMarket` would map; the median would not.
+
+**4. The series is fetched and thrown away.** The request asks for twelve
+windows (`chronologicalSpan=12&tPlusFrom=1&tPlusTo=12`) and the handler keeps
+
+```ts
+series.seriesInfo[series.seriesInfo.length - 1]
+```
+
+— one point. So even a live, routed, correctly-named integration yields **one**
+growth horizon, where the brief's §3 requires 5-year, 3-year, 1-year and a
+consistency reading. And two fields the scorers want are not in the declared
+`SuburbPerformance` interface at all: `priceGrowth3Year` and `vacancyRate`.
+
+**The conclusion the credential question was hiding:** breaks 2–4 are ours, they
+are free to fix, and until they are fixed no market-data purchase can change a
+grade.
+
+### Part 2 — The primary evidence is public, and it was measured
+
+Probed live from this egress on 2026-09-08 (single range requests, no crawl):
+
+| source | result |
+| --- | --- |
+| ABS Data API (`data.api.abs.gov.au`) | **answers** |
+| VIC / QLD / SA open-data portals (CKAN) | answer |
+| NSW Valuer General bulk sales | blocked at this proxy (502 CONNECT) — re-probe from the Supabase egress, as G2 did |
+
+Two ABS dataflows carry property values. **`RPPI`** (Residential Property Price
+Index) returns nothing after **2021-Q4** — five years stale, and a reminder of
+the sanctions rule that *freshness of the load is not currency of the data*.
+**`RES_DWELL`** is current and is the answer:
+
+> **`ABS,RES_DWELL` — Residential Dwellings: Unstratified Medians and Transfer
+> Counts by Dwelling Type, GCCSA and Rest of State**
+>
+> - 4 measures: transfer **counts** and **median prices**, each split
+>   *established houses* vs *attached dwellings*
+> - 15 regions (8 Greater Capital Cities + 7 Rest-of-State), plus state and
+>   two weighted averages in the codelist
+> - **2002-Q1 → 2026-Q2**, 98 quarters, 60 series, 92–98 observations each
+> - medians are `AUD` at `UNIT_MULT=3`; counts are `NUM` at `0`
+
+Executed end to end, median price of established house transfers, growth to
+2026-Q2, annualised:
+
+| region | median | 1yr | 3yr p.a. | 5yr p.a. | 10yr p.a. |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Greater Sydney | $1,488,000 | −2.13% | 3.16% | 4.28% | 5.21% |
+| Rest of NSW | $810,000 | 5.06% | 4.49% | 6.54% | 6.66% |
+| Greater Melbourne | $850,000 | 1.19% | 0.38% | 0.48% | 3.37% |
+| Rest of Vic. | $625,000 | 8.70% | 3.12% | 5.49% | 7.44% |
+| Greater Brisbane | $1,155,000 | 18.83% | 14.22% | 12.89% | 8.84% |
+| Rest of Qld | $800,000 | 10.10% | 12.62% | 10.76% | 6.53% |
+| Greater Adelaide | $975,000 | 13.24% | 11.57% | 12.13% | 8.28% |
+| Rest of SA | $584,000 | 15.74% | 13.95% | 13.52% | 8.23% |
+| Greater Perth | $1,010,000 | 18.82% | 18.96% | 13.34% | 6.86% |
+| Rest of WA | $665,000 | 20.91% | 18.46% | 11.90% | 7.26% |
+| Greater Hobart | $750,000 | 4.90% | 2.50% | 3.55% | 7.47% |
+| Rest of Tas. | $625,000 | 13.64% | 5.32% | 8.27% | 9.47% |
+| Greater Darwin | $752,000 | 21.37% | 8.45% | 5.90% | 3.22% |
+| Rest of NT | $450,000 | 1.28% | −1.99% | −0.44% | 0.55% |
+| ACT | $1,030,000 | 3.00% | 1.57% | 2.62% | 5.16% |
+
+This is capital growth in the brief's own sense — **actual value movement**,
+measured, government-published, dwelling-type aware, and reproducible by anyone
+issuing the same request. It discriminates: Greater Perth and Greater Melbourne
+are twenty points apart on the three-year reading, where today both score 50.
+The transfer counts on the same dataflow are a genuine turnover signal for the
+Demand dimension.
+
+Two limits travel with it, and must be recorded on every figure rather than
+argued away:
+
+- **It is unstratified.** A raw median of transfers, not quality-adjusted, so
+  composition shifts move it. The ABS says so in the dataflow's own title.
+- **The grain is regional, not suburb** — Greater Sydney, Rest of NSW. Under
+  the brief's §9 (persist the geographical level) and §8 (evidence confidence)
+  that is exactly what the design already anticipates: a coarse measure,
+  labelled coarse, beats a placeholder 50 and beats a fabricated suburb figure.
+  It is a floor to build on, not a ceiling — suburb-grain sales registers are
+  the next layer, and NSW's needs re-probing from the Supabase egress.
+
+### What this changes
+
+The gate in §46 asked the owner to choose a vendor. The measurement says the
+first move needs no vendor and no spend: route the market payload to the
+scorer, fix the field names, keep the series, and stand a deterministic Growth
+dimension on `RES_DWELL`. A vendor purchase remains the route to *suburb*
+grain, vacancy and days-on-market — but it is now an improvement on a working
+dimension rather than the precondition for having one.
+
+Scoring V2 stays unwired, per the brief's §14.
+
+---
+
+## §48 — Backtesting the ABS growth layer: it works, and that is the problem (2026-09-08)
+
+§47 found a real, free, authoritative capital-growth source and recommended
+standing the Growth dimension on it. Requirement 12 of the brief says to
+backtest before wiring. Doing so changes the recommendation, and the reason is
+one the brief anticipated in its own §8.
+
+Method: the 992 scored reports, `scoringV2.pure.ts` **unmodified**, with
+`priceGrowth1Year` and `priceGrowth3Year` supplied from `ABS,RES_DWELL` for
+the report's state and dwelling type. Reads only; nothing written.
+
+### The grade becomes a statement about the state
+
+| state | n | growth subscore | composite min | median | max | spread |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| WA | 71 | **100** | 73 | **90** | 98 | 25 |
+| QLD | 52 | **100** | 66 | 82 | 91 | 25 |
+| VIC | 56 | 44 | 45 | 54 | 59 | 14 |
+| NSW | 13 | 35 | 46 | 53 | 55 | 9 |
+
+Growth carries 0.40 of the nominal weight and **every property in a state
+receives the identical figure**, so the within-state spread is 9–25 points
+while the between-state swing is 55. Under this layer the median Perth
+property is an **A+** and no Sydney property can reach **A** at all, whatever
+its merits.
+
+That fails the brief's own test. "Why is my property A+?" answered with
+"Greater Perth median house prices rose 18.8% last year" is a statement about
+Perth. "Why is mine C+?" answered with "Greater Sydney fell 2.1%" is a
+statement about Sydney. Neither is a defence of a grade awarded to a property.
+
+### Every A+ in that run is a renormalisation
+
+| the A/A+ cohort (119 of 216 resolvable) | |
+| --- | --- |
+| graded on 4 of 5 dimensions | 73 |
+| graded on **3 of 5** | 46 |
+| `weightCovered` values observed | **0.60, 0.70, 0.85** — never 1.00 |
+
+So not one A+ here rests on the full nominal evidence; each is ≤85% of it
+renormalised to 100%. Requirement 8 forbids precisely this — *"Do not simply
+renormalise 45% of evidence to 100% and allow an A+"* — and the backtest shows
+the gate is load-bearing rather than decorative. Arithmetic that renormalises
+correctly is still not a defensible grade when what it renormalises is thin.
+
+### A third finding, from the resolution attempt
+
+Only **216 of 992** reports could be resolved to a state from
+`property_address`, and the reason is not a parsing weakness: **743 of the 776
+unresolved carry no comma at all** — `6 Acer Court`, `1/27D Mitchell Street`,
+`Parmelia`, `The Glengarry Hotel (The Glen Pub)`. Bare street lines with no
+suburb, no state, no postcode.
+
+But 967 of 992 carry `location_intelligence.coordinates`. So the geography is
+recoverable, from the coordinate and never from the address string — and the
+join is already in the database: `abs_sa2_meta.gccsa_name` carries all fifteen
+region names **exactly** as `RES_DWELL` spells them ("Greater Sydney", "Rest of
+Vic.", "Australian Capital Territory"), so no correspondence needs inventing.
+Any growth layer must be keyed on the resolved coordinate.
+
+### What this changes
+
+The ABS layer is worth having and is not the Growth dimension. Three
+conclusions:
+
+1. **`RES_DWELL` belongs in the product as regional CONTEXT**, labelled as the
+   region's movement and carrying its own weight, never presented as this
+   property's capital growth.
+2. **Suburb-grain evidence is genuinely required** for a property-level growth
+   score that survives a client challenge. That is now measured rather than
+   asserted, and it is the case for the purchase §47 said was optional.
+3. **The evidence-confidence gate comes first, whatever the source.** On this
+   corpus it is the difference between a grade and a renormalisation, and no
+   data purchase substitutes for it.
+
+Scoring V2 stays unwired.
+
+---
+
+## §49 — The Domain trace, and one contract the engine may read (2026-09-08)
+
+Step 1 of the Canonical Market Evidence brief: trace the existing Domain
+integration completely before introducing another provider. No production
+calls were made and no live scoring was changed.
+
+### 1. What the integration requires
+
+One credential, `DOMAIN_API_KEY`, sent as an `X-Api-Key` header. It is the
+**only** Domain name anywhere in the repository — there is no OAuth client id
+or secret, so the integration is built for Domain's API-key style of access
+rather than its OAuth client-credentials style. It is declared in four places
+and nowhere else: the Integrations registry (`domain` card, one required
+password field), `integrationSecrets.ts`'s allow-list, the placeholder-key seed
+migration, and `apiUsageBilling.pure.ts`.
+
+`domain-data-service` reads it with `Deno.env.get('DOMAIN_API_KEY')` and, when
+it is absent, returns **HTTP 500** `Domain API key not configured` before any
+outbound request.
+
+### 2. Does a credential exist in this deployment?
+
+**Not established, and the three routes that should have answered it are all
+mute.** This is worth stating precisely rather than guessing:
+
+| route | reading |
+| --- | --- |
+| `integration_configs` row for `DOMAIN_API_KEY` | present, **empty**, `updated_at` still the 2026-08-02 seed |
+| `update-integration-secret` | writes the project environment through the Management API and **never writes that table**, so the empty row is suggestive, not conclusive |
+| `activity_logs` audit of secret updates | **zero rows** — and see below |
+| edge function logs | retain 24 h; the last report was generated 2026-09-05, so no runtime evidence survives |
+| `api_health_log` | Domain has never written a row, while six sibling services have |
+
+**A new finding sits inside that table.** `update-integration-secret` logs every
+change with `entity_type: 'settings'`, and `settings` **is not one of the 26
+values of the `activity_entity_type` enum**. The insert is `await`ed without
+its error being read, so PostgREST's rejection is discarded: every secret
+update ever made through the Integrations page has failed to write its audit
+row while returning `success: true` to the operator. That is an audit-trail
+gap in its own right, and it is why the log cannot answer the question above.
+Out of scope for this stage; recorded, not fixed.
+
+**What would settle it, in one look:** Supabase Dashboard → Project Settings →
+Edge Functions → Secrets, and check whether `DOMAIN_API_KEY` is listed. If it
+is absent, that is the whole answer. If it is present, the service already
+carries the exact probe — `POST domain-data-service { "healthCheck": true }`
+returns the status code and a decoded message, and because the health check
+runs *after* the missing-key guard it distinguishes **unset** (500, our own
+message) from **set but unentitled** (403) and **set but invalid** (401). That
+is a production call, so it is left for explicit go-ahead.
+
+### 3. Entitlement and scopes
+
+The endpoint is `GET /v1/suburbPerformanceStatistics/{state}/{suburb}`.
+Whether this deployment's key is entitled to it **cannot be established from
+the repository** — entitlement is a property of the Domain account, not of the
+code, and the audit log that would show a successful call has never recorded
+one. The honest statement is: *the required scope is whichever Domain package
+includes Suburb Performance Statistics, and confirming it needs either the
+dashboard or the health-check call above.* Anything more specific would be a
+guess presented as a trace.
+
+### 4. The exact fields, and the two that are not there
+
+The service declares and reads nine values off the latest series entry:
+`medianSoldPrice`, `numberSold`, `medianRentListingPrice`,
+`numberListedForRent`, `daysOnMarket`, `auctionClearanceRate`,
+`medianSoldPricePercentChange` (mapped to `annualGrowth`), plus a locally
+computed `rentalYield` and a `dataQuality` flag.
+
+Two fields the scorers ask for are **not in that interface at all**:
+`priceGrowth3Year` and `vacancyRate`. No configuration change produces them
+from this endpoint.
+
+### 5. The multi-period series
+
+The request is `?propertyCategory={house|unit}&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12`
+— twelve windows. The handler then keeps
+
+```ts
+series.seriesInfo[series.seriesInfo.length - 1]
+```
+
+one element, and discards the rest. **The history is fetched and thrown away.**
+This is the single most consequential line for the brief's §4, because
+multi-horizon growth needs exactly what is being dropped.
+
+### 6–8. The three breaks already recorded
+
+Traced in §47 and unchanged: `domainData` is a sibling of `demographics` and
+is never included in the scoring call; the scorers read
+`marketData.medianPrice` while Domain returns `medianSoldPrice`; and the
+series truncation above. Breaks 6–8 are ours and free to fix; break 2 is a
+credential question.
+
+### Can Domain be the national evidence source?
+
+On the evidence available: **partly, and not alone.** Suburb Performance
+Statistics is nationally consistent in shape and is keyed by state + suburb
+with a dwelling split, which is the right grain. But it carries no vacancy
+rate and no multi-year growth field, and its per-suburb coverage for thin
+markets is unknown until a key exists. It is a strong *primary* adapter for
+median, 1-year growth, days on market, sales count and rent — with the series
+retained rather than truncated, several horizons become derivable from the
+same call — and it needs the ABS and the state registers behind it for
+benchmarks and for the fields it does not carry.
+
+### The contract itself
+
+`_shared/reports/market/marketEvidence.pure.ts` is the structure the scoring
+engine will be allowed to read, and the only one. Its shaping rule:
+**provenance is per MEASURE, not per envelope.** The obvious design puts one
+`level`/`source`/`asOf` on the bundle, and it cannot work, because the
+hierarchy fills different fields from different levels in the same request — a
+median from the suburb, a vacancy from the postcode, a benchmark from the
+GCCSA. An envelope-level `level: 'suburb'` would be a false statement about
+most of the fields and the report would print it.
+
+So every measure is an `EvidencePoint` carrying its own level, area name,
+dwelling-type match, provider, period, sample size, periods available and
+method. Three rules are pinned by tests:
+
+- **Absent is absent.** Every field optional; a measured `0` is a value and an
+  absent point is the absence of one.
+- **A dwelling-type MATCH outranks a finer geography.** A suburb figure mixing
+  houses and units is a statement about a different market; a postcode house
+  figure is the same market read more broadly.
+- **Benchmarks resolve to the COARSER point.** Filling a benchmark from the
+  subject's own suburb makes every property exactly average against itself and
+  deletes the relative-performance signal §48 says the score needs.
+
+The module holds no score, grade, weight or confidence verdict — only the raw
+inputs a confidence calculation consumes. Nothing is wired.
+
+---
+
+## §50 — The credential audit trail was never written (2026-09-08)
+
+Found while tracing the Domain credential (§49) and fixed here as an isolated
+security correction, separate from any scoring change.
+
+### What was wrong
+
+`activity_logs.entity_type` is the Postgres enum `activity_entity_type`.
+`update-integration-secret` wrote `entity_type: 'settings'`, which is **not one
+of its 26 values**, and `await`ed the insert without reading its `error` — so
+PostgREST's `22P02` rejection was discarded and the handler returned
+`success: true`.
+
+**Every credential change ever made through the Integrations page failed to
+record who changed which secret, and told the operator it had worked.**
+Measured 2026-09-08: `activity_logs` holds **5,037 rows across 22 enum values**
+and not one `settings` row has ever existed, because not one could.
+
+A second instance had the same shape: `aml-verification` wrote
+`entity_type: 'aml_provider_config'` and discarded the error explicitly with
+`.then(() => undefined, () => undefined)`, so promoting the AML screening
+provider from simulator to live — a change to what the platform may do —
+recorded nothing either.
+
+An audit row that silently fails to write is worse than none, because the
+absence reads as *"nothing happened"* rather than *"nothing was recorded"*.
+
+### A correction on scope
+
+A first scan counted 108 invalid literals across 25 files and that was **wrong**
+— the pattern matched any `entity_type:` property, including AML purchasing
+structures (`Individual`, `Company`, `SMSF`) and the portal functions, which
+write to their own tables (`finance_portal_activity_log`,
+`solicitor_portal_activity_log`). Scoped to literals inside an actual
+`activity_logs` insert, the real count is **two**, both fixed here.
+
+### The fix
+
+`_shared/activityAudit.ts` is the one place that knows the vocabulary and the
+one way to write a row. Three rules:
+
+- **The vocabulary is checked before the write.** A PostgREST enum rejection is
+  an opaque runtime `22P02` on a path that may run rarely; `recordActivity`
+  throws a named error instead, and `check-activity-entity-types.mjs` makes it
+  a build failure. The guard reads `ACTIVITY_ENTITY_TYPES` from the module, so
+  a migration that extends the enum is declared in exactly one place.
+- **A failed audit write is reported, never swallowed.** `recordActivity`
+  returns an outcome rather than throwing for a database fault. For a secret
+  update the Management API write has *already* succeeded, so failing the
+  request would be a lie in the other direction — the response now carries
+  `auditLogged` and, when false, `auditError`.
+- **An audit row never carries a credential.** Metadata records secret
+  **names**; `assertNoSecretValues` refuses a value under a key matching
+  secret/token/password/api_key/credential.
+
+`entity_type: 'system'` is the enum's value for a platform-level change, which
+is what both call sites are.
+
+Verified by execution: the guard was re-run against the original defect and
+fails on it (`update-integration-secret/index.ts:227 entity_type: 'settings'`),
+then passes once restored. Test files are excluded from the scan, because a
+spec that feeds `'settings'` in to prove it is refused is the opposite of the
+defect. 12 new tests; edge type-check back to its 339 baseline.
+
+Secret-update behaviour is otherwise unchanged.
+
+---
+
+## §51 — The Domain integration is legacy, and the route is gone (2026-09-08)
+
+Step 2 of the brief: verify Domain authentication against the *current* API
+contract rather than assuming the repository's `X-Api-Key` implementation is
+right. Established by unauthenticated execution — **no credential was sent** in
+any of these calls.
+
+### The measurement
+
+| request (no credential) | result |
+| --- | --- |
+| `GET /v1/suburbPerformanceStatistics/NSW/Bowral` | **404** `{"title":"Not Found","detail":"No Matching Route"}` |
+| `GET /v2/suburbPerformanceStatistics/NSW/Bowral/2576` | **401** `{"title":"Not Authorized","detail":"Unable to verify credentials"}` |
+| `GET https://auth.domain.com.au/v1/connect/token` | **400** `{"error":"invalid_request"}` |
+
+**The v1 route this repository calls no longer exists.** That is a routing
+answer, not an authorisation one: Domain's gateway says there is no such
+endpoint, and it says so *before* any credential question arises. The v2 route
+— with the `{postcode}` third segment — exists and is credential-gated.
+
+The token endpoint answering `invalid_request` to a bare GET means it is live
+and rejecting a malformed request, rather than absent.
+
+### What that changes
+
+`domain-data-service` could not have worked in its current form **whether or
+not a credential was ever configured**. A valid key would have produced a 404,
+`response.ok` false, `return null`, and `marketData: null` — which is precisely
+the reading on every one of the 992 scored reports (§47). The missing
+credential was never the whole story, and on this evidence it may not have been
+any of it.
+
+The implementation is legacy on three independent counts:
+
+1. **Version** — `/v1/` is removed; the current route is `/v2/`.
+2. **Path shape** — v2 takes `{state}/{suburb}/{postcode}`; the repo sends
+   `{state}/{suburb}` and holds no postcode in that call at all.
+3. **Authentication** — the repo sends `X-Api-Key`. Domain's own access
+   documentation states *"All Authorisation and Token requests are via
+   `https://auth.domain.com.au/`"*, and the live token endpoint confirms an
+   OAuth2 client-credentials flow.
+
+### The limit of what probing can settle
+
+Sending a dummy `X-Api-Key`, a dummy `Authorization: Bearer`, and no header at
+all produced **byte-identical 401 bodies**. Domain's gateway does not
+distinguish "unrecognised scheme" from "invalid credential", so the accepted
+scheme cannot be read off an unauthenticated probe — it is settled by the
+project's own configuration, not by the API's error text. Saying otherwise
+would be a guess dressed as a trace.
+
+### Package and scope
+
+Domain's package catalogue lists **Properties & Locations** — *"Explore auction
+results and property datasets. Access market performance and demographic
+stats."* That is the package containing suburb performance statistics, and the
+brief names the scope as `api_suburbperformance_read`. Their documentation is
+explicit that *"You will not be able to access any API Endpoint until the
+required API package(s) have been added to your project."*
+
+Whether the Aurixa/Naidu project holds that package and scope is a fact about
+the Domain account and is not establishable from this repository or from an
+unauthenticated call.
+
+### What is required, named exactly
+
+- A Domain project with the **Properties & Locations** package added, granting
+  **`api_suburbperformance_read`**.
+- **`DOMAIN_CLIENT_ID`** and **`DOMAIN_CLIENT_SECRET`** for the OAuth2
+  client-credentials flow against `https://auth.domain.com.au/v1/connect/token`
+  — neither name exists anywhere in this repository today, which is itself
+  evidence that the integration predates the current contract.
+- The call rewritten to `/v2/.../{postcode}` with a Bearer token.
+
+### The probe
+
+`market-source-probe` is a read-only diagnostic added here and **not yet run**:
+it deploys on merge to `main`, and its own `verifyAuth` means it needs an
+authenticated administrator session rather than a session key this work holds.
+It reports which credential NAMES are set — never a value, never a length,
+never a prefix, because a length is a hint and a prefix identifies the issuer —
+and probes a **fixed allow-list** of source URLs. Targets are selected by name
+from that list and can never be supplied in the request body: a probe that took
+a URL from its caller would be server-side request forgery in a function
+holding the service-role key. It writes nothing, and it classifies rather than
+summarises — `credential_absent`, `credential_invalid_or_scope_missing`,
+`not_entitled`, `route_not_found`, `rate_limited`, `blocked_by_origin` and
+`reachable` are different findings with different owners, and "unavailable"
+sent this investigation to the wrong remedy twice already.
+
+It carries the government sources too (VIC, NSW Valuer General, SA, ABS),
+because those refuse *this* development egress — `land.vic.gov.au` answers 403
+and the NSW Valuer General 502 — exactly as `directory.gov.au` and `aph.gov.au`
+did during the PEP work, where the two egresses turned out to differ. Whether
+they answer the Supabase runtime is the open question, and it is the gate on
+whether any suburb-grain source is reachable without a purchase.

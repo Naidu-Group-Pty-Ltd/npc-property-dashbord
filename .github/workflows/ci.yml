@@ -287,6 +287,13 @@ jobs:
       - name: Signed storage URLs are minted by the server
         run: node scripts/security/check-client-storage-signing.mjs
 
+      # activity_logs.entity_type is a Postgres enum. An unknown value is a
+      # runtime 22P02 that every audit write in this repo discarded, so the
+      # Integrations page recorded no credential change for the life of the
+      # deployment while answering success: true.
+      - name: Audit rows name an entity type the column accepts
+        run: node scripts/security/check-activity-entity-types.mjs
+
       - name: Build
         run: npm run build
 

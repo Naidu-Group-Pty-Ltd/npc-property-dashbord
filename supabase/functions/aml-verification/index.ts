@@ -11,6 +11,7 @@
  * analyst / reviewer / MLRO. Auditor is read-only.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
+import { recordActivity } from "../_shared/activityAudit.ts";
 import { verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
@@ -1013,9 +1014,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
               screening = { mode: "live", changed: true, reason: promotion.reason };
               // Recorded against the register rather than a case: this is a
               // change to what the platform may do, not to one customer's file.
-              await admin.from("activity_logs").insert({
+              // `aml_provider_config` is not an `activity_entity_type`, so this
+              // insert was rejected by the enum on every promotion — and the
+              // `.then(() => undefined, () => undefined)` discarded the error,
+              // which is how it stayed invisible. `system` is the enum's value
+              // for a platform-level change, which is exactly what the comment
+              // above describes. A failure is now logged rather than swallowed.
+              await recordActivity(admin, {
                 action_type: "aml_screening_provider_promoted",
-                entity_type: "aml_provider_config",
+                entity_type: "system",
+                entity_name: "AML screening provider",
                 entity_id: String(current.id),
                 metadata: {
                   capability: "pep_sanctions", provider_key: "local_lists",
@@ -1024,7 +1032,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
                   list_code: listCode, entries: written, sync_id: sync.id,
                   performed_by: userEmail, performed_at: new Date().toISOString(),
                 },
-              }).then(() => undefined, () => undefined);
+              });
             }
           }
         }
