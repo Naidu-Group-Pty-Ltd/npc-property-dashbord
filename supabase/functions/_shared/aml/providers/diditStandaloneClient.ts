@@ -508,6 +508,38 @@ export interface StandaloneProbe {
 /** Mission Control sets this on its OWN refusals and on nothing it relays. */
 const MC_REFUSAL_HEADER = 'x-mission-control-refusal';
 
+/**
+ * Which way a standalone call would go from this deployment, without making
+ * one.
+ *
+ * It exists so nothing outside this module has to re-derive it. A caller that
+ * resolves the route itself has to restate the API base, its default and its
+ * trailing-slash rule, and the moment any of those drifts it reports a route
+ * the calls did not take — a diagnostic that lies confidently about the thing
+ * it exists to measure. It is also the reason the credential stays here.
+ */
+export function describeStandaloneRoute(
+  path = '/v3/id-verification/',
+): { via: 'direct' | 'broker' | 'unconfigured'; host: string | null; why: string } {
+  const route = resolveStandaloneRoute({
+    path,
+    apiKey: Deno.env.get('DIDIT_API_KEY') ?? null,
+    apiBase: DIDIT_API_BASE,
+    missionControlUrl: Deno.env.get('MISSION_CONTROL_URL'),
+    cloneApiKey: Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'),
+  });
+  if (route.via === 'unconfigured') {
+    return { via: 'unconfigured', host: null, why: route.why };
+  }
+  let host: string | null = null;
+  try {
+    host = new URL(route.url).host;
+  } catch {
+    host = null;
+  }
+  return { via: route.via, host, why: '' };
+}
+
 export async function probeStandaloneRoute(): Promise<StandaloneProbe> {
   const path = '/v3/passive-liveness/';
   /*

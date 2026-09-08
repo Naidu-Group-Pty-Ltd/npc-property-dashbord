@@ -329,3 +329,115 @@ describe('Mission Control can ask a clone the same question', () => {
     }
   });
 });
+
+describe('the loop check sends a real capture, and says what that costs', () => {
+  const loop = readFileSync(
+    resolve(
+      __dirname,
+      '../../../supabase/functions/_shared/aml/providers/diditStandaloneLoopCheck.ts',
+    ),
+    'utf8',
+  );
+
+  /*
+   * The module explains itself at length, and prose that NAMES a thing must
+   * never stand in for code that DOES it — in either direction. A comment
+   * saying "no verification_checks row" is not a write, and a comment is not
+   * where a write may hide either. Every guard below that judges behaviour
+   * judges this.
+   */
+  const code = loop.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  it('runs the PRODUCTION calls, never a reimplementation of them', () => {
+    // A test that reimplements the call proves the reimplementation works,
+    // which is not the question anybody is asking.
+    for (const fn of ['verifyIdentityDocument(', 'checkPassiveLiveness(', 'compareFaces(']) {
+      expect(loop, fn).toContain(fn);
+    }
+    // And therefore goes through the one route resolver and the one
+    // postMultipart — no second HTTP call of its own.
+    expect(loop).not.toContain('await fetch(');
+  });
+
+  it('covers all three operations, because that is the loop', () => {
+    for (const op of ["'id-verification'", "'passive-liveness'", "'face-match'"]) {
+      expect(loop, op).toContain(op);
+    }
+  });
+
+  it('writes NO compliance record', () => {
+    // The AML record is a regulated artifact about real customers. Putting a
+    // synthetic identity in it to prove a network path works corrupts the
+    // thing being protected.
+    for (const forbidden of ['.insert(', '.update(', '.upsert(', 'verification_checks', 'aml.cases']) {
+      expect(code, forbidden).not.toContain(forbidden);
+    }
+    // It cannot reach a table at all: no client is constructed and none is taken.
+    expect(code).not.toContain('createClient');
+    expect(code).not.toContain('supabase');
+    expect(loop).toContain('wrote_compliance_record: false');
+  });
+
+  it('declares that it spends, unlike the probe', () => {
+    expect(loop).toContain('spends: true');
+  });
+
+  it('reads no credential and resolves no route of its own', () => {
+    /*
+     * Both for the same reason. `diditAmlScope.test.ts` keeps an explicit list
+     * of files permitted to name DIDIT_API_KEY and a diagnostic must not join
+     * it; and a route resolved here would restate the API base and its
+     * default, so a drift would report a route the calls did not take — a
+     * diagnostic lying about the one thing it measures.
+     */
+    expect(code).not.toContain('Deno.env.get');
+    expect(code).not.toContain('resolveStandaloneRoute(');
+    expect(code).toContain('describeStandaloneRoute(');
+  });
+
+  it('carries a real, decodable JPEG rather than a header with padding', () => {
+    /*
+     * The seed is decoded here rather than described. A capture that is not a
+     * JPEG is refused by the vendor for being unreadable, which is the SAME
+     * 400 a vendor returns when a multipart part never arrived — so the one
+     * thing this check exists to tell apart would be indistinguishable.
+     */
+    const literal = /const SEED_JPEG_BASE64 =\s*([\s\S]*?);\n/.exec(loop);
+    expect(literal, 'SEED_JPEG_BASE64 is declared').not.toBeNull();
+    const b64 = Array.from(literal![1].matchAll(/'([^']*)'/g), (m) => m[1]).join('');
+    const seed = Buffer.from(b64, 'base64');
+
+    expect(seed.length, 'the seed decodes to bytes').toBeGreaterThan(100);
+    expect([seed[0], seed[1]], 'starts with SOI').toEqual([0xff, 0xd8]);
+    expect(
+      [seed[seed.length - 2], seed[seed.length - 1]],
+      'ends with EOI',
+    ).toEqual([0xff, 0xd9]);
+
+    /*
+     * And the padding goes INSIDE the image: SOI, then COM segments, then the
+     * rest of the seed ending in EOI. Bytes appended past EOI are trailing
+     * garbage a strict decoder discards, so the size would be a claim about
+     * the request that the decoded image does not support.
+     */
+    const soi = code.indexOf('seed.subarray(0, 2)');
+    const com = code.indexOf('0xfe');
+    const tail = code.indexOf('seed.subarray(2)');
+    expect(soi, 'SOI is emitted first').toBeGreaterThan(-1);
+    expect(com, 'a COM marker is written').toBeGreaterThan(soi);
+    expect(tail, 'the rest of the image follows the padding').toBeGreaterThan(com);
+  });
+
+  it('counts a transport failure as the loop NOT closing', () => {
+    // "The vendor refused it" and "it never got there" are opposite readings.
+    // Only the first proves the file arrived.
+    expect(loop).toContain("DID_NOT_REACH");
+    for (const cat of ["'provider_unavailable'", "'timeout'", "'provider_not_configured'"]) {
+      expect(loop, cat).toContain(cat);
+    }
+  });
+
+  it('keeps the vendor handle free of anything person-shaped', () => {
+    expect(loop).toContain('npc:loopcheck:${crypto.randomUUID()}:1');
+  });
+});

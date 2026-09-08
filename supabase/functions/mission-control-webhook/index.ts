@@ -112,6 +112,28 @@ Deno.serve(async (req) => {
    * rejects it at validation), writes no record, and is never metered. The
    * result travels in the RESPONSE and is stored nowhere.
    */
+  /*
+   * The full loop, with real image parts.
+   *
+   * Separate from the probe on purpose. The probe's guarantee is that it
+   * spends nothing; this one sends real captures and a 2xx from any of the
+   * three calls is a billable unit, so folding them into one event would make
+   * a free diagnostic quietly start billing. A caller has to ask for this by
+   * name.
+   *
+   * Answered before the de-dupe for the same reason the probe is: it is a
+   * question asked now, not an event to be applied once.
+   */
+  if (event === "verification.loopcheck") {
+    const { runStandaloneLoopCheck } = await import(
+      "../_shared/aml/providers/diditStandaloneLoopCheck.ts"
+    );
+    const report = await runStandaloneLoopCheck();
+    return new Response(JSON.stringify({ ok: true, event, report }), {
+      headers: { ...corsHeaders, "content-type": "application/json" },
+    });
+  }
+
   if (event === "verification.selftest") {
     const { probeStandaloneRoute } = await import(
       "../_shared/aml/providers/diditStandaloneClient.ts"
