@@ -41,6 +41,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from "../_shared/errorResponse.ts";
 
 /** Credential names to report presence for. Presence only — never a value. */
 const CREDENTIAL_NAMES = [
@@ -221,9 +222,10 @@ Deno.serve(async (req) => {
       results,
     });
   } catch (cause) {
-    return json(
-      { error: cause instanceof Error ? cause.message : "probe failed" },
-      500,
-    );
+    // Never hand a caught error back to the caller: a Postgres message carries
+    // table, column and constraint names, and this function holds the
+    // service-role key. `internalError` logs the detail against a correlation
+    // id and returns only that id.
+    return json(internalError(cause, "market-source-probe"), 500);
   }
 });
