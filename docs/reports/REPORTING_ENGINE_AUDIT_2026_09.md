@@ -5241,3 +5241,240 @@ So the historical A/A+ backtest over the 992 stored reports **cannot be run**,
 and running it on regional data would reproduce §48's failure with better
 arithmetic. The methodology is built, tested and version-stamped; it waits on
 one credential, and the shortest path to it is A1.
+
+---
+
+## §55 — ME-4: scoring integration hardening and backtest readiness (2026-09-08)
+
+Nine pure modules now, still connected to nothing.
+`investment-scoring-service` is untouched, the stored corpus is untouched, no
+document changes, and thresholds are unmoved (A 75, A+ 85).
+
+### 55.1 The Dimension Ownership Matrix
+
+Extracting each live dimension scorer's body and listing the `input.*` it reads
+gives **five inputs read by two dimensions**:
+
+| input | read by | verdict |
+| --- | --- | --- |
+| `vacancyRate` | Demand, Risk | **duplicate** — Risk's reason string says *"weak rental **demand**"* |
+| `daysOnMarket` | Demand, Risk | **duplicate** — Risk's string says *"indicates weak **demand**"* |
+| `cashFlow` | Yield, Risk | **duplicate** — the ME-3 yield double-count |
+| `priceGrowth1Year` | Growth, Risk | **declared exception** |
+| `propertyPrice` | Yield, Demand | not a duplicate — a yield denominator and a price-to-median ratio are different quantities |
+
+The clearest evidence is that the code names the characteristic it is measuring
+and the name belongs to another dimension. Risk deducts up to 22 points for a
+vacancy rate Demand has already priced at 0.35 of its weight.
+
+`populationGrowth` is read by exactly one dimension — the wrong one. It sits
+inside `calculateGrowthScore` adding 10 points on the stated grounds that it
+*"drives demand"*, inside the dimension that measures capital growth.
+
+`dimensionOwnership.pure.ts` assigns one owner per input with the reason and the
+dimensions forbidden from reading it. Two rules: **an owner is the dimension
+whose QUESTION the input answers**, not the one that reads it first; and **a
+shared input needs a declared exception, never silence**. There is exactly one
+exception — Growth rewards twelve-month performance while Risk prices its
+reversal, in **opposite** directions, at a measured magnitude of roughly +4.0
+composite points against −0.9.
+
+### 55.2 Growth overlap: the components were awarding one signal three times
+
+The question was whether the five components measure different characteristics
+of one price series or award the same performance repeatedly. Measured over 600
+synthetic series varying trend, volatility, shape and benchmark independently:
+
+```
+                   longTerm  mediumTerm    momentum consistency    relative
+longTerm               1.00        0.97        0.81        0.47        0.86
+mediumTerm             0.97        1.00        0.91        0.40        0.83
+momentum               0.81        0.91        1.00        0.11        0.70
+consistency            0.47        0.40        0.11        1.00        0.41
+relative               0.86        0.83        0.70        0.41        1.00
+```
+
+**The five-year and three-year LEVELS correlate at r = 0.97.** They share three
+of their five years, so of course they agreed — and together they held **0.60
+of the Growth weight**. That is the inadvertent double-award this audit set out
+to detect, and the economic reasoning does not hold for it.
+
+The fix is economic, not a re-weighting. The question that component existed to
+answer was never *"what was the three-year rate?"* but **"has the recent period
+confirmed or contradicted the long run?"** — which is `3yr − 5yr`, orthogonal to
+the level by construction:
+
+```
+                   longTerm  trajectory    momentum consistency    relative
+longTerm               1.00        0.02        0.81        0.47        0.84
+trajectory             0.02        1.00        0.51       -0.21        0.02
+```
+
+**r = 0.97 → 0.02.** `longTerm` takes the freed weight (0.45) because it is now
+the sole measure of the rate, which is also the brief's own priority.
+
+Two correlations remain high and are kept deliberately, stated in the module
+rather than quietly carried. **Momentum's 0.81 is partly a sweep artefact** —
+the last-year return is a deterministic function of the same trend that drives
+the five-year rate, a real suburb's last year diverges far more, and at 0.10 the
+weight bounds it either way. **Relative's 0.84 is inherent to what "relative"
+means**: with the benchmark held still, out-performance is monotone in the
+subject's own growth, and it decorrelates exactly when benchmarks move, which is
+the case §48 protects.
+
+`GROWTH_WEIGHTS_V3_0` is retained so the harness can score a corpus both ways.
+
+### 55.3 Source independence is not performance breadth
+
+Confidence had **no measure of corroboration at all**, so a bundle drawn
+entirely from one vendor read exactly like one two providers agreed on. Three
+horizons from one provider are one source with more history.
+`sourceIndependence` counts distinct providers at 0.10, and `history` now reads
+*"periods of history"* so the two claims cannot be confused. A test asserts that
+adding a second horizon from the same provider raises history and leaves source
+independence unchanged.
+
+### 55.4 Location independence
+
+**Location is the dimension that works**, and that is worth saying: 972 of 1,001
+reports carry all three inputs, with 64 distinct walk scores and 512 distinct
+commute times across 21 distinct scores spanning 14–85. Three defects.
+
+**The state premium is not a locational characteristic.** Up to 15 of 100 points
+by state — NSW/VIC/QLD 15, WA/SA 12, TAS/ACT/NT 8 — so every NSW property
+collects the same 15 whether it stands in Mosman or 700 km inland, and a rural
+report prints *"Major capital city location"*. Removed; `state` is owned by
+nobody.
+
+**Absent evidence scored points**: no walk score +12, no commute +12, no schools
++8. Thirty-two of 100 points available to a property with no locational evidence
+at all. It bites on 29 of 1,001 reports, so the blast radius is small and the
+principle is not.
+
+**The walk score saturates.** `calculateWalkScore` sums five capped amenity
+terms that all max out in any suburb with a shopping strip: **62.8% of 1,112
+properties score 90 or above**, 87.1% score 70 or above, and p25→p75 spans just
+84→95. A "Walker's Paradise" band holding two thirds of an Australian investment
+corpus carries little information. The anchors are stretched to where the corpus
+sits, and a saturated reading says so on the result.
+
+### 55.5 Risk independence — the honest answer is that it is thin
+
+Vacancy and days on market removed. What remains, measured over 1,204 reports:
+
+| input | present | note |
+| --- | ---: | --- |
+| `propertyType` | 930 (77.2%) | at `property_specs.property_type` — **snake_case**, while the scorer reads `propertyType`, so it has never been read; 145 more rows hold the placeholder `"Residential Property"` |
+| `lvr` | 201 (16.7%) | |
+| `weeklyCashFlow` | 185 (15.4%) | effectively the same rows as `lvr` |
+
+So the answer to *"can the 5% Risk dimension be populated independently and
+defensibly?"* is **partly, and predominantly on one input**. Property type is
+reachable on 77% once the key name is corrected; leverage and serviceability
+exist on about a sixth of the corpus and are the same sixth. A Risk score on
+most reports will rest on property type alone. **No input was invented to fill
+the weight.**
+
+### 55.6 The shadow orchestrator
+
+`scoreInvestmentV2Shadow` is the one place the five dimensions, evidence
+confidence, grade eligibility and Evidence Behind the Score compose — because
+every defect this programme has found lived in the composition rather than in a
+dimension, and those are only visible where the pieces meet.
+
+It publishes what §48's A+ properties were never asked for: `effectiveWeights`
+beside nominal ones, and `evidenceCoverage` **discounted by how much of each
+dimension's own methodology ran**. Every A+ in that backtest was "85% of the
+nominal evidence renormalised to 100%", and that number is now on the result
+rather than implicit in it.
+
+### 55.7 Twenty-six invariants
+
+| rule | how it is checked |
+| --- | --- |
+| Monotonicity | five dimensions, each swept across its input range |
+| No duplicate reward | vacancy and DOM move Demand and leave Risk **identical**; cash flow moves Risk and leaves Yield identical; population growth moves Demand and leaves Growth identical |
+| The one exception | asserted to move its two dimensions in **opposite** directions |
+| Missing is absent | no dimension returns 0 or 50 from absence; an unmeasured dimension leaves the composite; a location with no evidence scores `null`, not 32 |
+| Depth ≠ corroboration | a second horizon from one provider raises history and not source independence |
+| Grade integrity | a high score on thin evidence is capped, and both grades are always reported |
+| State independence | changing **only** the benchmark is bounded to six composite points; a booming region cannot lift an ordinary property to an A |
+| Property differentiation | two suburbs in one region differ by more than 40 growth points on their own evidence |
+
+### 55.8 Corpus readiness — and a second blocker nobody had counted
+
+The resolver run over all 1,204 stored reports:
+
+```
+Readiness state                          Geography resolution
+  unresolved_geography  1204  100.0%       none               92    7.6%
+  backtest_ready           0    0.0%       coordinates_only  1112   92.4%
+                                           resolved             0    0.0%
+
+Missing field counts
+  suburb            1204  100.0%      purchase_price  1004  83.4%
+  weekly_rent       1023   85.0%      lvr             1003  83.3%
+  weekly_cash_flow  1019   84.6%      dwelling_type    311  25.8%
+```
+
+**0 of 1,204 are backtest-ready, and market evidence is not why.** Suburb,
+postcode and state are stored nowhere structurally — 0 of 1,204 — while
+coordinates are present on 92.4%. There are **two** blockers, not one, and the
+second is entirely within our control: a licensed suburb dataset cannot be
+joined to a corpus that has no suburb.
+
+The resolver will not parse `property_address` to close that gap, and
+`ADDRESS_COMPOSITION.md` is why: Make geocodes `{{address}},{{suburb}}` with no
+street number, Google answers with a suburb centroid, and a second model call
+writes eight address columns back over the extraction — so `Full Address` reads
+`Cobblebank VIC 3338, Australia` on a record that knows `Mortlock Street`. A
+string that has been through that loop cannot prove which suburb a property is
+in, and wrong geography would attach real market evidence to the wrong property
+with every downstream figure inheriting it.
+
+The pieces for the mapping exist and are simply not connected: `suburb_directory`
+holds 18,519 suburb/state/postcode rows but no coordinates; `listing_geocodes`
+resolves coordinate→suburb on 1,030 rows but is keyed for the Listings
+marketplace; `sa2_point_cache` holds one row. The remedy is a bounded
+reverse-geocode pass over 1,112 coordinates, validated against
+`suburb_directory` — a **proof** from the provider's own locality answer, not an
+inference from the address label.
+
+Two resolver corrections found by execution: neither `purchasePrice` nor
+`propertyPrice` appears anywhere in `financial_calculations` on any row (the
+figure is `initialCosts.propertyValue`, and for builder stock it is split across
+`landPrice` and `buildPrice`, so the sum is labelled as a sum in its
+provenance); and each field declares candidate paths in priority order with the
+result recording **which** path resolved, because the corpus spans several eras
+of the writer and a backtest has to be auditable back to the byte it read.
+
+### 55.9 Provider-neutral ingestion
+
+One contract over four routes — `api_adapter`, `licensed_csv`, `licensed_json`,
+`operator_import` — so a licensed export is usable the day it lands, without
+waiting for API access. **Licensing is enforced per ROW, not per file**, because
+a provider may deliver open ABS-derived benchmarks alongside proprietary medians
+in one export and refusing the file would discard material we are entitled to
+use. An unverified row is accepted for shadow scoring and refused a client
+document. Nothing in the module writes.
+
+### 55.10 The harness, and diagnostics that only report
+
+The harness scores exactly the rows it is handed evidence for and reports the
+rest as unresolved: **no synthetic fallback, no regional stand-in, no default**,
+because a backtest run on invented inputs produces a distribution that looks
+exactly like a real one and would be acted on.
+
+Nine checks — state domination, one dimension dominating, compression,
+inflation, single-grade collapse, top grades on low confidence, highs resting on
+one horizon, highs resting on renormalisation, and movement driven by data
+availability rather than performance. **Every one reports and none adjusts.**
+§48 was found by looking at a distribution, and a system that silently corrected
+for it would have hidden the finding instead of surfacing it.
+
+### 55.11 What is deliberately not done
+
+No production wiring. No historical backtest — real or simulated. No threshold
+change. The system is methodology-ready and backtest-ready; it is not data-ready
+until geography is resolved and a licensed suburb source lands, and it is not
+live until real distributions have been inspected.
