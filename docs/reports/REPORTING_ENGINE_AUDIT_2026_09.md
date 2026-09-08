@@ -5478,3 +5478,129 @@ No production wiring. No historical backtest — real or simulated. No threshold
 change. The system is methodology-ready and backtest-ready; it is not data-ready
 until geography is resolved and a licensed suburb source lands, and it is not
 live until real distributions have been inspected.
+
+---
+
+## §56 — ME-5: canonical geography, and what the historical record really holds (2026-09-08)
+
+### 56.1 The geography blocker is removed
+
+ME-4 measured suburb, postcode and state stored on **0 of 1,204** reports. After
+this stage, **931 carry a full ASGS chain**.
+
+Resolution is point-in-polygon against the ABS ASGS 2021 boundaries — the ones
+the ABS publishes its own statistics against — so the geography and the
+evidence will share one definition. Reachability was proved from **Supabase
+infrastructure** rather than from this repository's development egress, because
+§52 already caught that distinction the hard way; all 25 ASGS layers answer 200.
+
+One coordinate resolves the chain:
+
+```
+SAL → suburb + locality code        POA → postcode
+SA2 → statistical area              → local join to abs_sa2_meta for SA3/SA4/GCCSA/state
+RA  → remoteness                    UCL → the urban centre it actually sits in
+```
+
+Deriving the hierarchy locally rather than fetching it means fewer calls **and**
+a hierarchy that cannot disagree with itself.
+
+| | reports |
+| --- | ---: |
+| resolved | **931** (83.6%) |
+| unresolved | 183 |
+| requires_review | 0 |
+| resolved_with_warning | 0 |
+| distinct suburbs / SA2s | 302 / 274 |
+
+445 distinct Australian coordinates, 2,225 point queries, **445 of 445 resolved
+on all five layers, zero failures.**
+
+Remoteness: Major Cities 657, Inner Regional 220, Outer Regional 46, Remote 6,
+Very Remote 2 — so **274 reports are non-metro**, which is the population the
+Location fairness work exists to protect.
+
+**The address is never consulted.** `ADDRESS_COMPOSITION.md` records why, and
+the corpus proves it: the coordinate whose stored address reads `Cobblebank VIC
+3338` resolves to **Melton South**, correctly, with urban centre **Melton**
+rather than Melbourne.
+
+### 56.2 Independently cross-validated, 100%
+
+All 144 initial `suburb_not_in_directory` warnings were the ABS's own
+disambiguating qualifier — `Fernvale (Qld)`, `Armadale (WA)`, `Churchill
+(Vic.)`, `Springfield (Ipswich - Qld)` — against a directory that stores plain
+names. Normalised, **all 144 matched, and postcode AND state agreed on all
+144, with zero disagreements.**
+
+So across all 931 resolved reports: **0 state mismatches, 0 postcode
+mismatches**, confirmed by a source independent of the boundaries themselves.
+
+### 56.3 The 183 unresolved are an integrity finding, not a resolver weakness
+
+**16.4% of stored coordinates fall outside Australia** — latitudes as far north
+as 55.9, longitudes as far west as −122.3. They are left unplaced. Coverage is
+not the objective: forcing them into a suburb would attach real market evidence
+to the wrong property, and every figure downstream would inherit it silently.
+
+### 56.4 The financial figures were not missing — they were in the wrong drawer
+
+ME-4 reported purchase price on 203 of 1,204. That was true of
+`financial_calculations` and wrong about the record.
+
+**997 of 1,207 reports have no financial block at all**, so the gaps are whole
+reports rather than scattered fields — but **459 carry `manual_overrides`**,
+and those hold exactly the figures in question, **entered by an operator**:
+
+| figure | `financial_calculations` | `manual_overrides` | **either** |
+| --- | ---: | ---: | ---: |
+| purchase price | 203 | **431** | **493** |
+| weekly rent | 184 | 193 | 227 |
+| LVR | 204 | 200 | 251 |
+
+`manual_overrides` also carries the full cost structure — council and water
+rates, management and letting fees, insurance, repairs, stamp duty, solicitor
+fees, occupancy rate, loan amount, interest rate, term.
+
+Purchase-price coverage is therefore **2.4× what ME-4 reported**, from a source
+that was already in the record. An operator-typed figure is the strongest
+provenance available and outranks anything derived.
+
+### 56.5 The historical transport data is fabricated, and it contaminates Location
+
+ME-4 recommended preferring "actual evidence such as amenity distances and
+transport" over the saturated walk score. **Measured, that recommendation
+cannot be followed on historical data, because the transport block is worse.**
+
+`distanceToStop` holds **five distinct values across 1,108 reports**, one per
+state:
+
+| distance | "nearest stop" | reports |
+| ---: | --- | ---: |
+| 450 m | Central Station | **822** |
+| 250 m | Swanston Street Tram | 117 |
+| 350 m | Queen Street Bus Station | 86 |
+| 320 m | Wellington Street Bus Station | 79 |
+| 280 m | Currie Street Bus Stop | 4 |
+
+This is precisely the defect `TRANSPORT_SOURCES.md` records — *"eight per-state
+fetchers that ignored the coordinate, so every NSW property was 450 m from
+Central Station"*. The GTFS work fixed the forward path; **the historical
+records still hold the fabricated values.**
+
+Three consequences, and the second is the one that bites:
+
+1. The transport block cannot complement or replace the walk score for a
+   backtest. It has 5 distinct values against the walk score's 65.
+2. **The historical walk score is itself contaminated.** `calculateWalkScore`
+   takes up to 30 of its 100 points from `publicTransportData.qualityScore` —
+   and that field is present, at one constant per state (83, 82, 56, 70, 78).
+   So the saturation is not only scale compression: roughly a third of the
+   historical walk score is a per-state constant.
+3. Location on historical reports therefore rests partly on fabricated input.
+   For the backtest it must be recomputed from the real GTFS stops the platform
+   now holds, or declared not-evidence. It must not be silently scored.
+
+This is why the walk-score recalibration in ME-4 was correctly marked
+provisional, and why recalibrating against this corpus would have been
+calibrating against a fabrication.

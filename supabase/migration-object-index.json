@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1025,
+  "migration_files": 1026,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -1723,6 +1723,9 @@
     "index:push_subscriptions_user_lookup_idx",
     "index:report_brand_snapshots_created_idx",
     "index:report_brand_snapshots_source_idx",
+    "index:report_geography_sa2_idx",
+    "index:report_geography_status_idx",
+    "index:report_geography_suburb_state_idx",
     "index:report_qa_conversations_client_id_idx",
     "index:report_qa_messages_stream_role_uidx",
     "index:report_qa_renders_brand_idx",
@@ -2424,6 +2427,7 @@
     "table:public.report_generation_chunks",
     "table:public.report_generation_preferences",
     "table:public.report_generation_runs",
+    "table:public.report_geography",
     "table:public.report_hero_placements",
     "table:public.report_qa_conversation_shares",
     "table:public.report_qa_conversations",
