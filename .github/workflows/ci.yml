@@ -940,3 +940,76 @@ jobs:
           name: sbom-cyclonedx
           path: sbom.cdx.json
           if-no-files-found: warn
+
+  # The Builder Stock PDF election worker.
+  #
+  # WHY IT IS NOT UNDER `tsconfig.worker.json`. That gate exists for
+  # `builder-stock-image-worker`, whose stated premise is that it imports
+  # nothing. This worker breaks that premise on purpose — running the SHARED
+  # `electFromPdfBytes` is the whole point of it, and that is what stops the
+  # election drifting into two implementations — so it carries Deno-style `.ts`
+  # specifiers and a remote `esm.sh` import a `moduleResolution: bundler`
+  # compiler cannot resolve. Relaxing that config would weaken the gate for the
+  # worker it was written for, so this worker is excluded there and validated
+  # HERE, by the two toolchains that actually compile it. It is not exempt from
+  # validation; it is validated differently because it is compiled differently.
+  #
+  # ITS OWN JOB, because wrangler 4 refuses to start below Node 22 ("Wrangler
+  # requires at least Node.js v22.0.0") and every job in this file pins 20.
+  # This repo already answers that the same way — the AML loader workflows give
+  # a Node-22 tool its own runner — rather than moving an existing job's floor.
+  builder-stock-pdf-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # RESTORE ONLY, never save: the `security` job owns this key and writes
+      # it. Sharing the read keeps this job off esm.sh on a warm tree — the
+      # outage that took that job down twice in an hour — without two jobs
+      # racing to write one entry.
+      - name: Restore Deno module cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/deno
+          key: deno-${{ runner.os }}-${{ hashFiles('supabase/functions/**/*.ts') }}
+          restore-keys: |
+            deno-${{ runner.os }}-
+
+      # `deno check` walks the worker entry AND every `_shared` module behind
+      # it, so a type error in the shared election fails here too.
+      #
+      # `DENO_NO_PACKAGE_JSON=1` is this repo's own answer to the error this
+      # otherwise dies on, recorded in `check-edge-functions.mjs` under "This
+      # gate was passing by not running": Deno walks up to the root
+      # `package.json`, switches to bring-your-own-node_modules resolution, and
+      # cannot find a declared dependency because no root `npm ci` has run
+      # here. Taking package.json out of scope is also an accurate description
+      # of the target — workerd has no node_modules.
+      #
+      # The wrangler build is the half that resolves the `esm.sh` -> npm alias
+      # and produces the bundle a deploy would upload, so it catches what a
+      # typechecker cannot. Its install is load-bearing: with no `node_modules`
+      # under the worker the build fails. `npm ci` rather than `npm install` so
+      # the tree comes from the committed lockfile, and wrangler is pinned so
+      # this does not go red on somebody else's release.
+      - name: Deno check and wrangler build
+        env:
+          DENO_NO_PACKAGE_JSON: "1"
+          WRANGLER_SEND_METRICS: "false"
+        run: |
+          deno check cloudflare/builder-stock-pdf-worker/src/index.ts
+          npm ci --prefix cloudflare/builder-stock-pdf-worker --no-audit --no-fund
+          npx --yes wrangler@4.129.1 deploy --dry-run \
+            -c cloudflare/builder-stock-pdf-worker/wrangler.jsonc

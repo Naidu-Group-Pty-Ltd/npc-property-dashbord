@@ -97,7 +97,15 @@ describe('the settler claims serially and never pre-claims a batch', () => {
 });
 
 describe('the whole heavy PDF path is behind one slot', () => {
-  const pkg = read('supabase/functions/_shared/builderStock/packageImages.ts');
+  /*
+   * The slot's wiring MOVED to `pdfElection.ts` when the election became one
+   * named unit — the same code lifted verbatim out of `extractFromDocument`,
+   * so that the thing measured to exceed an Edge Function's 2,000 ms CPU limit
+   * can run on `builder-stock-pdf-worker` instead. Nothing about the guard
+   * changed; every assertion below is the one it always was, read where the
+   * code now lives.
+   */
+  const pkg = read('supabase/functions/_shared/builderStock/pdfElection.ts');
 
   it('takes the slot BEFORE the text read, not just before the election', () => {
     // The hole that let the six die: the text read runs first, parses the same
