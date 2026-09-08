@@ -625,19 +625,46 @@ describe('every boundary failure stays operational', () => {
   });
 });
 
-describe('runtime 2 behaves exactly as production does today', () => {
-  it('is still runtime 2, so nothing has moved yet', () => {
-    expect(RUNTIME_VERSION).toBe(2);
+describe('the runtime the deployment actually runs at', () => {
+  /*
+   * This block asserted the OPPOSITE until the activation: that nothing had
+   * moved, so the worker could not be reached even by accident while it was
+   * being built. It is the same rule read from the other side now — the
+   * deployment is at or past the worker runtime, so the heavy election is off
+   * this process — and it is deliberately still a single place to look.
+   */
+  it('is at or past the runtime that moves the election off this process', () => {
     expect(WORKER_RUNTIME_VERSION).toBe(3);
-    expect(RUNTIME_VERSION).toBeLessThan(WORKER_RUNTIME_VERSION);
+    expect(RUNTIME_VERSION).toBeGreaterThanOrEqual(WORKER_RUNTIME_VERSION);
   });
 
-  it('routes in process at runtime 2 even with a worker fully configured', () => {
-    expect(electionRoute({ runtimeVersion: 2, endpoint: ENDPOINT, token: TOKEN }))
-      .toEqual({ kind: 'in_process' });
+  it('routes to the worker when it is configured, and never in process', () => {
+    expect(electionRoute({
+      runtimeVersion: RUNTIME_VERSION, endpoint: ENDPOINT, token: TOKEN,
+    })).toEqual({ kind: 'worker', endpoint: ENDPOINT, token: TOKEN });
   });
 
-  it('and at every runtime below the worker runtime', () => {
+  it('and answers no capacity rather than falling back when it is not', () => {
+    /*
+     * THE RULE THE WHOLE CHANGE RESTS ON. Falling back to the in-process
+     * election here would re-run the thing measured to die — 2.4 s of
+     * indivisible CPU against a 2,000 ms limit — and re-create the exact
+     * `CPUTime` kill this exists to end. A missing endpoint, a missing token
+     * or both is `no_capacity`, which the caller reports as `unreachable`.
+     */
+    for (const half of [
+      { endpoint: '', token: TOKEN },
+      { endpoint: ENDPOINT, token: '' },
+      { endpoint: '', token: '' },
+    ]) {
+      expect(electionRoute({ runtimeVersion: RUNTIME_VERSION, ...half }).kind)
+        .toBe('no_capacity');
+    }
+  });
+
+  it('still routes in process at every runtime below the worker runtime', () => {
+    // Untouched by the activation: a deployment that has not advanced behaves
+    // exactly as it did, which is what makes the bump revertible.
     for (const version of [0, 1, 2]) {
       expect(electionRoute({ runtimeVersion: version, endpoint: ENDPOINT, token: TOKEN }).kind)
         .toBe('in_process');
@@ -651,9 +678,18 @@ describe('runtime 2 behaves exactly as production does today', () => {
     expect(outcome).toEqual(direct);
   });
 
-  it('and no migration in this change advances the runtime', () => {
+  it('and the migration that advanced it says so in the database too', () => {
+    /*
+     * The constant gates the ROUTE; the column gates the REOPEN, and they are
+     * compared by `builderStockRuntimeReopen`. Named here as well because a
+     * bump that moves one and forgets the other is inert in one direction and
+     * re-retires work in the other.
+     */
     const runtime = read('supabase/functions/_shared/builderStock/runtimeVersion.pure.ts');
-    expect(runtime).toContain('export const RUNTIME_VERSION = 2;');
+    expect(runtime).toContain(`export const RUNTIME_VERSION = ${RUNTIME_VERSION};`);
+    const migration = read(
+      'supabase/migrations/20261115100000_builder_stock_runtime_version_3.sql');
+    expect(migration).toContain(`SET image_runtime_version = ${RUNTIME_VERSION};`);
   });
 });
 
