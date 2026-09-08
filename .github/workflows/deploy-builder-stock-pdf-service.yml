@@ -37,14 +37,21 @@ jobs:
     outputs:
       ready: ${{ steps.check.outputs.ready }}
     steps:
+      # All THREE, because `google-github-actions/auth` takes the service
+      # account as well as the provider: gating on two of them lets the build
+      # start and fail at the auth step instead of saying plainly that the
+      # deployment is not configured.
       - id: check
         run: |
-          if [ -n "${{ vars.GCP_PROJECT_ID }}" ] \
-            && [ -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ]; then
+          missing=""
+          [ -n "${{ vars.GCP_PROJECT_ID }}" ] || missing="$missing GCP_PROJECT_ID"
+          [ -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ] || missing="$missing GCP_WORKLOAD_IDENTITY_PROVIDER"
+          [ -n "${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" ] || missing="$missing GCP_DEPLOY_SERVICE_ACCOUNT"
+          if [ -z "$missing" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Not deployed::GCP_PROJECT_ID / GCP_WORKLOAD_IDENTITY_PROVIDER are unset, so the worker was not built. The Edge settler runs the election in-process until it is."
+            echo "::warning title=Not deployed::Unset:$missing. The worker was not built, and the Edge settler runs the election in-process until it is."
           fi
 
   # ── The election must survive the move, and that is testable here ─────────
@@ -160,6 +167,20 @@ jobs:
         run: |
           set -euo pipefail
           tag="ci${GITHUB_SHA::7}"
+          # `--update-secrets` MERGES; `--set-secrets` and `--set-env-vars`
+          # REPLACE. Only the merging form appears here, so wiring the token
+          # can never drop an unrelated variable somebody set on the service.
+          #
+          # BUILDER_STOCK_PDF_SECRET is optional and names a Secret Manager
+          # secret. Unset, the service keeps whatever environment it already
+          # has — which on a brand-new service is nothing at all, and the
+          # verify step below says so and stops. See DEPLOY.md.
+          secret_args=()
+          if [ -n "${{ vars.BUILDER_STOCK_PDF_SECRET }}" ]; then
+            secret_args=(--update-secrets
+              "BUILDER_STOCK_PDF_SERVICE_TOKEN=${{ vars.BUILDER_STOCK_PDF_SECRET }}:latest")
+          fi
+
           gcloud run deploy "$SERVICE" \
             --project "${{ vars.GCP_PROJECT_ID }}" \
             --image "${{ needs.build.outputs.image }}" \
@@ -169,6 +190,7 @@ jobs:
             --cpu 2 --memory 2Gi \
             --concurrency 1 --timeout 120 \
             --min-instances 0 --max-instances 10 \
+            "${secret_args[@]}" \
             --no-traffic --tag "$tag"
 
           url=$(gcloud run services describe "$SERVICE" \
@@ -189,26 +211,38 @@ jobs:
     env:
       CANARY: ${{ needs.stage.outputs.canary }}
     steps:
+      # `/health` answers 503 while the token is unset, so `curl -f` would
+      # discard the very body that says why. `-o` without `-f` keeps it, and
+      # the status is read separately.
       - name: The canary says what it is
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 10); do
-            if curl -sf --max-time 30 "$CANARY/health" -o /tmp/health.json; then
-              cat /tmp/health.json; break
-            fi
+          code=000
+          for attempt in $(seq 1 12); do
+            code=$(curl -s --max-time 30 -o /tmp/health.json -w '%{http_code}' "$CANARY/health" || echo 000)
+            [ "$code" != "000" ] && break
             sleep 5
           done
+          echo "health answered $code"; cat /tmp/health.json || true
           grep -q '"service":"builder-stock-pdf-service"' /tmp/health.json \
             || { echo "::error::canary did not identify itself"; exit 1; }
-          grep -q '"token_configured":true' /tmp/health.json \
-            || echo "::warning title=Token unset::The staged revision has no BUILDER_STOCK_PDF_SERVICE_TOKEN, so it will refuse every election."
+
+          # THE FIRST PASS OF A TWO-PASS BOOTSTRAP, and it is a stop rather
+          # than a warning: a revision that cannot answer an election is not a
+          # verified revision, and `promote` must never run after it.
+          if ! grep -q '"token_configured":true' /tmp/health.json; then
+            echo "::error title=Bootstrap: set the token, then rerun::The service now exists but has no BUILDER_STOCK_PDF_SERVICE_TOKEN, so it refuses every election. Set it once — gcloud run services update ${{ env.SERVICE }} --region ${{ env.REGION }} --project ${{ vars.GCP_PROJECT_ID }} --update-secrets BUILDER_STOCK_PDF_SERVICE_TOKEN=<secret>:latest — or set the BUILDER_STOCK_PDF_SECRET repository variable, then rerun this workflow to stage and verify a new revision. See builder-stock-pdf-service/DEPLOY.md."
+            exit 1
+          fi
 
       - name: And refuses an unauthenticated election
         run: |
           set -euo pipefail
           code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -X POST "$CANARY/v1/elect")
-          [ "$code" = "401" ] || [ "$code" = "503" ] \
-            || { echo "::error::unauthenticated POST answered $code"; exit 1; }
+          # 401 once the token is set. 503 cannot occur here — the step above
+          # stops the run while the token is unset — so it is not accepted.
+          [ "$code" = "401" ] \
+            || { echo "::error::unauthenticated POST answered $code, expected 401"; exit 1; }
 
   # ── Promotion is a person's decision ──────────────────────────────────────
   promote:
