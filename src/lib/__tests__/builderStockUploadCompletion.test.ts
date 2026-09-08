@@ -18,7 +18,7 @@ import { join, resolve } from 'node:path';
 import {
   ABANDONED_PARSE_MS, COMPLETABLE_UPLOAD_STATUSES, finalUploadStatus,
   parseIsAbandoned, settleCompletedUploads, settleUploadCompletion,
-  summariseImageStages,
+  summariseImageStages, mergeStageSummary, isStageCountEntry,
 } from '../../../supabase/functions/_shared/builderStock/uploadCompletion';
 
 interface UploadRow {
@@ -551,5 +551,91 @@ describe('the summary follows the properties, not the image row upload_id', () =
     const imageRead = source.slice(source.indexOf("from('builder_stock_item_images')"));
     expect(imageRead).toContain(".in('stock_item_id', chunk)");
     expect(imageRead.slice(0, 400)).not.toContain("eq('upload_id'");
+  });
+});
+
+/**
+ * Recomputed means RECOMPUTED.
+ *
+ * Spreading the old document under the new one preserves the co-tenant key it
+ * was added for — and it also preserves any stage the recomputation no longer
+ * produces. An upload whose Street View image has since been retired would
+ * carry `street_view: { ready: 1 }` for ever beside its true counts, while the
+ * contract for this column is that its stage counts are recomputed.
+ */
+describe('stage counts are replaced as a set, other tenants are carried', () => {
+  it('drops a stage the new calculation no longer produces, and keeps the metadata', async () => {
+    const items = [settledItem()];
+    const { db, writes } = fakeDb(
+      [upload({
+        image_stage_summary: {
+          // A stage this upload once had, since retired.
+          street_view: { ready: 1 },
+          // A stale count for a stage that still exists: also replaced, never merged.
+          uploaded_document: { ready: 99, failed: 4 },
+          // Another module's key, which must survive.
+          notion_row_assets_version: 23,
+        },
+      })],
+      items,
+      [image('uploaded_document', 'ready', { stock_item_id: items[0].id })],
+    );
+
+    await settleUploadCompletion(db, { uploadId: 'upload-1' });
+
+    expect(writes[0].patch.image_stage_summary).toEqual({
+      notion_row_assets_version: 23,
+      uploaded_document: { ready: 1 },
+    });
+    // Stated separately, because this is the claim that matters.
+    expect(writes[0].patch.image_stage_summary)
+      .not.toHaveProperty('street_view');
+  });
+
+  it('classifies a stage count by its shape, not by a list of names', () => {
+    expect(isStageCountEntry({ ready: 2, failed: 1 })).toBe(true);
+    // A stage that counted nothing is still a stage key.
+    expect(isStageCountEntry({})).toBe(true);
+    // Scalars, nulls and arrays are somebody else's business.
+    expect(isStageCountEntry(23)).toBe(false);
+    expect(isStageCountEntry('23')).toBe(false);
+    expect(isStageCountEntry(null)).toBe(false);
+    expect(isStageCountEntry([1, 2])).toBe(false);
+    expect(isStageCountEntry({ nested: { ready: 1 } })).toBe(false);
+  });
+
+  it('merges an absent or malformed document without throwing', () => {
+    const fresh = { uploaded_document: { ready: 1 } };
+    for (const existing of [null, undefined, 'nonsense', 42, []]) {
+      expect(mergeStageSummary(existing, fresh)).toEqual(fresh);
+    }
+  });
+
+  it('the fresh count wins where a carried key shares a stage name', () => {
+    /*
+     * Carried keys and fresh stage keys are disjoint by construction — one is
+     * everything that is NOT stage-shaped — so this can only arise if a
+     * non-stage value is filed under a stage's name. It must still be the
+     * recomputed count that survives, or a stale scalar would shadow the real
+     * number the whole change exists to produce.
+     */
+    const merged = mergeStageSummary(
+      { uploaded_document: 'stale', notion_row_assets_version: 23 },
+      { uploaded_document: { ready: 7 } },
+    );
+    expect(merged.uploaded_document).toEqual({ ready: 7 });
+    expect(merged.notion_row_assets_version).toBe(23);
+  });
+
+  it('carries every non-stage key, not just the one we know about', () => {
+    const merged = mergeStageSummary(
+      { notion_row_assets_version: 23, some_future_marker: 'kept', old_stage: { ready: 9 } },
+      { uploaded_document: { ready: 3 } },
+    );
+    expect(merged).toEqual({
+      notion_row_assets_version: 23,
+      some_future_marker: 'kept',
+      uploaded_document: { ready: 3 },
+    });
   });
 });

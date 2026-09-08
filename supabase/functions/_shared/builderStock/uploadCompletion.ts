@@ -147,6 +147,52 @@ export function summariseImageStages(
   return summary;
 }
 
+/**
+ * Is this entry a STAGE COUNT, rather than another tenant's metadata?
+ *
+ * `summariseImageStages` returns `Record<stage, Record<state, number>>`, so a
+ * stage entry is an object whose every value is a number — `{ ready: 78 }`.
+ * Everything else in the document belongs to somebody else and is not this
+ * function's to recompute: `repairSourceImages` keeps
+ * `notion_row_assets_version: 23` here, a scalar, which fails this test and
+ * survives.
+ *
+ * An empty object IS stage-shaped and is treated as one, which is right: a
+ * stage that counted nothing is still a stage key.
+ */
+export function isStageCountEntry(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.values(value as Record<string, unknown>)
+    .every((count) => typeof count === 'number' && Number.isFinite(count));
+}
+
+/**
+ * The document to write: fresh stage counts, other tenants untouched.
+ *
+ * THE STAGE KEYS ARE REPLACED AS A SET, NOT MERGED KEY BY KEY. A spread of the
+ * old document under the new one preserves `notion_row_assets_version` — the
+ * thing it was added for — but it also preserves any stage the recomputation
+ * NO LONGER produces. An upload whose Street View image has since been retired
+ * would keep `street_view: { ready: 1 }` for ever beside its true counts, and
+ * the contract for this column is that its stage counts are recomputed.
+ *
+ * So the old stage entries are dropped wholesale and the new ones stand alone,
+ * while every non-stage key is carried across.
+ */
+export function mergeStageSummary(
+  existing: unknown,
+  fresh: Record<string, Record<string, number>>,
+): Record<string, unknown> {
+  const carried: Record<string, unknown> = {};
+  const document = (existing && typeof existing === 'object' && !Array.isArray(existing))
+    ? existing as Record<string, unknown>
+    : {};
+  for (const [key, value] of Object.entries(document)) {
+    if (!isStageCountEntry(value)) carried[key] = value;
+  }
+  return { ...carried, ...fresh };
+}
+
 /** The import's own verdict, not the imagery's. */
 export function finalUploadStatus(recordsFailed: unknown): SettledUploadStatus {
   return Number(recordsFailed ?? 0) > 0 ? 'partially_complete' : 'complete';
@@ -286,22 +332,22 @@ export async function settleUploadCompletion(
 
     const status = finalUploadStatus(upload.records_failed);
     /*
-     * MERGED, because this document has another tenant.
-     * `repairSourceImages` records `notion_row_assets_version` here — its own
-     * comment says the key "is MERGED, never written over the stage counts
-     * beside it" — while this write replaced the whole document and silently
-     * dropped it, costing that upload a re-fetch of its live source on every
-     * later run. The stage counts are recomputed; everything else is kept.
+     * This document has another tenant. `repairSourceImages` records
+     * `notion_row_assets_version` here — its own comment says the key "is
+     * MERGED, never written over the stage counts beside it" — while this
+     * write replaced the whole document and silently dropped it, costing that
+     * upload a re-fetch of its live source on every later run.
+     *
+     * `mergeStageSummary` keeps that key and replaces the stage counts AS A
+     * SET, so a stage this recomputation no longer produces disappears rather
+     * than standing for ever beside the true numbers.
      */
-    const existingSummary = (upload.image_stage_summary ?? {}) as Record<string, unknown>;
     const { error: writeError } = await db
       .from('builder_stock_uploads')
       .update({
         status,
-        image_stage_summary: {
-          ...existingSummary,
-          ...summariseImageStages(stageRows),
-        },
+        image_stage_summary: mergeStageSummary(
+          upload.image_stage_summary, summariseImageStages(stageRows)),
       })
       .eq('id', uploadId);
     if (writeError) return { status: null, refusal: 'read_failed' };
