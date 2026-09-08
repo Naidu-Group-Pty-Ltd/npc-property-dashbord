@@ -91,6 +91,7 @@ async function hasCaseAccess(
 import { reserveTokens, commitTokens, cancelTokens } from "../_shared/missionControl.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { probeStandaloneRoute } from '../_shared/aml/providers/diditStandaloneClient.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1208,6 +1209,45 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           note: "Configuration plus a live /healthz probe of the configured service. `ready_live` means the service answered and both models initialised.",
           idv: await capabilityReadiness("idv"),
           screening: await capabilityReadiness("pep_sanctions"),
+        });
+      }
+
+      /*
+       * Does verification actually WORK from this deployment?
+       *
+       * Every other readiness reading here answers a question about
+       * configuration — key present, provider active, thresholds parseable —
+       * and all of them were green on three tenants that had never completed
+       * a single verification. On the brokered route four things no local
+       * flag can see stand between this function and the vendor: the clone's
+       * Mission Control key, its scopes, Mission Control's own Didit
+       * credential, and the vendor itself.
+       *
+       * So this makes one real call and reports what came back. It spends
+       * nothing (the request is deliberately incomplete, so the vendor
+       * rejects it at validation), is never metered, and writes no record —
+       * see `probeStandaloneRoute`.
+       *
+       * Reviewer-or-MLRO, because it names which credential a failure lies
+       * with and because it makes an outbound call; an analyst reads
+       * `provider_readiness` instead.
+       */
+      case "verification_selftest": {
+        if (!roles.has("reviewer") && !roles.has("mlro")) {
+          return jr({ error: "Reviewer or MLRO role required" }, 403);
+        }
+        const probe = await probeStandaloneRoute();
+        return jr({
+          probe,
+          // Said plainly, because "the vendor rejected our incomplete
+          // request" is the PASS here and reads like a failure otherwise.
+          reading: probe.verdict === "reachable"
+            ? "Verification can reach the provider on this route."
+            : "Verification cannot reach the provider on this route.",
+          spent: false,
+          note:
+            "One deliberately incomplete request. Nothing is billed, no verification " +
+            "is created, and no record is written.",
         });
       }
 

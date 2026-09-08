@@ -326,6 +326,38 @@ with the same function the screening query uses, so a browser that normalised
 differently writes entries no query can ever match, which looks exactly like a
 list that works.
 
+## Identity verification reaches Didit through Mission Control
+Read [`docs/aml/VERIFICATION_BROKER.md`](./docs/aml/VERIFICATION_BROKER.md)
+before touching `_shared/aml/providers/diditStandaloneRoute.pure.ts`,
+`probeStandaloneRoute`, the `verification_selftest` operation or Mission
+Control's `verificationBroker.*`. A Didit API key is scoped to an
+APPLICATION, and that scope includes the application's session list — measured
+7 Sep 2026, one key returned all eight sessions with the customer's name and
+**live pre-signed URLs to their passport portrait and selfie**. Forwarding it
+fleet-wide put a credential on three tenant projects that could read every
+other tenant's customers' identity documents, and Didit publishes no API to
+mint one per tenant. So the credential stops travelling and the CALL travels:
+Mission Control holds the key and runs the three write operations on a
+tenant's behalf.
+
+Four rules bite. **A brokered call is not metered at the clone** — Mission
+Control writes the usage row because Mission Control made the vendor call, and
+both ends billing is worse than neither. **Nothing readable is brokered**, so
+the enumeration this closes cannot be reached through the thing that closes
+it. **Who refused is read from a header** (`x-mission-control-refusal`, set on
+Mission Control's own refusals and never on what it relays) rather than
+guessed from a body, because both ends answer 401 with similar JSON and send
+an operator to opposite remedies. And **configuration is not reachability**:
+every readiness reading here was green on three tenants that had never
+completed a verification, so `verification_selftest` makes one real call —
+deliberately incomplete, so the vendor rejects it for free — and being
+rejected is the PASS. It is never metered and writes nothing.
+
+The **hosted-session** flow (`diditClient.ts`, `didit-webhook`) is deliberately
+NOT brokered: it is legacy, `diditConfigured()` refuses to create a session
+without the raw key, and a decision read is parameterised by session id — so
+brokering it needs per-session ownership or the broker becomes the leak.
+
 ## AML screening execution
 Read [`docs/aml/SCREENING_EXECUTION.md`](./docs/aml/SCREENING_EXECUTION.md)
 before touching `_shared/aml/screeningConsumer.ts`, the inline

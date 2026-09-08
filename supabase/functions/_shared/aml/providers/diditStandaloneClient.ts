@@ -443,3 +443,162 @@ export async function fetchRemoteImage(value: string | null): Promise<Uint8Array
 export async function resolveReferenceImage(value: string | null): Promise<Uint8Array | null> {
   return decodeInlineImage(value) ?? await fetchRemoteImage(value);
 }
+
+/**
+ * Whether identity verification can actually reach the vendor from HERE.
+ *
+ * ## Why this exists
+ *
+ * Every readiness reading in this product answers a question about
+ * CONFIGURATION — is the key present, is the provider active, are the
+ * thresholds parseable — and every one of them was green on three tenants
+ * that had never once completed a verification. Configuration is not
+ * reachability, and the gap between them is exactly where a brokered call
+ * lives: the clone's Mission Control key, its scopes, Mission Control's own
+ * Didit credential and the vendor's availability are four things no local
+ * flag can see.
+ *
+ * So this makes ONE real call and reports what came back.
+ *
+ * ## The four rules
+ *
+ * **It spends nothing.** The body is deliberately incomplete, so the vendor
+ * rejects it at validation — a 4xx that proves the request authenticated,
+ * arrived and was answered, without creating a verification anybody is
+ * billed for. Being rejected IS the pass.
+ *
+ * **It is never metered and never recorded.** A probe is not a customer's
+ * verification: it writes no check, touches no case, and takes the plain
+ * `fetch` on both routes rather than `meteredFetch`, so a diagnostic can
+ * never appear on a tenant's invoice.
+ *
+ * **Who refused is read from a header, never guessed from a body.** Mission
+ * Control marks its own refusals (`x-mission-control-refusal`); a relayed
+ * vendor answer carries no such header. Both ends can answer 401 with
+ * similar JSON, and they send an operator to opposite remedies — "this
+ * clone's Mission Control key is wrong or unscoped" versus "the fleet's Didit
+ * credential is wrong".
+ *
+ * **It reports the HOST, never the URL and never a credential.** The path
+ * names the operation and the query could carry anything; the host is what an
+ * operator needs to know.
+ */
+export type StandaloneProbeVerdict =
+  /** The far end authenticated us and answered. This is the healthy reading. */
+  | 'reachable'
+  /** The vendor rejected the credential the call was made with. */
+  | 'credential_rejected'
+  /** Mission Control declined to broker. Its reason is in `detail`. */
+  | 'broker_refused'
+  /** Nothing answered: DNS, TLS, a timeout, a dropped connection. */
+  | 'unreachable'
+  /** Neither a vendor key nor a route to the broker. */
+  | 'unconfigured';
+
+export interface StandaloneProbe {
+  readonly route: 'direct' | 'broker' | 'unconfigured';
+  /** Host only. */
+  readonly endpoint: string | null;
+  readonly status: number | null;
+  readonly answered_by: 'vendor' | 'mission_control' | 'none';
+  readonly verdict: StandaloneProbeVerdict;
+  readonly detail: string;
+}
+
+/** Mission Control sets this on its OWN refusals and on nothing it relays. */
+const MC_REFUSAL_HEADER = 'x-mission-control-refusal';
+
+export async function probeStandaloneRoute(): Promise<StandaloneProbe> {
+  const path = '/v3/passive-liveness/';
+  /*
+   * The credential is read HERE and nowhere else. Handing it in from the
+   * endpoint would put a raw `Deno.env.get('DIDIT_API_KEY')` in
+   * `aml-verification`, where every other read is reduced to a boolean and a
+   * contract test enforces exactly that — the rule that keeps a secret VALUE
+   * out of the one function a browser can reach.
+   */
+  const route = resolveStandaloneRoute({
+    path,
+    apiKey: Deno.env.get('DIDIT_API_KEY') ?? null,
+    apiBase: DIDIT_API_BASE,
+    missionControlUrl: Deno.env.get('MISSION_CONTROL_URL'),
+    cloneApiKey: Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'),
+  });
+  if (route.via === 'unconfigured') {
+    return {
+      route: 'unconfigured',
+      endpoint: null,
+      status: null,
+      answered_by: 'none',
+      verdict: 'unconfigured',
+      detail: route.why,
+    };
+  }
+
+  let host: string | null = null;
+  try {
+    host = new URL(route.url).host;
+  } catch {
+    host = null;
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(route.url, {
+      method: 'POST',
+      headers: route.headers,
+      // Empty on purpose: enough to be a well-formed multipart request and
+      // not enough to be a verification. `fetch` writes the boundary.
+      body: new FormData(),
+      signal: AbortSignal.timeout(STANDALONE_TIMEOUT_MS),
+    });
+  } catch (e) {
+    return {
+      route: route.via,
+      endpoint: host,
+      status: null,
+      answered_by: 'none',
+      verdict: 'unreachable',
+      detail: redact(e instanceof Error ? e.message : String(e), route.secret),
+    };
+  }
+
+  const refusal = res.headers.get(MC_REFUSAL_HEADER);
+  if (refusal) {
+    return {
+      route: route.via,
+      endpoint: host,
+      status: res.status,
+      answered_by: 'mission_control',
+      verdict: 'broker_refused',
+      detail: `Mission Control refused to broker the call: ${refusal}`,
+    };
+  }
+
+  // No refusal header, so this answer came from the vendor — through the
+  // broker or directly, which is precisely the thing being proven.
+  if (res.status === 401 || res.status === 403) {
+    return {
+      route: route.via,
+      endpoint: host,
+      status: res.status,
+      answered_by: 'vendor',
+      verdict: 'credential_rejected',
+      detail:
+        route.via === 'broker'
+          ? "The vendor rejected Mission Control's Didit credential."
+          : 'The vendor rejected this deployment\'s DIDIT_API_KEY.',
+    };
+  }
+
+  return {
+    route: route.via,
+    endpoint: host,
+    status: res.status,
+    answered_by: 'vendor',
+    verdict: 'reachable',
+    detail:
+      `The vendor authenticated the call and answered ${res.status} to a deliberately ` +
+      'incomplete request. Verification can run on this route.',
+  };
+}
