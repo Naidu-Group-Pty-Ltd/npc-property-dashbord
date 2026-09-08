@@ -66,3 +66,7 @@ ds-bundle/
 .design-system/
 tests-e2e/manual-screening-dialog/harness/dist/
 scripts/security/deno.lock
+
+# Supabase CLI version-check cache. Written whenever the CLI runs; carries no
+# information. `supabase/.temp/linked-project.json` beside it IS checked in.
+supabase/.temp/cli-latest
