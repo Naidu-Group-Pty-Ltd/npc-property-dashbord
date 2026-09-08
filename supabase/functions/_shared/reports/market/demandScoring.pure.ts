@@ -185,7 +185,7 @@ export interface DemandComponent {
   score: number;
   /** The measurement it was computed from, in its own units. */
   input: number;
-  unit: 'percent' | 'days' | 'ratio' | 'percent_per_annum';
+  unit: 'percent' | 'days' | 'ratio' | 'percent_per_annum' | 'reading_count';
   /** Human sentence a report can print verbatim. */
   detail: string;
   /**
@@ -253,8 +253,11 @@ export function scoreSaleUrgency(ev: MarketEvidence): DemandComponent | null {
   return {
     key: 'saleUrgency',
     score: clamp(score),
+    // A blend has no single input measurement, so `input` is how many readings
+    // went into it and the unit says exactly that. The readings themselves are
+    // in `detail` and on the evidence trail.
     input: lenses.length,
-    unit: 'ratio',
+    unit: 'reading_count',
     detail: lenses.map((l) => l.label).join(', '),
     evidence: lenses.map((l) => l.point),
   };
