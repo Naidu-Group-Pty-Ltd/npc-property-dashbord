@@ -201,7 +201,9 @@ describe('a strong region cannot carry an ordinary property, and a slow one cann
 
   it('holds the benchmark to a minority of the weight', () => {
     expect(GROWTH_WEIGHTS.relative).toBeLessThanOrEqual(0.2);
-    expect(GROWTH_WEIGHTS.longTerm + GROWTH_WEIGHTS.mediumTerm)
+    // The suburb's own measured rate and trajectory must outweigh the region
+    // it sits in by a wide margin — this is the §48 protection as a number.
+    expect(GROWTH_WEIGHTS.longTerm + GROWTH_WEIGHTS.trajectory)
       .toBeGreaterThan(GROWTH_WEIGHTS.relative * 3);
   });
 });
@@ -231,8 +233,10 @@ describe('missing evidence is missing, and confidence says so', () => {
 
   it('names every component it could not compute', () => {
     const r = run('thinButStrong');
+    // Momentum is computable — the fixture's one figure IS a twelve-month
+    // reading. Everything that needs a longer window, or two windows, is not.
     expect([...r.missing].sort())
-      .toEqual(['consistency', 'longTerm', 'mediumTerm', 'relative']);
+      .toEqual(['consistency', 'longTerm', 'relative', 'trajectory']);
   });
 
   it('rates full, suburb-level, dwelling-matched evidence as high confidence', () => {
@@ -259,7 +263,7 @@ describe('the evidence trail is complete enough to explain the score', () => {
   it('explains confidence factor by factor', () => {
     const f = run('exceptionalSustained').confidence.factors;
     expect(f.map((x) => x.key).sort())
-      .toEqual(['dwellingType', 'freshness', 'geography', 'history', 'sample']);
+      .toEqual(['dwellingType', 'freshness', 'geography', 'history', 'sample', 'sourceIndependence']);
     for (const x of f) expect(x.detail.length).toBeGreaterThan(5);
   });
 

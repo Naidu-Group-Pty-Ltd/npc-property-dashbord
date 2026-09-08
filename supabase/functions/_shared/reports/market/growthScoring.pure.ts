@@ -25,13 +25,25 @@
  *
  * ## The five components
  *
- * | component | weight | why |
- * | --- | ---: | --- |
- * | long-term (5yr CAGR) | 0.35 | the most authoritative single reading |
- * | medium-term (3yr CAGR) | 0.25 | confirms the long run is not one old spike |
- * | momentum (1yr) | 0.10 | deliberately small — one strong year must not dominate |
- * | consistency | 0.15 | +20/−10/flat is not the same as steady compounding |
- * | relative to benchmark | 0.15 | the suburb's performance net of its market |
+ * | component | weight | why | overlap with `longTerm` |
+ * | --- | ---: | --- | ---: |
+ * | long-term (5yr CAGR) | 0.45 | the most authoritative single reading | — |
+ * | trajectory (3yr vs 5yr) | 0.15 | has the recent period confirmed the long run? | r = 0.02 |
+ * | momentum (1yr) | 0.10 | deliberately small — one strong year must not dominate | r = 0.81 |
+ * | consistency | 0.15 | +20/−10/flat is not the same as steady compounding | r = 0.47 |
+ * | relative to benchmark | 0.15 | the suburb's performance net of its market | r = 0.84 |
+ *
+ * Those correlations are measured, not asserted — 600 synthetic series varying
+ * trend, volatility, shape and benchmark independently (ME-4-B). Two remain
+ * high and are kept deliberately. **Momentum's 0.81 is partly an artefact of
+ * the sweep**, whose last-year return is a deterministic function of the same
+ * trend that drives the five-year rate; a real suburb's last year diverges far
+ * more, and at 0.10 the weight bounds the damage either way. **Relative's 0.84
+ * is inherent to what "relative" means** — with the benchmark held still,
+ * out-performance is monotone in the subject's own growth, and it decorrelates
+ * exactly when benchmarks move, which is the case audit §48 exists to protect.
+ * Neither is a second award for the same fact; both are stated rather than
+ * quietly carried.
  *
  * Weights are renormalised across the components that could actually be
  * computed. That is arithmetic, not judgement, and it is precisely why
@@ -64,11 +76,41 @@ import {
 } from './marketEvidence.pure.ts';
 
 /** Bumped whenever a weight, anchor or rule changes. Persisted with the score. */
-export const GROWTH_METHODOLOGY_VERSION = '3.0.0';
+export const GROWTH_METHODOLOGY_VERSION = '3.1.0';
 
-export const GROWTH_WEIGHTS = {
+/**
+ * The 3.0.0 weights, kept for comparison rather than deleted.
+ *
+ * `mediumTerm` was the THREE-YEAR LEVEL, and the overlap sweep (ME-4-B) found
+ * it correlated **r = 0.97** with the five-year level across 360 synthetic
+ * series — 0.60 of the Growth weight carrying one signal twice, which is the
+ * inadvertent-double-award the audit set out to detect. Retained so the
+ * backtest harness can score a corpus both ways and show the difference.
+ */
+export const GROWTH_WEIGHTS_V3_0 = {
   longTerm: 0.35,
   mediumTerm: 0.25,
+  momentum: 0.10,
+  consistency: 0.15,
+  relative: 0.15,
+} as const;
+
+/**
+ * 3.1.0 — the three-year LEVEL becomes a three-year-versus-five-year
+ * TRAJECTORY, and the freed weight goes to the level that remains.
+ *
+ * The two CAGRs shared three of their five years, so of course they agreed.
+ * The question the component was there to answer was never "what was the
+ * three-year rate?" but **"has the recent period confirmed or contradicted the
+ * long run?"** — and that is `3yr − 5yr`, which is orthogonal to the level by
+ * construction. Measured on the same sweep: **r = 0.97 → 0.02**.
+ *
+ * `longTerm` rises to 0.45 because it is now the only measure of the RATE, and
+ * the brief fixes the five-year figure as the greatest single authority.
+ */
+export const GROWTH_WEIGHTS = {
+  longTerm: 0.45,
+  trajectory: 0.15,
   momentum: 0.10,
   consistency: 0.15,
   relative: 0.15,
@@ -110,9 +152,18 @@ export const LONG_TERM_ANCHORS: ReadonlyArray<readonly [number, number]> = [
   [-4, 0], [-1, 8], [0, 15], [2, 30], [4, 48], [6, 65], [8, 79], [10, 89], [13, 96], [16, 100],
 ];
 
-/** Three-year CAGR. Slightly more forgiving: a shorter window is noisier. */
-export const MEDIUM_TERM_ANCHORS: ReadonlyArray<readonly [number, number]> = [
-  [-6, 0], [-2, 10], [0, 18], [3, 35], [6, 55], [9, 72], [12, 85], [16, 95], [20, 100],
+/**
+ * Trajectory: three-year CAGR minus five-year CAGR, in points per annum.
+ *
+ * Zero scores 50 and it is a MEASUREMENT — the recent three years ran at
+ * exactly the long-run rate, which is a real finding about a steady market.
+ * Positive is accelerating, negative decelerating. The range is deliberately
+ * tighter than a level's: a suburb whose recent rate is 5 points above its
+ * five-year rate is compounding much faster than it was, and 8 points is
+ * exceptional.
+ */
+export const TRAJECTORY_ANCHORS: ReadonlyArray<readonly [number, number]> = [
+  [-8, 0], [-5, 12], [-2, 32], [0, 50], [2, 68], [5, 86], [8, 100],
 ];
 
 /** One year. Wide, because a single year swings hard in both directions. */
@@ -159,17 +210,31 @@ export function scoreLongTerm(ev: MarketEvidence): GrowthComponent | null {
   };
 }
 
-/** Score the three-year compound annual rate. */
-export function scoreMediumTerm(ev: MarketEvidence): GrowthComponent | null {
-  const p = ev.growth3YearCagr;
-  if (!p) return null;
+/**
+ * Score the recent trajectory: has the last three years confirmed the long run?
+ *
+ * Needs BOTH horizons. With only a three-year figure there is nothing to
+ * compare it against, and scoring the level alone is precisely the redundancy
+ * this replaced — so the component is absent rather than approximated.
+ */
+export function scoreTrajectory(ev: MarketEvidence): GrowthComponent | null {
+  const recent = ev.growth3YearCagr;
+  const long = ev.growth5YearCagr;
+  if (!recent || !long) return null;
+  const delta = recent.value - long.value;
+  const direction = Math.abs(delta) < 0.05
+    ? 'in line with'
+    : delta > 0 ? 'ahead of' : 'behind';
   return {
-    key: 'mediumTerm',
-    score: clamp(interpolate(p.value, MEDIUM_TERM_ANCHORS)),
-    input: p.value,
+    key: 'trajectory',
+    score: clamp(interpolate(delta, TRAJECTORY_ANCHORS)),
+    input: delta,
     unit: 'percent_per_annum',
-    detail: `${p.value.toFixed(1)}% per annum over three years`,
-    evidence: p,
+    detail:
+      `three-year rate ${recent.value.toFixed(1)}% p.a. is `
+      + `${Math.abs(delta).toFixed(1)} points ${direction} the five-year rate`
+      + (Math.abs(delta) < 0.05 ? '' : ` of ${long.value.toFixed(1)}% p.a.`),
+    evidence: recent,
   };
 }
 
@@ -275,11 +340,23 @@ export interface GrowthConfidence {
   factors: ReadonlyArray<{ key: string; score: number; weight: number; detail: string }>;
 }
 
+/**
+ * Confidence weights.
+ *
+ * `sourceIndependence` is new in 3.1.0 and exists because **performance
+ * breadth and evidence-source independence are different concepts**. Three
+ * horizons from one provider are one source with more history, not three
+ * corroborating sources — and before this there was no factor that could tell
+ * the difference, so a bundle drawn entirely from a single vendor read exactly
+ * like one corroborated by two. `history` measures depth and says so; this
+ * measures how many independent providers stand behind the reading.
+ */
 export const CONFIDENCE_WEIGHTS = {
-  geography: 0.30,
-  dwellingType: 0.20,
+  geography: 0.25,
+  dwellingType: 0.15,
   sample: 0.20,
   history: 0.20,
+  sourceIndependence: 0.10,
   freshness: 0.10,
 } as const;
 
@@ -364,7 +441,29 @@ export function growthConfidence(
   );
   factors.push({
     key: 'history', score: historyScore, weight: CONFIDENCE_WEIGHTS.history,
-    detail: `${periods} periods, ${horizons} of 3 growth horizons computable`,
+    // Depth from ONE source is still depth. The wording says so, because the
+    // next factor is what answers "how many sources?".
+    detail: `${periods} periods of history, ${horizons} of 3 growth horizons computable`,
+  });
+
+  // Source independence — how many distinct providers stand behind the reading.
+  // One provider answering three horizons is one source, however many rows it
+  // returned. Corroboration is a different claim from depth and is scored as one.
+  const providers = [...new Set(points.map((p) => p.provider))];
+  const independenceScore = providers.length === 0
+    ? 0
+    : providers.length === 1
+      ? 55   // a single credible provider is the ordinary case, not a failure
+      : providers.length === 2
+        ? 85
+        : 100;
+  factors.push({
+    key: 'sourceIndependence', score: independenceScore, weight: CONFIDENCE_WEIGHTS.sourceIndependence,
+    detail: providers.length === 0
+      ? 'no source'
+      : providers.length === 1
+        ? `one provider (${providers[0]}); no independent corroboration`
+        : `${providers.length} independent providers (${providers.join(', ')})`,
   });
 
   // Freshness — the period the SOURCE describes, never when it was fetched.
@@ -410,7 +509,7 @@ export interface GrowthResult {
 export function scoreGrowth(ev: MarketEvidence, now: Date = new Date()): GrowthResult {
   const built = [
     scoreLongTerm(ev),
-    scoreMediumTerm(ev),
+    scoreTrajectory(ev),
     scoreMomentum(ev),
     scoreConsistency(ev),
     scoreRelative(ev),
