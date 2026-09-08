@@ -127,6 +127,80 @@ this deployment does not use.
 work, and enabling white-label on a workflow still drops that workflow out of
 the free tier. Neither fact reaches the standalone path.
 
+## The brokered call bills the tenant — and did not, at first
+
+Measured 8 Sep 2026 by running the loop end to end on NPC Test. Didit charged
+the prime USD 0.30 and Mission Control wrote three usage rows, correctly
+attributed to the clone, every one of them `billing_reason: no_key`,
+`billable: false`, `cost_micros: 0`. The money left and nobody was recharged —
+the exact failure `API_USAGE_METERING.md` names.
+
+One CASE arm caused it. `resolve_api_key_billability` charges on
+`clone_backend_secrets.status = 'inherited'` and drops everything else into
+`no_key`. `withheld` — the status that exists so a clone can STOP holding a
+forwarded key — landed in that else. Correct before the broker: no forwarded
+key meant the clone could not spend our money. Exactly inverted after it:
+`withheld` is now the one status that GUARANTEES the prime paid, because the
+credential stays here and the CALL travels instead.
+
+Four rules carry the fix.
+
+**Two independent routes, either sufficient.** The broker STATES `brokered` in
+the event metadata — it made the call, so it is the only party that knows, and
+it is right about a clone whose ledger row says anything at all. The status
+column catches usage arriving by any other path while the clone is
+demonstrably stripped of the key. Neither is trusted to cover the other.
+
+**A reporter may not assert its own route.** `normalizeEvent` strips
+`brokered` from clone-supplied metadata. That a clone could only ever use it
+to charge ITSELF more is not the point: an input to the money rule comes from
+the party that knows, or the rule is decorative.
+
+**`brokered` is not `inherited`.** Same charge, different fact — one
+credential travelled to the tenant, the other never left this project. An
+operator asking the ledger which tenants hold our keys must not be told a
+brokered one does.
+
+**A failed brokered call is still `error_call`.** Nothing was delivered, and
+the route the credential took does not change that.
+
+The metadata is read as jsonb (`(_metadata->'brokered') = 'true'::jsonb`),
+never cast. `::boolean` RAISES on a string Postgres cannot read, and metadata
+is free-form — one malformed value would abort the function and stop every
+tenant's usage being recorded at all.
+
+## One credential, three prices
+
+Turning billing on exposed a second fault, older than the broker.
+`api_provider_rates` holds one row per SECRET, so `DIDIT_API_KEY` had one
+price for every call: cost USD 0.20, resale USD 0.40. Measured against the
+vendor's own counters that is true of exactly one of the three operations —
+`id_verification_api` USD 0.20, `passive_liveness_api` USD 0.05,
+`face_match_api` USD 0.05.
+
+So a verification costs USD 0.30 and the flat rate booked USD 0.60, the
+platform's own ledger overstating what it paid by 2x, and charged the tenant
+USD 1.20 — 4x cost, against the 2x margin the owner actually set. The direct
+(`inherited`) path was always priced this way; it never showed because
+nothing was being charged at all.
+
+`api_provider_rate_features` is an override table, deliberately not a
+replacement: `api_provider_rates` keeps its `UNIQUE (secret_name)` and stays
+the one row the rate editor reads and writes, so that surface is untouched and
+cannot break by a second row appearing under the same name. A feature with no
+override is priced by the base row exactly as before, which is what leaves
+every other vendor alone.
+
+**The resale figures are not a new pricing decision.** Each is the measured
+cost times the margin already on the base Didit row (400000/200000 = 2.0), so
+the owner's own multiple is preserved and only the cost it multiplies is
+corrected. Changing the margin is a commercial decision and those three rows
+are where it happens.
+
+Verified on the live ledger after repair: three events, cost USD 0.30 total —
+matching Didit to the cent — and charge USD 0.60. The rollup reconciles: 3
+billable of 3, alongside 8 error events from the free probes at zero.
+
 ### A rejected call does not appear to bill
 
 Measured on the same reading: `passive_liveness_api` stood at **2** after the
