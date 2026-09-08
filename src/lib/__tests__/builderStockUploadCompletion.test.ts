@@ -18,7 +18,7 @@ import { join, resolve } from 'node:path';
 import {
   ABANDONED_PARSE_MS, COMPLETABLE_UPLOAD_STATUSES, finalUploadStatus,
   parseIsAbandoned, settleCompletedUploads, settleUploadCompletion,
-  summariseImageStages,
+  summariseImageStages, mergeStageSummary, isStageCountEntry,
 } from '../../../supabase/functions/_shared/builderStock/uploadCompletion';
 
 interface UploadRow {
@@ -27,11 +27,13 @@ interface UploadRow {
   status: string;
   records_failed: number;
   deleted_at: string | null;
+  image_stage_summary?: Record<string, unknown>;
 }
 
 interface Faults {
   countFails?: boolean;
   imagesFail?: boolean;
+  itemsFail?: boolean;
   writeFails?: boolean;
 }
 
@@ -92,9 +94,15 @@ function fakeDb(
         limit: async () => ({ data: rowsFor(), error: null }),
         // A real range SLICES: `readAllRows` terminates on an empty page, so a
         // double that ignores the offsets pages for ever.
-        range: async (from: number, to: number) => (faults.imagesFail
-          ? { data: null, error: { message: 'images unreadable' } }
-          : { data: rowsFor().slice(from, to + 1), error: null }),
+        range: async (from: number, to: number) => {
+          if (faults.imagesFail && table === 'builder_stock_item_images') {
+            return { data: null, error: { message: 'images unreadable' } };
+          }
+          if (faults.itemsFail && table === 'builder_stock_items') {
+            return { data: null, error: { message: 'items unreadable' } };
+          }
+          return { data: rowsFor().slice(from, to + 1), error: null };
+        },
         // The count query is awaited on the builder itself.
         then: (onFulfilled: (value: unknown) => unknown) => Promise.resolve(
           counting && faults.countFails
@@ -129,7 +137,7 @@ function fakeDb(
 
 const upload = (over: Partial<UploadRow> = {}): UploadRow => ({
   id: 'upload-1', organisation_id: 'org-1', status: 'enriching',
-  records_failed: 0, deleted_at: null, ...over,
+  records_failed: 0, deleted_at: null, image_stage_summary: {}, ...over,
 });
 
 /*
@@ -137,15 +145,39 @@ const upload = (over: Partial<UploadRow> = {}): UploadRow => ({
  * 'source'. A fixture that omitted it would exercise a row shape the table
  * cannot hold.
  */
-const settledItem = (over = {}) => ({
-  upload_id: 'upload-1', organisation_id: 'org-1',
-  lifecycle_status: 'active', enrichment_status: 'complete',
-  image_work_stage: 'settled', ...over,
-});
+let itemSeq = 0;
+const settledItem = (over: Record<string, unknown> = {}) => {
+  itemSeq += 1;
+  return {
+    id: `item-${itemSeq}`,
+    upload_id: 'upload-1', organisation_id: 'org-1',
+    lifecycle_status: 'active', enrichment_status: 'complete',
+    image_work_stage: 'settled', ...over,
+  };
+};
 
-const image = (stage: string, state: string, id = `img-${Math.random()}`) => ({
-  id, upload_id: 'upload-1', source_stage: stage, processing_status: state,
-});
+/*
+ * An image belongs to a PROPERTY. `upload_id` is whatever upload happened to
+ * store it and is deliberately not what the summary is gathered by any more —
+ * these fixtures set it to the shapes production actually holds: a superseded
+ * upload's id, or nothing at all.
+ */
+let imageSeq = 0;
+const image = (
+  stage: string,
+  state: string,
+  over: { stock_item_id?: string; upload_id?: string | null } = {},
+) => {
+  imageSeq += 1;
+  return {
+    id: `img-${String(imageSeq).padStart(4, '0')}`,
+    stock_item_id: 'item-1',
+    upload_id: 'upload-1',
+    source_stage: stage,
+    processing_status: state,
+    ...over,
+  };
+};
 
 describe('settleUploadCompletion', () => {
   it('records a finished import as complete, with its image summary', async () => {
@@ -400,5 +432,210 @@ describe('a settled ladder finishes a property, whatever the legacy latch says',
     expect(source).not.toMatch(/enrichment_status\s*:/);
     expect(source).toContain(".in('enrichment_status', UNFINISHED_ENRICHMENT_STATUSES)");
     expect(source).toContain(".neq('image_work_stage', SETTLED_ITEM_WORK_STAGE)");
+  });
+});
+
+/**
+ * The audit record that said no images were processed.
+ *
+ * `image_stage_summary` is declared "per-stage image counts" for the upload and
+ * the Builder Portal renders it as `Images: uploaded document 78 · …`. It was
+ * gathered by asking for image rows carrying THIS upload's id — but an image
+ * keeps the id of the upload that STORED it, so on a re-upload, where every row
+ * is matched and re-pointed to the new upload, not one image carries the new id.
+ *
+ * MEASURED 7 SEPTEMBER 2026 on upload `5412982c`, 78 properties each carrying
+ * its builder's own photograph: 78 images carried the superseded upload's id,
+ * 156 carried none at all, none carried the current upload's. The record then
+ * stated, permanently, that no images were processed — the same falsehood the
+ * paged read already refuses to write on a database fault, by another route.
+ */
+describe('the summary follows the properties, not the image row upload_id', () => {
+  it('counts images left behind by the SUPERSEDED upload', () => {
+    const items = [settledItem(), settledItem()];
+    const { db, writes } = fakeDb(
+      [upload()],
+      items,
+      [
+        image('uploaded_document', 'ready',
+          { stock_item_id: items[0].id, upload_id: 'upload-0-superseded' }),
+        image('uploaded_document', 'ready',
+          { stock_item_id: items[1].id, upload_id: 'upload-0-superseded' }),
+      ],
+    );
+
+    return settleUploadCompletion(db, { uploadId: 'upload-1' }).then((outcome) => {
+      expect(outcome).toEqual({ status: 'complete' });
+      expect(writes[0].patch.image_stage_summary)
+        .toEqual({ uploaded_document: { ready: 2 } });
+    });
+  });
+
+  it('counts images carrying NO upload id at all', async () => {
+    const items = [settledItem()];
+    const { db, writes } = fakeDb(
+      [upload()],
+      items,
+      [image('uploaded_document', 'ready', { stock_item_id: items[0].id, upload_id: null }),
+        image('internet_search', 'unavailable',
+          { stock_item_id: items[0].id, upload_id: null })],
+    );
+
+    const outcome = await settleUploadCompletion(db, { uploadId: 'upload-1' });
+
+    expect(outcome).toEqual({ status: 'complete' });
+    expect(writes[0].patch.image_stage_summary).toEqual({
+      uploaded_document: { ready: 1 },
+      internet_search: { unavailable: 1 },
+    });
+  });
+
+  it('never counts another upload\'s properties', async () => {
+    const mine = settledItem();
+    const theirs = settledItem({ id: 'item-elsewhere', upload_id: 'upload-2' });
+    const { db, writes } = fakeDb(
+      [upload()],
+      [mine, theirs],
+      [image('uploaded_document', 'ready', { stock_item_id: mine.id }),
+        image('street_view', 'ready', { stock_item_id: theirs.id })],
+    );
+
+    const outcome = await settleUploadCompletion(db, { uploadId: 'upload-1' });
+
+    expect(outcome).toEqual({ status: 'complete' });
+    expect(writes[0].patch.image_stage_summary)
+      .toEqual({ uploaded_document: { ready: 1 } });
+  });
+
+  it('a FAILED property read is not an upload with no properties', async () => {
+    // The same rule the image read has always had: anything short of the whole
+    // set writes nothing, because a partial summary understates the work
+    // permanently and this column is never revisited.
+    const { db, writes } = fakeDb(
+      [upload()], [settledItem()], [image('uploaded_document', 'ready')],
+      { itemsFail: true },
+    );
+    const outcome = await settleUploadCompletion(db, { uploadId: 'upload-1' });
+    expect(outcome).toEqual({ status: null, refusal: 'read_failed' });
+    expect(writes).toHaveLength(0);
+  });
+
+  it('keeps the other tenant of this document', async () => {
+    /*
+     * `repairSourceImages` records `notion_row_assets_version` in the same
+     * jsonb — its own comment says the key "is MERGED, never written over the
+     * stage counts beside it" — while this write replaced the document whole
+     * and dropped it, costing that upload a re-fetch of its live source on
+     * every later run.
+     */
+    const items = [settledItem()];
+    const { db, writes } = fakeDb(
+      [upload({ image_stage_summary: { notion_row_assets_version: 23 } })],
+      items,
+      [image('uploaded_document', 'ready', { stock_item_id: items[0].id })],
+    );
+
+    await settleUploadCompletion(db, { uploadId: 'upload-1' });
+
+    expect(writes[0].patch.image_stage_summary).toEqual({
+      notion_row_assets_version: 23,
+      uploaded_document: { ready: 1 },
+    });
+  });
+
+  it('gathers by the property and never by the image row\'s upload id', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'supabase/functions/_shared/builderStock/uploadCompletion.ts'),
+      'utf8',
+    );
+    const imageRead = source.slice(source.indexOf("from('builder_stock_item_images')"));
+    expect(imageRead).toContain(".in('stock_item_id', chunk)");
+    expect(imageRead.slice(0, 400)).not.toContain("eq('upload_id'");
+  });
+});
+
+/**
+ * Recomputed means RECOMPUTED.
+ *
+ * Spreading the old document under the new one preserves the co-tenant key it
+ * was added for — and it also preserves any stage the recomputation no longer
+ * produces. An upload whose Street View image has since been retired would
+ * carry `street_view: { ready: 1 }` for ever beside its true counts, while the
+ * contract for this column is that its stage counts are recomputed.
+ */
+describe('stage counts are replaced as a set, other tenants are carried', () => {
+  it('drops a stage the new calculation no longer produces, and keeps the metadata', async () => {
+    const items = [settledItem()];
+    const { db, writes } = fakeDb(
+      [upload({
+        image_stage_summary: {
+          // A stage this upload once had, since retired.
+          street_view: { ready: 1 },
+          // A stale count for a stage that still exists: also replaced, never merged.
+          uploaded_document: { ready: 99, failed: 4 },
+          // Another module's key, which must survive.
+          notion_row_assets_version: 23,
+        },
+      })],
+      items,
+      [image('uploaded_document', 'ready', { stock_item_id: items[0].id })],
+    );
+
+    await settleUploadCompletion(db, { uploadId: 'upload-1' });
+
+    expect(writes[0].patch.image_stage_summary).toEqual({
+      notion_row_assets_version: 23,
+      uploaded_document: { ready: 1 },
+    });
+    // Stated separately, because this is the claim that matters.
+    expect(writes[0].patch.image_stage_summary)
+      .not.toHaveProperty('street_view');
+  });
+
+  it('classifies a stage count by its shape, not by a list of names', () => {
+    expect(isStageCountEntry({ ready: 2, failed: 1 })).toBe(true);
+    // A stage that counted nothing is still a stage key.
+    expect(isStageCountEntry({})).toBe(true);
+    // Scalars, nulls and arrays are somebody else's business.
+    expect(isStageCountEntry(23)).toBe(false);
+    expect(isStageCountEntry('23')).toBe(false);
+    expect(isStageCountEntry(null)).toBe(false);
+    expect(isStageCountEntry([1, 2])).toBe(false);
+    expect(isStageCountEntry({ nested: { ready: 1 } })).toBe(false);
+  });
+
+  it('merges an absent or malformed document without throwing', () => {
+    const fresh = { uploaded_document: { ready: 1 } };
+    for (const existing of [null, undefined, 'nonsense', 42, []]) {
+      expect(mergeStageSummary(existing, fresh)).toEqual(fresh);
+    }
+  });
+
+  it('the fresh count wins where a carried key shares a stage name', () => {
+    /*
+     * Carried keys and fresh stage keys are disjoint by construction — one is
+     * everything that is NOT stage-shaped — so this can only arise if a
+     * non-stage value is filed under a stage's name. It must still be the
+     * recomputed count that survives, or a stale scalar would shadow the real
+     * number the whole change exists to produce.
+     */
+    const merged = mergeStageSummary(
+      { uploaded_document: 'stale', notion_row_assets_version: 23 },
+      { uploaded_document: { ready: 7 } },
+    );
+    expect(merged.uploaded_document).toEqual({ ready: 7 });
+    expect(merged.notion_row_assets_version).toBe(23);
+  });
+
+  it('carries every non-stage key, not just the one we know about', () => {
+    const merged = mergeStageSummary(
+      { notion_row_assets_version: 23, some_future_marker: 'kept', old_stage: { ready: 9 } },
+      { uploaded_document: { ready: 3 } },
+    );
+    expect(merged).toEqual({
+      notion_row_assets_version: 23,
+      some_future_marker: 'kept',
+      uploaded_document: { ready: 3 },
+    });
   });
 });
