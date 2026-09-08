@@ -19,6 +19,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
+import { parse as parseYaml } from 'yaml';
 import { join } from 'node:path';
 import {
   ELECTION_CONTEXT_HEADER, ELECTION_TIMEOUT_MS, MAX_DOCUMENT_BYTES,
@@ -404,23 +405,43 @@ describe('nothing in production routes anywhere', () => {
    * rather than assumed.
    */
   it('CI validates the probe with the toolchains that actually compile it', () => {
-    const ci = read('.github/workflows/ci.yml');
-    const step = ci.slice(ci.indexOf('TEMPORARY -- Builder Stock PDF probe'));
-    expect(step).toContain('deno check cloudflare/builder-stock-pdf-probe/src/index.ts');
+    // Parsed rather than string-sliced: three of this step's four failures were
+    // environment, not text, and only the parsed job shows the environment.
+    const ci = parseYaml(read('.github/workflows/ci.yml')) as {
+      jobs: Record<string, { steps: { name?: string; uses?: string;
+        with?: Record<string, unknown>; env?: Record<string, string>; run?: string }[] }>;
+    };
+    const job = ci.jobs['builder-stock-pdf-probe'];
+    expect(job).toBeDefined();
+    const step = job.steps.find((s) => s.name?.includes('Builder Stock PDF probe'));
+    expect(step).toBeDefined();
+
+    expect(step!.run).toContain('deno check cloudflare/builder-stock-pdf-probe/src/index.ts');
+    expect(step!.run).toContain('npm ci --prefix cloudflare/builder-stock-pdf-probe');
+    expect(step!.run).toMatch(/wrangler@[\d.]+ deploy --dry-run/);
+    expect(step!.run).toContain('-c cloudflare/builder-stock-pdf-probe/wrangler.jsonc');
+
     /*
      * WITHOUT THIS THE CHECK DOES NOT RUN AT ALL. Deno walks up to the root
      * `package.json`, switches to bring-your-own-node_modules resolution, and
      * dies on `Could not find "@types/node" in a node_modules folder` —
-     * because this job never runs `npm ci` at the root. `deno check` then
-     * exits 1 having type-checked nothing, which is this repo's own recorded
-     * failure mode: a gate that "was passing by not running", one dependency
-     * along. Verified by reproducing it with the root install removed.
+     * because no root `npm ci` has run. `deno check` then exits 1 having
+     * type-checked nothing, which is this repo's own recorded failure mode: a
+     * gate that "was passing by not running", one dependency along.
      */
-    expect(step).toContain('DENO_NO_PACKAGE_JSON: "1"');
-    expect(step).toContain('npm ci --prefix cloudflare/builder-stock-pdf-probe');
-    expect(step).toContain('wrangler@');
-    expect(step).toContain('deploy --dry-run');
-    expect(step).toContain('-c cloudflare/builder-stock-pdf-probe/wrangler.jsonc');
+    expect(step!.env?.DENO_NO_PACKAGE_JSON).toBe('1');
+
+    /*
+     * AND NODE 22, WHICH IS ALSO LOAD-BEARING. wrangler 4 refuses to start
+     * below it — "Wrangler requires at least Node.js v22.0.0. You are using
+     * v20.20.2" — and every other job in this file pins 20. This is why the
+     * probe has a job of its own rather than a step inside one: a temporary
+     * experiment must not move an existing job's Node floor under every other
+     * step in it.
+     */
+    const node = job.steps.find((s) => s.uses?.startsWith('actions/setup-node'));
+    expect(String(node?.with?.['node-version'])).toBe('22');
+
     // The wrangler build resolves the esm.sh -> npm alias from the probe's own
     // dependency, so the lockfile `npm ci` reads has to be in the repository.
     expect(here('cloudflare/builder-stock-pdf-probe/package-lock.json')).toBe(true);
