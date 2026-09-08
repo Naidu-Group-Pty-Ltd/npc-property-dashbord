@@ -752,3 +752,116 @@ describe('the existing image worker keeps its gate', () => {
     expect(job).toContain('node-version: 22');
   });
 });
+
+// ── Configuring the bearer, without carrying it anywhere ────────────────────
+/*
+ * One bearer has to be byte-identical in two stores that will neither of them
+ * read a value back. That is a distribution problem, not a bug, and this
+ * repository has already answered it once: `rotate-internal-edge-secret.yml`
+ * ISSUES a new value inside the runner and writes both halves in one job,
+ * because the alternative — carrying a live credential across by hand — is
+ * the thing secret management exists to prevent.
+ *
+ * These assert the properties that make that safe, rather than the strings
+ * that happen to express them today.
+ */
+describe('the workflow that sets the bearer', () => {
+  const workflow = read('.github/workflows/set-builder-stock-pdf-worker-secrets.yml');
+  const NAMES = ['BUILDER_STOCK_PDF_WORKER_TOKEN', 'BUILDER_STOCK_PDF_WORKER_URL'];
+
+  it('writes exactly the names the settler reads', () => {
+    // Tied to the code rather than to a memory of it: renaming one end without
+    // the other fails here instead of at 2am against a production upload.
+    const client = read('supabase/functions/_shared/builderStock/pdfElectionClient.ts');
+    for (const name of NAMES) {
+      expect(client).toContain(`env('${name}')`);
+      expect(workflow).toContain(name);
+    }
+  });
+
+  it('mints the token in the runner and masks it before anything else uses it', () => {
+    const minted = workflow.indexOf('NEW_TOKEN="$(openssl rand -hex 32)"');
+    const masked = workflow.indexOf('::add-mask::$NEW_TOKEN');
+    expect(minted).toBeGreaterThan(-1);
+    expect(masked).toBeGreaterThan(minted);
+    // Every later mention is a use, and every use is after the mask.
+    const uses = [...workflow.matchAll(/\$NEW_TOKEN/g)].map((m) => m.index ?? -1);
+    expect(uses.every((at) => at >= masked)).toBe(true);
+  });
+
+  it('never prints it, and takes it from no caller', () => {
+    for (const forbidden of [
+      /echo\s+"?\$NEW_TOKEN/,
+      /echo\s+"?\$BEARER/,
+      /inputs\.\w*token/i,
+      /inputs\.\w*secret/i,
+    ]) {
+      expect(`${forbidden}: ${forbidden.test(workflow)}`).toBe(`${forbidden}: false`);
+    }
+  });
+
+  it('lets a caller choose neither the secret name nor its value', () => {
+    /*
+     * `set-builder-stock-link-secrets.yml` records why: a workflow that can
+     * write ANY Edge Function secret is a privilege escalation surface —
+     * anyone able to dispatch it could overwrite INTERNAL_EDGE_SECRET or a
+     * vendor credential. The names are literals in the file.
+     */
+    const block = workflow.slice(
+      workflow.indexOf('  workflow_dispatch:'), workflow.indexOf('\npermissions:'));
+    const inputs = [...block.matchAll(/^ {6}(\w+):$/gm)].map((m) => m[1]);
+    expect(inputs.sort()).toEqual(['confirm', 'worker_url']);
+    for (const name of NAMES) {
+      expect(workflow).toContain(`"${name}=$`);
+    }
+  });
+
+  it('judges the destination host rather than globbing the whole URL', () => {
+    /*
+     * `*` in a shell `case` pattern matches a slash, so `https://*.workers.dev`
+     * also accepts `https://elsewhere.example/x.workers.dev`. The settler sends
+     * multi-megabyte brochures to whatever this stores, so the host is
+     * isolated before its suffix is judged.
+     */
+    expect(workflow).toContain('REST="${WORKER_URL#https://}"');
+    const hostCheck = workflow.indexOf('*[/?#@]*');
+    const suffixCheck = workflow.indexOf('*.workers.dev) : ;;');
+    expect(hostCheck).toBeGreaterThan(-1);
+    expect(suffixCheck).toBeGreaterThan(hostCheck);
+  });
+
+  it('proves the halves agree by being refused in the right way', () => {
+    /*
+     * GET on the election path: authentication runs first and routing second,
+     * so 404 means the bearer was accepted and nothing was decoded. Same shape
+     * as `verification_selftest` — a deliberately incomplete call where being
+     * rejected correctly is the pass, costing no CPU and sending no document.
+     */
+    const proof = workflow.slice(workflow.indexOf('Prove the two halves agree'));
+    expect(proof).toContain('/v1/elect');
+    expect(proof).toMatch(/CODE" = '401'[\s\S]*?exit 1/);
+    expect(proof).toMatch(/CODE" != '404'[\s\S]*?exit 1/);
+    // And a check that only proves acceptance would pass on an open worker.
+    expect(proof).toMatch(/WRONG" != '401'[\s\S]*?exit 1/);
+  });
+
+  it('deploys nothing and moves no property', () => {
+    /*
+     * Comments stripped first. This repository has already had a check that
+     * prose satisfied — a kill detector asserting the file merely CONTAINED a
+     * word — and a header explaining what a workflow does not do would pass
+     * this one the same way.
+     */
+    const acts = workflow.split('\n')
+      .filter((line) => !/^\s*#/.test(line)).join('\n');
+    for (const forbidden of [
+      'supabase functions deploy',
+      'supabase db push',
+      'wrangler deploy',
+      'reopen_builder_stock_runtime_failures',
+      'RUNTIME_VERSION',
+    ]) {
+      expect(`${forbidden}: ${acts.includes(forbidden)}`).toBe(`${forbidden}: false`);
+    }
+  });
+});
