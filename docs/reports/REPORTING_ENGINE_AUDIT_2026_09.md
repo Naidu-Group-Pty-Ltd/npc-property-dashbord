@@ -5809,3 +5809,163 @@ that improved by better reading rather than by acquiring anything.
 **Nothing here changes the A = 75 / A+ = 85 thresholds, and nothing here is a
 backtest.** A backtest on this corpus would be a measurement of an empty
 Growth dimension and a quarantined Location one.
+
+---
+
+## §58 — ME-5: the centre a property belongs to, and the risk that is the buyer's (2026-09-08)
+
+§57 quarantined the historical Location evidence. This is what replaces it, and
+what the same measurement turned up about Risk.
+
+### 58.1 Two wrong commutes, only one of which is a bug
+
+The corpus measured every property's access to its **state capital**:
+
+* **Bentley WA, 8 km from Perth, stored 82.1 hours.** A defect — the
+  destination defaulted to Sydney (§57.3).
+* **Moranbah QLD stored 1,487 minutes to Brisbane.** *Not* a defect. The
+  Distance Matrix answered correctly. The **question** is wrong: nobody in
+  Moranbah commutes to Brisbane, and grading the property on how long that
+  takes grades it on being regional.
+
+`resolveActivityCentre` reads the answer the ABS already publishes, in three
+tiers, most specific first:
+
+| tier | what it is | why it is trusted |
+| --- | --- | --- |
+| `capital_labour_market` | a Greater capital's GCCSA | the GCCSA is *defined* from journey-to-work data |
+| `significant_urban_area` | an SUA of 10,000+ | the functional town outside a capital |
+| `local_centre` | the Urban Centre itself | where the property **is**, not where its jobs are |
+
+The UCL is deliberately **last**. The brief's caution — that a UCL is not
+automatically the right activity centre — is exactly right: a dormitory town's
+UCL says nothing about where its residents work.
+
+SUA was resolved for all 931 placed reports against the ABS ASGS 2021 layer
+(931 of 931 answered HTTP 200). The result:
+
+| tier | reports | distinct centres |
+| --- | ---: | ---: |
+| capital labour market | **587** | 12 |
+| significant urban area | **236** | 34 |
+| local centre | **108** | 35 |
+| none | 0 | — |
+
+So **344 reports — 37% — were being graded on a commute to a city they have no
+relationship with**, the Sunshine Coast's 92 among them.
+
+That resolution also found the trap a loader has to know about: **the ABS tiles
+the continent, so "no urban centre here" arrives as a NAMED polygon** —
+`Not in any Significant Urban Area (Qld)`, on 131 of 931 rows. Reading it as a
+place would route every rural property's access to a centre of that name.
+
+Two tiers resolve a **named centre with a null coordinate**, because the ABS
+publishes the boundary and not the centre, and a polygon centroid would be an
+invention of exactly the kind this programme keeps removing. Those report
+access as *not yet measurable* rather than measuring to a guess.
+
+### 58.2 A jurisdiction's own feed, or nothing
+
+Reconstructing the transport reading for all 931 placed reports against the
+185,177 loaded stops — boardable stops within 1,600 m, grouped to places by
+`parent_station`:
+
+* **355 have a stop within 1,600 m.** Median nearest 113 m, closest 11 m,
+  furthest-nearest 1,512 m. Against a stored template that said *"3 stops
+  within 1 km"* for all 1,108.
+
+But the raw reconstruction hides a trap. **`nsw_sydney` is Transport for NSW's
+whole bundle**, not Sydney's, and it carries the interstate rail and coach
+network — so a **Docklands property finds "Melbourne (Southern Cross) Station"
+225 m away**, a Wodonga property finds NSW border-town buses, and a Lyneham
+property finds NSW school services in Canberra.
+
+| state | a stop within 1.6 km | in-jurisdiction | interstate feed only |
+| --- | ---: | ---: | ---: |
+| QLD | 221 | 221 | 0 |
+| NSW | 123 | 123 | 0 |
+| VIC | 6 | **0** | **6** |
+| ACT | 4 | **0** | **4** |
+| SA | 1 | **0** | **1** |
+
+Every one of those 11 is a real stop at a real distance, and none measures the
+network the property's residents use. It is **worse than the honest
+`outside_loaded_networks`**, because a Docklands property with trams every three
+minutes would be reported as having one stop nearby. `readingIsInJurisdiction`
+applies the rule where both the live service and a backtest must apply it
+identically. **344 of 931 carry a genuine in-jurisdiction reading.**
+
+### 58.3 Location Evidence V2, and its neutrality
+
+| component | source | held today |
+| --- | --- | --- |
+| transit stops | loaded GTFS, by coordinate | NSW, QLD SEQ, NT ×2 |
+| activity centre | ABS ASGS 2021 | all 931 placed |
+| access to that centre | not acquired | no |
+| schools, shops, health | not acquired | no |
+
+Three rules, each with a test.
+
+**There is no composite score.** A weighting over one measured component and
+three absent ones is a confident answer to a question the evidence cannot
+settle. The module publishes components and coverage; whether that is enough to
+grade is the caller's decision.
+
+**Transit is measured or unmeasured, never poor.** Inner-metro Perth reads
+`not_covered` because WA publishes no loaded feed, and a test forbids that
+absence being worded as poor service. Scoring those 587 as badly served would
+grade them on which state government publishes an open feed.
+
+**Nothing compares across tiers or across coverage states.** Minutes to the
+Perth CBD and minutes to a country town's main street are different quantities.
+A test asserts a Moranbah property scores no worse than an inner-Perth one on
+components measured.
+
+### 58.4 Risk: 70% of its weight is the buyer, not the property
+
+The same repeated-address analysis settles the Risk model question with
+evidence rather than preference. 55 addresses appear in more than one report:
+
+| what differs for the same address | addresses |
+| --- | ---: |
+| purchase price | 7 of 55 |
+| **LVR** | **16 of 55** |
+| **weekly cash flow** | **21 of 55** |
+
+The property is stable; the financing is not. Concretely: **1 Boxer Drive,
+Wyndham Vale — two reports, the same day, the same $635,000, the same −$562
+weekly net — one at 80% LVR and one at 90%.** Three more Truganina addresses
+carry the identical pair. On the leverage anchors that is 62 → 30, weighted
+0.40: **12.8 points of Risk for a number an operator typed into a calculator.**
+
+| model | what it scores | the buyer's position |
+| --- | --- | --- |
+| **A** asset only | asset type, overheating | dropped |
+| **B** asset scored, finance disclosed | asset type, overheating | reported beside the grade |
+| **C** blended (today) | all four | folded into the grade |
+
+They are separated by an **invariant**: the same property, on the same day, at
+the same price must receive the same property Risk score. A and B hold it by
+construction; **C fails it on 16 of 55 repeated addresses.**
+
+The fair counter-argument, which is the strong one: a report IS about a
+specific purchase at a specific LVR, so the buyer's leverage really does bear
+on that investment's risk, and **Model A throws it away.** That is precisely
+why **B is preferable to A** — it moves the information out of a number
+presented as a property grade and reports it as what it is.
+
+The trade-off in the other direction is coverage: A and B are scoreable on
+**879** of 1,207 reports against C's **1,010** — and **131 of C's are scoreable
+on buyer facts alone**, which is to say C can produce a Risk score for a report
+that carries no property attribute at all. That is not a point in C's favour.
+
+**Recommendation: Model B**, on the invariance evidence and on the coverage
+composition — not because it was the preferred hypothesis. `scoreRisk` is
+untouched, nothing is switched, and no live path calls `riskModels.pure.ts`.
+
+**Overheating sensitivity (item 13).** The anchors are flat below 12% growth,
+so ordinary appreciation is not charged as risk — charging for it would be a
+second opinion on Growth. Dropping leverage raises overheating's share from
+0.10 to 0.33, which is the trade-off to weigh rather than a free improvement,
+and it is pinned by a test. Overheating remains **unscoreable on this corpus
+anyway**, because no suburb price series is held.
