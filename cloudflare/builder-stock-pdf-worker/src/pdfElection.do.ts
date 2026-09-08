@@ -46,6 +46,17 @@ import {
 // deno-lint-ignore no-empty-interface
 export interface PdfElectionEnv {}
 
+/**
+ * The name of the one lane every election is serialised through.
+ *
+ * It lives HERE rather than in the Worker entrypoint because workerd treats
+ * every named export of the entrypoint as a handler or a Durable Object class
+ * and refuses to start otherwise — "Incorrect type for map entry
+ * 'ELECTION_LANE': the provided value is not of type 'function or
+ * ExportedHandler'". Measured: the Worker would not boot at all.
+ */
+export const ELECTION_LANE = 'builder-stock-pdf-election';
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,

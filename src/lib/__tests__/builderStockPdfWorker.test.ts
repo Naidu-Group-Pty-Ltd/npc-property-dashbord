@@ -50,8 +50,10 @@ vi.mock('../../../supabase/functions/_shared/builderStock/pdfText', () => ({
   }),
 }));
 
-import worker, { ELECTION_LANE } from '../../../cloudflare/builder-stock-pdf-worker/src/index';
-import { PdfElection } from '../../../cloudflare/builder-stock-pdf-worker/src/pdfElection.do';
+import worker from '../../../cloudflare/builder-stock-pdf-worker/src/index';
+import {
+  ELECTION_LANE, PdfElection,
+} from '../../../cloudflare/builder-stock-pdf-worker/src/pdfElection.do';
 import { readPdfPageTextResult } from '../../../supabase/functions/_shared/builderStock/pdfText';
 import { electFromPdfBytes } from '../../../supabase/functions/_shared/builderStock/pdfElection';
 import { runElectionOnRoute } from '../../../supabase/functions/_shared/builderStock/pdfElectionClient';
@@ -331,6 +333,29 @@ describe('the ingress does only authentication and routing', () => {
       '.text()', '.blob()', '.formData()']) {
       expect(handler).not.toContain(forbidden);
     }
+  });
+
+  /*
+   * ONLY HANDLERS AND DURABLE OBJECT CLASSES MAY BE NAMED EXPORTS.
+   *
+   * workerd validates the entrypoint's export map at STARTUP and refuses to
+   * boot on anything else. A first version of this exported the lane name as a
+   * `const` from here and the Worker would not start at all:
+   *
+   *   Uncaught TypeError: Incorrect type for map entry 'ELECTION_LANE':
+   *   the provided value is not of type 'function or ExportedHandler'.
+   *
+   * Nothing else caught it — not `deno check`, not the wrangler build, not
+   * fifty-two tests — because none of them boots the runtime. Only running it
+   * did. This is the guard that would have.
+   */
+  it('exports only what a Worker entrypoint may export', () => {
+    const exported = [...stripComments(source).matchAll(/^export\s+(.+)$/gm)]
+      .map((m) => m[1].trim());
+    expect(exported).toEqual([
+      "{ PdfElection } from './pdfElection.do.ts';",
+      'default {',
+    ]);
   });
 
   it('hands the original request over, so the PDF streams through untouched', () => {

@@ -31,10 +31,13 @@
  */
 import { PDF_ELECTION_PROTOCOL } from '../../../supabase/functions/_shared/builderStock/pdfElectionBoundary.pure.ts';
 
+/*
+ * ONLY handlers and Durable Object classes may be named exports of a Worker
+ * entrypoint. workerd validates this at startup and refuses to boot on
+ * anything else, so the lane NAME is imported rather than re-exported here.
+ */
 export { PdfElection } from './pdfElection.do.ts';
-
-/** The name of the one lane every election is serialised through. */
-export const ELECTION_LANE = 'builder-stock-pdf-election';
+import { ELECTION_LANE } from './pdfElection.do.ts';
 
 /**
  * The two methods this ingress uses on the Durable Object binding, declared
