@@ -4039,3 +4039,163 @@ client challenge.
 Scoring V2 therefore stops here, unwired, pending a decision on the market-data
 source. The arithmetic corrections are built and backtested (§45); what is
 missing is the evidence, and no amount of engineering substitutes for it.
+
+---
+
+## §47 — The wire is cut in four places, and the ABS answers (2026-09-08)
+
+§46 stopped at "there is no market-data credential" and put a procurement
+question to the owner. That was the right gate and the wrong stopping point:
+following the payload the rest of the way to the scorer shows that **restoring
+a credential would not have moved a single score**, and probing the public
+registers shows that the primary evidence the brief demands is available for
+nothing.
+
+### Part 1 — Four independent breaks between market data and a grade
+
+Each is fatal on its own. Each reports as normal operation.
+
+**1. No credential.** `domain-data-service` reads `DOMAIN_API_KEY` and returns
+HTTP 500 `Domain API key not configured` before any fetch. It is alone among
+its siblings in writing no `api_health_log` row — `abs-census` (2,441),
+`climate-data` (2,289), `crime-statistics` (1,747), `public-transport` (639),
+`bc-segment-engine` (194) and `risk-assessment` (172) all do, Domain has never
+written one. Consistent with the unset branch; not proof of it, because the
+function logs health only after a successful call.
+
+**2. The payload never reaches the scorer.** This is the break that matters.
+`generate-investment-report` stores the Domain response as
+`enhancedData.domainData` — a **sibling** of `demographics` — and then calls
+the scorer with:
+
+```ts
+body: JSON.stringify({
+  property: { … },
+  demographics: enhancedData.demographics,
+  locationIntelligence: enhancedData.locationIntelligence,
+  financials: enhancedData.financials
+})            // ← domainData is not here, and never has been
+```
+
+while every scorer reads
+
+```ts
+const marketData = demographics.marketData || financials.marketData || {};
+```
+
+— `investment-scoring-service` (twice: `transformScoringInput` and
+`transformAreaInput`), `_shared/investmentScoreEngine.ts`, and
+`backfill-investment-scores`. **No writer anywhere in the repository writes
+`marketData` under either key.**
+
+Measured across the whole corpus on 2026-09-08:
+
+| assertion | result |
+| --- | ---: |
+| reports stored | 1,199 |
+| distinct keys ever present in `demographics_data` | **7** — `dataQuality`, `dataSource`, `population`, `employment`, `income`, `housing`, `cached` |
+| `demographics_data ? 'marketData'` | **0** |
+| `financial_calculations ? 'marketData'` | **0** |
+| `data_sources->'marketData'` populated | **0** of 1,049 carrying the key |
+
+So `marketData` has evaluated to `{}` on every report this platform has ever
+generated, and `medianSuburbPrice`, `priceGrowth1Year`, `priceGrowth3Year`,
+`vacancyRate` and `daysOnMarket` have been `undefined` every time. This is the
+`aml.cases.tenant_id` class again — reading a name no writer writes, with
+nothing to report it — except in JSONB, where there is not even a 42703.
+
+**3. A name mismatch behind the disconnect.** Were the payload routed, Domain
+returns `medianSoldPrice`; the scorer reads `marketData.medianPrice`.
+`annualGrowth` and `daysOnMarket` would map; the median would not.
+
+**4. The series is fetched and thrown away.** The request asks for twelve
+windows (`chronologicalSpan=12&tPlusFrom=1&tPlusTo=12`) and the handler keeps
+
+```ts
+series.seriesInfo[series.seriesInfo.length - 1]
+```
+
+— one point. So even a live, routed, correctly-named integration yields **one**
+growth horizon, where the brief's §3 requires 5-year, 3-year, 1-year and a
+consistency reading. And two fields the scorers want are not in the declared
+`SuburbPerformance` interface at all: `priceGrowth3Year` and `vacancyRate`.
+
+**The conclusion the credential question was hiding:** breaks 2–4 are ours, they
+are free to fix, and until they are fixed no market-data purchase can change a
+grade.
+
+### Part 2 — The primary evidence is public, and it was measured
+
+Probed live from this egress on 2026-09-08 (single range requests, no crawl):
+
+| source | result |
+| --- | --- |
+| ABS Data API (`data.api.abs.gov.au`) | **answers** |
+| VIC / QLD / SA open-data portals (CKAN) | answer |
+| NSW Valuer General bulk sales | blocked at this proxy (502 CONNECT) — re-probe from the Supabase egress, as G2 did |
+
+Two ABS dataflows carry property values. **`RPPI`** (Residential Property Price
+Index) returns nothing after **2021-Q4** — five years stale, and a reminder of
+the sanctions rule that *freshness of the load is not currency of the data*.
+**`RES_DWELL`** is current and is the answer:
+
+> **`ABS,RES_DWELL` — Residential Dwellings: Unstratified Medians and Transfer
+> Counts by Dwelling Type, GCCSA and Rest of State**
+>
+> - 4 measures: transfer **counts** and **median prices**, each split
+>   *established houses* vs *attached dwellings*
+> - 15 regions (8 Greater Capital Cities + 7 Rest-of-State), plus state and
+>   two weighted averages in the codelist
+> - **2002-Q1 → 2026-Q2**, 98 quarters, 60 series, 92–98 observations each
+> - medians are `AUD` at `UNIT_MULT=3`; counts are `NUM` at `0`
+
+Executed end to end, median price of established house transfers, growth to
+2026-Q2, annualised:
+
+| region | median | 1yr | 3yr p.a. | 5yr p.a. | 10yr p.a. |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Greater Sydney | $1,488,000 | −2.13% | 3.16% | 4.28% | 5.21% |
+| Rest of NSW | $810,000 | 5.06% | 4.49% | 6.54% | 6.66% |
+| Greater Melbourne | $850,000 | 1.19% | 0.38% | 0.48% | 3.37% |
+| Rest of Vic. | $625,000 | 8.70% | 3.12% | 5.49% | 7.44% |
+| Greater Brisbane | $1,155,000 | 18.83% | 14.22% | 12.89% | 8.84% |
+| Rest of Qld | $800,000 | 10.10% | 12.62% | 10.76% | 6.53% |
+| Greater Adelaide | $975,000 | 13.24% | 11.57% | 12.13% | 8.28% |
+| Rest of SA | $584,000 | 15.74% | 13.95% | 13.52% | 8.23% |
+| Greater Perth | $1,010,000 | 18.82% | 18.96% | 13.34% | 6.86% |
+| Rest of WA | $665,000 | 20.91% | 18.46% | 11.90% | 7.26% |
+| Greater Hobart | $750,000 | 4.90% | 2.50% | 3.55% | 7.47% |
+| Rest of Tas. | $625,000 | 13.64% | 5.32% | 8.27% | 9.47% |
+| Greater Darwin | $752,000 | 21.37% | 8.45% | 5.90% | 3.22% |
+| Rest of NT | $450,000 | 1.28% | −1.99% | −0.44% | 0.55% |
+| ACT | $1,030,000 | 3.00% | 1.57% | 2.62% | 5.16% |
+
+This is capital growth in the brief's own sense — **actual value movement**,
+measured, government-published, dwelling-type aware, and reproducible by anyone
+issuing the same request. It discriminates: Greater Perth and Greater Melbourne
+are twenty points apart on the three-year reading, where today both score 50.
+The transfer counts on the same dataflow are a genuine turnover signal for the
+Demand dimension.
+
+Two limits travel with it, and must be recorded on every figure rather than
+argued away:
+
+- **It is unstratified.** A raw median of transfers, not quality-adjusted, so
+  composition shifts move it. The ABS says so in the dataflow's own title.
+- **The grain is regional, not suburb** — Greater Sydney, Rest of NSW. Under
+  the brief's §9 (persist the geographical level) and §8 (evidence confidence)
+  that is exactly what the design already anticipates: a coarse measure,
+  labelled coarse, beats a placeholder 50 and beats a fabricated suburb figure.
+  It is a floor to build on, not a ceiling — suburb-grain sales registers are
+  the next layer, and NSW's needs re-probing from the Supabase egress.
+
+### What this changes
+
+The gate in §46 asked the owner to choose a vendor. The measurement says the
+first move needs no vendor and no spend: route the market payload to the
+scorer, fix the field names, keep the series, and stand a deterministic Growth
+dimension on `RES_DWELL`. A vendor purchase remains the route to *suburb*
+grain, vacancy and days-on-market — but it is now an improvement on a working
+dimension rather than the precondition for having one.
+
+Scoring V2 stays unwired, per the brief's §14.
