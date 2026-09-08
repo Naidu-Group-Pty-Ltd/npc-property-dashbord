@@ -292,3 +292,40 @@ describe('the self-test proves reachability without spending anything', () => {
     expect(block).toContain('Verification can reach the provider on this route.');
   });
 });
+
+describe('Mission Control can ask a clone the same question', () => {
+  const webhook = readFileSync(
+    resolve(__dirname, '../../../supabase/functions/mission-control-webhook/index.ts'),
+    'utf8',
+  );
+
+  it('answers the probe on the signed webhook channel', () => {
+    // The alternative was admitting a service credential to `aml-verification`,
+    // which deliberately refuses service_role outright — that function serves
+    // people, and one hole in it for a diagnostic is how such a boundary stops
+    // meaning anything.
+    expect(webhook).toContain('if (event === "verification.selftest")');
+    expect(webhook).toContain('probeStandaloneRoute()');
+  });
+
+  it('runs it BEFORE the de-dupe, because a probe asked twice must ask twice', () => {
+    // Everything past the de-dupe is an event applied exactly once. Keyed like
+    // one, a second probe would be answered from a table without making the
+    // call — the stale reading it exists to replace.
+    const probeAt = webhook.indexOf('if (event === "verification.selftest")');
+    // The INSERT, not the comment at the top of the file that names the table.
+    const dedupeAt = webhook.indexOf('from("token_webhook_events").insert');
+    expect(probeAt).toBeGreaterThan(-1);
+    expect(dedupeAt).toBeGreaterThan(-1);
+    expect(probeAt).toBeLessThan(dedupeAt);
+  });
+
+  it('returns the reading rather than storing it', () => {
+    const at = webhook.indexOf('if (event === "verification.selftest")');
+    const block = webhook.slice(at, at + 500);
+    expect(block).toContain('JSON.stringify({ ok: true, event, probe })');
+    for (const forbidden of ['.insert(', '.upsert(', '.update(']) {
+      expect(block, forbidden).not.toContain(forbidden);
+    }
+  });
+});
