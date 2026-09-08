@@ -49,16 +49,27 @@ const json = (body: unknown, status = 200) =>
   });
 
 /**
- * Constant-time bearer comparison, as `builder-stock-image-worker` does it: a
- * length-leaking early return on a shared secret is worth avoiding even behind
- * an unadvertised URL.
+ * Constant-time equality: both values are SHA-256 digested and the digests
+ * XOR-compared, so neither length nor prefix of the expected token leaks
+ * through timing, and the comparison itself cannot short-circuit.
+ *
+ * The SAME implementation `builder-stock-image-worker` uses, deliberately
+ * rather than coincidentally: two workers on one account guarding one kind of
+ * secret should not have two answers to how a bearer is compared. The first
+ * version here compared character codes after a length check, which is
+ * constant-time only across tokens of EQUAL length — the length itself was
+ * still readable from the early return.
  */
-function tokenMatches(presented: string, expected: string): boolean {
-  if (presented.length !== expected.length) return false;
+async function tokensMatch(received: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(received)),
+    crypto.subtle.digest('SHA-256', encoder.encode(expected)),
+  ]);
+  const va = new Uint8Array(a);
+  const vb = new Uint8Array(b);
   let diff = 0;
-  for (let i = 0; i < presented.length; i += 1) {
-    diff |= presented.charCodeAt(i) ^ expected.charCodeAt(i);
-  }
+  for (let i = 0; i < va.length; i++) diff |= va[i] ^ vb[i];
   return diff === 0;
 }
 
@@ -83,7 +94,7 @@ export default {
     if (!expected) return json({ error: 'worker_token_not_configured' }, 503);
     const auth = request.headers.get('authorization') ?? '';
     const presented = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
-    if (!presented || !tokenMatches(presented, expected)) {
+    if (!presented || !(await tokensMatch(presented, expected))) {
       return json({ error: 'unauthorised' }, 401);
     }
 

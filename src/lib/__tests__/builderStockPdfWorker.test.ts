@@ -327,10 +327,36 @@ describe('authentication fails closed', () => {
     expect(response.status).toBe(401);
   });
 
-  it('compares in constant time, so a length cannot be probed', () => {
+  /*
+   * ONE ANSWER TO HOW A BEARER IS COMPARED, ACROSS BOTH WORKERS.
+   *
+   * Both values are SHA-256 digested and the DIGESTS are XOR-compared, so the
+   * loop always runs over 32 fixed bytes: neither the length nor any prefix of
+   * the expected token is readable from timing. The first version here
+   * compared character codes behind a length check, which is constant-time
+   * only across tokens of equal length — the length itself still leaked. Two
+   * workers on one account guarding one kind of secret must not have two
+   * answers to this, so the function is asserted to be the SAME one, not
+   * merely a similar one.
+   */
+  it('compares bearers exactly as the image worker does', () => {
+    const body = (src: string) => {
+      const start = src.indexOf('async function tokensMatch');
+      return src.slice(start, src.indexOf('\n}', start));
+    };
+    const mine = body(read(WORKER_SRC));
+    const theirs = body(read('cloudflare/builder-stock-image-worker/src/index.ts'));
+    expect(mine).not.toBe('');
+    expect(mine).toBe(theirs);
+  });
+
+  it('and that comparison digests both sides rather than walking the token', () => {
     const source = stripComments(read(WORKER_SRC));
-    expect(source).toContain('diff |=');
-    // No early return inside the comparison loop.
+    expect(source).toContain("crypto.subtle.digest('SHA-256', encoder.encode(received))");
+    expect(source).toContain("crypto.subtle.digest('SHA-256', encoder.encode(expected))");
+    expect(source).toContain('diff |= va[i] ^ vb[i]');
+    // Nothing may short-circuit: no length check, no early return in the loop.
+    expect(source).not.toMatch(/\.length !== .*\.length/);
     expect(source).not.toMatch(/for \([^)]*\) \{[^}]*return false/);
   });
 
