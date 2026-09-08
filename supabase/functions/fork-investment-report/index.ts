@@ -509,7 +509,24 @@ Deno.serve(async (req) => {
         // weighted 15% on the financial fork: measured, a unit graded B at 60
         // where the record says C+ at 57. No strata property has been forked
         // yet, so the exposure is latent — and armed.
-        propertyType: readPropertyFacts(parent.property_specs, overrides).normalisedType,
+        // Only the strata case changes. `normalisedType` is undefined for an
+        // unclassified record, and `investmentScoreEngine` line 68 is
+        // `property.propertyType || 'house'` — so passing undefined would
+        // DEFAULT to a house and award `dRisk`'s +3, where the old expression
+        // passed the truthy `'Residential Property'` placeholder and got a
+        // neutral. That would be a score change in the inflating direction,
+        // and scoring is a separate decision the author has open. So the two
+        // rungs below preserve the previous behaviour exactly: an
+        // unclassifiable-but-present type stays neutral, an empty record still
+        // resolves to 'house'.
+        //
+        // The engine's own `|| 'house'` is the real defect — it turns
+        // "unclassified" into a house bonus, and `property_specs` is empty on
+        // 100% of current reports — but it belongs to the scoring work, not
+        // here.
+        propertyType: readPropertyFacts(parent.property_specs, overrides).normalisedType
+          ?? parent.property_specs?.property_type
+          ?? 'house',
       },
       demographics: parent.demographics_data || {},
       locationIntelligence: parent.location_intelligence || {},

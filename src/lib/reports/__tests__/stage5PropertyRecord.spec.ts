@@ -193,6 +193,37 @@ describe('the fork stops naming keys nothing writes', () => {
   it('resolves the property type through the healing reader', () => {
     expect(FORK).toContain('readPropertyFacts(parent.property_specs, overrides).normalisedType');
   });
+
+  it('changes the score input ONLY where the operator recorded a real type', () => {
+    // Scoring is a separate, open decision, so this PR must not move a score
+    // it is not about. `investmentScoreEngine` reads
+    // `property.propertyType || 'house'`, so handing it `undefined` for an
+    // unclassified record would DEFAULT to a house and award `dRisk`'s +3 —
+    // where the old expression passed the truthy `'Residential Property'`
+    // placeholder and got a neutral. The two extra rungs preserve that.
+    const oldWay = (specs: Record<string, unknown> | null) =>
+      (specs?.propertyType as string) || (specs?.property_type as string) || 'house';
+    const newWay = (specs: Record<string, unknown> | null, ovr: Record<string, unknown>) =>
+      readPropertyFacts(specs, ovr).normalisedType
+        ?? (specs?.property_type as string | undefined)
+        ?? 'house';
+
+    const PLACEHOLDER = { property_type: 'Residential Property' };
+    // Unchanged: an empty record, a bare placeholder, and a real type already
+    // in the spec column all resolve exactly as they did.
+    for (const [specs, ovr] of [
+      [null, {}],
+      [PLACEHOLDER, {}],
+      [{ property_type: 'house' }, {}],
+    ] as const) {
+      expect(newWay(specs, ovr)).toBe(oldWay(specs));
+    }
+    // Changed, and this is the whole point: the operator's recorded type now
+    // reaches the engine instead of being discarded by the placeholder.
+    expect(oldWay(PLACEHOLDER)).toBe('Residential Property');
+    expect(newWay(PLACEHOLDER, { propertyType: 'apartment' })).toBe('unit');
+    expect(newWay(PLACEHOLDER, { propertyType: 'house' })).toBe('house');
+  });
 });
 
 describe('the generator persists the merged facts', () => {
