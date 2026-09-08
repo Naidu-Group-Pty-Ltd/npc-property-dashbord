@@ -5604,3 +5604,208 @@ Three consequences, and the second is the one that bites:
 This is why the walk-score recalibration in ME-4 was correctly marked
 provisional, and why recalibrating against this corpus would have been
 calibrating against a fabrication.
+
+---
+
+## §57 — ME-5: the Location evidence, measured end to end (2026-09-08)
+
+§56 closed the geography blocker. This is the item the revised brief called the
+highest remaining priority: *"Audit the entire historical Location intelligence
+object for common template/state-level patterns."*
+
+The audit's own Section 24 named one contaminated field, `distanceToStop`. A
+sweep of all **1,114** stored `location_intelligence` objects found five
+distinct kinds of contamination, and the headline is one number:
+
+> **Three reports of 1,114 carry both a measured walk score and a measured
+> commute.**
+
+### 57.1 The whole transport block is a per-state constant
+
+1,108 of 1,114 objects carry the legacy transport shape. Across all of them:
+
+| field | distinct values | modal value | reports at the mode |
+| --- | ---: | --- | ---: |
+| `stopsWithin1km` | **1** | `3` | 1,108 |
+| `nearestStop` | 5 | `Central Station` | 822 |
+| `distanceToStop` | 5 | `450` | 822 |
+| `qualityScore` | 5 | `83` | 822 |
+| `serviceFrequency` | 5 | `{peak:18, offPeak:8}` | 822 |
+| `routeCoverage` | 5 | `T2 Inner West Line …` | 822 |
+| `summary` | 5 | `Excellent public transport access with 3 stops within 1km.` | 822 |
+| `transportTypes` | 3 | `[Train, Light Rail, Bus, Ferry]` | 822 |
+
+The five values are the capital-city interchanges — Sydney's Central Station,
+Melbourne's Swanston Street trams, Brisbane's Queen Street, Perth's Wellington
+Street, Adelaide's Currie Street — and Sydney is the fallback. **The 822
+reports that say the nearest stop is Central Station, 450 m away, span all
+eight states and territories.**
+
+### 57.2 The walk score is that constant plus four saturated counts
+
+`calculateWalkScore` spends its whole 30-point transit allowance on
+`publicTransportData.qualityScore`. The other four components saturate at
+counts of 3–5, against a hard `.slice(0, 10)` in `fetchNearbyPlaces`:
+
+| component | formula | maxes at | reports maxed |
+| --- | --- | ---: | ---: |
+| Shopping & dining | `min(25, (shops + restaurants/2) × 2)` | 10 + 10 | 676 |
+| Schools | `min(15, count × 3)` | 5 | 952 |
+| Healthcare | `min(15, count × 5)` | 3 | 919 |
+| Recreation | `min(15, count × 3)` | 5 | 967 |
+
+**641 objects have all four maxed.** For those the walk score is the state
+constant and nothing else — **four distinct values across 641 properties**.
+Reconstructing the formula from the stored counts reproduces the stored score
+exactly on **1,109 of 1,114**, so this is the mechanism rather than a theory
+about it.
+
+### 57.3 The commute is a real query to the wrong city — and 438 are not queries at all
+
+`getCBDCoordinates` ended `|| cbdLocations['NSW']`, so a request carrying no
+state measured a transit journey to Sydney.
+
+The marker and the cause turn out to be one thing. Of the non-NSW reports:
+
+| stored `nearestStop` | non-NSW reports | commute consistent with Sydney only | with own capital only |
+| --- | ---: | ---: | ---: |
+| `Central Station` | 519 | **494** | **0** |
+| `Swanston Street Tram` | 117 | 0 | 93 |
+| `Queen Street Bus Station` | 86 | 0 | 68 |
+| `Wellington Street Bus Station` | 78 | 0 | 66 |
+| `Currie Street Bus Stop` | 4 | 0 | 4 |
+
+One absent `input.state`, two symptoms. Concretely: **Bentley WA, 8 km from
+Perth, stored 3,283.6 km and 82.1 hours** — straight-line Bentley→Sydney is
+3,284 km. Richmond Vic, 3 km from Melbourne, stored 968.7 km.
+
+This is not merely a wrong number. The Location score bands the commute in
+**minutes**, so all 494 land in *"Limited CBD access (>60 min)"* for **3 points
+of 30** — while **74 of them are within 10 km of their own CBD**, the closest
+0.4 km. A 27-point inversion on a dimension weighted at 25%.
+
+Separately, **438 of the 1,114 commutes were never a route**: when the Distance
+Matrix call fails, the helper returns straight-line distance × 1.5 minutes as
+`mode: 'estimated'`, mean 10,125 minutes. `commute.mode` is the only thing that
+tells the two apart.
+
+### 57.4 Counts, failed reads, and 183 foreign measurements
+
+Every "within N km" count is `min(actual, 10)` — the field names promise a
+radius count they do not deliver. At the ceiling: restaurants 990/1,114
+(88.9%), schools 851 (76.4%), parks 818 (73.4%), healthcare 686 (61.6%),
+shopping 596 (53.5%).
+
+A failed read is stored as an empty area: the fetch helper's `catch` returns
+`{ count: 0, results: [] }`, which becomes `nearest*: 'N/A'` and
+`distanceTo*: 0`. Zero is the modal school and hospital distance.
+
+And 183 objects measure a location outside Australia. **US school vocabulary
+appears in 31 of those 183 and in 0 of the 931** whose coordinate resolves to
+an ASGS boundary — an independent confirmation of §56's classification, from a
+completely different field. One object's coordinate is 53.44, −2.98 (Liverpool,
+England) with "Early Learners Day Nursery" as its nearest school.
+
+Two further findings that are real but weaker, recorded as such: Google's
+`type=school` admits childcare centres, driving, swim and music schools — the
+modal nearest school across the corpus is "Style Academy Australia", 66 reports
+at 0.02 km — and `topSchools[].rating` is a Google user rating, zero where
+absent, not an academic one.
+
+### 57.5 What was built
+
+`locationEvidenceProvenance.pure.ts` classifies every field into seven kinds.
+Four are non-evidence (`legacy_non_evidence`, `measured_misdirected`,
+`read_failed`, `offshore`); `measured_capped` and `measured_unverified_class`
+are **disclosed rather than discarded**, because a saturating count still
+separates a remote property from an urban one.
+
+`report_location_provenance` holds the verdict beside the record. Nothing
+edits `location_intelligence` and no issued report changes.
+
+| walk score | commute | reports |
+| --- | --- | ---: |
+| `legacy_non_evidence` | `measured_misdirected` | 364 |
+| `legacy_non_evidence` | `measured` | 307 |
+| `legacy_non_evidence` | `legacy_non_evidence` (estimated) | 253 |
+| `offshore` | `offshore` | 183 |
+| `measured_capped` | `measured` | **3** |
+| `measured_capped` | `legacy_non_evidence` | 2 |
+| `legacy_non_evidence` | `read_failed` | 2 |
+
+The table is materialised in SQL and the classifier is TypeScript, so
+`locationEvidenceProvenance.spec.ts` compares the two on **23 verbatim
+production objects** covering all four stored shapes. That comparison is what
+stops them drifting — and it is what caught the `estimated` commute, which the
+first version of the classifier wrongly called a measurement.
+
+**Three rules.** A template is not a measurement, and a measurement of the
+wrong thing is not a template — they need different remedies, and collapsing
+them would discard 364 recoverable commutes. A ceiling is disclosed, never
+silently trusted. And `legacy_non_evidence` is a status, not a deletion.
+
+### 57.6 The live writer, fixed
+
+Four faults, all still live before this:
+
+1. **The Sydney default is gone.** `resolveCbdDestination` returns null for an
+   absent or unrecognised state and the caller measures nothing rather than
+   something else.
+2. **The invented commute is gone.** A failed route returns an explicit
+   not-measured with a reason, and no number a reader could mistake for a
+   journey. `destination_unknown` and `no_route_returned` send an operator to
+   different remedies.
+3. **A latent crash is fixed.** `public-transport-service` answers
+   `{ success, data: {…} }` and the consumer took the *envelope*, so
+   `publicTransportData.stopsWithin1km.length` dereferenced undefined —
+   reproduced by execution against the service's real success body. It would
+   have thrown for every location a loaded feed covers: Sydney, south-east
+   Queensland, Darwin, Alice Springs, 185,177 stops. Latent rather than fired,
+   because the last eight reports are all outside those feeds.
+4. **The `qualityScore` branch is deleted, not left dormant.** The service
+   publishes no such field now, and a dormant branch is one service change away
+   from restoring the contamination.
+
+`projectTransportForLocationIntelligence` states the rule once: **naming a
+field the source cannot fill is how a template gets written.**
+`TEMPLATE_ONLY_TRANSPORT_FIELDS` names the nine a stops feed cannot answer and
+a test asserts the stored block contains none of them. Typing that projection
+caught a real error in this change's own first draft — it read
+`nearest.distanceMetres` where the field is `metres`, which would have stored
+null for every property.
+
+### 57.7 Staged readiness, recalculated
+
+Measured over the whole corpus of 1,207, with geography from §56 and the
+financial precedence from §56.4:
+
+| stage | ready | of 1,207 | what binds it |
+| --- | ---: | ---: | --- |
+| Geography | **931** | 77.1% | 183 coordinates outside Australia, 93 with none |
+| Growth | **0** | 0% | no licensed suburb price series is held |
+| Demand | **0** | 0% | no licensed vacancy / days-on-market series |
+| Yield | **222** | 18.4% | weekly rent — 493 have a price, 226 a rent |
+| Risk | **105** | 8.7% | weekly net (188), then LVR (251) |
+| Location | **3** | 0.2% | §57.5 |
+| Partial composite (≥3 dimensions) | **2** | 0.2% | |
+| Full composite (5 dimensions) | **0** | 0% | Growth and Demand are empty |
+| **A/A+ evidence ready** | **0** | 0% | |
+
+Component coverage, so the constraint is legible rather than only the verdict:
+
+| input | present | of 1,207 |
+| --- | ---: | ---: |
+| dwelling type (a real one) | 896 | 74.2% |
+| purchase price | 493 | 40.8% |
+| LVR | 251 | 20.8% |
+| weekly rent | 226 | 18.7% |
+| weekly net | 188 | 15.6% |
+
+The purchase-price figure is 493 rather than ME-4's 203 because §56.4's
+precedence reads `manual_overrides` as the calculator's input. That is a
+2.4× gain from data already stored, and it is the only one of these numbers
+that improved by better reading rather than by acquiring anything.
+
+**Nothing here changes the A = 75 / A+ = 85 thresholds, and nothing here is a
+backtest.** A backtest on this corpus would be a measurement of an empty
+Growth dimension and a quarantined Location one.
