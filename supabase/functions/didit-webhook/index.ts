@@ -456,8 +456,34 @@ Deno.serve(async (req) => {
 
   const apiKey = Deno.env.get('DIDIT_API_KEY') || '';
   if (!apiKey) {
+    /*
+     * A deployment that brokers verification through Mission Control holds no
+     * Didit key on purpose — an application-scoped key can read every other
+     * tenant's customers' identity documents. The HOSTED session flow this
+     * webhook settles is the one path that still needs the raw credential, so
+     * it is unavailable there, and `diditConfigured()` already refuses to
+     * CREATE a hosted session without the key — which is why no webhook can
+     * legitimately arrive here on such a deployment.
+     *
+     * Named rather than left as a bare `not_configured`, because a 500 with
+     * no reason on a webhook is read as an outage, and this is a deliberate
+     * shape. 200 would be worse: it would tell Didit the event was accepted.
+     */
+    const brokered = Boolean(Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'));
+    // The event marker is unchanged: it is the durable record, and renaming a
+    // value other rows already carry makes the history unqueryable. The
+    // brokered nuance belongs in the answer, which nothing stores.
     await markEvent({ error: 'api_key_not_configured' });
-    return json({ ok: false, reason: 'not_configured' }, 500);
+    return json({
+      ok: false,
+      reason: 'not_configured',
+      brokered,
+      detail: brokered
+        ? 'This deployment reaches Didit through Mission Control and holds no vendor key, so ' +
+          'the hosted-session flow is not available here. Identity verification runs through ' +
+          'the capture flow instead.'
+        : 'DIDIT_API_KEY is not set on this deployment.',
+    }, 500);
   }
 
   // ── The authoritative read. The body said something changed; this is what it

@@ -220,3 +220,75 @@ describe('the route and the calls it has to carry', () => {
     }
   });
 });
+
+describe('the self-test proves reachability without spending anything', () => {
+  const clientSrc = readFileSync(
+    resolve(
+      __dirname,
+      '../../../supabase/functions/_shared/aml/providers/diditStandaloneClient.ts',
+    ),
+    'utf8',
+  );
+  const probeSrc = clientSrc.slice(clientSrc.indexOf('export async function probeStandaloneRoute'));
+  const verificationSrc = readFileSync(
+    resolve(__dirname, '../../../supabase/functions/aml-verification/index.ts'),
+    'utf8',
+  );
+
+  it('exists, because configuration is not reachability', () => {
+    // Every readiness reading in this product answers a question about
+    // configuration, and all of them were green on three tenants that had
+    // never completed a verification.
+    expect(probeSrc.length).toBeGreaterThan(0);
+    expect(verificationSrc).toContain('case "verification_selftest"');
+  });
+
+  it('is NEVER metered — a diagnostic must not reach a tenant\'s invoice', () => {
+    expect(probeSrc).toContain('await fetch(route.url');
+    expect(probeSrc).not.toContain('meteredFetch');
+  });
+
+  it('writes nothing: no record, no case, no check', () => {
+    for (const forbidden of ['.insert(', '.update(', '.upsert(', '.delete(', 'appendEvent']) {
+      expect(probeSrc, forbidden).not.toContain(forbidden);
+    }
+  });
+
+  it('sends an INCOMPLETE body, which is what makes the vendor reject it for free', () => {
+    // Being rejected at validation is the pass: it proves the call
+    // authenticated, arrived and was answered, with nothing billed.
+    expect(probeSrc).toContain('body: new FormData()');
+  });
+
+  it('reads WHO refused from a header, never guesses it from a body', () => {
+    // Mission Control's 401 and the vendor's 401 are the same status with a
+    // similar body and opposite remedies. Only Mission Control can set this.
+    // The name is Mission Control's; this end must spell it identically, so
+    // the literal is pinned here and the probe is pinned to the constant.
+    expect(clientSrc).toContain("const MC_REFUSAL_HEADER = 'x-mission-control-refusal';");
+    expect(probeSrc).toContain('res.headers.get(MC_REFUSAL_HEADER)');
+    expect(probeSrc).toContain("answered_by: 'mission_control'");
+    expect(probeSrc).toContain("answered_by: 'vendor'");
+  });
+
+  it('reports the host, never the URL and never a credential', () => {
+    expect(probeSrc).toContain('new URL(route.url).host');
+    // The only thing that ever carries the secret is the redaction call.
+    const secretMentions = probeSrc.match(/route\.secret/g) ?? [];
+    expect(secretMentions.length).toBe(1);
+    expect(probeSrc).toContain('redact(');
+  });
+
+  it('is offered to a reviewer or an MLRO, never to an analyst', () => {
+    const at = verificationSrc.indexOf('case "verification_selftest"');
+    const block = verificationSrc.slice(at, at + 700);
+    expect(block).toContain('!roles.has("reviewer") && !roles.has("mlro")');
+  });
+
+  it('says the vendor rejecting it is the PASS, so nobody reads it as a fault', () => {
+    const at = verificationSrc.indexOf('case "verification_selftest"');
+    const block = verificationSrc.slice(at, at + 1400);
+    expect(block).toContain('spent: false');
+    expect(block).toContain('Verification can reach the provider on this route.');
+  });
+});

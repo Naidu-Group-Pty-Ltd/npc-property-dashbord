@@ -96,7 +96,15 @@ describe('the classification can never settle an outcome', () => {
     // whoever reads the two branches next. An absent key is an operator fault
     // with a fix, and the retry after that fix is what delivers the outcome
     // the event carries. An absent workflow is not a fault and has no fix.
-    const branch = handler.slice(handler.indexOf("api_key_not_configured"));
-    expect(branch.slice(0, 200)).toMatch(/\}, 500\)/);
+    const at = handler.indexOf("api_key_not_configured");
+    expect(at, 'the missing-key branch').toBeGreaterThan(-1);
+    // The FIRST status this branch answers with, rather than "500 appears
+    // somewhere in the next N bytes" — the branch carries prose now, and a
+    // byte window that has to grow with the wording is a guard that decays.
+    const branch = handler.slice(at);
+    const status = /\}, (\d{3})\)/.exec(branch)?.[1];
+    expect(status, 'status the missing-key branch answers with').toBe('500');
+    // And never the workflow branch's acceptance, which is the distinction.
+    expect(status).not.toBe('202');
   });
 });
