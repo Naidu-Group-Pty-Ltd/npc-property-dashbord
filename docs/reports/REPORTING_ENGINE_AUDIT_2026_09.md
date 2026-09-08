@@ -6047,3 +6047,182 @@ not what it is.
 The honest conclusion: **asset type is a classifier, not a score.** Nothing here
 changes it — this records what it is worth *before* anybody weights it more
 heavily, which is precisely what Models A and B would do.
+
+---
+
+## §59 — ME-5.1: correcting Risk, and what the geography really contains (2026-09-08)
+
+### 59.1 The contradiction in ME-5's own recommendation
+
+§58.6 established with evidence that **asset type is a classifier, not a
+score**. §58.4 then recommended Model B — which weights `assetType` at **0.67**,
+more than triple the **0.20** the live model gives it. The recommendation would
+have *tripled* property-type bias while the same document argued it should not
+score at all.
+
+Property invariance did not catch it because **invariance is the wrong
+instrument**: it asserts the same property scores the same across reports, and
+is silent on whether a house and a unit are compared fairly. A test now records
+that Model B separates a house from a unit by more than ten points on type
+alone.
+
+### 59.2 Model D — type selects the questions and scores none of them
+
+    propertyType → selects the applicable risk QUESTIONS
+                 → genuine property evidence answers them
+                 → Risk exists only where enough of it does
+
+What Aurixa actually holds, measured rather than assumed:
+
+| candidate source | rows | grain | property-level? |
+| --- | ---: | --- | --- |
+| crime | 54,001 | postcode / LGA / SA2, four states | no |
+| SEIFA + Census | 5,270 | postcode | no |
+| climate | 1,237 | area | no |
+| `planning_data_cache` | **2** | — | effectively empty |
+| flood, bushfire, strata, condition, inspection | **none** | — | not held |
+
+**There is no property-level risk evidence in the platform**, so every question
+resolves `unavailable` and **Risk is null**. Crime and SEIFA remain *named* in
+each schema, excluded from scoring and attributed to Location, so the overlap is
+visible rather than silently double-counted. `acquisitionBacklog()` publishes the
+seven questions with what would answer each — the schema is also the shopping
+list, and **none of it is built in this stage**.
+
+### 59.3 The second renormalisation problem
+
+Removing asset type left a subtler version of the same fault: with exactly one
+question answered, averaging over "the questions that were answered" made that
+single observation **100% of Risk**.
+
+`observations` and `eligibility` are now separate. Hazard and planning are both
+the `site` category, so two answers there are **one** independent category, not
+two. `MINIMUM_INDEPENDENT_CATEGORIES` is declared **uncalibrated** and
+`RISK_METHODOLOGY_STATUS` is `provisional / uncalibrated`. **D2 remains the
+leading candidate and is explicitly not final.**
+
+A design flaw of mine that the tests caught: overheating was averaged in at 25%
+of the weight, and its anchors sit at 100 below 12% growth — so **a calm market
+raised the risk score of every property**. Taking `min()` instead lets a hot
+market become the whole score. It is now a bounded deduction: at most 25 points
+off, never an addition.
+
+### 59.4 Finance Suitability
+
+Two results, structurally separate. `FinanceSuitabilityResult` exposes no
+`score`, `points`, `value`, `weight` or `grade` field, so a composite cannot
+read it by accident. On the real Wyndham Vale pair the leverage reading differs
+and the property risk does not.
+
+### 59.5 The trusted geography population is 867, not 931
+
+Of the 931 ME-5 called trustworthy, **64 sit at exactly −33.8688, 151.2093 —
+Sydney CBD to four decimal places, the geocoder's former literal fallback.** All
+26 reports whose address is `Unknown Property (rec…)` are among them, and **none
+of the 64 has an address mentioning Sydney.** `assessAuPoint` could never catch
+them: Sydney is in Australia and in NSW.
+
+**Final classification of the 1,207:**
+
+| class | count |
+| --- | ---: |
+| trusted — anchored address | **336** |
+| trusted — unanchored but validated | **531** |
+| **trusted total** | **867** |
+| geocode failure value | 64 |
+| offshore / unplaceable | 183 |
+| no geography row (no coordinate stored) | 93 |
+
+### 59.6 Why the required-anchor gate was rejected
+
+| cohort | has state token / postcode / "Australia" | has none |
+| --- | ---: | ---: |
+| corrupted (183) | 3 | **180** |
+| resolved (931) | 338 | **593** |
+
+Recall is excellent and the cost is ruinous: **593 of 931 legitimate reports —
+63.7%** — are ordinary bare street lines that geocoded correctly.
+`property_specs.state` and `.postcode` are **NULL on every report in both
+cohorts**, so there is nothing to compose the missing context from. The anchor
+is a **disclosed signal**; 531 of the 867 trusted records are unanchored and
+validated, and their provenance says so.
+
+Enforcement sits where it discriminates: refuse what is definitively not an
+address, and adjudicate the answer. A fallback coordinate raises
+`suspected_failure_value`; `confirmed_failure_value` needs positive evidence.
+**A genuine 1 Martin Place must stay geocodable.**
+
+Item 5 asked whether the continent centre is measured or theoretical. I added it
+on theory and then checked: **two stored coordinates sit on it exactly.** Every
+entry now carries its measured `occurrences` — 64 and 2.
+
+### 59.7 Location provenance, all nine families
+
+Only `genuine_measured` is admissible to V2, and `admissibleToV2` is *derived*
+from the class so the two cannot drift. Beyond §57's transport findings:
+
+* every "within N km" count is the Places page slice — **Public Transport 974 of
+  1,114 at the ceiling (87.4%)**, restaurants 990, schools 851, recreation 818,
+  healthcare 686, shopping 596;
+* **`amenities[].score` is a pure function of the capped count**, taking 6–11
+  distinct values across 1,114 objects;
+* `schools.nearestSchool` is a real nearest place of Google type `school`, which
+  admits childcare, driving, swim and music schools — the modal value is **"Style
+  Academy Australia" on 66 reports at 0.02 km**;
+* `topSchools[].rating` is a Google *user* rating, zero where absent;
+* **no employment or activity-access field exists at all.**
+
+### 59.8 National transport coverage
+
+`nsw_sydney` is misnamed: its bounding box runs lat −37.82 to −27.46 and lon
+138.59 to 153.62, reaching Melbourne, Adelaide and Brisbane, because it is
+Transport for NSW's **whole** bundle. `route_type` is NULL on all 185,177 stops,
+so **mode is not established anywhere.**
+
+| state | settlement | reports | own-feed stop | interstate only | none |
+| --- | --- | ---: | ---: | ---: | ---: |
+| QLD | metro | 226 | 200 | 0 | 26 |
+| **WA** | **metro** | **164** | **0** | 0 | **164** |
+| **VIC** | **metro** | **145** | **0** | 3 | **142** |
+| QLD | inner regional | 149 | 44 | 0 | 105 |
+| NSW | metro | 47 | 47 | 0 | 0 |
+| ACT | metro | 4 | 0 | 4 | 0 |
+
+**The two largest metro cohorts after south-east Queensland — Perth and
+Melbourne — have no transport evidence at all.** Scoring transport on this
+coverage would rank a Brisbane property above an identical Perth one because
+Queensland publishes a feed and Western Australia has not been ingested. So
+transport is `unavailable`, never neutral-scored, and a test forbids the absence
+being worded as poor service.
+
+### 59.9 Readiness, recalculated
+
+| stage | ready | of 1,207 |
+| --- | ---: | ---: |
+| Geography Ready | **867** | 71.8% |
+| Growth Ready | **0** | 0% |
+| Demand Ready | **0** | 0% |
+| Yield Ready | 222 | 18.4% |
+| Property Risk **Evidence** Ready | **0** | 0% |
+| Finance Suitability Ready | 251 | 20.8% |
+| Location — centre resolvable | 867 | 71.8% |
+| Location — transport possible at all | 465 | 38.5% |
+| Partial composite (geography + yield) | 174 | 14.4% |
+| Full Composite Ready | **0** | 0% |
+| A/A+ Evidence Eligible | **0** | 0% |
+
+Property Risk and Finance Suitability are counted separately, as instructed.
+
+### 59.10 What is NOT done, and why
+
+**Item 14's stratified Location V2 sample is not delivered.** It would be
+dishonest to produce one: of the nine Location families, eight are inadmissible
+and the ninth (the coordinate) is not a Location reading. The only genuinely
+measurable components today are the activity centre — resolvable for all 867 —
+and transit, possible for 465 and *only* in NSW, QLD and NT. A "stratified
+sample" spanning Perth, Adelaide and regional Victoria would consist of rows
+reading `unavailable` in every column. **The sample becomes meaningful once at
+least one more evidence family is genuinely re-derived**, and that is the next
+piece of real work rather than something to simulate now.
+
+**No A/A+ backtest.** Growth 0, Demand 0.
