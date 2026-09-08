@@ -290,7 +290,7 @@ export function presentPoints(
 ): Array<{ key: EvidenceKey; point: EvidencePoint<unknown> }> {
   const out: Array<{ key: EvidenceKey; point: EvidencePoint<unknown> }> = [];
   for (const key of EVIDENCE_KEYS) {
-    const point = (ev as Record<string, unknown>)[key] as EvidencePoint<unknown> | undefined;
+    const point = (ev as unknown as Record<string, unknown>)[key] as EvidencePoint<unknown> | undefined;
     if (point && typeof point === 'object' && 'value' in point) out.push({ key, point });
   }
   return out;
@@ -360,11 +360,14 @@ export function mergeEvidence(
     }
 
     for (const key of EVIDENCE_KEYS) {
-      const incoming = (candidate as Record<string, unknown>)[key] as EvidencePoint<unknown> | undefined;
+      const incoming = (candidate as unknown as Record<string, unknown>)[key] as
+        | EvidencePoint<unknown>
+        | undefined;
       if (!incoming || typeof incoming !== 'object' || !('value' in incoming)) continue;
-      const held = merged[key] as EvidencePoint<unknown> | undefined;
-      if (!held) { merged[key] = incoming; continue; }
-      if (beats(incoming, held, BENCHMARK_KEYS.has(key))) merged[key] = incoming;
+      const bag = merged as Record<string, unknown>;
+      const held = bag[key] as EvidencePoint<unknown> | undefined;
+      if (!held) { bag[key] = incoming; continue; }
+      if (beats(incoming, held, BENCHMARK_KEYS.has(key))) bag[key] = incoming;
     }
   }
 

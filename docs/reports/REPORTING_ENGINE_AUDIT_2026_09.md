@@ -4725,3 +4725,465 @@ So the commercial shortlist is four, not two: Domain, Cotality, PropTrack and
 Pricefinder, plus SQM for vacancy specifically. Every one of them has an empty
 credential slot, which is the single fact standing between this programme and
 suburb-grain evidence.
+
+---
+
+## §53 — ME-3: the deterministic methodology, and the dimension that was never once measured (2026-09-08)
+
+Three pure modules, none of them wired to report generation. They are the
+methodology; connecting it waits on a licensed suburb-grain source (§52) and on
+the shadow backtest (ME-4).
+
+- `_shared/reports/market/growthScoring.pure.ts`
+- `_shared/reports/market/demandScoring.pure.ts`
+- `_shared/reports/market/yieldScoring.pure.ts`
+- `_shared/reports/market/gradeEligibility.pure.ts`
+
+Each reads `MarketEvidence` (§49) and nothing else: no provider names, no HTTP,
+no model. Same evidence in, same score out, and every component can be shown to
+a client beside the measurement it came from.
+
+### 53.1 Demand was not mostly a placeholder — it was entirely one
+
+§46 recorded Growth pinned at a placeholder `50` on 975 of 992 reports. Demand
+is worse, and the measurement leaves no room for interpretation. Across the 999
+scored reports:
+
+```
+demandScore.score   = 50     999 of 999   (100.0%)
+demandScore.hasData = false  999 of 999
+demandScore.details = ""     999 of 999
+```
+
+The base score of `50`, never once moved by any evidence, on every report the
+platform has produced — holding **15% of the composite weight** and saying
+nothing at all about why. Not one report has a single demand data point.
+
+All four inputs fail, each for its own reason:
+
+| input | the scorer reads | what the record holds | reports |
+| --- | --- | --- | ---: |
+| `vacancyRate` | `marketData.vacancyRate` | no `marketData` key exists in any record | 0 of 1,201 |
+| `daysOnMarket` | `marketData.daysOnMarket` | ditto | 0 of 1,201 |
+| `medianSuburbPrice` | `marketData.medianPrice` | ditto | 0 of 1,201 |
+| `unemploymentRate` | `demographics.unemploymentRate` | `demographics.income.unemploymentRate`, as a **string** | 865 unreachable |
+
+The fourth is the instructive one, and it fails twice over. It is a **container
+error** — the value sits one level below where the reader looks, so a real
+number is invisible — and **849 of those 865 carry the identical value
+`"3.5"`**, stamped `source: "ABS Census 2021 estimates"`, `dataQuality:
+"estimated"`. Only 16 reports carry a figure that varies at all.
+
+That matters for what the repair had to be. Correcting the path would have
+moved Demand from one flat constant (50) to another (~68), attributed the
+second one to the ABS on the way, and produced a dimension that discriminates
+between properties exactly as well as the first: not at all. **A dimension can
+be wired correctly and still be worthless**, which is the argument for routing
+it through `MarketEvidence` rather than repairing the reader — a constant
+cannot pass as a measurement there, because every point has to name its
+provider, geography, period and sample size.
+
+### 53.2 One characteristic, charged once
+
+Three inputs to the property investment composite are scored in **two of its
+dimensions each**, and the second site says so in its own words:
+
+| input | scored in | and again in | what the second site calls it |
+| --- | --- | --- | --- |
+| `vacancyRate` | `calculateDemandScore:835` | `calculateRiskScore:1016` | *"Very high vacancy (>6%) signals weak rental **demand**"* |
+| `daysOnMarket` | `calculateDemandScore:861` | `calculateRiskScore:1036` | *"Very extended selling time (>120 days) indicates weak **demand**"* |
+| `populationGrowth` | — | `calculateGrowthScore:736` | *"Strong population growth driving **demand**"* |
+
+The Risk dimension deducts up to 22 points for a vacancy rate the Demand
+dimension has already scored, and its reason string names the characteristic as
+demand while doing it. The Growth dimension adds 10 points for population
+growth on the stated grounds that it drives demand — inside the dimension that
+measures capital growth, which is the confusion this programme's brief names
+directly: population growth is not evidence that values have risen.
+
+One thing this table deliberately does **not** claim. The same file also holds
+a separate *area* score (`calculateAreaScore` → `calcRentalMarket:420`,
+`calcMarketMomentum:348`, `calcEconomicStrength:360`) which reads the same
+three fields. That is a different product with its own composite, not a fourth
+count against the property score, and an earlier draft of this section
+mis-attributed those lines. The claim above is confined to one composite.
+
+`DEMAND_EXCLUSIONS` states what the module refuses and which dimension owns it,
+and a test asserts the refusal by feeding the scorer nothing but excluded keys
+and requiring `score === null`. Two boundaries are worth naming:
+
+**Demand is not Growth.** Price movement is Growth's at every horizon. A suburb
+where prices rose is not thereby in demand *as well* — that is one fact counted
+twice, and it is how a strong market comes to look exceptional on two
+dimensions for one reason. Population growth is the single exception, and only
+because it is a **driver**: people arriving is a reason to expect demand, not
+evidence that values rose. It carries 0.15, so it can inform a score and cannot
+carry one.
+
+**Demand is not Yield.** Yield measures the rent level against the price;
+vacancy measures whether the property lets at all. A 6% yield at 7% vacancy is
+a different proposition from a 6% yield at 0.8%, and collapsing them loses
+exactly that.
+
+### 53.3 The four Demand components
+
+| component | weight | measures |
+| --- | ---: | --- |
+| rental tightness | 0.35 | can it be let (`vacancyRate`) |
+| sale urgency | 0.35 | how hard buyers compete |
+| absorption | 0.15 | sales against stock advertised |
+| population driver | 0.15 | whether the resident base is growing |
+
+Sale urgency takes three readings — days on market, vendor discount, auction
+clearance — and **blends them into one component rather than scoring three**.
+They are three lenses on a single characteristic, and giving each its own
+weight would charge for it three times inside the dimension that exists to stop
+charging twice across dimensions. A test asserts that three strong readings
+carry the same 0.35 as one.
+
+Absorption needs both halves. A sales count alone is ambiguous: it rises with
+demand and it rises with churn, and nothing in the number says which.
+
+Two anchors put 50 in the middle, and in both cases **that 50 is a
+measurement**: 3.0% vacancy and a 60% auction clearance rate are the
+conventional balance points of the Australian market, where neither side has
+the upper hand. The rental-tightness component says so in its own sentence when
+the reading lands there, so a report cannot print a balanced-market 50 that
+looks like the placeholder this work removes.
+
+### 53.4 Demand confidence decays faster than Growth confidence
+
+| factor | Growth | Demand |
+| --- | ---: | ---: |
+| geography | 0.30 | 0.30 |
+| dwelling type | 0.20 | 0.15 |
+| sample | 0.20 | 0.25 |
+| history | 0.20 | — |
+| freshness | **0.10** | **0.30** |
+
+Not a copy with different numbers. A five-year CAGR ending two years ago still
+describes how a suburb compounds; a vacancy rate from two years ago describes a
+rental market that no longer exists — so freshness carries three times the
+weight and decays on a steeper curve, and a test asserts a stale demand reading
+loses more confidence than a stale growth reading.
+
+There is no `history` factor: demand measures are point-in-time. And breadth is
+deliberately **not** folded in — it is reported as `weightCovered` beside the
+score, because putting it in confidence too would break this module's own rule
+inside its own confidence calculation. A single impeccably sourced vacancy rate
+is high confidence and 35% coverage at the same time, and both are true.
+
+### 53.5 The Yield double-count, corrected at the economics
+
+`calculateYieldScore` bands the gross yield and then subtracts 20 more points
+when weekly cash flow is below −$100. Both halves measure the same economic
+fact, and the band's own wording says so. Measured across the stored scores,
+**every stored subscore is exactly 20 below the band its own `details` names**:
+
+| stored score | its own `details` | band that text comes from |
+| ---: | --- | ---: |
+| 0 | "Poor yield (<2%)" | 10 |
+| **10** (778 rows, 78.3%) | "Below average yield (2-3%)" | 30 |
+| 30 | "Average yield (3-4%)" | 50 |
+| 50 | "Good yield (4-5%)" | 70 |
+| 65 | "Excellent yield (5-6%)" | 85 |
+
+So a document says *"Good yield (4-5%) — Adequate cash flow"* beside a score of
+50 the reader cannot reconcile with it.
+
+The penalty also discriminates nothing: it landed on essentially the whole
+corpus, because an Australian residential property at current prices is almost
+always negatively geared before tax. **A term that applies to ~99% of cases
+carries no information** — it shifts the whole dimension down 20 points and
+compresses an already-narrow scale.
+
+The correction is economic, not a recalibration: **yield measures the
+property's rental return, and nothing else.** Whether the buyer's financing
+makes the holding position negative is a fact about the loan, the deposit and
+the tax position — not about the property — so it goes to `holdingCashFlowSignal`,
+exported separately and named for its destination, so wiring it back into Yield
+would be a visible decision rather than an accident. Its `typical_negative`
+reading is the honest label for ordinary negative gearing.
+
+Anchors are calibrated to the corpus rather than to intuition: the measured
+median gross yield is **4.36%** and p75 **5.49%**, so 4.36% scores 50. The
+bands were never the problem; the 20 points taken off afterwards were.
+
+**The module bands a figure and never derives one.** The first version of
+`scoreYield` computed `(weeklyRent * 52 / price) * 100` inline, and
+`derivedFigureDefinitions.spec.ts` — the ratchet §MX-B left behind — failed on
+it by name. That was the gate working: gross and net yield have exactly one
+definition in this programme, in `_shared/reports/metrics/propertyMetrics.pure.ts`,
+and adding a twenty-third module to the frozen list would have bought a green
+run at the cost of the thing the ratchet exists to hold. `scoreYield` calls
+`grossYield` and `netYield` now.
+
+Delegating forced a second correction, and it is the more valuable one. The
+input was `propertyPrice`, documented as *"purchase price or current value"* —
+the exact ambiguity `DERIVED_FIGURES.md` records as the reason six gross-yield
+sites disagreed while none of them was wrong. **Basis is part of the call**, so
+the input is `basisAmount` plus a required `basis`, the result carries a
+`BasedMetric` rather than a bare percentage, and `label` reads *"Gross yield
+(on purchase price)"* from `labelFor`. A report cannot now print one basis
+under the other's name.
+
+### 53.6 The evidence ceiling — where a high score does not become a high grade
+
+The fixtures produce one result that is correct and must not become an A+: a
+suburb with a single strong twelve-month figure, at regional level, on six
+transactions, two periods, dwelling type unmatched. It scores **93** with
+**10%** coverage and **low** confidence. Nothing is wrong with the 93 — it is
+what the evidence says. What would be wrong is printing "A+" on it, because the
+honest sentence underneath reads *"exceptional, on the strength of one year of
+regional data covering six sales of a different dwelling type."*
+
+`gradeEligibility.pure.ts` caps the grade and **never changes the score**, so
+the number and the reason stay legible side by side. Thresholds are untouched
+(A = 75, A+ = 85). It is deliberately **not** "4 of 5 dimensions" — counting
+dimensions treats a missing vacancy rate as equivalent to a missing five-year
+growth series, and they are nothing alike. The rule is about Growth
+specifically plus a floor on overall coverage:
+
+| | growth confidence | growth coverage | overall coverage |
+| --- | ---: | ---: | ---: |
+| A | ≥ 45 | ≥ 45% | ≥ 55% |
+| A+ | ≥ 70 | ≥ 70% | ≥ 70% |
+
+### 53.7 Synthetic methodology tests — NOT market evidence
+
+Every fixture is a controlled input constructed to exercise the mathematics.
+None is a real suburb, median or growth rate, and **no result below is a
+backtest, a forecast, or a statement about any Australian market**. Fixtures
+are named for the shape they test rather than for any place. The real
+historical backtest waits on a licensed suburb-grain source (§52, ME-4).
+
+```
+GROWTH                          score   conf    band   cover
+exceptional sustained              90     95    high    100%
+strong recent / weak long          31     95    high    100%
+average                            55     95    high    100%
+declining                          10     95    high    100%
+average in booming region          47     95    high    100%
+strong in slow region              85     95    high    100%
+thin but strong                    93     24     low     10%
+no evidence                         —     10     low      0%
+
+DEMAND                          score   conf    band   cover
+tight market, fast sales           95     93    high    100%
+balanced on every reading          53     93    high    100%
+oversupplied and slow               7     93    high    100%
+tight rental, slow sales           58     93    high     70%
+population only                   100     93    high     15%
+stale readings (2024-Q2)           88     68  medium     70%
+no evidence                         —     17     low      0%
+
+YIELD                           score  gross      basis
+4.5% gross, no gearing info        53   4.50%     gross
+4.5% gross, -$350/wk geared        53   4.50%     gross   (unchanged — the double-count is gone)
+9.9% gross                        100   9.88%     gross
+1.6% gross                          1   1.56%     gross
+rent unknown                        —       —     unavailable
+```
+
+Two readings deserve comment. *Average in booming region* scores **47** while
+*strong in slow region* scores **85** — the §48 failure inverted: a regional
+tide no longer lifts an ordinary property, and a slow region no longer sinks a
+strong one, because the benchmark carries 0.15 and the suburb's own performance
+carries 0.85. And *population only* scores 100 at 15% coverage: the component
+is genuinely at the top of its scale, the renormalisation is arithmetic, and it
+is the **coverage** beside it — not a suppressed score — that stops it becoming
+a grade.
+
+### 53.8 Legitimate A and A+ pathways exist without moving a threshold
+
+The question §48 left open was whether the engine can produce an A+ that Aurixa
+could defend. Composite over the five dimensions at the existing weights
+(growth 0.40, location 0.25, yield 0.15, demand 0.15, risk 0.05), with the
+evidence ceiling applied:
+
+```
+case                             growth   cover  score  grade  capped
+fully evidenced, exceptional         90    100%     87     A+   no
+fully evidenced, strong              85    100%     79      A   no
+fully evidenced, average             55    100%     56      B   no
+thin evidence, strong reading        93     40%     91     B+   yes (would have been A+)
+```
+
+A+ is reachable at 85 on fully evidenced, genuinely exceptional performance —
+without lowering anything. A is reachable on strong performance. An average
+property lands at B. And the fourth row is the point of the exercise: a
+composite of **91** is refused A+ and capped at B+, because 40% coverage and
+low growth confidence cannot carry the claim.
+
+**These are algorithm fixtures.** They demonstrate the scale is functional and
+the ceiling binds. They say nothing about how many real properties would earn
+an A, which is ME-4's question and needs real suburb evidence.
+
+### 53.9 What is deliberately not done
+
+Nothing here is connected to report generation. `investment-scoring-service` is
+untouched, the stored corpus is untouched, and no document changes. The modules
+are the methodology, verified by execution against synthetic inputs; the
+decision to adopt them belongs after the shadow backtest, on real evidence.
+
+---
+
+## §54 — Provider discovery closes: PropTrack activation, SQM, and the final hierarchy (2026-09-08)
+
+Discovery stops here. This section fixes the source hierarchy and states, for
+the two sources that could change it, exactly what has to happen next — and
+what must not be assumed in the meantime.
+
+### 54.1 PropTrack qualification: what is known, and what cannot be known yet
+
+| question | answer | how established |
+| --- | --- | --- |
+| Is it the licensed route to realestate.com.au data? | Yes | PropTrack is REA Group's data-licensing arm |
+| Is scraping the consumer site an alternative? | **No** | `realestate.com.au/robots.txt` expressly refuses automated access (§52) |
+| Is the API reachable from this platform? | Yes — 403 at the edge without a credential | `pg_net` probe from Supabase |
+| Does this repository have a slot for it? | Yes — `PROPTRACK_API_KEY`, `PROPTRACK_BASE_URL` | `registry.ts:693` |
+| Is a credential present? | **No.** Both empty, seeded 2026-08-02, never set | credential presence check |
+| What does the API return? | **Unknown, and not guessed** | see below |
+| What does it cost? | **Unknown, and not guessed** | commercial |
+
+The last two are the honest answers. `developer.proptrack.com` does not
+resolve and `data.proptrack.com/docs` returns 403 — PropTrack's documentation
+is behind the same gate as its data. **No endpoint name, field name, response
+shape or price appears anywhere in this specification**, because inventing one
+is how an adapter comes to be written against an API that does not exist. The
+standing rule holds: entitlement is never inferred from public vendor
+documentation, and here there is not even public documentation to misread.
+
+### 54.2 PropTrack activation specification
+
+Three parts, in order. Part A is commercial and belongs to Aurixa; parts B and
+C are engineering and are specified precisely enough to start the day part A
+lands.
+
+**Part A — what to obtain from REA Group / PropTrack.** Not a shopping list: a
+set of questions whose answers determine whether the adapter is worth writing
+at all. Each maps to a field the scoring engine actually reads.
+
+| # | ask | why it decides something |
+| --- | --- | --- |
+| A1 | An API credential for a named environment (sandbox and production) | nothing below can be verified without one |
+| A2 | The **suburb-grain** median sale price series, house and unit separately, with the available history depth in periods | Growth's long-term component needs ≥ 5 years; `growth5YearCagr` is 0.35 of the dimension |
+| A3 | Whether the series is delivered as a series or as point statistics | `priceSeries` drives the consistency component; point figures alone forfeit 0.15 |
+| A4 | Transaction counts behind each median | `sampleSize` is 0.20–0.25 of every confidence reading; absent, it scores 30 rather than 0 |
+| A5 | Days on market, vendor discount, auction clearance at suburb grain | the three lenses of Demand's sale-urgency component |
+| A6 | Rental vacancy rate at suburb grain — **or a statement that it is not offered** | if not offered, vacancy has exactly one other declared source (54.3) |
+| A7 | Median advertised rent at suburb grain | Yield currently derives from a property-level rent only |
+| A8 | Rate limits, and whether they are per key or per tenant | this platform forwards the prime's keys to every clone; a per-key limit is a fleet-wide ceiling |
+| A9 | **Permitted cache duration** | the platform caches; an unstated duration cannot be complied with |
+| A10 | **Redistribution rights for a client-facing PDF**, in writing | this is the gate on `licensingStatus`; see below |
+| A11 | **The right to persist a derived metric** (a score computed from their data) | the grade is derived and stored |
+| A12 | Attribution wording required on a rendered document | it has to be typeset, not appended later |
+
+A10 and A11 are not paperwork. `EvidencePoint.licensingStatus` defaults to
+`unverified`, and `mayReachClientReport` admits only `open` and
+`licensed_for_client_reports` — so **until A10 is answered in writing, a
+PropTrack figure can be scored in a shadow backtest and cannot be rendered in
+a client document or persisted as a derived metric.** That is a working state,
+not a blocked one, and it is the reason qualification can proceed while the
+commercial conversation runs.
+
+Cost is deliberately absent from this table. It is a commercial negotiation
+and no figure is stated here.
+
+**Part B — what this repository must build.** One file and one registration.
+
+1. `_shared/reports/market/adapters/proptrackAdapter.pure.ts` — maps
+   PropTrack's response onto `MarketEvidence`. Pure, no HTTP.
+2. `'proptrack'` added to `EvidenceProvider` in `marketEvidence.pure.ts`.
+3. The fetch goes through `_shared/meteredFetch.ts`, never bare `fetch`, or the
+   call is billed to nobody (`API_USAGE_METERING.md`).
+4. `PROPTRACK_API_KEY` is added to `_shared/listingsPipelineSecrets.pure.ts`
+   **only if** it is to be Mission-Control-managed and forwarded to clones.
+   Otherwise it stays a per-workspace credential on the Integrations page.
+
+Nothing else changes. The scorers read `MarketEvidence` and do not know
+providers exist — which is the property §49 exists to create, and its first
+real test.
+
+**Part C — the qualification gate, before a single figure reaches a
+document.** Run `market-source-probe` against the credentialled endpoint and
+record, per measure: geographic level actually returned, whether the dwelling
+type matched what was asked, sample size, period covered, and history depth.
+A provider that answers 200 with a *postcode* median when a suburb was
+requested is a correct answer to a different question, and the contract already
+has the vocabulary to say so — but only if the adapter sets `level` from what
+came back rather than from what was asked.
+
+### 54.3 SQM Research qualification
+
+SQM matters for one reason and it is a sharp one: **it is the only declared
+source of a rental vacancy rate at suburb grain.** No Australian government
+publisher offers one. Vacancy is 0.35 of the Demand dimension — the single
+largest component — so without SQM or a commercial provider that bundles
+vacancy, Demand runs at a maximum of 65% coverage by construction.
+
+| question | answer |
+| --- | --- |
+| Declared in this repository? | Yes — `SQM_RESEARCH_API_KEY` (`registry.ts:817`) |
+| Credential present? | **No.** Empty, never set |
+| Reachable from Supabase? | `sqmresearch.com.au` answers 200 |
+| Scraping? | **Refused.** Not attempted, not planned |
+| What it publishes | vacancy rates, stock on market, rental series |
+| Grain | suburb / postcode |
+
+The same three questions decide it: does the licence permit a figure in a
+client-facing PDF, what cache duration is permitted, and may a derived metric
+be persisted. Until answered, the same rule applies — `unverified`, scorable,
+not renderable.
+
+One point of sequencing: **A6 above may make SQM unnecessary.** If PropTrack
+supplies vacancy, one commercial relationship covers growth, sale urgency and
+rental tightness together. So A6 is asked before SQM is pursued, not after.
+
+### 54.4 Pricefinder — deliberately not pursued
+
+Declared (`PRICEFINDER_API_KEY`), empty, and left there. Its stated coverage —
+property attributes, sales evidence, owner records — overlaps what Domain,
+Cotality and PropTrack already offer, and it publishes no measure the other
+three lack. A fourth commercial relationship is not investigated until the
+first one is credentialled and qualified.
+
+### 54.5 The final source hierarchy
+
+Resolved **per measure**, which is what per-measure provenance is for. First
+row that can answer wins; the contract's `mergeEvidence` implements the
+contest.
+
+| measure | 1st | 2nd | 3rd | if none |
+| --- | --- | --- | --- | --- |
+| suburb median price | Domain / Cotality / PropTrack | state file (manual ingest) | — | absent |
+| growth 1 / 3 / 5 yr (subject) | Domain / Cotality / PropTrack | state file (manual ingest) | — | absent |
+| price series | same, where delivered as a series | — | — | consistency excluded |
+| **regional benchmark growth** | **ABS `RES_DWELL`** | — | — | relative component excluded |
+| days on market | Domain / Cotality / PropTrack | — | — | lens dropped from sale urgency |
+| vendor discount | Cotality / PropTrack | — | — | lens dropped |
+| auction clearance | Domain / PropTrack | — | — | lens dropped |
+| **vacancy rate** | **SQM**, or PropTrack if A6 | — | — | rental tightness excluded |
+| sales count | Domain / Cotality / PropTrack | ABS transfer counts (regional) | — | absorption excluded |
+| listing activity | Domain / Cotality / PropTrack | — | — | absorption excluded |
+| population growth | ABS ERP | — | — | driver excluded |
+
+Three properties of that table are the point of it. **ABS is the benchmark row
+and only the benchmark row** — §48 is what happens when a regional figure
+stands in for a local one, and the contract keeps `benchmark*` as separate
+fields so the two can never be confused. **Every "if none" is *absent*, never a
+default** — no zero, no 50, and the coverage figure beside the score says how
+much of the methodology ran. And **no row is a scrape**: where a licensed route
+does not exist, the measure is absent and the report says so.
+
+### 54.6 What is still blocking the real backtest
+
+One thing, and it has not moved: **every commercial credential slot is empty.**
+Domain, Cotality, PropTrack, Pricefinder, SQM — five declared providers, five
+empty keys. ABS answers and is regional. The government suburb-grain files are
+behind Cloudflare challenges a server-side fetch cannot solve by design (§52).
+
+So the historical A/A+ backtest over the 992 stored reports **cannot be run**,
+and running it on regional data would reproduce §48's failure with better
+arithmetic. The methodology is built, tested and version-stamped; it waits on
+one credential, and the shortest path to it is A1.
