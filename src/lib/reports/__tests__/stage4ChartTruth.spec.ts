@@ -140,18 +140,58 @@ describe('chart labels are decoded before they are uppercased', () => {
   });
 });
 
-describe('a radar label is drawn in full', () => {
-  it('reserves a gutter for the labels either side of the polygon', () => {
-    // Labels anchor at `cx ± (R + 22)`. The viewBox was 460 wide with the wheel
-    // centred, so the outermost characters fell outside it and WeasyPrint
-    // clipped them — `INFRASTRUCTURE & AMENITY` printed as `ASTRUCTURE`.
-    expect(RENDERER).toContain('WHEEL_LABEL_CHARS');
-    expect(RENDERER).toContain('wheelLabelLines');
+describe('a scorecard is bars on a common baseline, never a radar', () => {
+  // Rejected by the product owner on 2026-09-08. The clipped-label fix above
+  // (a gutter plus a word-boundary wrap) is what a radar needs to be legible
+  // at all, and it is superseded: the chart is gone.
+  //
+  // Two of the objections are about the DATA rather than about taste, which is
+  // why this is a guard and not a preference. The polygon's area depends on the
+  // arbitrary ORDER of the axes, so the chart's most dominant property carried
+  // no information; and area scales with the SQUARE of the values, so it
+  // overstated every gap it drew. `renderScoreBars` carries the full reasoning.
+  const DESIGN_SYSTEM = readFileSync(
+    resolve(REPO, 'supabase/functions/_shared/reportDesign/charts.pure.ts'),
+    'utf8',
+  );
+
+  it('no radar renderer survives on the report path', () => {
+    // Deleted, not deprecated: a dormant renderer is one import away from
+    // coming back, which is why `ResponsibilityNotice.tsx` was deleted too.
+    for (const [name, source] of [['renderer', RENDERER], ['design system', DESIGN_SYSTEM]] as const) {
+      expect(source, name).not.toContain('renderScoreWheel');
+      expect(source, name).not.toContain('wheelLabelLines');
+      expect(source, name).not.toContain('WHEEL_LABEL_CHARS');
+    }
   });
 
-  it('wraps on a word boundary rather than mid-word', () => {
-    const fn = RENDERER.slice(RENDERER.indexOf('const wheelLabelLines'));
-    // Splits into words and refills; never a fixed-width slice.
-    expect(fn.slice(0, 600)).toMatch(/split\(\/\\s\+\/\)|split\(" "\)/);
+  it('the scorecard directive still draws — the shape changed, not the vocabulary', () => {
+    // ~35 stored reports emit `{{wheel:}}`. Dropping the directive would blank
+    // a figure on every one of them; content is transformed, never lost.
+    expect(RENDERER).toContain('renderScoreBarsSvg');
+    expect(RENDERER).toMatch(/\{\{wheel:/);
+    expect(DESIGN_SYSTEM).toContain('export function renderScoreBars');
+  });
+
+  it('a chart label is decoded before it is escaped, on the bars primitive too', () => {
+    // Moving the scorecard onto `renderBarsSvg` re-exposed the entity bug in a
+    // new form: labels arrive from `marked`-escaped prose, so `Infrastructure &
+    // amenity` reached the chart as `Infrastructure &amp; amenity` and a second
+    // escape printed the entity. Latent on `{{bars:}}` until the scorecard
+    // landed on it.
+    const bars = RENDERER.slice(RENDERER.indexOf('function renderBarsSvg'));
+    expect(bars.slice(0, 2600)).toContain('svgLabel(it.label)');
+    expect(bars.slice(0, 2600)).not.toContain('svgEscape(it.label)');
+  });
+
+  it('both score charts read as one design', () => {
+    // Two bar charts of the same kind in one document must not be coloured by
+    // different rules. `renderBarsSvg`'s default ramp turns green above 0.66 —
+    // a colour this gold-and-cream document uses nowhere else — so both score
+    // charts pass an explicit accent and let the bar lengths do the comparing.
+    const extract = RENDERER.slice(RENDERER.indexOf('function extractScoreBreakdownItems'));
+    expect(extract.slice(0, 2100)).toContain('accent: VIZ_GOLD');
+    const scorecard = RENDERER.slice(RENDERER.indexOf('function renderScoreBarsSvg'));
+    expect(scorecard.slice(0, 900)).toContain('accent: VIZ_GOLD');
   });
 });

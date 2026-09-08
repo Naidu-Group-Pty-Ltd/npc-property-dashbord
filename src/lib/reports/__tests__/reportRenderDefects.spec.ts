@@ -40,7 +40,7 @@ import {
 import { parseVizDirectives } from '../../../../supabase/functions/_shared/reports/vizDirectives.pure';
 import {
   renderHeatmap,
-  renderScoreWheel,
+  renderScoreBars,
 } from '../../../../supabase/functions/_shared/reportDesign/charts.pure';
 import { buildRecordedFactsBlock } from '../../../../supabase/functions/_shared/reports/investment/condenseFacts.pure';
 import { hasContents } from '../../../../scripts/template-library/investmentCompass/resolvers';
@@ -204,33 +204,58 @@ describe('the document is titled as what it is, per tier', () => {
 describe('a chart label prints whole', () => {
   // Chromium palette-free context at the width the directive renderer uses
   // for a compact figure (the wheel), and at full measure for the rest.
-  const wheel = (labels: string[]) => {
+  const scorecard = (labels: string[]) => {
     const base = planningChartContext();
     const ctx = { ...base, widthMm: base.widthMm * (460 / 760) };
-    return renderScoreWheel(ctx, labels.map((_, i) => 60 + i), { labels });
+    return renderScoreBars(ctx, labels.map((_, i) => 60 + i), { labels });
   };
 
-  it('the wheel wraps long side labels and solves its own width', () => {
-    // The real failing chart: at w=460 "FUTURE RESILIENCE" printed as
-    // "RE RESILIENCE"; a padding-only widening to 532 still clipped it,
-    // because the type is sized through w/widthMm and grows with the box.
-    const svg = wheel(['Yield Strength', 'Cash Flow', 'Growth Alignment', 'Future Resilience', 'Affordability']);
-    expect(svg).toContain('>FUTURE<');
-    expect(svg).toContain('>RESILIENCE<');
-    expect(svg).toContain('>GROWTH<');
-    expect(svg).toContain('>ALIGNMENT<');
-    // The unbreakable 13-char word drives the solved width past compact.
-    const w = Number(/viewBox="0 0 (\d+)/.exec(svg)![1]);
-    expect(w).toBeGreaterThan(460);
-    // Every side label's measured ink stays inside the box: end-anchored ink
-    // runs left from x, start-anchored runs right (0.71em/char measured).
-    const microSize = Number(/font-size="([\d.]+)"/.exec(svg)![1]);
-    for (const m of svg.matchAll(/<text x="([\d.]+)"[^>]*text-anchor="(start|end)"[^>]*>([A-Z ]+)<\/text>/g)) {
-      const ink = m[3].length * microSize * 0.71;
-      const [lo, hi] = m[2] === 'end' ? [Number(m[1]) - ink, Number(m[1])] : [Number(m[1]), Number(m[1]) + ink];
-      expect(lo).toBeGreaterThanOrEqual(0);
-      expect(hi).toBeLessThanOrEqual(w);
+  it('a long dimension label prints whole on the scorecard', () => {
+    // This guard was written for a radar. `FUTURE RESILIENCE` printed as
+    // `RE RESILIENCE` at w=460, and a padding-only widening to 532 still
+    // clipped it because the type is sized through `w / widthMm` and grows
+    // with the box — so the wheel had to wrap its side labels and solve its
+    // own width.
+    //
+    // The radar is gone (see `renderScoreBars`), and with it the radial side
+    // labels that caused this. The DEFECT CLASS is not gone: a scorecard whose
+    // longest dimension name is clipped is the same failure whatever geometry
+    // draws it, so the guard moved onto the chart that replaced it. Bars set
+    // their labels horizontally in a column that sizes to the longest one, and
+    // the label is emitted whole rather than truncated — both are asserted,
+    // because a column that sizes correctly and a label that is cut are
+    // independent ways to get this wrong.
+    const labels = ['Yield Strength', 'Cash Flow', 'Growth Alignment', 'Future Resilience', 'Affordability'];
+    const svg = scorecard(labels);
+
+    // Whole, in one text node, exactly as given — no wrap, no ellipsis, no
+    // uppercase transform that a reader would have to decode back.
+    for (const label of labels) {
+      expect(svg, label).toContain(`>${label}<`);
     }
+
+    // And the ink fits: every label is end-anchored at the column's right
+    // edge and runs LEFT from there, so its start must stay at or above 0.
+    // 0.58em per character is the advance `renderBars` sizes the column with.
+    const microSize = Number(/font-size="([\d.]+)"/.exec(svg)![1]);
+    for (const m of svg.matchAll(/<text x="([\d.]+)"[^>]*text-anchor="end"[^>]*>([^<]+)<\/text>/g)) {
+      const ink = m[2].length * microSize * 0.58;
+      expect(Number(m[1]) - ink, m[2]).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('the scorecard is never a radar', () => {
+    // Rejected by the product owner on 2026-09-08 and removed rather than
+    // discouraged: a dormant radar renderer is one import away from coming
+    // back. The polygon, the spokes and the rings are the signature.
+    const svg = scorecard(['Location strength', 'Risk profile', 'Tenant appeal']);
+    expect(svg).not.toContain('<polygon');
+    expect(svg).not.toContain('<circle');
+    // Bars share one baseline: every bar starts at the same x.
+    const xs = [...svg.matchAll(/<rect x="([\d.]+)" y="[\d.]+" width="[\d.]+" height="12"/g)]
+      .map((m) => m[1]);
+    expect(xs.length).toBeGreaterThan(0);
+    expect(new Set(xs).size).toBe(1);
   });
 
   it('a parenthesised label is one label, not a row per comma', () => {

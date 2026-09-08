@@ -3681,3 +3681,96 @@ Found by reading the fifteen pages, all outside this package's scope:
   and read as documents, before and after
 - `tsc --noEmit`, `eslint`, `security:edge-check` (339 against a 339 baseline),
   `audit:style`, `vitest run`, `npm run build` — clean
+
+---
+
+## §44 — The scorecard is bars, not a radar (2026-09-08)
+
+Rugesh rejected the Executive Verdict's radar outright on sight of the §43
+render. It is removed rather than discouraged.
+
+### Two of the objections are about the data, not about taste
+
+**The polygon's area depends on the arbitrary order of the axes.** The same
+five scores arranged differently enclose a different area and read as a
+different result. Nothing in `investment_score.breakdown` says what the order
+should be — it is object key order — so the chart's most visually dominant
+property carried no information at all.
+
+**Area scales with the square of the values.** A dimension at 86 beside one at
+64 contributes roughly 1.8× the area rather than 1.34×, so the picture
+overstated every gap it drew.
+
+Two more follow from the form. The space between two spokes means nothing —
+there is no continuum between "tenant appeal" and "risk profile" — and filling
+it implies one. And comparing lengths along five spokes at five angles is
+measurably harder than comparing them against one baseline, while the corner
+labels crowd: §43's `ASTRUCTURE` clipping was a symptom of the geometry, and
+the gutter-and-wrap that fixed it is what a radar needs merely to be legible.
+
+Bars close all four at once: one baseline, length proportional to value,
+nothing enclosed, labels set horizontally in a column that sizes itself.
+
+### Removed, not deprecated
+
+`renderScoreWheel` (design system, ~6.7 KB of radar geometry) and
+`renderScoreWheelSvg` (investment renderer) are **deleted**. A dormant
+renderer is one import away from coming back — the reasoning that deleted
+`ResponsibilityNotice.tsx` rather than unmounting it. `renderScoreBars` and
+`renderScoreBarsSvg` replace them, both delegating to the `renderBars`
+primitive that already existed beside them.
+
+**The directive vocabulary is unchanged.** `{{wheel: …}}` is still recognised
+and still draws, because ~35 stored reports emit it and dropping it would
+blank a figure on every one. Content is transformed, never lost — and the
+minimum score count drops from three to two, because three was the radar's
+constraint (a polygon needs three vertices; bars do not).
+
+The generator prompt now names the section SCORECARD and says in terms that it
+is drawn as horizontal bars and never as a radar or spider chart.
+
+Zero of 112 `report_templates` carry a `chart-radar` or `score-wheel` block, so
+no stored template changes. The Template Builder still *offers* `chart-radar`
+in its block palette — a separate product surface, named here and not touched.
+
+### Two things the change surfaced
+
+**The entity bug came back in a new form.** Moving the scorecard onto
+`renderBarsSvg` printed `Infrastructure &amp; amenity`: labels arrive from
+prose `marked` has already escaped, and `svgEscape` ran on them a second time.
+Latent on `{{bars:}}` — no production bar label had ever carried an ampersand —
+and immediate the moment the scorecard landed on that primitive. Fixed at the
+primitive with §43's own `svgLabel`, so `{{bars:}}` gets it too.
+
+**Two bar charts of the same kind must not be coloured by different rules.**
+The document now draws two: Figure 01 "Score drivers" (the composite's
+weighted dimensions) and Figure 02 "Qualitative scorecard". `renderBarsSvg`'s
+default ramp colours by magnitude and turns **green** (`VIZ_GOOD`, `#4F7A33`)
+above 0.66 — a colour this gold-and-cream document uses nowhere else, and one
+that would have painted four of the scorecard's five dimensions. Both charts
+pass an explicit gold accent and let the bar lengths do the comparing, which is
+the entire argument for bars. Score drivers' labels also moved to sentence case:
+`dimensionLabel`'s lowercase is for PROSE ("weighted across growth, location and
+yield") and read as a typo in a label column beside "Location strength".
+
+### Not sorted, deliberately
+
+Bars can be sorted without distortion — there is no enclosed area whose shape
+depends on order — and a sorted scorecard answers "which dimension is weakest"
+instantly. It is left in the record's order for two reasons: the breakdown
+table directly beneath it uses that order, and two orders on facing content is
+a real cross-referencing cost; and the order is stable across reports, so a
+reader comparing two properties finds the same dimension in the same row.
+
+### Verification
+
+- Rendered end-to-end and read: the scorecard prints five bars on one baseline,
+  every label whole, `Infrastructure & amenity` correct, zero `&amp;` anywhere
+  in the document
+- The label guard MOVED rather than being deleted — `reportRenderDefects.spec`
+  still asserts a long dimension label prints whole, now against the chart that
+  replaced the radar, plus a measured ink-fits-the-column assertion
+- A source guard asserts no radar renderer survives on either path, and that
+  the directive still draws
+- `vitest run` — 21,938 passed, 0 failed; `tsc`, `eslint`, `build`,
+  `audit:style`, `security:edge-check` at baseline — clean

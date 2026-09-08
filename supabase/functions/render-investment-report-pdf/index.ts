@@ -1325,66 +1325,40 @@ function renderHeatmapSvg(grid: number[][], rowLabels: string[] = [], colLabels:
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet"><rect width="${w}" height="${h}" rx="6" fill="${VIZ_PAPER}"/>${t}${colL}${rowL}${cells}</svg>`;
 }
 
-/** Score wheel — radar/polar for multi-dimensional scoring. */
-function renderScoreWheelSvg(scores: number[], labels: string[] = [], max = 100): string {
-  if (scores.length < 3 || scores.length > MAX_WHEEL_SCORES) return "";
-  // The width is a LABEL GUTTER, not a chart size. Labels are anchored at
-  // `cx ± (R + 22)` and set outward, so the left- and right-most ones need room
-  // beyond the polygon. At the old 460 the leftmost anchor sat at x=86 with the
-  // text running left from there, and `Infrastructure & amenity` — 24 characters
-  // at ~6.2px each — started at roughly x=-63. It was clipped to `ASTRUCTURE &
-  // AMENITY` on a client's Executive Verdict page.
-  const w = 560, h = 360, cx = w / 2, cy = h / 2 + 8, R = 130;
-  const n = scores.length;
-  const angle = (i: number) => -Math.PI / 2 + (i / n) * Math.PI * 2;
-  const pt = (i: number, r: number) => `${(cx + r * Math.cos(angle(i))).toFixed(1)},${(cy + r * Math.sin(angle(i))).toFixed(1)}`;
-  // Rings
-  const rings = [0.25, 0.5, 0.75, 1].map((t) =>
-    `<polygon points="${Array.from({ length: n }, (_, i) => pt(i, R * t)).join(" ")}" fill="none" stroke="${VIZ_RULE}" stroke-opacity="${0.4 + t * 0.2}" stroke-width="0.6"/>`,
-  ).join("");
-  const spokes = Array.from({ length: n }, (_, i) => `<line x1="${cx}" y1="${cy}" x2="${(cx + R * Math.cos(angle(i))).toFixed(1)}" y2="${(cy + R * Math.sin(angle(i))).toFixed(1)}" stroke="${VIZ_RULE}" stroke-width="0.5"/>`).join("");
-  const polyPts = scores.map((s, i) => pt(i, R * Math.max(0, Math.min(1, (Number(s) || 0) / max)))).join(" ");
-  const dots = scores.map((s, i) => {
-    const r = R * Math.max(0, Math.min(1, (Number(s) || 0) / max));
-    return `<circle cx="${(cx + r * Math.cos(angle(i))).toFixed(1)}" cy="${(cy + r * Math.sin(angle(i))).toFixed(1)}" r="3" fill="${VIZ_GOLD}" stroke="${VIZ_PAPER}" stroke-width="1"/>`;
-  }).join("");
-  // A gutter alone is not enough for an arbitrarily long label, so one that
-  // would still overrun is wrapped once on a word boundary. Two lines is the
-  // limit: a third would collide with the ring below it, and a label needing
-  // three lines is one the caller should have shortened.
-  const WHEEL_LABEL_CHARS = 15;
-  const wheelLabelLines = (raw: string): string[] => {
-    const text = decodeHtmlEntities(raw).toUpperCase().trim();
-    if (text.length <= WHEEL_LABEL_CHARS) return [text];
-    const words = text.split(/\s+/);
-    const first: string[] = [];
-    while (words.length && [...first, words[0]].join(" ").length <= WHEEL_LABEL_CHARS) {
-      first.push(words.shift()!);
-    }
-    // A single word longer than the budget has no break point; leave it whole
-    // rather than hyphenating a label nobody can then read.
-    if (!first.length) return [text];
-    return words.length ? [first.join(" "), words.join(" ")] : [first.join(" ")];
-  };
-  const lbls = (labels.length ? labels : scores.map((_, i) => `D${i + 1}`)).map((lbl, i) => {
-    const a = angle(i);
-    const lx = cx + (R + 22) * Math.cos(a);
-    const ly = cy + (R + 22) * Math.sin(a);
-    const anchor = Math.abs(Math.cos(a)) < 0.2 ? "middle" : Math.cos(a) > 0 ? "start" : "end";
-    const lines = wheelLabelLines(lbl);
-    const lineEls = lines.map((line, k) =>
-      `<text x="${lx.toFixed(1)}" y="${(ly + 3.5 + k * 11).toFixed(1)}" text-anchor="${anchor}" font-family="Inter,sans-serif" font-size="9.5" fill="${VIZ_INK_MUTED}" letter-spacing="0.4">${svgEscape(line)}</text>`,
-    ).join("");
-    const valueY = ly + 15 + (lines.length - 1) * 11;
-    return `${lineEls}
-      <text x="${lx.toFixed(1)}" y="${valueY.toFixed(1)}" text-anchor="${anchor}" font-family="Playfair Display,Georgia,serif" font-weight="700" font-size="11" fill="${VIZ_INK}" style="font-variant-numeric:tabular-nums;">${Math.round(Number(scores[i]) || 0)}</text>`;
-  }).join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
-    <rect width="${w}" height="${h}" rx="6" fill="${VIZ_PAPER}"/>
-    ${rings}${spokes}
-    <polygon points="${polyPts}" fill="${VIZ_GOLD}" fill-opacity="0.18" stroke="${VIZ_GOLD_SOFT}" stroke-width="1.6" stroke-linejoin="round"/>
-    ${dots}${lbls}
-  </svg>`;
+/**
+ * A scorecard is bars on a common baseline. It used to be a radar.
+ *
+ * The Executive Verdict drew its five named dimensions as a filled pentagon.
+ * Two of the objections are about the data rather than about taste: the
+ * polygon's **area depends on the arbitrary order of the axes**, so the
+ * chart's most dominant property carried no information; and area scales with
+ * the **square** of the values, so a dimension at 86 beside one at 64
+ * contributed ~1.8× the area rather than 1.34× and the picture overstated
+ * every gap it drew. The space between two spokes also means nothing — there
+ * is no continuum between "tenant appeal" and "risk profile" — and radial
+ * labels crowd the corners, which is what printed `INFRASTRUCTURE & AMENITY`
+ * as `ASTRUCTURE` on a client's page.
+ *
+ * `renderBarsSvg` fixes all of it: one baseline, length proportional to value,
+ * nothing enclosed, labels set horizontally. The full reasoning is on
+ * `renderScoreBars` in `_shared/reportDesign/charts.pure.ts`, which is the
+ * same change on the design-system path.
+ *
+ * One accent rather than `renderBarsSvg`'s magnitude ramp: the measured spread
+ * on a real scorecard is 64–86, and a red-to-green ramp over 22 points of a
+ * 100-point scale paints an ordinary dimension as a failure.
+ */
+function renderScoreBarsSvg(scores: number[], labels: string[] = [], max = 100): string {
+  if (scores.length < 2 || scores.length > MAX_WHEEL_SCORES) return "";
+  return renderBarsSvg(
+    scores.map((value, i) => ({
+      label: String(labels[i] ?? `D${i + 1}`).trim(),
+      value: Number(value) || 0,
+      display: String(Math.round(Number(value) || 0)),
+      accent: VIZ_GOLD,
+    })),
+    { max },
+  );
 }
 
 /** Bullet chart — compact KPI with actual / target / range bands (Tufte-style). */
@@ -1521,7 +1495,18 @@ function vizFigure(svg: string, caption = ""): string {
   return `<figure class="vis-figure">${minifySvg(svg)}${caption ? `<figcaption>${esc(caption)}</figcaption>` : ""}</figure>`;
 }
 
-/** Tufte-style horizontal comparator bars. Each bar = label + value + bar + numeric tag. */
+/**
+ * Tufte-style horizontal comparator bars. Each bar = label + value + bar +
+ * numeric tag.
+ *
+ * The label goes through `svgLabel` rather than `svgEscape`: these labels
+ * arrive from a `{{bars:}}` / `{{wheel:}}` directive in prose that `marked`
+ * has already escaped, so `Infrastructure & amenity` reaches here as
+ * `Infrastructure &amp; amenity` and escaping it a second time prints the
+ * entity. Latent on `{{bars:}}` — no production bar label had ever carried an
+ * ampersand — and immediate the moment the scorecard moved onto this
+ * primitive, which is how it was found.
+ */
 function renderBarsSvg(
   items: Array<{ label: string; value: number; display?: string; accent?: string }>,
   opts: { title?: string; max?: number; unit?: string } = {},
@@ -1546,7 +1531,7 @@ function renderBarsSvg(
     const fill = it.accent || (pct >= 0.66 ? VIZ_GOOD : pct >= 0.4 ? VIZ_GOLD : pct >= 0.2 ? VIZ_WARN : VIZ_RISK);
     const display = it.display ?? (Number.isInteger(it.value) ? String(it.value) : it.value.toFixed(1)) + (opts.unit || "");
     return `
-      <text x="${labelW}" y="${y + 17}" text-anchor="end" font-family="Inter,sans-serif" font-size="10" fill="${VIZ_INK}">${svgEscape(it.label)}</text>
+      <text x="${labelW}" y="${y + 17}" text-anchor="end" font-family="Inter,sans-serif" font-size="10" fill="${VIZ_INK}">${svgLabel(it.label)}</text>
       <rect x="${barX}" y="${y + 8}" width="${barW}" height="12" fill="${VIZ_PAPER_ALT}" rx="2"/>
       <rect x="${barX}" y="${y + 8}" width="${bw.toFixed(1)}" height="12" fill="${fill}" rx="2"/>
       <text x="${barX + barW + 10}" y="${y + 17}" font-family="Inter,sans-serif" font-weight="700" font-size="10" fill="${VIZ_INK}" style="font-variant-numeric:tabular-nums;">${svgEscape(display)}</text>
@@ -1791,7 +1776,7 @@ function renderKpiStripHtml(items: Array<{ label: string; value: string; delta?:
     </div>`).join("")}</div>`;
 }
 
-function extractScoreBreakdownItems(score: any): Array<{ label: string; value: number; display: string }> {
+function extractScoreBreakdownItems(score: any): Array<{ label: string; value: number; display: string; accent: string }> {
   const raw = score?.breakdown || score?.scores || score?.components || {};
   if (!raw || typeof raw !== "object") return [];
   return Object.entries(raw).map(([key, val]: [string, any]) => {
@@ -1805,8 +1790,17 @@ function extractScoreBreakdownItems(score: any): Array<{ label: string; value: n
     const n = typeof val === "number" ? val : Number(val?.score ?? val?.value ?? val?.rating);
     if (!Number.isFinite(n)) return null;
     const label = key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ").replace(/\bscore\b/ig, "").trim();
-    return { label: label || key, value: n, display: `${Math.round(n)}` };
-  }).filter(Boolean) as Array<{ label: string; value: number; display: string }>;
+    // Sentence case. `dimensionLabel`'s lowercase is for PROSE — "weighted
+    // across growth, location and yield" — and reads as a typo in a chart's
+    // label column beside the Qualitative Scorecard's "Location strength".
+    const shown = label ? label.charAt(0).toUpperCase() + label.slice(1) : key;
+    // One accent, like the scorecard. `renderBarsSvg`'s default ramp colours by
+    // magnitude and turns green (`VIZ_GOOD`) above 0.66 — a colour this
+    // gold-and-cream document uses nowhere else, and one that would paint four
+    // of the scorecard's five dimensions on the page opposite. The bars' own
+    // lengths carry the comparison, which is the entire argument for bars.
+    return { label: shown, value: n, display: `${Math.round(n)}`, accent: VIZ_GOLD };
+  }).filter(Boolean) as Array<{ label: string; value: number; display: string; accent: string }>;
 }
 
 function recursiveNumberByKey(obj: unknown, patterns: RegExp[], seen = new Set<unknown>()): number | null {
@@ -2332,7 +2326,9 @@ function applyEditorialMarkdown(md: string): string {
     const rawScores = parts[0].split(",");
     if (rawScores.length > MAX_WHEEL_SCORES) return _m;
     const scores = rawScores.map((v) => Number(v.trim())).filter((n) => Number.isFinite(n));
-    if (scores.length < 3) return _m;
+    // Two bars are a comparison. The old floor of three was the radar's — a
+    // polygon needs three vertices to be a shape; bars do not.
+    if (scores.length < 2) return _m;
     if (complexVisualUnits + scores.length > MAX_COMPLEX_VISUAL_UNITS) return _m;
     const opts: Record<string, string> = {};
     for (const p of parts.slice(1)) {
@@ -2341,7 +2337,7 @@ function applyEditorialMarkdown(md: string): string {
     }
     const labels = opts.labels ? opts.labels.split(",").map((s) => s.trim()) : [];
     complexVisualUnits += scores.length;
-    return vizFigure(renderScoreWheelSvg(scores, labels, Number(opts.max) || 100), opts.title || "");
+    return vizFigure(renderScoreBarsSvg(scores, labels, Number(opts.max) || 100), opts.title || "");
   });
 
   // {{bars: Label1 70, Label2 45%, Label3 $1.2M | title=… | max=100 | unit=%}}
