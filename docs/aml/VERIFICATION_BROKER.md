@@ -95,15 +95,46 @@ scopes, Mission Control's own Didit credential, and the vendor itself.
 - It is **reviewer-or-MLRO**, because it names which credential a failure lies
   with and because it makes an outbound call.
 
-## What the free tier actually allows
+## What the free tier actually allows — and what it does not cover
 
-Measured 8 Sep 2026 on the live account: `allow_free_usage: true`, and all
-three brokered operations are free-tier — **500 each per calendar month**,
-`id_verification` at $0.15 beyond, `passive_liveness` $0.10, `face_match`
-$0.05. Usage was **zero on every one of them**, which is the vendor's own
-confirmation that no verification has ever run through this path.
+**The free tier does not apply to the route this product uses.** That is the
+correction that matters, and it was got wrong twice before the counters were
+read properly.
 
-A `0.00` balance does not block free-tier work; **only a negative one does**.
-So the balance is not the constraint people assume it is — the monthly free
-allowance is, and enabling white-label on a workflow is what drops it out of
-the free tier entirely.
+Didit meters two families under similar names. The **workflow/session**
+features — `id_verification`, `passive_liveness`, `face_match` — each carry
+`free_tier_limit: 500` per calendar month. The **direct `/v3/` API**
+endpoints, which is what `diditStandaloneClient` calls on every route, meter
+under the `_api` suffix — `id_verification_api`, `passive_liveness_api`,
+`face_match_api` — and measured 8 Sep 2026 **not one `_api` counter carries a
+`free_tier_limit` at all**. Every one of the eighteen reads `NONE`.
+
+So the standalone prices are the real ones, per call, from the first call:
+
+| Operation | Counter | Price |
+| --- | --- | --- |
+| ID verification | `id_verification_api` | $0.20 |
+| Passive liveness | `passive_liveness_api` | $0.05 |
+| Face match | `face_match_api` | $0.05 |
+
+One complete verification is therefore **$0.30**, and the $9.00 balance
+measured that day is about thirty of them. Reading the free-tier row and
+concluding a verification costs nothing is the mistake to avoid: the
+free-tier numbers are true, they are simply about the hosted session flow
+this deployment does not use.
+
+`allow_free_usage: true` and a `0.00` balance still do not block *free-tier*
+work, and enabling white-label on a workflow still drops that workflow out of
+the free tier. Neither fact reaches the standalone path.
+
+### A rejected call does not appear to bill
+
+Measured on the same reading: `passive_liveness_api` stood at **2** after the
+empty-form probe had been run against three clones several times over. A call
+the vendor refuses at validation is not counted. That is what makes
+`verification_selftest`'s "spends nothing" guarantee hold — it is a property
+of the refusal, not an assumption — and it is why the loop check's expected
+cost is also nothing despite sending real bytes: a synthetic image carries no
+document and no face, so it is refused too. The difference is that the loop
+check **could** bill if a call got far enough to succeed, so it declares
+`spends: true` and is never the default.
