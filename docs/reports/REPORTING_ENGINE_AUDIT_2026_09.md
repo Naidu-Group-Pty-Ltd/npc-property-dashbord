@@ -4278,3 +4278,139 @@ conclusions:
    data purchase substitutes for it.
 
 Scoring V2 stays unwired.
+
+---
+
+## §49 — The Domain trace, and one contract the engine may read (2026-09-08)
+
+Step 1 of the Canonical Market Evidence brief: trace the existing Domain
+integration completely before introducing another provider. No production
+calls were made and no live scoring was changed.
+
+### 1. What the integration requires
+
+One credential, `DOMAIN_API_KEY`, sent as an `X-Api-Key` header. It is the
+**only** Domain name anywhere in the repository — there is no OAuth client id
+or secret, so the integration is built for Domain's API-key style of access
+rather than its OAuth client-credentials style. It is declared in four places
+and nowhere else: the Integrations registry (`domain` card, one required
+password field), `integrationSecrets.ts`'s allow-list, the placeholder-key seed
+migration, and `apiUsageBilling.pure.ts`.
+
+`domain-data-service` reads it with `Deno.env.get('DOMAIN_API_KEY')` and, when
+it is absent, returns **HTTP 500** `Domain API key not configured` before any
+outbound request.
+
+### 2. Does a credential exist in this deployment?
+
+**Not established, and the three routes that should have answered it are all
+mute.** This is worth stating precisely rather than guessing:
+
+| route | reading |
+| --- | --- |
+| `integration_configs` row for `DOMAIN_API_KEY` | present, **empty**, `updated_at` still the 2026-08-02 seed |
+| `update-integration-secret` | writes the project environment through the Management API and **never writes that table**, so the empty row is suggestive, not conclusive |
+| `activity_logs` audit of secret updates | **zero rows** — and see below |
+| edge function logs | retain 24 h; the last report was generated 2026-09-05, so no runtime evidence survives |
+| `api_health_log` | Domain has never written a row, while six sibling services have |
+
+**A new finding sits inside that table.** `update-integration-secret` logs every
+change with `entity_type: 'settings'`, and `settings` **is not one of the 26
+values of the `activity_entity_type` enum**. The insert is `await`ed without
+its error being read, so PostgREST's rejection is discarded: every secret
+update ever made through the Integrations page has failed to write its audit
+row while returning `success: true` to the operator. That is an audit-trail
+gap in its own right, and it is why the log cannot answer the question above.
+Out of scope for this stage; recorded, not fixed.
+
+**What would settle it, in one look:** Supabase Dashboard → Project Settings →
+Edge Functions → Secrets, and check whether `DOMAIN_API_KEY` is listed. If it
+is absent, that is the whole answer. If it is present, the service already
+carries the exact probe — `POST domain-data-service { "healthCheck": true }`
+returns the status code and a decoded message, and because the health check
+runs *after* the missing-key guard it distinguishes **unset** (500, our own
+message) from **set but unentitled** (403) and **set but invalid** (401). That
+is a production call, so it is left for explicit go-ahead.
+
+### 3. Entitlement and scopes
+
+The endpoint is `GET /v1/suburbPerformanceStatistics/{state}/{suburb}`.
+Whether this deployment's key is entitled to it **cannot be established from
+the repository** — entitlement is a property of the Domain account, not of the
+code, and the audit log that would show a successful call has never recorded
+one. The honest statement is: *the required scope is whichever Domain package
+includes Suburb Performance Statistics, and confirming it needs either the
+dashboard or the health-check call above.* Anything more specific would be a
+guess presented as a trace.
+
+### 4. The exact fields, and the two that are not there
+
+The service declares and reads nine values off the latest series entry:
+`medianSoldPrice`, `numberSold`, `medianRentListingPrice`,
+`numberListedForRent`, `daysOnMarket`, `auctionClearanceRate`,
+`medianSoldPricePercentChange` (mapped to `annualGrowth`), plus a locally
+computed `rentalYield` and a `dataQuality` flag.
+
+Two fields the scorers ask for are **not in that interface at all**:
+`priceGrowth3Year` and `vacancyRate`. No configuration change produces them
+from this endpoint.
+
+### 5. The multi-period series
+
+The request is `?propertyCategory={house|unit}&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12`
+— twelve windows. The handler then keeps
+
+```ts
+series.seriesInfo[series.seriesInfo.length - 1]
+```
+
+one element, and discards the rest. **The history is fetched and thrown away.**
+This is the single most consequential line for the brief's §4, because
+multi-horizon growth needs exactly what is being dropped.
+
+### 6–8. The three breaks already recorded
+
+Traced in §47 and unchanged: `domainData` is a sibling of `demographics` and
+is never included in the scoring call; the scorers read
+`marketData.medianPrice` while Domain returns `medianSoldPrice`; and the
+series truncation above. Breaks 6–8 are ours and free to fix; break 2 is a
+credential question.
+
+### Can Domain be the national evidence source?
+
+On the evidence available: **partly, and not alone.** Suburb Performance
+Statistics is nationally consistent in shape and is keyed by state + suburb
+with a dwelling split, which is the right grain. But it carries no vacancy
+rate and no multi-year growth field, and its per-suburb coverage for thin
+markets is unknown until a key exists. It is a strong *primary* adapter for
+median, 1-year growth, days on market, sales count and rent — with the series
+retained rather than truncated, several horizons become derivable from the
+same call — and it needs the ABS and the state registers behind it for
+benchmarks and for the fields it does not carry.
+
+### The contract itself
+
+`_shared/reports/market/marketEvidence.pure.ts` is the structure the scoring
+engine will be allowed to read, and the only one. Its shaping rule:
+**provenance is per MEASURE, not per envelope.** The obvious design puts one
+`level`/`source`/`asOf` on the bundle, and it cannot work, because the
+hierarchy fills different fields from different levels in the same request — a
+median from the suburb, a vacancy from the postcode, a benchmark from the
+GCCSA. An envelope-level `level: 'suburb'` would be a false statement about
+most of the fields and the report would print it.
+
+So every measure is an `EvidencePoint` carrying its own level, area name,
+dwelling-type match, provider, period, sample size, periods available and
+method. Three rules are pinned by tests:
+
+- **Absent is absent.** Every field optional; a measured `0` is a value and an
+  absent point is the absence of one.
+- **A dwelling-type MATCH outranks a finer geography.** A suburb figure mixing
+  houses and units is a statement about a different market; a postcode house
+  figure is the same market read more broadly.
+- **Benchmarks resolve to the COARSER point.** Filling a benchmark from the
+  subject's own suburb makes every property exactly average against itself and
+  deletes the relative-performance signal §48 says the score needs.
+
+The module holds no score, grade, weight or confidence verdict — only the raw
+inputs a confidence calculation consumes. Nothing is wired.
