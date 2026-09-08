@@ -43,14 +43,51 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from "../_s
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from "../_shared/errorResponse.ts";
 
-/** Credential names to report presence for. Presence only — never a value. */
+/**
+ * Credential names to report presence for. Presence only — never a value.
+ *
+ * Both providers are listed under their CURRENT and LEGACY shapes, because the
+ * repository models each as a single API key while both APIs in fact want
+ * OAuth2 client credentials (§51, §52). Which names exist is the evidence that
+ * settles whether an integration was configured, half-configured, or
+ * configured against a contract the vendor has since replaced.
+ */
 const CREDENTIAL_NAMES = [
+  // Domain: legacy X-Api-Key, then the client-credentials pair.
   "DOMAIN_API_KEY",
   "DOMAIN_CLIENT_ID",
   "DOMAIN_CLIENT_SECRET",
+  // Cotality/CoreLogic: legacy single key, then the client-credentials pair.
   "COTALITY_API_KEY",
+  "COTALITY_CLIENT_ID",
+  "COTALITY_CLIENT_SECRET",
   "COTALITY_BASE_URL",
+  // PropTrack is REA Group's data arm — the LICENSED route to
+  // realestate.com.au's data. Scraping the consumer site is refused by REA's
+  // own robots.txt in as many words, so it is not a route this platform takes.
+  "PROPTRACK_API_KEY",
+  "PROPTRACK_BASE_URL",
+  // Pricefinder (sales evidence) and SQM Research (vacancy, stock on market)
+  // — the only declared source for a vacancy rate at suburb grain.
+  "PRICEFINDER_API_KEY",
+  "SQM_RESEARCH_API_KEY",
 ] as const;
+
+/**
+ * How a provider stands, before any network call.
+ *
+ * `licensing_unverified` is deliberately its own state and not a failure: a
+ * provider can be perfectly reachable and correctly credentialled and still be
+ * unusable in a client-facing report, because redistribution rights are a
+ * commercial fact rather than a technical one. Cotality's own scoping
+ * document leaves those questions open, so nothing may assume them.
+ */
+type ProviderStatus =
+  | "configured_and_testable"
+  | "credential_absent"
+  | "authentication_implementation_obsolete"
+  | "entitlement_unavailable"
+  | "licensing_unverified";
 
 interface Target {
   /** How the caller names it. */
@@ -81,6 +118,35 @@ const TARGETS: readonly Target[] = [
       "https://api.domain.com.au/v1/suburbPerformanceStatistics/NSW/Bowral" +
       "?propertyCategory=house&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12",
     note: "The v1 route domain-data-service calls today.",
+  },
+  {
+    // Cotality/CoreLogic suburb statistics — branch 4 of the scoping spec
+    // ("Market Trends / Suburb Stats"). The host is the default configured in
+    // cotality-service; COTALITY_BASE_URL overrides it at runtime, and that is
+    // SERVER configuration rather than caller input, so it cannot be used to
+    // point this function at an arbitrary host.
+    id: "cotality_suburb_statistics",
+    url: "https://api.corelogic.asia/property/au/v2/statistics/locality/1234",
+    note: "Cotality Market Trends / Suburb Statistics — the branch-4 endpoint shape.",
+  },
+  {
+    id: "proptrack_market_api",
+    url:
+      "https://data.proptrack.com/api/v2/market/sale/historic-median-sale-price" +
+      "?suburb=Bowral&state=NSW&postcode=2576&propertyTypes=house&frequency=monthly",
+    note: "PropTrack (REA Group) historic median sale price — the licensed realestate.com.au route.",
+  },
+  {
+    id: "vic_data_catalogue",
+    url: "https://discover.data.vic.gov.au/api/3/action/package_search?q=median+house+suburb&rows=1",
+    rangeBytes: 2048,
+    note: "Victorian open-data CATALOGUE. Reachable where the file host is not.",
+  },
+  {
+    id: "qld_statistician",
+    url: "https://www.qgso.qld.gov.au/",
+    rangeBytes: 2048,
+    note: "Queensland Government Statistician — median sales by suburb publisher.",
   },
   {
     id: "vic_median_house_by_suburb",
@@ -213,12 +279,50 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Classify each provider from what is configured, before the network says
+    // anything. A provider with no credential cannot be distinguished from one
+    // with a bad credential by its 401 alone, which is why presence is read
+    // from the environment rather than inferred from a status code.
+    const hasCotalityKey = credentials.COTALITY_API_KEY === true;
+    const hasCotalityOAuth =
+      credentials.COTALITY_CLIENT_ID === true && credentials.COTALITY_CLIENT_SECRET === true;
+
+    const providers = {
+      domain: {
+        status: (hasDomainOAuth
+          ? "configured_and_testable"
+          : hasDomainKey
+            ? "authentication_implementation_obsolete"
+            : "credential_absent") as ProviderStatus,
+        authScheme: hasDomainOAuth ? "oauth_client_credentials" : hasDomainKey ? "api_key_legacy" : "none",
+        // v1 answers 404 "No Matching Route"; the live contract is v2 with a
+        // {postcode} segment and a Bearer token (§51).
+        repositoryImplementation: "v1 + X-Api-Key (obsolete)",
+        licensingStatus: "not_assessed",
+      },
+      cotality: {
+        status: (hasCotalityOAuth
+          ? "configured_and_testable"
+          : hasCotalityKey
+            ? "authentication_implementation_obsolete"
+            : "credential_absent") as ProviderStatus,
+        authScheme: hasCotalityOAuth ? "oauth_client_credentials" : hasCotalityKey ? "api_key_legacy" : "none",
+        // Every branch resolver is a stub: there is no fetch to Cotality
+        // anywhere in cotality-service, so a credential alone changes nothing.
+        repositoryImplementation: "scaffolding only — no outbound call exists",
+        // A production gate, never a development blocker. Cotality's own
+        // scoping spec leaves cache duration, redistribution rights for
+        // client-facing PDFs, and the right to persist derived metrics open.
+        licensingStatus: "unverified",
+      },
+    };
+
     return json({
       probe: "market-source-probe",
       readOnly: true,
       probedAt: new Date().toISOString(),
       credentialsPresent: credentials,
-      domainAuthScheme: hasDomainOAuth ? "oauth_client_credentials" : hasDomainKey ? "api_key" : "none",
+      providers,
       results,
     });
   } catch (cause) {

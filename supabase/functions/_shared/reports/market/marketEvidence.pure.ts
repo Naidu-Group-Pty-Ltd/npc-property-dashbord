@@ -108,6 +108,24 @@ export type EvidenceProvider =
 export type EvidenceMethod = 'observed' | 'calculated';
 
 /**
+ * Whether this measure may appear in a document a client receives.
+ *
+ * A production gate, not a development one. A provider can be perfectly
+ * reachable, correctly credentialled and returning excellent data, and still
+ * be unusable in a client-facing report because redistribution rights are a
+ * commercial fact rather than a technical one. Cotality's own scoping
+ * document (`docs/integrations/cotality-scoping.md` §4) leaves permitted cache
+ * duration, redistribution rights for client-facing PDFs, and the right to
+ * persist derived metrics explicitly open.
+ *
+ * So the default is `unverified` and it is never inferred: a measure whose
+ * rights nobody has confirmed may be scored in a shadow backtest and must not
+ * be rendered or persisted as a derived metric. `open` is for material whose
+ * licence positively permits it — ABS and CC-BY government data.
+ */
+export type LicensingStatus = 'open' | 'licensed_for_client_reports' | 'internal_only' | 'unverified';
+
+/**
  * One measured quantity and everything needed to defend it.
  *
  * `asOf` is the period the SOURCE describes, never when we fetched it — the
@@ -138,8 +156,27 @@ export interface EvidencePoint<T = number> {
   /** Historical periods available for this series, where applicable. */
   periodsAvailable: number | null;
   method: EvidenceMethod;
+  /**
+   * Whether this measure may reach a client-facing document.
+   *
+   * Absent means `unverified` — the conservative reading, because assuming a
+   * right nobody has confirmed is how a licence gets breached in a document
+   * that has already been emailed.
+   */
+  licensingStatus?: LicensingStatus;
   /** Anything a reader needs in order not to over-read the number. */
   sourceNote: string | null;
+}
+
+/** The licensing status of a point, defaulting conservatively. */
+export function licensingOf(point: EvidencePoint<unknown>): LicensingStatus {
+  return point.licensingStatus ?? 'unverified';
+}
+
+/** May this measure be rendered in a document a client receives? */
+export function mayReachClientReport(point: EvidencePoint<unknown>): boolean {
+  const status = licensingOf(point);
+  return status === 'open' || status === 'licensed_for_client_reports';
 }
 
 /**
@@ -253,7 +290,7 @@ export function presentPoints(
 ): Array<{ key: EvidenceKey; point: EvidencePoint<unknown> }> {
   const out: Array<{ key: EvidenceKey; point: EvidencePoint<unknown> }> = [];
   for (const key of EVIDENCE_KEYS) {
-    const point = (ev as Record<string, unknown>)[key] as EvidencePoint<unknown> | undefined;
+    const point = (ev as unknown as Record<string, unknown>)[key] as EvidencePoint<unknown> | undefined;
     if (point && typeof point === 'object' && 'value' in point) out.push({ key, point });
   }
   return out;
@@ -323,11 +360,14 @@ export function mergeEvidence(
     }
 
     for (const key of EVIDENCE_KEYS) {
-      const incoming = (candidate as Record<string, unknown>)[key] as EvidencePoint<unknown> | undefined;
+      const incoming = (candidate as unknown as Record<string, unknown>)[key] as
+        | EvidencePoint<unknown>
+        | undefined;
       if (!incoming || typeof incoming !== 'object' || !('value' in incoming)) continue;
-      const held = merged[key] as EvidencePoint<unknown> | undefined;
-      if (!held) { merged[key] = incoming; continue; }
-      if (beats(incoming, held, BENCHMARK_KEYS.has(key))) merged[key] = incoming;
+      const bag = merged as Record<string, unknown>;
+      const held = bag[key] as EvidencePoint<unknown> | undefined;
+      if (!held) { bag[key] = incoming; continue; }
+      if (beats(incoming, held, BENCHMARK_KEYS.has(key))) bag[key] = incoming;
     }
   }
 
