@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import {
+  describeAuthAttempt,
   describeVerdict,
   groupCredentialPresence,
   summariseProbe,
@@ -42,6 +43,12 @@ interface ProbeResult {
   verdict: string;
   elapsedMs?: number;
   error?: string;
+  kind?: 'commercial' | 'government';
+  credentialSent?: boolean;
+  authNotImplemented?: boolean;
+  contentType?: string | null;
+  bodyPreview?: string;
+  providerHeaders?: Record<string, string>;
 }
 
 interface ProbeResponse {
@@ -220,11 +227,46 @@ export default function MarketSourceProbePanel() {
                         <span className="ml-auto text-xs text-muted-foreground">owner: {reading.owner}</span>
                       </div>
                       <p className="mt-2 text-xs leading-5 text-muted-foreground">{reading.meaning}</p>
+                      <p className="mt-1 text-xs italic leading-5 text-muted-foreground">
+                        {describeAuthAttempt(
+                          result.credentialSent === true,
+                          result.authNotImplemented === true,
+                          result.kind,
+                        ).line}
+                      </p>
                       {reading.nextAction && (
                         <p className="mt-1 flex gap-1.5 text-xs leading-5 text-foreground">
                           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
                           <span>{reading.nextAction}</span>
                         </p>
+                      )}
+                      {(result.bodyPreview || result.providerHeaders) && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+                            What the source itself said
+                          </summary>
+                          <div className="mt-2 space-y-1">
+                            {result.contentType && (
+                              <p className="text-xs text-muted-foreground">
+                                content-type: <code className="font-mono">{result.contentType}</code>
+                              </p>
+                            )}
+                            {result.providerHeaders && Object.keys(result.providerHeaders).length > 0 && (
+                              <ul className="space-y-0.5">
+                                {Object.entries(result.providerHeaders).map(([h, v]) => (
+                                  <li key={h} className="text-xs text-muted-foreground">
+                                    <code className="font-mono">{h}</code>: {v}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {result.bodyPreview && (
+                              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted/40 p-2 text-[11px] leading-4 text-muted-foreground">
+                                {result.bodyPreview}
+                              </pre>
+                            )}
+                          </div>
+                        </details>
                       )}
                     </li>
                   );

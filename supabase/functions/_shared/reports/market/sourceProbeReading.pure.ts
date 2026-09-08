@@ -111,8 +111,8 @@ const READINGS: Readonly<Record<ProbeVerdict, Omit<VerdictReading, 'verdict' | '
     tone: 'attention',
   },
   blocked_by_origin: {
-    label: 'Blocked at the origin',
-    meaning: 'The endpoint answered 403 with no credential sent. The refusal is about where the request came from rather than about who made it.',
+    label: 'Refused, and not about entitlement',
+    meaning: 'A 403 where no credential was sent, or from a party nobody holds an account with. The refusal is about the request or its origin — it says nothing about what this deployment is entitled to.',
     owner: 'engineering',
     nextAction: 'Compare against the same target from another egress before concluding anything: two egresses have already turned out to differ in this programme.',
     tone: 'attention',
@@ -151,6 +151,47 @@ export function describeVerdict(verdict: string): VerdictReading {
     nextAction: 'Add the verdict to the classifier’s reading, or correct the classifier. Do not interpret it from its name.',
     tone: 'attention',
     recognised: false,
+  };
+}
+
+/**
+ * What actually happened on the wire, in one sentence.
+ *
+ * The first live run reported an unauthenticated 401 from Cotality as
+ * "credential rejected, or scope missing" and an unauthenticated 403 from a
+ * Victorian Government spreadsheet as "not entitled — added to the account".
+ * Both were fabrications: no Cotality credential exists and there is no
+ * government account to add anything to. The classifier now takes real
+ * credential presence, and this states it in the open so a reader can see
+ * whether a refusal was even capable of meaning what it appears to mean.
+ */
+export function describeAuthAttempt(
+  credentialSent: boolean,
+  authNotImplemented: boolean,
+  kind: 'commercial' | 'government' | undefined,
+): { line: string; qualifiesFinding: boolean } {
+  if (kind === 'government') {
+    return {
+      line: 'Public source — no credential applies. Nothing here can be an entitlement finding.',
+      qualifiesFinding: false,
+    };
+  }
+  if (credentialSent) {
+    return {
+      line: 'A credential was sent, so the answer is about this deployment’s access.',
+      qualifiesFinding: true,
+    };
+  }
+  if (authNotImplemented) {
+    return {
+      line: 'A credential exists but this probe cannot use it — the provider’s scheme is not implemented here, '
+        + 'and guessing it would be inventing a contract. The request went out unauthenticated.',
+      qualifiesFinding: false,
+    };
+  }
+  return {
+    line: 'No credential was sent. Whatever the endpoint answered, it is not a statement about entitlement.',
+    qualifiesFinding: false,
   };
 }
 

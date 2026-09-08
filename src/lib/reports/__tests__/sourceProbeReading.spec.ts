@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import {
+  describeAuthAttempt,
   PROBE_VERDICTS,
   PROVIDER_STATUS_READING,
   describeVerdict,
@@ -168,5 +169,99 @@ describe('the owner routing is meaningful', () => {
     const reading = describeVerdict('reachable');
     expect(reading.meaning).toMatch(/does not say/i);
     expect(reading.nextAction).toBeTruthy();
+  });
+});
+
+// ── ME-6 final run: the classification defect the first live probe exposed ──
+
+describe('an unauthenticated refusal is never an entitlement finding', () => {
+  const src = readFileSync(PROBE_SOURCE, 'utf8');
+
+  it('classify takes credential presence AND the target kind, not the status alone', () => {
+    expect(src).toContain('function classify(status: number, credentialSent: boolean, kind: TargetKind)');
+  });
+
+  it('no call site may assert a credential was sent — the first version hardcoded true', () => {
+    // The defect verbatim: `classify(response.status, isDomain ? … : true)`.
+    const calls = [...src.matchAll(/classify\(([^)]*)\)/g)].map((m) => m[1]);
+    const invocations = calls.filter((c) => !c.startsWith('status:'));
+    expect(invocations.length).toBeGreaterThan(0);
+    for (const args of invocations) {
+      expect(args).not.toMatch(/,\s*true\s*[,)]?\s*$/);
+      expect(args).not.toContain('? hasDomain');
+    }
+  });
+
+  it('every target declares its kind, its credential names and its auth method', () => {
+    const ids = [...src.matchAll(/id:\s*"([a-z0-9_]+)"/g)].map((m) => m[1]);
+    expect(ids.length).toBeGreaterThanOrEqual(10);
+    const kinds = [...src.matchAll(/kind:\s*"(commercial|government)"/g)].length;
+    const creds = [...src.matchAll(/credentialNames:\s*\[/g)].length;
+    const auths = [...src.matchAll(/auth:\s*"(domain_api_key|not_implemented|none_required)"/g)].length;
+    expect(kinds).toBe(ids.length);
+    expect(creds).toBe(ids.length);
+    expect(auths).toBe(ids.length);
+  });
+
+  it('a government target can never be classified as an entitlement problem', () => {
+    // The rule, read off the classifier: government short-circuits before the
+    // credentialSent branch that produces `not_entitled`.
+    const body = src.slice(src.indexOf('function classify('), src.indexOf('\n}', src.indexOf('function classify(')));
+    const at403 = body.slice(body.indexOf('status === 403'));
+    expect(at403.indexOf('kind === "government"')).toBeLessThan(at403.indexOf('not_entitled'));
+  });
+});
+
+describe('the auth-attempt reading states what reached the wire', () => {
+  it('a public source can never carry an entitlement finding', () => {
+    const r = describeAuthAttempt(false, false, 'government');
+    expect(r.qualifiesFinding).toBe(false);
+    expect(r.line).toMatch(/no credential applies/i);
+  });
+
+  it('names an unusable credential as unusable rather than pretending it was sent', () => {
+    const r = describeAuthAttempt(false, true, 'commercial');
+    expect(r.qualifiesFinding).toBe(false);
+    expect(r.line).toMatch(/cannot use it/i);
+    expect(r.line).toMatch(/inventing a contract/i);
+  });
+
+  it('only a sent credential qualifies a finding about access', () => {
+    expect(describeAuthAttempt(true, false, 'commercial').qualifiesFinding).toBe(true);
+    expect(describeAuthAttempt(false, false, 'commercial').qualifiesFinding).toBe(false);
+    expect(describeAuthAttempt(false, false, 'commercial').line).toMatch(/not a statement about entitlement/i);
+  });
+});
+
+describe('Domain’s API key is not described as obsolete', () => {
+  const src = readFileSync(PROBE_SOURCE, 'utf8');
+
+  it('an api-key credential alone makes Domain configured and testable', () => {
+    const block = src.slice(src.indexOf('domain: {'), src.indexOf('cotality: {'));
+    expect(block).toContain('hasDomainOAuth || hasDomainKey');
+    expect(block).not.toContain('authentication_implementation_obsolete');
+  });
+
+  it('the repository description no longer calls X-API-Key obsolete', () => {
+    const block = src.slice(src.indexOf('domain: {'), src.indexOf('cotality: {'));
+    expect(block).not.toMatch(/X-Api-Key \(obsolete\)/);
+    expect(block).toMatch(/documented scheme/i);
+  });
+});
+
+describe('the provider diagnostic never carries credential material', () => {
+  const src = readFileSync(PROBE_SOURCE, 'utf8');
+
+  it('reads response headers from an allow-list that excludes auth and cookies', () => {
+    const block = src.slice(src.indexOf('providerHeaders:'), src.indexOf('elapsedMs:', src.indexOf('providerHeaders:')));
+    for (const banned of ['authorization', 'cookie', 'set-cookie', 'x-api-key']) {
+      expect(block.toLowerCase()).not.toContain(`"${banned}"`);
+    }
+    expect(block).toContain('www-authenticate');
+  });
+
+  it('never reads back the request headers it sent', () => {
+    expect(src).not.toMatch(/headers\[["']X-Api-Key["']\]\s*\)/);
+    expect(src).not.toContain('JSON.stringify(headers');
   });
 });

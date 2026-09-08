@@ -6778,3 +6778,182 @@ flood/strata/planning acquisition was started. Finance Suitability remains
 separate. No contaminated historical Location composite was reused.
 
 ---
+
+## §62 — ME-6: the first authoritative runtime result, and what it corrected (2026-09-08)
+
+`market-source-probe` ran from the deployed Command Centre. This is the first
+reading of this deployment's own runtime, and it settled a question §49 could
+only call *suggestive* — **`DOMAIN_API_KEY` is SET**. It also exposed a defect in
+the probe itself, which is recorded first because two of its findings were
+fabrications.
+
+### 62.1 What the run returned
+
+**Credential presence — 1 of 11 names set.** `DOMAIN_API_KEY` set;
+`DOMAIN_CLIENT_ID`, `DOMAIN_CLIENT_SECRET`, all four Cotality names, both
+PropTrack names, Pricefinder and SQM Research all **not set**.
+
+| target | status | first verdict | corrected verdict |
+| --- | ---: | --- | --- |
+| `domain_v2_suburb_performance` | 403 | Not entitled | **under diagnosis** (62.3) |
+| `domain_v1_suburb_performance` | **404** | Route does not exist | unchanged |
+| `cotality_suburb_statistics` | 401 | Credential rejected, or scope missing | **credential absent** |
+| `proptrack_market_api` | **404** | Route does not exist | unchanged |
+| `vic_data_catalogue` | 206 | Reachable | unchanged |
+| `qld_statistician` | 206 | Reachable | unchanged |
+| `vic_median_house_by_suburb` | 403 | Not entitled | **refused, not about entitlement** |
+| `nsw_valuer_general_psi` | — | Unreachable | unchanged |
+| `sa_data_portal` | 200 | Reachable | unchanged |
+| `abs_res_dwell` | 200 | Reachable | unchanged |
+
+Four government sources answer this runtime, which is a real and useful finding
+in its own right: VIC's catalogue, the QLD Statistician, data.sa.gov.au and ABS
+are all reachable where the development egress could not always reach them.
+
+### 62.2 The classification defect — two fabricated findings
+
+`classify(response.status, isDomain ? hasDomainKey || hasDomainOAuth : true)`.
+The third argument is the literal `true` for **every non-Domain target**, so the
+classifier was told a credential had been sent when none had.
+
+Two consequences reached an operator as instructions:
+
+**Cotality** answered 401 to an unauthenticated request and was reported as
+*"Credential rejected, or scope missing — confirm the credential and that the
+account holds the named scope."* There is no Cotality credential. The advice was
+to check something that does not exist.
+
+**A Victorian Government spreadsheet** answered 403 and was reported as *"Not
+entitled — owner: commercial. Entitlement is a property of the provider account;
+it is added to the account, never worked around here."* Nobody holds an account
+with `land.vic.gov.au`. That is a fabricated finding pointing at a fabricated
+commercial relationship, and it is precisely the class of error this programme
+exists to remove — it would have sent someone to negotiate with a vendor that
+is not a vendor.
+
+The correction has three parts. **`classify` takes real credential presence**,
+resolved per target from the names that would authenticate it. **Every target
+declares its `kind`**, and a `government` 403 can never be an entitlement
+finding however the request was made — only a commercial party has an
+entitlement to withhold. And **`auth` is declared per target**, because a
+credential that exists is not a credential that was sent: Cotality needs an
+OAuth token exchange this diagnostic does not perform, and PropTrack publishes
+no documentation at all, so the header its key belongs in is unknown and
+inventing one would be fabricating a contract. Those read as
+`authNotImplemented` and the panel says so in words.
+
+Two rules, pinned by tests that read the function's source: **an
+unauthenticated refusal says nothing about entitlement**, and **no call site may
+assert that a credential was sent**.
+
+### 62.3 The Domain 403 — what it does and does not prove
+
+The word "not entitled" is withheld until the evidence carries it. What is
+measured:
+
+| request | credential | result |
+| --- | --- | --- |
+| v2 suburb performance, development egress (§61.2) | none | **401** *"Unable to verify credentials"* |
+| v2 suburb performance, Supabase runtime | `DOMAIN_API_KEY` | **403** |
+
+**The transition is the evidence.** Domain's gateway answers 401 when it cannot
+verify a credential and 403 when it can but refuses the request. Moving from one
+to the other on the same route, when the only difference is that a key was
+attached, is consistent with the key being **recognised** — and inconsistent
+with hypothesis B, an invalid or disabled key, which would have stayed at 401.
+
+Domain's own documentation supplies the mechanism: *"You will not be able to
+access any API Endpoint until the required API package(s) have been added to
+your project."* A project whose key is valid but which does not hold
+**Properties & Locations** would answer exactly this.
+
+That is strong, and it is not yet conclusive, because a WAF refusal (hypothesis
+D) also presents as 403 — and §61.2 measured this development egress being
+403'd by an edge WAF on Domain's token host. Two things settle it and both are
+now in the probe rather than in an argument:
+
+1. **The provider's own diagnostic is captured and rendered** — content type,
+   a bounded body preview, and an allow-list of response headers
+   (`www-authenticate`, the `X-Quota-*` family, `retry-after`, `server`,
+   `cf-ray`). A JSON body in Domain's own error shape is the API refusing; an
+   HTML *"Access Denied"* page is a WAF. The allow-list never reads
+   `authorization`, `cookie` or `set-cookie`, so no credential or session
+   material can travel in this field.
+2. **A second Domain package is probed on the same key** —
+   `domain_address_suggest`, Domain's documented read-only Address Suggestion
+   route. If the key answers 200 there and 403 on suburb performance, the key
+   is valid and the product is not in the project. If it answers 403 on both,
+   the key is unpackaged entirely. If 401 on both, the key is not recognised.
+   One run, three distinguishable outcomes.
+
+Item 4 asked whether the key is already used successfully elsewhere in this
+repository. It is not: `domain-data-service` is the only Domain caller and it
+calls the **v1 route Domain has removed**, so it has never succeeded and cannot
+serve as a control. The second package is therefore the control, and it is
+Domain's own published route rather than one invented for testing.
+
+### 62.4 Dwelling-type recovery — the record does not hold it
+
+204 of 867 trusted reports carry no resolvable dwelling type. Every deterministic
+route was measured; none infers from narrative, price or address.
+
+| route | recoverable |
+| --- | ---: |
+| sibling report on the same `canonical_property_key`, unambiguous | **4** |
+| same key, ambiguous (two different types) | 0 |
+| `property_listing_id` → `listings_cache` | **0** — 41 links, **0 rows survive** |
+| an alternative structured key in `property_specs` | **0** — one key exists, `property_type`, present on 109 and specific on none |
+| `client_property_id` → `client_properties` | **0** — no report carries one |
+| **total recovered** | **4** |
+| **not recoverable from the record** | **200** |
+
+The revised Growth-addressable denominator is therefore **641 of 867 (73.9%)**,
+against 637 before. That is the honest answer and it is a small one: item 8's
+premise — that lineage recovery would return a material number — does not hold
+against this record.
+
+The reason the listing route returns nothing is documented elsewhere in this
+repository and is the same fault: Airtable prunes `Property Intake Master` at 30
+days, and `listings_cache` mirrored that prune until it was made an archive. The
+41 listings that would have answered this question aged out before the archive
+existed. **The dwelling type for 200 properties is not somewhere else in the
+system; it is gone.**
+
+### 62.5 Why it was gone — and the writer that will stop taking the next 200
+
+`generate-investment-report/index.ts` composed the stored property type as
+`… : (rawPropertyType.includes('house') ? 'House' : … : rawPropertyType ||
+'Residential Property')`. When nothing was known, the generator wrote the
+literal `'Residential Property'` — and that string is indistinguishable, to
+every downstream reader, from a type somebody actually established.
+
+This repository had already written the rule down. `propertyRecord.pure.ts`
+says in as many words: *"Absent is absent — never a placeholder."* The generator
+did it anyway, and it is why 81 rows say `residential property` today.
+
+One value became two. **`resolvedPropertyType` is the fact** and is `null` when
+nothing authoritative is known — it is what reaches `composePropertySpecs` and
+the stored record. **`propertyTypeLabel` is prose**, used in the six prompt and
+table positions where a readable phrase is wanted and no fact is asserted. A
+generic label can no longer overwrite absence, and it never could overwrite a
+specific value — the specific branches are unchanged and still win.
+
+### 62.6 Provider standing corrected
+
+The live panel read *"Credential present, scheme obsolete"* and described this
+repository as *"v1 + X-Api-Key (obsolete)"*. §61.2 had already established from
+Domain's public developer portal that the API key is a **current documented
+scheme**, so that status was stale the moment it was measured. With
+`DOMAIN_API_KEY` set, Domain now reads **configured — testable**, `authScheme`
+is `api_key`, and the repository description names the one defect that survives:
+the version prefix.
+
+### 62.7 Cotality and PropTrack stay where they are
+
+Neither has a runtime credential, so neither unauthenticated result says
+anything about entitlement — which is the whole point of 62.2. They remain
+fallback candidates. Domain remains the first activation path because a
+credential exists, the contract is public and measured, the required route is
+documented, and the implementation delta is a version prefix.
+
+---
