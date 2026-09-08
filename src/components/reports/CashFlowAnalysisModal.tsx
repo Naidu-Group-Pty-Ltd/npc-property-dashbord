@@ -84,6 +84,11 @@ import {
   PROJECTION_TOTAL_LABEL_INNER_CLASS,
 } from '@/lib/cashFlow/projectionTableGeometry.pure';
 import {
+  NEGATIVE_FIGURE_INK,
+  POSITIVE_FIGURE_INK,
+  signedFigureInk,
+} from '@/lib/cashFlow/figureInk.pure';
+import {
   get10YearLoanProjection,
   type MortgageInput,
   type RateChange,
@@ -4630,7 +4635,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                           <span className="font-medium">
                                             ${Number(entry.value).toLocaleString('en-AU')}
                                             {yoyVal !== null && yoyVal !== 0 && (
-                                              <span className={`ml-1.5 ${yoyVal > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                              <span className={`ml-1.5 ${signedFigureInk(yoyVal)}`}>
                                                 {yoyVal > 0 ? '↑' : '↓'}{Math.abs(yoyVal).toFixed(1)}%
                                               </span>
                                             )}
@@ -4807,7 +4812,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                   <div className="flex items-end justify-between">
                                     <div>
                                       <p className="text-xs font-bold">{kpi.yr10}</p>
-                                      <p className={`text-[10px] font-semibold ${kpi.positive ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                      <p className={`text-[10px] font-semibold ${kpi.positive ? POSITIVE_FIGURE_INK : NEGATIVE_FIGURE_INK}`}>
                                         {kpi.change}
                                       </p>
                                     </div>
@@ -4957,7 +4962,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                         <span className="font-medium">
                                           {Number(gross.value).toFixed(2)}%
                                           {yoyGross !== 0 && (
-                                            <span className={`ml-1.5 ${yoyGross > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                            <span className={`ml-1.5 ${signedFigureInk(yoyGross)}`}>
                                               {yoyGross > 0 ? '↑' : '↓'}{Math.abs(yoyGross).toFixed(2)}pp
                                             </span>
                                           )}
@@ -4973,7 +4978,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                         <span className="font-medium">
                                           {Number(net.value).toFixed(2)}%
                                           {yoyNet !== 0 && (
-                                            <span className={`ml-1.5 ${yoyNet > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                            <span className={`ml-1.5 ${signedFigureInk(yoyNet)}`}>
                                               {yoyNet > 0 ? '↑' : '↓'}{Math.abs(yoyNet).toFixed(2)}pp
                                             </span>
                                           )}
@@ -5234,7 +5239,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             <div key={cat.label} className="bg-muted/40 rounded-lg p-2.5 text-center space-y-1">
                               <p className="text-[10px] text-muted-foreground font-medium">{cat.icon} {cat.label}</p>
                               <p className="text-xs font-bold truncate" style={{ color: winner.color }}>{winner.name}</p>
-                              <p className="text-[10px] font-semibold text-success-foreground">{cat.format(cat.getValue(winner))}</p>
+                              <p className="text-[10px] font-semibold text-success">{cat.format(cat.getValue(winner))}</p>
                             </div>
                           );
                         })}
@@ -5413,19 +5418,19 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <SelectContent>
                         <SelectItem value="growth">
                           <div className="flex items-center gap-2">
-                            <TrendingUp className="h-3 w-3 text-info-foreground" />
+                            <TrendingUp className="h-3 w-3 text-info" />
                             Growth Focused
                           </div>
                         </SelectItem>
                         <SelectItem value="income">
                           <div className="flex items-center gap-2">
-                            <DollarSign className="h-3 w-3 text-success-foreground" />
+                            <DollarSign className="h-3 w-3 text-success" />
                             Income Focused
                           </div>
                         </SelectItem>
                         <SelectItem value="balanced">
                           <div className="flex items-center gap-2">
-                            <Zap className="h-3 w-3 text-accent-foreground" />
+                            <Zap className="h-3 w-3 text-accent" />
                             Balanced
                           </div>
                         </SelectItem>
@@ -5496,7 +5501,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <ul className="text-xs space-y-1">
                             {propertyRecommendation.insights.map((insight, i) => (
                               <li key={i} className="flex items-start gap-1">
-                                <span className="text-success-foreground mt-0.5">✓</span>
+                                <span className="text-success mt-0.5">✓</span>
                                 <span>{insight}</span>
                               </li>
                             ))}
@@ -5653,7 +5658,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                   {isGeneratingAiAnalysis && (
                     <div className="flex items-center justify-center py-8">
                       <div className="text-center">
-                        <RotateCcw className="h-8 w-8 animate-spin mx-auto mb-2 text-info-foreground" />
+                        <RotateCcw className="h-8 w-8 animate-spin mx-auto mb-2 text-info" />
                         <p className="text-sm text-muted-foreground">Analyzing cash flow projections...</p>
                       </div>
                     </div>
@@ -6124,7 +6129,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       {/* Custom Stage Month Selection (only in custom mode) */}
                       {schedulePreset === 'custom' && (
                         <div className="rounded-2xl border border-info/30 bg-info/10 p-4 dark:border-info/30 dark:bg-info/30">
-                          <h5 className="text-sm font-medium mb-3 text-info dark:text-info-foreground">Custom Stage Positioning</h5>
+                          <h5 className="text-sm font-medium mb-3 text-info">Custom Stage Positioning</h5>
                           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
                             {[
                               { index: 0, label: 'Deposit' },
@@ -6472,10 +6477,18 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         ))}
                       </TableRow>
                       
+                      {/* `signedFigureInk`, never `text-destructive-foreground`.
+                          These five rows are the only ones in the table whose
+                          colour carries meaning, and all five spelled the loss
+                          colour as the ink for text on a SOLID destructive fill
+                          — which is `0 0% 100%` in both themes, so every
+                          negative figure on this screen was painted white while
+                          the PDF and the HTML export printed the same rows in
+                          red. See `src/lib/cashFlow/figureInk.pure.ts`. */}
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/a $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.preTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${signedFigureInk(p.preTaxCashFlowPA)}`}>
                             {p.year === 0 ? '' : p.preTaxCashFlowPA.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6484,7 +6497,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/w $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.preTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${signedFigureInk(p.preTaxCashFlowPW)}`}>
                             {p.year === 0 ? '' : p.preTaxCashFlowPW.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6543,7 +6556,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Net Profit/Loss $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.netProfitLoss < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${signedFigureInk(p.netProfitLoss)}`}>
                             {p.year === 0 ? '' : p.netProfitLoss.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6566,7 +6579,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <div className={PROJECTION_TOTAL_LABEL_INNER_CLASS}>After-Tax Cash Flow p/a $</div>
                         </TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${p.afterTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${signedFigureInk(p.afterTaxCashFlowPA)}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPA.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6577,7 +6590,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <div className={PROJECTION_TOTAL_LABEL_INNER_CLASS}>After-Tax Cash Flow p/w $</div>
                         </TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${p.afterTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${signedFigureInk(p.afterTaxCashFlowPW)}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPW.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
