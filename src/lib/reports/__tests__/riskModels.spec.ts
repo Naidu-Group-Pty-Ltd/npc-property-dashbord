@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ASSET_TYPE_MODAL_SHARE,
+  ASSET_TYPES_OFF_SCALE,
   BUYER_SCOPED_INPUTS,
   modelsHoldingPropertyInvariance,
   PROPERTY_SCOPED_INPUTS,
   RISK_MODEL_WEIGHTS,
   scoreRiskModel,
+  UNMAPPED_STORED_TYPES,
   type RiskModelId,
 } from '@/lib/reports/market/riskModels.pure';
 import { RISK_WEIGHTS } from '@/lib/reports/market/riskScoring.pure';
@@ -128,6 +131,37 @@ describe('risk models', () => {
     it('carries a larger share of Risk once leverage leaves — which is the trade-off to weigh', () => {
       expect(RISK_MODEL_WEIGHTS.C_blended.marketOverheating).toBe(0.10);
       expect(RISK_MODEL_WEIGHTS.A_asset_only.marketOverheating).toBeGreaterThan(0.3);
+    });
+  });
+
+  describe('the asset-type component, challenged (item 12)', () => {
+    it('names the real stored types the table does not cover', () => {
+      expect(UNMAPPED_STORED_TYPES).toEqual(['house_and_land', 'villa']);
+      for (const t of UNMAPPED_STORED_TYPES) {
+        // They are genuine values, and they resolve to nothing.
+        expect(scoreRiskModel('A_asset_only', { propertyType: t }).missing).toContain('assetType');
+      }
+    });
+
+    it('records that the component is a near-constant on this corpus', () => {
+      // 631 of the 896 reports carrying a real dwelling type are `house`.
+      expect(ASSET_TYPE_MODAL_SHARE).toBeGreaterThan(0.7);
+    });
+
+    it('marks vacant land as off-scale rather than merely low', () => {
+      expect(ASSET_TYPES_OFF_SCALE).toEqual(['land']);
+      // It still scores today — this records the objection, it does not act on it.
+      expect(scoreRiskModel('A_asset_only', { propertyType: 'land' }).score).toBe(45);
+    });
+
+    it('costs Models A and B far more than C when the type is unresolvable', () => {
+      const unmapped = { propertyType: 'villa', lvr: 80, weeklyCashFlow: -100, growth1Year: 6 };
+      expect(scoreRiskModel('A_asset_only', unmapped).missing).toContain('assetType');
+      // C still has leverage and serviceability to fall back on; A and B do not.
+      expect(scoreRiskModel('C_blended', unmapped).components.map((c) => c.key).sort())
+        .toEqual(['leverage', 'marketOverheating', 'serviceability']);
+      expect(scoreRiskModel('A_asset_only', unmapped).components.map((c) => c.key))
+        .toEqual(['marketOverheating']);
     });
   });
 });

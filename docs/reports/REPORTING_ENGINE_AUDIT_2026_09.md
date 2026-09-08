@@ -6002,3 +6002,48 @@ a scheduled invocation still reaches it.
 **It is not deployed and not scheduled**, and that is deliberate: deploying an
 Edge Function and adding a cron entry are production changes, and this stage's
 instruction was to fix the writer, not to switch it on.
+
+### 58.6 The asset-type component, challenged (item 12)
+
+`ASSET_TYPE_SCORES` asserts house 82, duplex 74, townhouse 66, unit 55,
+apartment 55, land 45. Four things are true of it, and none is comfortable.
+
+**The numbers are unevidenced.** Nothing in this repository justifies why a
+duplex is eight points safer than a townhouse. They are a plausible ordering
+somebody wrote down, and the programme's own rule — a point must come from a
+real observation or a deterministic calculation — does not admit them as they
+stand.
+
+**It barely discriminates.** The stored distribution:
+
+| stored type | reports | scored |
+| --- | ---: | ---: |
+| house | 631 | 82 |
+| *residential property* (placeholder) | 145 | — |
+| *(empty)* | 128 | — |
+| apartment | 110 | 55 |
+| land | 72 | 45 |
+| *other* (placeholder) | 38 | — |
+| unit | 37 | 55 |
+| duplex | 18 | 74 |
+| townhouse | 11 | 66 |
+| **house_and_land** | **9** | **—** |
+| **villa** | **8** | **—** |
+
+Of the 896 carrying a real type, **631 are `house`: 70.4% receive the identical
+82**, so for seven reports in ten this component is a constant.
+
+**Two real types resolve to nothing.** `house_and_land` and `villa` are genuine
+stored values absent from the table. Under Model C that costs 0.20 of the
+weight; under A and B, where asset type carries 0.67, it costs most of the
+dimension — a test asserts C keeps three components on such a report while A
+keeps one.
+
+**Vacant land is a category error, not a low score.** Land has no dwelling, no
+rent, no depreciation and different financing, so its risk is not a point on the
+same scale as a house's. Scoring it 45 says *"a somewhat worse house"*, which is
+not what it is.
+
+The honest conclusion: **asset type is a classifier, not a score.** Nothing here
+changes it — this records what it is worth *before* anybody weights it more
+heavily, which is precisely what Models A and B would do.

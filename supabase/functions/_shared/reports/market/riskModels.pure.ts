@@ -190,3 +190,45 @@ export function modelsHoldingPropertyInvariance(
     return Math.abs(x - y) < 1e-9;
   });
 }
+
+/**
+ * ME-5 item 12 — what the asset-type component is actually worth.
+ *
+ * `ASSET_TYPE_SCORES` asserts house 82, duplex 74, townhouse 66, unit 55,
+ * apartment 55, land 45. Measured against the corpus, four things are true and
+ * none of them is comfortable:
+ *
+ * **The numbers are unevidenced.** Nothing in this repository justifies why a
+ * duplex is eight points safer than a townhouse. They are a plausible ordering
+ * somebody wrote down, and the programme's own rule — a point must come from a
+ * real observation or a deterministic calculation — does not admit them as
+ * they stand.
+ *
+ * **It barely discriminates.** Of the 896 reports carrying a real dwelling
+ * type, 631 are `house`: **70.4% receive the identical 82**, so for seven in
+ * ten reports this component is a constant.
+ *
+ * **Two real types resolve to nothing.** `house_and_land` (9 reports) and
+ * `villa` (8) are genuine stored values that `resolveAssetType` returns null
+ * for, because they are absent from the table. Under Model C that costs 0.20 of
+ * the weight; under A and B, where asset type carries 0.67, losing it costs
+ * most of the dimension. `UNMAPPED_STORED_TYPES` names them so the gap is a
+ * fact rather than a surprise.
+ *
+ * **Vacant land is a category error, not a low score.** Land has no dwelling,
+ * no rent, no depreciation and different financing, so its risk is not a point
+ * on the same scale as a house's — scoring it 45 says "a somewhat worse house",
+ * which is not what it is.
+ *
+ * The honest conclusion is that asset type is a *classifier*, not a score.
+ * Nothing here changes it; this records what it is worth before anybody weights
+ * it more heavily, which is exactly what Models A and B would do.
+ */
+export const UNMAPPED_STORED_TYPES: readonly string[] = ['house_and_land', 'villa'];
+
+/** Measured share of resolvable reports receiving the modal asset score. */
+export const ASSET_TYPE_MODAL_SHARE = 631 / 896;
+
+/** Asset types whose risk is a different kind of thing, not a lower score. */
+export const ASSET_TYPES_OFF_SCALE: readonly string[] = ['land'];
+
