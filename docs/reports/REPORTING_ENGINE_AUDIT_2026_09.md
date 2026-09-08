@@ -6489,3 +6489,280 @@ engineering step unblocks it. The provider order in §60.7 is then the next act,
 and it is Aurixa's rather than this repository's.
 
 ---
+
+## §61 — ME-6: real market evidence activation (2026-09-08)
+
+ME-6's objective is one thing: get genuine, licensed, suburb-level Australian
+market evidence flowing through `MarketEvidence` so Growth (40%) and Demand
+(15%) can be computed from real data. This section records what was established
+by execution, what was built, and the exact point at which provider access
+becomes the gate.
+
+**Stage outcome: B — commercial activation remains blocked.** No credential
+exists for any provider, so no genuine market figure was retrieved. Everything
+that does not require one is complete, and §61.8 states precisely what unblocks
+it. **No substitute Growth or Demand data was invented to keep engineering
+moving.**
+
+### 61.1 The ME-5.1 components are present
+
+All eleven confirmed on `0eda00b02`: canonical geography and its maintenance
+columns, trusted/untrusted classification, the `MarketEvidence` contract,
+provider-neutral ingestion, the shadow scorer, the backtest harness, Model D
+property Risk, separate Finance Suitability, Location evidence provenance,
+`market-source-probe`, and the Integrations probe UI. None was redesigned.
+
+### 61.2 Provider contracts, established by execution — and two ME-5.1 corrections
+
+Every call below was made **with no credential**. Reproducing §51's
+measurements on today's date:
+
+| request | result | reading |
+| --- | --- | --- |
+| `GET /v1/suburbPerformanceStatistics/NSW/Bowral` | **404** No Matching Route | the route the repo calls is gone |
+| `GET /v2/suburbPerformanceStatistics/NSW/Bowral` | **401** | exists, credential-gated |
+| `GET /v2/suburbPerformanceStatistics/NSW/Bowral/2576` | **401** | exists, credential-gated |
+
+**Domain's developer portal is public**, which §54 did not establish — the 401
+body names it, and its sitemap enumerates every page. Reading it corrects ME-5.1
+§60.3 on two counts.
+
+**Correction 1 — `X-API-Key` is NOT obsolete.** `/docs/latest/authentication/`
+documents *two* current schemes side by side: an API key (as an `X-API-Key`
+header or an `api_key` query parameter) **and** OAuth2 client credentials. ME-5.1
+called the repository's implementation "legacy on three independent counts" and
+the third count was wrong. The correct reading is that Domain offers both and
+the account decides which applies.
+
+**Correction 2 — the path shape was not wrong either.** `/v2/…/{state}/{suburb}`
+exists as its own documented route beside `/v2/…/{state}/{suburb}/{postcode}`,
+and both answer 401. So of the three counts, exactly one survives: **the version
+prefix**. That is a materially smaller change than ME-5.1 recorded, and it is
+the kind of error that comes from inferring a contract from an error code
+instead of reading the vendor's own documentation.
+
+What the documentation settles, precisely:
+
+| question | Domain's answer |
+| --- | --- |
+| token endpoint | `POST https://auth.domain.com.au/v1/connect/token` |
+| token auth | **HTTP Basic** — client_id as username, client_secret as password |
+| scope for suburb performance | `api_suburbperformance_read` |
+| allowed environments | **Any** (sandbox included) |
+| user context required | **No** — client credentials suffice |
+| unavailable scope | `400 invalid_scope` |
+| authorisation rate limit | 3,000 token requests/hour; cache to expiry |
+| general rate limit | 1,000–3,000 requests/minute by plan |
+| daily quota | per plan, reset **10am AEST** |
+| usage headers | `X-Quota-PerMinute-Limit`, `-Remaining`, `X-Quota-PerDay-Limit` |
+| package gate | *"You will not be able to access any API Endpoint until the required API package(s) have been added to your project."* |
+
+One measured obstacle: from **this development egress**, presenting an
+`Authorization` header to the token endpoint returns **403 Access Denied** from
+an edge WAF, while a bare POST returns the ordinary `400 invalid_request`. That
+is an egress fact, not a credential fact, and it is exactly the class §52
+recorded — two egresses differing. It must be re-measured from the Supabase
+runtime before any conclusion is drawn, which is what `market-source-probe` is
+for.
+
+**Cotality/CoreLogic — a live gateway, and the registry points at the wrong
+host.** `developer.corelogic.asia` answers 200 (a client-rendered portal, no
+server-side content). The API gateway is real:
+
+| request (no real credential) | result |
+| --- | --- |
+| `POST api.corelogic.asia/access/oauth/token`, no credential | `401 {"error":"unauthorized","error_description":"There is no client authentication…"}` |
+| same, Basic auth with an obviously-fake key | `401 …"clientId 'not-a-real-key' not known"` |
+| `https://api.cotality.com` (the registry's placeholder base URL) | **404** |
+
+Two things follow. The registry's `COTALITY_BASE_URL` placeholder names a host
+that does not serve the API; `api.corelogic.asia` does. And — decisively for
+diagnosis — **CoreLogic's gateway distinguishes "no credential" from "unknown
+client", which Domain's does not.** §51 recorded that a dummy key, a dummy
+Bearer and no header at all produced byte-identical 401s from Domain, so the
+accepted scheme cannot be read off an unauthenticated probe. CoreLogic's
+Apigee gateway names the failure. That materially improves what
+`market-source-probe` can report once a credential exists.
+
+**PropTrack — unchanged from §54.** `developer.proptrack.com` does not resolve;
+`data.proptrack.com/docs` answers 403. There is still no public documentation to
+read, so no endpoint, field or response shape is written anywhere in this repo.
+
+**SQM Research** — `sqmresearch.com.au` answers 200; no public API
+documentation was found.
+
+### 61.3 What the corpus gives a provider to match on
+
+The provider-independent denominator, measured against the 867 trusted
+geography records (item 19's structural half — the provider-matched numerator
+waits on access).
+
+A provider is asked for `(state, suburb, postcode, dwelling type)`. **All 867
+trusted records carry the first three and no untrusted record carries all
+three** — the trusted set and the provider-addressable set are the same set,
+which is a useful accident of how ME-5 resolved geography.
+
+| state | trusted | house | attached | land | type unresolved | growth-addressable | provider calls |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| QLD | 404 | 276 | 60 | 20 | 48 | 336 | 112 |
+| VIC | 201 | 100 | 11 | 3 | 87 | 111 | 37 |
+| WA | 179 | 88 | 47 | 3 | 41 | 135 | 59 |
+| NSW | 59 | 27 | 9 | 0 | 23 | 36 | 26 |
+| SA | 11 | 7 | 0 | 0 | 4 | 7 | 5 |
+| TAS | 7 | 5 | 1 | 0 | 1 | 6 | 3 |
+| ACT | 4 | 4 | 0 | 0 | 0 | 4 | 2 |
+| NT | 2 | 2 | 0 | 0 | 0 | 2 | 1 |
+| **total** | **867** | **509** | **128** | **26** | **204** | **637** | **245** |
+
+Three readings matter.
+
+**245 provider calls cover 637 properties.** One call answers a (suburb,
+postcode, dwelling type), and the corpus concentrates: 225 distinct suburbs
+behind 637 properties, a 2.6:1 amplification. Whatever the plan, the first
+genuine extraction is a few hundred calls — well inside a single day's quota on
+any tier. Cost is not the blocker and should not be modelled as one.
+
+**637 of 867 (73.5%) are growth-addressable**, or 52.8% of the whole
+1,207-report corpus.
+
+**The largest single loss is ours, not the provider's.** 204 records — 23.5% —
+carry no resolvable dwelling type: `residential property` (81), `other` (28),
+absent (95). ME-5 already ruled those must resolve to unavailable rather than
+default to house. Recovering them needs no provider and no licence, and it is
+worth more than any secondary provider would add.
+
+### 61.4 The sample frame — structural, never outcome-selected
+
+`evidenceSampleFrame.pure.ts` fixes 37 cells across NSW/VIC/QLD/WA/SA, four
+remoteness classes and both dwelling types.
+
+The brief asks the sample to span strong, average and weak markets and also
+forbids cherry-picking historically strong examples. Those are in tension only
+if the first is satisfied at selection time — and we have no growth data, which
+is the whole reason ME-6 exists. **Any strong/average/weak label applied now
+would be our guess about a market, and selecting on it would manufacture the
+spread the extraction is meant to test for.** So the frame is drawn on measured
+structural axes (state × ABS remoteness × dwelling type, ordered
+deterministically), and the performance spread is **verified after retrieval**.
+If the sample turns out to contain no falling market, that is a finding about
+the corpus and a real one. A test asserts no cell carries a performance label
+and that the module cannot even spell one.
+
+Item 15's differentiation tests are **named before the data arrives**, so the
+eventual result cannot be a search for whichever pair happened to differ:
+Parmelia vs Gosnells (WA metro houses), Elanora Heights vs Kellyville (NSW
+metro houses), and Buddina QLD 4575 house vs unit — with Truganina VIC 3029
+house vs unit as a second-state control so the first is not a QLD artefact.
+
+### 61.5 Aurixa owns the growth arithmetic
+
+`growth/growthPeriods.pure.ts` computes 1-year movement and 3- and 5-year CAGR
+from a provider's observations. Every result persists the start observation, the
+end observation, the exact elapsed period, the formula version, the value, the
+provider and the working as a reader would check it.
+
+Four mixings are refused before any arithmetic runs, because none is detectable
+from the numbers afterwards: house with unit, suburb with regional, observed
+with forecast, median price with valuation index. A blended series looks
+entirely plausible.
+
+Three rules bite. **A shorter window is never reported as a longer one** — the
+start observation must sit within ±0.5 years of the anniversary, `actualYears`
+records what was really used, and 2 years of history refuses a 5-year figure
+rather than producing one. **A refusal is never a zero.** And **each period
+refuses independently**, so a missing 5-year does not cost the 1-year.
+
+### 61.6 The validator rejects what is not evidence and never rewrites a market
+
+`evidenceQuality.pure.ts` separates two failures that look alike in a validator
+and are opposites in a market.
+
+**Malformed** — a period in the future, a duplicated period, a series running
+backwards, a suburb the request never asked about, a coarser geography than was
+requested — is **rejected**. Using it is using something that is not evidence.
+
+**Extreme** — a 75% quarter-on-quarter move — is **flagged and passed through at
+full value**. Perth houses genuinely moved like that; a thin regional median
+genuinely halves when three cheap sales land together. Clipping it would rewrite
+a real market event into a plausible one and nothing downstream could tell. The
+words `clip`, `clamp`, `winsorise` and `Math.min(Math.max` do not appear in the
+module and a test asserts it, and no finding may carry a corrected value.
+
+Geography is **matched against the trusted Aurixa record, never trusted from the
+provider's echo** — including the state, because Australian suburb names repeat.
+That check found a real defect in this module's first version: the suburb
+normaliser strips a bracketed state disambiguator (`Araluen (NSW)`), and
+applying it to the *state field* reduced every state to the empty string, so
+`VIC` matched `NSW`. Two separate normalisers now, and the regression is pinned.
+
+Dwelling-type substitution is **flagged, not rejected** — usable as context,
+never as this dwelling type's own growth. Sample sizes are retained exactly and
+absence is flagged rather than assumed. Freshness is measured from the period
+the source describes, never from when we fetched.
+
+### 61.7 The snapshot that makes ME-7 reproducible
+
+`evidenceSnapshot.pure.ts` plus `20261117090000_market_evidence_snapshots.sql`.
+
+ME-7 decides whether the methodology needs calibrating; that is only meaningful
+if re-running it gives the same answer. A provider's median moves every quarter
+and its API can be re-priced or withdrawn, so a backtest driven by live calls is
+a measurement whose instrument changes while it is being read.
+
+A snapshot is `draft` while records accumulate and `sealed` afterwards, and
+sealing takes a content hash over a canonical ordering — so re-extraction in a
+different order hashes identically while any changed value does not.
+`extractedAt` (when we asked) and `evidenceAsOf` (the newest period the data
+describes) are separate fields, for the reason the sanctions work settled.
+Licensing aggregates to the **most restrictive** record and defaults to
+`unverified`, which means scorable in a shadow backtest and not renderable to a
+client.
+
+**Sealed is enforced by the database, not only by TypeScript**, because this
+repository has twice found a rule that lived only in application code and was
+bypassed by the one caller that mattered. Proven by execution in production: a
+draft is editable; a sealed snapshot cannot be edited, cannot be deleted, and
+cannot have a record added to it. The fixture was removed and 0 rows remain.
+
+### 61.8 The gate, exactly
+
+Everything above is provider-neutral and complete. What ME-6 cannot do without
+access:
+
+| item | state |
+| --- | --- |
+| 10 — retrieve a real multi-state sample | **blocked** — frame ready, 37 cells, 245-call budget known |
+| 11 — normalise through `MarketEvidence` | **blocked** — contract and validator ready |
+| 13 — Growth Performance + Confidence on real data | **blocked** — arithmetic ready and tested |
+| 14 — Demand Performance + Confidence on real data | **blocked** — which components a provider supports cannot be known until one answers |
+| 15 — real property differentiation | **blocked** — four pairs named in advance |
+| 19 — provider coverage of the corpus | **half done** — denominator measured (§61.3); numerator needs a provider |
+| 20 — is a secondary provider necessary | **blocked** — it is a question about measured coverage, and there is none |
+
+**The provider decision is deliberately not made.** Item 3 says to decide from
+evidence rather than preference once actual entitlement is established, and
+entitlement is a property of an account that this repository cannot read. What
+the evidence so far favours is worth recording without pretending it is a
+decision: Domain has a fully public contract, both auth schemes documented, a
+named scope, sandbox access and published quotas; Cotality has an existing
+commercial relationship and a gateway that diagnoses failures precisely, but no
+outbound call has ever been written and its own scoping document leaves cache
+duration, client-report redistribution and derived-metric persistence open.
+
+**No credential model was changed.** Item 5 says to correct Domain's
+configuration *if* the real contract confirms it is needed — and the real
+contract says `X-API-Key` remains current, so ripping it out on ME-5.1's reading
+would have removed a working scheme on a false premise. What ME-5.1 recorded as
+a defect (that `DOMAIN_CLIENT_ID`/`DOMAIN_CLIENT_SECRET` cannot be entered
+anywhere) is real and still true, but it is now an *addition* to make when
+OAuth is the chosen scheme, not a replacement.
+
+### 61.9 What did not change
+
+Scoring V2 is not wired into live report generation. A = 75 and A+ = 85 are
+untouched. No Growth weight, Demand weight, dimension weight or eligibility rule
+was modified — calibration belongs to ME-7. Risk remains `null` and no
+flood/strata/planning acquisition was started. Finance Suitability remains
+separate. No contaminated historical Location composite was reused.
+
+---
