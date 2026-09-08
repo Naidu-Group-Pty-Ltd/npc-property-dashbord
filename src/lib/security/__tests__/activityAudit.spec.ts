@@ -119,11 +119,17 @@ describe('an audit row never carries a credential', () => {
     ).not.toThrow();
   });
 
+  // The fixtures below are deliberately NOT key-shaped. `assertNoSecretValues`
+  // refuses any non-empty value under a matching KEY, so the content is
+  // irrelevant to what is being asserted — and a realistic-looking literal
+  // (this file first used `sk-live-abc123`) trips the repository's own gitleaks
+  // gate, which is the gate working. A test about not storing credentials must
+  // not ship something that reads as one.
   it('refuses a key that looks like it holds a value', () => {
     for (const meta of [
-      { secret_value: 'sk-live-abc123' },
-      { api_key: 'abc' },
-      { password: 'hunter2' },
+      { secret_value: 'placeholder' },
+      { api_key: 'placeholder' },
+      { password: 'placeholder' },
       { credentials: { user: 'a', pass: 'b' } },
     ]) {
       expect(() => assertNoSecretValues(meta), JSON.stringify(meta)).toThrow(/credential value/);
@@ -133,7 +139,7 @@ describe('an audit row never carries a credential', () => {
   it('is enforced by recordActivity itself, not left to the caller', async () => {
     const { client, rows } = writerThat(null);
     await expect(
-      recordActivity(client, { ...ENTRY, metadata: { api_key: 'sk-live-abc' } }),
+      recordActivity(client, { ...ENTRY, metadata: { api_key: 'placeholder' } }),
     ).rejects.toThrow(/credential value/);
     expect(rows).toEqual([]);
   });
