@@ -407,6 +407,16 @@ describe('nothing in production routes anywhere', () => {
     const ci = read('.github/workflows/ci.yml');
     const step = ci.slice(ci.indexOf('TEMPORARY -- Builder Stock PDF probe'));
     expect(step).toContain('deno check cloudflare/builder-stock-pdf-probe/src/index.ts');
+    /*
+     * WITHOUT THIS THE CHECK DOES NOT RUN AT ALL. Deno walks up to the root
+     * `package.json`, switches to bring-your-own-node_modules resolution, and
+     * dies on `Could not find "@types/node" in a node_modules folder` —
+     * because this job never runs `npm ci` at the root. `deno check` then
+     * exits 1 having type-checked nothing, which is this repo's own recorded
+     * failure mode: a gate that "was passing by not running", one dependency
+     * along. Verified by reproducing it with the root install removed.
+     */
+    expect(step).toContain('DENO_NO_PACKAGE_JSON: "1"');
     expect(step).toContain('npm ci --prefix cloudflare/builder-stock-pdf-probe');
     expect(step).toContain('wrangler@');
     expect(step).toContain('deploy --dry-run');

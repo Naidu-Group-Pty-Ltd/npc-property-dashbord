@@ -421,8 +421,20 @@ jobs:
       #
       # wrangler is pinned: a temporary check that goes red on somebody else's
       # release is noise rather than signal.
+      #
+      # `DENO_NO_PACKAGE_JSON=1` is this repo's own answer to this exact error,
+      # recorded in `check-edge-functions.mjs`: Deno walks up to the root
+      # `package.json`, switches to bring-your-own-node_modules resolution, and
+      # then cannot find a declared dependency because THIS job never runs
+      # `npm ci` at the root. The first version of this step failed on
+      # `Could not find "@types/node" in a node_modules folder` — the same
+      # sentence that gate records, one dependency along. Taking package.json
+      # out of scope is also an accurate description of the target: workerd has
+      # no node_modules, and the probe's own dependency is resolved by the
+      # wrangler build below, from the install between them.
       - name: TEMPORARY -- Builder Stock PDF probe (deno check + wrangler build)
         env:
+          DENO_NO_PACKAGE_JSON: "1"
           WRANGLER_SEND_METRICS: "false"
         run: |
           deno check cloudflare/builder-stock-pdf-probe/src/index.ts
