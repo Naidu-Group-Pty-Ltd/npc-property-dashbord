@@ -6957,3 +6957,91 @@ credential exists, the contract is public and measured, the required route is
 documented, and the implementation delta is a version prefix.
 
 ---
+
+## §63 — ME-6: one trustworthy Domain diagnostic (2026-09-08)
+
+§62 corrected a probe that fabricated two findings. This pass corrects a third
+thing it still did — concluding from a status code — and adds the one header
+Domain itself says to read.
+
+### 63.1 `X-Domain-Security-Reason`
+
+Domain's troubleshooting guidance names it as the **first** diagnostic for a 401
+or 403. It carries a reason phrase, never credential material, so it joins the
+response-header allow-list and is lifted into its own field because it is the
+one header that decides what the verdict means. The panel renders it under the
+Domain row, quoted verbatim.
+
+The allow-list stays an allow-list: `authorization`, `cookie`, `set-cookie`,
+`x-api-key` and `proxy-authorization` are never read, and nothing anywhere reads
+back the request headers the probe sent. Three tests assert it.
+
+### 63.2 A 403 with a credential is not an entitlement finding
+
+The `not_entitled` reading asserted its own conclusion — *"the account is not
+entitled to this endpoint"* — and routed it to `commercial`. Domain documents
+several causes for one 403: a missing scope, a plan that does not include the
+API, an environment restriction, an access restriction, an invalid or expired
+key, and other internal denials. **They do not share an owner.** Sending that to
+a commercial negotiation on the status alone routes a key problem to the wrong
+department.
+
+The verdict is now *"Refused with a credential — reason required"*, owner
+`unassigned`, next action: read the provider's own reason before assigning it to
+anybody. A standing test permits `unassigned` **only** where the reading also
+states what would resolve it — a verdict that names nobody and asks for nothing
+is a dead end rather than a caution.
+
+### 63.3 The two-product matrix, and the case it refuses to conclude
+
+`domain_address_suggest` requires `api_properties_read`; suburb performance
+requires `api_suburbperformance_read`. Probing both on one key separates a key
+problem from a product problem, which no single status can.
+
+| Address Suggestion | Suburb Performance | reading |
+| --- | --- | --- |
+| 2xx | 2xx | the key works and both capabilities are reachable — qualify the payload |
+| 2xx | 403 | **strong**: the key itself works; the issue is specific to Suburb Performance access, scope or plan. The stated reason names which |
+| 401 | 401 | an authentication or key problem is likely — qualify with the header and body before replacing anything |
+| 403 | 403 | **AMBIGUOUS.** Never *"the key has no packages"* |
+
+The both-403 row is the point of this section. It is the reading that was
+written here once and is now refused: project or package configuration, missing
+scopes, an environment restriction, a plan restriction, the key's own state, a
+WAF or origin refusal that never reached Domain's gateway, and other Domain
+access policies all present identically. `interpretDomainAccess` returns
+`conclusive: false` and `owner: null` for it, and its next step forbids raising
+a commercial request until something names the cause. Where Domain does state a
+reason it is quoted into the reading verbatim.
+
+Two more rules fall out. **One product alone concludes nothing** — a single
+result cannot separate the two failure modes, so the matrix says so rather than
+reading the one it has. And **an unnamed combination is never concluded from**:
+anything the matrix does not name is a reason to look, not a reason to guess.
+
+### 63.4 The v1 404 is a deprecation control, not a blocker
+
+Domain deprecated v1 Suburb Performance and replaced it with v2. The v1 target
+stays in the probe as evidence the old route is gone — that is what it proves,
+and it proved it — but it is not an ME-6 blocker and the production adapter
+targets v2. Its note now says so.
+
+### 63.5 What is settled, and what the next run decides
+
+The dwelling-type conclusion stands as measured: 204 unresolved, **4**
+deterministically recovered, ~200 genuinely unrecoverable from the structured
+record, and a Growth-addressable corpus of **641 of 867**. No LLM, narrative,
+price or address inference was used to manufacture the missing types and none
+will be. `resolvedPropertyType` is the fact and is null when unknown;
+`propertyTypeLabel` is prose; a generic label can no longer be persisted as a
+factual type.
+
+Demand qualification is deliberately deferred until Suburb Performance actually
+answers. Domain's documented series may expose median sold price, number sold,
+sale listing count, auction counts, days on market, discount percentage, median
+rent listing price and rent listing count — which could carry a substantial part
+of Demand as well as Growth. Only the fields genuinely present under this
+deployment's data access will be used, and **no secondary provider is added
+unless a measured evidence gap remains** after that inspection.
+
+---

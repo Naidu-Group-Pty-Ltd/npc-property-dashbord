@@ -30,6 +30,7 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import {
   describeAuthAttempt,
   describeVerdict,
+  interpretDomainAccess,
   groupCredentialPresence,
   summariseProbe,
   PROVIDER_STATUS_READING,
@@ -49,6 +50,7 @@ interface ProbeResult {
   contentType?: string | null;
   bodyPreview?: string;
   providerHeaders?: Record<string, string>;
+  securityReason?: string | null;
 }
 
 interface ProbeResponse {
@@ -207,6 +209,29 @@ export default function MarketSourceProbePanel() {
             </div>
           )}
 
+          {response.results?.some((r) => r.id.startsWith('domain_')) && (() => {
+            const suggest = response.results!.find((r) => r.id === 'domain_address_suggest');
+            const suburb = response.results!.find((r) => r.id === 'domain_v2_suburb_performance');
+            const reading = interpretDomainAccess(
+              suggest ? { status: suggest.status, securityReason: suggest.securityReason } : null,
+              suburb ? { status: suburb.status, securityReason: suburb.securityReason } : null,
+            );
+            return (
+              <div className="glass-subtle rounded-xl p-4">
+                <h3 className="text-sm font-semibold text-foreground">Domain — two products, one key</h3>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">{reading.reading}</p>
+                <p className="mt-2 flex gap-1.5 text-xs leading-5 text-foreground">
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+                  <span>{reading.nextStep}</span>
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {reading.conclusive ? 'Conclusive on this evidence.' : 'Not conclusive — nothing is assigned to an owner yet.'}
+                  {reading.owner ? ` Owner: ${reading.owner}.` : ''}
+                </p>
+              </div>
+            );
+          })()}
+
           {response.results && response.results.length > 0 && (
             <div className="space-y-3">
               <h3 className="text-sm font-semibold text-foreground">What each source answered</h3>
@@ -227,6 +252,12 @@ export default function MarketSourceProbePanel() {
                         <span className="ml-auto text-xs text-muted-foreground">owner: {reading.owner}</span>
                       </div>
                       <p className="mt-2 text-xs leading-5 text-muted-foreground">{reading.meaning}</p>
+                      {result.securityReason && (
+                        <p className="mt-2 rounded-lg border border-warning/35 bg-warning/10 px-2 py-1.5 text-xs leading-5 text-foreground">
+                          <span className="font-semibold">Domain’s stated reason:</span>{' '}
+                          <code className="font-mono">{result.securityReason}</code>
+                        </p>
+                      )}
                       <p className="mt-1 text-xs italic leading-5 text-muted-foreground">
                         {describeAuthAttempt(
                           result.credentialSent === true,

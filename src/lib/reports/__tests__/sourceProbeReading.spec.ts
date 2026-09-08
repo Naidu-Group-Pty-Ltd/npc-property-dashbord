@@ -11,6 +11,7 @@ import { resolve } from 'node:path';
 
 import {
   describeAuthAttempt,
+  interpretDomainAccess,
   PROBE_VERDICTS,
   PROVIDER_STATUS_READING,
   describeVerdict,
@@ -42,8 +43,14 @@ describe('the verdict vocabulary mirrors the classifier', () => {
       expect(reading.recognised).toBe(true);
       expect(reading.label.length).toBeGreaterThan(0);
       expect(reading.meaning.length).toBeGreaterThan(0);
-      expect(reading.owner).not.toBe('unassigned');
       expect(['positive', 'neutral', 'attention', 'blocked']).toContain(reading.tone);
+      // `unassigned` is permitted only where the status genuinely does not
+      // determine responsibility — and there it must say what would. A verdict
+      // that names nobody AND asks for nothing is a dead end.
+      if (reading.owner === 'unassigned') {
+        expect(reading.nextAction).toBeTruthy();
+        expect(reading.nextAction!.length).toBeGreaterThan(20);
+      }
     }
   });
 });
@@ -158,8 +165,14 @@ describe('every provider status carries its owner', () => {
 });
 
 describe('the owner routing is meaningful', () => {
-  it('sends a 403-with-credential to commercial and a 404 to engineering', () => {
-    expect(describeVerdict('not_entitled').owner).toBe('commercial');
+  it('sends a 403-with-credential to NOBODY until the provider says why', () => {
+    // This assertion used to read `.toBe('commercial')`. That encoded the rule
+    // ME-6's final pass corrects: Domain documents a missing scope, a plan that
+    // excludes the API, an environment restriction, an access restriction, an
+    // invalid key and other internal denials as causes of one 403, and they do
+    // not share an owner. Routing it to commercial on the status alone sends a
+    // key problem to a negotiation.
+    expect(describeVerdict('not_entitled').owner).toBe('unassigned');
     expect(describeVerdict('route_not_found').owner).toBe('engineering');
     expect(describeVerdict('credential_absent').owner).toBe('operator');
     expect(describeVerdict('server_error').owner).toBe('vendor');
@@ -263,5 +276,105 @@ describe('the provider diagnostic never carries credential material', () => {
   it('never reads back the request headers it sent', () => {
     expect(src).not.toMatch(/headers\[["']X-Api-Key["']\]\s*\)/);
     expect(src).not.toContain('JSON.stringify(headers');
+  });
+});
+
+// ── Domain's canonical diagnostic, and the two-product matrix ───────────────
+
+describe('X-Domain-Security-Reason is captured; auth and session headers are not', () => {
+  const src = readFileSync(PROBE_SOURCE, 'utf8');
+
+  it('surfaces Domain’s own reason as its own field', () => {
+    expect(src).toContain('"x-domain-security-reason"');
+    expect(src).toContain('securityReason: response.headers.get("x-domain-security-reason")');
+  });
+
+  it('never reads an authentication or session header', () => {
+    const allowList = src.slice(src.indexOf('providerHeaders:'), src.indexOf('securityReason:'));
+    for (const banned of ['authorization', 'cookie', 'set-cookie', 'x-api-key', 'proxy-authorization']) {
+      expect(allowList.toLowerCase()).not.toContain(`"${banned}"`);
+    }
+  });
+
+  it('reads response headers only — never the request headers it sent', () => {
+    expect(src).not.toMatch(/headers\[["']X-Api-Key["']\]\s*[,)]/);
+    expect(src).not.toContain('JSON.stringify(headers');
+  });
+});
+
+describe('a 403 with a credential is not an entitlement finding by itself', () => {
+  it('the reading names the several documented causes and assigns nobody', () => {
+    const r = describeVerdict('not_entitled');
+    expect(r.owner).toBe('unassigned');
+    expect(r.meaning).toMatch(/not decided by the status/i);
+    expect(r.nextAction).toMatch(/X-Domain-Security-Reason/);
+    expect(r.label).not.toMatch(/^Not entitled$/);
+  });
+});
+
+describe('the Domain two-product interpretation matrix', () => {
+  const ok = (n = 200) => ({ status: n });
+
+  it('both 2xx — the key works and both capabilities are reachable', () => {
+    const r = interpretDomainAccess(ok(), ok());
+    expect(r.conclusive).toBe(true);
+    expect(r.owner).toBe('engineering');
+    expect(r.reading).toMatch(/key works/i);
+  });
+
+  it('address 200 + suburb 403 — the key works; the issue is Suburb Performance', () => {
+    const r = interpretDomainAccess(ok(), { status: 403, securityReason: 'Missing scope' });
+    expect(r.reading).toMatch(/key itself works/i);
+    expect(r.reading).toMatch(/specific to Suburb Performance/i);
+    expect(r.reading).toContain('Missing scope');
+    expect(r.owner).toBe('commercial');
+    expect(r.conclusive).toBe(true);
+  });
+
+  it('address 200 + suburb 403 with NO stated reason assigns nobody', () => {
+    const r = interpretDomainAccess(ok(), { status: 403 });
+    expect(r.conclusive).toBe(false);
+    expect(r.owner).toBeNull();
+    expect(r.nextStep).toMatch(/response body/i);
+  });
+
+  it('both 401 — likely a key problem, still qualified rather than concluded', () => {
+    const r = interpretDomainAccess({ status: 401 }, { status: 401 });
+    expect(r.owner).toBe('operator');
+    expect(r.conclusive).toBe(false);
+    expect(r.reading).toMatch(/authentication or key problem is likely/i);
+  });
+
+  it('both 403 — AMBIGUOUS, and never “the key has no packages”', () => {
+    const r = interpretDomainAccess({ status: 403 }, { status: 403 });
+    expect(r.conclusive).toBe(false);
+    expect(r.owner).toBeNull();
+    expect(r.reading).toMatch(/AMBIGUOUS/);
+    expect(r.reading).toMatch(/must not be reported as/i);
+    expect(r.reading.toLowerCase()).not.toMatch(/the key holds no packages\b(?!.*must not)/);
+    // Every documented cause is named rather than one being chosen.
+    for (const cause of ['package', 'scope', 'environment', 'plan', 'WAF']) {
+      expect(r.reading).toContain(cause);
+    }
+    expect(r.nextStep).toMatch(/Do not raise a commercial request/i);
+  });
+
+  it('quotes Domain’s reason verbatim when one is present', () => {
+    const r = interpretDomainAccess({ status: 403 }, { status: 403, securityReason: 'Plan does not include API' });
+    expect(r.reading).toContain('Plan does not include API');
+  });
+
+  it('one product alone concludes nothing', () => {
+    const r = interpretDomainAccess(null, { status: 403 });
+    expect(r.conclusive).toBe(false);
+    expect(r.owner).toBeNull();
+    expect(r.reading).toMatch(/Both Domain products must answer/i);
+  });
+
+  it('an unnamed combination is never concluded from', () => {
+    const r = interpretDomainAccess({ status: 429 }, { status: 500 });
+    expect(r.conclusive).toBe(false);
+    expect(r.owner).toBeNull();
+    expect(r.reading).toMatch(/not one the matrix names/i);
   });
 });

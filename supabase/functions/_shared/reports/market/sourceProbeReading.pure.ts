@@ -90,10 +90,12 @@ const READINGS: Readonly<Record<ProbeVerdict, Omit<VerdictReading, 'verdict' | '
     tone: 'attention',
   },
   not_entitled: {
-    label: 'Not entitled',
-    meaning: 'A credential was sent and the endpoint answered 403. The credential is recognised; the account is not entitled to this endpoint.',
-    owner: 'commercial',
-    nextAction: 'Entitlement is a property of the provider account, not of this code. It is added to the account, never worked around here.',
+    label: 'Refused with a credential — reason required',
+    meaning: 'A credential was sent and the endpoint answered 403. The credential reached the gateway; WHY it was refused is not decided by the status. '
+      + 'Domain alone documents several causes — a missing scope, a plan that does not include the API, an environment restriction, an access restriction, '
+      + 'an invalid or expired key, and other internal denials — and they have different owners.',
+    owner: 'unassigned',
+    nextAction: 'Read the provider’s own reason (X-Domain-Security-Reason, the response body, the headers) before assigning this to anybody. A 403 alone is not an entitlement finding.',
     tone: 'blocked',
   },
   route_not_found: {
@@ -228,6 +230,99 @@ export const PROVIDER_STATUS_READING: Readonly<Record<string, { label: string; m
     tone: 'attention',
   },
 };
+
+/**
+ * Reading a Domain refusal from TWO products rather than one status.
+ *
+ * Suburb Performance requires the scope `api_suburbperformance_read`; Address
+ * Suggestion requires `api_properties_read`. Probing both on the same key
+ * separates "this key does not work" from "this key does not reach this
+ * product" — which one status could never do.
+ *
+ * The matrix deliberately refuses to conclude on the both-403 case. It is
+ * tempting to read it as "the key holds no packages", and that was written here
+ * once before being corrected: Domain documents several causes for a 403 and a
+ * WAF can produce one without Domain's gateway being involved at all. Only the
+ * provider's own reason settles it, which is why every reading below points at
+ * `X-Domain-Security-Reason` rather than at a conclusion.
+ */
+export type DomainOutcome = { status: number; securityReason?: string | null };
+
+export interface DomainInterpretation {
+  reading: string;
+  /** Who can act, or null while the provider's reason is still unread. */
+  owner: FindingOwner | null;
+  /** True only where the evidence settles the question by itself. */
+  conclusive: boolean;
+  nextStep: string;
+}
+
+export function interpretDomainAccess(
+  addressSuggest: DomainOutcome | null,
+  suburbPerformance: DomainOutcome | null,
+): DomainInterpretation {
+  const reason = suburbPerformance?.securityReason || addressSuggest?.securityReason || null;
+  const withReason = (base: string) =>
+    reason ? `${base} Domain’s stated reason: “${reason}”.` : base;
+  const a = addressSuggest?.status;
+  const p = suburbPerformance?.status;
+
+  if (a === undefined || p === undefined) {
+    return {
+      reading: 'Both Domain products must answer before this can be read. One result on its own cannot separate a key problem from a product problem.',
+      owner: null,
+      conclusive: false,
+      nextStep: 'Run the probe so both Domain targets report.',
+    };
+  }
+  if (a >= 200 && a < 300 && p >= 200 && p < 300) {
+    return {
+      reading: 'The key works and both tested capabilities are reachable.',
+      owner: 'engineering',
+      conclusive: true,
+      nextStep: 'Qualify the Suburb Performance payload — series shape, dwelling split, history depth, sample counts — then extract the sample frame.',
+    };
+  }
+  if (a >= 200 && a < 300 && p === 403) {
+    return {
+      reading: withReason(
+        'Strong evidence the key itself works: Address Suggestion answered under `api_properties_read` while Suburb Performance was refused. '
+        + 'The remaining issue is specific to Suburb Performance access — scope, package or plan.',
+      ),
+      owner: reason ? 'commercial' : null,
+      conclusive: Boolean(reason),
+      nextStep: reason
+        ? 'Ask Domain for the smallest activation that discharges this exact reason.'
+        : 'Domain returned no X-Domain-Security-Reason. Read the response body before naming the cause.',
+    };
+  }
+  if (a === 401 && p === 401) {
+    return {
+      reading: withReason('Both products answered 401, so an authentication or key problem is likely rather than a product one.'),
+      owner: 'operator',
+      conclusive: false,
+      nextStep: 'Qualify with Domain’s diagnostic header and body before replacing anything — 401 covers an unrecognised key and a malformed scheme alike.',
+    };
+  }
+  if (a === 403 && p === 403) {
+    return {
+      reading: withReason(
+        'Both products were refused with a credential attached. This is AMBIGUOUS and must not be reported as “the key has no packages”. '
+        + 'Project or package configuration, missing scopes, an environment restriction, a plan restriction, the key’s own state, a WAF or origin refusal, '
+        + 'and other Domain access policies all present this way.',
+      ),
+      owner: null,
+      conclusive: false,
+      nextStep: 'Establish the cause from X-Domain-Security-Reason, the response body and the response headers. Do not raise a commercial request until one of them names it.',
+    };
+  }
+  return {
+    reading: withReason(`Address Suggestion answered ${a} and Suburb Performance ${p}. This combination is not one the matrix names, so nothing is concluded from it.`),
+    owner: null,
+    conclusive: false,
+    nextStep: 'Read the provider’s own diagnostic. An unnamed combination is a reason to look, never a reason to guess.',
+  };
+}
 
 export interface ProviderCredentialGroup {
   provider: string;

@@ -4,13 +4,25 @@ One message, ready to send, plus the evidence behind it. Nothing here is
 speculative: every technical statement was measured, and the questions are the
 ones whose answers change what this platform may do with the data.
 
-**Send this only once `market-source-probe` has confirmed the 403 is a package
-question rather than a WAF refusal** — the probe now returns Domain's own error
-body and probes a second Domain package on the same key, which distinguishes
-them in one run (audit §62.3). If the second package answers 200 and suburb
-performance answers 403, the message below is exactly right. If both answer 403,
-change "add Suburb Performance" to "add Properties & Locations": the key would
-then hold no packages at all.
+**Do not send this until the probe has established WHY the 403 happened.** The
+status alone does not carry it: Domain documents a missing scope, a plan that
+does not include the API, an environment restriction, an access restriction, an
+invalid or expired key, and other internal denials as causes of the same 403 —
+and they do not share an owner or a remedy.
+
+Two readings decide which version of this message is correct, and both come
+from the probe rather than from inference (audit §62.3):
+
+| probe result | what to send |
+| --- | --- |
+| **Address Suggestion 200 + Suburb Performance 403**, with `X-Domain-Security-Reason` naming a scope, package or plan | the message below, **as written** — the key works, and the ask is the smallest activation that discharges that exact reason |
+| **Both 403** | **do not send the message below.** Quote Domain's stated reason verbatim and ask them to confirm the project or access restriction it names. Both-403 is ambiguous — it is equally consistent with a project configuration, a missing scope, an environment or plan restriction, the key's own state, and a WAF refusal that never reached Domain's gateway |
+| **Both 401** | not a commercial matter yet — an authentication or key question for the operator |
+
+An earlier version of this document said that both-403 meant "the key holds no
+packages" and to broaden the ask accordingly. That was a conclusion drawn from a
+status code, and it is removed: it would have opened a larger commercial
+conversation than the evidence supports, on a premise nobody had established.
 
 **Do not discuss pricing in this message.** It is a scope and rights request.
 
@@ -29,9 +41,15 @@ then hold no packages at all.
 >
 > Could you please:
 >
-> **1. Confirm and activate access.** Confirm whether our existing key/application
-> can be granted the **Properties & Locations** package with the
-> `api_suburbperformance_read` scope, or whether a new application is required.
+> **1. Confirm and activate access.** Our key already succeeds against Address
+> Suggestion (`api_properties_read`), so the application itself is working.
+> Please confirm whether that same key/application can be granted the
+> **`api_suburbperformance_read`** scope — via the **Properties & Locations**
+> package or whatever the smallest applicable activation is — or whether a new
+> application is required.
+>
+> *(Insert Domain's own `X-Domain-Security-Reason` here verbatim if one was
+> returned — it names the restriction and saves a round trip.)*
 >
 > **2. Confirm what the Suburb Performance response contains**, specifically:
 > - median sale price by period at suburb grain;

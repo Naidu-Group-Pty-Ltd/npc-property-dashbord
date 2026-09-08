@@ -151,7 +151,7 @@ const TARGETS: readonly Target[] = [
     url:
       "https://api.domain.com.au/v1/suburbPerformanceStatistics/NSW/Bowral" +
       "?propertyCategory=house&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12",
-    note: "The v1 route domain-data-service calls today.",
+    note: "Domain v1 Suburb Performance — DEPRECATED by Domain and replaced by v2. Kept as a control proving the old route is gone, never as a live blocker: the production adapter targets v2.",
     kind: "commercial",
     credentialNames: ["DOMAIN_API_KEY", "DOMAIN_CLIENT_ID", "DOMAIN_CLIENT_SECRET"],
     auth: "domain_api_key",
@@ -395,6 +395,10 @@ Deno.serve(async (req) => {
            */
           providerHeaders: Object.fromEntries(
             ([
+              // Domain's OWN canonical diagnostic for 401/403 — their
+              // troubleshooting guidance names it as the first thing to read.
+              // It carries a reason phrase, never credential material.
+              "x-domain-security-reason",
               "www-authenticate", "x-quota-perminute-limit", "x-quota-perminute-remaining",
               "x-quota-perday-limit", "x-quota-perday-remaining", "retry-after",
               "x-ratelimit-remaining", "server", "cf-ray", "x-amzn-errortype",
@@ -402,6 +406,13 @@ Deno.serve(async (req) => {
               .map((h) => [h, response.headers.get(h)])
               .filter(([, v]) => v !== null),
           ),
+          /**
+           * Lifted out of the header map because it is the one header that
+           * decides the verdict's meaning. Domain names it as the first
+           * diagnostic for a 401 or 403, and a 403 without it is an
+           * unexplained refusal rather than an entitlement finding.
+           */
+          securityReason: response.headers.get("x-domain-security-reason"),
           elapsedMs: Date.now() - startedAt,
         });
       } catch (cause) {
