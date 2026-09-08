@@ -4482,3 +4482,102 @@ spec that feeds `'settings'` in to prove it is refused is the opposite of the
 defect. 12 new tests; edge type-check back to its 339 baseline.
 
 Secret-update behaviour is otherwise unchanged.
+
+---
+
+## §51 — The Domain integration is legacy, and the route is gone (2026-09-08)
+
+Step 2 of the brief: verify Domain authentication against the *current* API
+contract rather than assuming the repository's `X-Api-Key` implementation is
+right. Established by unauthenticated execution — **no credential was sent** in
+any of these calls.
+
+### The measurement
+
+| request (no credential) | result |
+| --- | --- |
+| `GET /v1/suburbPerformanceStatistics/NSW/Bowral` | **404** `{"title":"Not Found","detail":"No Matching Route"}` |
+| `GET /v2/suburbPerformanceStatistics/NSW/Bowral/2576` | **401** `{"title":"Not Authorized","detail":"Unable to verify credentials"}` |
+| `GET https://auth.domain.com.au/v1/connect/token` | **400** `{"error":"invalid_request"}` |
+
+**The v1 route this repository calls no longer exists.** That is a routing
+answer, not an authorisation one: Domain's gateway says there is no such
+endpoint, and it says so *before* any credential question arises. The v2 route
+— with the `{postcode}` third segment — exists and is credential-gated.
+
+The token endpoint answering `invalid_request` to a bare GET means it is live
+and rejecting a malformed request, rather than absent.
+
+### What that changes
+
+`domain-data-service` could not have worked in its current form **whether or
+not a credential was ever configured**. A valid key would have produced a 404,
+`response.ok` false, `return null`, and `marketData: null` — which is precisely
+the reading on every one of the 992 scored reports (§47). The missing
+credential was never the whole story, and on this evidence it may not have been
+any of it.
+
+The implementation is legacy on three independent counts:
+
+1. **Version** — `/v1/` is removed; the current route is `/v2/`.
+2. **Path shape** — v2 takes `{state}/{suburb}/{postcode}`; the repo sends
+   `{state}/{suburb}` and holds no postcode in that call at all.
+3. **Authentication** — the repo sends `X-Api-Key`. Domain's own access
+   documentation states *"All Authorisation and Token requests are via
+   `https://auth.domain.com.au/`"*, and the live token endpoint confirms an
+   OAuth2 client-credentials flow.
+
+### The limit of what probing can settle
+
+Sending a dummy `X-Api-Key`, a dummy `Authorization: Bearer`, and no header at
+all produced **byte-identical 401 bodies**. Domain's gateway does not
+distinguish "unrecognised scheme" from "invalid credential", so the accepted
+scheme cannot be read off an unauthenticated probe — it is settled by the
+project's own configuration, not by the API's error text. Saying otherwise
+would be a guess dressed as a trace.
+
+### Package and scope
+
+Domain's package catalogue lists **Properties & Locations** — *"Explore auction
+results and property datasets. Access market performance and demographic
+stats."* That is the package containing suburb performance statistics, and the
+brief names the scope as `api_suburbperformance_read`. Their documentation is
+explicit that *"You will not be able to access any API Endpoint until the
+required API package(s) have been added to your project."*
+
+Whether the Aurixa/Naidu project holds that package and scope is a fact about
+the Domain account and is not establishable from this repository or from an
+unauthenticated call.
+
+### What is required, named exactly
+
+- A Domain project with the **Properties & Locations** package added, granting
+  **`api_suburbperformance_read`**.
+- **`DOMAIN_CLIENT_ID`** and **`DOMAIN_CLIENT_SECRET`** for the OAuth2
+  client-credentials flow against `https://auth.domain.com.au/v1/connect/token`
+  — neither name exists anywhere in this repository today, which is itself
+  evidence that the integration predates the current contract.
+- The call rewritten to `/v2/.../{postcode}` with a Bearer token.
+
+### The probe
+
+`market-source-probe` is a read-only diagnostic added here and **not yet run**:
+it deploys on merge to `main`, and its own `verifyAuth` means it needs an
+authenticated administrator session rather than a session key this work holds.
+It reports which credential NAMES are set — never a value, never a length,
+never a prefix, because a length is a hint and a prefix identifies the issuer —
+and probes a **fixed allow-list** of source URLs. Targets are selected by name
+from that list and can never be supplied in the request body: a probe that took
+a URL from its caller would be server-side request forgery in a function
+holding the service-role key. It writes nothing, and it classifies rather than
+summarises — `credential_absent`, `credential_invalid_or_scope_missing`,
+`not_entitled`, `route_not_found`, `rate_limited`, `blocked_by_origin` and
+`reachable` are different findings with different owners, and "unavailable"
+sent this investigation to the wrong remedy twice already.
+
+It carries the government sources too (VIC, NSW Valuer General, SA, ABS),
+because those refuse *this* development egress — `land.vic.gov.au` answers 403
+and the NSW Valuer General 502 — exactly as `directory.gov.au` and `aph.gov.au`
+did during the PEP work, where the two egresses turned out to differ. Whether
+they answer the Supabase runtime is the open question, and it is the gate on
+whether any suburb-grain source is reachable without a purchase.

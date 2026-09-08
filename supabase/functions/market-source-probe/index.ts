@@ -1,0 +1,229 @@
+/**
+ * Read-only reachability probe for market-evidence sources.
+ *
+ * ## What this is for
+ *
+ * Two questions could not be answered from outside the deployment, and both
+ * gate the Canonical Market Evidence work (audit §47-§51):
+ *
+ *  1. **Is a market-data credential present in this project's environment?**
+ *     `integration_configs` holds an empty row, `update-integration-secret`
+ *     writes the environment rather than that table, and the audit log that
+ *     would have recorded a change was itself broken (§50). Only the runtime
+ *     can see `Deno.env`.
+ *  2. **Does the Supabase egress reach the government sources that refuse this
+ *     repository's tooling?** `land.vic.gov.au` answers 403 and the NSW Valuer
+ *     General 502 from the development egress, exactly as directory.gov.au and
+ *     aph.gov.au did during the PEP work — where the answer turned out to be
+ *     that the two egresses differ.
+ *
+ * ## Four rules
+ *
+ * **Nothing is written.** No table, no report, no score. This function exists
+ * to answer questions, and a diagnostic that mutates is a diagnostic nobody
+ * dares run.
+ *
+ * **A credential is never returned, logged or echoed** — only whether a name is
+ * SET. Not its length, not a prefix, not a masked form: a length is a hint and
+ * a prefix identifies the issuer.
+ *
+ * **Targets come from this module, never from the request.** A probe that took
+ * a URL from the caller would be server-side request forgery in a function
+ * holding the service-role key. The body selects a target by NAME from
+ * {@link TARGETS} and nothing else.
+ *
+ * **A failure is classified, not summarised.** "Unavailable" sent the last
+ * investigation to the wrong remedy twice; credential-absent, credential-
+ * invalid, scope-missing, package-not-entitled, route-not-found, rate-limited
+ * and reachable are different findings with different owners.
+ */
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from "../_shared/auth.ts";
+import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+
+/** Credential names to report presence for. Presence only — never a value. */
+const CREDENTIAL_NAMES = [
+  "DOMAIN_API_KEY",
+  "DOMAIN_CLIENT_ID",
+  "DOMAIN_CLIENT_SECRET",
+  "COTALITY_API_KEY",
+  "COTALITY_BASE_URL",
+] as const;
+
+interface Target {
+  /** How the caller names it. */
+  id: string;
+  url: string;
+  /** Bytes to request; a range keeps a probe cheap against a large file. */
+  rangeBytes?: number;
+  note: string;
+}
+
+/**
+ * The only URLs this function will ever request.
+ *
+ * WA's SLIP platform is deliberately absent: its licence bars commercial
+ * republication, so the platform does not fetch it at all.
+ */
+const TARGETS: readonly Target[] = [
+  {
+    id: "domain_v2_suburb_performance",
+    url:
+      "https://api.domain.com.au/v2/suburbPerformanceStatistics/NSW/Bowral/2576" +
+      "?propertyCategory=house&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12",
+    note: "Domain Properties & Locations — the v2 route the repo does not yet call.",
+  },
+  {
+    id: "domain_v1_suburb_performance",
+    url:
+      "https://api.domain.com.au/v1/suburbPerformanceStatistics/NSW/Bowral" +
+      "?propertyCategory=house&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12",
+    note: "The v1 route domain-data-service calls today.",
+  },
+  {
+    id: "vic_median_house_by_suburb",
+    url: "https://www.land.vic.gov.au/__data/assets/excel_doc/0032/756581/houses-by-suburb-2014-2024.xlsx",
+    rangeBytes: 2048,
+    note: "Victorian Property Sales Report, median house by suburb 2014-2024. CC-BY 4.0.",
+  },
+  {
+    id: "nsw_valuer_general_psi",
+    url: "https://www.valuation.property.nsw.gov.au/embed/propertySalesInformation",
+    rangeBytes: 2048,
+    note: "NSW Valuer General bulk property sales index page.",
+  },
+  {
+    id: "sa_data_portal",
+    url: "https://data.sa.gov.au/data/api/3/action/package_search?q=metro+median+house+sales&rows=1",
+    rangeBytes: 2048,
+    note: "data.sa.gov.au CKAN — metro median house sales.",
+  },
+  {
+    id: "abs_res_dwell",
+    url: "https://data.api.abs.gov.au/rest/data/ABS,RES_DWELL,/all?startPeriod=2026-Q1",
+    rangeBytes: 2048,
+    note: "ABS RES_DWELL — regional benchmark/context layer.",
+  },
+];
+
+/** What a probe outcome means, in the operator's terms. */
+type Verdict =
+  | "reachable"
+  | "credential_absent"
+  | "credential_invalid_or_scope_missing"
+  | "not_entitled"
+  | "route_not_found"
+  | "rate_limited"
+  | "blocked_by_origin"
+  | "server_error"
+  | "unreachable";
+
+function classify(status: number, hasCredential: boolean): Verdict {
+  if (status >= 200 && status < 300) return "reachable";
+  if (status === 401) return hasCredential ? "credential_invalid_or_scope_missing" : "credential_absent";
+  if (status === 403) return hasCredential ? "not_entitled" : "blocked_by_origin";
+  if (status === 404) return "route_not_found";
+  if (status === 429) return "rate_limited";
+  if (status >= 500) return "server_error";
+  return "unreachable";
+}
+
+Deno.serve(async (req) => {
+  const corsHeaders = createCorsHeaders(req.headers.get("origin"));
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body, null, 2), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+
+  try {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const body = await req.json().catch(() => ({}));
+    const { error: authError } = await verifyAuth(supabase, req.headers, body);
+    if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+
+    // Presence only. Never a value, never a length, never a prefix.
+    const credentials: Record<string, boolean> = {};
+    for (const name of CREDENTIAL_NAMES) {
+      credentials[name] = Boolean(Deno.env.get(name)?.trim());
+    }
+    const hasDomainKey = credentials.DOMAIN_API_KEY === true;
+    const hasDomainOAuth =
+      credentials.DOMAIN_CLIENT_ID === true && credentials.DOMAIN_CLIENT_SECRET === true;
+
+    // A caller may narrow to some targets BY NAME. It can never supply a URL.
+    const requested: unknown = (body as Record<string, unknown>)?.targets;
+    const wanted = Array.isArray(requested)
+      ? TARGETS.filter((t) => requested.includes(t.id))
+      : TARGETS;
+
+    const results = [];
+    for (const target of wanted) {
+      const isDomain = target.id.startsWith("domain_");
+      const headers: Record<string, string> = { Accept: "application/json" };
+      if (target.rangeBytes) headers["Range"] = `bytes=0-${target.rangeBytes - 1}`;
+      // Send whichever Domain credential exists. Legacy key and OAuth bearer are
+      // both attempted so the response distinguishes "wrong scheme" from
+      // "wrong credential" — neither is echoed back.
+      if (isDomain && hasDomainKey) headers["X-Api-Key"] = Deno.env.get("DOMAIN_API_KEY")!;
+
+      const startedAt = Date.now();
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 20_000);
+        const response = await fetch(target.url, {
+          method: "GET",
+          headers,
+          signal: controller.signal,
+          redirect: "follow",
+        });
+        clearTimeout(timer);
+        const text = await response.text();
+        results.push({
+          id: target.id,
+          note: target.note,
+          status: response.status,
+          verdict: classify(response.status, isDomain ? hasDomainKey || hasDomainOAuth : true),
+          contentType: response.headers.get("content-type"),
+          contentLength: response.headers.get("content-length"),
+          bytesRead: text.length,
+          // Bounded, and only ever the provider's own diagnostic text.
+          bodyPreview: text.slice(0, 400),
+          elapsedMs: Date.now() - startedAt,
+        });
+      } catch (cause) {
+        results.push({
+          id: target.id,
+          note: target.note,
+          status: 0,
+          verdict: "unreachable" as Verdict,
+          error: cause instanceof Error ? cause.message : String(cause),
+          elapsedMs: Date.now() - startedAt,
+        });
+      }
+    }
+
+    return json({
+      probe: "market-source-probe",
+      readOnly: true,
+      probedAt: new Date().toISOString(),
+      credentialsPresent: credentials,
+      domainAuthScheme: hasDomainOAuth ? "oauth_client_credentials" : hasDomainKey ? "api_key" : "none",
+      results,
+    });
+  } catch (cause) {
+    return json(
+      { error: cause instanceof Error ? cause.message : "probe failed" },
+      500,
+    );
+  }
+});
