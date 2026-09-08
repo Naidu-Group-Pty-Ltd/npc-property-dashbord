@@ -3931,3 +3931,111 @@ at all, so the Executive Verdict scorecard draws nothing on most of them, and
   corrected my own hypothesis about which variants it reaches
 - `vitest run` full suite green; `tsc`, `eslint`, `audit:style`,
   `security:edge-check` at its 339 baseline
+
+---
+
+## §46 — Evidence-Backed Scoring: what market data this platform actually has (2026-09-08)
+
+Step 1 of the Evidence-Backed Scoring brief is to trace the real Cotality
+entitlement and every other authoritative market source, on the instruction not
+to assume a vendor's public field list is what this application is entitled to.
+It is a gate: the Growth Evidence Layer cannot be built on a source that returns
+nothing.
+
+**There is no capital-growth evidence in this platform.** Both candidate
+sources are traced below, and neither has ever delivered a value.
+
+### Cotality / CoreLogic — scaffolding, never connected
+
+`supabase/functions/cotality-service/index.ts` says so in its own header:
+*"SCAFFOLDING ONLY. Status: awaiting sandbox credentials from Cotality."* While
+`COTALITY_API_KEY` is unset every branch returns a `modelled` envelope with
+`value: null` and confidence 0.3.
+
+Measured rather than taken on trust:
+
+| check | result |
+| --- | ---: |
+| `data_provenance` rows (where the envelope would persist) | **0** |
+| `cotality_*` / `corelogic_*` tables | **none exist** |
+| calls in `api_usage_log` (7 months, 20 services) | **0** |
+| callers of `cotality-service` anywhere in the repo | **0** |
+
+The only references outside the function are three comments in
+`investment-scoring-service` — `cotalityReady: true`, *"when cotality-service
+envelopes land"*. It is a placeholder for an integration that was never
+completed.
+
+### Domain — wired, called, and returns nothing
+
+`domain-data-service` is real code against a real endpoint:
+
+```
+https://api.domain.com.au/v1/suburbPerformanceStatistics/{state}/{suburb}
+  ?propertyCategory={house|unit}&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12
+```
+
+Its declared `SuburbPerformance` is close to exactly what the Growth and Demand
+dimensions need — `medianSoldPrice`, `numberSold`, `medianRentListingPrice`,
+`numberRented`, `daysOnMarket`, `auctionClearanceRate`, `annualGrowth`,
+`rentalYield` — at suburb + state + dwelling-type granularity. It **is** called
+by `generate-investment-report` (guarded on `suburb && state`).
+
+And it has never returned a value. The generator's own provenance record is the
+proof, because it stamps every source it attempted:
+
+```
+"seifa":     { source: abs_seifa,   confidence: 0.9  }
+"economics": { source: rba,         confidence: 0.9  }
+"employment":{ source: abs_employment, confidence: 0.9 }
+"crimeStatistics": { source: state_crime_data, confidence: 0.8 }
+"locationIntelligence": { source: google_maps, confidence: 0.95 }
+"marketData": null                          ← the only null
+```
+
+46 of the 68 reports since June carry the `marketData` key; **0 of 68 carry a
+non-null value**, and `demographics_data.marketData.medianPrice`,
+`.annualGrowth`, `.vacancyRate` and `.daysOnMarket` are absent on **all 992**
+scored reports.
+
+**Absence from `api_usage_log` is not the evidence here**, and saying so would
+repeat a mistake this programme has already made twice: `domain-data-service`
+uses a bare `fetch` rather than `meteredFetch`, so a working call would not
+appear there either. What is evidence is that it writes nothing to
+`api_health_log` while six sibling services do, which matches the code path
+where `DOMAIN_API_KEY` is unset — that branch returns `dataQuality:
+'unavailable'` *before* any fetch or logging.
+
+So the distinction that matters commercially: **this is most likely a missing
+credential, not a missing capability.** Domain's Suburb Performance
+Statistics product would supply most of the Growth and Demand layer. That is a
+procurement question, not an engineering one, and it should be settled before
+any further scoring work.
+
+### What the platform DOES hold
+
+| source | rows | what it can evidence |
+| --- | ---: | --- |
+| `abs_sa2_population` | **61,335** (2001–2025, 2,454 SA2s) | population growth at 1/3/5/10-year horizons, real CAGR |
+| `rba_observations` | 3,518 | macro rate and lending series |
+| `abs_census_poa` | 2,643 | income, tenure, household composition |
+| `abs_seifa_poa` | 2,627 | socio-economic advantage deciles |
+| `suburb_directory` | 18,519 | geography resolution |
+| `median_rent_cache` | 156 (38 suburbs) | rents, thin |
+
+Every one of these is a **growth driver**, not capital growth. Under the
+brief's own §2 distinction — *"population growth is not itself evidence that
+property values have grown"* — the platform can currently evidence the
+supporting half of the Growth dimension and **none of the primary half**.
+
+### The consequence for scoring
+
+A Growth dimension built only on population, SEIFA and macro series would be
+labelled Capital Growth while measuring none of it. That is the same class of
+defect as the placeholder 50 it replaces — a dimension asserting more than its
+evidence supports — and it would fail the brief's own test of surviving a
+client challenge.
+
+Scoring V2 therefore stops here, unwired, pending a decision on the market-data
+source. The arithmetic corrections are built and backtested (§45); what is
+missing is the evidence, and no amount of engineering substitutes for it.
