@@ -62,6 +62,15 @@ const CREDENTIAL_NAMES = [
   "COTALITY_CLIENT_ID",
   "COTALITY_CLIENT_SECRET",
   "COTALITY_BASE_URL",
+  // PropTrack is REA Group's data arm — the LICENSED route to
+  // realestate.com.au's data. Scraping the consumer site is refused by REA's
+  // own robots.txt in as many words, so it is not a route this platform takes.
+  "PROPTRACK_API_KEY",
+  "PROPTRACK_BASE_URL",
+  // Pricefinder (sales evidence) and SQM Research (vacancy, stock on market)
+  // — the only declared source for a vacancy rate at suburb grain.
+  "PRICEFINDER_API_KEY",
+  "SQM_RESEARCH_API_KEY",
 ] as const;
 
 /**
@@ -119,6 +128,13 @@ const TARGETS: readonly Target[] = [
     id: "cotality_suburb_statistics",
     url: "https://api.corelogic.asia/property/au/v2/statistics/locality/1234",
     note: "Cotality Market Trends / Suburb Statistics — the branch-4 endpoint shape.",
+  },
+  {
+    id: "proptrack_market_api",
+    url:
+      "https://data.proptrack.com/api/v2/market/sale/historic-median-sale-price" +
+      "?suburb=Bowral&state=NSW&postcode=2576&propertyTypes=house&frequency=monthly",
+    note: "PropTrack (REA Group) historic median sale price — the licensed realestate.com.au route.",
   },
   {
     id: "vic_data_catalogue",

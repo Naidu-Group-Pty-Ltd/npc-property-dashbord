@@ -4677,3 +4677,51 @@ inferred. `mayReachClientReport` admits only `open` and
 can be **scored in a shadow backtest and cannot be rendered or persisted as a
 derived metric**. That is what lets qualification proceed while Cotality's
 commercial questions stay open, without ever assuming an answer to them.
+
+### realestate.com.au — the licensed route is PropTrack, and scraping is refused in writing
+
+Asked whether suburb growth could also come from realestate.com.au. The answer
+is yes, through **PropTrack** — REA Group's data licensing arm, which is what
+realestate.com.au's data is sold as — and **not** by reading the consumer site.
+
+REA states the prohibition itself. `realestate.com.au/robots.txt`, fetched
+2026-09-08, opens:
+
+> *"In accessing or using any REA Group Website you agree that you will not use
+> any automated device, software, process or means to access, retrieve, scrape,
+> or index any REA Group Website…"*
+
+That is the site owner's own term, not an inference, and it settles the
+question without needing a view on whether a scraper would technically work.
+It would also be a *worse* version of the Cotality position: Cotality's rights
+are **unverified**, whereas this one is **expressly refused**, and the material
+would be going into a commercial document a client receives.
+
+**The slot already exists.** `registry.ts` declares `proptrack` — *"PropTrack
+(REA) — REA Group valuations, AVMs and listing performance data"*, tagged
+`realestate.com.au` — with `PROPTRACK_API_KEY` and `PROPTRACK_BASE_URL`. Both
+are empty, seeded 2026-08-02 and never set, exactly like Domain and Cotality.
+
+Probed from Supabase, no credential sent:
+
+| request | result |
+| --- | --- |
+| `data.proptrack.com/api/v2/market/sale/historic-median-sale-price?…` | **403 Access Denied** (edge) |
+| `data.proptrack.com/` | **403 Access Denied** |
+| `realestate.com.au/robots.txt` | 200 — the clause above |
+| `sqmresearch.com.au` | 200 |
+
+A 403 at the edge without a credential is what a gated commercial API looks
+like; it is not evidence of an entitlement problem.
+
+**Two further declared providers matter to the matrix**, both with empty slots:
+**Pricefinder** (*"property attributes, sales evidence and owner records"*) and
+**SQM Research** (*"vacancy rates, stock on market and rental series"*). SQM is
+the **only declared source for a vacancy rate at suburb grain** — no
+government publisher offers one — so if Demand is to include vacancy at all, it
+comes from there or from a provider that bundles it.
+
+So the commercial shortlist is four, not two: Domain, Cotality, PropTrack and
+Pricefinder, plus SQM for vacancy specifically. Every one of them has an empty
+credential slot, which is the single fact standing between this programme and
+suburb-grain evidence.
