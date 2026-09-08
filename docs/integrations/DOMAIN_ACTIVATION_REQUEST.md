@@ -107,3 +107,64 @@ larger conversation than the evidence requires. And no request for pre-computed
 growth figures: Aurixa owns that arithmetic
 (`growth/growthPeriods.pure.ts`), which is what lets a report show its working
 rather than assert a number.
+
+## Zero-cost addendum (ME-6, 2026-09-08)
+
+A commercial constraint now governs this: **Aurixa is not purchasing additional
+property-data subscriptions at this stage.** That changes what is being asked
+for, not the standard of evidence.
+
+### The one question that now leads
+
+**Can `api_properties_read` and `api_suburbperformance_read` be enabled on the
+EXISTING Aurixa application at no additional charge?**
+
+Everything else in the message above still stands and still needs answering.
+But this question is now first, because its answer decides whether Domain is a
+switch-on or a purchase — and a purchase is out of scope.
+
+### What was established from Domain's published material
+
+Measured 2026-09-08 against `developer.domain.com.au`:
+
+- The two scopes belong to the **Properties & Locations** package, which the
+  portal describes as *"Explore auction results and property datasets. Access
+  market performance and demographic stats."* Its endpoint list carries
+  `GET /v2/suburbPerformanceStatistics/{state}/{suburb}`,
+  `/v2/suburbPerformanceStatistics/{state}/{suburb}/{postcode}`,
+  `GET /v2/demographics/{state}/{suburb}/{postcode}` and `GET /v1/properties/{id}`.
+- Address Suggestion is a **different package** (`pkg_address_suggestion`),
+  which is why the probe tests both on the one key: it separates *is the key
+  recognised* from *is this product on the project*.
+- **Domain publishes no pricing or plan material on the developer portal.**
+  `/pricing`, `/plans` and `/docs/latest/packages` all answer 404, and the
+  package pages carry no cost, plan or tier language. Package entitlement is
+  therefore an account question, not a documented one — the same shape as
+  PropTrack's trial.
+
+### How the answer is recorded
+
+| Domain's answer | recorded as | consequence |
+| --- | --- | --- |
+| both scopes enabled on the existing key, no charge | `existing_licensed` | Domain becomes the primary Growth source; may become production evidence |
+| enabled but requires a paid package | `commercial_upgrade_required` | **no purchase is made.** The integration is NOT removed — it stays wired, and the gap is recorded so it is visible rather than looking like an absent source |
+| key not recognised at all | operator-side remedy, not an entitlement finding | re-issue the credential; this is not a commercial conversation |
+
+**The integration stays.** `domain-data-service`, the six `DOMAIN_*` credential
+names, the probe targets and the registry card are all untouched by a
+`commercial_upgrade_required` answer. Recording a gap is not the same as
+removing a route, and a removed route is one nobody can switch back on.
+
+### Why this matters more than it did last week
+
+The zero-cost open-data inventory
+(`_shared/reports/market/zeroCostSources.pure.ts`) measured the alternative and
+it does not cover the corpus. **Queensland is 53.7% of the Growth-addressable
+corpus and publishes no open suburb-level median sale price series; Western
+Australia is 20.8% and its only candidate is `Custom (Other)` licensed.**
+Victoria publishes exactly the right dataset under CC BY and its host refuses
+scripted clients from both egresses.
+
+So Domain's existing entitlement is not one option among many. It is, with the
+PropTrack trial, one of only two routes to suburb-level Growth evidence for
+three quarters of the properties Aurixa actually reports on.
