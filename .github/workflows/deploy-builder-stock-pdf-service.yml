@@ -1,0 +1,229 @@
+# Builder Stock PDF election worker — build, stage, prove, then wait.
+#
+# Mirrors deploy-pdf-parse-service.yml: every push builds and stages a revision
+# that serves NOBODY, verifies it on its own tagged URL, and stops. Promoting
+# is a deliberate human act, because this worker decides which photograph a
+# client sees and a bad revision must never reach production by merely being
+# newer.
+#
+# There are deliberately NO `--set-env-vars` here. `gcloud run deploy` replaces
+# the whole environment, so naming one variable would silently drop the rest —
+# including BUILDER_STOCK_PDF_SERVICE_TOKEN, which the service needs to answer
+# anything at all. The environment is configured once on the service.
+name: Deploy builder-stock-pdf-service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'builder-stock-pdf-service/**'
+      - 'supabase/functions/_shared/builderStock/**'
+      - '.github/workflows/deploy-builder-stock-pdf-service.yml'
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: 'Send production traffic to the verified revision'
+        type: boolean
+        default: false
+
+env:
+  SERVICE: builder-stock-pdf-service
+  REGION: australia-southeast1
+
+jobs:
+  # ── Is there anything to deploy with? ──────────────────────────────────────
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        run: |
+          if [ -n "${{ vars.GCP_PROJECT_ID }}" ] \
+            && [ -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Not deployed::GCP_PROJECT_ID / GCP_WORKLOAD_IDENTITY_PROVIDER are unset, so the worker was not built. The Edge settler runs the election in-process until it is."
+          fi
+
+  # ── The election must survive the move, and that is testable here ─────────
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # The worker and the Edge client must both type-check against the same
+      # shared modules — a drift between them is a wire that no longer matches.
+      - name: Type-check both ends of the boundary
+        run: |
+          deno check --no-lock builder-stock-pdf-service/main.ts
+          deno check --no-lock supabase/functions/_shared/builderStock/packageImages.ts
+
+      # A real document, through the real endpoint, proving the service answers
+      # and that its health names a version. No production credential is used:
+      # the token is generated for this run only.
+      - name: The worker answers, and says what it is
+        run: |
+          set -euo pipefail
+          token="ci-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          BUILDER_STOCK_PDF_SERVICE_TOKEN="$token" SERVICE_VERSION=ci PORT=8733 \
+            deno run -A --no-lock builder-stock-pdf-service/main.ts &
+          for _ in $(seq 1 30); do
+            curl -sf --max-time 2 http://127.0.0.1:8733/health >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8733/health | tee /tmp/health.json
+          grep -q '"protocol"' /tmp/health.json
+          grep -q '"version"' /tmp/health.json
+
+          # It must refuse an unauthenticated caller. A worker that processes
+          # documents for anyone is the failure this bearer exists to prevent.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8733/v1/elect)
+          [ "$code" = "401" ] || { echo "::error::unauthenticated POST answered $code"; exit 1; }
+
+  # ── Build the image ────────────────────────────────────────────────────────
+  build:
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: image
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          BASE: ${{ vars.BUILDER_STOCK_PDF_IMAGE }}
+        run: |
+          set -euo pipefail
+          base="${BASE:-gcr.io/$PROJECT_ID/builder-stock-pdf-service}"
+          tag="$(git rev-parse --short HEAD)"
+          echo "ref=${base}:${tag}" >> "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      # The build context is the REPOSITORY ROOT: the worker imports the shared
+      # builder-stock modules, which is the whole point of it.
+      - name: Build on Cloud Build
+        run: |
+          gcloud builds submit \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --tag "${{ steps.image.outputs.ref }}" \
+            --timeout=1800s \
+            --gcs-source-staging-dir "gs://${{ vars.GCP_PROJECT_ID }}_cloudbuild/source" \
+            . \
+            --substitutions=_DOCKERFILE=builder-stock-pdf-service/Dockerfile \
+            || gcloud builds submit \
+                 --project "${{ vars.GCP_PROJECT_ID }}" \
+                 --tag "${{ steps.image.outputs.ref }}" \
+                 --timeout=1800s .
+
+  # ── Stage a revision that serves nobody ────────────────────────────────────
+  stage:
+    needs: [gate, build]
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      canary: ${{ steps.deploy.outputs.canary }}
+    steps:
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+
+      # `--allow-unauthenticated` matches the sibling services: the worker does
+      # its own bearer check and answers 503 while no token is set, so it fails
+      # closed. Cloud Run IAM in front would be a second credential for the
+      # settler to hold and to rotate.
+      #
+      # `--cpu 2` is the whole reason this service exists — an Edge Function
+      # allows 2,000 ms of CPU and one election costs more than that.
+      # `--concurrency 1` keeps one document per instance, so two elections
+      # never share a decode slot's worth of memory.
+      - id: deploy
+        name: Deploy with no traffic
+        run: |
+          set -euo pipefail
+          tag="ci${GITHUB_SHA::7}"
+          gcloud run deploy "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --image "${{ needs.build.outputs.image }}" \
+            --region "$REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --cpu 2 --memory 2Gi \
+            --concurrency 1 --timeout 120 \
+            --min-instances 0 --max-instances 10 \
+            --no-traffic --tag "$tag"
+
+          url=$(gcloud run services describe "$SERVICE" \
+                  --project "${{ vars.GCP_PROJECT_ID }}" --region "$REGION" \
+                  --format=json \
+                | jq -r --arg tag "$tag" '[.status.traffic[]? | select(.tag == $tag) | .url] | first // ""')
+          # An empty URL means the tag did not attach, and every check below
+          # would then run against nothing and pass. Fail here instead.
+          [ -n "$url" ] || { echo "::error::the tagged revision has no URL"; exit 1; }
+          echo "canary=$url" >> "$GITHUB_OUTPUT"
+          echo "staged at $url — no production traffic"
+
+  # ── Prove the staged revision before anyone reaches it ────────────────────
+  verify:
+    needs: [gate, build, stage]
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CANARY: ${{ needs.stage.outputs.canary }}
+    steps:
+      - name: The canary says what it is
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 10); do
+            if curl -sf --max-time 30 "$CANARY/health" -o /tmp/health.json; then
+              cat /tmp/health.json; break
+            fi
+            sleep 5
+          done
+          grep -q '"service":"builder-stock-pdf-service"' /tmp/health.json \
+            || { echo "::error::canary did not identify itself"; exit 1; }
+          grep -q '"token_configured":true' /tmp/health.json \
+            || echo "::warning title=Token unset::The staged revision has no BUILDER_STOCK_PDF_SERVICE_TOKEN, so it will refuse every election."
+
+      - name: And refuses an unauthenticated election
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -X POST "$CANARY/v1/elect")
+          [ "$code" = "401" ] || [ "$code" = "503" ] \
+            || { echo "::error::unauthenticated POST answered $code"; exit 1; }
+
+  # ── Promotion is a person's decision ──────────────────────────────────────
+  promote:
+    needs: [gate, stage, verify]
+    if: ${{ needs.gate.outputs.ready == 'true' && inputs.promote }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Send traffic to the verified revision
+        run: |
+          gcloud run services update-traffic "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region "$REGION" \
+            --to-latest

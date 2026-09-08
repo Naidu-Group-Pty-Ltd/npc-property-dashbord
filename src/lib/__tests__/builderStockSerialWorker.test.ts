@@ -97,7 +97,13 @@ describe('the settler claims serially and never pre-claims a batch', () => {
 });
 
 describe('the whole heavy PDF path is behind one slot', () => {
-  const pkg = read('supabase/functions/_shared/builderStock/packageImages.ts');
+  /*
+   * The slot's wiring MOVED to `pdfElection.ts` when the election became a
+   * relocatable unit — the same code, now importable by the Cloud Run worker
+   * that runs it where there is CPU for it. The invariant is unchanged and is
+   * asserted where the code now lives.
+   */
+  const pkg = read('supabase/functions/_shared/builderStock/pdfElection.ts');
 
   it('takes the slot BEFORE the text read, not just before the election', () => {
     // The hole that let the six die: the text read runs first, parses the same

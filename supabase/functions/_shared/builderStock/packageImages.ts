@@ -34,11 +34,14 @@ import {
   DRIVE_FOLDER_MIME, type DriveEntry,
 } from './drivePackage.pure.ts';
 import {
-  selectPdfPropertyPrimaryHoldingSlot, type PdfPhotoProvenance,
+  type PdfPhotoProvenance,
 } from './pdfSourcePhoto.ts';
-import { withPdfDecodeSlot } from './pdfDecodeSlot.pure.ts';
 import { classifyBranch, sharedLinkFileUrl } from './sourceBranches.pure.ts';
 import { readPdfPageTextResult } from './pdfText.ts';
+import { electFromPdfBytes } from './pdfElection.ts';
+import {
+  electViaService, pdfElectionServiceConfigured,
+} from './pdfElectionClient.ts';
 import { MAX_SOURCE_IMAGE_BYTES, sniffImageContentType } from './sourceAssets.pure.ts';
 import { PRIMARY_ROLE, type SourceImageRoleAssignment } from './sourceImageRole.pure.ts';
 
@@ -708,102 +711,33 @@ async function extractFromDocument(
    * variant that does not re-enter — taking the slot twice in one call stack
    * is a deadlock rather than a bound.
    */
-  return await withPdfDecodeSlot(async () => {
-  const textResult = await readPageTexts(bytes);
-  if (!textResult.ok) {
-    return {
-      status: 'unreachable',
-      detail: `That document’s text could not be read (${"reason" in textResult ? textResult.reason : "unknown"}).`,
-    };
-  }
   /*
-   * And zero pages is the same fault wearing a different hat, whichever reader
-   * produced it: a PDF always has pages, so an empty list is the read failing
-   * rather than the document being silent. Judged here rather than inside one
-   * reader so every reader is held to it — the production one, and the ones
-   * tests inject to stand in for it.
+   * AND THE HEAVY HALF RUNS WHEREVER THERE IS CPU FOR IT.
+   *
+   * Everything above is cheap and stays here: the fetch and its guarded
+   * fetcher, the `%PDF-` sniff, and the rule that a link to an image is not a
+   * package document. What follows — the text read and the election over the
+   * same bytes — is the one indivisible unit measured to exceed an Edge
+   * Function's 2,000 ms CPU limit, so it is `electFromPdfBytes`, and
+   * `builder-stock-pdf-service` runs THAT module rather than a second
+   * implementation of it. See `pdfElection.ts` for the measurements.
    */
-  if (!textResult.pages.length) {
-    return {
-      status: 'unreachable',
-      detail: 'That document\'s text could not be read (no pages came back).',
-    };
-  }
+  const context = { label, identifiedBy, design, identityHints, documentName, url };
   /*
-   * AND PAGES THAT CAME BACK EMPTY ARE THE SAME FAULT AGAIN.
+   * THE WORKER WHERE THERE IS CPU, THIS ISOLATE WHERE THERE IS NOT ONE.
    *
-   * A package whose every page yields no text at all is not a package that says
-   * nothing about the property — it is a package this reader cannot read. The
-   * live list has them: "LOT 914 • COVELLA • GREENBANK QLD.pdf" is three pages
-   * of designed brochure exported as images, and its first page carries the
-   * lot, the estate, the suburb, the price, the land and house sizes and the
-   * facade render, all of it drawn rather than set. Text extraction returns
-   * zero characters from every page.
+   * Configured, the election runs in `builder-stock-pdf-service` — the same
+   * `electFromPdfBytes`, so the same winners. Unconfigured, it runs here
+   * exactly as it always has, which is what makes this deployable before the
+   * worker exists and survivable if the worker is ever taken away.
    *
-   * Recording that as "the document names no image for this property" banks a
-   * finished negative produced by a reader that never read the document — and
-   * `negativeProvenanceStillStands` would then suppress the source until a
-   * version bump. So it is operational, and the property is asked again: the
-   * answer changes for free the day this can read a drawn page.
-   *
-   * PARTIAL emptiness is deliberately NOT this. A document with text on some
-   * pages was read; that it says nothing identifying on the others is a fact
-   * about the document.
+   * An injected reader means a TEST supplied the page texts, and a test's
+   * reader cannot travel over a wire — so those callers stay in-process by
+   * construction rather than by a flag. The production reader is the identity
+   * `readPdfPageTextResult`, which is exactly what the worker uses.
    */
-  const textFree = textResult.pages.every((text) => !String(text ?? '').trim());
-  if (textFree && identifiedBy !== 'folder_structure') {
-    return {
-      status: 'unreachable',
-      detail: 'That document\'s pages carry no extractable text, so it could not be read.',
-    };
+  if (readPageTexts === readPdfPageTextResult && pdfElectionServiceConfigured()) {
+    return await electViaService(bytes, context, `${documentName}:${label}`);
   }
-  const pageTexts = textResult.pages;
-  const selection = await selectPdfPropertyPrimaryHoldingSlot(bytes, {
-    label,
-    design,
-    identityHints: identityHints ?? [],
-    pageTexts,
-    // Supplied ONLY when the builder's folder already named this document for
-    // this one property and the document itself can say nothing. See
-    // `assignPdfMediaRoles`.
-    structuralCoverPage: textFree ? 1 : null,
-  });
-  const photo = selection.primary;
-  if (!photo) {
-    /*
-     * A document nothing could be read from has still established nothing, even
-     * where its first page was structurally eligible and presented no single
-     * photograph. Recording a negative for it would bank an answer this reader
-     * never earned, so it stays operational and the property is asked again.
-     */
-    if (textFree) {
-      return {
-        status: 'unreachable',
-        detail: 'That document\'s pages carry no extractable text and its first page '
-          + 'presents no single photograph, so it could not be read.',
-      };
-    }
-    return {
-      status: 'not_identified',
-      detail: 'That document does not present a page as this property\'s package cover, '
-        + 'so it names no image for it.',
-    };
-  }
-
-  const suffix = photo.provenance.method === 'page_crop'
-    ? `crop(${photo.provenance.crop?.top}-${photo.provenance.crop?.bottom})`
-    : photo.provenance.resourceName;
-  return {
-    status: 'recovered',
-    image: {
-      bytes: photo.bytes,
-      contentType: photo.contentType,
-      reference: `${documentName}#page${photo.provenance.page}:${suffix}`,
-      documentName,
-      documentUrl: url,
-      provenance: photo.provenance,
-      role: photo.role,
-    },
-  };
-  });
+  return await electFromPdfBytes(bytes, readPageTexts, context);
 }
