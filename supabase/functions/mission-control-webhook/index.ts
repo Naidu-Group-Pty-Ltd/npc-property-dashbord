@@ -112,6 +112,16 @@ Deno.serve(async (req) => {
    * rejects it at validation), writes no record, and is never metered. The
    * result travels in the RESPONSE and is stored nowhere.
    */
+  if (event === "verification.selftest") {
+    const { probeStandaloneRoute } = await import(
+      "../_shared/aml/providers/diditStandaloneClient.ts"
+    );
+    const probe = await probeStandaloneRoute();
+    return new Response(JSON.stringify({ ok: true, event, probe }), {
+      headers: { ...corsHeaders, "content-type": "application/json" },
+    });
+  }
+
   /*
    * The full loop, with real image parts.
    *
@@ -130,16 +140,6 @@ Deno.serve(async (req) => {
     );
     const report = await runStandaloneLoopCheck();
     return new Response(JSON.stringify({ ok: true, event, report }), {
-      headers: { ...corsHeaders, "content-type": "application/json" },
-    });
-  }
-
-  if (event === "verification.selftest") {
-    const { probeStandaloneRoute } = await import(
-      "../_shared/aml/providers/diditStandaloneClient.ts"
-    );
-    const probe = await probeStandaloneRoute();
-    return new Response(JSON.stringify({ ok: true, event, probe }), {
       headers: { ...corsHeaders, "content-type": "application/json" },
     });
   }
