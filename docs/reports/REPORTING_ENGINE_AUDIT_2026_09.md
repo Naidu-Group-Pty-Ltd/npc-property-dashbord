@@ -5969,3 +5969,36 @@ second opinion on Growth. Dropping leverage raises overheating's share from
 0.10 to 0.33, which is the trade-off to weigh rather than a free improvement,
 and it is pinned by a test. Overheating remains **unscoreable on this corpus
 anyway**, because no suburb price series is held.
+
+### 58.5 The forward geography writer (item 15)
+
+`report_geography` holds 1,114 rows, all stamped 2026-09-08, all written by the
+backfill — and **nothing wrote a row for a report created afterwards.** A grep
+of the whole fleet finds the table named in four places, every one of them a
+pure module or a spec. The same is true of `report_location_provenance`.
+
+A derived table that only a backfill maintains is correct on the day it lands
+and silently stale from the next one, which is the failure this programme keeps
+finding. `resolve-report-geography` is what maintains it: it resolves the
+geography for reports that have no row, from the report's own stored
+coordinate, through the same `asgsGeography.pure.ts` the backfill used.
+
+Four rules. The **coordinate is the question** and the free-text address is
+never consulted. A **failed boundary service is `unresolved`, never guessed** —
+and the ArcGIS endpoint reports failure as HTTP 200 with an error body, so that
+shape is treated as transport and left retryable, unlike `outside_australia`,
+which is final. It **never writes to `investment_reports`**. And the **batch is
+bounded at eight** — one report costs six queries to a public service somebody
+else pays to run, so a small batch that drains over several invocations is the
+courteous shape, and a bad deploy cannot spend an afternoon of somebody's rate
+limit.
+
+`verify_jwt = true` is a decision rather than a default: the function holds the
+service-role key and performs no auth check of its own, so the gateway is the
+only thing between an anonymous caller and a sweep that spends the ABS
+geoserver's budget on our behalf. A service-role key is itself a valid JWT, so
+a scheduled invocation still reaches it.
+
+**It is not deployed and not scheduled**, and that is deliberate: deploying an
+Edge Function and adding a cron entry are production changes, and this stage's
+instruction was to fix the writer, not to switch it on.

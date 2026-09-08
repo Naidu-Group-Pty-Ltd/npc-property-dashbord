@@ -666,6 +666,15 @@ verify_jwt = false
 [functions.resolve-listing-coordinates]
 verify_jwt = false
 
+# ME-5 item 15. Maintains `report_geography` for reports the backfill did not
+# cover. It holds the service-role key and performs NO auth check of its own,
+# so the gateway is the only thing between an anonymous caller and a sweep that
+# spends the ABS geoserver's rate limit on somebody else's behalf. `true` is
+# therefore the declaration, not the default nobody chose — a service-role key
+# is itself a valid JWT, so a scheduled invocation still reaches it.
+[functions.resolve-report-geography]
+verify_jwt = true
+
 [functions.street-view]
 verify_jwt = false
 
