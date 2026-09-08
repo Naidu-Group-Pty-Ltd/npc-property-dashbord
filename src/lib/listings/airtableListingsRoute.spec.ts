@@ -150,3 +150,57 @@ describe('the module stays pure and coupling-free', () => {
     expect(src).not.toContain('Deno.env');
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Adoption: the two consumers must actually go through the route.            */
+/* -------------------------------------------------------------------------- */
+
+const proxy = readFileSync('supabase/functions/airtable-proxy/index.ts', 'utf8');
+const cache = readFileSync('supabase/functions/listings-cache/index.ts', 'utf8');
+
+describe('neither consumer reaches Airtable directly any more', () => {
+  it('airtable-proxy builds every URL from the route', () => {
+    // A surviving literal would be a path that still needs the token and so
+    // still fails on a clone — the exact half-adoption this change exists to
+    // remove.
+    expect(proxy).not.toContain('api.airtable.com');
+    expect(proxy).toContain('listingsRequestUrl');
+  });
+
+  it('listings-cache builds every URL from the route', () => {
+    expect(cache).not.toContain('api.airtable.com');
+    expect(cache).toContain('listingsRequestUrl');
+  });
+
+  it('neither builds an Airtable bearer header of its own', () => {
+    // The credential belongs to the route, which is the only place that knows
+    // whether this deployment is entitled to spend one.
+    for (const src of [proxy, cache]) {
+      expect(src).not.toMatch(/Bearer \$\{\s*(token|config\.token)\s*\}/);
+    }
+  });
+});
+
+describe('a brokered read is not metered at the clone', () => {
+  it('airtable-proxy logs usage only on the metered route', () => {
+    // Mission Control writes the usage row for a call Mission Control made.
+    // Metering at both ends bills the tenant twice.
+    const idx = proxy.indexOf('logApiUsage(supabase, {');
+    expect(idx).toBeGreaterThan(-1);
+    const before = proxy.slice(Math.max(0, idx - 600), idx);
+    expect(before).toContain('if (route.meter)');
+  });
+
+  it('listings-cache meters nothing at all, so there is nothing to guard', () => {
+    expect(cache).not.toContain('logApiUsage');
+  });
+});
+
+describe('an unconfigured deployment says which half is missing', () => {
+  it('both consumers carry the reason out rather than a bare refusal', () => {
+    for (const src of [proxy, cache]) {
+      expect(src).toMatch(/route\.via === 'unconfigured'/);
+      expect(src).toContain('route.why');
+    }
+  });
+});
