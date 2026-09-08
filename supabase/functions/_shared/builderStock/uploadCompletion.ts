@@ -72,6 +72,16 @@ export const SETTLED_ITEM_WORK_STAGE = 'settled';
 const MAX_UPLOADS_PER_PASS = 25;
 
 /**
+ * How many property ids go into one image query's filter.
+ *
+ * The list travels in the URL, so it is chunked rather than sent whole: a
+ * thousand uuids is about 37 kB of query string and servers refuse it long
+ * before that. Two hundred keeps a request comfortably short while an ordinary
+ * upload of a few dozen properties still needs exactly one.
+ */
+const ITEM_FILTER_CHUNK = 200;
+
+/**
  * How long a `parsing` row may be believed.
  *
  * An edge invocation is capped at roughly 150 seconds and stamps
@@ -159,7 +169,7 @@ export async function settleUploadCompletion(
   try {
     let uploadQuery = db
       .from('builder_stock_uploads')
-      .select('id, organisation_id, status, records_failed, deleted_at')
+      .select('id, organisation_id, status, records_failed, deleted_at, image_stage_summary')
       .eq('id', uploadId);
     if (params.organisationId) {
       uploadQuery = uploadQuery.eq('organisation_id', params.organisationId);
@@ -215,22 +225,84 @@ export async function settleUploadCompletion(
     if ((count ?? 0) > 0) return { status: null, refusal: 'items_outstanding' };
 
     /*
+     * THE SUMMARY FOLLOWS THE PROPERTIES, NOT THE IMAGE ROW'S `upload_id`.
+     *
+     * The column's contract is "per-stage image counts" for this upload, and
+     * the Builder Portal renders it as `Images: uploaded document 78 · …`.
+     * This read used to ask for image rows carrying THIS upload's id, and an
+     * image keeps the id of the upload that stored it — so on a RE-UPLOAD,
+     * where every row is matched and re-pointed to the new upload, not one
+     * image carries the new id and the summary is written `{}`.
+     *
+     * MEASURED 7 SEPTEMBER 2026 on upload `5412982c`, 78 properties each
+     * carrying its builder's own photograph: 78 images carried the superseded
+     * upload's id, 156 carried none at all, and none carried the current
+     * upload's. The audit record then stated, permanently, that no images were
+     * processed — the exact falsehood the paged read below already refuses to
+     * write on a database fault, reached by a different route.
+     *
+     * So the properties are read first and their images second. A NULL
+     * `upload_id` on an image is thereby irrelevant rather than fatal, which
+     * is the point: what makes an image this upload's is the property it
+     * belongs to.
+     *
+     * Every item of this upload counts, at any lifecycle. A first-time
+     * import's rows may still be `staged` when it completes, and narrowing to
+     * `active` would empty the summary for exactly the path that works today.
+     */
+    const itemPage = await readAllRows<{ id: unknown }>(
+      () => db
+        .from('builder_stock_items')
+        .select('id')
+        .eq('organisation_id', upload.organisation_id)
+        .eq('upload_id', uploadId)
+        .order('id', { ascending: true }));
+    if (itemPage.failed) return { status: null, refusal: 'read_failed' };
+
+    const itemIds = itemPage.rows
+      .map((row) => String(row.id ?? ''))
+      .filter((id) => id.length > 0);
+
+    /*
      * Paged, because the API caps a response at 1,000 rows however the limit
      * is written — and an incomplete read is never written from, because the
      * summary it would produce understates the work permanently.
+     *
+     * Chunked as well, because the property list goes into the request as a
+     * filter and an unbounded `in` is a URL long enough to be refused.
      */
-    const stagePage = await readAllRows<StageRow>(
-      () => db
-        .from('builder_stock_item_images')
-        .select('id, source_stage, processing_status')
-        .eq('upload_id', uploadId)
-        .order('id', { ascending: true }));
-    if (stagePage.failed) return { status: null, refusal: 'read_failed' };
+    const stageRows: StageRow[] = [];
+    for (let at = 0; at < itemIds.length; at += ITEM_FILTER_CHUNK) {
+      const chunk = itemIds.slice(at, at + ITEM_FILTER_CHUNK);
+      const stagePage = await readAllRows<StageRow>(
+        () => db
+          .from('builder_stock_item_images')
+          .select('id, source_stage, processing_status')
+          .in('stock_item_id', chunk)
+          .order('id', { ascending: true }));
+      if (stagePage.failed) return { status: null, refusal: 'read_failed' };
+      stageRows.push(...stagePage.rows);
+    }
 
     const status = finalUploadStatus(upload.records_failed);
+    /*
+     * MERGED, because this document has another tenant.
+     * `repairSourceImages` records `notion_row_assets_version` here — its own
+     * comment says the key "is MERGED, never written over the stage counts
+     * beside it" — while this write replaced the whole document and silently
+     * dropped it, costing that upload a re-fetch of its live source on every
+     * later run. The stage counts are recomputed; everything else is kept.
+     */
+    const existingSummary = (upload.image_stage_summary ?? {}) as Record<string, unknown>;
     const { error: writeError } = await db
       .from('builder_stock_uploads')
-      .update({ status, image_stage_summary: summariseImageStages(stagePage.rows) })
+      .update({
+        status,
+        image_stage_summary: {
+          ...existingSummary,
+          ...summariseImageStages(stageRows),
+        },
+      })
       .eq('id', uploadId);
     if (writeError) return { status: null, refusal: 'read_failed' };
 
