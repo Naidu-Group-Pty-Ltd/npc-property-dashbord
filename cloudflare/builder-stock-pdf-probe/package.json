@@ -1,0 +1,8 @@
+{
+  "name": "builder-stock-pdf-probe",
+  "private": true,
+  "description": "TEMPORARY. Answers one question and is then deleted: can a Cloudflare Worker run the shared builder-stock election inside a 128 MB isolate?",
+  "dependencies": {
+    "unpdf": "0.12.1"
+  }
+}

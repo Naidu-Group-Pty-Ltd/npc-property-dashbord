@@ -1,0 +1,25 @@
+/**
+ * TEMPORARY PROBE — not production, not connected to anything.
+ *
+ * One question: can the real Cloudflare Workers runtime execute the SHARED
+ * `electFromPdfBytes` on the two documents that exceed an Edge Function's CPU
+ * limit, inside a Worker isolate's 128 MB?
+ *
+ * No AI binding, no KV, no D1, no database, no Supabase secret. The bearer is
+ * the only configuration, and it follows the pattern
+ * `builder-stock-image-worker` already uses.
+ */
+{
+  "name": "builder-stock-pdf-probe",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  // pdf.js (via unpdf) reaches for Node built-ins.
+  "compatibility_flags": ["nodejs_compat"],
+  // The shared reader loads unpdf with `import('https://esm.sh/unpdf@0.12.1')`,
+  // and a Worker cannot fetch a module at runtime. This resolves that exact
+  // specifier to the SAME library at the SAME pinned version from npm, so
+  // `readPdfPageTextResult` — including its AcroForm field-text pass — runs
+  // unchanged. A packaging alias, not a substitute reader.
+  "alias": { "https://esm.sh/unpdf@0.12.1": "unpdf" },
+  "observability": { "enabled": true }
+}
