@@ -609,142 +609,62 @@ export function renderHeatmap(
     + `${title}${colL}${rowL}${cells}</svg>`;
 }
 
-/** Score wheel — a radar over three or more dimensions. */
 /**
- * Wrap a wheel label into at most two lines at the word break that best
- * balances them. A label of one long word cannot wrap and stays whole — the
- * width solve then pays for it. Never truncates: a shortened dimension name
- * in a client's scorecard is a different dimension.
+ * A scorecard is bars on a common baseline. It used to be a radar, and the
+ * radar is gone.
+ *
+ * ## Why the shape changed
+ *
+ * The Executive Verdict drew five named dimensions — location strength,
+ * infrastructure & amenity, property fit, tenant appeal, risk profile — as a
+ * filled pentagon. Four things are wrong with that, and the first two are
+ * wrong about the DATA rather than about taste:
+ *
+ *  1. **The polygon's area depends on the order of the axes.** The same five
+ *     scores arranged differently enclose a different area and read as a
+ *     different result. Nothing in the record says what the order should be,
+ *     so the most visually dominant property of the chart carries no
+ *     information at all.
+ *  2. **Area scales with the square of the values.** A dimension scoring 86
+ *     against one scoring 64 contributes not 1.34× but ~1.8× the area, so the
+ *     picture overstates every gap it shows.
+ *  3. **The space between two spokes means nothing.** There is no continuum
+ *     between "tenant appeal" and "risk profile", and filling it implies one.
+ *  4. **Radial labels have nowhere to go.** Comparing lengths along five
+ *     spokes at five angles is measurably harder than comparing them against
+ *     one baseline, and the corner labels crowd — `INFRASTRUCTURE & AMENITY`
+ *     printed as `ASTRUCTURE` on a real client render. That was fixed with a
+ *     label gutter and a wrap; the crowding is a property of the form.
+ *
+ * Bars fix all four at once: one baseline, length proportional to value,
+ * nothing enclosed, and labels set horizontally in a column that sizes itself.
+ *
+ * ## Why one colour and not a traffic light
+ *
+ * `renderBars` colours by magnitude when no tone is given — above 0.66 reads
+ * positive, below 0.2 negative. Over a real scorecard that is a distortion:
+ * the measured spread on `6 Acer Court` is 64 to 86, and a red-to-green ramp
+ * across 22 points of a 100-point scale paints an ordinary dimension as a
+ * failure. The bars are one accent, and their lengths carry the comparison.
  */
-function wrapWheelLabel(label: string): string[] {
-  const t = label.trim();
-  if (t.length <= 12 || !/\s/.test(t)) return [t];
-  const words = t.split(/\s+/);
-  let best = [t];
-  let bestLen = t.length;
-  for (let i = 1; i < words.length; i++) {
-    const a = words.slice(0, i).join(' ');
-    const b = words.slice(i).join(' ');
-    const len = Math.max(a.length, b.length);
-    if (len < bestLen) { bestLen = len; best = [a, b]; }
-  }
-  return best;
-}
-
-export function renderScoreWheel(
+export function renderScoreBars(
   ctx: ChartContext,
   scores: number[],
   opts: { labels?: string[]; max?: number } = {},
 ): string {
-  if (scores.length < 3 || scores.length > MAX_WHEEL_SCORES) return '';
+  if (scores.length < 2 || scores.length > MAX_WHEEL_SCORES) return '';
   const max = opts.max ?? 100;
-  const R = 130;
-  const LABEL_R = R + 22;
-  const n = scores.length;
-  const angle = (i: number) => -Math.PI / 2 + (i / n) * Math.PI * 2;
-
-  // The side labels are the sizing problem, and padding cannot solve it.
-  // `text()` converts points to viewBox units through `w / ctx.widthMm`, so
-  // widening the box also enlarges every label in units — chasing a clipped
-  // label with more padding never converges. Measured on the real failing
-  // render: at w=460 a 17-char micro label took 140u of the 78u available
-  // ("FUTURE RESILIENCE" printed as "RE RESILIENCE"); widened to w=532 it
-  // took 161u of 114u and still clipped. A single line would need w≈813,
-  // wider than the wide box. Two things fix it together: a long label WRAPS
-  // at a word break, and the width is the closed form of
-  // `w/2 − LABEL_R ≥ label(w) + EDGE`, solvable because label(w) is linear
-  // in w. The advance is measured, not guessed: 0.71em per tracked
-  // uppercase character of the body stack (Chromium getComputedTextLength
-  // over the failing labels, tracking included), carried with margin.
-  const labels = (opts.labels?.length ? opts.labels : scores.map((_, i) => `D${i + 1}`))
-    .map((l) => String(l ?? '').trim().toUpperCase());
-  const wrapped = labels.map(wrapWheelLabel);
-  const anchorFor = (i: number) => {
-    const c = Math.cos(angle(i));
-    return Math.abs(c) < 0.2 ? 'middle' as const : c > 0 ? 'start' as const : 'end' as const;
-  };
-  // Only start/end-anchored labels press against the half-width; a centred
-  // top or bottom label has the whole measure.
-  const longestSideLine = wrapped.reduce((m, ls, i) =>
-    anchorFor(i) === 'middle' ? m : Math.max(m, ...ls.map((s) => s.length)), 1);
-  const ADV_EM = 0.74;
-  const EDGE = 8;
-  const q = longestSideLine * ADV_EM * CHART_TEXT_PT.micro * MM_PER_PT / ctx.widthMm;
-  const w = Math.min(
-    CHART_WIDTH.wide,
-    Math.max(CHART_WIDTH.compact, q < 0.42 ? Math.ceil((LABEL_R + EDGE) / (0.5 - q)) : CHART_WIDTH.wide),
+  const labels = opts.labels?.length ? opts.labels : scores.map((_, i) => `D${i + 1}`);
+  return renderBars(
+    ctx,
+    scores.map((value, i) => ({
+      label: String(labels[i] ?? `D${i + 1}`).trim(),
+      value: Number(value) || 0,
+      display: String(Math.round(Number(value) || 0)),
+      tone: 'accent' as const,
+    })),
+    { max },
   );
-
-  // Vertical rhythm in the units the type actually takes at this width.
-  const microU = ptToUnits(CHART_TEXT_PT.micro, w, ctx.widthMm);
-  const captionU = ptToUnits(CHART_TEXT_PT.caption, w, ctx.widthMm);
-  const lead = Math.round(microU * 12) / 10;
-  const valueLead = Math.round((captionU + microU * 0.35) * 10) / 10;
-  const lineCount = (i: number) => wrapped[i].length;
-  const maxLines = Math.max(...wrapped.map((ls) => ls.length));
-  // The box height is derived from the actual extents: the bottom-most block
-  // grows downward from its anchor, the top block is pinned just above the
-  // disc's crown, and both must clear the edge. cy = h/2 + 8 cancels cleanly.
-  const maxBottomExtent = wrapped.reduce((m, ls, i) => {
-    const s = Math.sin(angle(i));
-    if (s <= 0.2) return m;
-    return Math.max(m, LABEL_R * s + 3.5 + (ls.length - 1) * lead + valueLead + captionU * 0.3);
-  }, R);
-  const topBlock = R + 6 + captionU * 0.3 + valueLead + (maxLines - 1) * lead + microU * 0.8;
-  const h = Math.max(
-    360,
-    16 + 2 * Math.ceil(maxBottomExtent + EDGE),
-    2 * Math.ceil(topBlock + EDGE - 8),
-  );
-  const cx = w / 2, cy = h / 2 + 8;
-  const pt = (i: number, r: number) =>
-    `${(cx + r * Math.cos(angle(i))).toFixed(1)},${(cy + r * Math.sin(angle(i))).toFixed(1)}`;
-
-  const rings = [0.25, 0.5, 0.75, 1].map((t) =>
-    `<polygon points="${Array.from({ length: n }, (_, i) => pt(i, R * t)).join(' ')}" fill="none" `
-    + `stroke="${ctx.palette.rule}" stroke-opacity="${(0.4 + t * 0.2).toFixed(2)}" stroke-width="0.6"/>`).join('');
-  const spokes = Array.from({ length: n }, (_, i) =>
-    `<line x1="${cx}" y1="${cy}" x2="${(cx + R * Math.cos(angle(i))).toFixed(1)}" `
-    + `y2="${(cy + R * Math.sin(angle(i))).toFixed(1)}" stroke="${ctx.palette.rule}" stroke-width="0.5"/>`).join('');
-
-  const clamp01 = (s: number) => Math.max(0, Math.min(1, (Number(s) || 0) / max));
-  const polyPts = scores.map((s, i) => pt(i, R * clamp01(s))).join(' ');
-  const dots = scores.map((s, i) => {
-    const r = R * clamp01(s);
-    return `<circle cx="${(cx + r * Math.cos(angle(i))).toFixed(1)}" cy="${(cy + r * Math.sin(angle(i))).toFixed(1)}" `
-      + `r="3" fill="${ctx.palette.accent}" stroke="${ctx.palette.ground}" stroke-width="1"/>`;
-  }).join('');
-
-  const lbls = wrapped.map((lines, i) => {
-    const a = angle(i);
-    const s = Math.sin(a);
-    const lx = cx + LABEL_R * Math.cos(a);
-    const ly = cy + LABEL_R * s;
-    const anchor = anchorFor(i);
-    // Blocks stack radially outward: below the disc they grow downward from
-    // the anchor, above it the value hugs the crown and the lines rise from
-    // there, beside it the last line holds the anchor. Reading order stays
-    // label line(s) then value in every case.
-    const valueY = s < -0.2
-      ? cy - R - 6 - captionU * 0.3
-      : ly + 3.5 + (s > 0.2 ? (lines.length - 1) * lead : 0) + valueLead;
-    const lastLineY = valueY - valueLead;
-    const lineText = lines.map((ln, j) =>
-      text(ctx, w, {
-        x: lx, y: lastLineY - (lines.length - 1 - j) * lead,
-        pt: 'micro', fill: ctx.palette.inkMuted, anchor, tracking: 0.3,
-      }, svgEscape(ln))).join('');
-    return lineText
-      + text(ctx, w, { x: lx, y: valueY, pt: 'caption', fill: ctx.palette.ink, anchor, stack: 'display', weight: 700, tabular: true },
-        String(Math.round(Number(scores[i]) || 0)));
-  }).join('');
-
-  return `${svgOpen(w, h)}
-    <rect width="${w}" height="${h}" rx="6" fill="${ctx.palette.ground}"/>
-    ${rings}${spokes}
-    <polygon points="${polyPts}" fill="${withAlpha(ctx.palette.accent, 0.18)}" stroke="${ctx.palette.accentDeep}" stroke-width="1.6" stroke-linejoin="round"/>
-    ${dots}${lbls}
-  </svg>`;
 }
 
 /** Bullet — a KPI against a target and qualitative bands. */

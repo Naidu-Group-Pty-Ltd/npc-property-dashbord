@@ -1391,7 +1391,8 @@ Council rezoning to MU3 was gazetted March 2026, lifting permissible density.
 {{heatmap: 5.2,6.1,7.4 / 4.8,5.9,6.7 / 3.1,4.0,5.2 | rows=2024,2025,2026 | cols=Q1,Q2,Q3 | title=Suburb Growth %}}
 \`\`\`
 
-6. SCORE WHEEL — multi-dimensional radar (3+ scores).
+6. SCORECARD — named dimensions each scored out of 100 (2+ scores). Drawn as
+   horizontal bars on a common baseline; never as a radar or spider chart.
    Format: \`{{wheel: s1,s2,s3,… | labels=L1,L2,L3,… | max=100 | title=…}}\`
 \`\`\`
 {{wheel: 78,64,82,71,55 | labels=Yield,Growth,Risk,Demand,Infra | title=Score Breakdown}}
