@@ -38,6 +38,10 @@ import {
   scoreDemand,
 } from '../market/demandScoring.pure';
 import {
+  buildEvidenceStatement,
+  withheldFromClient,
+} from '../market/evidenceStatement.pure';
+import {
   emptyEvidence,
   type EvidencePoint,
   type EvidenceSubject,
@@ -505,5 +509,106 @@ describe('absorption needs both halves', () => {
     const r = scoreDemand(evidence({ salesCount: pt(140) }), NOW);
     expect(r.score).toBeNull();
     expect(r.missing).toContain('absorption');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "Evidence Behind the Score" — the disclosure a grade has to carry
+// ---------------------------------------------------------------------------
+
+describe('the evidence statement states, and never derives', () => {
+  const strong = evidence({
+    growth5YearCagr: pt(11.5), growth3YearCagr: pt(12.2), growth1Year: pt(10.8),
+    priceSeries: series([11, 12, 10, 13, 11, 12]),
+    benchmarkGrowth5YearCagr: pt(4.2, { level: 'gccsa', areaName: 'Synthetic benchmark region' }),
+    vacancyRate: pt(0.9), daysOnMarket: pt(16),
+  });
+
+  const statementFor = (audience: 'client' | 'internal', ev = strong) => {
+    const g = scoreGrowth(ev, NOW);
+    const d = scoreDemand(ev, NOW);
+    const y = scoreYield({ basis: 'purchase', basisAmount: 800_000, weeklyRent: 692 });
+    const e = applyEligibility({ compositeScore: 87, growth: g, overallCoverage: 1 });
+    return buildEvidenceStatement({
+      growth: g, demand: d, yieldResult: y, eligibility: e, evidence: ev, audience,
+    });
+  };
+
+  it('carries every dimension with its coverage and its sources', () => {
+    const s = statementFor('internal');
+    expect(s.dimensions.map((d) => d.key)).toEqual(['growth', 'demand', 'yield']);
+    for (const d of s.dimensions) expect(d.measures.length).toBeGreaterThan(0);
+    expect(s.sources.length).toBeGreaterThan(0);
+    // Sources are de-duplicated: the same point backs several components.
+    expect(new Set(s.sources).size).toBe(s.sources.length);
+  });
+
+  it('reports every score exactly as the scorer computed it', () => {
+    const g = scoreGrowth(strong, NOW);
+    const s = statementFor('internal');
+    const growthRow = s.dimensions.find((d) => d.key === 'growth')!;
+    expect(growthRow.score).toBe(g.score);
+    expect(growthRow.coverage).toBe(g.weightCovered);
+    expect(growthRow.confidence!.score).toBe(g.confidence.score);
+    for (const [i, c] of g.components.entries()) {
+      expect(growthRow.measures[i].score).toBe(Math.round(c.score));
+      expect(growthRow.measures[i].weight).toBe(c.weight);
+    }
+  });
+
+  it('gives an absent dimension a row and a reason, never silence', () => {
+    const bare = evidence({ vacancyRate: pt(1.1) });
+    const s = statementFor('internal', bare);
+    const growthRow = s.dimensions.find((d) => d.key === 'growth')!;
+    expect(growthRow.score).toBeNull();
+    expect(growthRow.absenceReason).toMatch(/no growth score is stated/);
+    expect(s.limitations.some((l) => /capital-growth evidence/.test(l))).toBe(true);
+  });
+
+  it('withholds an unlicensed source from a client and says it did', () => {
+    const unverified = evidence({
+      growth5YearCagr: pt(11.5, { licensingStatus: 'unverified' }),
+      growth3YearCagr: pt(12.2, { licensingStatus: 'unverified' }),
+    });
+    const client = statementFor('client', unverified);
+    const internal = statementFor('internal', unverified);
+
+    // The figure still informs the score for both readers…
+    const g = scoreGrowth(unverified, NOW);
+    expect(client.dimensions[0].score).toBe(g.score);
+    // …but only the internal reader is told where it came from.
+    expect(internal.sources.some((x) => /Synthetic fixture area/.test(x))).toBe(true);
+    expect(client.sources.some((x) => /Synthetic fixture area/.test(x))).toBe(false);
+    // The property's own rent and price is not third-party material and is
+    // never withheld — only the licensed market evidence is.
+    expect(client.sources).toEqual(['This property\u2019s own recorded rent and price']);
+    expect(client.dimensions[0].measures.every((m) => m.provenanceWithheld)).toBe(true);
+    expect(client.limitations.some((l) => /cannot be named in this document/.test(l))).toBe(true);
+    // And the withholding is legible internally, per measure.
+    expect(withheldFromClient(unverified).length).toBe(2);
+  });
+
+  it('explains a cap where the grade is stated, not in a footnote', () => {
+    const g = scoreGrowth(FIXTURES.thinButStrong, NOW);
+    const e = applyEligibility({ compositeScore: 91, growth: g, overallCoverage: 0.4 });
+    const s = buildEvidenceStatement({
+      growth: g,
+      demand: scoreDemand(FIXTURES.thinButStrong, NOW),
+      yieldResult: scoreYield({ basis: 'purchase', basisAmount: 800_000, weeklyRent: 692 }),
+      eligibility: e,
+      evidence: FIXTURES.thinButStrong,
+      audience: 'client',
+    });
+    expect(s.grade).toBe('B+');
+    expect(s.scoreGrade).toBe('A+');
+    expect(s.capExplanation.length).toBeGreaterThan(0);
+    expect(s.limitations[0]).toContain('rather than the A+');
+  });
+
+  it('gives Yield no confidence reading rather than inventing one', () => {
+    const s = statementFor('internal');
+    const y = s.dimensions.find((d) => d.key === 'yield')!;
+    expect(y.confidence).toBeNull();
+    expect(y.score).not.toBeNull();
   });
 });

@@ -5019,7 +5019,61 @@ low growth confidence cannot carry the claim.
 the ceiling binds. They say nothing about how many real properties would earn
 an A, which is ME-4's question and needs real suburb evidence.
 
-### 53.9 What is deliberately not done
+### 53.9 "Evidence Behind the Score"
+
+A grade is a claim Aurixa has to defend to the client it was given to. Today it
+cannot be: the number arrives with a one-line `details` string which, on the
+corpus, either contradicts the score beside it (53.5) or is empty (53.1). A
+reader who disagrees with a B+ has nothing to disagree *with*.
+
+`evidenceStatement.pure.ts` composes the disclosure — per dimension, what was
+measured, where it came from, how far it can be relied on, and what could not
+be measured and what that cost. Rendered from the fixture bundle:
+
+```
+GRADE A+  (score alone: A+)
+
+Capital growth — 90, confidence 95 (high), 100% of methodology
+   [w 0.35]  93  Five-year capital growth: 11.5% per annum over five years
+   [w 0.25]  86  Three-year capital growth: 12.2% per annum over three years
+   [w 0.10]  76  Twelve-month movement: 10.8% over the last twelve months
+   [w 0.15]  94  Consistency of growth: 6 of 6 periods rose, spread 1.0 points
+   [w 0.15]  97  Against the wider market: +7.3 points over the five-year window
+
+Market demand — 92, confidence 93 (high), 70% of methodology
+   [w 0.35]  91  Rental vacancy: 0.9% rental vacancy
+   [w 0.35]  93  Competition for stock: 16 days on market, 84% auction clearance
+   not measured: Sales against stock advertised, Population growth
+
+Rental return — 52, 100% of methodology
+   [w 1.00]  52  Gross yield (on purchase price): 4.50% gross, 3.46% net …
+
+NOT AVAILABLE   cotality: no credential configured
+LIMITATIONS     Market demand was scored on 70% of its methodology; sales
+                against stock advertised, population growth could not be measured.
+```
+
+Four rules carry it. **It states and never derives** — every number is read
+from a result object, because a disclosure that recomputes its own subject can
+disagree with it, in the one place a reader is being invited to check the
+working. **Absence is content** — a dimension that could not be measured gets a
+row saying so, in the same shape as one that could, since silence about a
+missing five-year series reads as "there was nothing to say". **Licensing
+decides what may be shown, per measure** — the statement takes an AUDIENCE, and
+an unquotable source is named as withheld rather than dropped, because a source
+list with a silent hole is a worse disclosure than one that says a source is not
+quotable; the figure still informs the score for both readers. And **the cap is
+explained where the grade is stated**, not in a footnote, because it is the
+first thing a reader will ask about.
+
+Yield deliberately carries **no confidence reading**. It is not measured from
+market evidence — it is computed from this property's own rent and price — and
+printing a confidence beside it to make the table symmetrical would be
+inventing a number for a layout. For the same reason the property's own rent
+and price is never withheld from a client: it is not third-party licensed
+material.
+
+### 53.10 What is deliberately not done
 
 Nothing here is connected to report generation. `investment-scoring-service` is
 untouched, the stored corpus is untouched, and no document changes. The modules
