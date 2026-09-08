@@ -1,19 +1,20 @@
 /**
- * BUILDER STOCK — THE WIRE BETWEEN THE SETTLER AND THE PDF WORKER.
+ * BUILDER STOCK — THE WIRE FOR HANDING A BROCHURE TO ANOTHER RUNTIME.
  *
- * ONE MODULE, BOTH ENDS. The Edge client encodes with it and the Cloud Run
- * worker decodes with it, so the two cannot disagree about the contract. This
+ * NOT IN USE BY PRODUCTION. Nothing in the settler calls across a boundary;
+ * `extractFromDocument` runs the election in its own process. This is the
+ * contract the FEASIBILITY PROBE speaks, and it lives here rather than in the
+ * probe so that both ends of any future handoff would be one rule. This
  * repository has paid for the alternative more than once: a rule written twice
  * is a rule that drifts.
  *
- * WHY THE DOCUMENT TRAVELS AS A RAW BODY. The Edge function already holds the
- * bytes — it fetched them through the guarded fetcher and applied the identity
- * rules — and base64 of a 14 MB brochure is about 19 MB and real CPU spent in
+ * WHY THE DOCUMENT WOULD TRAVEL AS A RAW BODY. Whoever holds the bytes has
+ * already fetched them through the guarded fetcher and applied the identity
+ * rules, and base64 of a 14 MB brochure is about 19 MB and real CPU spent in
  * exactly the isolate that has none to spare. So the PDF is the request body
  * verbatim and the small context rides in a header. The ANSWER comes back as
  * JSON with the elected image base64-encoded, because that image is small
- * (a facade render, not the document) and decoding it costs the Edge almost
- * nothing.
+ * (a facade render, not the document) and decoding it costs almost nothing.
  *
  * Pure: no IO, no clock, no network.
  */

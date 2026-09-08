@@ -17,10 +17,15 @@
  * Lodge costs about 1.7 s of CPU here on fast hardware; the limit is 2.0 s on
  * shared hardware, and the rest of the invocation draws on the same budget.
  *
- * So the work moved rather than shrank. `builder-stock-pdf-service` runs THIS
- * module — the same TypeScript, the same thresholds, the same winners — where
- * there is CPU to run it. Nothing here is a second implementation, and nothing
- * about which image wins is decided anywhere else.
+ * So the work has to move rather than shrink, and the first thing that needed
+ * doing was to NAME it. This module is that name. It is the same TypeScript
+ * lifted verbatim out of `extractFromDocument` — the same slot, the same
+ * thresholds, the same winners — and production still calls it in-process,
+ * exactly as before. What the lift buys is that the unit can now be RUN
+ * against another runtime and the results compared, which is the open
+ * question and is not yet answered. Whatever answers it must import THIS
+ * module: nothing here may be reimplemented, and nothing about which image
+ * wins is decided anywhere else.
  *
  * WHAT DELIBERATELY DID NOT MOVE. The fetch, the guarded fetcher and its SSRF
  * rules, the `%PDF-` sniff and the "a link to an image is not a package

@@ -98,10 +98,11 @@ describe('the settler claims serially and never pre-claims a batch', () => {
 
 describe('the whole heavy PDF path is behind one slot', () => {
   /*
-   * The slot's wiring MOVED to `pdfElection.ts` when the election became a
-   * relocatable unit — the same code, now importable by the Cloud Run worker
-   * that runs it where there is CPU for it. The invariant is unchanged and is
-   * asserted where the code now lives.
+   * The slot's wiring MOVED to `pdfElection.ts` when the election became one
+   * named unit — the same code, lifted verbatim so that the thing measured to
+   * exceed an Edge Function's 2,000 ms CPU limit can be run against another
+   * runtime and compared. Nothing about the guard changed; it is asserted
+   * where the code now lives.
    */
   const pkg = read('supabase/functions/_shared/builderStock/pdfElection.ts');
 
