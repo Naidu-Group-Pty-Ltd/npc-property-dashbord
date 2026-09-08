@@ -3482,3 +3482,202 @@ behaviour.
 
 - 12 new tests, executed against the verbatim production blocks
 - `tsc --noEmit`, `security:edge-check` (339 against a 339 baseline) — clean
+
+---
+
+## §43 — Stage 4: reading the document, and who it says it is from (2026-09-08)
+
+§42 fixed what a labelled block promises. This is the rest of Stage 4: the whole
+document rendered through the **production** renderer and read page by page, and
+then the same document rendered as an unbranded clone would produce it.
+
+The harness imports `buildHtml` from `render-investment-report-pdf` itself and
+feeds it a real `investment_reports` row (`6 Acer Court, Bowral NSW 2576`,
+2026-09-02) plus the operator's real `global_report_settings`. Only
+`loadHouseCoverArt` needs Supabase and it fails gracefully, so the HTML is the
+production article. WeasyPrint **69.0** — the version the container pins —
+turns it into the PDF. Fifteen pages, read as a document.
+
+### Three chart defects, none of which a code review would have found
+
+**1. The bar chart plotted dimensions the engine never scored.** Acer's
+`investment_score.breakdown` marks `demand` and `growth` `excluded: true`,
+`hasData: false`, `weight: 0` — and leaves a placeholder `score` of **50**
+sitting in the field regardless. "Score drivers" drew five bars: risk 60,
+yield 10, location 65, **demand 50, growth 50**. The two invented bars sit
+mid-range between the three real ones, so the chart looks entirely normal.
+
+Three readers ask that question and one asked nothing at all.
+`reportBindingProjection` tests `excluded === true || hasData === false`;
+`breakdownEntries` tests that plus a zero weight; the renderer's
+`extractScoreBreakdownItems` read `.score` straight off the entry.
+`dimensionWasScored` is the one predicate now, exported from
+`scoreSections.pure.ts` and imported by the renderer. Re-rendered: five bars →
+three.
+
+**2. `&` printed as `&AMP;` on every chart label.** The Executive Verdict radar
+read `&AMP; AMENITY`. `svgEscape` runs first and `.toUpperCase()` ran on its
+output, so the entity's own letters were uppercased. The Contents page spells
+the same heading correctly — that path decodes — which is why it survived.
+`decodeHtmlEntities` / `svgLabel` / `svgLabelUpper` now carry the 15 label call
+sites, and `&amp;` is decoded **last** so `&amp;lt;` cannot become `<`.
+
+**3. The radar's longest label was clipped to `ASTRUCTURE`.** Labels anchor at
+`cx ± (R + 22)` and ran outside a 460-wide viewBox. The box is 560 now — a
+label gutter — with word-boundary wrapping at 15 characters and the score value
+shifted down by the extra lines. Re-rendered: `INFRASTRUCTURE & AMENITY`, in
+full, on two lines, clear of the polygon.
+
+### An unbranded deployment signed its reports with another business's name
+
+The same report rendered with the settings a freshly provisioned clone actually
+holds — `contact_details.company_name` empty, no white-label brand, the seeded
+`professional_disclaimer` row — carried **three businesses that are not the
+issuer**, on one document:
+
+| where | what it printed |
+| --- | --- |
+| watermark, tiled across every body page | `NPC` |
+| PDF `Author` and `dcterms.creator` | `NPC Property` |
+| back-page masthead | `PROPERTY` / `CONSULTING` |
+| PDF `Creator` | `NPC Premium PDF (WeasyPrint)` |
+
+`NPC` and `NPC Property` are the prime's trading name. `Property Consulting` is
+a name no business holds — a placeholder that reads as a firm, and one of six
+invented identities the fleet falls back to (`Property Consulting` ×14,
+`Property Report` ×7, `NPC Property`, `NPC`, `a property advisory firm`,
+`the Agency`).
+
+The fourth copy is the one that matters most, and it was not in the renderer at
+all. `useGlobalReportSettings.defaultDisclaimer` held the prime's own wording,
+verbatim:
+
+> *As a Professional Property Consultant & Buyers Agent, we provide information
+> and advice based on our expertise… Our services include assisting you in
+> identifying and evaluating potential opportunities, negotiating purchase
+> terms, and navigating the transaction process… By engaging our services, you
+> acknowledge…*
+
+Under an unbranded masthead every clause of that is false. The platform is not
+engaged by the reader, holds itself out as nobody's buyer's agent, and
+negotiates nothing. It is not a cosmetic slip: acting as, or holding out as, a
+real estate or buyer's agent is licensed conduct in every Australian state.
+
+### The rule
+
+**An identity and its disclaimer travel together**, because a disclaimer is a
+statement by the issuer about the issuer. `issuerIdentity.pure.ts` resolves both
+in one place, and there are exactly two issuers and never a third:
+
+- **`workspace`** — the deployment has said who it is (report contact company
+  name, or white-label brand). Its own name, its own disclaimer.
+- **`platform`** — the deployment has said nothing. **Aurixa Systems**, and the
+  technology provider's disclaimer.
+
+No invented trading name, no other tenant's name, no blank masthead — the same
+rule `platformBrand.ts` applies to the favicon and `submissionRecordBrand.ts`
+to the AML submission record, and the "no brand" set is deliberately kept in
+step with the latter so a document and its compliance record cannot disagree
+about who issued them.
+
+### Why the switch is on the READ and not on the default
+
+Fixing the default alone would not have closed it. A clone whose
+`global_report_settings` were seeded from the prime carries the prime's text in
+the row, and no default ever fires. So `resolveReportDisclaimer` is keyed on the
+resolved issuer, and the platform issuer prints the platform wording whatever is
+stored.
+
+The rule that makes that safe to state: *a deployment that has not said who it
+is cannot have a disclaimer of its own.* A disclaimer written by an
+unidentified party and printed under Aurixa's name is exactly the confusion this
+closes, and the escape is one keystroke — typing a company name moves the whole
+document to the `workspace` issuer.
+
+`is_enabled: false` is honoured for a named business and **not** for the
+platform: a report going out under Aurixa's name with no statement of what
+Aurixa is would be the same defect reached by a different route.
+
+### What the platform disclaimer says that the consultancy one could not
+
+Five paragraphs, each closing something the inherited wording left open. Two are
+worth naming.
+
+**It disclaims the licensed CATEGORY, not merely the responsibility.** "Accepts
+no responsibility" leaves the category claim standing, and the category claim is
+the licensing one — so it says, in terms, that Aurixa Systems is not a real
+estate agent, buyer's agent, property manager or licensed valuer, does not
+provide financial product, credit, taxation or legal advice, and is not a party
+to any property transaction. Stated as role and conduct rather than as a claim
+about which registrations the company holds, because the licensing question
+turns on what is *provided* and because this module cannot verify a corporate
+registration.
+
+**It does not extinguish the operator's own obligations.** A platform disclaimer
+that appeared to wipe out a reader's rights against the business that handed
+them the report would be a worse document than the one it replaces, so the
+limitation carries its own limit: *"That does not limit the obligations of the
+business that provided this report to you, whose own terms of engagement govern
+its relationship with you."* The word "we" appears nowhere — "we" is what made
+the consultancy wording read as an engagement.
+
+The word **"Compass"**, the ten-year cash flow tables and the modelled
+projections are all in the document, so the third paragraph says plainly that a
+projection rests on stated assumptions and that *assumptions are not
+predictions*.
+
+### The back page, and a promise it could not keep
+
+`CONTACT US` was drawn unconditionally over a contact list an unbranded
+deployment has no rows for — a whole section heading over nothing, which is
+§42's rule at page scale. It is drawn only when there is a row.
+
+### Nothing changed for anyone who has a brand
+
+The branded render, diffed before and after: **byte-identical** apart from the
+generation timestamp, two source comments, and the `generator` meta — the tool
+is Aurixa's rather than the prime's. The masthead, the contact rows, the
+disclaimer body and the watermark are unchanged. The prime has held
+`company_name: "Naidu Property Consulting Services"` since 2026-02-19, so
+nothing here can reach its documents.
+
+Verified on the unbranded render: **zero** occurrences of the string `NPC`
+anywhere in the HTML (from 10), PDF `Author` = `Aurixa Systems`, masthead
+`AURIXA` / `SYSTEMS`, no `CONTACT US` heading, the platform disclaimer on the
+page.
+
+### Named and not fixed
+
+Found by reading the fifteen pages, all outside this package's scope:
+
+- **Title and subtitle promoted to chapters** — Contents entries 02 and 03, and
+  a near-blank page 5.
+- **A WATCH callout truncated mid-word** at "finan".
+- **Weekly cash flow reads −$1,844** in the document against a stored
+  `weeklyNet` of −1,544.
+- **The cover states the address twice.**
+- **`1922` on the stat card, `1,922` in the prose** — one figure, two
+  thousands conventions.
+- **The cover's decorative SVG data-URI is rejected by WeasyPrint**, and
+  `repeat(auto-fit/auto-fill)` is unsupported (4 warnings).
+- **The disclaimer renders the source's hard line breaks** rather than
+  reflowing.
+- **`security-contract.test.ts` is wired into no script or workflow.** It was
+  updated so it stays truthful, and `stage4ChartTruth.spec.ts` covers the same
+  ground in a suite that does run — but a dormant contract test is a guard
+  nobody is holding.
+- **Five more invented-identity fallbacks outside the reporting engine** —
+  `client-portal-login`, `portal-notification-email`, `manage-agency-agreements`
+  and `_shared/brand-config.ts`, the last of which also falls back to the
+  prime's own `@npcservices.com.au` sender addresses with a stated reason
+  (a verified Resend sender). Same class, different surface.
+
+### Verification
+
+- 31 new tests across `stage4ReportIssuer.spec.ts` (19) and
+  `stage4ChartTruth.spec.ts` (12), the second proved to go red on the bug it
+  guards and green on the fix
+- Branded and unbranded documents rendered end-to-end through WeasyPrint 69.0
+  and read as documents, before and after
+- `tsc --noEmit`, `eslint`, `security:edge-check` (339 against a 339 baseline),
+  `audit:style`, `vitest run`, `npm run build` — clean

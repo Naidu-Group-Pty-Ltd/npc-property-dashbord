@@ -13,6 +13,8 @@ import { signStoragePaths } from "../_shared/storageSign.ts";
 import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSafety.ts";
 import { collectFootnoteDefinitions } from "./footnotes.ts";
 import { statCardHasValue } from "../_shared/reports/investment/blockHygiene.pure.ts";
+import { dimensionWasScored } from "../_shared/reports/investment/scoreSections.pure.ts";
+import { PLATFORM_ISSUER_NAME, resolveReportDisclaimer, resolveReportIssuer } from "../_shared/reports/issuerIdentity.pure.ts";
 // Both are called by `wrapInsightSections` below and neither was imported, so
 // every call to `buildHtml` threw `ReferenceError: wrapInsightHeadingSections is
 // not defined` before WeasyPrint was ever reached. The modules exist and are
@@ -541,7 +543,7 @@ function renderSvgChart(config: Record<string, unknown>, width: number, height: 
       const topPct = ((values[topIdx] || 0) / total * 100).toFixed(0);
       centerLabel = `
         <text x="${ringCx}" y="${ringCy - 4}" text-anchor="middle" font-family="Playfair Display,Georgia,serif" font-size="24" font-weight="800" fill="${ink}" ${tabular}>${topPct}%</text>
-        <text x="${ringCx}" y="${ringCy + 14}" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="8.5" font-weight="600" fill="${muted}" letter-spacing="1.6">${svgEsc((labels[topIdx] || "TOP").toUpperCase()).slice(0, 18)}</text>
+        <text x="${ringCx}" y="${ringCy + 14}" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="8.5" font-weight="600" fill="${muted}" letter-spacing="1.6">${svgLabelUpper(labels[topIdx] || "TOP").slice(0, 18)}</text>
       `;
     }
 
@@ -554,7 +556,7 @@ function renderSvgChart(config: Record<string, unknown>, width: number, height: 
       const valueLabel = `${formatAxisValue(v, axisMode)}  ·  ${pct}%`;
       return `<g transform="translate(${legendX},${y})">
         <rect x="0" y="-9" width="11" height="11" rx="2" fill="${CHART_PALETTE[i % CHART_PALETTE.length]}"/>
-        <text x="20" y="0" ${legendFontStyle} fill="${ink}">${svgEsc(labels[i] || "")}</text>
+        <text x="20" y="0" ${legendFontStyle} fill="${ink}">${svgLabel(labels[i] || "")}</text>
         <text x="20" y="14" font-family="Inter,Arial,sans-serif" font-size="9.5" font-weight="500" ${tabular} fill="${muted}">${svgEsc(valueLabel)}</text>
       </g>`;
     }).join("");
@@ -1127,6 +1129,46 @@ function svgEscape(s: string): string {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+/**
+ * Label text arriving from the report's markdown has ALREADY been HTML-escaped
+ * — `marked` turns `Infrastructure & amenity` into `Infrastructure &amp;
+ * amenity` before any shortcode is read. Two things then go wrong on the way
+ * into an SVG, and the second is the visible one:
+ *
+ *  - `svgEscape` escapes the `&` again, so the entity prints literally;
+ *  - `.toUpperCase()`, which fourteen chart labels apply, mangles the entity
+ *    ITSELF — `&amp;` becomes `&AMP;`, which is not an entity at all.
+ *
+ * Rendered, the Executive Verdict's radar label read **`&AMP; AMENITY`** on a
+ * client's page. The chapter-heading path already decodes (that is why the
+ * Contents page reads correctly and the charts do not); this is that same
+ * decode, named once so every label can share it.
+ *
+ * Decode-then-escape is not a widening: the text is escaped again on the way
+ * out, so nothing the model wrote can become markup.
+ */
+function decodeHtmlEntities(s: unknown): string {
+  return String(s ?? "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    // `&amp;` last, so `&amp;lt;` decodes to `&lt;` rather than to `<`.
+    .replace(/&amp;/g, "&");
+}
+
+/** A label drawn into an SVG: decoded once, then escaped for the SVG. */
+function svgLabel(s: unknown): string {
+  return svgEscape(decodeHtmlEntities(s));
+}
+
+/** The same, for the chart labels this renderer sets in capitals. */
+function svgLabelUpper(s: unknown): string {
+  return svgEscape(decodeHtmlEntities(s).toUpperCase());
+}
+
 /** Half-circle gauge — KPI score visualiser. */
 function renderGaugeSvg(value: number, max = 100, label = "", caption = ""): string {
   const v = Math.max(0, Math.min(max, Number(value) || 0));
@@ -1167,7 +1209,7 @@ function renderGaugeSvg(value: number, max = 100, label = "", caption = ""): str
     <text x="${cx}" y="${cy + 20}" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" letter-spacing="2.6" fill="${VIZ_INK_MUTED}">${svgEscape(("/" + max + "  ·  " + band).toUpperCase())}</text>
     <rect x="${cx - 38}" y="${cy + 30}" width="76" height="3" fill="${bandColor}" rx="1.5"/>
     ${label ? `<text x="${cx}" y="42" text-anchor="middle" font-family="Playfair Display,Georgia,serif" font-weight="700" font-size="18" fill="${VIZ_INK}">${svgEscape(label)}</text>` : ""}
-    ${caption ? `<text x="${cx}" y="62" text-anchor="middle" font-family="Inter,sans-serif" font-size="9.5" fill="${VIZ_INK_MUTED}" letter-spacing="1.4">${svgEscape(caption.toUpperCase())}</text>` : ""}
+    ${caption ? `<text x="${cx}" y="62" text-anchor="middle" font-family="Inter,sans-serif" font-size="9.5" fill="${VIZ_INK_MUTED}" letter-spacing="1.4">${svgLabelUpper(caption)}</text>` : ""}
   </svg>`;
 }
 
@@ -1277,8 +1319,8 @@ function renderHeatmapSvg(grid: number[][], rowLabels: string[] = [], colLabels:
       cells += `<text x="${x + cellW / 2}" y="${y + cellH / 2 + 3.5}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9.5" font-weight="600" fill="${VIZ_INK}" style="font-variant-numeric:tabular-nums;">${svgEscape(Number.isInteger(v) ? String(v) : v.toFixed(1))}</text>`;
     }
   }
-  const rowL = rowLabels.map((lbl, r) => `<text x="${padL - 10}" y="${padT + r * cellH + cellH / 2 + 3.5}" text-anchor="end" font-family="Inter,sans-serif" font-size="9.5" fill="${VIZ_INK_MUTED}">${svgEscape(lbl)}</text>`).join("");
-  const colL = colLabels.map((lbl, c) => `<text x="${padL + c * cellW + cellW / 2}" y="${padT - 10}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" fill="${VIZ_INK_MUTED}" letter-spacing="0.3">${svgEscape(lbl)}</text>`).join("");
+  const rowL = rowLabels.map((lbl, r) => `<text x="${padL - 10}" y="${padT + r * cellH + cellH / 2 + 3.5}" text-anchor="end" font-family="Inter,sans-serif" font-size="9.5" fill="${VIZ_INK_MUTED}">${svgLabel(lbl)}</text>`).join("");
+  const colL = colLabels.map((lbl, c) => `<text x="${padL + c * cellW + cellW / 2}" y="${padT - 10}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" fill="${VIZ_INK_MUTED}" letter-spacing="0.3">${svgLabel(lbl)}</text>`).join("");
   const t = title ? `<text x="${padL}" y="22" font-family="Playfair Display,Georgia,serif" font-weight="700" font-size="14" fill="${VIZ_INK}">${svgEscape(title)}</text>` : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet"><rect width="${w}" height="${h}" rx="6" fill="${VIZ_PAPER}"/>${t}${colL}${rowL}${cells}</svg>`;
 }
@@ -1286,7 +1328,13 @@ function renderHeatmapSvg(grid: number[][], rowLabels: string[] = [], colLabels:
 /** Score wheel — radar/polar for multi-dimensional scoring. */
 function renderScoreWheelSvg(scores: number[], labels: string[] = [], max = 100): string {
   if (scores.length < 3 || scores.length > MAX_WHEEL_SCORES) return "";
-  const w = 460, h = 360, cx = w / 2, cy = h / 2 + 8, R = 130;
+  // The width is a LABEL GUTTER, not a chart size. Labels are anchored at
+  // `cx ± (R + 22)` and set outward, so the left- and right-most ones need room
+  // beyond the polygon. At the old 460 the leftmost anchor sat at x=86 with the
+  // text running left from there, and `Infrastructure & amenity` — 24 characters
+  // at ~6.2px each — started at roughly x=-63. It was clipped to `ASTRUCTURE &
+  // AMENITY` on a client's Executive Verdict page.
+  const w = 560, h = 360, cx = w / 2, cy = h / 2 + 8, R = 130;
   const n = scores.length;
   const angle = (i: number) => -Math.PI / 2 + (i / n) * Math.PI * 2;
   const pt = (i: number, r: number) => `${(cx + r * Math.cos(angle(i))).toFixed(1)},${(cy + r * Math.sin(angle(i))).toFixed(1)}`;
@@ -1300,13 +1348,36 @@ function renderScoreWheelSvg(scores: number[], labels: string[] = [], max = 100)
     const r = R * Math.max(0, Math.min(1, (Number(s) || 0) / max));
     return `<circle cx="${(cx + r * Math.cos(angle(i))).toFixed(1)}" cy="${(cy + r * Math.sin(angle(i))).toFixed(1)}" r="3" fill="${VIZ_GOLD}" stroke="${VIZ_PAPER}" stroke-width="1"/>`;
   }).join("");
+  // A gutter alone is not enough for an arbitrarily long label, so one that
+  // would still overrun is wrapped once on a word boundary. Two lines is the
+  // limit: a third would collide with the ring below it, and a label needing
+  // three lines is one the caller should have shortened.
+  const WHEEL_LABEL_CHARS = 15;
+  const wheelLabelLines = (raw: string): string[] => {
+    const text = decodeHtmlEntities(raw).toUpperCase().trim();
+    if (text.length <= WHEEL_LABEL_CHARS) return [text];
+    const words = text.split(/\s+/);
+    const first: string[] = [];
+    while (words.length && [...first, words[0]].join(" ").length <= WHEEL_LABEL_CHARS) {
+      first.push(words.shift()!);
+    }
+    // A single word longer than the budget has no break point; leave it whole
+    // rather than hyphenating a label nobody can then read.
+    if (!first.length) return [text];
+    return words.length ? [first.join(" "), words.join(" ")] : [first.join(" ")];
+  };
   const lbls = (labels.length ? labels : scores.map((_, i) => `D${i + 1}`)).map((lbl, i) => {
     const a = angle(i);
     const lx = cx + (R + 22) * Math.cos(a);
     const ly = cy + (R + 22) * Math.sin(a);
     const anchor = Math.abs(Math.cos(a)) < 0.2 ? "middle" : Math.cos(a) > 0 ? "start" : "end";
-    return `<text x="${lx.toFixed(1)}" y="${(ly + 3.5).toFixed(1)}" text-anchor="${anchor}" font-family="Inter,sans-serif" font-size="9.5" fill="${VIZ_INK_MUTED}" letter-spacing="0.4">${svgEscape(lbl.toUpperCase())}</text>
-      <text x="${lx.toFixed(1)}" y="${(ly + 15).toFixed(1)}" text-anchor="${anchor}" font-family="Playfair Display,Georgia,serif" font-weight="700" font-size="11" fill="${VIZ_INK}" style="font-variant-numeric:tabular-nums;">${Math.round(Number(scores[i]) || 0)}</text>`;
+    const lines = wheelLabelLines(lbl);
+    const lineEls = lines.map((line, k) =>
+      `<text x="${lx.toFixed(1)}" y="${(ly + 3.5 + k * 11).toFixed(1)}" text-anchor="${anchor}" font-family="Inter,sans-serif" font-size="9.5" fill="${VIZ_INK_MUTED}" letter-spacing="0.4">${svgEscape(line)}</text>`,
+    ).join("");
+    const valueY = ly + 15 + (lines.length - 1) * 11;
+    return `${lineEls}
+      <text x="${lx.toFixed(1)}" y="${valueY.toFixed(1)}" text-anchor="${anchor}" font-family="Playfair Display,Georgia,serif" font-weight="700" font-size="11" fill="${VIZ_INK}" style="font-variant-numeric:tabular-nums;">${Math.round(Number(scores[i]) || 0)}</text>`;
   }).join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
     <rect width="${w}" height="${h}" rx="6" fill="${VIZ_PAPER}"/>
@@ -1336,7 +1407,7 @@ function renderBulletSvg(opts: { value: number; target?: number; max?: number; r
     ? `<line x1="${xOf(opts.target).toFixed(1)}" x2="${xOf(opts.target).toFixed(1)}" y1="${padT + 2}" y2="${padT + plotH - 2}" stroke="${VIZ_RISK}" stroke-width="3"/>`
     : "";
   const label = opts.label ? `<text x="${padL - 12}" y="${padT + plotH / 2 - 2}" text-anchor="end" font-family="Playfair Display,Georgia,serif" font-weight="700" font-size="12" fill="${VIZ_INK}">${svgEscape(opts.label)}</text>` : "";
-  const sub = opts.sub ? `<text x="${padL - 12}" y="${padT + plotH / 2 + 13}" text-anchor="end" font-family="Inter,sans-serif" font-size="8.5" fill="${VIZ_INK_MUTED}" letter-spacing="0.6">${svgEscape(opts.sub.toUpperCase())}</text>` : "";
+  const sub = opts.sub ? `<text x="${padL - 12}" y="${padT + plotH / 2 + 13}" text-anchor="end" font-family="Inter,sans-serif" font-size="8.5" fill="${VIZ_INK_MUTED}" letter-spacing="0.6">${svgLabelUpper(opts.sub)}</text>` : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
     <rect width="${w}" height="${h}" fill="${VIZ_PAPER}" rx="4"/>${bands}${bar}${tgt}${label}${sub}
   </svg>`;
@@ -1361,13 +1432,13 @@ function renderMarimekkoSvg(rows: Array<{ label: string; weight: number; segment
       y += segH;
       return r;
     }).join("");
-    const lbl = `<text x="${(x + colW / 2).toFixed(1)}" y="${(h - padB + 16).toFixed(1)}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" fill="${VIZ_INK}">${svgEscape(row.label)}</text>`;
+    const lbl = `<text x="${(x + colW / 2).toFixed(1)}" y="${(h - padB + 16).toFixed(1)}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" fill="${VIZ_INK}">${svgLabel(row.label)}</text>`;
     const x0 = x; x += colW;
     return segs + lbl;
   }).join("");
   const legend = segLabels.map((lbl, i) => {
     const lx = padL + i * 110;
-    return `<rect x="${lx}" y="10" width="10" height="10" fill="${palette[i % palette.length]}"/><text x="${lx + 14}" y="19" font-family="Inter,sans-serif" font-size="9" fill="${VIZ_INK_MUTED}" letter-spacing="0.5">${svgEscape(lbl.toUpperCase())}</text>`;
+    return `<rect x="${lx}" y="10" width="10" height="10" fill="${palette[i % palette.length]}"/><text x="${lx + 14}" y="19" font-family="Inter,sans-serif" font-size="9" fill="${VIZ_INK_MUTED}" letter-spacing="0.5">${svgLabelUpper(lbl)}</text>`;
   }).join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
     <rect width="${w}" height="${h}" fill="${VIZ_PAPER}" rx="6"/>${legend}${groups}
@@ -1509,7 +1580,7 @@ function renderQuadrantSvg(
     { x: midX - plotW / 4, y: padT + plotH - 8, text: opts.q3 || "" },
     { x: midX + plotW / 4, y: padT + plotH - 8, text: opts.q4 || "" },
   ].filter((q) => q.text).map((q) =>
-    `<text x="${q.x}" y="${q.y}" text-anchor="middle" font-family="Inter,sans-serif" font-size="8.5" font-weight="700" fill="${VIZ_INK_MUTED}" letter-spacing="1.6">${svgEscape(q.text.toUpperCase())}</text>`
+    `<text x="${q.x}" y="${q.y}" text-anchor="middle" font-family="Inter,sans-serif" font-size="8.5" font-weight="700" fill="${VIZ_INK_MUTED}" letter-spacing="1.6">${svgLabelUpper(q.text)}</text>`
   ).join("");
   const dots = points.map((p) => {
     const cx = xOf(p.x), cy = yOf(p.y);
@@ -1527,8 +1598,8 @@ function renderQuadrantSvg(
     <line x1="${padL}" x2="${padL + plotW}" y1="${midY}" y2="${midY}" stroke="${VIZ_RULE}" stroke-dasharray="3 3" stroke-width="0.6"/>
     ${quadLabels}
     ${dots}
-    <text x="${padL + plotW / 2}" y="${h - 18}" text-anchor="middle" font-family="Inter,sans-serif" font-size="10" fill="${VIZ_INK_MUTED}" letter-spacing="1.6">${svgEscape((opts.xLabel || "").toUpperCase())} →</text>
-    <text x="20" y="${padT + plotH / 2}" text-anchor="middle" font-family="Inter,sans-serif" font-size="10" fill="${VIZ_INK_MUTED}" letter-spacing="1.6" transform="rotate(-90 20 ${padT + plotH / 2})">${svgEscape((opts.yLabel || "").toUpperCase())} →</text>
+    <text x="${padL + plotW / 2}" y="${h - 18}" text-anchor="middle" font-family="Inter,sans-serif" font-size="10" fill="${VIZ_INK_MUTED}" letter-spacing="1.6">${svgLabelUpper(opts.xLabel || "")} →</text>
+    <text x="20" y="${padT + plotH / 2}" text-anchor="middle" font-family="Inter,sans-serif" font-size="10" fill="${VIZ_INK_MUTED}" letter-spacing="1.6" transform="rotate(-90 20 ${padT + plotH / 2})">${svgLabelUpper(opts.yLabel || "")} →</text>
   </svg>`;
 }
 
@@ -1609,7 +1680,7 @@ function renderDonutSvg(
     return `<path d="${d}" fill="${fill}" stroke="${VIZ_PAPER}" stroke-width="1.2"/>`;
   }).join("");
   const centerVal = opts.centerLabel ?? `${Math.round((segments[0]?.value || 0) / total * 100)}%`;
-  const centerSub = svgEscape((opts.centerSub ?? segments[0]?.label ?? "").toUpperCase());
+  const centerSub = svgLabelUpper(opts.centerSub ?? segments[0]?.label ?? "");
   const legend = segments.map((s, i) => {
     const pct = Math.round((Math.max(0, s.value) / total) * 100);
     const y = 48 + i * 22;
@@ -1649,7 +1720,7 @@ function renderTilesSvg(
     const fill = `rgba(212,168,67,${alpha.toFixed(2)})`;
     return `<g>
       <rect x="${x}" y="${y}" width="${cellW}" height="${cellH}" rx="4" fill="${fill}" stroke="${VIZ_RULE}" stroke-width="0.6"/>
-      <text x="${x + 12}" y="${y + 20}" font-family="Inter,sans-serif" font-size="8.5" letter-spacing="1.2" fill="${VIZ_INK_MUTED}">${svgEscape((t.label || "").toUpperCase())}</text>
+      <text x="${x + 12}" y="${y + 20}" font-family="Inter,sans-serif" font-size="8.5" letter-spacing="1.2" fill="${VIZ_INK_MUTED}">${svgLabelUpper(t.label || "")}</text>
       <text x="${x + 12}" y="${y + 50}" font-family="Playfair Display,Georgia,serif" font-weight="800" font-size="22" fill="${VIZ_INK}" style="font-variant-numeric:lining-nums tabular-nums;">${svgEscape(t.value)}</text>
       ${t.sub ? `<text x="${x + 12}" y="${y + cellH - 12}" font-family="Inter,sans-serif" font-size="8.5" fill="${VIZ_INK_MUTED}">${svgEscape(t.sub)}</text>` : ""}
     </g>`;
@@ -1696,7 +1767,7 @@ function renderTimelineRibbonSvg(items: Array<{ phase: string; label: string; co
     const labels = list.map((it, j) => `<text x="${x}" y="${axisY + 36 + j * 15}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" fill="${VIZ_INK}" font-weight="${j === 0 ? 700 : 500}">${svgEscape(it.label.length > 28 ? it.label.slice(0, 26) + "…" : it.label)}</text>`).join("");
     return `<g>
       <circle cx="${x}" cy="${axisY}" r="8" fill="${i === 0 ? VIZ_NAVY : VIZ_GOLD}" stroke="${VIZ_PAPER}" stroke-width="2"/>
-      <text x="${x}" y="${axisY - 24}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" letter-spacing="1.4" fill="${VIZ_INK_MUTED}" font-weight="700">${svgEscape(phase.toUpperCase())}</text>
+      <text x="${x}" y="${axisY - 24}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" letter-spacing="1.4" fill="${VIZ_INK_MUTED}" font-weight="700">${svgLabelUpper(phase)}</text>
       ${labels}
     </g>`;
   }).join("");
@@ -1724,6 +1795,13 @@ function extractScoreBreakdownItems(score: any): Array<{ label: string; value: n
   const raw = score?.breakdown || score?.scores || score?.components || {};
   if (!raw || typeof raw !== "object") return [];
   return Object.entries(raw).map(([key, val]: [string, any]) => {
+    // A dimension the engine could not score carries a placeholder `score` of
+    // 50 beside `excluded: true`, `hasData: false` and `weight: 0`. Plotting it
+    // draws a mid-range bar that looks exactly like a measurement — on
+    // `6 Acer Court` the chart showed demand 50 and growth 50 between a real
+    // risk 60 and a real location 65. `dimensionWasScored` is the same
+    // predicate the binding projection and the composed scorecard ask.
+    if (val && typeof val === "object" && !dimensionWasScored(val)) return null;
     const n = typeof val === "number" ? val : Number(val?.score ?? val?.value ?? val?.rating);
     if (!Number.isFinite(n)) return null;
     const label = key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ").replace(/\bscore\b/ig, "").trim();
@@ -2879,9 +2957,16 @@ export async function buildHtml(
 ): Promise<string> {
   const contact = opts.contact || {};
   const disclaimer = opts.disclaimer || {};
+  // Who this document is issued BY. Resolved ONCE, here, because four places
+  // below used to answer it separately and printed three different businesses
+  // on one unbranded report — `NPC` in the watermark, `NPC Property` in the PDF
+  // metadata and `PROPERTY CONSULTING` on the back page. See
+  // `_shared/reports/issuerIdentity.pure.ts`.
+  const issuer = resolveReportIssuer({ companyName: contact.company_name, brandName });
+  const issuedDisclaimer = resolveReportDisclaimer(issuer, disclaimer);
   // Keep report-wide advisor attribution initialized before any generated HTML/CSS
   // fragments so later Phase blocks cannot accidentally hit a temporal-dead-zone.
-  const advisorLine = contact.name || contact.advisor || contact.company_name || brandName;
+  const advisorLine = contact.name || contact.advisor || issuer.name;
   const includeCharts = opts.includeCharts !== false;
   const includeSparklines = opts.includeSparklines !== false;
   const includeHeroImages = opts.includeHeroImages === true; // opt-in, costs tokens
@@ -3646,7 +3731,7 @@ export async function buildHtml(
     .pill-neutral { background: ${THEME.neutralBg}; color: ${THEME.neutralInk}; }
 
     /* ── Cover ── */
-    /* ── Cover (standard NPC cover image, full-bleed) ── */
+    /* ── Cover (standard cover image, full-bleed) ── */
     .cover {
       page: cover;
       page-break-after: always;
@@ -4415,7 +4500,7 @@ export async function buildHtml(
 
   // PDF metadata — surfaced in Acrobat properties + search indexing.
   const docTitle = `${address} — Investment Report`;
-  const docAuthor = String(contact.company_name || brandName || "NPC Property");
+  const docAuthor = issuer.name;
   const docDescription = `Comprehensive investment analysis for ${address}.`;
   const locKeywords = [loc?.suburb, loc?.state, loc?.postcode].filter(Boolean).join(", ");
   const docKeywords = [
@@ -4436,7 +4521,7 @@ export async function buildHtml(
 <meta name="description" content="${esc(docDescription)}" />
 <meta name="keywords" content="${esc(docKeywords)}" />
 <meta name="subject" content="${esc(`Investment Report — ${address}`)}" />
-<meta name="generator" content="NPC Premium PDF (WeasyPrint)" />
+<meta name="generator" content="${esc(PLATFORM_ISSUER_NAME)} reporting platform (WeasyPrint)" />
 <meta name="dcterms.created" content="${esc(docCreated)}" />
 <meta name="dcterms.creator" content="${esc(docAuthor)}" />
 <!-- Fonts bundled in the WeasyPrint container at /usr/share/fonts/truetype/premium.
@@ -4450,7 +4535,7 @@ ${(() => {
   // ── Premium Layer (Phase 1+2) — wins specificity over all earlier rules.
   // Watermark generated as a tiled SVG data URI: ultra-light diagonal brand
   // string repeated across every page background.
-  const wmText = esc(String(contact.company_name || brandName || "NPC").toUpperCase());
+  const wmText = esc(issuer.name.toUpperCase());
   const wmSvg = `data:image/svg+xml;utf8,${encodeURIComponent(`
     <svg xmlns='http://www.w3.org/2000/svg' width='560' height='560' viewBox='0 0 560 560'>
       <g transform='rotate(-32 280 280)' font-family='Inter, sans-serif' font-size='13' font-weight='700'
@@ -5318,9 +5403,9 @@ ${
       : ""
   }
 
-<!-- ── Contact + Disclaimer closing page (matches all other NPC reports) ── -->
+<!-- ── Contact + Disclaimer closing page (shared by every report format) ── -->
 ${(() => {
-  const companyRaw = String(contact.company_name || brandName || "Property Consulting").toUpperCase();
+  const companyRaw = issuer.name.toUpperCase();
   const parts = companyRaw.split(" ");
   const mainCompany = parts.length >= 2 ? parts.slice(0, -1).join(" ") : parts[0];
   const subCompany = parts.length >= 2 ? parts[parts.length - 1] : "";
@@ -5350,9 +5435,11 @@ ${(() => {
     .filter(([, v]) => v)
     .map(([l, v]) => `<div class="contact-row"><div class="label">${esc(l)}</div><div class="value">${linkifyValue(String(l), String(v))}</div></div>`)
     .join("");
-  const discText = disclaimer.is_enabled !== false && disclaimer.text
-    ? String(disclaimer.text)
-    : "This report is provided for general informational purposes only and does not constitute financial, taxation, legal, or investment advice. All figures, projections, and market commentary are derived from publicly available data and reasonable assumptions at the time of writing, and may change. Recipients should seek independent professional advice before making any investment decisions.";
+  // The issuer decides the wording. A named business speaks its own; an
+  // unbranded deployment issues under Aurixa Systems and speaks the technology
+  // provider's, which is a different statement rather than the same one with a
+  // name swapped — see `_shared/reports/issuerIdentity.pure.ts`.
+  const discText = issuedDisclaimer.text;
   const discParas = discText
     .split(/\n\s*\n|\n/)
     .map((p) => p.trim())
@@ -5362,8 +5449,8 @@ ${(() => {
   return `<section class="disclaimer-page">
     <div class="company-main">${esc(mainCompany)}</div>
     ${subCompany ? `<div class="company-sub">${esc(subCompany)}</div>` : ""}
-    <div class="contact-heading">CONTACT US</div>
-    <div class="contact-list">${rowsHtml}</div>
+    ${rowsHtml ? `<div class="contact-heading">CONTACT US</div>
+    <div class="contact-list">${rowsHtml}</div>` : ""}
     <div class="disclaimer-body">${discParas}</div>
   </section>`;
 })()}

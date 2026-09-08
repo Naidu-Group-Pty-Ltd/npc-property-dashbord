@@ -28,6 +28,7 @@ import { Separator } from '@/components/ui/separator';
 import { ReportGenerationStatus } from '@/components/billing/ReportGenerationStatus';
 import { TokenCostEstimate } from '@/components/billing/TokenCostEstimate';
 import { estimateTokens } from '@/lib/missionControl';
+import { resolveReportDisclaimer, resolveReportIssuer } from '@/lib/reports/issuerIdentity.pure';
 
 interface BorrowingCapacityAssessment {
   borrowingCapacity: number;
@@ -3054,24 +3055,32 @@ export function PortfolioAnalysisPDFGenerator({
       
       // ============= BRANDED DISCLAIMER & CONTACT PAGE =============
       console.log('📝 Creating branded disclaimer page...');
+      const __issuer = resolveReportIssuer({
+        companyName: globalSettings?.contactDetails?.company_name,
+      });
+      const __disclaimer = resolveReportDisclaimer(__issuer, globalSettings?.disclaimer);
       drawPdfLibDisclaimerPage(
         pdfDoc,
         PAGE_WIDTH,
         PAGE_HEIGHT,
         helveticaFont,
         helveticaBold,
-        globalSettings?.contactDetails || {
-          company_name: 'Property Report',
-          phone: '',
-          email: '',
-          website: '',
-          address: '',
-          abn: '',
+        // Who this is issued by — resolved by the one module that answers it,
+        // never an invented trading name. See
+        // `_shared/reports/issuerIdentity.pure.ts`.
+        {
+          ...(globalSettings?.contactDetails ?? {
+            company_name: '', phone: '', email: '', website: '', address: '', abn: '',
+          }),
+          company_name: __issuer.name,
         },
-        globalSettings?.disclaimer || {
-          text: 'As a Professional Property Consultant & Buyers Agent, we provide information and advice based on our expertise and experience in the real estate market. Please be aware that the advice and insights offered are for general informational purposes only and should not be considered financial advice. While we strive to ensure the accuracy and relevance of the information provided, real estate markets are dynamic and subject to change and cannot guarantee the future performance or outcomes of any property investment. It is important to understand that real estate investments carry risks, including market fluctuations, changes in property values, and potential financial losses. Our services include assisting you in identifying and evaluating potential opportunities, negotiating purchase terms, and navigating the transaction process. Any decisions to purchase, sell, or invest in real estate should be made after careful consideration and consultation with appropriate financial, legal, and tax advisors. By engaging our services, you acknowledge that you have read and understood this disclaimer and agree to take full responsibility for your property-related decisions. Always conduct your own research and due diligence to ensure that any property transaction aligns with your financial objectives and risk profile.',
-          is_enabled: true,
-          font_size: 'small',
+        // The wording follows the issuer. This literal used to be the prime's
+        // own — a licensed buyer's agent describing a service it performs —
+        // printed by any deployment whose settings had not loaded.
+        {
+          text: __disclaimer.text,
+          is_enabled: __disclaimer.text !== '',
+          font_size: globalSettings?.disclaimer?.font_size ?? 'small',
         },
       );
       console.log('✓ branded disclaimer page complete');

@@ -58,20 +58,48 @@ interface BreakdownEntry {
   score: number | undefined;
 }
 
+/**
+ * Did the engine actually score this dimension?
+ *
+ * The one predicate for that question, because there were three readings of it
+ * and one of them was wrong. `investment_score.breakdown.<dim>` carries
+ * `excluded: true`, `hasData: false` and `weight: 0` when the engine had
+ * nothing to score with — **and a placeholder `score` of 50 sitting in the
+ * field regardless**. A reader that takes `.score` without asking this question
+ * publishes that 50 as a measurement.
+ *
+ * `reportBindingProjection` asked it (`excluded === true || hasData === false`)
+ * and `breakdownEntries` asked it (`(hasData ?? available) !== false` plus a
+ * zero-weight test); `render-investment-report-pdf`'s
+ * `extractScoreBreakdownItems` asked nothing at all, and drew the Executive
+ * Summary's "Score drivers" bar chart from the raw entries. Rendered against
+ * `6 Acer Court` — a record whose demand and growth dimensions are both
+ * excluded — the chart plotted five bars: risk 60, yield 10, location 65,
+ * **demand 50, growth 50**. The two fabricated bars sit mid-range between the
+ * real ones, so nothing about the chart looks wrong.
+ *
+ * Exported so the renderer asks this rather than a fourth version of it.
+ */
+export function dimensionWasScored(raw: unknown): boolean {
+  if (!isRecord(raw)) return false;
+  // Generator-written breakdowns carry `hasData`; engine-written ones carry
+  // `available`. Either being explicitly false means the dimension was not
+  // scored and must not be tabulated as though it were.
+  if (raw.excluded === true) return false;
+  if ((raw.hasData ?? raw.available) === false) return false;
+  // A dimension the engine gave no weight contributed nothing to the total.
+  const weight = num(raw.weight);
+  return !(weight !== undefined && weight <= 0);
+}
+
 /** The dimensions that actually carried data, in stored order. */
 function breakdownEntries(score: unknown): BreakdownEntry[] {
   if (!isRecord(score) || !isRecord(score.breakdown)) return [];
   const out: BreakdownEntry[] = [];
   for (const [key, raw] of Object.entries(score.breakdown)) {
     if (!isRecord(raw)) continue;
-    // Generator-written breakdowns carry `hasData`; engine-written ones carry
-    // `available`. Either being explicitly false means the dimension was not
-    // scored and must not be tabulated as though it were.
-    const carried = (raw.hasData ?? raw.available) !== false;
-    if (!carried) continue;
-    const weight = num(raw.weight);
-    if (weight !== undefined && weight <= 0) continue;
-    out.push({ key, label: dimensionLabel(key), weight, score: num(raw.score) });
+    if (!dimensionWasScored(raw)) continue;
+    out.push({ key, label: dimensionLabel(key), weight: num(raw.weight), score: num(raw.score) });
   }
   return out;
 }
