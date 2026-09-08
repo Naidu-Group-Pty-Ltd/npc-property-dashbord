@@ -1,5 +1,6 @@
 {
   "//": "The Builder Stock Cloudflare worker, typechecked on its own: it ships outside src/ and supabase/functions/, deliberately imports nothing, and types its AI binding locally — so the app tsconfig never sees it and vite never checks it. Strict, DOM-lib (workerd exposes the same fetch/streams/crypto surface), no emit.",
+  "//exclude": "builder-stock-pdf-probe is a TEMPORARY feasibility probe and breaks the premise above ON PURPOSE: importing the shared election is the whole point of it, so it carries Deno-style `.ts` specifiers and a remote `https://esm.sh/...` import that this compiler cannot resolve — 59 errors, none of which is a defect. It is checked by the two toolchains that actually compile it: `deno check` (which understands both) and `npx wrangler deploy --dry-run -c cloudflare/builder-stock-pdf-probe/wrangler.jsonc` (which builds it, alias and all). The exclusion names that one directory so it can never quietly grow to cover the worker this file exists for, and it leaves with the probe.",
   "compilerOptions": {
     "target": "ES2022",
     "module": "ES2022",
@@ -9,5 +10,6 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["cloudflare"]
+  "include": ["cloudflare"],
+  "exclude": ["cloudflare/builder-stock-pdf-probe"]
 }

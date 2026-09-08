@@ -290,6 +290,29 @@ describe('nothing in production routes anywhere', () => {
     }
   });
 
+  /*
+   * THE PROBE IS EXCLUDED FROM THE WORKER TYPE GATE, AND ONLY THE PROBE.
+   *
+   * `tsconfig.worker.json` exists for `builder-stock-image-worker`, whose
+   * premise — stated in its own comment — is that it imports nothing. The
+   * probe breaks that on purpose: importing the shared election is the point,
+   * so it carries Deno-style `.ts` specifiers and a remote `esm.sh` import
+   * that this compiler cannot resolve. 59 errors, not one of them a defect.
+   * It is checked instead by `deno check` and by the wrangler build, the two
+   * toolchains that actually compile it.
+   *
+   * What must never happen is that exclusion widening. A gate switched off for
+   * the worker it was written for is worse than no gate, because the config
+   * still looks like one.
+   */
+  it('the worker type gate excludes the probe and nothing else', () => {
+    const worker = JSON.parse(read('tsconfig.worker.json'));
+    expect(worker.include).toEqual(['cloudflare']);
+    expect(worker.exclude).toEqual(['cloudflare/builder-stock-pdf-probe']);
+    // The real worker is still inside the gate.
+    expect(here('cloudflare/builder-stock-image-worker/src/index.ts')).toBe(true);
+  });
+
   it('and the runtime is not re-armed for an unproven boundary', () => {
     const runtime = read('supabase/functions/_shared/builderStock/runtimeVersion.pure.ts');
     expect(runtime).toContain('export const RUNTIME_VERSION = 2;');
