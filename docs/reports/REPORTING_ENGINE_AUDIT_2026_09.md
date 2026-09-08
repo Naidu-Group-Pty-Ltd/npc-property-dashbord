@@ -3774,3 +3774,160 @@ reader comparing two properties finds the same dimension in the same row.
   the directive still draws
 - `vitest run` — 21,938 passed, 0 failed; `tsc`, `eslint`, `build`,
   `audit:style`, `security:edge-check` at baseline — clean
+
+---
+
+## §45 — Stage 5: the record must hold what the document asserts (2026-09-08)
+
+Stage 5 asks whether the pipeline is right across the range of properties the
+business actually sees. Doing that naively — render five more reports and read
+them — is Stage 4 five times, so the space was derived from what the pipeline
+genuinely **forks on** and the live corpus was counted into it.
+
+The first measurement changed the question. **The range has collapsed.**
+
+### `property_specs` is a hardcoded string and eight nulls
+
+Every one of the 68 reports generated since June 2026 carries
+`property_specs.property_type = 'Residential Property'` and **null in every
+other field** — no bedrooms, no land size, no build size, no parking, no year
+built, no zoning, no council area. `1/27D Mitchell Street` is unmistakably a
+unit and its record says nothing. `6 Acer Court` is a four-bedroom house on
+1,922 m² and its record says nothing.
+
+Except the record does know. All of it is in `manual_overrides`:
+`propertyType: "house"`, `landSizeSqm: 1922`, `buildSizeSqm: 253`,
+`carSpaces: 2`.
+
+The generator resolves every one of those correctly — `effectiveLandSizeSqm`
+and its siblings merge the overrides over the listing, and those merged values
+build the prompt, the duty assessment and the score — and then persists the
+**un-merged half**:
+
+```ts
+land_size_sqm: propertyDetails?.landSizeSqm || null,
+property_type: standardizedPropertyType || propertyDetails?.propertyType || 'Residential Property',
+```
+
+The answer is computed, used, and discarded at the moment of writing it down.
+Measured across the completed corpus:
+
+| the operator supplied | the spec column stored |
+| --- | ---: |
+| `landSizeSqm` | null on **127** |
+| `buildSizeSqm` | null on **122** |
+| `carSpaces` | null on **144** |
+| `propertyType` | the literal on **84** |
+
+`'Residential Property'` is not a measurement. `normalisePropertyType` returns
+undefined for it, `dRisk` tests `unit|apartment|townhouse|house` and hits none,
+`financialEngine` tests `=== 'unit'` for the strata estimate and misses. It is
+a placeholder that reads as a classification — the same class as a `0.00%`
+yield standing in for an unknown rent.
+
+### Two rules
+
+**The record must hold what the document asserts.** `composePropertySpecs`
+takes the merged facts; every field is `| null` and a caller that knows nothing
+writes nulls, which is a true statement about the record.
+
+**Reading heals as well as writing.** Fixing the write alone would leave all
+1,180 stored reports with an empty spec block for ever while the facts sit in
+`manual_overrides` on every one of them. `readPropertyFacts` resolves the spec
+column first and falls back to the overrides — the asymmetry
+`healFinanceIdentity` settled on, for the same reason: a read-path repair
+reaches every reader with no migration and no stored byte overwritten.
+
+### The fork read four keys and three had never been written
+
+`fork-investment-report` built its score input from
+`parent.property_specs?.price`, `?.weeklyRent`, `?.state` and `?.propertyType`.
+The writer has only ever emitted `land_size_sqm`, `building_size_sqm`,
+`bedrooms`, `bathrooms`, `parking`, `year_built`, `property_type`, `zoning`,
+`council_area`. Three of the four names do not exist and the fourth is the
+writer's `property_type` misspelled.
+
+This is the `aml.cases.tenant_id` class in JSONB, where **nothing errors**: the
+read yields `undefined`, `Number(undefined)` yields `NaN`, and the `||` chain
+silently takes the next rung.
+
+Realised exposure, measured rather than assumed: `price` and `weeklyRent` are
+shadowed by working rungs above them, so they cost nothing. `propertyType`
+resolved to the placeholder while the operator's own answer sat in `overrides`,
+destructured two lines above. `dRisk` is its only consumer and is weighted 15%
+on the financial fork, 5% on the composite and **absent from
+`DUE_DILIGENCE_WEIGHTS`** — so the strategic fork is unaffected, and my first
+hypothesis that it moved every fork was wrong. Executed against a real parent:
+a unit grades **B at 60 where the record says C+ at 57**. There are 19
+apartments in the corpus and **none has ever been forked**, so this is latent —
+and armed, and in the inflating direction.
+
+### The prompt instructed the fabrication
+
+`Property Characteristics` supplied the model a fill-in-the-blank on six rows:
+
+```
+| Land Size | ${effectiveLandSizeSqm ? … : 'Estimated XXX-XXX m² (typical for suburb)'} |
+| Bedrooms  | ${effectiveBeds  || 'X (typical for property type)'} |
+| Parking   | ${propertyDetails?.carSpaces || 'X-X spaces'} |
+| Condition | ${propertyDetails?.condition || 'Good to excellent'} |
+```
+
+**169** stored documents print an `Estimated N–N m²` land size and **201**
+assert `| Condition | Good to excellent |` about a property nobody inspected.
+Three sampled reports state a land size roughly **double** the operator's own
+recorded figure and then reason from it: `38 Larcom Crescent` says `~500 m²`
+throughout — council rates, land tax and rent comparables — against a recorded
+**255**. `80 Alison Street` prints `Estimated 500-650 m²` against a recorded
+450. The prose is a literal expansion of the prompt's placeholder; the model
+did exactly what it was told.
+
+Era-split, because the mechanism and the exposure are different questions:
+
+| era | reports | `Estimated N–N m²` | `Condition: Good to excellent` |
+| --- | ---: | ---: | ---: |
+| since Jun 2026 | 68 | **0** | **0** |
+| Mar–May 2026 | 40 | 2 | 14 |
+| before Mar 2026 | 1,072 | 167 | 187 |
+
+So it is **historical** — the Compass-40 overlay does not draw that section.
+A broader regex initially matched 14 current reports; read, all fourteen are
+legitimate qualitative prose ("crime levels are moderate and broadly typical
+for a coastal residential suburb"), which is a measurement error of mine and
+not a finding. The placeholders are removed anyway, because a dormant
+instruction to fabricate is one routing change from firing — the reasoning that
+deleted the radar rather than deprecating it.
+
+A prohibition with no permitted action is one a model routes around, so the
+rows are omitted and the permitted action is stated: it may say an attribute is
+not recorded, and may discuss the suburb's stock provided it attributes none of
+it to this property.
+
+### Coverage, per era
+
+What fraction of the document's promised facts the record can actually
+produce, reading spec **or** override:
+
+| fact | historical (1,112) | current (68) |
+| --- | ---: | ---: |
+| property type | 88% | 57% |
+| land size | 8% | 54% |
+| build size | 8% | 49% |
+| purchase price | 38% | 72% |
+| weekly rent | 14% | 72% |
+| investment score | 87% | **37%** |
+| coordinates | 95% | **59%** |
+
+Operators entering overrides have lifted land and build coverage sixfold. The
+two that fell are worth their own work: 63% of current reports carry no score
+at all, so the Executive Verdict scorecard draws nothing on most of them, and
+41% have no coordinates, so no map.
+
+### Verification
+
+- 18 new tests; the phantom-key guard proved **red on the bug and green on the
+  fix** rather than assumed
+- The scorer executed against a real parent to measure the fork's cost, which
+  corrected my own hypothesis about which variants it reaches
+- `vitest run` full suite green; `tsc`, `eslint`, `audit:style`,
+  `security:edge-check` at its 339 baseline

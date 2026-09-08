@@ -19,6 +19,7 @@ import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun a
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
+import { composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { reconcileNearestSchool, reconcileSchoolDistances } from '../_shared/reports/schoolDistance.pure.ts';
 import { reconcileFacts, factFindingToFlag } from '../_shared/reports/investment/factReconciliation.pure.ts';
 import { financeIdentityBreaches } from '../_shared/reports/metrics/propertyMetrics.pure.ts';
@@ -4107,13 +4108,41 @@ Based on ${documentContent ? 'the provided property listing data' : 'location in
 | Property Characteristic | ${documentContent ? 'Value' : 'Estimated Value'} |
 |------------------------|-------|
 | Property Type | ${standardizedPropertyType} |
-| Land Size | ${effectiveLandSizeSqm ? effectiveLandSizeSqm + ' m²' : 'Estimated XXX-XXX m² (typical for suburb)'} |
-| Bedrooms | ${effectiveBeds || 'X (typical for property type)'} |
-| Bathrooms | ${effectiveBaths || 'X-X (typical modern standard)'} |
-| Parking | ${propertyDetails?.carSpaces || 'X-X spaces'} |
-| Year Built | ${propertyDetails?.yearBuilt || 'Estimated XXXX-XXXX'} |
-| Condition | ${propertyDetails?.condition || 'Good to excellent'} |
+${[
+  // A specification table states facts. Where the record holds none, the row
+  // is OMITTED — it is not filled with an instruction to estimate one.
+  //
+  // Each of these rows used to carry a placeholder the model was asked to
+  // expand: `'Estimated XXX-XXX m² (typical for suburb)'`,
+  // `'X (typical for property type)'`, `'X-X spaces'`, `'Estimated XXXX-XXXX'`
+  // and, for condition, the flat assertion `'Good to excellent'` about a
+  // property nobody had inspected. Measured across the corpus: 169 documents
+  // print an "Estimated N–N m²" land size and 201 assert
+  // `| Condition | Good to excellent |`. On three sampled reports the stated
+  // range is roughly DOUBLE the land size the operator had recorded, and the
+  // council rates, land tax and rent comparables are then reasoned from it —
+  // `38 Larcom Crescent` says ~500 m² throughout against a recorded 255.
+  //
+  // Nothing here reaches a current document (the Compass-40 overlay does not
+  // draw this section), but a dormant instruction to fabricate is one routing
+  // change away from firing, which is why it goes rather than being left.
+  ['Land Size', effectiveLandSizeSqm ? `${effectiveLandSizeSqm} m²` : null],
+  ['Bedrooms', effectiveBeds || null],
+  ['Bathrooms', effectiveBaths || null],
+  ['Parking', mergedOverrides.carSpaces ?? propertyDetails?.carSpaces ?? null],
+  ['Year Built', mergedOverrides.yearBuilt ?? propertyDetails?.yearBuilt ?? null],
+  ['Condition', propertyDetails?.condition ?? null],
+].filter(([, v]) => v !== null && v !== undefined && v !== '')
+ .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
 ${isStrataProperty ? `| Strata Type | ${standardizedPropertyType} within strata scheme |` : ''}
+
+The table above contains every physical attribute on record for this property.
+Do not add a row to it, and do not state a land size, floor area, bedroom or
+bathroom count, parking count, year built or condition that is not in it — not
+as an estimate, not as a range, and not as what is "typical for the suburb".
+Where an attribute is absent you may say it is not recorded, and you may
+discuss the suburb's housing stock in general terms provided you do not
+attribute any of it to this property.
 
 **${documentContent ? 'Property Price' : 'Estimated Property Value'}:** $${effectivePurchasePrice?.toLocaleString() || 'X,XXX,XXX'} AUD
 
@@ -6197,17 +6226,26 @@ YOUR DEDICATED PROPERTY PARTNER
       // to read `.landSize` / `.buildingSize` / `.parking` while every caller
       // sent `landSizeSqm` / `buildSizeSqm` / `carSpaces`, so three of the
       // nine specs were null on every row whatever the caller knew.
-      const propertySpecs = {
-        land_size_sqm: propertyDetails?.landSizeSqm || null,
-        building_size_sqm: propertyDetails?.buildSizeSqm || null,
-        bedrooms: propertyDetails?.beds || null,
-        bathrooms: propertyDetails?.baths || null,
-        parking: propertyDetails?.carSpaces || null,
-        year_built: propertyDetails?.yearBuilt || null,
-        property_type: standardizedPropertyType || propertyDetails?.propertyType || 'Residential Property',
-        zoning: propertyDetails?.zoning || null,
-        council_area: propertyDetails?.councilArea || null
-      };
+      // The MERGED facts, not the listing's alone. Every value below was
+      // already resolved above by merging `manual_overrides` over
+      // `propertyDetails` — and this block used to persist the un-merged half,
+      // so the answer was computed, used to build the prompt and the duty
+      // assessment, and then discarded at the moment of writing it down: 127
+      // land sizes, 122 build sizes and 144 car-space counts an operator had
+      // supplied were stored as null, and `property_type` was the literal
+      // `'Residential Property'` on 84. See
+      // `_shared/reports/investment/propertyRecord.pure.ts`.
+      const propertySpecs = composePropertySpecs({
+        propertyType: effectivePropertyType ?? standardizedPropertyType,
+        landSizeSqm: effectiveLandSizeSqm,
+        buildSizeSqm: effectiveBuildSizeSqm,
+        beds: effectiveBeds,
+        baths: effectiveBaths,
+        carSpaces: mergedOverrides.carSpaces ?? propertyDetails?.carSpaces,
+        yearBuilt: mergedOverrides.yearBuilt ?? propertyDetails?.yearBuilt,
+        zoning: effectiveZoningCode ?? propertyDetails?.zoning,
+        councilArea: mergedOverrides.councilArea ?? propertyDetails?.councilArea,
+      });
       
       // Prepare data sources tracking. Every source the generation ATTEMPTED
       // is recorded — present with its provenance, or null — so the viewer's

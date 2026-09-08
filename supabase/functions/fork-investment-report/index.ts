@@ -37,6 +37,7 @@ import {
   type ComposedChapter,
 } from '../_shared/reports/investment/financialChapters.pure.ts';
 import { stripPlaceholderRows } from '../_shared/reports/investment/derivedHygiene.pure.ts';
+import { readPropertyFacts } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { scrubBlocks } from '../_shared/reports/investment/blockHygiene.pure.ts';
 import { stripEditorialLabelsFromMarkdown } from '../_shared/compassPostProcessor.ts';
 
@@ -482,22 +483,56 @@ Deno.serve(async (req) => {
     const overrides = parent.manual_overrides || {};
     const scoreInputRaw = {
       property: {
+        // `property_specs.price` and `.weeklyRent` were read here and have
+        // NEVER been written by any writer — the spec block has only ever held
+        // `land_size_sqm`, `building_size_sqm`, `bedrooms`, `bathrooms`,
+        // `parking`, `year_built`, `property_type`, `zoning`, `council_area`.
+        // JSONB does not error on a key that is not there, so the read yielded
+        // `undefined`, `Number(undefined)` yielded `NaN`, and the `||` chain
+        // silently took the next rung. Same class as the `aml.cases.tenant_id`
+        // sweep, with nothing to report it.
         price: Number(overrides.purchasePrice)
           || Number(fin.initialCosts?.propertyValue)
           || Number(fin.purchasePrice)
-          || Number(parent.property_specs?.price)
           || 0,
         weeklyRent: Number(overrides.weeklyRent)
           || Number(fin.income?.weeklyRent)
           || Number(fin.weeklyRent)
-          || Number(parent.property_specs?.weeklyRent)
           || 0,
-        propertyType: parent.property_specs?.propertyType || parent.property_specs?.property_type || 'house',
+        // The record's own answer, healed on read. This read
+        // `property_specs?.propertyType` — a key the writer spells
+        // `property_type` — then fell through to that key, which is the
+        // literal `'Residential Property'` on every report since June 2026,
+        // while the operator's own `propertyType` sat in `overrides`,
+        // destructured two lines above. `dRisk` is the only consumer
+        // (`unit|apartment` −10, `townhouse` −5, `house` +3) and it is
+        // weighted 15% on the financial fork: measured, a unit graded B at 60
+        // where the record says C+ at 57. No strata property has been forked
+        // yet, so the exposure is latent — and armed.
+        // Only the strata case changes. `normalisedType` is undefined for an
+        // unclassified record, and `investmentScoreEngine` line 68 is
+        // `property.propertyType || 'house'` — so passing undefined would
+        // DEFAULT to a house and award `dRisk`'s +3, where the old expression
+        // passed the truthy `'Residential Property'` placeholder and got a
+        // neutral. That would be a score change in the inflating direction,
+        // and scoring is a separate decision the author has open. So the two
+        // rungs below preserve the previous behaviour exactly: an
+        // unclassifiable-but-present type stays neutral, an empty record still
+        // resolves to 'house'.
+        //
+        // The engine's own `|| 'house'` is the real defect — it turns
+        // "unclassified" into a house bonus, and `property_specs` is empty on
+        // 100% of current reports — but it belongs to the scoring work, not
+        // here.
+        propertyType: readPropertyFacts(parent.property_specs, overrides).normalisedType
+          ?? parent.property_specs?.property_type
+          ?? 'house',
       },
       demographics: parent.demographics_data || {},
       locationIntelligence: parent.location_intelligence || {},
       financials: fin,
-      state: parent.property_specs?.state || parent.demographics_data?.state,
+      // `property_specs.state` is a third key no writer emits.
+      state: parent.demographics_data?.state,
     };
 
     const financialScore = resolveVariantScore('financial', scoreInputRaw, parent);
