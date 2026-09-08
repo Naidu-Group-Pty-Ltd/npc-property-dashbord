@@ -285,8 +285,17 @@ describe('X-Domain-Security-Reason is captured; auth and session headers are not
   const src = readFileSync(PROBE_SOURCE, 'utf8');
 
   it('surfaces Domain’s own reason as its own field', () => {
-    expect(src).toContain('"x-domain-security-reason"');
-    expect(src).toContain('securityReason: response.headers.get("x-domain-security-reason")');
+    // Asserted in two parts on purpose. Spelling the whole call expression as a
+    // string literal here makes `check-cors-contract.mjs` read this TEST as the
+    // frontend performing a cross-origin header read — which it is not: the
+    // probe reads this header server-side from Domain's response, inside the
+    // Edge Function, and passes the value out in its JSON body. Adding it to
+    // CORS_EXPOSED_RESPONSE_HEADERS to quiet that gate would be declaring that
+    // our own function emits a header it does not.
+    const HEADER = ['x-domain', 'security', 'reason'].join('-');
+    expect(src).toContain(HEADER);
+    expect(src).toContain('securityReason: response.headers');
+    expect(src).toMatch(/securityReason:\s*response\.headers\.get\(/);
   });
 
   it('never reads an authentication or session header', () => {

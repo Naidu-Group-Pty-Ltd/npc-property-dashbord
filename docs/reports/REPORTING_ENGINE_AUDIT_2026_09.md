@@ -7026,6 +7026,42 @@ stays in the probe as evidence the old route is gone — that is what it proves,
 and it proved it — but it is not an ME-6 blocker and the production adapter
 targets v2. Its note now says so.
 
+### 63.4a The local gate runner was under-reporting, and that is on me
+
+CI failed `security` on a head my local run had called clean. The cause was not
+the repository: **the local harness was reporting the wrong exit status.** Each
+step ran as `( cmd1 \n cmd2 \n … ); echo "EXIT:$?"`, and without `set -e` a
+subshell's `$?` is the status of the LAST command only. Any failure earlier in a
+multi-command step was swallowed, and every step in that runner is
+multi-command.
+
+So the "all 47 gates, 0 failures" reported for the ME-6 heads was weaker than it
+sounded: it meant *the last command of each of 47 steps passed*. The runner now
+carries `set -e` in all 47 groups, and the first failure in a group is the
+group's status.
+
+Re-running it immediately surfaced a second failure that had been hidden — and
+both remaining local failures are the same environment-bound class rather than
+defects: `migrationSyntax.test.ts` at 5,029 ms and `diditProviderConfigTruth`
+at 8,584 ms, each against a 5,000 ms limit, on a corpus of 1,030 migrations and
+4,495 tests. CI settled it on this exact head: **`verify` passed on GitHub**,
+running both of those specs, while `security` failed on the one real defect
+below. This container is slower than the runner; the repository is not broken.
+
+The real defect CI caught was `check-cors-contract.mjs`, and its finding was
+sound in the way it was raised even though the conclusion did not apply. The
+gate scans `src/` for `headers.get('x-…')` and requires the header to be in
+`CORS_EXPOSED_RESPONSE_HEADERS`. It matched a **test file** — the spec asserting
+that the probe lifts `x-domain-security-reason` into its own field quoted the
+whole call expression as a string literal.
+
+The header is read **server-side**, inside the Edge Function, from *Domain's*
+response, and its value leaves in the probe's JSON body; it never crosses a
+browser CORS boundary. Adding it to the expose list to quiet the gate would have
+declared that our own function emits a header it does not — a false statement to
+a security gate, in order to go green. The test asserts the same rule without
+embedding the call expression instead, and the gate is untouched.
+
 ### 63.5 What is settled, and what the next run decides
 
 The dwelling-type conclusion stands as measured: 204 unresolved, **4**
