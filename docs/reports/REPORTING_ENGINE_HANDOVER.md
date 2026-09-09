@@ -55,16 +55,17 @@ Three corollaries that have each been paid for at least once:
 | | |
 | --- | --- |
 | Branch | `claude/reporting-engine-audit-4850hs` |
-| Last code commit | `b0185fc92215fadf4877f6f113804649b1e6b4f1` (this document is committed on top of it, and is the only later commit) |
-| Base | `main` @ `5b2cf9aabaea4a47d0f830e14a4af08967c33e41` |
-| Open PR | **#2578** — 2 commits ahead of main, no merge conflict |
-| PR state | **DRAFT** — this is why it cannot be merged |
-| CI | green **except `supply-chain`** (see §3) |
+| Base | `main` @ `bf2ec99dda79472d61c618497036db015a15587e` |
+| Open PR | **#2578** — no merge conflict |
+| PR state | **DRAFT** — this is now the only thing stopping it merging |
+| CI | green (the `supply-chain` blocker was resolved on `main`; see §3.1) |
 
-Two commits are on the branch and **not yet in `main`**:
+Four commits are on the branch and **not yet in `main`**:
 
 1. `dc08be5e5` — ME-6 zero-cost evidence strategy (audit §64)
 2. `b0185fc92` — ME-6 closure: one Growth denominator, frozen ME-7 population (audit §65)
+3. `35babc76c` — this handover document (documentation only)
+4. `31ddd12fe` — merge of `main`, to take the `@tiptap` lockfile fix (see §3.1)
 
 Everything below §64 in the audit document **is** merged and live.
 
@@ -72,42 +73,43 @@ Everything below §64 in the audit document **is** merged and live.
 
 ## 3. Blockers, in the order that unblocks the most
 
-### 3.1 `supply-chain` CI check — blocks every PR in the repo
+### 3.1 `supply-chain` — RESOLVED on `main`, 9 Sep (kept for the lesson)
 
-Two advisories published against `@tiptap/core@3.26.1`:
+Two advisories were published against `@tiptap/core@3.26.1` on 9 Sep —
+`GHSA-cp6q-959q-f8rh` (`mergeAttributes()` turns an own `__proto__` key into
+inherited executable DOM attributes) and `GHSA-j95f-988m-3j2f` (quadratic
+ReDoS in Markdown attribute parsing, `>=3.7.0 <3.30.5`). Both are `high`,
+neither was on the allowlist, so the gate failed on every PR in the repo,
+`main` included.
 
-- `GHSA-cp6q-959q-f8rh` — `mergeAttributes()` turns an own `__proto__` key into inherited executable DOM attributes
-- `GHSA-j95f-988m-3j2f` — quadratic ReDoS in Markdown attribute parsing (affects `>=3.7.0 <3.30.5`)
+**Fixed by PR #2579**, merged into `main` at 12:05Z: `@tiptap/core` is now
+`3.31.3`, hoisted to a single copy. This branch took it by merging `main`
+(`31ddd12fe`), and `node scripts/security/dependency-audit.mjs` at
+`SECURITY_AUDIT_LEVEL=high` now exits 0 — 10 findings, 3 `high`, all three
+(`image-size`, `pptxgenjs`, `vite`) already on the allowlist with a reason and
+a review date.
 
-**This is not PR #2578's.** That PR changes no dependency file, and `main`
-carries the identical `3.26.1`. `npm audit` is deterministic over a lockfile,
-so `main` fails identically.
+**Two things here are worth carrying forward.**
 
-Measured remedies that **do not** work:
+**The diagnosis in `issuecomment-5595294197` was wrong on its central claim.**
+It said 28 packages peer-depend on *exactly* `3.26.1` and that core therefore
+could not move without an `overrides` block. It could. The real cause was a
+**stale lockfile holding four separate `@tiptap/core` copies** (`3.26.1`,
+`3.30.2`, `3.30.0`, `3.26.1`) — which is why `npm update` appeared to do
+nothing useful: it refreshed one of the four. `tldraw` and `@tldraw/editor`
+both ask for `^3.12.1`, a range that already admitted every fixed version, so
+dropping every `@tiptap/*` entry and re-resolving with
+`npm install --package-lock-only` collapsed them into one hoisted `3.31.3`
+with **`package.json` untouched and no `overrides` introduced**. The lesson is
+a familiar one in this programme: *a version that will not move* and *a
+lockfile with several copies of it* look identical from the outside, and only
+one of them needs a declared pin.
 
-1. `npm audit fix` — moves 9 packages, leaves `@tiptap/core` at `3.26.1`.
-2. Re-resolving `tldraw` inside its declared `^5.3.2` — lands `5.4.0`, which
-   asks for `@tiptap/core: ^3.12.1`; npm keeps the satisfying `3.26.1`.
-3. `npm update` on the tiptap family — still `3.26.1`.
-
-**Why**: 28 packages peer-depend on **exactly** `3.26.1`, all transitive under
-`tldraw`. Core cannot move without an `overrides` block covering the family.
-
-Two options, and **this is an owner's decision, not an agent's**:
-
-**(a)** `overrides` in `package.json` to `^3.30.5` for `@tiptap/core`,
-`@tiptap/pm`, `@tiptap/react`, `@tiptap/starter-kit`. Clears both advisories.
-Crosses a peer-dependency pin, so the tldraw canvas and the rich-text surfaces
-must be exercised before merge.
-
-**(b)** Triage into `scripts/security/dependency-audit-allowlist.json`, as was
-already done for `image-size`, `pptxgenjs` and `vite`.
-
-**(b) was deliberately not taken.** Accepting a high-severity
-prototype-pollution and ReDoS advisory is a security decision with an owner,
-and this repository has already had one lesson about making a gate go green by
-telling it something convenient (§63, the CORS contract). Diagnosis is on the
-PR as `issuecomment-5595294197`.
+**The allowlist was still the wrong move, and that judgement stands.**
+Accepting a high-severity prototype-pollution and ReDoS advisory is a security
+decision with an owner, and the correct fix turned out to cost one re-resolve.
+Making a gate go green by telling it something convenient would have left the
+vulnerability in place and the record saying it was accepted.
 
 ### 3.2 PR #2578 is a draft
 
@@ -359,11 +361,11 @@ Edge checks need Deno on PATH: `export PATH="$PATH:/root/.deno/bin"`.
 
 ## 9. Immediate next actions
 
-1. **Decide the tiptap remedy** (§3.1) — unblocks every PR in the repo.
-2. **Mark PR #2578 ready** and merge (§3.2).
-3. **Send the Domain and PropTrack requests** (§3.3).
-4. **Run the probe once** at `/integrations` and capture the result (§3.4).
-5. When either vendor answers at $0: record the footing, build **only** that
+1. **Mark PR #2578 ready** and merge (§3.2). Nothing else blocks it — CI is
+   green and there is no merge conflict.
+2. **Send the Domain and PropTrack requests** (§3.3).
+3. **Run the probe once** at `/integrations` and capture the result (§3.4).
+4. When either vendor answers at $0: record the footing, build **only** that
    one adapter, normalise into `MarketEvidence`, seal the first genuine
    evidence snapshot, and re-evaluate the ME-7 gate.
 
