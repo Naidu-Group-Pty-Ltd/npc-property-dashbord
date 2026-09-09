@@ -168,7 +168,7 @@ describe('ME-6 — the measured zero-cost inventory', () => {
   });
 
   it('does not pretend the zero-cost stack covers Growth for the corpus', () => {
-    // The whole point of the exercise: QLD (53.7%) and WA (20.8%) publish no
+    // The whole point of the exercise: QLD (50.8%) and WA (20.6%) publish no
     // open suburb-level median sale price, so nothing here can reach them.
     const growth = growthCapableToday();
     for (const s of growth) {

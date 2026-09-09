@@ -30,19 +30,21 @@
  * what the transport denies.
  *
  * **2. The open data is not where the properties are.** This is the finding
- * that reframes the whole strategy. Measured over `report_geography` joined to
- * `investment_reports`, the Growth-addressable corpus is **663 of 867**, and it
- * is concentrated in the two states with the *least* usable open data:
+ * that reframes the whole strategy. The denominator is
+ * `growthPopulation.pure.ts` and nowhere else — this module states it and does
+ * not define it, which is the rule that stopped 641 and 663 coexisting. Under
+ * predicate `me7.pop.1` the Growth-ready corpus is **665 of 867**, and it is
+ * concentrated in the two states with the *least* usable open data:
  *
- * | state | Growth-addressable | share | open suburb x type median sale price |
+ * | state | Growth-ready | share | open suburb x type median sale price |
  * | --- | ---: | ---: | --- |
- * | QLD | 356 | 53.7% | **none** — QGSO's housing theme is building approvals |
- * | WA | 138 | 20.8% | **none** — Landgate's is `Custom (Other)` licensing |
- * | VIC | 114 | 17.2% | yes, CC BY — and unreachable (finding 1) |
- * | NSW | 36 | 5.4% | raw bulk sales only; medians must be derived |
+ * | QLD | 338 | 50.8% | **none** — QGSO's housing theme is building approvals |
+ * | WA | 137 | 20.6% | **none** — Landgate's is `Custom (Other)` licensing |
+ * | VIC | 131 | 19.7% | yes, CC BY — and unreachable (finding 1) |
+ * | NSW | 40 | 6.0% | raw bulk sales only; medians must be derived |
  * | SA/TAS/ACT/NT | 19 | 2.9% | partial |
  *
- * Three quarters of the corpus sits in QLD and WA, and neither publishes an
+ * Seventy-one per cent of the corpus sits in QLD and WA, and neither publishes an
  * open suburb-level median residential sale price series at all. ABS does not
  * close it either: `RES_DWELL_ST` is *state* grain and `RPPI` is *capital city*
  * grain — checked against all 1,227 published ABS dataflows, of which none
@@ -122,7 +124,7 @@ export interface ZeroCostSource {
  * the order in which a gap actually costs something.
  */
 export const ZERO_COST_SOURCES: readonly ZeroCostSource[] = [
-  // ---- QLD: 53.7% of the Growth-addressable corpus, and no open price series.
+  // ---- QLD: 50.8% of the Growth-ready corpus (me7.pop.1), and no open price series.
   {
     id: 'qld_land_valuations',
     jurisdiction: 'QLD',
@@ -140,7 +142,7 @@ export const ZERO_COST_SOURCES: readonly ZeroCostSource[] = [
     scheduledIngestionRequired: true,
   },
 
-  // ---- WA: 20.8%, and the one candidate is not openly licensed.
+  // ---- WA: 20.6%, and the one candidate is not openly licensed.
   {
     id: 'wa_landgate_residential_attributes',
     jurisdiction: 'WA',
@@ -158,7 +160,7 @@ export const ZERO_COST_SOURCES: readonly ZeroCostSource[] = [
     scheduledIngestionRequired: true,
   },
 
-  // ---- VIC: 17.2%. The best dataset in the country for this, and it is walled.
+  // ---- VIC: 19.7%. The best dataset in the country for this, and it is walled.
   {
     id: 'vic_property_sales_median_by_suburb',
     jurisdiction: 'VIC',

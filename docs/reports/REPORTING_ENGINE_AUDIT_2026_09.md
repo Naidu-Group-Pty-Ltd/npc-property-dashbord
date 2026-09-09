@@ -7254,3 +7254,131 @@ is enforced rather than remembered:
 A methodology validated on trial evidence is a validated methodology. It is not
 a licence to ship, and the two must never be conflated — which is exactly why
 the footing is a field on the point rather than a note in a document.
+
+## §65 ME-6 closure — one denominator, and a frozen ME-7 population
+
+ME-6 reported two Growth-addressable counts for the same idea — **641** and
+**663** — and an ambiguous denominator makes every coverage percentage that
+follows unfalsifiable. This section settles it by arithmetic and freezes the
+result, so that ME-7 has a subject population that cannot move under it.
+
+### 65.1 Why the two numbers differed — measured, not inferred
+
+Both were computed over the same 867 trusted-geography reports. They are the
+same predicate with and without one exclusion:
+
+| step | count |
+| --- | ---: |
+| trusted geography (suburb AND state present) | 867 |
+| `property_specs.property_type` present and not a placeholder | **663** |
+| less `land` (26) | **637** |
+| plus §62.4's sibling recovery (4) | **641** |
+
+Neither was wrong about what it measured. They measured different things while
+both being called "Growth-addressable".
+
+**663 was too loose** — it counted 26 vacant-land reports. A land parcel has no
+dwelling, so no house/unit median series describes it: Domain segments
+`suburbPerformanceStatistics` by house and unit, and PropTrack's sale insights
+do the same. Counting land inflates the denominator with rows no provider can
+ever answer for.
+
+**641 was too narrow** — it read one field. Two further deterministic routes to
+the same fact were already in the record and unused.
+
+### 65.2 The canonical answer is 665, and it is not "the bigger one"
+
+`_shared/reports/market/growthPopulation.pure.ts`, predicate `me7.pop.1`:
+
+| route | reports |
+| --- | ---: |
+| `property_specs.property_type` | 663 |
+| `financial_calculations.propertySpecs.propertyType` | +15 |
+| unambiguous sibling on the same `canonical_property_key` | +13 |
+| any type resolved | 691 |
+| less `land` | −26 |
+| **canonical Growth-ready** | **665** |
+
+It is simultaneously **stricter** than 663 (land excluded) and **more complete**
+than 641 (three routes instead of one). Landing two above 663 is a coincidence
+of two independent corrections, not a preference for a larger number.
+
+The 15 the financial block adds are **all `house`** — specific, and stated by
+the operator rather than derived, which `historicalFactAuthority.pure.ts`
+already established: `financial_calculations.propertySpecs` is the calculator's
+INPUT record. The sibling route yields 13 against §62.4's 4 because its pool is
+enriched by the financial route, which §62.4 did not consult.
+
+A measurement bug of my own is fixed here too: coalescing the raw values and
+*then* testing for a placeholder never consults the second source, because
+`'Residential Property'` is non-null. Each route is now tested for specificity
+before the fall-through, and a test pins it.
+
+### 65.3 What Growth readiness requires — and what it must never require
+
+**Required**: trusted geography (suburb AND state), and a dwelling type
+resolvable by one of the three routes that maps to a class a provider
+publishes.
+
+**Not required, deliberately**: LVR, cash flow, rent, Risk, composite scoring
+readiness — none is an input to a suburb median series. **Postcode is not
+required either**: measured, 0 of the 663 lack one, so it discriminates nothing
+today, and Domain's route is `/{state}/{suburb}` with postcode an optional
+refinement.
+
+**Sibling recovery is a ROUTE, never a REQUIREMENT.** §62.4 introduced it while
+measuring what could be recovered. It belongs in the definition as one of three
+ways the type may be established, not as a condition — requiring one would
+exclude 663 reports to gain 13.
+
+### 65.4 The frozen population
+
+`me7_backtest_populations` / `me7_backtest_population_members`, sealed under
+`me7.pop.1`: **867 considered, 665 ready**, one row per considered report
+carrying canonical geography, dwelling type and class, resolution route, and
+inclusion or an exclusion reason.
+
+| state | Growth-ready | houses | attached |
+| --- | ---: | ---: | ---: |
+| QLD | 338 | 278 | 60 |
+| WA | 137 | 89 | 48 |
+| VIC | 131 | 120 | 11 |
+| NSW | 40 | 31 | 9 |
+| SA / TAS / ACT / NT | 19 | 18 | 1 |
+| **total** | **665** | **536** | **129** |
+
+228 distinct suburbs. Excluded: 176 `dwelling_type_unresolved`, 26
+`dwelling_type_not_segmentable`.
+
+The rule the table exists to enforce: **provider coverage is measured AGAINST
+the population and never defines it.** Without that, a provider outage shrinks
+the denominator and the coverage percentage *improves* — the metric moves the
+wrong way under exactly the fault it should reveal. Membership is therefore
+settled before any provider is called, and immutability mirrors
+`market_evidence_snapshots`: draft → sealed once, no unseal, UPDATE and DELETE
+refused on a sealed row and on its members. Both refusals were proven by
+execution against the sealed row.
+
+### 65.5 Precedence, and the ME-7 entry gate
+
+`me7EntryGate.pure.ts` carries both as code. Subject Growth resolves
+Domain-at-$0 → PropTrack trial → open state suburb series → **unavailable**;
+Demand resolves provider/open → government context → **unavailable**. There is
+no benchmark tier in the subject ordering, and `mayServeSubjectGrowth` refuses
+the ABS series by name — a state mean price is identical for hundreds of
+properties, so using it as the subject's own Growth is how a score comes to
+rest on nothing about the suburb.
+
+The gate refuses a sample without QLD or WA, because those two are 475 of the
+665 and a VIC/NSW-only backtest would validate the methodology against 26% of
+the portfolio while reporting a number about the other 74%. It explicitly does
+**not** require 100% coverage, a complete Demand set, or Victoria.
+
+### 65.6 Where this leaves ME-7
+
+The population is locked and the gate is written. What the gate is waiting on is
+evidence, and both remaining zero-cost levers are **outside this repository's
+reach**: Domain's answer on enabling two scopes at no charge, and PropTrack's
+answer on trial terms. Neither can be measured, inferred, or substituted — and
+an ME-7 run assembled from anything else would be a backtest of a methodology
+against evidence it will never use in production.
