@@ -16,6 +16,11 @@ through the real projections and templates, and a page-by-page review of the
 result. Every load-bearing number below is a fresh measurement dated
 2026-09-02, not a quotation of an earlier doc.
 
+**Picking this up cold?** Read
+[`REPORTING_ENGINE_HANDOVER.md`](./REPORTING_ENGINE_HANDOVER.md) first. This
+file records what was measured; that one records where the work stands, what
+is blocked, and which facts must not be re-derived.
+
 ---
 
 ## 1 · Architecture census
