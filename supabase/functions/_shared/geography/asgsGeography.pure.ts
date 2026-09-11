@@ -279,8 +279,30 @@ export interface ResolveInput {
   coordinate: Partial<Coordinate> | null | undefined;
   lookup: AsgsLookup | null;
   hierarchy: Sa2Hierarchy | null;
-  /** Directory rows matching the resolved suburb, for validation only. */
-  directoryMatches: ReadonlyArray<DirectoryEntry>;
+  /**
+   * Directory rows matching the resolved suburb, for validation only.
+   *
+   * **Three states, and they are three different facts.** This distinction is
+   * the whole point of the field:
+   *
+   *  - `null` / `undefined` — **the check was not performed.** No directory
+   *    flag is raised, because "we did not look" is not evidence about the
+   *    suburb. A note records that the cross-check is absent.
+   *  - `[]` — **the check was performed and found nothing.** That IS evidence,
+   *    and it raises `suburb_not_in_directory`.
+   *  - a populated array — checked, matched; the postcode and state comparisons
+   *    below can run.
+   *
+   * They used to be two: an empty array meant both, and every caller passed
+   * `[]` without performing a lookup. So every resolution this module has ever
+   * produced carried `suburb_not_in_directory` and read
+   * `resolved_with_warning` — a warning about a check nobody ran, on a
+   * geography that was perfectly good. It also meant the two disagreements
+   * this validation exists to catch (`suburb_postcode_mismatch`,
+   * `state_mismatch`) could never be raised at all, because the code reached
+   * them only through the populated branch.
+   */
+  directoryMatches: ReadonlyArray<DirectoryEntry> | null | undefined;
 }
 
 /**
@@ -364,7 +386,17 @@ export function resolveGeography(input: ResolveInput): ResolvedGeography {
   // Validate against the directory. It confirms or questions; it never decides.
   // Callers match on `normalisePlaceName(suburb)` so an ABS qualifier is not
   // mistaken for a missing suburb.
-  if (directoryMatches.length === 0) {
+  //
+  // Nothing below may run on a check that did not happen. A resolution with no
+  // directory reading is a clean `resolved` carrying a note, never a warning:
+  // the flags here are assertions ABOUT the suburb, and we have none to make.
+  if (directoryMatches === null || directoryMatches === undefined) {
+    notes.push(
+      'The suburb directory cross-check was not performed for this resolution, so no '
+      + 'directory agreement or disagreement is recorded. The ASGS boundary is the '
+      + 'authority either way.',
+    );
+  } else if (directoryMatches.length === 0) {
     flags.push('suburb_not_in_directory');
     notes.push(
       `"${suburb}" is not in the suburb directory. The ASGS boundary is still the authority — `

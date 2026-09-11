@@ -28,6 +28,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveOneReportGeography } from '../../../../supabase/functions/_shared/geography/resolveOneReportGeography';
+import { resolveGeography } from '../../../../supabase/functions/_shared/geography/asgsGeography.pure';
 import type { AsgsLookup } from '../../../../supabase/functions/_shared/geography/asgsGeography.pure';
 import { AUSTRALIA_CENTROID } from '../../../../supabase/functions/_shared/geocodeGranularity.pure';
 import {
@@ -85,12 +86,29 @@ const HIERARCHY: Record<string, Record<string, unknown>> = {
   },
 };
 
+/** The directory rows a cohort scenario's suburb is listed under. */
+const DIRECTORY: Readonly<Record<string, Array<Record<string, string>>>> = {
+  cobblebank: [{ suburb: 'Cobblebank', state: 'VIC', postcode: '3338' }],
+  traralgon: [{ suburb: 'Traralgon', state: 'VIC', postcode: '3844' }],
+  'wyndham vale': [{ suburb: 'Wyndham Vale', state: 'VIC', postcode: '3024' }],
+  petermann: [{ suburb: 'Petermann', state: 'NT', postcode: '0872' }],
+};
+
+interface FakeOptions {
+  /** Override the directory answer for every suburb. */
+  readonly suburb_directory?: Array<Record<string, string>>;
+  /** Make the directory read fail, which must read as NOT CHECKED. */
+  readonly directoryError?: string;
+  readonly onRead?: (table: string, value: string) => void;
+}
+
 /**
- * A service-role client, reduced to the two calls the resolver makes. Every
+ * A service-role client, reduced to the three calls the resolver makes. Every
  * write is captured rather than discarded, because "the row was written" is
- * itself one of the facts this cohort checks.
+ * itself one of the facts this cohort checks — and so is "the directory was
+ * actually read", which is the distinction this round corrects.
  */
-function fakeSupabase() {
+function fakeSupabase(opts: FakeOptions = {}) {
   const writes: Array<Record<string, unknown>> = [];
   return {
     writes,
@@ -100,6 +118,22 @@ function fakeSupabase() {
           select: () => ({
             eq: (_c: string, code: string) => ({
               maybeSingle: async () => ({ data: HIERARCHY[code] ?? null, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'suburb_directory') {
+        return {
+          select: () => ({
+            ilike: (_col: string, value: string) => ({
+              limit: async () => {
+                opts.onRead?.(table, value);
+                if (opts.directoryError) {
+                  return { data: null, error: { message: opts.directoryError } };
+                }
+                if (opts.suburb_directory) return { data: opts.suburb_directory, error: null };
+                return { data: DIRECTORY[value.toLowerCase()] ?? [], error: null };
+              },
             }),
           }),
         };
@@ -207,6 +241,7 @@ interface Trace {
   prompt: string;
   ruling: string;
   rowWritten: boolean;
+  directoryChecked: boolean;
 }
 
 async function runChain(s: Scenario): Promise<Trace> {
@@ -217,6 +252,7 @@ async function runChain(s: Scenario): Promise<Trace> {
   let geography: Record<string, unknown> | null;
   let provenance: { source: string; status: string; absRequeried: boolean };
   let rowWritten = false;
+  let directoryChecked = false;
 
   if (s.storedRow !== undefined) {
     // The sweep, or the one-off backfill, has already placed this report.
@@ -235,6 +271,7 @@ async function runChain(s: Scenario): Promise<Trace> {
       lookupPoint: async () => s.lookup ?? SERVICE_DOWN,
     });
     rowWritten = supabase.writes.length === 1;
+    directoryChecked = outcome.directoryChecked;
     geography = outcome.row === null ? null : {
       postcode: outcome.row.postcode,
       status: outcome.row.status,
@@ -294,6 +331,7 @@ async function runChain(s: Scenario): Promise<Trace> {
     prompt,
     ruling: result.demographicsRuling,
     rowWritten,
+    directoryChecked,
   };
 }
 
@@ -353,7 +391,7 @@ const REGENERATED: Scenario = {
   coordinate: { lat: -37.6924, lng: 144.5402 },
   lookup: null,
   addressPostcode: '3338',
-  storedRow: { status: 'resolved_with_warning', postcode: '3338', suburb: 'Cobblebank', state: 'VIC' },
+  storedRow: { status: 'resolved', postcode: '3338', suburb: 'Cobblebank', state: 'VIC' },
 };
 
 const BACKFILLED: Scenario = {
@@ -361,10 +399,12 @@ const BACKFILLED: Scenario = {
   coordinate: { lat: -37.6924, lng: 144.5402 },
   lookup: null,
   addressPostcode: '3338',
-  // The one-off backfill wrote a clean `resolved` because it DID hold the
-  // suburb directory. Both spellings must behave identically here, which is
-  // why the two stored-row scenarios differ only in that word.
-  storedRow: { status: 'resolved', postcode: '3338', suburb: 'Cobblebank', state: 'VIC' },
+  // A row whose suburb the directory does not carry — a real state, and the
+  // warned status must admit area statistics exactly as the clean one does.
+  // That is what makes `subjectPostcodeOf` accept both.
+  storedRow: {
+    status: 'resolved_with_warning', postcode: '3338', suburb: 'Cobblebank', state: 'VIC',
+  },
 };
 
 const COHORT: readonly Scenario[] = [
@@ -383,15 +423,14 @@ describe('C3 — the first-generation cohort, traced end to end', () => {
   it('a valid first generation receives valid ABS facts', async () => {
     for (const s of [TRUSTED_METRO, TRUSTED_REGIONAL]) {
       const t = await runChain(s);
-      // `resolved_with_warning`, not `resolved` — and that is the real
-      // production value, pinned rather than papered over. Both this path and
-      // the sweep pass `directoryMatches: []`, so `suburb_not_in_directory` is
-      // raised on EVERY resolution. The flag is honest (the directory
-      // cross-check is not being run) and it changes nothing here, because
-      // `subjectPostcodeOf` accepts the warned status: the ASGS boundary is
-      // the authority and the directory only ever confirms or questions it.
-      // Recorded as a carry-forward in RF72B1_FORWARD_SAFE_ACTIVATION.md §10.
-      expect(t.geography, s.name).toBe('resolved_with_warning');
+      // A clean `resolved`. It used to read `resolved_with_warning` on every
+      // resolution, because both this path and the sweep passed
+      // `directoryMatches: []` WITHOUT opening the directory, and the resolver
+      // reads `[]` as "checked and absent". The check is performed now, and a
+      // check that was not performed is a distinct third state — so a good
+      // geography no longer carries a warning about a lookup nobody made.
+      expect(t.geography, s.name).toBe('resolved');
+      expect(t.directoryChecked, s.name).toBe(true);
       expect(t.poa, s.name).toBe(s.addressPostcode);
       expect(t.gate, s.name).toBe('admitted');
       // The row is written during the run — which is the whole point: no sweep
@@ -422,7 +461,7 @@ describe('C3 — the first-generation cohort, traced end to end', () => {
 
   it('a wrong POA fails closed even though the ABS payload is genuine', async () => {
     const t = await runChain(WRONG_POA);
-    expect(t.geography).toBe('resolved_with_warning');
+    expect(t.geography).toBe('resolved');
     expect(t.poa).toBe('3024');
     expect(t.abs).toBe('ABS Census 2021 (POA 3338)');
     expect(t.gate).toBe('withheld');
@@ -433,9 +472,12 @@ describe('C3 — the first-generation cohort, traced end to end', () => {
 
   it('the sentinel coordinate is refused rather than placed in the desert', async () => {
     const t = await runChain(SENTINEL);
-    // The boundary service answered with a real remote locality. The chain
-    // still refuses, because the point is the geocoder's "no match".
+    // The boundary service WOULD answer with a real remote locality — a real
+    // suburb, in a real postcode, which the directory would confirm. The chain
+    // refuses anyway, because the point is the geocoder's "no match", and it
+    // does not spend the boundary or directory query to find that out.
     expect(t.geography).toBe('unresolved');
+    expect(t.directoryChecked).toBe(false);
     expect(t.poa).toBeNull();
     expect(t.gate).toBe('withheld');
     expect(t.prompt).not.toContain('0872');
@@ -522,5 +564,152 @@ describe('C3 — the first-generation cohort, traced end to end', () => {
     // `point_in_polygon` is what the batch used to write, and the constraint
     // rejected every one of them silently.
     expect(supabase.writes[0]?.method).toBe('asgs_point_in_polygon');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C-dir — "not checked" is not "not found"
+// ---------------------------------------------------------------------------
+
+/**
+ * `resolveGeography` reads `directoryMatches: []` as *the directory was checked
+ * and this suburb is not in it*. Every caller passed `[]` without opening the
+ * directory, so every resolution this module produced carried
+ * `suburb_not_in_directory` and read `resolved_with_warning` — a warning about
+ * a check nobody ran — and the two disagreements the validation exists to catch
+ * were unreachable, because the code reached them only through the populated
+ * branch.
+ *
+ * The field now has three states and they are three different facts. These
+ * tests pin all three, and the two disagreements that are now reachable.
+ */
+describe('C-dir — the suburb directory: checked, absent, and not checked', () => {
+  const MELTON = { latitude: -37.6924, longitude: 144.5402 };
+  const SAL = placed('3338', 'Cobblebank', '213021455');
+  const HIER = {
+    sa2Code: '213021455', sa2Name: 'Cobblebank - District', sa3Name: 'Melton',
+    sa4Name: 'Melbourne - West', gccsaName: 'Greater Melbourne', stateName: 'Victoria',
+  };
+  const resolve = (directoryMatches: unknown) => resolveGeography({
+    coordinate: MELTON, lookup: SAL, hierarchy: HIER,
+    directoryMatches: directoryMatches as never,
+  });
+
+  it('a directory MATCH resolves clean — no warning on a good geography', () => {
+    const g = resolve([{ suburb: 'Cobblebank', state: 'VIC', postcode: '3338' }]);
+    expect(g.status).toBe('resolved');
+    expect(g.flags).toEqual([]);
+  });
+
+  it('an actual MISS is a warning — that is evidence about the suburb', () => {
+    const g = resolve([]);
+    expect(g.status).toBe('resolved_with_warning');
+    expect(g.flags).toContain('suburb_not_in_directory');
+  });
+
+  it('NOT CHECKED never pretends the suburb was absent', () => {
+    for (const notChecked of [null, undefined]) {
+      const g = resolve(notChecked);
+      expect(g.status, String(notChecked)).toBe('resolved');
+      expect(g.flags, String(notChecked)).not.toContain('suburb_not_in_directory');
+      expect(g.flags, String(notChecked)).toEqual([]);
+      // Honest about itself: the absence of the check is recorded.
+      expect(g.notes.join(' '), String(notChecked)).toMatch(/cross-check was not performed/i);
+    }
+  });
+
+  it('a postcode disagreement is a warning — and is now reachable at all', () => {
+    const g = resolve([{ suburb: 'Cobblebank', state: 'VIC', postcode: '3337' }]);
+    expect(g.flags).toContain('suburb_postcode_mismatch');
+    expect(g.status).toBe('resolved_with_warning');
+    // The boundary still decides. The directory questioned; it did not win.
+    expect(g.postcode).toBe('3338');
+  });
+
+  it('a state disagreement forces review — the one that attaches the wrong market', () => {
+    const g = resolve([{ suburb: 'Cobblebank', state: 'NSW', postcode: '3338' }]);
+    expect(g.flags).toContain('state_mismatch');
+    expect(g.status).toBe('requires_review');
+    expect(g.state).toBe('VIC');
+  });
+
+  it('the directory never decides the geography, in any of the three states', () => {
+    for (const d of [
+      null,
+      [],
+      [{ suburb: 'Cobblebank', state: 'NSW', postcode: '3337' }],
+    ]) {
+      const g = resolve(d);
+      expect(g.suburb, JSON.stringify(d)).toBe('Cobblebank');
+      expect(g.postcode, JSON.stringify(d)).toBe('3338');
+      expect(g.state, JSON.stringify(d)).toBe('VIC');
+      expect(g.localityCode, JSON.stringify(d)).toBe('SAL23338');
+    }
+  });
+
+  it('the resolver PERFORMS the check rather than declaring it', async () => {
+    const reads: Array<{ table: string; value: string }> = [];
+    const supabase = fakeSupabase({
+      suburb_directory: [{ suburb: 'Cobblebank', state: 'VIC', postcode: '3338' }],
+      onRead: (table, value) => reads.push({ table, value }),
+    });
+    const outcome = await resolveOneReportGeography({
+      supabase,
+      reportId: '11111111-2222-3333-4444-555555555555',
+      latitude: MELTON.latitude,
+      longitude: MELTON.longitude,
+      lookupPoint: async () => SAL,
+    });
+    expect(reads.some((r) => r.table === 'suburb_directory')).toBe(true);
+    expect(outcome.directoryChecked).toBe(true);
+    // A real match, so a clean resolution — this is the false warning gone.
+    expect(outcome.status).toBe('resolved');
+    expect(outcome.row?.flags).toEqual([]);
+  });
+
+  it('a directory read that FAILS is not checked, not a missing suburb', async () => {
+    const supabase = fakeSupabase({ directoryError: 'connection reset' });
+    const outcome = await resolveOneReportGeography({
+      supabase,
+      reportId: '11111111-2222-3333-4444-555555555555',
+      latitude: MELTON.latitude,
+      longitude: MELTON.longitude,
+      lookupPoint: async () => SAL,
+    });
+    expect(outcome.directoryChecked).toBe(false);
+    expect(outcome.status).toBe('resolved');
+    expect(outcome.row?.flags).not.toContain('suburb_not_in_directory');
+    // Our outage never becomes a finding about somebody's suburb.
+    expect(outcome.row?.notes).toMatch(/cross-check was not performed/i);
+  });
+
+  it('a genuinely unlisted suburb still warns, through the real read', async () => {
+    const supabase = fakeSupabase({ suburb_directory: [] });
+    const outcome = await resolveOneReportGeography({
+      supabase,
+      reportId: '11111111-2222-3333-4444-555555555555',
+      latitude: MELTON.latitude,
+      longitude: MELTON.longitude,
+      lookupPoint: async () => SAL,
+    });
+    expect(outcome.directoryChecked).toBe(true);
+    expect(outcome.status).toBe('resolved_with_warning');
+    expect(outcome.row?.flags).toContain('suburb_not_in_directory');
+  });
+
+  it('an ABS qualifier is not a missing suburb', async () => {
+    // ABS publishes `Springfield (Qld)`; no directory carries the bracket.
+    const qualified = placed('4300', 'Springfield (Qld)', '213021455');
+    const supabase = fakeSupabase({
+      suburb_directory: [{ suburb: 'Springfield', state: 'QLD', postcode: '4300' }],
+    });
+    const outcome = await resolveOneReportGeography({
+      supabase,
+      reportId: '11111111-2222-3333-4444-555555555555',
+      latitude: -27.6667, longitude: 152.9167,
+      lookupPoint: async () => qualified,
+    });
+    expect(outcome.directoryChecked).toBe(true);
+    expect(outcome.row?.flags).not.toContain('suburb_not_in_directory');
   });
 });

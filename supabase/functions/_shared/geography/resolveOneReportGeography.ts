@@ -31,15 +31,36 @@
  * service, and a report with no usable coordinate resolves `unresolved` rather
  * than borrowing a location. Nothing here reads a free-text suburb or postcode:
  * the address string is what produced the untrusted postcode in the first place.
+ *
+ * ## The directory cross-check is PERFORMED, not declared
+ *
+ * `resolveGeography` reads `directoryMatches: []` as "the directory was checked
+ * and this suburb is not in it" — and every caller, this one included, used to
+ * pass `[]` without opening the directory. So every resolution carried
+ * `suburb_not_in_directory` and read `resolved_with_warning`: a warning about a
+ * check nobody ran, on a geography that was correct. Worse, the two
+ * disagreements the validation exists to catch — a suburb under a different
+ * postcode, and a cross-state contradiction — were unreachable, because the
+ * code reached them only through the populated branch.
+ *
+ * The lookup now happens, against the same `suburb_directory` the listings
+ * pipeline uses, and the field's three states are three different facts: `null`
+ * for not checked, `[]` for checked and absent, rows for checked and matched.
+ * **The directory never decides geography** — the ASGS point-in-polygon answer
+ * is the authority, and the directory only agrees, disagrees or is silent.
  */
 
+import { isAustraliaCentroid } from '../geocodeGranularity.pure.ts';
 import {
   ASGS_RELEASE,
   BOUNDARY_SOURCE,
   isPlausiblyAustralian,
+  normalisePlaceName,
   resolveGeography,
+  stripLocalityQualifier,
   type AsgsArea,
   type AsgsLookup,
+  type DirectoryEntry,
   type Sa2Hierarchy,
 } from './asgsGeography.pure.ts';
 
@@ -121,6 +142,54 @@ export async function lookupPointDefault(lat: number, lng: number): Promise<Asgs
   }
 }
 
+/**
+ * The `suburb_directory` rows for one ASGS locality name.
+ *
+ * Returns **null** — meaning "not checked" — for every reason that is not an
+ * answer about the suburb: no locality to look up, or a read that failed. That
+ * distinction is load-bearing: `resolveGeography` treats `[]` as "checked and
+ * absent" and raises `suburb_not_in_directory` on it, so returning `[]` from a
+ * database fault would put a warning on a good geography and blame the suburb
+ * for our own outage.
+ *
+ * The query is by the STRIPPED name: ABS publishes qualifiers like
+ * `Springfield (Qld)` that no directory carries, and `normalisePlaceName`
+ * filters the rows afterwards so case, punctuation and spacing cannot cause a
+ * false miss either. `.ilike` is a parameterised filter — never a composed
+ * `.or()` string, which is the pattern this repository has already been bitten
+ * by twice.
+ */
+async function readDirectory(
+  supabase: { from: (table: string) => any },
+  salName: string,
+): Promise<DirectoryEntry[] | null> {
+  const bare = stripLocalityQualifier(salName).trim();
+  if (bare === '') return null;
+  try {
+    const { data, error } = await supabase
+      .from('suburb_directory')
+      .select('suburb, state, postcode')
+      .ilike('suburb', bare)
+      .limit(50);
+    if (error) {
+      console.warn(`⚠️ suburb_directory unreadable (${error.message}) — cross-check not performed.`);
+      return null;
+    }
+    const wanted = normalisePlaceName(salName);
+    return (data ?? [])
+      .filter((r: Record<string, unknown>) =>
+        typeof r.suburb === 'string' && normalisePlaceName(r.suburb) === wanted)
+      .map((r: Record<string, unknown>) => ({
+        suburb: String(r.suburb),
+        state: String(r.state ?? ''),
+        postcode: String(r.postcode ?? ''),
+      }));
+  } catch (e) {
+    console.warn(`⚠️ suburb_directory read threw (${String(e)}) — cross-check not performed.`);
+    return null;
+  }
+}
+
 export interface GeographyRowShape {
   report_id: string;
   latitude: number | null;
@@ -162,6 +231,13 @@ export interface ResolveOneResult {
   readonly row: GeographyRowShape | null;
   /** Present only where the write succeeded — and it is a real failure now. */
   readonly writeError: string | null;
+  /**
+   * Whether the suburb-directory cross-check actually ran. Reported rather than
+   * inferred from the flags, because the absence of `suburb_not_in_directory`
+   * means "matched" and "not checked" at once if you read it that way — which
+   * is the confusion this whole field exists to end.
+   */
+  readonly directoryChecked: boolean;
 }
 
 const num = (v: unknown): number | null =>
@@ -182,11 +258,17 @@ export async function resolveOneReportGeography(
   const longitude = num(opts.longitude);
   const lookupPoint = opts.lookupPoint ?? lookupPointDefault;
 
-  // The boundary service is only asked about a point that could be here.
-  // Asking it about London wastes a request to be told what the bounding box
-  // already knows.
+  // The boundary service is only asked about a point that could be here, and
+  // is not the geocoder's own "no match". Asking it about London wastes a
+  // request to be told what the bounding box already knows; asking it about
+  // the centre of the continent spends one to be told a desert locality we are
+  // going to refuse anyway — and it would spend a directory query too.
+  //
+  // `resolveGeography` refuses both independently, so this is an economy and
+  // never the authority: a caller that asks anyway still gets the refusal.
   const worthAsking = latitude !== null && longitude !== null
-    && isPlausiblyAustralian({ latitude, longitude });
+    && isPlausiblyAustralian({ latitude, longitude })
+    && !isAustraliaCentroid(latitude, longitude);
 
   const lookup = worthAsking ? await lookupPoint(latitude!, longitude!) : null;
 
@@ -209,11 +291,18 @@ export async function resolveOneReportGeography(
     }
   }
 
+  // The cross-check is performed, rather than declared and skipped. `null`
+  // where there is no locality to check or the read failed — never `[]`, which
+  // would assert the suburb is absent from a directory nobody opened.
+  const directoryMatches = lookup?.sal
+    ? await readDirectory(opts.supabase, lookup.sal.name)
+    : null;
+
   const resolved = resolveGeography({
     coordinate: latitude !== null && longitude !== null ? { latitude, longitude } : null,
     lookup,
     hierarchy,
-    directoryMatches: [],
+    directoryMatches,
   });
 
   const row: GeographyRowShape = {
@@ -250,5 +339,6 @@ export async function resolveOneReportGeography(
     status: resolved.status,
     row: error ? null : row,
     writeError: error ? String(error.message ?? error) : null,
+    directoryChecked: directoryMatches !== null,
   };
 }

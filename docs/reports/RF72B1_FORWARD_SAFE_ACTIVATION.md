@@ -175,6 +175,10 @@ the wrong-area payload is **dropped rather than kept** — the gate would refuse
 cross-check anyway, and carrying it forward would store a figure about the wrong place
 in the snapshot.
 
+**The suburb-directory cross-check is PERFORMED, not declared.** See §3 — it was the
+eighth defect, and the one that made every otherwise-perfect resolution read
+`resolved_with_warning`.
+
 **The stored-row read survives as a fallback**, for the one case the resolution cannot
 cover: a run where the resolution itself failed. Reading a row an earlier sweep wrote is
 the behaviour this function already had, so the fallback cannot make a report worse than
@@ -192,7 +196,7 @@ recognises is how the two come to disagree.
 
 ---
 
-## 3. Seven defects this phase found in itself
+## 3. Eight defects this phase found in itself
 
 Both were found by proofs, not by review, and both are pinned by tests.
 
@@ -254,6 +258,42 @@ withheld on the same geography ground as `demographics` and `seifaData`, and re-
 with them when the POA moves: one rule, three payloads, one table — enforced at both
 ends, because gating them together while re-keying only two would have reintroduced the
 same mismatch through the front door.
+
+### "Not checked" was indistinguishable from "not found"
+
+The eighth, found in review of the seventh's own output, and the one that explains a
+reading the first cohort recorded as merely honest.
+
+`resolveGeography` interprets `directoryMatches: []` as **the directory was checked and
+this suburb is not in it** — and every caller, the sweep and both generators, passed
+`[]` without opening the directory. So every resolution this module has ever produced
+carried `suburb_not_in_directory` and read `resolved_with_warning`: a warning about a
+check nobody ran, on a geography that was correct.
+
+The second half is worse than the noise. The postcode and state comparisons sit in the
+`else` branch — the populated one — so with every caller passing `[]`, the two
+disagreements this validation exists to catch were **unreachable**:
+`suburb_postcode_mismatch` and `state_mismatch` could not be raised by any code path,
+ever. A validation that can only ever return one of its four answers is not a validation.
+
+Both halves are fixed, and deliberately both rather than either:
+
+1. **The check is performed.** `readDirectory` queries the same `suburb_directory` the
+   listings pipeline uses, by the **stripped** ASGS name (`Springfield (Qld)` carries a
+   qualifier no directory holds) with `normalisePlaceName` filtering the rows, so case,
+   punctuation and an ABS qualifier cannot cause a false miss. It is a parameterised
+   `.ilike`, never a composed `.or()` string — the pattern this repository has been
+   bitten by twice.
+2. **The API's three states are three facts.** `null`/`undefined` is *not checked* and
+   raises no directory flag at all (a note records the absence); `[]` is *checked and
+   absent* and still warns; rows are *checked and matched*. Doing only (1) would leave
+   the same trap armed for the next caller — and for this one, because the directory read
+   can itself fail, and a database fault must never become a finding about somebody's
+   suburb.
+
+The ASGS point-in-polygon answer remains the authority in all three states. A test
+asserts the suburb, postcode, state and locality code are identical whether the directory
+agrees, disagrees or was never opened.
 
 ---
 
@@ -506,16 +546,16 @@ COORDINATE → GEOGRAPHY → POA → ABS → GATE → SNAPSHOT → PROMPT
 
 Eight scenarios, each traced through every step:
 
-| # | Scenario | Geography | Trusted POA | Gate | What the page gets |
-| --- | --- | --- | --- | --- | --- |
-| 1 | trusted coordinate + matching ABS POA | `resolved_with_warning` | 3338 | **admitted** | real figures, sourced |
-| 2 | trusted coordinate, regional | `resolved_with_warning` | 3844 | **admitted** | real figures, sourced |
-| 3 | sentinel coordinate (country fallback) | `unresolved` | — | **withheld** | an honest absence |
-| 4 | missing coordinate | `unresolved` | — | **withheld** | an honest absence |
-| 5 | coordinate that cannot resolve (service down) | `unresolved` | — | **withheld** | an honest absence, retryable |
-| 6 | wrong / stale ABS POA (3338 payload, 3024 property) | `resolved_with_warning` | 3024 | **withheld** | an honest absence naming both |
-| 7 | regenerated report with an existing geography row | `resolved_with_warning` | 3338 | **admitted** | identical to #1 |
-| 8 | historical / backfilled row | `resolved` | 3338 | **admitted** | identical to #1 |
+| # | Scenario | Geography | Directory | Trusted POA | Gate | What the page gets |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | trusted coordinate + matching ABS POA | `resolved` | checked, matched | 3338 | **admitted** | real figures, sourced |
+| 2 | trusted coordinate, regional | `resolved` | checked, matched | 3844 | **admitted** | real figures, sourced |
+| 3 | sentinel coordinate (country fallback) | `unresolved` | not asked | — | **withheld** | an honest absence |
+| 4 | missing coordinate | `unresolved` | not asked | — | **withheld** | an honest absence |
+| 5 | coordinate that cannot resolve (service down) | `unresolved` | not asked | — | **withheld** | an honest absence, retryable |
+| 6 | wrong / stale ABS POA (3338 payload, 3024 property) | `resolved` | checked, matched | 3024 | **withheld** | an honest absence naming both |
+| 7 | regenerated report with an existing geography row | `resolved` | (stored row) | 3338 | **admitted** | identical to #1 |
+| 8 | historical / backfilled row | `resolved_with_warning` | (stored row) | 3338 | **admitted** | identical to #1 |
 
 **The three expectations the mandate set, all met by execution:** a valid first
 generation receives valid ABS facts (#1, #2); an unresolved first generation fails
@@ -529,12 +569,16 @@ Across all eight: no disowned Location identifier, no `undefined`, no `NaN`, no 
 token, no `XX` placeholder, and the cash rate is the in-force target with both dates on
 every one — including the five where no area statistics exist at all.
 
-**One honest reading recorded rather than smoothed:** every live resolution is
-`resolved_with_warning`, not `resolved`, because both this path and the sweep pass
-`directoryMatches: []` and `suburb_not_in_directory` is therefore raised on all of them.
-The flag is truthful — the directory cross-check is not being run — and it blocks
-nothing, because `subjectPostcodeOf` accepts the warned status and the ASGS boundary is
-the authority the directory only ever confirms. Carried forward (§10), not papered over.
+Scenario 8 keeps `resolved_with_warning` deliberately: a suburb the directory genuinely
+does not carry is a real state, and a warned row must admit area statistics exactly as a
+clean one does — which is what makes `subjectPostcodeOf` accept both, and what scenarios
+7 and 8 exist side by side to prove.
+
+**The reading the first version of this cohort recorded as "honest" was a defect**, and
+§3 is where it is now written up. Every live resolution read `resolved_with_warning`
+because every caller passed `directoryMatches: []` without opening the directory, and the
+resolver reads `[]` as "checked and absent". The check is performed now, "not checked" is
+a distinct third state, and a good geography resolves clean.
 
 ---
 
@@ -664,14 +708,9 @@ Also confirm, on the same run, that `report_geography` now has a row for that re
    high-severity on the QA page; nothing stops it being downloaded or shared, because
    nothing ever did. Carried to the next operational control, before broad client
    rollout. Documented rather than silently added.
-6. **The suburb directory cross-check is not run.** Both the sweep and the generators
-   pass `directoryMatches: []`, so every resolution carries `suburb_not_in_directory`
-   and reads `resolved_with_warning`. Honest and harmless today — the ASGS boundary is
-   the authority and the warned status admits area statistics — but it means the flag
-   carries no information, and the two disagreements it exists to catch
-   (`suburb_postcode_mismatch`, `state_mismatch`) can never be raised. Supplying the
-   directory is a new read in an edge function and is named rather than taken.
-7. **The snapshot covers ABS, SEIFA and RBA only.** Crime, climate, planning and
-   regional trends each reach the prompt through their own block carrying their own
-   provenance; extending "narrated implies snapshotted" to them is the natural next
-   step and is declared in `rf72b1SnapshotCoverage.spec.ts` rather than omitted.
+6. **Snapshot coverage is ABS / SEIFA / RBA, and that is COMPLETE for this phase.**
+   Crime, climate, planning and regional trends are **not yet covered** — each reaches
+   the prompt through its own block carrying its own provenance, and extending "narrated
+   implies snapshotted" to them is a data-integrity coverage stage of its own rather
+   than a widening of this PR. Declared in `rf72b1SnapshotCoverage.spec.ts` rather than
+   omitted, so the gap is a named constant instead of a silence.
