@@ -179,6 +179,49 @@ describe('a sole-property document still has to name THIS property', () => {
 });
 
 /*
+ * THE BUMP MUST NOT WITHDRAW A PICTURE, AND THIS IS WHY IT CANNOT.
+ *
+ * v14's entry records the thing that makes a bump dangerous: it "is the first
+ * that can withdraw a picture as well as find one", because a re-derivation
+ * that refuses what the old rules accepted demotes a row that was drawing a
+ * card. Four uploads sit below this version and two of them are currently
+ * showing a photograph, so the question is not academic.
+ *
+ * Every part of this change is MONOTONE — it deletes a `return false` and
+ * widens a corroboration pool, and adds no new way to refuse:
+ *
+ *   `pageStatesIdentity`   test 2 is skipped for a sole-property document
+ *   `anchorPdfRowsToPages` an ambiguous sole-property cover resolves
+ *                          instead of returning null
+ *   `identityHints`        can only satisfy test 4, never fail it
+ *
+ * So no page that qualified at 23 can fail at 24, and a picture already
+ * elected re-elects. Asserted rather than argued.
+ */
+describe('the sole-property rule can only ever find more', () => {
+  const CASES: ReadonlyArray<readonly [string, readonly string[], readonly string[]]> = [
+    ['Lot 27, 49 Cockrell Rd, Mernda', PAGES, HINTS],
+    ['Lot 27, 49 Cockrell Rd, Mernda', PAGES, []],
+    ['Lot 1037 Fuchsia Street, Wollert', ['Lot 1307 Fuchsia Street PACKAGE PRICE'], []],
+    ['Lot 51 - Tringa Street, Sandpiper Estate', ['Lot 51 Sandpiper Estate $640,000 350sqm'], []],
+    ['Lot 324, Nex 20', ['Lot 324 Nex 20 Sale Price - $700,000 Land Size - 400sqm'], []],
+    ['Lot 7', ['Lot 7 Sale Price - $500,000 Land Size - 300sqm'], []],
+  ];
+
+  it.each(CASES)('never refuses %s under the sole-property rule when it accepted it without', (
+    label, pages, hints,
+  ) => {
+    const strict = findPropertyCoverPages(pages, label, hints, false);
+    const relaxed = findPropertyCoverPages(pages, label, hints, true);
+    expect(relaxed.length).toBeGreaterThanOrEqual(strict.length);
+    // And every page the strict rule found is still found.
+    for (const cover of strict) {
+      expect(relaxed.map((c) => c.page)).toContain(cover.page);
+    }
+  });
+});
+
+/*
  * A CAPABILITY CHANGE THAT DOES NOT BUMP THE VERSION REACHES NO EXISTING ROW.
  *
  * `negativeProvenanceStillStands` keeps a negative recorded at the CURRENT
