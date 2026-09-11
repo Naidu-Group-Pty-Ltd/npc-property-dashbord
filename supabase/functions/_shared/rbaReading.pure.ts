@@ -49,7 +49,44 @@ export interface MacroFigure {
   periodLabel: string;
 }
 
+/**
+ * The cash rate target in force, and the day it took effect.
+ *
+ * This is a DIFFERENT FACT from `cashRate` below, and the difference is the
+ * whole reason this exists. `cashRate` is F1.1's `FIRMMCRT` — "Cash Rate
+ * Target; monthly average" — so in a month containing a Board change it is
+ * an average of two targets and equals neither (4.31, 3.96, 3.83 and 3.70 all
+ * appear in the series, and no Board ever set them). Presenting it as "the
+ * current cash rate" states a number the RBA never announced.
+ *
+ * `cashRateTarget` is F1's `FIRMMCRTD` — the target ON A DATE — paired with
+ * `FIRMMCCRT`, the RBA's own "as announced" change column. The effective date
+ * is therefore read from the publisher, never inferred by differencing values.
+ */
+export interface CashRateTarget {
+  /** Per cent, as announced. */
+  percent: number;
+  /** ISO date the current target took effect (the RBA's own announcement). */
+  effectiveDate: string;
+  /** '6 May 2026' — for prose. */
+  effectiveLabel: string;
+  /** The latest date the file carries a target for: it is still in force as at this date. */
+  asAtDate: string;
+  /** '10 September 2026' — the same date, said the way a report says it. */
+  asAtLabel: string;
+  /** Percentage points of the announced change that set this target. */
+  changePoints: number;
+  seriesId: string;
+  tableCode: string;
+  /** The series' own Description, verbatim ("Cash Rate Target on date"). */
+  basis: string;
+  publicationDate: string | null;
+  source: string;
+}
+
 export interface MacroReading {
+  /** In-force target with its effective date, or null when F1 is not loaded. */
+  cashRateTarget: CashRateTarget | null;
   cashRate: {
     current: MacroFigure;
     /** The series' own Description ("Cash Rate Target; monthly average"). */
@@ -144,6 +181,62 @@ export function lastMoveOf(obs: RbaObsRow[], seriesId: string): { periodLabel: s
 const metaOf = (meta: RbaMetaRow[], id: string): RbaMetaRow | null =>
   meta.find((m) => m.series_id === id) ?? null;
 
+/** '6 May 2026' from an ISO date — the effective date said the way a person says it. */
+export function dayLabel(isoDate: string): string {
+  const [y, m, d] = isoDate.split('-');
+  const month = MONTHS[Number(m) - 1];
+  if (!month) return isoDate;
+  return `${Number(d)} ${month} ${y}`;
+}
+
+/**
+ * The cash rate target in force, read from F1 rather than inferred.
+ *
+ * Fails CLOSED — returns null — rather than answering approximately, because
+ * the caller's alternative is F1.1's monthly average and presenting that as
+ * the current target is precisely the defect this exists to close. Null on
+ * any of: F1 not loaded, no target observations, no announced change in the
+ * window, or the target on the effective date disagreeing with the target on
+ * the latest date. That last one is the important one: it means the change
+ * column and the level column no longer describe the same step, and a
+ * disagreement between two columns of one file is never something to average.
+ */
+export function cashRateTargetOf(meta: RbaMetaRow[], obs: RbaObsRow[]): CashRateTarget | null {
+  const targets = obs
+    .filter((o) => o.series_id === 'FIRMMCRTD' && Number.isFinite(o.value))
+    .sort((a, b) => (a.obs_date < b.obs_date ? -1 : 1));
+  const changes = obs
+    .filter((o) => o.series_id === 'FIRMMCCRT' && Number.isFinite(o.value))
+    .sort((a, b) => (a.obs_date < b.obs_date ? -1 : 1));
+  if (targets.length === 0 || changes.length === 0) return null;
+
+  const latest = targets[targets.length - 1];
+  // The most recent announced change at or before the latest target we hold.
+  let effective: RbaObsRow | null = null;
+  for (let i = changes.length - 1; i >= 0; i--) {
+    if (changes[i].obs_date <= latest.obs_date) { effective = changes[i]; break; }
+  }
+  if (!effective) return null;
+
+  const atEffective = targets.find((o) => o.obs_date === effective!.obs_date);
+  if (!atEffective || atEffective.value !== latest.value) return null;
+
+  const targetMeta = metaOf(meta, 'FIRMMCRTD');
+  return {
+    percent: latest.value,
+    effectiveDate: effective.obs_date,
+    effectiveLabel: dayLabel(effective.obs_date),
+    asAtDate: latest.obs_date,
+    asAtLabel: dayLabel(latest.obs_date),
+    changePoints: effective.value,
+    seriesId: 'FIRMMCRTD',
+    tableCode: 'f1',
+    basis: targetMeta?.description ?? 'Cash Rate Target on date',
+    publicationDate: targetMeta?.publication_date ?? null,
+    source: 'RBA statistical table F1',
+  };
+}
+
 /**
  * Compose the reading. Null only when nothing at all is loaded; otherwise
  * each component is present exactly where its series holds observations.
@@ -166,6 +259,8 @@ export function buildMacroReading(meta: RbaMetaRow[], obs: RbaObsRow[]): MacroRe
   const invDisc = monthly(obs, 'FILRHLBVDI');
   const invFixed = monthly(obs, 'FILRHL3YFI');
   const f5Meta = metaOf(meta, 'FILRHLBVS');
+
+  const cashRateTarget = cashRateTargetOf(meta, obs);
 
   const cashRate = cash
     ? {
@@ -200,8 +295,8 @@ export function buildMacroReading(meta: RbaMetaRow[], obs: RbaObsRow[]): MacroRe
     }
     : null;
 
-  if (!cashRate && !inflation && !lendingRates) return null;
-  return { cashRate, inflation, lendingRates };
+  if (!cashRateTarget && !cashRate && !inflation && !lendingRates) return null;
+  return { cashRateTarget, cashRate, inflation, lendingRates };
 }
 
 // ---------------------------------------------------------------------------

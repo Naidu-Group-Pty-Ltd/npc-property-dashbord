@@ -17,6 +17,10 @@ import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.t
 import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure.ts';
 import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
+import {
+  activateSafeGenerationInputs,
+  type SafeGenerationResult,
+} from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -464,7 +468,13 @@ async function fetchEnhancedData(
   manualOverrides: Record<string, any>,
   supabaseUrl: string,
   supabaseAnonKey: string
-): Promise<{ enhancedData: EnhancedData; suburb: string | null; postcode: string | null; state: string }> {
+): Promise<{
+  enhancedData: EnhancedData;
+  suburb: string | null;
+  postcode: string | null;
+  state: string;
+  safeGeneration: SafeGenerationResult;
+}> {
   console.log('🔄 Fetching enhanced data from multiple APIs...');
   
   let enhancedData: EnhancedData = {};
@@ -927,7 +937,27 @@ async function fetchEnhancedData(
 
   console.log('📊 Enhanced data fetch complete. Data sources:', Object.keys(enhancedData).filter(k => enhancedData[k as keyof EnhancedData]).join(', '));
 
-  return { enhancedData, suburb, postcode, state };
+  // RF-7.2B.1 — the Client-Safe Gate, on the same object and by the same rules
+  // as `generate-investment-report`. This path builds its OWN prompt context
+  // (`buildEnhancedDataContext` below), so gating only the other generator
+  // would leave a second, fully-featured route to the model carrying every
+  // disowned fact. It sits after the score call above for the same reason it
+  // does there: the score engine reads three of the fields being withheld.
+  const safeGeneration = activateSafeGenerationInputs({
+    enhancedData,
+    cashRateTarget: (enhancedData as any)?.economics?.cashRateTarget ?? null,
+    cashRateMonthlyAverage: null,
+    capturedAt: new Date().toISOString(),
+  });
+  enhancedData = safeGeneration.enhancedData as EnhancedData;
+  const withheld = safeGeneration.removed.filter((r) => r.hadValue).map((r) => r.path);
+  console.log(
+    `🛡️ Client-Safe Gate active (${safeGeneration.snapshot.assuranceVersion}) — `
+    + `${withheld.length} disowned fact(s) withheld${withheld.length ? `: ${withheld.join(', ')}` : ''}`
+    + `; demographics ${safeGeneration.demographicsKept ? 'retained' : 'withheld'}.`,
+  );
+
+  return { enhancedData, suburb, postcode, state, safeGeneration };
 }
 
 // Build enhanced data context string - mirrors generate-investment-report
@@ -937,8 +967,15 @@ function buildEnhancedDataContext(enhancedData: EnhancedData, propertyAddress: s
   // Demographics context
   if (enhancedData.demographics) {
     const demo = enhancedData.demographics;
+    // The gate above admits this block only where it is a recognised ABS Census
+    // postal-area retrieval, so the label is now true rather than asserted —
+    // and it names the payload's own source rather than a constant.
+    const demoSource = (demo as { dataSource?: unknown }).dataSource;
+    const demoLabel = typeof demoSource === 'string' && demoSource.trim() !== ''
+      ? demoSource.trim()
+      : 'ABS Census';
     context += `
-**DEMOGRAPHIC DATA (ABS Census):**
+**DEMOGRAPHIC DATA (${demoLabel}):**
 - Population: ${demo.population?.total || 'N/A'}
 - Population Growth (5yr): ${demo.population?.growth || 'N/A'}%
 - Median Age: ${demo.population?.medianAge || 'N/A'} years
@@ -957,17 +994,27 @@ function buildEnhancedDataContext(enhancedData: EnhancedData, propertyAddress: s
     context += `\n**ECONOMIC CONTEXT:**\n${macroEconomicBlock(enhancedData)}\n`;
   }
 
-  // Location intelligence
+  // Location intelligence.
+  //
+  // Walk Score, the public-transport quality score and the CBD commute are
+  // withheld by the Client-Safe Gate (RF-7.2B.1) and are therefore no longer
+  // read here: they could only ever have printed "N/A", and a labelled row is
+  // a promise that a figure follows it. What remains is counted amenities,
+  // rendered only where they were measured.
   if (enhancedData.locationIntelligence) {
     const loc = enhancedData.locationIntelligence;
-    context += `
-**LOCATION INTELLIGENCE:**
-- Walk Score: ${loc.walkScore || 'N/A'}/100
-- Public Transport Score: ${loc.transport?.qualityScore || 'N/A'}/100
-- CBD Commute: ${loc.commute?.durationMinutes || 'N/A'} minutes (${loc.commute?.distanceKm || 'N/A'} km)
-- Healthcare Facilities (5km): ${loc.healthcare?.facilitiesWithin5km || 'N/A'}
-- Shopping Centers: ${loc.lifestyle?.shoppingCenters || 'N/A'}
-`;
+    const lines: string[] = [];
+    const healthcare = loc.healthcare?.facilitiesWithin5km;
+    if (typeof healthcare === 'number') lines.push(`- Healthcare facilities within 5km: ${healthcare}`);
+    const shops = loc.lifestyle?.shoppingCenters;
+    if (typeof shops === 'number') lines.push(`- Shopping centres nearby: ${shops}`);
+    const nearestSchool = loc.schools?.nearestSchool;
+    if (typeof nearestSchool === 'string' && nearestSchool.trim() !== '' && nearestSchool !== 'N/A') {
+      lines.push(`- Nearest school: ${nearestSchool}`);
+    }
+    if (lines.length > 0) {
+      context += `\n**LOCATION INTELLIGENCE:**\n${lines.join('\n')}\n`;
+    }
   }
 
   // SEIFA data
@@ -1612,7 +1659,7 @@ const __regenerateQualHandler = async (req: Request): Promise<Response> => {
     }
 
     // ========== FETCH ENHANCED DATA FROM ALL APIs ==========
-    const { enhancedData, suburb, postcode, state } = await fetchEnhancedData(
+    const { enhancedData, suburb, postcode, state, safeGeneration } = await fetchEnhancedData(
       propertyAddress,
       manualOverrides,
       supabaseUrl,
@@ -1980,6 +2027,12 @@ YOUR DEDICATED PROPERTY PARTNER
     if (Object.keys(enhancedData).length > 0) {
       updatePayload.demographics_data = enhancedData.demographics || null;
       updatePayload.economic_data = enhancedData.economics || null;
+      // A qualitative regeneration rewrites the prose from freshly-fetched
+      // facts, so the report-time snapshot is refreshed with it. Leaving the
+      // old one would leave the document and its provenance describing
+      // different runs. This is an explicit rewrite, not a reopen — reopening
+      // still reads the stored snapshot and re-queries nothing.
+      updatePayload.market_fact_snapshot = safeGeneration.snapshot;
       updatePayload.investment_score = enhancedData.investmentScore || null;
       
       // Merge enhanced financials with any existing data

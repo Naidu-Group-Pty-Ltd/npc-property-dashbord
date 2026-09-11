@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { internalError } from '../_shared/errorResponse.ts';
-import { parseRbaCsv, RBA_WANTED_SERIES, type RbaTableCode } from '../_shared/rbaTables.pure.ts';
+import { parseRbaCsv, RBA_WANTED_SERIES, type RbaTableCode, observationsToPersist } from '../_shared/rbaTables.pure.ts';
 
 /**
  * Ingest the RBA statistical tables into `rba_observations` /
@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
 
   const table = String(body?.table ?? '') as RbaTableCode;
   if (!(table in RBA_WANTED_SERIES)) {
-    return json({ success: false, error: 'table must be "f1.1", "g1" or "f5"' }, 400);
+    return json({ success: false, error: 'table must be "f1", "f1.1", "g1" or "f5"' }, 400);
   }
   const csv = typeof body?.csv === 'string' ? body.csv : '';
   if (csv.trim() === '') return json({ success: false, error: 'csv text is required' }, 400);
@@ -85,7 +85,11 @@ Deno.serve(async (req) => {
   if (!authorised) return json({ success: false, error: 'forbidden' }, 403);
 
   try {
-    const parsed = parseRbaCsv(csv, table); // throws → nothing written
+    // Parse the file whole (so truncation and layout drift are still caught
+    // against the real row count), then narrow to what this table persists.
+    // F1 is daily: storing it whole would evict every monthly and quarterly
+    // observation from the reader's bounded window. See RBA_PERSIST_POLICY.
+    const parsed = observationsToPersist(parseRbaCsv(csv, table)); // throws → nothing written
 
     const chunk = <T,>(arr: T[], n: number): T[][] =>
       Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, (i + 1) * n));

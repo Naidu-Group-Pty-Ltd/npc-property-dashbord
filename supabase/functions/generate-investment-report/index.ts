@@ -13,6 +13,8 @@ import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
+import { activateSafeGenerationInputs } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
+import { auditMarketClaims, claimFaultToFlag } from '../_shared/reports/contract/marketClaimAudit.pure.ts';
 import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
@@ -1501,7 +1503,7 @@ Median values have climbed steadily ~~[820,860,910,980,1050,1180]~~ over six yea
     a single supporting datum without breaking prose flow. Keep \`note\` to one line.
     Format: \`{{margin: Title | spark=v1,v2,v3,… | note=One-line context | label=Context}}\`
 \`\`\`
-{{margin: RBA cash-rate trajectory | spark=4.35,4.35,4.10,3.85,3.60,3.35 | note=Six-month decline supports the refinancing window in Q3. | label=Macro watch}}
+{{margin: Median rent, last six quarters | spark=v1,v2,v3,v4,v5,v6 | note=One line of context, from the figures in this report. | label=Rental watch}}
 \`\`\`
 
 20. TIMELINE RIBBON — infrastructure / delivery pipeline. Use instead of a list
@@ -3220,6 +3222,37 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       console.log('Enhanced data fetch failed, proceeding with basic analysis:', error?.message || 'Unknown error');
     }
 
+    // ========================================================================
+    // RF-7.2B.1 — CLIENT-SAFE GATE ACTIVATION
+    // ========================================================================
+    // Everything below this line reads gated facts. The gate sits HERE, on the
+    // object, rather than at each of the four base prompts, because a fact that
+    // is not on `enhancedData` cannot reach a prompt that interpolates
+    // `enhancedData` — whichever prompt it is, and however it is written later.
+    //
+    // It is deliberately placed AFTER the scoring calls above: the investment
+    // score engine reads `walkScore`, `commute.durationMinutes` and
+    // `schools.schoolsWithin3km`, and re-pointing it would silently move every
+    // new report's score. That belongs to the scoring programme, not here.
+    //
+    // From this point the sanitised object is what the prompts compose from AND
+    // what is persisted, so the stored report snapshot carries no disowned fact
+    // either.
+    const safeGeneration = activateSafeGenerationInputs({
+      enhancedData,
+      cashRateTarget: (enhancedData as any)?.economics?.cashRateTarget ?? null,
+      cashRateMonthlyAverage: null,
+      capturedAt: new Date().toISOString(),
+    });
+    enhancedData = safeGeneration.enhancedData as typeof enhancedData;
+    const removedForNarrative = safeGeneration.removed.filter((r) => r.hadValue);
+    console.log(
+      `🛡️ Client-Safe Gate active (${safeGeneration.snapshot.assuranceVersion}) — `
+      + `${removedForNarrative.length} disowned fact(s) withheld from the narrative`
+      + (removedForNarrative.length ? `: ${removedForNarrative.map((r) => r.path).join(', ')}` : '')
+      + `; demographics ${safeGeneration.demographicsKept ? 'retained' : 'withheld'}.`,
+    );
+
     // ============================================================================
     // DATA AVAILABILITY SUMMARY - Graceful Degradation Report
     // ============================================================================
@@ -3338,13 +3371,16 @@ ${regionalTrendBlocks(enhancedData)}
 |------------|------|-------|----------|--------------|
 
 **Transport:**
-| Mode | Details | Access Score |
-|------|---------|--------------|
-| Train Stations | [names] (XXkm) | XX/100 |
-| Bus Routes | XX routes | XX/100 |
-| Major Roads | [list] | - |
-| CBD Commute | XX mins by [mode] | - |
-| Walk Score | XX/100 | - |
+| Mode | Details |
+|------|---------|
+| Train Stations | [names, from the measured stops above] |
+| Bus Routes | [from the measured stops above] |
+| Major Roads | [list] |
+
+Do NOT state a Walk Score, an "access score", a CBD commute time or a service
+frequency here. None of them is measured for this area — the walk score and
+transport score were withdrawn because they described the state rather than the
+address — and a scored row with no source is an invitation to invent one.
 
 **Shopping & Services:**
 | Facility Type | Nearest | Distance | Details |
@@ -3930,12 +3966,8 @@ The suburb's lifestyle is characterised by:
 A major infrastructure advancement occurred with the opening of [Station Name] in [Year], located at [specific location][citation]. This development has dramatically improved accessibility, providing commuters with access to the [Line Name] through [Connection Station]. The station includes [facilities - car park, bus connections] serving [list of destinations][citation].
 
 **Commute Performance:**
-| Metric | Value |
-|--------|-------|
-| CBD Commute | ${enhancedData.locationIntelligence?.commute?.durationMinutes || 'XX'} minutes via public transit (${enhancedData.locationIntelligence?.commute?.distanceKm || 'XX'} km distance) |
-| Public Transport Quality Score | ${enhancedData.locationIntelligence?.transport?.qualityScore || 'XX'}/100 |
 
-The suburb benefits from excellent service frequency, with peak hour services operating at [XX] services per hour and off-peak services at [XX] services per hour across multiple transport modes[citation].
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available.
 
 **Population & Development Trends:**
 
@@ -3947,14 +3979,11 @@ Write this from the population-trend table above, the Planning & Development blo
 
 # Current Market Performance
 
-| Metric | Value | Data Source |
-|--------|-------|-------------|
-| Walk Score | ${enhancedData.locationIntelligence?.walkScore || 'XX'}/100 | Location Intelligence Data |
-| Public Transport Score | ${enhancedData.locationIntelligence?.transport?.qualityScore || 'XX'}/100 | Location Intelligence Data |
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available.
 
 **Market Commentary (150+ words required):**
 
-[Suburb]'s [exceptionally high/moderate/etc.] walk score of [XX]/100 reflects [assessment of pedestrian accessibility]. The [XX]/100 public transport score demonstrates [connectivity assessment]. These metrics underscore the suburb's appeal to [target demographics].
+Write about the suburb's accessibility from the named stations, counted stops and amenities measured above. Do NOT quote a walk score or a transport score — neither is measured — and do NOT characterise walkability or connectivity with a number of any kind.
 
 Current market conditions are influenced by the National House Price Growth Rate of [X.X]% (as of [Date]), with [Suburb] positioned to benefit from [demand drivers]. The suburb's inventory includes [property mix description][citation].
 
@@ -4075,15 +4104,9 @@ Additional parks include [Park 1] and [Park 2], both offering picnic areas, walk
 
 | Metric | Value | Details |
 |--------|-------|---------|
-| Walk Score | ${enhancedData.locationIntelligence?.walkScore || 'XX'}/100 | ${enhancedData.locationIntelligence?.walkScore >= 70 ? 'Excellent' : 'Moderate'} pedestrian accessibility |
-| Public Transport Score | ${enhancedData.locationIntelligence?.transport?.qualityScore || 'XX'}/100 | ${enhancedData.locationIntelligence?.transport?.qualityScore >= 70 ? 'Excellent' : 'Moderate'} service coverage and frequency |
-| CBD Commute Time | ${enhancedData.locationIntelligence?.commute?.durationMinutes || 'XX'} minutes | Via public transit (${enhancedData.locationIntelligence?.commute?.distanceKm || 'XX'} km) |
 | Nearest Station | ${enhancedData.locationIntelligence?.transport?.nearestStation || '[Station Name]'} | [Location details] |
-| Station Opening | [Year] | Multi-storey car park included |
 
-**Service Frequency & Routes:**
-- Peak Hour Service: ${enhancedData.locationIntelligence?.transport?.serviceFrequency?.peak || 'XX'} services/hour
-- Off-Peak Service: ${enhancedData.locationIntelligence?.transport?.serviceFrequency?.offPeak || 'XX'} services/hour
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available. Service frequency is not measured either — the stops file carries no timetable — so do NOT state services per hour, peak or off-peak.
 - Transport Types: ${enhancedData.locationIntelligence?.transport?.transportTypes?.join(', ') || 'Train, Bus, Light Rail'}
 - Primary Lines: [Line names]
 - Bus Connections: Services to [destinations list]
@@ -5503,6 +5526,10 @@ YOUR DEDICATED PROPERTY PARTNER
         if (!existingEnhancedFields.locationIntelligence && enhancedData?.locationIntelligence) {
           earlyUpdate.location_intelligence = enhancedData.locationIntelligence;
         }
+        // The snapshot goes down with the first enhanced write, so a run that is
+        // killed at the wall-clock budget still leaves the provenance of what it
+        // had already put in front of a reader.
+        earlyUpdate.market_fact_snapshot = safeGeneration.snapshot;
 
         const hasAnyEnhancedField = Object.keys(earlyUpdate).length > 1;
         const alreadyHasAnyEnhancedField = !!(
@@ -5803,6 +5830,10 @@ YOUR DEDICATED PROPERTY PARTNER
                 console.log('  ✓ Saving location_intelligence');
                 didAttachEnhancedData = true;
               }
+              // Every write that attaches enhanced data attaches its provenance
+              // with it, so the snapshot and the blobs can never describe
+              // different runs.
+              progressiveUpdatePayload.market_fact_snapshot = safeGeneration.snapshot;
             }
             
             await supabaseClient
@@ -6296,6 +6327,9 @@ YOUR DEDICATED PROPERTY PARTNER
       // finishes is worse than one carrying a named warning. Report-level
       // rule, so comparative prose about other properties cannot trip it.
       let factFlags: Array<ReturnType<typeof factFindingToFlag>> = [];
+      // Kept separate from `factFlags` because it answers a different question
+      // and carries its own flag type; both land in `allValidationFlags`.
+      let claimFlags: Array<ReturnType<typeof claimFaultToFlag>> = [];
       try {
         const factNum = (v: unknown): number | undefined => {
           const n = toFiniteNumber(v);
@@ -6320,6 +6354,19 @@ YOUR DEDICATED PROPERTY PARTNER
           lvrPct: toFiniteNumber(effectiveLvr),
         });
         factFlags = factFindings.map(factFindingToFlag);
+
+        // RF-7.2B.1 §7 — the other question the reconciliation above does not
+        // ask. That one checks whether the prose agrees with the record; this
+        // checks whether a figure it agrees with has been given a label the
+        // source does not support: a postal-area count called a suburb's, a
+        // 2021 Census figure called current, a monthly average called the rate
+        // in force. It discloses; nothing here fails a report.
+        const claimFaults = auditMarketClaims(reportContent, safeGeneration.snapshot.facts);
+        if (claimFaults.length > 0) {
+          console.log(`🔍 Market-claim audit: ${claimFaults.length} finding(s) — `
+            + claimFaults.map((f) => `${f.fact}/${f.kind}`).join(', '));
+        }
+        claimFlags = claimFaults.map(claimFaultToFlag);
 
         // The other half of the same question. Above asks whether the prose
         // agrees with the record; this asks whether the record agrees with
@@ -6359,6 +6406,8 @@ YOUR DEDICATED PROPERTY PARTNER
         ...schemaValidationFlags,
         // Prose-vs-record contradictions, from the reconciliation above.
         ...factFlags,
+        // Right number, wrong label — grain, period or source (RF-7.2B.1 §7).
+        ...claimFlags,
         // Add quality-based validation flags
         ...(avgScore < 70 ? [{
           type: 'quality',
@@ -6396,6 +6445,10 @@ YOUR DEDICATED PROPERTY PARTNER
         financial_calculations: enhancedData.financials || null,
         investment_score: enhancedData.investmentScore || null,
         location_intelligence: enhancedData.locationIntelligence || null,
+        // RF-7.2B.1 — what this report was shown, frozen at generation. Reopening
+        // it must never re-read today's ABS or RBA tables and quietly restate the
+        // document; the snapshot is what a later reader reconciles against.
+        market_fact_snapshot: safeGeneration.snapshot,
         property_specs: propertySpecs,
         validation_flags: allValidationFlags,
         calculation_version: '1.0.0',

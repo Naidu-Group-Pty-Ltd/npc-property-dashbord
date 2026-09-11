@@ -17,10 +17,10 @@
  *   SUPABASE_ANON_KEY=...        (gateway JWT; any valid project JWT works) \
  *   INTERNAL_EDGE_SECRET=...     (required once a table holds rows;
  *                                 a table's very first load may omit it) \
- *     node scripts/rba/load-rba-tables.mjs [--table f1.1,g1,f5] [--file <path>]
+ *     node scripts/rba/load-rba-tables.mjs [--table f1,f1.1,g1,f5] [--file <path>]
  *
  * Options:
- *   --table <codes>   Comma-separated subset (default: all three).
+ *   --table <codes>   Comma-separated subset (default: all four).
  *   --file <path>     Read ONE table's CSV from a local file instead of
  *                     downloading (pair with a single --table).
  *
@@ -33,6 +33,11 @@
 import { readFileSync } from 'node:fs';
 
 const TABLES = {
+  // F1 is the DAILY money-market table. It carries the cash rate target ON A
+  // DATE (FIRMMCRTD) and the RBA's own announced change in it (FIRMMCCRT) —
+  // which is how the report states a current target with an effective date.
+  // F1.1's monthly average is a different fact and is kept for trend context.
+  'f1': 'https://www.rba.gov.au/statistics/tables/csv/f1-data.csv',
   'f1.1': 'https://www.rba.gov.au/statistics/tables/csv/f1.1-data.csv',
   'g1': 'https://www.rba.gov.au/statistics/tables/csv/g1-data.csv',
   'f5': 'https://www.rba.gov.au/statistics/tables/csv/f5-data.csv',
@@ -44,7 +49,7 @@ const argValue = (name) => {
   return i >= 0 && i + 1 < args.length ? args[i + 1] : null;
 };
 
-const wanted = (argValue('--table') ?? 'f1.1,g1,f5').split(',').map((s) => s.trim()).filter(Boolean);
+const wanted = (argValue('--table') ?? 'f1,f1.1,g1,f5').split(',').map((s) => s.trim()).filter(Boolean);
 const localFile = argValue('--file');
 
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -60,7 +65,7 @@ if (localFile && wanted.length !== 1) {
 }
 for (const t of wanted) {
   if (!(t in TABLES)) {
-    console.error(`unknown table "${t}" — expected f1.1, g1 or f5`);
+    console.error(`unknown table "${t}" — expected f1, f1.1, g1 or f5`);
     process.exit(2);
   }
 }

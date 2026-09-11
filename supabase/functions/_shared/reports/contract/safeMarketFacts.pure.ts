@@ -281,6 +281,87 @@ export function safeCashRate(reading: RbaCashRateReading | null): SafeFact<numbe
   });
 }
 
+/** The daily target series and the RBA's own announced-change column. */
+export const CASH_RATE_TARGET_SERIES_ID = 'FIRMMCRTD';
+
+/** The in-force target, as `cashRateTargetOf` derived it from F1. */
+export interface CashRateTargetReading {
+  readonly percent: unknown;
+  readonly effectiveLabel: unknown;
+  readonly asAtLabel: unknown;
+  readonly seriesId: unknown;
+  readonly tableCode: unknown;
+  readonly publicationDate: unknown;
+}
+
+/**
+ * The cash rate target in force, with the date the Reserve Bank set it.
+ *
+ * This is the fact a reader acts on, and the one the product could not state:
+ * the only series held was a monthly AVERAGE, so "the current cash rate" was
+ * either a month-old average or a constant nobody refreshed. Absent means
+ * absent — `safeCashRate` is NOT a fallback for this, because presenting a
+ * monthly average as the rate in force is the misstatement being closed.
+ */
+export function safeCashRateTarget(reading: CashRateTargetReading | null): SafeFact<number> {
+  const unavailable = (why: string) => gateFact<number>({
+    name: 'market.cashRateTargetCurrent',
+    value: null,
+    safety: 'unavailable',
+    material: true,
+    absenceReason: why,
+  });
+
+  if (reading === null) {
+    return unavailable(
+      'No Reserve Bank cash-rate target is currently held, so no current rate is quoted. '
+      + 'The monthly average is not used in its place.',
+    );
+  }
+  if (str(reading.seriesId) !== CASH_RATE_TARGET_SERIES_ID) {
+    return unavailable(
+      'The available interest-rate series is not the Reserve Bank cash rate target on date, '
+      + 'so it is not quoted as the current target.',
+    );
+  }
+
+  const value = num(reading.percent);
+  const effective = str(reading.effectiveLabel);
+  if (value === null || effective === null) {
+    return unavailable(
+      'The Reserve Bank series does not carry both a target and the date it took effect, '
+      + 'so no current rate is quoted.',
+    );
+  }
+
+  const asAt = str(reading.asAtLabel);
+  return gateFact<number>({
+    name: 'market.cashRateTargetCurrent',
+    value,
+    safety: 'authoritative',
+    source: 'rba_observations',
+    material: true,
+    context: {
+      grain: 'national',
+      referencePeriod: `effective ${effective}`
+        + (asAt ? `, in force as at ${asAt}` : ''),
+      dataset: str(reading.tableCode)
+        ? `RBA statistical table ${String(reading.tableCode).toUpperCase()} — Cash Rate Target on date`
+        : 'RBA Cash Rate Target on date',
+      asOf: str(reading.publicationDate),
+    },
+  });
+}
+
+/** The client sentence for the in-force target. One spelling, shared. */
+export function cashRateTargetStatement(fact: SafeFact<number>): string {
+  if (fact.status !== 'present' || fact.value === null || fact.context === null) {
+    return fact.absence?.reason ?? 'No current Reserve Bank cash rate target is quoted.';
+  }
+  return `RBA Cash Rate Target: ${fact.value}% — ${fact.context.referencePeriod}`
+    + (fact.context.asOf ? `, published ${fact.context.asOf}.` : '.');
+}
+
 /** `2026-08-31` → `August 2026`. Null rather than a guess on anything else. */
 export function monthLabel(obsDate: unknown): string | null {
   const s = str(obsDate);
