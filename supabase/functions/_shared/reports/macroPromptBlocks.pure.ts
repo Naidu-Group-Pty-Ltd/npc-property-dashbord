@@ -65,12 +65,28 @@ export function macroEconomicBlock(input: MacroPromptInput): string {
   const targetLabel = str(target?.['effectiveLabel']);
   const haveTarget = targetPercent !== null && targetLabel !== null;
   if (haveTarget) {
-    const asAt = str(target?.['asAtLabel']);
+    const dateSource = str(target?.['effectiveDateSource']) ?? 'RBA';
     const targetSource = sourceCell(str(target?.['source']), str(target?.['publicationDate']));
-    rows.push(
-      `| RBA cash rate target (current) | ${targetPercent}% — effective ${targetLabel}` +
-      `${asAt ? `, in force as at ${asAt}` : ''} | ${targetSource} |`,
-    );
+    rows.push(`| RBA cash rate target (current) | ${targetPercent}% | ${targetSource} |`);
+    // The effective date and the last CHANGE date are different facts and get
+    // their own rows. The RBA publishes "4.35%, effective 12 August 2026" while
+    // the rate last moved on 6 May 2026 — the Board met twice more and held.
+    // One row carrying both invites the model to conflate them, which is the
+    // error this correction exists to remove.
+    rows.push(`| — effective from | ${targetLabel} (most recent Board decision) | ${dateSource} |`);
+    const changedLabel = str(target?.['lastChangedLabel']);
+    const changePoints = num(target?.['lastChangePoints']);
+    if (changedLabel !== null && changePoints !== null) {
+      const held = num(target?.['decisionsSinceChange']);
+      const heldNote = held !== null && held > 0
+        ? `; unchanged at ${held} Board decision${held === 1 ? '' : 's'} since`
+        : '';
+      rows.push(
+        `| — last changed | ${changedLabel}, by ${changePoints > 0 ? '+' : ''}${changePoints} percentage points${heldNote} | ${dateSource} |`,
+      );
+    }
+    const asAt = str(target?.['asAtLabel']);
+    if (asAt) rows.push(`| — in force as at | ${asAt} | RBA statistical table F1 |`);
   }
 
   const cash = e?.['cashRate'] as Numericish | null | undefined;
@@ -118,10 +134,13 @@ export function macroEconomicBlock(input: MacroPromptInput): string {
     'consumer confidence or any other macro figure — none is measured here. Do NOT attribute any projection to the RBA ' +
     'or Treasury. Do NOT put a "What This Means" heading or any other commentary label above the paragraphs.',
     haveTarget
-      ? 'The cash rate in force is the row labelled "RBA cash rate target (current)" — quote it with its effective ' +
-        'date. The "Cash Rate Target — Monthly Average" row is a MONTHLY AVERAGE of that target and is NOT the rate ' +
-        'in force: use it only to describe the trend, always calling it a monthly average, and never present its ' +
-        'month as a board decision date.'
+      ? 'The cash rate in force is the row labelled "RBA cash rate target (current)". Its effective date is the ' +
+        '"effective from" row — the most recent Board decision, whether or not that decision moved the rate. The ' +
+        '"last changed" row is a DIFFERENT date: when the target last moved. Do NOT present the last-changed date ' +
+        'as the effective date, and do NOT write that the rate "has been at this level since" the effective date — ' +
+        'it has been at this level since it last CHANGED. The "Cash Rate Target — Monthly Average" row is a MONTHLY ' +
+        'AVERAGE of that target and is NOT the rate in force: use it only to describe the trend, always calling it ' +
+        'a monthly average, and never present its month as a board decision date.'
       : 'NO CURRENT CASH RATE TARGET IS AVAILABLE for this report. The only cash-rate figure in the table is a ' +
         'MONTHLY AVERAGE and you must call it that every time you use it. Do NOT describe it as the current rate, ' +
         "today's rate, the rate in force or the latest rate, do NOT give it an effective or decision date, and do " +

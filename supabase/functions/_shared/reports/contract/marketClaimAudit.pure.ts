@@ -19,9 +19,30 @@
  *  - **Source.** `FIRMMCRT` is a monthly AVERAGE of the cash rate target.
  *    Calling it "the current cash rate" names a number the Board never set.
  *
- * It DISCLOSES and never blocks. A report is not failed over a word: the
- * faults become validation flags beside the fact reconciliation that already
- * runs, because two gates on one question is how one of them becomes wrong.
+ * ## What a fault does (RF-7.2B.1 §4)
+ *
+ * Generation still completes — a report is not failed mid-run over a word, and
+ * the model is not asked to re-write itself. What changes is CLIENT READINESS.
+ *
+ * Each fault becomes a `validation_flags` entry, which is the report QA
+ * mechanism that already exists: `QualityAssurance.tsx` splits reports into
+ * `cleanReports` and `reportsWithValidationIssues` purely on
+ * `validation_flags.length > 0`, so a report carrying one of these is no longer
+ * clean and cannot be presented as such until it is corrected.
+ *
+ * They are raised at `high` — the existing severity vocabulary is
+ * `critical | high | medium`, and the page counts and surfaces those bands.
+ * That is deliberately a step above the `warning` the prose-vs-record
+ * reconciliation uses beside it: a yield that disagrees by a rounding step is a
+ * possible discrepancy, whereas these three are VALIDATED semantic errors about
+ * what a figure is — a postal area called a suburb, a five-year-old census
+ * figure called current, a monthly average called the rate in force. A warning
+ * that no band counts is exactly the "silently client-ready" state this closes.
+ *
+ * What this does NOT do: gate delivery. Nothing in the product consults
+ * `validation_flags` before a report is shared or downloaded — `status` is set
+ * to `completed` unconditionally — and adding such a gate would be a new
+ * workflow rather than a use of the existing one.
  *
  * Deliberately narrow. It matches a fact's own value in the prose and reads
  * the words immediately around it, rather than trying to parse claims in
@@ -183,7 +204,9 @@ export function claimFaultToFlag(fault: ClaimFault): {
 } {
   return {
     type: 'market_claim',
-    severity: 'warning',
+    // `high`, not `warning` — see the header. The QA page counts
+    // critical/high/medium; a band it does not count reads as no finding.
+    severity: 'high',
     field: fault.fact,
     message: fault.message,
     value: { kind: fault.kind, supported: fault.supported, excerpt: fault.excerpt },

@@ -27,6 +27,12 @@ import { safeCashRateTarget, cashRateTargetStatement } from '../contract/safeMar
 import { auditMarketClaims } from '../contract/marketClaimAudit.pure';
 import { macroEconomicBlock } from '../../../../supabase/functions/_shared/reports/macroPromptBlocks.pure';
 import { cashRateTargetOf } from '../../../../supabase/functions/_shared/rbaReading.pure';
+import { parseCashRateDecisions } from '../../../../supabase/functions/_shared/rbaCashRateDecisions.pure';
+import {
+  PRODUCTION_SCORING_AUTHORITY,
+  mayPublishOverallGrade,
+  mayPublishDimensionScores,
+} from '../../../../supabase/functions/_shared/reports/market/scoringInputPolicy.pure';
 import {
   RBA_WANTED_SERIES,
   RBA_PERSIST_POLICY,
@@ -66,16 +72,30 @@ const RETRIEVED_DEMOGRAPHICS = {
 };
 const TARGET_READING = {
   percent: 4.35,
-  effectiveLabel: '6 May 2026',
+  effectiveDate: '2026-08-12',
+  effectiveLabel: '12 August 2026',
+  lastChangedDate: '2026-05-06',
+  lastChangedLabel: '6 May 2026',
+  lastChangePoints: 0.25,
+  decisionsSinceChange: 2,
   asAtLabel: '10 September 2026',
   seriesId: 'FIRMMCRTD',
   tableCode: 'f1',
   publicationDate: '11-Sep-2026',
+  effectiveDateSource: 'RBA Cash Rate Target decision history',
 };
 
-const activate = (enhancedData: unknown, target: unknown = TARGET_READING) =>
+/** A trusted point-in-polygon geography for the subject property. */
+const SUBJECT_GEOGRAPHY = { status: 'resolved', postcode: '3338', suburb: 'Cobblebank', state: 'VIC' };
+
+const activate = (
+  enhancedData: unknown,
+  target: unknown = TARGET_READING,
+  geography: unknown = SUBJECT_GEOGRAPHY,
+) =>
   activateSafeGenerationInputs({
     enhancedData,
+    geography,
     cashRateTarget: target as never,
     cashRateMonthlyAverage: null,
     capturedAt: '2026-09-11T08:00:00.000Z',
@@ -184,7 +204,7 @@ describe('6-8 — the cash rate is the in-force target, not a constant or a mode
       } as never,
     });
     expect(block).toContain('RBA cash rate target (current)');
-    expect(block).toContain('effective 6 May 2026');
+    expect(block).toContain('12 August 2026 (most recent Board decision)');
     expect(block).toContain('Cash Rate Target — Monthly Average');
     const rows = block.split('\n').filter((l) => l.startsWith('|'));
     // The monthly row must never claim to be current.
@@ -207,19 +227,17 @@ describe('6-8 — the cash rate is the in-force target, not a constant or a mode
     expect(block).not.toContain('cash rate target (current)');
   });
 
-  it('the effective date is read from the RBA, never inferred, and fails closed', () => {
+  it('F1 alone CANNOT supply an effective date — it fails closed instead', () => {
+    // The whole reason the decision history exists. F1's change column records
+    // only non-zero moves, so deriving an effective date from it reports the
+    // LAST CHANGE (6 May 2026) where the RBA publishes 12 August 2026.
     const meta = [{ series_id: 'FIRMMCRTD', table_code: 'f1', title: 'Cash Rate Target', description: 'Cash Rate Target on date', units: 'Per cent', publication_date: '11-Sep-2026' }];
     const obs = [
       { series_id: 'FIRMMCRTD', obs_date: '2026-05-06', value: 4.35 },
       { series_id: 'FIRMMCRTD', obs_date: '2026-09-10', value: 4.35 },
       { series_id: 'FIRMMCCRT', obs_date: '2026-05-06', value: 0.25 },
     ];
-    expect(cashRateTargetOf(meta as never, obs as never)?.effectiveDate).toBe('2026-05-06');
-    // No announced change → no answer, rather than a guess from the values.
-    expect(cashRateTargetOf(meta as never, obs.filter((o) => o.series_id !== 'FIRMMCCRT') as never)).toBeNull();
-    // The two columns disagreeing is never something to average.
-    const contradictory = obs.map((o) => (o.obs_date === '2026-05-06' && o.series_id === 'FIRMMCRTD' ? { ...o, value: 9.99 } : o));
-    expect(cashRateTargetOf(meta as never, contradictory as never)).toBeNull();
+    expect(cashRateTargetOf(meta as never, obs as never, [])).toBeNull();
   });
 
   it('a refused target is REMOVED from the payload, not merely recorded absent', () => {
@@ -249,7 +267,7 @@ describe('6-8 — the cash rate is the in-force target, not a constant or a mode
   it('the statement says effective, never "current rate today"', () => {
     const s = cashRateTargetStatement(safeCashRateTarget(TARGET_READING as never));
     expect(s).toContain('RBA Cash Rate Target: 4.35%');
-    expect(s).toContain('effective 6 May 2026');
+    expect(s).toContain('effective 12 August 2026');
   });
 });
 
@@ -343,7 +361,7 @@ describe('13-14 — the report-time snapshot', () => {
   it('14 — reopening reads the stored snapshot; nothing re-queries a market table', () => {
     // The column is additive and nullable, and nothing backfills it: a report
     // that predates the snapshot reads NULL rather than acquiring one.
-    const migration = read('supabase/migrations/20261121101500_report_market_fact_snapshot.sql');
+    const migration = read('supabase/migrations/20261119100000_report_market_fact_snapshot.sql');
     expect(migration).toMatch(/ADD COLUMN IF NOT EXISTS market_fact_snapshot jsonb/);
     expect(migration).not.toMatch(/\bUPDATE\b|\bINSERT\b/i);
   });
@@ -411,7 +429,7 @@ describe('17-19 — parity, history and preservation', () => {
   });
 
   it('18b — the migration is additive only', () => {
-    const migration = read('supabase/migrations/20261121101500_report_market_fact_snapshot.sql');
+    const migration = read('supabase/migrations/20261119100000_report_market_fact_snapshot.sql');
     expect(migration).not.toMatch(/DROP\s+(COLUMN|TABLE)/i);
   });
 
@@ -500,5 +518,226 @@ describe('11-12 — the narrative is reconciled on grain, period and source', ()
     expect(src).toContain('...claimFlags,');
     // A finding must not abort generation.
     expect(src).not.toMatch(/claimFaults\.length[^\n]*throw/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RF-7.2B.1 corrections — the semantic-integrity pass
+// ---------------------------------------------------------------------------
+
+describe('C1 — the four cash-rate facts are distinct', () => {
+  const meta = [{
+    series_id: 'FIRMMCRTD', table_code: 'f1', title: 'Cash Rate Target',
+    description: 'Cash Rate Target on date', units: 'Per cent', publication_date: '11-Sep-2026',
+  }];
+  const f1 = [
+    { series_id: 'FIRMMCRTD', obs_date: '2026-05-06', value: 4.35 },
+    { series_id: 'FIRMMCRTD', obs_date: '2026-09-10', value: 4.35 },
+  ];
+  // The RBA's own published history: a change, then two holds.
+  const DECISIONS = [
+    { effective_date: '2026-02-04', change_points: 0.25, target_percent: 3.85 },
+    { effective_date: '2026-03-18', change_points: 0.25, target_percent: 4.10 },
+    { effective_date: '2026-05-06', change_points: 0.25, target_percent: 4.35 },
+    { effective_date: '2026-06-17', change_points: 0, target_percent: 4.35 },
+    { effective_date: '2026-08-12', change_points: 0, target_percent: 4.35 },
+  ];
+
+  it('an unchanged Board decision after the last change sets the EFFECTIVE date', () => {
+    const t = cashRateTargetOf(meta as never, f1 as never, DECISIONS as never)!;
+    expect(t.percent).toBe(4.35);
+    expect(t.effectiveDate).toBe('2026-08-12');      // most recent decision
+    expect(t.lastChangedDate).toBe('2026-05-06');    // when it last MOVED
+    expect(t.lastChangePoints).toBe(0.25);
+    expect(t.decisionsSinceChange).toBe(2);          // 17 Jun and 12 Aug
+  });
+
+  it('the effective date is NEVER the last non-zero change when holds follow it', () => {
+    const t = cashRateTargetOf(meta as never, f1 as never, DECISIONS as never)!;
+    expect(t.effectiveDate).not.toBe(t.lastChangedDate);
+  });
+
+  it('with no hold since the change, effective and last-changed coincide', () => {
+    const upTo = DECISIONS.slice(0, 3);
+    const t = cashRateTargetOf(meta as never, f1 as never, upTo as never)!;
+    expect(t.effectiveDate).toBe('2026-05-06');
+    expect(t.lastChangedDate).toBe('2026-05-06');
+    expect(t.decisionsSinceChange).toBe(0);
+  });
+
+  it('a history of holds alone cannot say when the rate moved, so it refuses', () => {
+    const holdsOnly = DECISIONS.filter((d) => d.change_points === 0);
+    expect(cashRateTargetOf(meta as never, f1 as never, holdsOnly as never)).toBeNull();
+  });
+
+  it('F1 disagreeing with the decision history is refused, never averaged', () => {
+    const wrongF1 = [{ series_id: 'FIRMMCRTD', obs_date: '2026-09-10', value: 3.10 }];
+    expect(cashRateTargetOf(meta as never, wrongF1 as never, DECISIONS as never)).toBeNull();
+  });
+
+  it('the decision history alone is sufficient — F1 is a cross-check, not the authority', () => {
+    const t = cashRateTargetOf([] as never, [] as never, DECISIONS as never)!;
+    expect(t.percent).toBe(4.35);
+    expect(t.effectiveDate).toBe('2026-08-12');
+    expect(t.asAtDate).toBeNull();
+  });
+
+  it('the parser refuses a history with no unchanged decision at all', () => {
+    // That source would be F1 by another name, and would reintroduce the bug.
+    const rows = DECISIONS.map((d) => `<tr><td>1 Jan 2020</td><td>+0.25</td><td>${d.target_percent}</td></tr>`).join('');
+    const page = `<table><tr><th>Effective Date</th><th>Change % points</th><th>Cash rate target %</th></tr>${rows}</table>`;
+    expect(() => parseCashRateDecisions(page)).toThrow();
+  });
+});
+
+describe('C2 — the snapshot carries the actual values, not a marker', () => {
+  const DEMOGRAPHICS = {
+    population: { total: 18234 },
+    income: { medianAge: 34, medianHouseholdIncome: 96000, medianWeeklyIncome: 1846, unemploymentRate: 4.2 },
+    employment: { laborForce: 9100, laborForceParticipation: 62.4, employmentRate: 95.8 },
+    dataSource: 'ABS Census 2021 (POA 3338)', dataQuality: 'census', referencePeriod: '2021',
+  };
+
+  it('every narrated ABS metric gets its own fact, with its own value', () => {
+    const facts = activate({ demographics: DEMOGRAPHICS }).snapshot.facts;
+    const byName = new Map(facts.map((f) => [f.name, f]));
+    expect(byName.get('abs.population')?.value).toBe(18234);
+    expect(byName.get('abs.medianAge')?.value).toBe(34);
+    expect(byName.get('abs.medianHouseholdIncomeAnnual')?.value).toBe(96000);
+    expect(byName.get('abs.unemploymentRate')?.value).toBe(4.2);
+    expect(byName.get('abs.labourForce')?.value).toBe(9100);
+    expect(byName.get('abs.employmentRate')?.value).toBe(95.8);
+  });
+
+  it('each carries source, dataset, grain, geography id, period and ruling', () => {
+    const fact = activate({ demographics: DEMOGRAPHICS })
+      .snapshot.facts.find((f) => f.name === 'abs.population')!;
+    expect(fact.source).toBe('abs_census_poa');
+    expect(fact.dataset).toBe('abs_census_poa');
+    expect(fact.grain).toBe('postcode');
+    expect(fact.geographyId).toBe('3338');
+    expect(fact.referencePeriod).toBe('2021 Census');
+    expect(fact.ruling).not.toBe('');
+  });
+
+  it('the RBA facts are individually snapshotted too', () => {
+    const names = activate({}).snapshot.facts.map((f) => f.name);
+    expect(names).toContain('market.cashRateTargetCurrent');
+    expect(names).toContain('market.cashRateTargetEffectiveDate');
+    expect(names).toContain('market.cashRateTargetLastChangedDate');
+    expect(names).toContain('market.cashRateTargetLastChangePoints');
+  });
+
+  it('the effective and last-changed dates are stored as SEPARATE values', () => {
+    const byName = new Map(activate({}).snapshot.facts.map((f) => [f.name, f]));
+    expect(byName.get('market.cashRateTargetEffectiveDate')?.value).toBe('2026-08-12');
+    expect(byName.get('market.cashRateTargetLastChangedDate')?.value).toBe('2026-05-06');
+    expect(byName.get('market.cashRateTargetLastChangePoints')?.value).toBe(0.25);
+  });
+
+  it('a reader can reconstruct the narrative basis without re-querying', () => {
+    // Every present fact names what it is, where it came from and when it was measured.
+    for (const f of activate({ demographics: DEMOGRAPHICS }).snapshot.facts) {
+      if (f.status !== 'present') continue;
+      expect(f.source, f.name).not.toBeNull();
+      expect(f.dataset, f.name).not.toBeNull();
+    }
+  });
+});
+
+describe('C3 — ABS data must describe the SUBJECT property', () => {
+  const forPoa = (poa: string) => ({
+    population: { total: 18234 },
+    dataSource: `ABS Census 2021 (POA ${poa})`, dataQuality: 'census', referencePeriod: '2021',
+  });
+
+  it('a matching POA is admitted', () => {
+    const r = activate({ demographics: forPoa('3338') }, TARGET_READING, { status: 'resolved', postcode: '3338' });
+    expect(r.demographicsKept).toBe(true);
+  });
+
+  it('a WRONG POA is blocked — the adversarial case', () => {
+    // Subject in 3024, genuine ABS data for 3338: real, authoritative, and
+    // about somebody else's suburb.
+    const r = activate({ demographics: forPoa('3338') }, TARGET_READING, { status: 'resolved', postcode: '3024' });
+    expect(r.demographicsKept).toBe(false);
+    expect(r.enhancedData.demographics).toBeUndefined();
+    expect(r.demographicsRuling).toContain('3338');
+    expect(r.demographicsRuling).toContain('3024');
+    expect(r.demographicsRuling).toMatch(/not estimated, synthesised or borrowed/i);
+  });
+
+  it('SEIFA is withheld on the same geography ground', () => {
+    const r = activate(
+      { demographics: forPoa('3338'), seifaData: { irsad: { score: 1010, decile: 6 } } },
+      TARGET_READING,
+      { status: 'resolved', postcode: '3024' },
+    );
+    expect(r.enhancedData.seifaData).toBeUndefined();
+    expect(r.removed.map((x) => x.path)).toContain('seifaData');
+  });
+
+  it('untrusted geography withholds rather than vouches', () => {
+    for (const status of ['requires_review', 'unresolved', undefined]) {
+      const r = activate({ demographics: forPoa('3338') }, TARGET_READING, { status, postcode: '3338' });
+      expect(r.demographicsKept, String(status)).toBe(false);
+    }
+  });
+
+  it('no geography at all withholds, and says which absence it is', () => {
+    const r = activate({ demographics: forPoa('3338') }, TARGET_READING, null);
+    expect(r.demographicsKept).toBe(false);
+    expect(r.demographicsRuling).toMatch(/no trusted resolved postcode/i);
+  });
+
+  it('the generator supplies the trusted row rather than its own postcode', () => {
+    const src = stripComments(read(GENERATOR));
+    expect(src).toContain("from('report_geography')");
+    expect(src).toContain('geography: subjectGeography');
+  });
+});
+
+describe('C4 — a market-claim fault affects client readiness', () => {
+  it('faults are raised in the severity vocabulary the QA page counts', () => {
+    const src = read('supabase/functions/_shared/reports/contract/marketClaimAudit.pure.ts');
+    expect(src).toContain("severity: 'high'");
+    expect(src).not.toContain("severity: 'warning'");
+  });
+
+  it('and land in validation_flags, which is what splits clean from flagged', () => {
+    const gen = stripComments(read(GENERATOR));
+    expect(gen).toContain('...claimFlags,');
+    // The existing readiness mechanism: any flag at all moves a report out of
+    // `cleanReports`. Pinned here so a refactor of that page cannot quietly
+    // make these faults client-ready again.
+    const qa = read('src/pages/QualityAssurance.tsx');
+    expect(qa).toContain('validation_flags');
+    expect(qa).toMatch(/cleanReports\s*=\s*reports\.filter/);
+  });
+});
+
+describe('C6 — the legacy scorer is untouched and cannot become client authority', () => {
+  // The boundary itself is proven by `scoringInputPolicy.spec.ts`; these are
+  // the minimum integration assertions that RF-7.2B.1 left it standing.
+  it('production scoring authority is still "unavailable"', () => {
+    expect(PRODUCTION_SCORING_AUTHORITY).toBe('unavailable');
+  });
+
+  it('no overall grade may be published under it', () => {
+    expect(mayPublishOverallGrade(PRODUCTION_SCORING_AUTHORITY)).toBe(false);
+  });
+
+  it('no dimension assessment may be published under it', () => {
+    expect(mayPublishDimensionScores(PRODUCTION_SCORING_AUTHORITY)).toBe(false);
+  });
+
+  it('this phase changed neither the scorer nor the policy', () => {
+    // The gate deliberately runs AFTER scoring, so the engine still reads the
+    // disowned fields — and cannot publish anything from them.
+    const engine = read('supabase/functions/_shared/investmentScoreEngine.ts');
+    expect(engine).not.toContain('safeGenerationInputs');
+    expect(engine).not.toContain('activateSafeGenerationInputs');
+    const policy = read('supabase/functions/_shared/reports/market/scoringInputPolicy.pure.ts');
+    expect(policy).not.toContain('safeGenerationInputs');
   });
 });

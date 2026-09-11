@@ -65,6 +65,7 @@ import {
 import {
   safeCashRate,
   safeCashRateTarget,
+  cashRateTargetDetailFacts,
   SAFE_MARKET_FACTS_VERSION,
   type RbaCashRateReading,
   type CashRateTargetReading,
@@ -110,6 +111,33 @@ export const DISOWNED_LOCATION_REASONS: Readonly<Record<string, string>> = {
     + 'distinguishes nothing.',
 };
 
+/**
+ * The ABS metrics that actually reach the narrative, with the path each sits at
+ * in the `censusDemographicsResponse` payload.
+ *
+ * Transcribed from `censusPromptBlocks` rather than from the table, so the
+ * snapshot records what a CLIENT was shown rather than what was fetched. A
+ * marker saying demographics were "retrieved" cannot answer "which number did
+ * the report quote"; these can.
+ */
+export const SNAPSHOT_ABS_METRICS: ReadonlyArray<{
+  readonly name: string;
+  readonly path: readonly string[];
+  readonly label: string;
+}> = [
+  { name: 'abs.population', path: ['population', 'total'], label: 'population count' },
+  { name: 'abs.medianAge', path: ['income', 'medianAge'], label: 'median age' },
+  { name: 'abs.medianHouseholdIncomeAnnual', path: ['income', 'medianHouseholdIncome'], label: 'annualised median household income' },
+  { name: 'abs.medianWeeklyIncome', path: ['income', 'medianWeeklyIncome'], label: 'median weekly household income' },
+  { name: 'abs.unemploymentRate', path: ['income', 'unemploymentRate'], label: 'unemployment rate' },
+  { name: 'abs.labourForce', path: ['employment', 'laborForce'], label: 'labour force size' },
+  { name: 'abs.labourForceParticipation', path: ['employment', 'laborForceParticipation'], label: 'labour-force participation rate' },
+  { name: 'abs.employmentRate', path: ['employment', 'employmentRate'], label: 'employment rate' },
+];
+
+/** The SEIFA indices `seifaTable` narrates, from a separate payload. */
+export const SNAPSHOT_SEIFA_INDICES: readonly string[] = ['irsad', 'irsd', 'ier', 'ieo'];
+
 // ---------------------------------------------------------------------------
 // Inputs and outputs
 // ---------------------------------------------------------------------------
@@ -117,6 +145,15 @@ export const DISOWNED_LOCATION_REASONS: Readonly<Record<string, string>> = {
 export interface SafeGenerationInput {
   /** The assembled fan-out payload. Not mutated. */
   readonly enhancedData: unknown;
+  /**
+   * The trusted `report_geography` row for the SUBJECT property.
+   *
+   * A genuine ABS source is not enough if it describes a different place. The
+   * demographics payload names the postal area it came from, and that must be
+   * the subject's own postcode: a real POA 3338 retrieval attached to a
+   * property in 3024 is authoritative about somebody else's suburb.
+   */
+  readonly geography?: unknown;
   /** The in-force cash rate target, as `cashRateTargetOf` derived it. */
   readonly cashRateTarget?: CashRateTargetReading | null;
   /** The monthly-average reading, for trend context only. */
@@ -195,6 +232,32 @@ function withoutPath(
   const inner = withoutPath(child, rest.join('.'));
   if (inner.next === child) return { next: source, hadValue: false };
   return { next: { ...source, [head]: inner.next }, hadValue: inner.hadValue };
+}
+
+/** Read a dotted path out of a payload, or null. */
+export function readPath(source: unknown, path: readonly string[]): number | string | null {
+  let cursor: unknown = source;
+  for (const key of path) {
+    if (!isRecord(cursor)) return null;
+    cursor = cursor[key];
+  }
+  if (typeof cursor === 'number' && Number.isFinite(cursor)) return cursor;
+  if (typeof cursor === 'string' && cursor.trim() !== '') return cursor.trim();
+  return null;
+}
+
+/**
+ * The subject property's own postcode, from a TRUSTED `report_geography` row.
+ *
+ * Untrusted geography yields null, which withholds demographics rather than
+ * letting an unconfirmed location vouch for an area's statistics.
+ */
+export function subjectPostcodeOf(geography: unknown): string | null {
+  if (!isRecord(geography)) return null;
+  const status = str(geography['status']);
+  if (status === null || !['resolved', 'resolved_with_warning'].includes(status)) return null;
+  const postcode = str(geography['postcode']) ?? str(geography['poa']);
+  return postcode !== null && /^\d{4}$/.test(postcode) ? postcode : null;
 }
 
 /**
@@ -280,52 +343,114 @@ export function activateSafeGenerationInputs(
     next['locationIntelligence'] = loc;
   }
 
-  // --- Demographics: keep only a recognised retrieval -----------------------
+  // --- Demographics: a recognised retrieval AND the subject's own POA -------
   const demographics = next['demographics'];
-  const demographicsKept = demographicsAreRetrieved(demographics);
   const demographicsSource = isRecord(demographics)
     ? str(demographics['dataSource'] ?? demographics['source'])
     : null;
-  const demographicsPoa = demographicsKept ? poaOfCensusSource(demographicsSource) : null;
+  const demographicsPoa = poaOfCensusSource(demographicsSource);
+  const subjectPostcode = subjectPostcodeOf(input.geography);
+  const retrieved = demographicsAreRetrieved(demographics);
+  const poaMatches = demographicsPoa !== null
+    && subjectPostcode !== null
+    && demographicsPoa === subjectPostcode;
+  const demographicsKept = retrieved && poaMatches;
   const demographicsReferencePeriod = isRecord(demographics)
     ? str(demographics['referencePeriod'])
     : null;
+
   let demographicsRuling: string;
   if (demographics === undefined || demographics === null) {
     demographicsRuling =
       'No demographic payload was supplied for this report, so none is narrated.';
-  } else if (demographicsKept) {
-    demographicsRuling =
-      `Retrieved from the ABS Census postal-area table (${demographicsSource ?? 'POA'}) and kept.`;
-  } else {
-    delete next['demographics'];
-    removed.push({
-      path: 'demographics',
-      reason:
-        'Not recognised as a retrieval from the ABS Census postal-area table. A '
-        + 'generated block carrying an ABS label is the defect this closes, and a '
-        + 'source must be recognised rather than merely not blocked.',
-      hadValue: true,
-    });
+  } else if (!retrieved) {
     demographicsRuling =
       'The demographic payload is not a recognised ABS Census postal-area retrieval, '
       + 'so it is withheld. It is not estimated, synthesised or borrowed from a '
       + 'neighbouring area.';
+  } else if (subjectPostcode === null) {
+    demographicsRuling =
+      'This property has no trusted resolved postcode, so area statistics cannot be '
+      + 'confirmed to describe it and are withheld. They are not estimated, synthesised '
+      + 'or borrowed from a neighbouring area.';
+  } else if (!poaMatches) {
+    demographicsRuling =
+      `The available ABS Census data is for postal area ${demographicsPoa ?? 'an unnamed area'}, `
+      + `but this property resolves to postcode ${subjectPostcode}. Statistics for a different `
+      + 'area are withheld rather than attached to it. They are not estimated, synthesised or '
+      + 'borrowed from a neighbouring area.';
+  } else {
+    demographicsRuling =
+      `Retrieved from the ABS Census postal-area table (${demographicsSource ?? 'POA'}) and `
+      + `confirmed to describe this property's own postcode ${subjectPostcode}.`;
   }
+
+  if (!demographicsKept && demographics !== undefined && demographics !== null) {
+    delete next['demographics'];
+    removed.push({ path: 'demographics', reason: demographicsRuling, hadValue: true });
+  }
+  // SEIFA describes the same postal area as the Census figures beside it, so it
+  // stands or falls on the same geography question.
+  const seifa = next['seifaData'];
+  if (!demographicsKept && seifa !== undefined && seifa !== null) {
+    delete next['seifaData'];
+    removed.push({
+      path: 'seifaData',
+      reason: 'SEIFA indices describe the same postal area as the Census figures beside '
+        + 'them, so they are withheld on the same ground. ' + demographicsRuling,
+      hadValue: true,
+    });
+  }
+
+  const absContext = {
+    grain: 'postcode' as const,
+    referencePeriod: demographicsReferencePeriod
+      ? `${demographicsReferencePeriod} Census`
+      : '2021 Census',
+    dataset: 'abs_census_poa',
+    asOf: demographicsReferencePeriod,
+  };
+
+  if (demographicsKept) {
+    // One fact per NARRATED metric, carrying its actual value. This is what
+    // lets a future reader say which number the narrative was built on; a
+    // roll-up saying "retrieved" cannot answer that.
+    for (const metric of SNAPSHOT_ABS_METRICS) {
+      facts.push(gateFact({
+        name: metric.name,
+        value: readPath(demographics, metric.path),
+        safety: 'contextual',
+        source: 'abs_census_poa',
+        context: absContext,
+        absenceReason:
+          `The ABS Census holds no ${metric.label} for postal area ${subjectPostcode}.`,
+      }));
+    }
+    if (isRecord(seifa)) {
+      for (const index of SNAPSHOT_SEIFA_INDICES) {
+        if (!isRecord(seifa[index])) continue;
+        facts.push(gateFact({
+          name: `abs.seifa.${index}`,
+          value: readPath(seifa, [index, 'score']),
+          safety: 'contextual',
+          source: 'abs_seifa_poa',
+          context: { ...absContext, dataset: 'abs_seifa_poa' },
+          absenceReason:
+            `The SEIFA release carries no ${index.toUpperCase()} score for postal area ${subjectPostcode}.`,
+        }));
+      }
+    }
+  }
+
+  // The roll-up stays, because a reader needs to know at a glance whether the
+  // block was admitted at all — but it is no longer the only thing recorded.
   facts.push(gateFact({
     name: 'market.demographics',
     value: demographicsKept ? 'retrieved' : null,
     safety: demographicsKept ? 'contextual' : 'not_client_safe',
-    source: demographicsKept ? 'abs_census_poa' : 'generated',
+    source: demographicsKept ? 'abs_census_poa' : 'withheld',
     material: true,
-    context: demographicsKept
-      ? {
-        grain: 'postcode',
-        referencePeriod: demographicsReferencePeriod ?? '2021 Census',
-        dataset: 'abs_census_poa',
-        asOf: demographicsReferencePeriod,
-      }
-      : undefined,
+    context: demographicsKept ? absContext : undefined,
     absenceReason: demographicsKept ? undefined : demographicsRuling,
   }));
 
@@ -341,7 +466,7 @@ export function activateSafeGenerationInputs(
   // which is exactly what it does when F1 is not loaded at all.
   const targetFact = safeCashRateTarget(input.cashRateTarget ?? null);
   const monthlyFact = safeCashRate(input.cashRateMonthlyAverage ?? null);
-  facts.push(targetFact, monthlyFact);
+  facts.push(targetFact, monthlyFact, ...cashRateTargetDetailFacts(input.cashRateTarget ?? null));
 
   const economics = next['economics'];
   if (isRecord(economics) && economics['cashRateTarget'] !== undefined) {
@@ -369,7 +494,9 @@ export function activateSafeGenerationInputs(
       capturedAt: input.capturedAt,
       assuranceVersion: ASSURANCE_VERSION,
       facts: facts.map((f) =>
-        snapshotFactOf(f, f.name === 'market.demographics' ? demographicsPoa : null)),
+        snapshotFactOf(f, f.name.startsWith('abs.') || f.name === 'market.demographics'
+          ? (demographicsKept ? subjectPostcode : null)
+          : null)),
     },
     version: SAFE_GENERATION_VERSION,
   };

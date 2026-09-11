@@ -287,11 +287,17 @@ export const CASH_RATE_TARGET_SERIES_ID = 'FIRMMCRTD';
 /** The in-force target, as `cashRateTargetOf` derived it from F1. */
 export interface CashRateTargetReading {
   readonly percent: unknown;
+  readonly effectiveDate: unknown;
   readonly effectiveLabel: unknown;
+  readonly lastChangedDate: unknown;
+  readonly lastChangedLabel: unknown;
+  readonly lastChangePoints: unknown;
+  readonly decisionsSinceChange?: unknown;
   readonly asAtLabel: unknown;
   readonly seriesId: unknown;
   readonly tableCode: unknown;
   readonly publicationDate: unknown;
+  readonly effectiveDateSource?: unknown;
 }
 
 /**
@@ -318,7 +324,11 @@ export function safeCashRateTarget(reading: CashRateTargetReading | null): SafeF
       + 'The monthly average is not used in its place.',
     );
   }
-  if (str(reading.seriesId) !== CASH_RATE_TARGET_SERIES_ID) {
+  // `seriesId` is F1's, and F1 is a cross-check rather than the authority: the
+  // decision history alone is sufficient and leaves it null. What is refused is
+  // a reading claiming to be the target while naming some OTHER series.
+  const seriesId = str(reading.seriesId);
+  if (seriesId !== null && seriesId !== CASH_RATE_TARGET_SERIES_ID) {
     return unavailable(
       'The available interest-rate series is not the Reserve Bank cash rate target on date, '
       + 'so it is not quoted as the current target.',
@@ -345,12 +355,66 @@ export function safeCashRateTarget(reading: CashRateTargetReading | null): SafeF
       grain: 'national',
       referencePeriod: `effective ${effective}`
         + (asAt ? `, in force as at ${asAt}` : ''),
-      dataset: str(reading.tableCode)
-        ? `RBA statistical table ${String(reading.tableCode).toUpperCase()} — Cash Rate Target on date`
-        : 'RBA Cash Rate Target on date',
+      dataset: str(reading.effectiveDateSource)
+        ?? 'RBA Cash Rate Target decision history',
       asOf: str(reading.publicationDate),
     },
   });
+}
+
+/**
+ * The three dates and amounts that sit beside the target, each its own fact.
+ *
+ * Separate rather than folded into the target's label because they answer
+ * different questions and were being conflated: the EFFECTIVE date is the most
+ * recent Board decision (12 August 2026 on the reported case) while the LAST
+ * CHANGED date is when the rate moved (6 May 2026). A snapshot that recorded
+ * only "effective 6 May" would preserve the error rather than the facts.
+ */
+export function cashRateTargetDetailFacts(
+  reading: CashRateTargetReading | null,
+): SafeFact<unknown>[] {
+  if (reading === null) return [];
+  const source = str(reading.effectiveDateSource)
+    ?? 'RBA Cash Rate Target decision history';
+  const context = {
+    grain: 'national' as const,
+    referencePeriod: 'RBA Board decision',
+    dataset: source,
+    asOf: str(reading.publicationDate),
+  };
+  const facts: SafeFact<unknown>[] = [];
+  const effectiveDate = str(reading.effectiveDate);
+  if (effectiveDate !== null) {
+    facts.push(gateFact({
+      name: 'market.cashRateTargetEffectiveDate',
+      value: effectiveDate,
+      safety: 'authoritative',
+      source: 'rba_cash_rate_decisions',
+      context,
+    }));
+  }
+  const lastChanged = str(reading.lastChangedDate);
+  if (lastChanged !== null) {
+    facts.push(gateFact({
+      name: 'market.cashRateTargetLastChangedDate',
+      value: lastChanged,
+      safety: 'authoritative',
+      source: 'rba_cash_rate_decisions',
+      context,
+    }));
+  }
+  const points = num(reading.lastChangePoints);
+  if (points !== null) {
+    facts.push(gateFact({
+      name: 'market.cashRateTargetLastChangePoints',
+      value: points,
+      safety: 'authoritative',
+      source: 'rba_cash_rate_decisions',
+      context,
+    }));
+  }
+  return facts;
 }
 
 /** The client sentence for the in-force target. One spelling, shared. */

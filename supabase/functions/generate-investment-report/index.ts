@@ -3238,8 +3238,36 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     // From this point the sanitised object is what the prompts compose from AND
     // what is persisted, so the stored report snapshot carries no disowned fact
     // either.
+    //
+    // The subject's TRUSTED geography, for the postal-area cross-check: a real
+    // ABS retrieval for POA 3338 is authoritative about somebody else's suburb
+    // if this property sits in 3024. `report_geography` is the platform's
+    // point-in-polygon authority; the address-derived postcode this function
+    // computed is not, which is the whole reason the check exists.
+    //
+    // NOTE (operational, recorded in RF72B1_FORWARD_SAFE_ACTIVATION.md):
+    // `resolve-report-geography` self-selects reports whose
+    // `location_intelligence` is ALREADY PERSISTED, so a first generation has
+    // no row here and demographics fail closed. That ordering is named as the
+    // follow-up decision rather than worked around by trusting a weaker
+    // postcode.
+    let subjectGeography: Record<string, unknown> | null = null;
+    if (reportId && supabaseClient) {
+      const { data: geoRow, error: geoError } = await supabaseClient
+        .from('report_geography')
+        .select('postcode, status, suburb, state')
+        .eq('report_id', reportId)
+        .maybeSingle();
+      if (geoError) {
+        console.log(`⚠️ report_geography read failed (${geoError.message}) — area statistics will fail closed.`);
+      } else if (geoRow) {
+        subjectGeography = geoRow as Record<string, unknown>;
+      }
+    }
+
     const safeGeneration = activateSafeGenerationInputs({
       enhancedData,
+      geography: subjectGeography,
       cashRateTarget: (enhancedData as any)?.economics?.cashRateTarget ?? null,
       cashRateMonthlyAverage: null,
       capturedAt: new Date().toISOString(),

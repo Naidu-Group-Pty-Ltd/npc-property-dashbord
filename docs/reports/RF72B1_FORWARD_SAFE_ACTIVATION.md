@@ -21,15 +21,22 @@ These are answered separately on purpose, because collapsing them is what went w
 | --- | --- | --- |
 | Client-Safe Gate | YES (RF-7.2B) | **YES** — `generate-investment-report` and `regenerate-report-qualitative` |
 | Generated demographics blocked | YES | **YES** |
-| Trusted ABS POA admitted | YES | **YES** |
+| Trusted ABS POA admitted | YES | **YES** — and cross-checked against the subject's own postcode |
 | Unsafe Location trio + transport score blocked | YES | **YES** |
 | Hardcoded / LLM cash rate blocked | YES | **YES** |
 | Current RBA cash-rate target ingested | **NEW** | **CODE YES / DATA PENDING A LOAD** (§4) |
-| Report-time market-fact snapshot | **NEW** | **YES** |
-| Market-claim reconciliation | YES (RF-7.2B) | **YES** — disclosed, never blocking |
+| Report-time market-fact snapshot | **NEW** | **YES** — individual valued facts, ABS and RBA |
+| Market-claim reconciliation | YES (RF-7.2B) | **YES** — a fault makes the report non-clean at `high` severity |
 | Visibility policy as Viewer/PDF authority | YES | **NO** — RF-7.2C |
 | Chart-null policy in production charts | YES | **NO** — RF-7.2C |
 | Rent-basis production capture | contract only | **NO** (§9) |
+
+| RBA current effective date (vs last-changed) | **NEW** | **YES** — four distinct facts |
+| Legacy scorer | untouched | cannot publish a grade (`PRODUCTION_SCORING_AUTHORITY = 'unavailable'`) |
+
+**Code activation: READY. Production source load: NOT YET VERIFIED** — see §9c, the
+post-deploy activation check. RF-7.2B.1 is not operationally complete merely because
+it fails closed.
 
 **Ready for RF-7.2C: YES for data integrity; the Viewer/PDF adoption is RF-7.2C's own work.**
 
@@ -106,6 +113,25 @@ Two judgement calls, stated rather than buried:
   pass through `reconcileNearestSchool` / `reconcileSchoolDistances`; removing a working
   reconciliation would be widening the phase.
 
+### The ABS data must describe THIS property
+
+A genuine ABS source is not enough if it describes somewhere else. The gate now
+requires `demographic POA === trusted report_geography postcode`: a real POA 3338
+retrieval attached to a property in 3024 is authoritative about somebody else's
+suburb, and is **blocked with an explicit reason** naming both postcodes. SEIFA
+goes with it, because it describes the same postal area. Untrusted or absent
+geography withholds rather than vouches. Nothing is estimated, synthesised or
+borrowed from a neighbour.
+
+**Operational consequence, stated rather than discovered in production:**
+`resolve-report-geography` self-selects reports whose `location_intelligence` is
+ALREADY PERSISTED — which happens at the generator's own write — and has no
+caller in the generation path. So a **first** generation has no geography row and
+demographics fail closed. Regenerations and any report after a backfill run do
+have one. The remedy is an ordering decision (resolve geography before narrative,
+rather than after) and is **put to the owner rather than taken**, because it
+changes when a separate function runs.
+
 ### Trust is asymmetric
 
 A source must be **recognised** to pass. The live payload stamps
@@ -141,6 +167,43 @@ so the block fails closed onto the monthly average under its own label.
 **Decision: the Investment Property Report's primary macroeconomic fact is the CURRENT
 RBA cash-rate target with its effective date.** `FIRMMCRT` is retained solely as
 explicitly-labelled monthly-average trend context.
+
+### The correction: four facts, not two
+
+The first implementation reported `4.35% — effective 6 May 2026`. **That was the
+last CHANGE date, not the effective date**, and the difference is three months.
+
+F1's `FIRMMCCRT` records only NON-ZERO changes — measured over the whole published
+series, its distinct values are `-0.50, -0.25, -0.15, 0.25, 0.50`, with no `0`
+anywhere. The Board met on 17 June 2026 and again on 12 August 2026 and left the
+target where it was; F1 has no row for either, so nothing derivable from F1 can
+reach the RBA's own published effective date.
+
+The RBA's decision history does record holds, and the four facts are now separate:
+
+| Fact | Value | Source |
+| --- | --- | --- |
+| Current target | **4.35%** | decision history, cross-checked against F1 |
+| Current effective date | **12 August 2026** | decision history (most recent Board decision) |
+| Last changed date | **6 May 2026** | decision history |
+| Last change | **+0.25 percentage points** | decision history |
+| Decisions held since | 2 (17 Jun, 12 Aug) | decision history |
+
+They render as four rows rather than one, and the prompt forbids presenting the
+last-changed date as the effective date, or writing that the rate "has been at
+this level since" the effective date — it has been at this level since it last
+*changed*.
+
+`rba_cash_rate_decisions` stores the history (401 decisions back to January 1990,
+300 of them holds). The seven 1990 rows the RBA published as a RANGE — e.g.
+`15.00 to 15.50` — are kept with their verbatim text and null numerics rather than
+dropped, so a truncated download can never be mistaken for a short history.
+
+**Fails closed four ways**: no decision history loaded (F1 alone yields *null*,
+because F1's last-change date is not a substitute for an effective date); no
+non-zero change anywhere in the history; a history of holds alone; or F1
+disagreeing with the decision history about the rate in force — two official RBA
+sources disagreeing is never something to average.
 
 The two are different facts, and the difference is measurable. `FIRMMCRT` is F1.1's
 "Cash Rate Target; **monthly average**": in a month containing a Board change it averages
@@ -193,6 +256,27 @@ backfilled**). Per authoritative fact: value, status, source, dataset/series, ge
 grain, geography identifier, reference period, as-of/publication date, the gate's
 ruling, and the assurance version the snapshot was produced under.
 
+### The correction: actual values, not a marker
+
+The first implementation recorded `market.demographics = "retrieved"` and nothing
+else — which cannot answer *which number did the narrative quote*. Every ABS
+metric that reaches the prose is now its own fact carrying its own value:
+
+`abs.population` · `abs.medianAge` · `abs.medianHouseholdIncomeAnnual` ·
+`abs.medianWeeklyIncome` · `abs.unemploymentRate` · `abs.labourForce` ·
+`abs.labourForceParticipation` · `abs.employmentRate`, plus
+`abs.seifa.{irsad,irsd,ier,ieo}`.
+
+The list is transcribed from `censusPromptBlocks` rather than from the table, so
+it records what a **client was shown** rather than what was fetched. The RBA side
+is the same: `market.cashRateTargetCurrent`,
+`market.cashRateTargetEffectiveDate`, `market.cashRateTargetLastChangedDate` and
+`market.cashRateTargetLastChangePoints` are four separate values, so a snapshot
+cannot preserve the conflation the correction removed.
+
+Measured on the cohort: 10 valued facts where demographics are admitted, 4 where
+they are not.
+
 The rule: **reopening a report must never re-read today's ABS or RBA tables and quietly
 restate the document.** NULL means the report predates the snapshot — not that its
 snapshot is empty.
@@ -216,8 +300,23 @@ Three faults, each named by the mandate: **grain** (a postal-area figure called 
 suburb's), **period** (a 2021 Census figure called current), **source** (a monthly
 average called the rate in force).
 
-It **discloses and never blocks** — findings become `validation_flags`, because two
-gates on one question is how one of them becomes wrong. It is deliberately narrow: it
+**Generation completes; client readiness does not.** Findings become
+`validation_flags`, which is the report QA mechanism that already exists:
+`QualityAssurance.tsx` splits reports into `cleanReports` and
+`reportsWithValidationIssues` purely on `validation_flags.length > 0`, so a report
+carrying one of these faults is no longer clean and cannot be presented as such
+until corrected.
+
+They are raised at **`high`** — the page counts `critical | high | medium`, and a
+band it does not count reads as no finding at all. That is deliberately a step
+above the `warning` the prose-vs-record reconciliation uses beside it: a yield
+disagreeing by a rounding step is a possible discrepancy, whereas these three are
+validated semantic errors about what a figure *is*.
+
+**What this does not do is gate delivery.** Nothing in the product consults
+`validation_flags` before a report is shared or downloaded — `status` is set to
+`completed` unconditionally — and adding such a gate would be a new workflow
+rather than a use of the existing one. It is deliberately narrow: it
 matches a fact's own value in the prose and reads the words around it, rather than
 parsing claims in general. A broad claim parser that is 80% right generates more noise
 than signal, and a reviewer who learns to ignore these flags is worse off than one who
@@ -292,6 +391,54 @@ family.
 
 ---
 
+## 9a. The migration timestamps
+
+`20261119100000_report_market_fact_snapshot.sql` and
+`20261119110000_rba_cash_rate_decisions.sql`.
+
+Both are dated after 11 September 2026, and that is **deliberate rather than
+accidental**. 98 of the repository's existing migrations already carry versions
+between 20260911 and 20261119: the version sequence has drifted ahead of
+wall-clock time, and the repo's documented convention is monotonic ORDERING
+("must remain later than every…", "unique and later than…"), not calendar
+accuracy. Dating these in September would place them behind 97 already-applied
+migrations and risk being skipped by version-tracking.
+
+They are therefore anchored immediately after the current maximum
+(`20261119093000`), adding no new drift. The first version chosen (`20261121101500`)
+was arbitrary and has been corrected.
+
+## 9b. The scoring-authority boundary, proven not altered
+
+This PR touches neither `investmentScoreEngine.ts` nor
+`scoringInputPolicy.pure.ts`. The boundary is proven by the existing
+`scoringInputPolicy.spec.ts`; RF-7.2B.1 adds only the minimum integration
+assertions that it still stands:
+
+- `PRODUCTION_SCORING_AUTHORITY === 'unavailable'`
+- `mayPublishOverallGrade('unavailable') === false`
+- `mayPublishDimensionScores('unavailable') === false`
+- neither the engine nor the policy references this phase's machinery
+
+So even though the legacy scorer still consumes the disowned `walkScore`,
+`commute` and `schools` fields, a new report cannot publish an overall grade, a
+dimension assessment or a score-derived verdict from that path. V2 is untouched.
+
+## 9c. Post-deploy activation check (required)
+
+Code activation is ready; **production source load is not verified**. RF-7.2B.1 is
+not operationally complete merely because it fails closed. After merge and deploy:
+
+1. Load the authoritative sources —
+   `node scripts/rba/load-rba-tables.mjs --table cash-rate,f1`.
+2. Read back the current target and effective date; confirm **4.35% effective
+   12 August 2026**, last changed 6 May 2026.
+3. Read back trusted ABS for a known postcode.
+4. Run one production-shaped generation.
+5. Inspect the stored `market_fact_snapshot` — individual valued facts present.
+6. Inspect the prompt — no blocked fact present.
+7. Confirm no `market_claim` fault on a correct report.
+
 ## 10. Carry-forwards — named, not taken
 
 1. **The investment score still reads the disowned Location fields.** Deliberate: the
@@ -304,3 +451,9 @@ family.
    published file; the load runs after deployment. Fails closed until then.
 4. **Visibility policy and chart-null policy are still not the Viewer/PDF authority.**
    RF-7.2C.
+5. **Geography resolution runs after generation, not before** (§ "The ABS data must
+   describe THIS property"). Until that ordering changes, a first generation
+   withholds demographics. An owner decision, not a code default.
+6. **No delivery gate exists.** A market-claim fault makes a report non-clean and
+   high-severity on the QA page; nothing stops it being downloaded or shared,
+   because nothing ever did.
