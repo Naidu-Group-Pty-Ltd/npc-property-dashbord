@@ -3,6 +3,14 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import {
+  admissibleInputs,
+  policyStamp,
+  NOT_ASSESSED_REASON,
+  OVERALL_GRADE_UNAVAILABLE,
+  type ScoredDimension,
+  type ScoringPolicyStamp,
+} from '../_shared/reports/market/scoringInputPolicy.pure.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -27,6 +35,15 @@ interface InvestmentScoringInput {
   lvr?: number;
   state?: string;
   propertyType?: string;
+  /**
+   * Inputs the CALLER has verified for this property, by name.
+   *
+   * The forward-only policy refuses a templated or market-evidence input until
+   * it is named here, so nothing scores from an unverified source by default
+   * and a genuine one opens its dimension without a code change
+   * (`scoringInputPolicy.pure.ts`).
+   */
+  verifiedInputs?: string[];
 }
 
 interface DimensionScore {
@@ -62,6 +79,14 @@ interface InvestmentScore {
   weaknesses: string[];
   opportunities: string[];
   risks: string[];
+  /** How this run decided what could count, and whether a grade was issued. */
+  policy?: ScoringPolicyStamp;
+  /** The client-facing statement where no grade may be issued; null when one was. */
+  evidenceStatement?: { heading: string; value: string; explanation: string } | null;
+  /** Per-dimension reason, in the client's words, for each dimension not assessed. */
+  notAssessed?: Record<string, string>;
+  /** What the record offered before the policy ruled, for the audit trail. */
+  dataPointsPresented?: Record<string, string[]>;
 }
 
 // Minimum number of dimensions required to publish a quantitative headline score.
@@ -616,12 +641,37 @@ function calculateInvestmentScore(input: InvestmentScoringInput): InvestmentScor
   if (hasNum(input.daysOnMarket)) riskPoints.push('daysOnMarket');
   if (hasNum(input.priceGrowth1Year)) riskPoints.push('priceGrowth1Year');
 
+  // The forward-only policy decides what may actually count. An input is
+  // admitted only when the dimension OWNS it and it is either operator-entered
+  // or declared verified — so a per-state walk-score template, a fabricated
+  // commute and a buyer's own leverage all stop reaching a property grade.
+  // Refused inputs remain visible in `dataPointsPresented` for the audit trail.
+  const verified = Array.isArray(input.verifiedInputs) ? input.verifiedInputs : [];
+  const admitted = (dimension: ScoredDimension, presented: string[]) =>
+    admissibleInputs(dimension, presented, verified);
+
+  const yieldAdmitted = admitted('yield', yieldPoints);
+  const growthAdmitted = admitted('growth', growthPoints);
+  const locationAdmitted = admitted('location', locationPoints);
+  const demandAdmitted = admitted('demand', demandPoints);
+  const riskAdmitted = admitted('risk', riskPoints);
+
+  // Yield still needs BOTH price and rent; the policy narrows what may be
+  // counted, it never relaxes a dimension's own requirement.
+  const yieldStillHasData = yieldHasData
+    && yieldAdmitted.includes('propertyPrice') && yieldAdmitted.includes('weeklyRent');
+
   const dims = {
-    yieldScore: { ...yieldScore, hasData: yieldHasData, dataPoints: yieldPoints },
-    growthScore: { ...growthScore, hasData: growthPoints.length > 0, dataPoints: growthPoints },
-    locationScore: { ...locationScore, hasData: locationPoints.length > 0, dataPoints: locationPoints },
-    demandScore: { ...demandScore, hasData: demandPoints.length > 0, dataPoints: demandPoints },
-    riskScore: { ...riskScore, hasData: riskPoints.length > 0, dataPoints: riskPoints },
+    yieldScore: { ...yieldScore, hasData: yieldStillHasData, dataPoints: yieldAdmitted },
+    growthScore: { ...growthScore, hasData: growthAdmitted.length > 0, dataPoints: growthAdmitted },
+    locationScore: { ...locationScore, hasData: locationAdmitted.length > 0, dataPoints: locationAdmitted },
+    demandScore: { ...demandScore, hasData: demandAdmitted.length > 0, dataPoints: demandAdmitted },
+    riskScore: { ...riskScore, hasData: riskAdmitted.length > 0, dataPoints: riskAdmitted },
+  };
+
+  const presentedByDimension: Record<string, string[]> = {
+    yieldScore: yieldPoints, growthScore: growthPoints, locationScore: locationPoints,
+    demandScore: demandPoints, riskScore: riskPoints,
   };
 
   const weights = {
@@ -647,6 +697,29 @@ function calculateInvestmentScore(input: InvestmentScoringInput): InvestmentScor
     riskScore,
   });
 
+  const measured = (Object.keys(dims) as Array<keyof typeof dims>)
+    .filter((k) => dims[k].hasData)
+    .map((k) => k.replace(/Score$/, '') as ScoredDimension);
+  const policy = policyStamp(measured, !coverage.dataInsufficient, new Date());
+
+  // What a client is told where no grade may be issued, and why each absent
+  // dimension is absent. Composed once here so the viewer, the PDF and the
+  // stored row cannot disagree about it.
+  const evidenceStatement = coverage.dataInsufficient
+    ? {
+        heading: OVERALL_GRADE_UNAVAILABLE.heading,
+        value: OVERALL_GRADE_UNAVAILABLE.value,
+        explanation: OVERALL_GRADE_UNAVAILABLE.explanation,
+      }
+    : null;
+  const notAssessed = (Object.keys(dims) as Array<keyof typeof dims>)
+    .filter((k) => !dims[k].hasData)
+    .reduce<Record<string, string>>((acc, k) => {
+      const dim = k.replace(/Score$/, '') as ScoredDimension;
+      acc[dim] = NOT_ASSESSED_REASON[dim];
+      return acc;
+    }, {});
+
   return {
     totalScore,
     grade,
@@ -657,6 +730,10 @@ function calculateInvestmentScore(input: InvestmentScoringInput): InvestmentScor
     weaknesses,
     opportunities,
     risks,
+    policy,
+    evidenceStatement,
+    notAssessed,
+    dataPointsPresented: presentedByDimension,
   };
 }
 
