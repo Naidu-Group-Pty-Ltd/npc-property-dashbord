@@ -6,6 +6,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { internalError } from '../_shared/errorResponse.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
+import { ANTHROPIC_MODELS_URL, anthropicRequestHeaders } from '../_shared/anthropicRoute.pure.ts';
+import { resolveAnthropicCredential } from '../_shared/anthropicCredential.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -113,10 +115,14 @@ async function probeOpenAI(): Promise<{ result: ProviderResult; models: ProbedMo
 
 async function probeAnthropic(): Promise<{ result: ProviderResult; models: ProbedModel[] }> {
   const probedAt = new Date().toISOString();
-  const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!apiKey) return { result: { provider: 'anthropic', route: 'native', ok: false, keyConfigured: false, modelCount: 0, probedAt }, models: [] };
+  // `keyConfigured` is a reading about whether this deployment can reach
+  // Anthropic AT ALL — which since federation is no longer the same question
+  // as whether a key is set, and reading the environment directly reported a
+  // correctly federated clone as unconfigured.
+  const resolved = await resolveAnthropicCredential();
+  if (!resolved.ok) return { result: { provider: 'anthropic', route: 'native', ok: false, keyConfigured: false, modelCount: 0, error: resolved.why, probedAt }, models: [] };
   try {
-    const r = await fetchWithTimeout('https://api.anthropic.com/v1/models', { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' } });
+    const r = await fetchWithTimeout(ANTHROPIC_MODELS_URL, { headers: anthropicRequestHeaders(resolved.credential) });
     if (!r.ok) return { result: { provider: 'anthropic', route: 'native', ok: false, keyConfigured: true, modelCount: 0, error: `${r.status}`, probedAt }, models: [] };
     const data = await r.json();
     const list: any[] = data?.data ?? [];
