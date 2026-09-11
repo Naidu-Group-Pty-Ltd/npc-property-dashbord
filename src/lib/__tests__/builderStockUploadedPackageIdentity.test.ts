@@ -45,10 +45,14 @@ import {
 import {
   anchorPdfRowsToPages,
 } from '../../../supabase/functions/_shared/builderStock/pdfRowAnchors.pure';
+import {
+  PROVENANCE_VERSION,
+} from '../../../supabase/functions/_shared/builderStock/provenanceVersion.pure';
 
 const read = (relative: string) => readFileSync(join(process.cwd(), relative), 'utf8');
 const IMPORT = read('supabase/functions/_shared/builderStock/importStock.ts');
 const REPAIR = read('supabase/functions/_shared/builderStock/repairSourceImages.ts');
+const VERSION_PROSE = read('supabase/functions/_shared/builderStock/sourceImages.ts');
 
 /** Page 1 of the flyer, from what production recorded plus the printed figures. */
 const FLYER = [
@@ -131,6 +135,65 @@ describe('a MULTI-property document is untouched', () => {
       [LABEL, 'Lot 32, Other Street, Mernda'], PAGES, [1], true, [HINTS, []]);
     // Neither row may claim page 1 on a document that names several lots.
     expect(anchors[0]).toBeNull();
+  });
+});
+
+/*
+ * THE LIMIT OF THE WAIVER, AND WHY IT IS THE RIGHT LIMIT.
+ *
+ * The second row in production carrying this refusal is Lot 1037 Fuchsia
+ * Street, also a one-property upload. Its page reads "PACKAGE PRICE Lot 1307
+ * Fuchsia Street". That is NOT the other-lot veto and the waiver must not
+ * rescue it: test 1 — "the lot is stated, as a lot" — is what refuses it, and
+ * test 1 is the whole discriminator. The document names lot 1307; the row says
+ * lot 1037. One of the two is wrong, and electing the picture anyway would be
+ * this pipeline guessing which. The product's existing answer — refuse, and
+ * quote what the page actually says — is what lets the builder find the typo.
+ *
+ * So the sole-property rule relaxes context and never identity.
+ */
+describe('a sole-property document still has to name THIS property', () => {
+  const FUCHSIA = [
+    'PACKAGE PRICE',
+    'Lot 1307 Fuchsia Street',
+    'Sale Price - $640,000',
+    'Land Size - 350sqm',
+  ].join('\n');
+  const FUCHSIA_LABEL = 'Lot 1037 Fuchsia Street, Wollert';
+
+  it('refuses a page that states a different lot, sole property or not', () => {
+    expect(findPropertyCoverPages([FUCHSIA], FUCHSIA_LABEL, [], true)).toHaveLength(0);
+    expect(findPropertyCoverPages([FUCHSIA], FUCHSIA_LABEL, [], false)).toHaveLength(0);
+  });
+
+  it('and it is test 1 doing it — the same page naming OUR lot is accepted', () => {
+    const ours = [FUCHSIA.replace('Lot 1307', 'Lot 1037')];
+    expect(findPropertyCoverPages(ours, FUCHSIA_LABEL, [], true)).toHaveLength(1);
+  });
+
+  it('so the street name alone can never carry a contradicted lot', () => {
+    // Corroboration (test 4) is plentiful here — "fuchsia", "street" both
+    // appear — and it changes nothing, because test 1 returns before it.
+    expect(findPropertyCoverPages([FUCHSIA], FUCHSIA_LABEL, ['Fuchsia'], true)).toHaveLength(0);
+  });
+});
+
+/*
+ * A CAPABILITY CHANGE THAT DOES NOT BUMP THE VERSION REACHES NO EXISTING ROW.
+ *
+ * `negativeProvenanceStillStands` keeps a negative recorded at the CURRENT
+ * version, and `repairSourceImages` skips any row already banked at it. The
+ * flyer above is banked at 23 with its refusal recorded, so without this bump
+ * the fix would apply to future uploads and leave the reported row broken for
+ * ever — which is the shape of every "you already fixed this" report.
+ */
+describe('the bump that lets it reach the rows already refused', () => {
+  it('is past the version those refusals were banked at', () => {
+    expect(PROVENANCE_VERSION).toBeGreaterThan(23);
+  });
+
+  it('and sourceImages.ts records what it changed, as every bump does', () => {
+    expect(VERSION_PROSE).toContain('24 STOPS A ONE-PROPERTY BROCHURE');
   });
 });
 
