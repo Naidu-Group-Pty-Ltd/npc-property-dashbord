@@ -4566,7 +4566,8 @@ unauthenticated call.
 
 ### The probe
 
-`market-source-probe` is a read-only diagnostic added here and **not yet run**:
+`market-source-probe` is a read-only diagnostic added here and, as of this
+section, not yet run (it has since run exactly once, on 8 Sep 2026 — §66):
 it deploys on merge to `main`, and its own `verifyAuth` means it needs an
 authenticated administrator session rather than a session key this work holds.
 It reports which credential NAMES are set — never a value, never a length,
@@ -6417,7 +6418,9 @@ scorer. Three standing rules hold throughout:
 
 ### 60.9 The probe had no door, and now has one
 
-The probe was written in §51 and has **never been run**. Not because it is
+The probe was written in §51 and, when this section was written, had **never
+been run** (its one production run came 28 minutes after this work deployed —
+§66). Not because it is
 broken: `verify_jwt = true` at the gateway *and* its own `verifyAuth` mean it
 needs an authenticated administrator session, and **no surface in the product
 invoked it** — a grep of `src/` returns nothing. The only ways to reach it were
@@ -7387,3 +7390,54 @@ reach**: Domain's answer on enabling two scopes at no charge, and PropTrack's
 answer on trial terms. Neither can be measured, inferred, or substituted — and
 an ME-7 run assembled from anything else would be a backtest of a methodology
 against evidence it will never use in production.
+
+---
+
+## §66 ME-6 — the probe ran once, and the answer is the ambiguous case
+
+*Run 2026-09-08; recorded 2026-09-11.*
+
+The operator ran the source probe exactly once, from the Integrations page, 28
+minutes after #2575 deployed the corrected function. The run is verified in
+the production function logs rather than assumed: `function_edge_logs` holds
+exactly one non-OPTIONS invocation of `market-source-probe` across the whole
+retained window (8–11 Sep, swept in 24-hour slices) — `POST | 200` at
+**2026-09-08T15:42:54Z**, 3,331 ms. The probe persists nothing by design
+(§60.9), so the per-target readings below are the operator surface's own
+rendering of that one response.
+
+What it read:
+
+- `DOMAIN_API_KEY` **present**; Domain classified configured/testable.
+- `domain_address_suggest` → **HTTP 403**.
+- `domain_v2_suburb_performance` → **HTTP 403**.
+- **No `X-Domain-Security-Reason`** visible on either refusal — the one header
+  Domain names as the first diagnostic for a 401/403.
+- Cotality credentials **absent**. PropTrack credentials **absent**. SQM **not
+  authorised** for automated ingestion (policy, not transport — §64).
+
+Under the pre-registered four-case reading (§63, unchanged), 403 + 403 is the
+ambiguous case and **stays ambiguous**: it is equally consistent with a
+project or account configuration, a missing scope, a plan or environment
+restriction, the key's own state, and a WAF refusal that never reached
+Domain's gateway. Entitlement, an invalid key, a WAF and a missing scope were
+each deliberately **not** inferred from the status code alone — inferring any
+one of them sends an operator to the wrong remedy, and with no security-reason
+header nothing on the wire distinguishes them.
+
+Three consequences:
+
+1. **The probe does not need to be run again.** Its question — what does this
+   key get, from this deployment, today — is answered, and the answer is
+   deterministic on Domain's side. Re-run only if Domain configuration changes
+   (a new key, an activated scope, an account change); one run then re-settles
+   the state.
+2. **The resolution is with the provider, not the pipeline.**
+   `DOMAIN_ACTIVATION_REQUEST.md` now carries the both-403 branch as the
+   applicable message: because no security reason was returned there is
+   nothing to quote, so the message asks Domain to state which restriction
+   produces the 403 on this key, and whether `api_properties_read` and
+   `api_suburbperformance_read` can be enabled on the existing application at
+   no additional charge.
+3. **Nothing upstream of the gate moves.** The ME-7 entry gate (§65) still
+   waits on evidence, and a 403 whose cause is unresolved contributes none.

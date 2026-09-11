@@ -139,17 +139,30 @@ repository, and **neither may be assumed, inferred or substituted**.
 
 - `docs/integrations/DOMAIN_ACTIVATION_REQUEST.md` — the lead question is
   whether `api_properties_read` and `api_suburbperformance_read` can be enabled
-  on the **existing** Aurixa application **at no additional charge**.
+  on the **existing** Aurixa application **at no additional charge**. The
+  probe's one run (§3.4) selected the letter's **both-403 branch**: that is
+  the message to send.
 - `docs/integrations/PROPTRACK_TRIAL_REQUEST.md` — 12 questions on the official
   API trial, each mapped mechanically onto an `EvidenceAcquisition` value.
 
-### 3.4 The operator probe has never been run
+### 3.4 The Domain probe has been run — once — and its answer is the ambiguous case
 
-`market-source-probe` is deployed and verified (v14, byte-identical to main).
-The operator surface is at **`/integrations`** — *not* `/admin/integrations`,
-which 404s. One click on **Run source probe**, once.
+`market-source-probe` was run exactly **once**, from `/integrations`, on
+**2026-09-08 at 15:42:54 UTC** — 28 minutes after #2575 deployed the corrected
+function. The run is verified in the production function logs, not assumed:
+`function_edge_logs` holds exactly one non-OPTIONS invocation in the whole
+retained window (`POST | 200`, 3,331 ms), and the probe persists nothing by
+design, so the readings below are the operator surface's rendering of that one
+response.
 
-The four-case reading is **pre-registered** and must not be re-derived after
+- `DOMAIN_API_KEY` present; Domain configured/testable;
+- `domain_address_suggest` → **403**;
+- `domain_v2_suburb_performance` → **403**;
+- **no `X-Domain-Security-Reason`** on either refusal;
+- Cotality credentials absent; PropTrack credentials absent; SQM not
+  authorised for automated ingestion.
+
+The four-case reading is **pre-registered** and was not re-derived after
 seeing the result — `domain_address_suggest` against
 `domain_v2_suburb_performance`:
 
@@ -161,7 +174,16 @@ seeing the result — `domain_address_suggest` against
 | 403 | 403 | **ambiguous, stays ambiguous** — no owner assigned |
 
 Entitlement is never inferred from a 403 alone. A government 403 is never an
-entitlement finding.
+entitlement finding. This run is the fourth row: **ambiguous, and it stays
+ambiguous** — entitlement, an invalid key, a WAF and a missing scope were each
+deliberately not inferred, because with no security-reason header nothing on
+the wire distinguishes them.
+
+**The probe's question is answered and it does not need running again** unless
+Domain configuration changes (a new key, an activated scope, an account
+change) — one run then re-settles the state. The cause is resolved by Domain's
+answer to `DOMAIN_ACTIVATION_REQUEST.md` (its both-403 branch), not by another
+click. Audit §66 is the full record.
 
 ---
 
@@ -380,9 +402,12 @@ Edge checks need Deno on PATH: `export PATH="$PATH:/root/.deno/bin"`.
 
 1. **Mark PR #2578 ready** and merge (§3.2). Nothing else blocks it — CI is
    green and there is no merge conflict.
-2. **Send the Domain and PropTrack requests** (§3.3).
-3. **Run the probe once** at `/integrations` and capture the result (§3.4).
-4. When either vendor answers at $0: record the footing, build **only** that
+2. **Send the Domain and PropTrack requests** (§3.3). The probe has already
+   answered everything a run can answer (§3.4): both Domain products 403 with
+   no stated reason, so the Domain message goes out under the letter's
+   both-403 branch. Do not re-run the probe unless Domain configuration
+   changes.
+3. When either vendor answers at $0: record the footing, build **only** that
    one adapter, normalise into `MarketEvidence`, seal the first genuine
    evidence snapshot, and re-evaluate the ME-7 gate.
 

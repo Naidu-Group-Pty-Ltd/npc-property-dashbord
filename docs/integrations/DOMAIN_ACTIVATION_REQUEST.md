@@ -4,19 +4,24 @@ One message, ready to send, plus the evidence behind it. Nothing here is
 speculative: every technical statement was measured, and the questions are the
 ones whose answers change what this platform may do with the data.
 
-**Do not send this until the probe has established WHY the 403 happened.** The
-status alone does not carry it: Domain documents a missing scope, a plan that
-does not include the API, an environment restriction, an access restriction, an
-invalid or expired key, and other internal denials as causes of the same 403 —
-and they do not share an owner or a remedy.
+**The probe has run — once, on 2026-09-08 at 15:42 UTC — and it selected the
+both-403 branch below.** Both `domain_address_suggest` and
+`domain_v2_suburb_performance` answered **HTTP 403**, and **no
+`X-Domain-Security-Reason` was returned** on either. The status alone does not
+carry the cause: Domain documents a missing scope, a plan that does not
+include the API, an environment restriction, an access restriction, an invalid
+or expired key, and other internal denials as causes of the same 403 — and
+they do not share an owner or a remedy. So the message to send is the
+**both-403 message** below; do not re-run the probe first (audit §66 — one run
+settles the state until Domain configuration changes).
 
-Two readings decide which version of this message is correct, and both come
-from the probe rather than from inference (audit §62.3):
+The readings that decide which message is correct come from the probe rather
+than from inference (audit §62.3):
 
 | probe result | what to send |
 | --- | --- |
 | **Address Suggestion 200 + Suburb Performance 403**, with `X-Domain-Security-Reason` naming a scope, package or plan | the message below, **as written** — the key works, and the ask is the smallest activation that discharges that exact reason |
-| **Both 403** | **do not send the message below.** Quote Domain's stated reason verbatim and ask them to confirm the project or access restriction it names. Both-403 is ambiguous — it is equally consistent with a project configuration, a missing scope, an environment or plan restriction, the key's own state, and a WAF refusal that never reached Domain's gateway |
+| **Both 403** ← **the 8 Sep 2026 result** | **send the both-403 message below**, not the activation message. Where `X-Domain-Security-Reason` was returned, quote it verbatim; where it was absent — as on the 8 Sep run — there is nothing to quote, so the message asks Domain to state which restriction produces the 403. Both-403 is ambiguous — it is equally consistent with a project configuration, a missing scope, an environment or plan restriction, the key's own state, and a WAF refusal that never reached Domain's gateway |
 | **Both 401** | not a commercial matter yet — an authentication or key question for the operator |
 
 An earlier version of this document said that both-403 meant "the key holds no
@@ -28,7 +33,44 @@ conversation than the evidence supports, on a premise nobody had established.
 
 ---
 
-## The message
+## The message — both-403 branch (the branch the 8 Sep 2026 run selected)
+
+> Subject: HTTP 403 on two products for an active API key — please identify the restriction
+>
+> Hello,
+>
+> We hold an active Domain API key and are building suburb-level market
+> analysis for Australian residential property. As of 8 September 2026 that
+> key returns **HTTP 403** on both:
+>
+> - `GET /v1/addressSuggestion` (Address Suggestion), and
+> - `GET /v2/suburbPerformanceStatistics/{state}/{suburb}/{postcode}`
+>   (Suburb Performance Statistics),
+>
+> and no `X-Domain-Security-Reason` header is returned on either response, so
+> we cannot tell from our side which restriction applies.
+>
+> Could you please:
+>
+> **1. Identify what produces the 403** for this key on those two endpoints —
+> for example a project or account configuration, a missing scope, a plan or
+> environment restriction, the key's own state, or a gateway/WAF rule. We are
+> deliberately not guessing among these.
+>
+> **2. Confirm whether `api_properties_read` and `api_suburbperformance_read`
+> can be enabled on our existing application at no additional charge**, or
+> tell us what their activation involves.
+>
+> Once access is clarified we have a short follow-up on response content,
+> history depth, caching/persistence/display rights and attribution, so we can
+> configure our use to match your terms exactly.
+>
+> Thank you,
+> Aurixa / NPC Services
+
+---
+
+## The message — Address Suggestion 200 + Suburb Performance 403 branch (send only if a future reading selects it)
 
 > Subject: API package activation — Suburb Performance access for an existing key
 >
@@ -81,8 +123,10 @@ conversation than the evidence supports, on a premise nobody had established.
 > **5. Rate limits and quota** for the plan attached to this package, and whether
 > the limits are per key or per account.
 >
-> For scale: our first extraction is approximately **245 requests** covering 637
-> properties across 225 suburbs, and ongoing use is a similar order per refresh.
+> For scale: our first extraction is **248 requests** (one per suburb ×
+> dwelling class, measured against the sealed `me7.pop.1` population) covering
+> 665 properties across 228 suburbs, and ongoing use is a similar order per
+> refresh.
 >
 > Thank you,
 > Aurixa / NPC Services
