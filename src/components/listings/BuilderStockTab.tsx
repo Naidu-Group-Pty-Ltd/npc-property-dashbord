@@ -27,7 +27,7 @@ import {
   useMarketplaceClientSearch, useSelectBuilderStockForClient,
 } from '@/lib/marketplaceBuilderStock';
 import {
-  cardPictureNeedsGround,
+  cardPictureNeedsGround, homeSizeDisplay,
   primaryStockImage, stockImageProvenance, STOCK_PROVENANCE_LABEL,
   SELECTABLE_AVAILABILITY, stockItemConfiguration, stockItemLocality,
   stockItemPrice, stockItemTitle, STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
@@ -278,6 +278,8 @@ function StockCard({
   const image = primaryStockImage(item);
   const price = stockItemPrice(item);
   const configuration = stockItemConfiguration(item);
+  // Whole square metres on the card; the column keeps every digit it was given.
+  const homeSize = homeSizeDisplay(item.building_size_sqm);
   const locality = stockItemLocality(item);
   const builder = item.builder_organisation;
   const availabilityStatus = item.availability_status as StockAvailability;
@@ -356,7 +358,7 @@ function StockCard({
                 unlabelled `140 m²` while this row read `286 m² land`. Both
                 are labelled now, and the title carries neither.
               */}
-              {item.building_size_sqm ? <span>{item.building_size_sqm} m² home</span> : null}
+              {homeSize !== null ? <span>{homeSize} m² home</span> : null}
               {item.land_size_sqm ? <span>{item.land_size_sqm} m² land</span> : null}
             </p>
           ) : null}

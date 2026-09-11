@@ -29,7 +29,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CARD_PICTURE_ASPECT, CARD_PICTURE_GROUND_FLOOR,
   cardPictureGroundShare, cardPictureNeedsGround,
-  describesConfigurationOnly, homeSizeLabel, sizeFromConfiguration,
+  describesConfigurationOnly, homeSizeDisplay, homeSizeLabel, sizeFromConfiguration,
   stockItemTitle,
 } from '../builderStock';
 
@@ -175,11 +175,66 @@ describe('sizeFromConfiguration / homeSizeLabel', () => {
 
   it('labels a size and refuses anything that is not one', () => {
     expect(homeSizeLabel(154)).toBe('154 m² home');
-    expect(homeSizeLabel(140.5)).toBe('140.5 m² home');
     expect(homeSizeLabel(null)).toBeNull();
     expect(homeSizeLabel(undefined)).toBeNull();
     expect(homeSizeLabel(0)).toBeNull();
     expect(homeSizeLabel(-12)).toBeNull();
+  });
+});
+
+describe('homeSizeDisplay — rounded to show, never to store', () => {
+  /*
+   * Builders quote a plan to the centimetre, so two decimals beside a whole
+   * `563 m² land` is noise on a card with one line for both. The rounding is
+   * a property of the DISPLAY: nothing here writes, and `building_size_sqm`
+   * keeps every digit for the contract, the report and the export.
+   */
+  it('rounds the seven live sizes that carry decimals', () => {
+    const live: Array<[number, number]> = [
+      [179.82, 180], [190.38, 190], [174.65, 175], [173.84, 174],
+      [168.1, 168], [167.3, 167], [161.54, 162], [172.84, 173],
+      [121.84, 122], [139.52, 140], [175.28, 175],
+    ];
+    for (const [stored, shown] of live) {
+      expect(homeSizeDisplay(stored)).toBe(shown);
+      expect(homeSizeLabel(stored)).toBe(`${shown} m² home`);
+    }
+  });
+
+  it('leaves a whole size exactly as it is', () => {
+    for (const whole of [140, 154, 141, 178, 184, 207, 232, 235, 243, 295]) {
+      expect(homeSizeDisplay(whole)).toBe(whole);
+    }
+  });
+
+  it('rounds half away from zero, as a reader would', () => {
+    expect(homeSizeDisplay(140.5)).toBe(141);
+    expect(homeSizeDisplay(140.49)).toBe(140);
+  });
+
+  it('refuses anything that is not a size', () => {
+    expect(homeSizeDisplay(null)).toBeNull();
+    expect(homeSizeDisplay(undefined)).toBeNull();
+    expect(homeSizeDisplay(0)).toBeNull();
+    expect(homeSizeDisplay(-12)).toBeNull();
+    expect(homeSizeDisplay(NaN)).toBeNull();
+    expect(homeSizeDisplay(Infinity)).toBeNull();
+  });
+
+  it('says nothing rather than that a house has no floor area', () => {
+    // 0.4 is a bad record; `0 m² home` on a card would be a claim about a
+    // house, which is worse than an absent line.
+    expect(homeSizeDisplay(0.4)).toBeNull();
+    expect(homeSizeLabel(0.4)).toBeNull();
+  });
+
+  it('is the only reading the stats row takes — never the raw column', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/components/listings/BuilderStockTab.tsx'), 'utf8',
+    );
+    expect(source).toContain('homeSizeDisplay(item.building_size_sqm)');
+    // Rendering the column directly is what printed `179.82 m² home`.
+    expect(source).not.toMatch(/\{item\.building_size_sqm\}/);
   });
 });
 

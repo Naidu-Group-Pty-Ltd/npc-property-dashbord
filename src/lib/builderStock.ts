@@ -412,12 +412,32 @@ export function sizeFromConfiguration(text: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-/** `154` → `154 m² home`; a number that is not one → nothing. */
-export function homeSizeLabel(sqm: number | null | undefined): string | null {
+/**
+ * THE HOUSE SIZE AS A CARD SHOWS IT: WHOLE SQUARE METRES.
+ *
+ * ROUNDED FOR DISPLAY AND NOWHERE ELSE. Builders quote a house plan to the
+ * centimetre — seven of the thirty-one rows live on 11 September 2026 carry
+ * `179.82`, `190.38`, `174.65` — and two decimals beside a whole `563 m²
+ * land` reads as noise on a card that has one line for both. The COLUMN is
+ * untouched and nothing here writes: `building_size_sqm` keeps every digit
+ * the builder supplied, for the contract, the report and the export, and
+ * this is only what a card prints.
+ *
+ * A size that rounds AWAY is nothing rather than `0 m²`, because `0.4 m²` is
+ * a bad record and a card must never state a house has no floor area.
+ */
+export function homeSizeDisplay(sqm: number | null | undefined): number | null {
   if (sqm === null || sqm === undefined) return null;
   const value = Number(sqm);
   if (!Number.isFinite(value) || value <= 0) return null;
-  return `${value} m\u00b2 home`;
+  const whole = Math.round(value);
+  return whole > 0 ? whole : null;
+}
+
+/** `179.82` → `180 m² home`; a number that is not one → nothing. */
+export function homeSizeLabel(sqm: number | null | undefined): string | null {
+  const value = homeSizeDisplay(sqm);
+  return value === null ? null : `${value} m\u00b2 home`;
 }
 
 export function stockItemTitle(item: Pick<BuilderStockItem,
