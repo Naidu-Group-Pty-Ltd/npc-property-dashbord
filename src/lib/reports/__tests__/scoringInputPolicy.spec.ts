@@ -13,6 +13,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ASSESSED_LABEL,
+  PRODUCTION_SCORING_AUTHORITY,
+  authorityOf,
+  mayPublishDimensionScores,
+  mayPublishOverallGrade,
   INPUT_CLASSES,
   INPUT_OWNER,
   NOT_ASSESSED_REASON,
@@ -22,7 +26,7 @@ import {
   policyStamp,
   ruleOn,
 } from '../market/scoringInputPolicy.pure';
-import { gradedLine } from '../investment/scoreSections.pure';
+import { composeScoreDimensionsSection, gradedLine } from '../investment/scoreSections.pure';
 
 const ROOT = join(__dirname, '..', '..', '..', '..');
 const SERVICE = readFileSync(
@@ -68,11 +72,20 @@ describe('an overall grade requires sufficient verified evidence', () => {
   it('the stamp records whether a grade was issued, and the policy version', () => {
     const withheld = policyStamp(['yield'], false, new Date('2026-09-11T00:00:00Z'));
     expect(withheld.gradeIssued).toBe(false);
-    expect(withheld.eligibility).toBe('insufficient_verified_evidence');
     expect(withheld.inputPolicyVersion).toBe(SCORING_INPUT_POLICY_VERSION);
     expect(withheld.evaluatedAt).toBe('2026-09-11T00:00:00.000Z');
 
-    const issued = policyStamp(['yield', 'growth', 'location'], true, new Date());
+    // Two distinct reasons a grade is withheld, and the more fundamental one
+    // wins: with no authorised engine it does not matter what the evidence
+    // would have supported. Under an authorised engine the evidence reason is
+    // the one an operator can act on.
+    expect(withheld.eligibility).toBe('no_authorised_scoring_system');
+    expect(policyStamp(['yield'], false, new Date(), 'v2').eligibility)
+      .toBe('insufficient_verified_evidence');
+
+    // A grade is issued only where both hold.
+    expect(policyStamp(['yield', 'growth', 'location'], true, new Date()).gradeIssued).toBe(false);
+    const issued = policyStamp(['yield', 'growth', 'location'], true, new Date(), 'v2');
     expect(issued.gradeIssued).toBe(true);
     expect(issued.eligibility).toBe('issued');
   });
@@ -202,5 +215,141 @@ describe('the change is forward-only and confined to the property scorer', () =>
 
   it('a refused input stays visible for audit rather than disappearing', () => {
     expect(SERVICE).toContain('dataPointsPresented');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The production-authority boundary
+// ---------------------------------------------------------------------------
+
+const SCORE_SECTIONS = readFileSync(
+  join(ROOT, 'supabase', 'functions', '_shared', 'reports', 'investment', 'scoreSections.pure.ts'),
+  'utf8',
+);
+
+/** A stored score as the service now writes one for a NEW report. */
+const newReportScore = (over: Record<string, unknown> = {}) => ({
+  totalScore: null,
+  grade: 'N/A',
+  breakdown: {
+    yieldScore: { score: 72, hasData: true, weight: 100, dataPoints: ['propertyPrice', 'weeklyRent'] },
+    growthScore: { score: 50, hasData: false, weight: 0, excluded: true },
+  },
+  coverage: { dataInsufficient: true },
+  policy: {
+    scoringSystem: 'investment-scoring-service',
+    authority: 'unavailable',
+    dimensionScoresAuthoritative: false,
+    gradeIssued: false,
+    eligibility: 'no_authorised_scoring_system',
+  },
+  ...over,
+});
+
+/** A score issued before the policy — a historical snapshot. */
+const historicalScore = {
+  totalScore: 58,
+  grade: 'B',
+  breakdown: {
+    yieldScore: { score: 65, hasData: true, weight: 15 },
+    locationScore: { score: 40, hasData: true, weight: 25 },
+    riskScore: { score: 100, hasData: true, weight: 5 },
+  },
+  coverage: { dataInsufficient: false },
+};
+
+describe('the production scoring authority', () => {
+  it('no engine is authorised to grade a new report today', () => {
+    expect(PRODUCTION_SCORING_AUTHORITY).toBe('unavailable');
+    expect(mayPublishOverallGrade(PRODUCTION_SCORING_AUTHORITY)).toBe(false);
+    expect(mayPublishDimensionScores(PRODUCTION_SCORING_AUTHORITY)).toBe(false);
+  });
+
+  it('verifying inputs does NOT make V1 the authoritative grade engine', () => {
+    // Three V1 inputs declared verified — enough evidence for three measured
+    // dimensions — still yields no grade, because evidence is not authority.
+    const verified = ['walkScore', 'commuteTimeCBD', 'priceGrowth1Year', 'priceGrowth3Year'];
+    expect(measuredCount(verified)).toBeGreaterThanOrEqual(MIN_DIMENSIONS);
+
+    const stamp = policyStamp(
+      ['yield', 'location', 'growth'], true, new Date(), PRODUCTION_SCORING_AUTHORITY,
+    );
+    expect(stamp.gradeIssued).toBe(false);
+    expect(stamp.eligibility).toBe('no_authorised_scoring_system');
+    expect(stamp.dimensionScoresAuthoritative).toBe(false);
+  });
+
+  it('a grade is issued only when authority AND evidence both hold', () => {
+    expect(policyStamp(['yield'], false, new Date(), 'v2').gradeIssued).toBe(false);
+    expect(policyStamp(['yield', 'growth', 'location'], true, new Date(), 'v2').gradeIssued).toBe(true);
+    expect(policyStamp(['yield', 'growth', 'location'], true, new Date(), 'unavailable').gradeIssued)
+      .toBe(false);
+  });
+
+  it('an unstamped score is a historical snapshot, never withheld', () => {
+    expect(authorityOf(historicalScore)).toBe('legacy_snapshot');
+    expect(authorityOf(newReportScore())).toBe('unavailable');
+    expect(authorityOf(null)).toBe('legacy_snapshot');
+  });
+});
+
+describe('a verified metric is not an authorised scored dimension', () => {
+  it('verified Yield inputs remain admissible as facts', () => {
+    const admitted = admissibleInputs('yield', [...PRESENTED.yield]);
+    expect(admitted).toContain('propertyPrice');
+    expect(admitted).toContain('weeklyRent');
+  });
+
+  it('but a legacy Yield dimension SCORE is not published for a new report', () => {
+    // The stored breakdown carries yieldScore 72 with hasData true. It must not
+    // reach a client as an assessment, because no methodology is authorised.
+    expect(composeScoreDimensionsSection(newReportScore(), 'Dimensions')).toBeNull();
+    expect(gradedLine(newReportScore({ totalScore: 72, grade: 'B' }))).toBeUndefined();
+  });
+
+  it('a historical snapshot keeps its own dimension scores and verdict', () => {
+    const section = composeScoreDimensionsSection(historicalScore, 'Dimensions');
+    expect(section).not.toBeNull();
+    expect(section).toMatch(/Yield/);
+    expect(gradedLine(historicalScore)).toMatch(/Graded B at 58/);
+  });
+
+  it('the gate is on the score, never on the finance block', () => {
+    // Deterministic finance values come from `financial_calculations` through
+    // the binding projection; nothing in the authority path touches them.
+    const policySrc = readFileSync(
+      join(ROOT, 'supabase', 'functions', '_shared', 'reports', 'market', 'scoringInputPolicy.pure.ts'),
+      'utf8',
+    );
+    for (const finance of ['grossYield', 'stampDuty', 'weeklyCashFlow', 'financial_calculations']) {
+      expect(policySrc, `policy must not reach ${finance}`).not.toContain(finance);
+    }
+    // The section composer gates dimensions and the verdict, and nothing else.
+    // It reads the stamp the run wrote rather than re-deriving the decision —
+    // and it must not import from `market/`, a boundary the investment
+    // source-of-truth spec enforces independently.
+    expect(SCORE_SECTIONS).toContain('if (!dimensionScoresMayBeShown(score)) return [];');
+    expect(SCORE_SECTIONS).toContain('if (!overallGradeMayBeShown(score)) return undefined;');
+    expect(SCORE_SECTIONS).not.toContain('scoringInputPolicy');
+  });
+
+  it('no surface labels a V1 result as the frozen V2 assessment', () => {
+    expect(SCORE_SECTIONS).not.toMatch(/2\.1\.0-shadow/);
+    const stamp = policyStamp(['yield'], true, new Date(), PRODUCTION_SCORING_AUTHORITY);
+    expect(stamp.scoringSystem).toBe('investment-scoring-service');
+    expect(JSON.stringify(stamp)).not.toMatch(/v2|shadow/i);
+  });
+
+  it('front-end and PDF agree that no grade is available', () => {
+    // One predicate, one answer: the viewer reads `policy.gradeIssued` and the
+    // projection reads the authority — both refuse the same score.
+    const score = newReportScore();
+    expect(score.policy.gradeIssued).toBe(false);
+    expect(gradedLine(score)).toBeUndefined();
+    expect(composeScoreDimensionsSection(score, 'Dimensions')).toBeNull();
+  });
+
+  it('the service withholds the composite, not just the letter', () => {
+    expect(SERVICE).toContain('policy.gradeIssued ? computedTotal : null');
   });
 });

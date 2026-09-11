@@ -169,6 +169,79 @@ export function admissibleInputs(
 }
 
 // ---------------------------------------------------------------------------
+// Who is allowed to publish a grade at all
+// ---------------------------------------------------------------------------
+
+/**
+ * Which scoring system may speak for a report.
+ *
+ * The input policy decides what a dimension may COUNT. This decides something
+ * prior and more important: **which engine is authoritative at all**. They are
+ * separate because conflating them creates a trapdoor — gate V1's inputs and
+ * the grade goes away today, but verify three of those inputs later and the
+ * legacy methodology silently becomes the production grade engine again,
+ * without anyone deciding that it should.
+ *
+ * `legacy_snapshot` — a score already issued under V1. It is a historical
+ * record of what a client was sent on a date, it renders exactly as it always
+ * did, and it is never recomputed.
+ *
+ * `unavailable` — no engine is authorised to publish an overall property grade
+ * for a new report. This is today's state: V1 is not trusted to grade, and V2
+ * is frozen but not activated.
+ *
+ * `v2` — the frozen Scoring V2 engine, after an explicit production activation
+ * decision (ME-8). Nothing in this repository sets it.
+ */
+export type ScoringAuthority = 'legacy_snapshot' | 'unavailable' | 'v2';
+
+/**
+ * The authority a NEW report is scored under.
+ *
+ * Deliberately a constant rather than a flag read from configuration: making
+ * V2 authoritative is a decision with a review behind it, and a value some
+ * environment could set is not that decision. Changing this line is the
+ * activation.
+ */
+export const PRODUCTION_SCORING_AUTHORITY: ScoringAuthority = 'unavailable';
+
+/** May an overall score and letter grade be published under this authority? */
+export function mayPublishOverallGrade(authority: ScoringAuthority): boolean {
+  return authority === 'v2';
+}
+
+/**
+ * May per-dimension SCORES be presented as assessments under this authority?
+ *
+ * A legacy snapshot may show its own dimension scores, because that is what the
+ * client was sent. A new report may not show V1's, because a dimension score is
+ * an assessment produced by a methodology — and presenting a legacy assessment
+ * beside the frozen V2 name is the confusion this boundary exists to prevent.
+ *
+ * **This says nothing about deterministic metrics.** A gross yield of 4.69% is
+ * a calculation over a verified price and rent; it is published whenever it is
+ * supported, under every authority, and it is not this function's business.
+ */
+export function mayPublishDimensionScores(authority: ScoringAuthority): boolean {
+  return authority === 'v2' || authority === 'legacy_snapshot';
+}
+
+/**
+ * The authority a stored score was produced under.
+ *
+ * A score with no stamp predates this policy, so it is a legacy snapshot and
+ * renders as it always has. Absence means history, never "unknown, so withhold"
+ * — withholding there would rewrite what a client was already sent.
+ */
+export function authorityOf(score: unknown): ScoringAuthority {
+  const policy = (score as { policy?: { authority?: unknown } } | null)?.policy;
+  const value = policy?.authority;
+  return value === 'unavailable' || value === 'v2' || value === 'legacy_snapshot'
+    ? value
+    : 'legacy_snapshot';
+}
+
+// ---------------------------------------------------------------------------
 // What a client is told
 // ---------------------------------------------------------------------------
 
@@ -220,9 +293,13 @@ export const ASSESSED_LABEL = 'Measured' as const;
 export interface ScoringPolicyStamp {
   scoringSystem: 'investment-scoring-service';
   inputPolicyVersion: string;
+  /** Which engine was authorised to publish a grade for this run. */
+  authority: ScoringAuthority;
+  /** May this run's per-dimension scores be shown as assessments? */
+  dimensionScoresAuthoritative: boolean;
   /** True only when the run published an overall grade. */
   gradeIssued: boolean;
-  eligibility: 'issued' | 'insufficient_verified_evidence';
+  eligibility: 'issued' | 'insufficient_verified_evidence' | 'no_authorised_scoring_system';
   /** Dimensions that counted, after the policy. */
   measuredDimensions: ScoredDimension[];
   evaluatedAt: string;
@@ -230,14 +307,24 @@ export interface ScoringPolicyStamp {
 
 export function policyStamp(
   measuredDimensions: ScoredDimension[],
-  gradeIssued: boolean,
+  evidenceSufficient: boolean,
   now: Date,
+  authority: ScoringAuthority = PRODUCTION_SCORING_AUTHORITY,
 ): ScoringPolicyStamp {
+  // Both must hold. Evidence alone never publishes a grade — that is the
+  // trapdoor this boundary closes — and authority alone never invents one.
+  const gradeIssued = evidenceSufficient && mayPublishOverallGrade(authority);
   return {
     scoringSystem: 'investment-scoring-service',
     inputPolicyVersion: SCORING_INPUT_POLICY_VERSION,
+    authority,
+    dimensionScoresAuthoritative: mayPublishDimensionScores(authority),
     gradeIssued,
-    eligibility: gradeIssued ? 'issued' : 'insufficient_verified_evidence',
+    eligibility: gradeIssued
+      ? 'issued'
+      : mayPublishOverallGrade(authority)
+        ? 'insufficient_verified_evidence'
+        : 'no_authorised_scoring_system',
     measuredDimensions,
     evaluatedAt: now.toISOString(),
   };

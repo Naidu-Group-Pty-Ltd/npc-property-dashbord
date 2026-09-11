@@ -6,6 +6,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   admissibleInputs,
   policyStamp,
+  PRODUCTION_SCORING_AUTHORITY,
   NOT_ASSESSED_REASON,
   OVERALL_GRADE_UNAVAILABLE,
   type ScoredDimension,
@@ -682,11 +683,29 @@ function calculateInvestmentScore(input: InvestmentScoringInput): InvestmentScor
     riskScore: 0.05,
   };
 
-  const { totalScore, breakdown, coverage } = aggregateDimensions(dims, weights);
+  const { totalScore: computedTotal, breakdown, coverage } = aggregateDimensions(dims, weights);
 
-  const { grade, recommendation } = coverage.dataInsufficient
-    ? { grade: 'N/A', recommendation: 'Insufficient quantitative data for a headline grade — qualitative SWOT below' }
-    : determineGradeAndRecommendation(totalScore as number, input);
+  const measuredNow = (Object.keys(dims) as Array<keyof typeof dims>)
+    .filter((k) => dims[k].hasData)
+    .map((k) => k.replace(/Score$/, '') as ScoredDimension);
+
+  // The authority decides WHICH ENGINE may publish a grade, before any question
+  // of whether the evidence would support one. Gating inputs alone left a
+  // trapdoor: verify three of them later and the legacy methodology becomes the
+  // production grade engine again without anyone deciding that it should.
+  const policy = policyStamp(
+    measuredNow, !coverage.dataInsufficient, new Date(), PRODUCTION_SCORING_AUTHORITY,
+  );
+
+  // No authorised engine means no overall figure at all — a composite from an
+  // unauthorised methodology is the same claim as its grade.
+  const totalScore = policy.gradeIssued ? computedTotal : null;
+  const { grade, recommendation } = policy.gradeIssued
+    ? determineGradeAndRecommendation(computedTotal as number, input)
+    : {
+        grade: 'N/A',
+        recommendation: OVERALL_GRADE_UNAVAILABLE.explanation,
+      };
 
   // Analyze SWOT (always — qualitative output works even with sparse data)
   const { strengths, weaknesses, opportunities, risks } = analyzeSWOT(input, {
@@ -697,15 +716,10 @@ function calculateInvestmentScore(input: InvestmentScoringInput): InvestmentScor
     riskScore,
   });
 
-  const measured = (Object.keys(dims) as Array<keyof typeof dims>)
-    .filter((k) => dims[k].hasData)
-    .map((k) => k.replace(/Score$/, '') as ScoredDimension);
-  const policy = policyStamp(measured, !coverage.dataInsufficient, new Date());
-
   // What a client is told where no grade may be issued, and why each absent
   // dimension is absent. Composed once here so the viewer, the PDF and the
   // stored row cannot disagree about it.
-  const evidenceStatement = coverage.dataInsufficient
+  const evidenceStatement = !policy.gradeIssued
     ? {
         heading: OVERALL_GRADE_UNAVAILABLE.heading,
         value: OVERALL_GRADE_UNAVAILABLE.value,
