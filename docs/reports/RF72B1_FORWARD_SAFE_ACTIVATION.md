@@ -162,12 +162,18 @@ Four things it does **not** do, each because the mandate names it:
 - an unresolved coordinate leaves `subjectGeography` null and the gate withholds
   exactly as before.
 
-**The ABS re-query.** Where the trusted POA differs from the address-derived one, the
-phase-1 payload describes somebody else's postal area, so demographics and SEIFA are
-re-fetched for the subject's own. Where that re-fetch cannot be made, the wrong-area
-payload is **dropped rather than kept** — the gate would refuse it on the cross-check
-anyway, and carrying it forward would store a figure about the wrong place in the
-snapshot.
+**The ABS re-query, and all THREE payloads move together.** Where the trusted POA
+differs from the address-derived one, the phase-1 payloads describe somebody else's
+postal area, so demographics, SEIFA **and employment** are re-fetched for the subject's
+own. Employment is in that list because `abs-employment-service` projects the same
+`abs_census_poa` row and `industryTable` prints from it independently: re-keying two of
+the three would put a 3024 population table beside a 3338 industry mix on one page, and
+the gate would admit it, because `demographicsKept` is true. The employment call also
+takes a suburb, and it takes the **boundary's** suburb — never the free-text one, which
+belongs to the postcode we have just stopped believing. Where a re-fetch cannot be made,
+the wrong-area payload is **dropped rather than kept** — the gate would refuse it on the
+cross-check anyway, and carrying it forward would store a figure about the wrong place
+in the snapshot.
 
 **The stored-row read survives as a fallback**, for the one case the resolution cannot
 cover: a run where the resolution itself failed. Reading a row an earlier sweep wrote is
@@ -244,8 +250,10 @@ The worst of the seven, and the probe found it rather than review. `industryTabl
 **independently** of the population table. So a report whose demographics were refused
 for describing postal area 3338 while the property resolves to 3024 still printed 3338's
 industry mix, under its own heading, as a client-visible table. `employmentData` is now
-withheld on the same geography ground as `demographics` and `seifaData`: one rule, three
-payloads, one table.
+withheld on the same geography ground as `demographics` and `seifaData`, and re-queried
+with them when the POA moves: one rule, three payloads, one table — enforced at both
+ends, because gating them together while re-keying only two would have reintroduced the
+same mismatch through the front door.
 
 ---
 

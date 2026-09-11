@@ -42,6 +42,8 @@
  * carry-forward, recorded in RF72B1_FORWARD_SAFE_ACTIVATION.md §10.
  */
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
   activateSafeGenerationInputs,
@@ -287,5 +289,25 @@ describe('C5 — every market fact in a narrative prompt is in the snapshot', ()
     expect(enhanced.employmentData).toBeUndefined();
     expect(wrongArea.removed.map((r) => r.path)).toContain('employmentData');
     expect(demographicsStatBlocks(enhanced as never)).not.toContain('Industry');
+  });
+
+  it('and all three postal-area payloads are re-queried together', () => {
+    // The other half of the same rule, at the other end of the pipe. Re-keying
+    // demographics and SEIFA on the trusted POA while leaving employment on the
+    // address-derived one would put a 3024 population table beside a 3338
+    // industry mix on one page — which the gate would then ADMIT, because
+    // `demographicsKept` is true.
+    for (const fn of ['generate-investment-report', 'regenerate-report-qualitative']) {
+      const src = readFileSync(
+        resolve(__dirname, '../../../../supabase/functions', fn, 'index.ts'), 'utf-8');
+      const block = src.slice(src.indexOf('const requery = async'));
+      for (const service of ['abs-data-service', 'abs-seifa-service', 'abs-employment-service']) {
+        expect(block.slice(0, 3000), `${fn} / ${service}`).toContain(`requery('${service}'`);
+      }
+      // The employment service also takes a suburb, and it must be the one the
+      // BOUNDARY answered with — never the free-text suburb, which belongs to
+      // the postcode we have just stopped believing.
+      expect(block.slice(0, 3000), fn).toContain('subjectGeography?.suburb');
+    }
   });
 });

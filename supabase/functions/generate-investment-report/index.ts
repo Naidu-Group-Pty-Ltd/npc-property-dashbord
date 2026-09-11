@@ -2969,11 +2969,17 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       }
 
       // Where the boundary service disagrees with the typed address, the ABS
-      // payload fetched in phase 1 describes SOMEBODY ELSE'S postal area. It is
-      // re-fetched for the subject's own POA — and where that cannot be done,
-      // the wrong-area payload is DROPPED rather than kept: the gate would
-      // refuse it on the POA cross-check anyway, and carrying it forward into
-      // the snapshot would store a figure about the wrong place.
+      // payloads fetched in phase 1 describe SOMEBODY ELSE'S postal area. They
+      // are re-fetched for the subject's own POA — and where that cannot be
+      // done, the wrong-area payload is DROPPED rather than kept: the gate
+      // would refuse it on the POA cross-check anyway, and carrying it forward
+      // into the snapshot would store a figure about the wrong place.
+      //
+      // All THREE postal-area payloads move together. `abs-employment-service`
+      // projects the same `abs_census_poa` row as the demographics, and
+      // `industryTable` prints from it independently, so re-keying two of the
+      // three would put a 3024 population table beside a 3338 industry mix on
+      // one page. The gate withholds them as one for the same reason.
       const trustedPostcode = subjectPostcodeOf(subjectGeography);
       if (trustedPostcode && trustedPostcode !== postcode) {
         const trustedState = typeof subjectGeography?.state === 'string' && subjectGeography.state
@@ -2981,14 +2987,14 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           : state;
         console.log(
           `📍 Trusted POA ${trustedPostcode} differs from the address-derived `
-          + `${postcode ?? '(none)'} — re-querying ABS demographics and SEIFA.`,
+          + `${postcode ?? '(none)'} — re-querying ABS demographics, SEIFA and employment.`,
         );
-        const requery = async (fn: string) => {
+        const requery = async (fn: string, payload: Record<string, unknown>) => {
           try {
             const res = await fetchWithTimeout(`${supabaseUrl}/functions/v1/${fn}`, {
               method: 'POST',
               headers,
-              body: JSON.stringify({ postcode: trustedPostcode, state: trustedState }),
+              body: JSON.stringify(payload),
             }, 30000, fn);
             if (!res.ok) return null;
             const body = await res.json();
@@ -2997,17 +3003,27 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             return null;
           }
         };
-        const [absAgain, seifaAgain] = await Promise.all([
-          requery('abs-data-service'),
-          requery('abs-seifa-service'),
+        const [absAgain, seifaAgain, employmentAgain] = await Promise.all([
+          requery('abs-data-service', { postcode: trustedPostcode, state: trustedState }),
+          requery('abs-seifa-service', { postcode: trustedPostcode, state: trustedState }),
+          // This one also takes a suburb. The TRUSTED suburb, from the same
+          // boundary answer — never the free-text one, which belongs to the
+          // postcode we have just stopped believing.
+          requery('abs-employment-service', {
+            suburb: typeof subjectGeography?.suburb === 'string' ? subjectGeography.suburb : null,
+            state: trustedState,
+            postcode: trustedPostcode,
+          }),
         ]);
         enhancedData.demographics = absAgain ?? undefined;
         enhancedData.seifaData = seifaAgain ?? undefined;
+        enhancedData.employmentData = employmentAgain ?? undefined;
         geographyResolution = { ...geographyResolution, requeried: true };
         console.log(
           `↻ ABS re-query for POA ${trustedPostcode}: demographics `
           + `${absAgain ? 'retrieved' : 'unavailable (withheld)'}, SEIFA `
-          + `${seifaAgain ? 'retrieved' : 'unavailable (withheld)'}.`,
+          + `${seifaAgain ? 'retrieved' : 'unavailable (withheld)'}, employment `
+          + `${employmentAgain ? 'retrieved' : 'unavailable (withheld)'}.`,
         );
       }
 

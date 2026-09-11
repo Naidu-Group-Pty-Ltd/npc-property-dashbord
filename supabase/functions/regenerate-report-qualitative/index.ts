@@ -977,8 +977,9 @@ async function fetchEnhancedData(
   }
 
   // The trusted postal area, where it disagrees with the address-derived one.
-  // Same rule as the generator: re-fetch for the subject's own POA, and where
-  // that cannot be done DROP the wrong-area payload rather than carry it.
+  // Same rule as the generator, and all THREE postal-area payloads move
+  // together: re-fetch for the subject's own POA, and where that cannot be
+  // done DROP the wrong-area payload rather than carry it.
   const trustedPostcode = subjectPostcodeOf(subjectGeography);
   if (trustedPostcode && trustedPostcode !== postcode) {
     const trustedState = typeof subjectGeography?.state === 'string' && subjectGeography.state
@@ -988,7 +989,7 @@ async function fetchEnhancedData(
       `📍 Trusted POA ${trustedPostcode} differs from the address-derived `
       + `${postcode ?? '(none)'} — re-querying ABS demographics and SEIFA.`,
     );
-    const requery = async (fn: string) => {
+    const requery = async (fn: string, payload: Record<string, unknown>) => {
       try {
         const res = await fetchWithTimeout(`${supabaseUrl}/functions/v1/${fn}`, {
           method: 'POST',
@@ -996,7 +997,7 @@ async function fetchEnhancedData(
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${supabaseAnonKey}`,
           },
-          body: JSON.stringify({ postcode: trustedPostcode, state: trustedState }),
+          body: JSON.stringify(payload),
         }, 30000);
         if (!res.ok) return null;
         const body = await res.json();
@@ -1005,12 +1006,18 @@ async function fetchEnhancedData(
         return null;
       }
     };
-    const [absAgain, seifaAgain] = await Promise.all([
-      requery('abs-data-service'),
-      requery('abs-seifa-service'),
+    const [absAgain, seifaAgain, employmentAgain] = await Promise.all([
+      requery('abs-data-service', { postcode: trustedPostcode, state: trustedState }),
+      requery('abs-seifa-service', { postcode: trustedPostcode, state: trustedState }),
+      requery('abs-employment-service', {
+        suburb: typeof subjectGeography?.suburb === 'string' ? subjectGeography.suburb : null,
+        state: trustedState,
+        postcode: trustedPostcode,
+      }),
     ]);
     enhancedData.demographics = absAgain ?? undefined;
     enhancedData.seifaData = seifaAgain ?? undefined;
+    enhancedData.employmentData = employmentAgain ?? undefined;
     geographyProvenance = { ...geographyProvenance, absRequeried: true };
   }
 
