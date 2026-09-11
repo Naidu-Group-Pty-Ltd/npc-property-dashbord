@@ -59,11 +59,16 @@
  *
  * The intended path for genuinely trusted evidence is:
  *
- *     trusted evidence → Scoring V2 → score output contract → reporting
+ *     trusted evidence → Scoring V2 engine → score output contract
+ *                      → report fact contract → reporting
  *
- * after an explicit V2 production activation. It is **not**:
+ * after an explicit V2 production activation that WIRES THAT ENGINE. It is
+ * **not**:
  *
  *     trusted evidence → legacy V1 reactivation
+ *
+ * and it is not a label change inside this service either — see
+ * {@link LegacyScoringAuthority}.
  *
  * **The field is not wired to the live request path.** Measured 2026-09-11:
  * `transformInputData` builds its result field by field from the nested
@@ -215,6 +220,30 @@ export function admissibleInputs(
 export type ScoringAuthority = 'legacy_snapshot' | 'unavailable' | 'v2';
 
 /**
+ * The authorities THIS service can produce — and `v2` is deliberately not one.
+ *
+ * This module lives inside the legacy V1 scorer. Changing a constant here to
+ * `'v2'` would not make V1 execute the frozen Scoring V2 methodology; it would
+ * authorise V1's own arithmetic and label it with V2's name, which is worse
+ * than the unsupported grade this whole programme removed. So the legacy
+ * service is **structurally incapable** of claiming that authority: the
+ * constant and the stamp are typed to this narrower union, and `'v2'` there is
+ * a compile error rather than a convention somebody has to remember.
+ *
+ * Real V2 activation is not a label change. It requires wiring the frozen
+ * engine (`shadowScorer.pure.ts`) and consuming its own published result
+ * (`scoreOutputContract.pure.ts`):
+ *
+ *     trusted evidence → Scoring V2 engine → score output contract
+ *                      → report fact contract → reporting
+ *
+ * A reader still has to be able to RECOGNISE a v2-stamped score, which is why
+ * the wider {@link ScoringAuthority} exists and why the predicates below take
+ * it. Reading one is not the same as being able to mint one.
+ */
+export type LegacyScoringAuthority = Exclude<ScoringAuthority, 'v2'>;
+
+/**
  * The authority a NEW report is scored under.
  *
  * Deliberately a constant rather than a flag read from configuration: making
@@ -222,7 +251,7 @@ export type ScoringAuthority = 'legacy_snapshot' | 'unavailable' | 'v2';
  * environment could set is not that decision. Changing this line is the
  * activation.
  */
-export const PRODUCTION_SCORING_AUTHORITY: ScoringAuthority = 'unavailable';
+export const PRODUCTION_SCORING_AUTHORITY: LegacyScoringAuthority = 'unavailable';
 
 /** May an overall score and letter grade be published under this authority? */
 export function mayPublishOverallGrade(authority: ScoringAuthority): boolean {
@@ -323,9 +352,16 @@ export const ASSESSED_LABEL = 'Measured' as const;
  * walkability" in prose.
  *
  * What survives either way is a **fact**: a gross yield of 4.69%, a rent of
- * $650, a cash flow of −$120 a week. Those are calculations over verified
- * inputs and are described freely — an unauthorised methodology simply may not
- * convert them into a verdict about the property.
+ * $650, a purchase price. Those are calculations over verified inputs and are
+ * described freely — an unauthorised methodology simply may not convert them
+ * into a verdict about the property.
+ *
+ * **Buyer facts are a separate case and do not appear here at all.** Leverage
+ * and holding cash flow are owned by `finance` and admitted to no dimension,
+ * so `fromInput` refuses them for every property claim. That is deliberate
+ * rather than incidental: a borrowing position is not a property weakness. The
+ * figures stay fully available in Finance Suitability and the financial
+ * analysis, which is where a reader can act on them.
  */
 export interface ClaimPermits {
   /** May a claim be made from this dimension's score? */
@@ -363,8 +399,13 @@ export function claimPermits(opts: {
 export interface ScoringPolicyStamp {
   scoringSystem: 'investment-scoring-service';
   inputPolicyVersion: string;
-  /** Which engine was authorised to publish a grade for this run. */
-  authority: ScoringAuthority;
+  /**
+   * Which engine was authorised to publish a grade for this run.
+   *
+   * Narrowed to {@link LegacyScoringAuthority}: a stamp written by this service
+   * can never say `v2`, because this service is not V2.
+   */
+  authority: LegacyScoringAuthority;
   /** May this run's per-dimension scores be shown as assessments? */
   dimensionScoresAuthoritative: boolean;
   /** True only when the run published an overall grade. */
@@ -379,7 +420,7 @@ export function policyStamp(
   measuredDimensions: ScoredDimension[],
   evidenceSufficient: boolean,
   now: Date,
-  authority: ScoringAuthority = PRODUCTION_SCORING_AUTHORITY,
+  authority: LegacyScoringAuthority = PRODUCTION_SCORING_AUTHORITY,
 ): ScoringPolicyStamp {
   // Both must hold. Evidence alone never publishes a grade — that is the
   // trapdoor this boundary closes — and authority alone never invents one.

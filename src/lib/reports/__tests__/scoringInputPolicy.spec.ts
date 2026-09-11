@@ -457,3 +457,78 @@ describe('verified inputs never rehabilitate V1', () => {
     expect(SERVICE).toMatch(/internal and test use only/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The legacy service cannot impersonate V2
+// ---------------------------------------------------------------------------
+
+describe('legacy V1 can never be activated as V2', () => {
+  const POLICY_SRC = readFileSync(
+    join(ROOT, 'supabase', 'functions', '_shared', 'reports', 'market', 'scoringInputPolicy.pure.ts'),
+    'utf8',
+  );
+
+  it('the production constant is typed so that v2 is not expressible', () => {
+    // `LegacyScoringAuthority = Exclude<ScoringAuthority, 'v2'>` — assigning
+    // 'v2' to the constant or passing it to the stamp is a compile error, so
+    // no single edit inside the legacy service can relabel its output as V2.
+    expect(POLICY_SRC).toContain("export type LegacyScoringAuthority = Exclude<ScoringAuthority, 'v2'>");
+    expect(POLICY_SRC).toContain('export const PRODUCTION_SCORING_AUTHORITY: LegacyScoringAuthority');
+    expect(POLICY_SRC).toContain('authority: LegacyScoringAuthority = PRODUCTION_SCORING_AUTHORITY');
+    expect(POLICY_SRC).toContain('authority: LegacyScoringAuthority;');
+  });
+
+  it('a stamp from this service can only say legacy_snapshot or unavailable', () => {
+    for (const authority of ['unavailable', 'legacy_snapshot'] as const) {
+      const stamp = policyStamp(['yield'], true, new Date(), authority);
+      expect(stamp.authority).toBe(authority);
+      expect(stamp.gradeIssued).toBe(false); // neither may publish a grade
+    }
+  });
+
+  it('activation is documented as wiring the real engine, not a label change', () => {
+    expect(POLICY_SRC).toMatch(/Scoring V2 engine → score output contract/);
+    expect(POLICY_SRC).toMatch(/shadowScorer\.pure\.ts/);
+    expect(POLICY_SRC).toMatch(/scoreOutputContract\.pure\.ts/);
+    expect(POLICY_SRC).toMatch(/not a label change/i);
+  });
+
+  it('V2 remains unwired — the legacy service never imports the V2 engine', () => {
+    expect(SERVICE).not.toContain('shadowScorer');
+    expect(SERVICE).not.toContain('scoreOutputContract');
+    expect(SERVICE).not.toContain('scoreInvestmentV2');
+  });
+});
+
+describe('buyer finance is not property-quality commentary', () => {
+  it('leverage and cash flow are admitted to no dimension', () => {
+    for (const dim of ['yield', 'growth', 'location', 'demand', 'risk'] as const) {
+      expect(admissibleInputs(dim, ['lvr', 'cashFlow'])).toEqual([]);
+    }
+  });
+
+  it('so no property SWOT claim can be made from them, under any authority', () => {
+    for (const authority of ['unavailable', 'legacy_snapshot', 'v2'] as const) {
+      const permits = claimPermits({
+        authority,
+        measuredDimensions: ['yield', 'growth', 'location', 'demand', 'risk'],
+        // Even if a caller somehow presented them as admitted inputs for a
+        // dimension, ownership refuses them upstream in `admissibleInputs`.
+        admittedInputs: admissibleInputs('risk', ['lvr', 'cashFlow', 'propertyPrice']),
+      });
+      expect(permits.fromInput('lvr'), authority).toBe(false);
+      expect(permits.fromInput('cashFlow'), authority).toBe(false);
+    }
+  });
+
+  it('the comments say the claims are permanently gated, not that they survive', () => {
+    expect(SERVICE).toMatch(/owned by `finance` and admitted to NO dimension/);
+    expect(SERVICE).not.toMatch(/so it survives the scoring authority/);
+    expect(POLICY_DOC).toMatch(/Buyer facts are a separate case/);
+  });
+});
+
+const POLICY_DOC = readFileSync(
+  join(ROOT, 'supabase', 'functions', '_shared', 'reports', 'market', 'scoringInputPolicy.pure.ts'),
+  'utf8',
+);

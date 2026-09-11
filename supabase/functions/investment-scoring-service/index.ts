@@ -1237,8 +1237,11 @@ function analyzeSWOT(input: InvestmentScoringInput, scores: any, permits: ClaimP
   if (permits.fromDimensionScore('growth') && scores.growthScore.score < 50) {
     weaknesses.push('Limited historical capital growth');
   }
-  // Leverage is a fact the operator supplied about this purchase, not an
-  // assessment of the property, so it survives the scoring authority.
+  // Buyer leverage is owned by `finance` and admitted to NO dimension, so this
+  // never fires — by design. A borrowing position is not a property weakness:
+  // it belongs to Finance Suitability and the financial analysis, where the
+  // figure itself remains fully available. Kept here, permanently gated,
+  // because deleting it would hide that the decision was made.
   if (permits.fromInput('lvr') && input.lvr && input.lvr > 80) {
     weaknesses.push('High leverage increases financial risk');
   }
@@ -1266,7 +1269,9 @@ function analyzeSWOT(input: InvestmentScoringInput, scores: any, permits: ClaimP
   if (permits.fromInput('priceGrowth1Year') && input.priceGrowth1Year && input.priceGrowth1Year > 15) {
     risks.push('Rapid recent price growth may indicate market cooling ahead');
   }
-  // Holding cost is the operator's own figure for this purchase — a fact.
+  // Holding cash flow is likewise the buyer's, owned by `finance` and admitted
+  // to no dimension, so this never fires either. The figure belongs to the
+  // holding analysis, not to a verdict about the asset.
   if (permits.fromInput('cashFlow') && input.cashFlow && input.cashFlow < -150) {
     risks.push('Significant negative cash flow requiring ongoing funding');
   }
