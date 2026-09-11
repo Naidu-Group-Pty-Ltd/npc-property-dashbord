@@ -5,8 +5,10 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   admissibleInputs,
+  claimPermits,
   policyStamp,
   PRODUCTION_SCORING_AUTHORITY,
+  type ClaimPermits,
   NOT_ASSESSED_REASON,
   OVERALL_GRADE_UNAVAILABLE,
   type ScoredDimension,
@@ -37,12 +39,16 @@ interface InvestmentScoringInput {
   state?: string;
   propertyType?: string;
   /**
-   * Inputs the CALLER has verified for this property, by name.
+   * Inputs verified for this property, by name — **internal and test use only.**
    *
-   * The forward-only policy refuses a templated or market-evidence input until
-   * it is named here, so nothing scores from an unverified source by default
-   * and a genuine one opens its dimension without a code change
-   * (`scoringInputPolicy.pure.ts`).
+   * It widens what a dimension may COUNT and does nothing to who may GRADE:
+   * the scoring authority is decided separately, so verifying inputs can never
+   * make the legacy methodology authoritative again. Genuinely trusted evidence
+   * is destined for Scoring V2 after an explicit activation, not for V1.
+   *
+   * Not propagated by the live request path: `transformInputData` rebuilds the
+   * nested request shape field by field and does not carry this through, and no
+   * caller sets it. Present so the policy can be exercised directly.
    */
   verifiedInputs?: string[];
 }
@@ -707,14 +713,24 @@ function calculateInvestmentScore(input: InvestmentScoringInput): InvestmentScor
         recommendation: OVERALL_GRADE_UNAVAILABLE.explanation,
       };
 
-  // Analyze SWOT (always — qualitative output works even with sparse data)
+  // Analyze SWOT. Qualitative output still works on sparse data — but a claim
+  // that restates an unauthorised assessment is withheld with the number it
+  // restates, so the authority boundary cannot be walked around in prose.
+  const permits = claimPermits({
+    authority: policy.authority,
+    measuredDimensions: policy.measuredDimensions,
+    admittedInputs: [
+      ...yieldAdmitted, ...growthAdmitted, ...locationAdmitted,
+      ...demandAdmitted, ...riskAdmitted,
+    ],
+  });
   const { strengths, weaknesses, opportunities, risks } = analyzeSWOT(input, {
     yieldScore,
     growthScore,
     locationScore,
     demandScore,
     riskScore,
-  });
+  }, permits);
 
   // What a client is told where no grade may be issued, and why each absent
   // dimension is absent. Composed once here so the viewer, the PDF and the
@@ -1186,67 +1202,81 @@ function determineGradeAndRecommendation(score: number, input: InvestmentScoring
   return { grade, recommendation };
 }
 
-function analyzeSWOT(input: InvestmentScoringInput, scores: any) {
+/**
+ * The qualitative reading — every claim gated by what may actually be said.
+ *
+ * `permits` decides per claim, because the claims have different sources: some
+ * restate a dimension score, some restate an input, and some restate a fact the
+ * operator supplied. Only the last kind survives when no methodology is
+ * authorised. See `claimPermits` for why a sentence is an assessment.
+ */
+function analyzeSWOT(input: InvestmentScoringInput, scores: any, permits: ClaimPermits) {
   const strengths: string[] = [];
   const weaknesses: string[] = [];
   const opportunities: string[] = [];
   const risks: string[] = [];
 
   // Strengths
-  if (scores.yieldScore.score >= 70) {
+  if (permits.fromDimensionScore('yield') && scores.yieldScore.score >= 70) {
     strengths.push('Strong rental yield providing good cash flow');
   }
-  if (scores.growthScore.score >= 70) {
+  if (permits.fromDimensionScore('growth') && scores.growthScore.score >= 70) {
     strengths.push('Solid capital growth track record');
   }
-  if (scores.locationScore.score >= 70) {
+  if (permits.fromDimensionScore('location') && scores.locationScore.score >= 70) {
     strengths.push('Excellent location with strong amenities');
   }
-  if (input.walkScore && input.walkScore >= 80) {
+  if (permits.fromInput('walkScore') && input.walkScore && input.walkScore >= 80) {
     strengths.push('High walkability score enhancing liveability');
   }
 
   // Weaknesses
-  if (scores.yieldScore.score < 50) {
+  if (permits.fromDimensionScore('yield') && scores.yieldScore.score < 50) {
     weaknesses.push('Below average rental yield may require owner contribution');
   }
-  if (scores.growthScore.score < 50) {
+  if (permits.fromDimensionScore('growth') && scores.growthScore.score < 50) {
     weaknesses.push('Limited historical capital growth');
   }
-  if (input.lvr && input.lvr > 80) {
+  // Leverage is a fact the operator supplied about this purchase, not an
+  // assessment of the property, so it survives the scoring authority.
+  if (permits.fromInput('lvr') && input.lvr && input.lvr > 80) {
     weaknesses.push('High leverage increases financial risk');
   }
-  if (input.vacancyRate && input.vacancyRate > 4) {
+  if (permits.fromInput('vacancyRate') && input.vacancyRate && input.vacancyRate > 4) {
     weaknesses.push('Higher than ideal vacancy rate in the area');
   }
 
   // Opportunities
-  if (input.populationGrowth && input.populationGrowth > 2) {
+  if (permits.fromInput('populationGrowth') && input.populationGrowth && input.populationGrowth > 2) {
     opportunities.push('Strong population growth driving future demand');
   }
-  if (input.medianSuburbPrice && input.propertyPrice < input.medianSuburbPrice * 0.9) {
+  if (permits.fromInput('medianSuburbPrice')
+      && input.medianSuburbPrice && input.propertyPrice < input.medianSuburbPrice * 0.9) {
     opportunities.push('Priced below suburb median - potential for value appreciation');
   }
-  if (input.unemploymentRate && input.unemploymentRate < 3.5) {
+  if (permits.fromInput('unemploymentRate') && input.unemploymentRate && input.unemploymentRate < 3.5) {
     opportunities.push('Low unemployment supporting rental demand');
   }
-  if (scores.locationScore.score >= 70 && scores.yieldScore.score < 60) {
+  if (permits.fromDimensionScore('location') && permits.fromDimensionScore('yield')
+      && scores.locationScore.score >= 70 && scores.yieldScore.score < 60) {
     opportunities.push('Strong location may drive future capital growth');
   }
 
   // Risks
-  if (input.priceGrowth1Year && input.priceGrowth1Year > 15) {
+  if (permits.fromInput('priceGrowth1Year') && input.priceGrowth1Year && input.priceGrowth1Year > 15) {
     risks.push('Rapid recent price growth may indicate market cooling ahead');
   }
-  if (input.cashFlow && input.cashFlow < -150) {
+  // Holding cost is the operator's own figure for this purchase — a fact.
+  if (permits.fromInput('cashFlow') && input.cashFlow && input.cashFlow < -150) {
     risks.push('Significant negative cash flow requiring ongoing funding');
   }
-  if (input.daysOnMarket && input.daysOnMarket > 80) {
+  if (permits.fromInput('daysOnMarket') && input.daysOnMarket && input.daysOnMarket > 80) {
     risks.push('Extended selling times may indicate softer market');
   }
-  if (input.propertyType === 'unit' && input.state && ['VIC', 'QLD'].includes(input.state)) {
-    risks.push('Unit market in this state may face oversupply challenges');
-  }
+  // Dwelling type and state are not scoring inputs and never carry a verdict:
+  // the property type selects a risk schema and contributes nothing, and there
+  // is no state premium. This claim is exactly that verdict in words, so it is
+  // withheld unless a future methodology earns it through a classified input.
 
   return { strengths, weaknesses, opportunities, risks };
 }

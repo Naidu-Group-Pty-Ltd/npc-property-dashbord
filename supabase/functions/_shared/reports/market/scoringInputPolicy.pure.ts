@@ -44,15 +44,34 @@
  * writes none, so no historical report is touched, nothing is migrated and
  * nothing is recomputed. A stored score stays exactly as it was issued.
  *
- * ## Reversible by construction
+ * ## Trusted evidence leads to V2, never back to V1
  *
- * An input in a verification-requiring class becomes admissible the moment a
- * caller **declares it verified** (`verifiedInputs`). Nothing declares one
- * today, so today nothing in those classes scores — and when a genuine walk
- * score from a resolved coordinate or a licensed suburb series lands, the
- * caller names it and the dimension opens by itself. That is the same
- * evidence-opens-the-gate shape as Risk Model D's variant D2: no later code
- * change is required for the good case.
+ * `verifiedInputs` lets a caller mark an input as verified, and it is worth
+ * being exact about what that does and does not mean, because an earlier draft
+ * of this module overstated it.
+ *
+ * It affects **admissibility only** — whether a dimension may count an input.
+ * It has no bearing on {@link ScoringAuthority}, so no amount of verification
+ * makes V1 authoritative for a new report. Evidence and authority are answered
+ * separately and deliberately: gating inputs alone would have left a trapdoor
+ * where verifying three inputs later quietly reinstates the legacy methodology
+ * as the production grade engine, which is a decision nobody would have taken.
+ *
+ * The intended path for genuinely trusted evidence is:
+ *
+ *     trusted evidence → Scoring V2 → score output contract → reporting
+ *
+ * after an explicit V2 production activation. It is **not**:
+ *
+ *     trusted evidence → legacy V1 reactivation
+ *
+ * **The field is not wired to the live request path.** Measured 2026-09-11:
+ * `transformInputData` builds its result field by field from the nested
+ * request shape and does not carry `verifiedInputs` through, so the only way
+ * to set it is the flat-passthrough branch — and no caller in this repository
+ * sets it by either route. It exists so the policy can be exercised directly
+ * in tests and internal diagnostics. Wiring it to a caller would be a change
+ * with a decision behind it, not a detail.
  */
 
 /** Bumped whenever a class or a rule changes. Stamped on every new score. */
@@ -277,6 +296,57 @@ export const NOT_ASSESSED_REASON: Readonly<Record<ScoredDimension, string>> = {
 
 /** The label a dimension carries where it did score. */
 export const ASSESSED_LABEL = 'Measured' as const;
+
+// ---------------------------------------------------------------------------
+// Qualitative claims
+// ---------------------------------------------------------------------------
+
+/**
+ * What a report may SAY, as opposed to what it may score.
+ *
+ * The authority boundary is not about numbers, it is about assessments — and a
+ * sentence is an assessment. "Excellent location with strong amenities" makes
+ * exactly the claim a Location dimension score makes, in words, and suppressing
+ * the number while publishing the sentence would close the front door and leave
+ * the back one open.
+ *
+ * Two kinds of claim, two different rules:
+ *
+ * **From a dimension SCORE** — "solid capital growth track record", read off a
+ * growth score. Permitted only where that dimension was genuinely measured AND
+ * an authorised methodology produced it. Under `unavailable` there is none, so
+ * none of these may be made.
+ *
+ * **From an INPUT's value** — "higher than ideal vacancy rate", read off the
+ * vacancy figure itself. Permitted only where the policy admitted that input,
+ * which is what stops a per-state walk-score template becoming "high
+ * walkability" in prose.
+ *
+ * What survives either way is a **fact**: a gross yield of 4.69%, a rent of
+ * $650, a cash flow of −$120 a week. Those are calculations over verified
+ * inputs and are described freely — an unauthorised methodology simply may not
+ * convert them into a verdict about the property.
+ */
+export interface ClaimPermits {
+  /** May a claim be made from this dimension's score? */
+  fromDimensionScore(dimension: ScoredDimension): boolean;
+  /** May a claim be made from this input's own value? */
+  fromInput(input: string): boolean;
+}
+
+export function claimPermits(opts: {
+  authority: ScoringAuthority;
+  measuredDimensions: readonly ScoredDimension[];
+  admittedInputs: readonly string[];
+}): ClaimPermits {
+  const scoresSpeak = mayPublishDimensionScores(opts.authority);
+  const measured = new Set(opts.measuredDimensions);
+  const admitted = new Set(opts.admittedInputs);
+  return {
+    fromDimensionScore: (dimension) => scoresSpeak && measured.has(dimension),
+    fromInput: (input) => admitted.has(input),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // The stamp a new score carries

@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ASSESSED_LABEL,
+  claimPermits,
   PRODUCTION_SCORING_AUTHORITY,
   authorityOf,
   mayPublishDimensionScores,
@@ -351,5 +352,108 @@ describe('a verified metric is not an authorised scored dimension', () => {
 
   it('the service withholds the composite, not just the letter', () => {
     expect(SERVICE).toContain('policy.gradeIssued ? computedTotal : null');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Qualitative claims obey the same boundary as the numbers
+// ---------------------------------------------------------------------------
+
+describe('an unauthorised assessment cannot be published as prose', () => {
+  /** What a NEW report permits today: Yield measured, no authorised engine. */
+  const today = claimPermits({
+    authority: PRODUCTION_SCORING_AUTHORITY,
+    measuredDimensions: ['yield'],
+    admittedInputs: ['propertyPrice', 'weeklyRent'],
+  });
+
+  it('makes no claim from any dimension score', () => {
+    for (const dim of ['yield', 'growth', 'location', 'demand', 'risk'] as const) {
+      expect(today.fromDimensionScore(dim), `${dim} must not speak`).toBe(false);
+    }
+  });
+
+  it('makes no claim from an input the policy refused', () => {
+    for (const input of ['walkScore', 'commuteTimeCBD', 'schoolsNearby',
+      'vacancyRate', 'daysOnMarket', 'populationGrowth', 'priceGrowth1Year',
+      'medianSuburbPrice', 'unemploymentRate']) {
+      expect(today.fromInput(input), `${input} must not speak`).toBe(false);
+    }
+  });
+
+  it('still describes the facts an operator supplied', () => {
+    expect(today.fromInput('propertyPrice')).toBe(true);
+    expect(today.fromInput('weeklyRent')).toBe(true);
+  });
+
+  it('a legacy snapshot keeps the qualitative output it was issued with', () => {
+    const historical = claimPermits({
+      authority: 'legacy_snapshot',
+      measuredDimensions: ['yield', 'location', 'risk'],
+      admittedInputs: ['propertyPrice', 'weeklyRent', 'walkScore'],
+    });
+    expect(historical.fromDimensionScore('location')).toBe(true);
+    expect(historical.fromInput('walkScore')).toBe(true);
+    // Still only what that run measured.
+    expect(historical.fromDimensionScore('growth')).toBe(false);
+  });
+
+  it('an authorised V2 run may speak from what it measured', () => {
+    const activated = claimPermits({
+      authority: 'v2',
+      measuredDimensions: ['yield', 'growth', 'location'],
+      admittedInputs: ['propertyPrice', 'weeklyRent', 'priceGrowth1Year'],
+    });
+    expect(activated.fromDimensionScore('growth')).toBe(true);
+    expect(activated.fromDimensionScore('demand')).toBe(false);
+    expect(activated.fromInput('priceGrowth1Year')).toBe(true);
+  });
+
+  it('every SWOT claim in the service is gated', () => {
+    // No claim may be pushed from an ungated condition. Each `push` into a SWOT
+    // bucket must sit under a `permits.` test.
+    const swot = SERVICE.slice(SERVICE.indexOf('function analyzeSWOT'));
+    const body = swot.slice(0, swot.indexOf('\n}'));
+    const pushes = body.split('\n').filter((l) => /\.push\('/.test(l));
+    expect(pushes.length).toBeGreaterThan(8);
+    // Walk the conditions: every push is preceded by an `if (permits.` line.
+    const lines = body.split('\n');
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!/\.push\('/.test(lines[i])) continue;
+      const guard = lines.slice(Math.max(0, i - 3), i).join(' ');
+      expect(guard, `ungated claim: ${lines[i].trim()}`).toMatch(/permits\./);
+    }
+  });
+
+  it('the dwelling-type and state verdict is gone', () => {
+    expect(SERVICE).not.toContain('Unit market in this state may face oversupply');
+  });
+});
+
+describe('verified inputs never rehabilitate V1', () => {
+  it('verification widens evidence and never touches authority', () => {
+    const everythingVerified = claimPermits({
+      authority: PRODUCTION_SCORING_AUTHORITY,
+      measuredDimensions: ['yield', 'growth', 'location', 'demand', 'risk'],
+      admittedInputs: ['walkScore', 'priceGrowth1Year', 'vacancyRate'],
+    });
+    // Inputs speak — they were admitted. Dimensions do not — none is authorised.
+    expect(everythingVerified.fromInput('walkScore')).toBe(true);
+    for (const dim of ['yield', 'growth', 'location', 'demand', 'risk'] as const) {
+      expect(everythingVerified.fromDimensionScore(dim)).toBe(false);
+    }
+  });
+
+  it('the field is documented as unwired rather than as a future switch', () => {
+    const policySrc = readFileSync(
+      join(ROOT, 'supabase', 'functions', '_shared', 'reports', 'market', 'scoringInputPolicy.pure.ts'),
+      'utf8',
+    );
+    expect(policySrc).toMatch(/not wired to the live request path/i);
+    expect(policySrc).toMatch(/trusted evidence → Scoring V2/);
+    // The overstated claim must not return.
+    expect(policySrc).not.toMatch(/opens by itself/);
+    expect(policySrc).not.toMatch(/no later code change is required/);
+    expect(SERVICE).toMatch(/internal and test use only/i);
   });
 });
