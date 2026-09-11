@@ -51,6 +51,8 @@
  * the backtest honestly skips.
  */
 
+import { isAustraliaCentroid } from '../geocodeGranularity.pure.ts';
+
 /** The ASGS edition every boundary in this module is read from. */
 export const ASGS_RELEASE = 'ASGS2021';
 
@@ -75,6 +77,7 @@ export type GeographyFlag =
   | 'missing_coordinate'
   | 'invalid_coordinate'
   | 'outside_australia'
+  | 'geocoder_country_fallback'
   | 'outside_all_polygons'
   | 'near_locality_boundary'
   | 'suburb_postcode_mismatch'
@@ -306,6 +309,24 @@ export function resolveGeography(input: ResolveInput): ResolvedGeography {
       `The coordinate (${coordinate.latitude.toFixed(4)}, ${coordinate.longitude.toFixed(4)}) `
       + 'falls outside Australia and its external territories, so no Australian geography applies. '
       + 'The report needs its coordinate corrected before it can carry market evidence.');
+  }
+
+  // The geocoder's own "no match", which is inside the box, on land, and
+  // contradicts no state. `components=country:AU` answers the CENTRE OF THE
+  // CONTINENT rather than failing, so `London` and `Pittsburgh` became a tidy
+  // cluster in the desert — and a boundary query would place that cluster in a
+  // real remote locality with a real postcode, which is how a wrong coordinate
+  // becomes confident area statistics about somebody else's postal area.
+  //
+  // `isAustraliaCentroid` is the check the listing map already uses, imported
+  // rather than re-implemented: two spellings of one sentinel is how one of
+  // them goes stale.
+  if (isAustraliaCentroid(coordinate.latitude, coordinate.longitude)) {
+    return unresolved(coordinate, 'geocoder_country_fallback',
+      `The coordinate (${coordinate.latitude.toFixed(4)}, ${coordinate.longitude.toFixed(4)}) `
+      + 'is the geocoder\'s centre-of-Australia fallback, which is what it returns when an '
+      + 'address matches nothing in the country. It locates no property, so it is left '
+      + 'unplaced rather than resolved to whichever remote locality contains it.');
   }
 
   if (!lookup || lookup.serviceFailed) {

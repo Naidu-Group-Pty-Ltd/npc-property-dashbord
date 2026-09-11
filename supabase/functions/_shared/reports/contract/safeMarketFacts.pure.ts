@@ -414,6 +414,20 @@ export function cashRateTargetDetailFacts(
       context,
     }));
   }
+  // The macro table prints this — "unchanged at 2 Board decisions since" — so
+  // it is a client-visible figure and must be reconstructable from the stored
+  // snapshot like any other. Found by the §C5 coverage probe, which exists
+  // precisely because a figure can reach a prompt without reaching the record.
+  const held = num(reading.decisionsSinceChange);
+  if (held !== null) {
+    facts.push(gateFact({
+      name: 'market.cashRateTargetDecisionsSinceChange',
+      value: held,
+      safety: 'authoritative',
+      source: 'rba_cash_rate_decisions',
+      context,
+    }));
+  }
   return facts;
 }
 

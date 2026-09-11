@@ -27,12 +27,14 @@ These are answered separately on purpose, because collapsing them is what went w
 | Current RBA cash-rate target ingested | **NEW** | **CODE YES / DATA PENDING A LOAD** (§4) |
 | Report-time market-fact snapshot | **NEW** | **YES** — individual valued facts, ABS and RBA |
 | Market-claim reconciliation | YES (RF-7.2B) | **YES** — a fault makes the report non-clean at `high` severity |
+| Pre-generation geography resolution | **NEW** | **YES** — from this run's own coordinate, before the gate |
+| Delivery gate on a flagged report | — | **NO — documented, deliberately not added** (§6a) |
+| RBA current effective date (vs last-changed) | **NEW** | **YES** — four distinct facts |
+| "Narrated implies snapshotted" enforced | **NEW** | **YES** — by measurement (§5) |
+| Legacy scorer | untouched | cannot publish a grade (`PRODUCTION_SCORING_AUTHORITY = 'unavailable'`) |
 | Visibility policy as Viewer/PDF authority | YES | **NO** — RF-7.2C |
 | Chart-null policy in production charts | YES | **NO** — RF-7.2C |
-| Rent-basis production capture | contract only | **NO** (§9) |
-
-| RBA current effective date (vs last-changed) | **NEW** | **YES** — four distinct facts |
-| Legacy scorer | untouched | cannot publish a grade (`PRODUCTION_SCORING_AUTHORITY = 'unavailable'`) |
+| Rent-basis production capture | contract only | **NO** (§8) |
 
 **Code activation: READY. Production source load: NOT YET VERIFIED** — see §9c, the
 post-deploy activation check. RF-7.2B.1 is not operationally complete merely because
@@ -123,14 +125,56 @@ goes with it, because it describes the same postal area. Untrusted or absent
 geography withholds rather than vouches. Nothing is estimated, synthesised or
 borrowed from a neighbour.
 
-**Operational consequence, stated rather than discovered in production:**
-`resolve-report-geography` self-selects reports whose `location_intelligence` is
-ALREADY PERSISTED — which happens at the generator's own write — and has no
-caller in the generation path. So a **first** generation has no geography row and
-demographics fail closed. Regenerations and any report after a backfill run do
-have one. The remedy is an ordering decision (resolve geography before narrative,
-rather than after) and is **put to the owner rather than taken**, because it
-changes when a separate function runs.
+### Geography is resolved BEFORE the gate (C2)
+
+The ordering defect this phase first reported, now closed. `resolve-report-geography`
+self-selects reports whose `location_intelligence` is **already persisted** — which
+happens at the generator's own write — so a **first** generation had no geography row
+and its demographics failed closed, while a regeneration of the same property received
+area statistics. Same property, two documents, decided by whether a batch job had been
+past.
+
+The order is now:
+
+```
+PROPERTY / TRUSTED COORDINATE
+  → GEOGRAPHY RESOLUTION      (resolveOneReportGeography, from this run's coordinate)
+  → TRUSTED POSTCODE / ASGS IDENTITY
+  → ABS LOOKUP                (re-queried on the trusted POA where it disagrees)
+  → CLIENT-SAFE GATE
+  → REPORT-TIME SNAPSHOT
+  → NARRATIVE
+```
+
+**There is no second geography algorithm.** The sweep's per-report body was lifted into
+`_shared/geography/resolveOneReportGeography.ts` and the sweep now calls it too, so the
+batch and both generators resolve through one `resolveGeography` over the same ASGS 2021
+boundaries. It runs immediately after location intelligence — the first point at which a
+verified coordinate exists — and takes an injected `lookupPoint` so the boundary service
+is never reached from a test.
+
+Four things it does **not** do, each because the mandate names it:
+
+- it never reads the free-text suburb or postcode (that string is what produced the
+  untrusted postcode in the first place);
+- POA equality is unchanged — a resolution that disagrees still withholds;
+- no geography is borrowed from a neighbour, and none is synthesised;
+- an unresolved coordinate leaves `subjectGeography` null and the gate withholds
+  exactly as before.
+
+**The ABS re-query.** Where the trusted POA differs from the address-derived one, the
+phase-1 payload describes somebody else's postal area, so demographics and SEIFA are
+re-fetched for the subject's own. Where that re-fetch cannot be made, the wrong-area
+payload is **dropped rather than kept** — the gate would refuse it on the cross-check
+anyway, and carrying it forward would store a figure about the wrong place in the
+snapshot.
+
+**The stored-row read survives as a fallback**, for the one case the resolution cannot
+cover: a run where the resolution itself failed. Reading a row an earlier sweep wrote is
+the behaviour this function already had, so the fallback cannot make a report worse than
+it was. Which route was taken is recorded on the snapshot (`geography.source`:
+`pre_generation` | `stored_row` | `none`), because a reader of a stored report cannot
+otherwise tell.
 
 ### Trust is asymmetric
 
@@ -142,7 +186,7 @@ recognises is how the two come to disagree.
 
 ---
 
-## 3. Two defects this phase found in itself
+## 3. Seven defects this phase found in itself
 
 Both were found by proofs, not by review, and both are pinned by tests.
 
@@ -159,6 +203,49 @@ effective date, from an LLM-sourced series. Found by the forward cohort — whic
 exactly why the cohort runs against the **sanitised** object, as production does, rather
 than against the inputs. The activation now removes a refused target from the payload,
 so the block fails closed onto the monthly average under its own label.
+
+### `report_geography` has never held a row, and not for the reason assumed
+
+Lifting the sweep's body out exposed why the table is empty. The batch wrote
+`method: 'point_in_polygon'`; the table's CHECK constraint admits
+`'asgs_point_in_polygon'` or `'none'`. **Every upsert violated it and every write
+failed** — and the failure was swallowed into a per-report `write_failed:` string in a
+`results` array nobody reads, under HTTP 200 throughout. "The backfill has not run yet"
+was the wrong diagnosis of a silent constraint violation. Fixed in the one module that
+now writes, and pinned by a test that asserts the written `method`.
+
+### The geocoder's country fallback would have been placed in the desert
+
+`components=country:AU` does not fail on an unmatched address: it answers the centre of
+the continent with HTTP 200. That point is inside the bounding box, on land, and a
+boundary query places it in a **real remote locality with a real postcode** — so the
+cross-check would have compared a genuine POA against a genuine POA and admitted area
+statistics for the Simpson Desert. `resolveGeography` now refuses it, through
+`isAustraliaCentroid` — the check `auPointTrust.pure.ts` already uses, imported rather
+than re-implemented — under a new `geocoder_country_fallback` flag.
+
+### Three figures reached a client's page and nothing recorded them
+
+Found by the §C5 coverage probe on its first run, each closed:
+
+- the four **SEIFA deciles**. `seifaTable` prints score *and* decile; only the score was
+  snapshotted, and a decile is a separately published figure rather than a rounding of
+  the score beside it, so it could not be re-derived.
+- **`decisionsSinceChange`** — the macro table prints "unchanged at 2 Board decisions
+  since", and nothing stored the 2.
+- the **industry workforce shares** — up to five named industries with a measured share
+  each, printed under their own heading.
+
+### The gate had a third payload from the same table, ungated
+
+The worst of the seven, and the probe found it rather than review. `industryTable` reads
+`employmentData`, which `abs-employment-service` projects from the **same
+`abs_census_poa` row** keyed on the **same address-derived postcode** — and it prints
+**independently** of the population table. So a report whose demographics were refused
+for describing postal area 3338 while the property resolves to 3024 still printed 3338's
+industry mix, under its own heading, as a client-visible table. `employmentData` is now
+withheld on the same geography ground as `demographics` and `seifaData`: one rule, three
+payloads, one table.
 
 ---
 
@@ -265,17 +352,37 @@ metric that reaches the prose is now its own fact carrying its own value:
 `abs.population` · `abs.medianAge` · `abs.medianHouseholdIncomeAnnual` ·
 `abs.medianWeeklyIncome` · `abs.unemploymentRate` · `abs.labourForce` ·
 `abs.labourForceParticipation` · `abs.employmentRate`, plus
-`abs.seifa.{irsad,irsd,ier,ieo}`.
+`abs.seifa.{irsad,irsd,ier,ieo}`, their four `…Decile` twins, and one
+`abs.industryShare.<industry>` per printed industry row.
 
 The list is transcribed from `censusPromptBlocks` rather than from the table, so
 it records what a **client was shown** rather than what was fetched. The RBA side
 is the same: `market.cashRateTargetCurrent`,
-`market.cashRateTargetEffectiveDate`, `market.cashRateTargetLastChangedDate` and
-`market.cashRateTargetLastChangePoints` are four separate values, so a snapshot
-cannot preserve the conflation the correction removed.
+`market.cashRateTargetEffectiveDate`, `market.cashRateTargetLastChangedDate`,
+`market.cashRateTargetLastChangePoints` and
+`market.cashRateTargetDecisionsSinceChange` are five separate values, so a
+snapshot cannot preserve the conflation the correction removed.
 
-Measured on the cohort: 10 valued facts where demographics are admitted, 4 where
-they are not.
+The snapshot also carries `geography` — the postal area every area fact is keyed on,
+the resolver's status, how it was reached, and whether the ABS payload was re-queried
+on the trusted POA. The facts say which POA; this says how that POA was established.
+
+### The rule that keeps it complete: narrated implies snapshotted (C5)
+
+> Any market fact admitted to a narrative prompt must have a corresponding snapshot
+> fact unless explicitly classified as non-snapshotted static copy.
+
+Enforced by measurement, in `rf72b1SnapshotCoverage.spec.ts`. Every leaf number in a
+production-shaped payload is stamped with a unique value, the real gate runs, the real
+prompt blocks are composed from the sanitised object, and any stamp reaching the prose
+without reaching the snapshot fails the test by name. A source scan was the obvious
+alternative and is not equivalent — the blocks read through local aliases
+(`emp['laborForce']`), and a scanner that is 90% right on that is worse than none.
+
+It found three real gaps on its first run (§3) and one gate hole. The escape hatch,
+`NON_SNAPSHOTTED_NARRATIVE_PATHS`, is **empty**: what would belong in it is static copy
+that merely looks like a figure, never a measured value, and an entry costs a written
+reason.
 
 The rule: **reopening a report must never re-read today's ABS or RBA tables and quietly
 restate the document.** NULL means the report predates the snapshot — not that its
@@ -313,14 +420,39 @@ above the `warning` the prose-vs-record reconciliation uses beside it: a yield
 disagreeing by a rounding step is a possible discrepancy, whereas these three are
 validated semantic errors about what a figure *is*.
 
-**What this does not do is gate delivery.** Nothing in the product consults
-`validation_flags` before a report is shared or downloaded — `status` is set to
-`completed` unconditionally — and adding such a gate would be a new workflow
-rather than a use of the existing one. It is deliberately narrow: it
-matches a fact's own value in the prose and reads the words around it, rather than
-parsing claims in general. A broad claim parser that is 80% right generates more noise
-than signal, and a reviewer who learns to ignore these flags is worse off than one who
-never had them. One finding per fact per kind, for the same reason.
+It is deliberately narrow: it matches a fact's own value in the prose and reads the
+words around it, rather than parsing claims in general. A broad claim parser that is 80%
+right generates more noise than signal, and a reviewer who learns to ignore these flags
+is worse off than one who never had them. One finding per fact per kind, for the same
+reason.
+
+---
+
+## 6a. There is no delivery gate — stated, not hidden
+
+This is the limitation a reader of this document most needs, so it has its own section
+rather than a sentence inside another one.
+
+What happens today, exactly:
+
+1. **Generation completes.** A market-claim fault never fails a run. The report is
+   written, `status` is set to `completed`, and the prose is whatever the model wrote.
+2. **The report leaves the clean set.** A `high` fault lands in `validation_flags`, and
+   `QualityAssurance.tsx` splits `cleanReports` from `reportsWithValidationIssues`
+   purely on `validation_flags.length > 0`. The report is counted and surfaced as
+   carrying an issue, at a severity band the page counts.
+3. **Nothing stops it being delivered.** No share, download, email or PDF route
+   consults `validation_flags`. A flagged report can be sent to a client exactly as an
+   unflagged one can.
+
+That gap is **deliberate in this PR and must not be read as closed.** Adding a delivery
+gate is a new operational control — it decides who may override it, what a client sees
+while a report is held, and what happens to a report already sent — and that is a
+workflow decision rather than a use of the existing mechanism.
+
+**Carried forward as an operational control to settle before broad client rollout.**
+Until it is settled, the flag is a *review signal for staff*, not an enforcement
+boundary, and the programme's assurance claim must be stated that way.
 
 ---
 
@@ -352,6 +484,49 @@ Every delta from legacy generation, classified:
 **No unexplained delta.** The two behaviour changes a reader would notice are both
 intended and both listed: the four Location facts no longer appear in the narrative, and
 the cash rate is now stated as an in-force target rather than a month's average.
+
+### 7a. The FIRST-GENERATION cohort (C3)
+
+The cohort above exercises the gate from an already-assembled payload. It cannot see a
+defect of ORDER, which is what §2's geography finding was — so
+`rf72b1FirstGenerationCohort.spec.ts` runs the whole chain instead, in production's
+order, with the production modules:
+
+```
+COORDINATE → GEOGRAPHY → POA → ABS → GATE → SNAPSHOT → PROMPT
+```
+
+Eight scenarios, each traced through every step:
+
+| # | Scenario | Geography | Trusted POA | Gate | What the page gets |
+| --- | --- | --- | --- | --- | --- |
+| 1 | trusted coordinate + matching ABS POA | `resolved_with_warning` | 3338 | **admitted** | real figures, sourced |
+| 2 | trusted coordinate, regional | `resolved_with_warning` | 3844 | **admitted** | real figures, sourced |
+| 3 | sentinel coordinate (country fallback) | `unresolved` | — | **withheld** | an honest absence |
+| 4 | missing coordinate | `unresolved` | — | **withheld** | an honest absence |
+| 5 | coordinate that cannot resolve (service down) | `unresolved` | — | **withheld** | an honest absence, retryable |
+| 6 | wrong / stale ABS POA (3338 payload, 3024 property) | `resolved_with_warning` | 3024 | **withheld** | an honest absence naming both |
+| 7 | regenerated report with an existing geography row | `resolved_with_warning` | 3338 | **admitted** | identical to #1 |
+| 8 | historical / backfilled row | `resolved` | 3338 | **admitted** | identical to #1 |
+
+**The three expectations the mandate set, all met by execution:** a valid first
+generation receives valid ABS facts (#1, #2); an unresolved first generation fails
+closed (#3, #4, #5); a wrong POA fails closed (#6).
+
+And the inconsistency this closes is asserted directly: on the same property, with the
+same coordinate, **the first generation and the regeneration now produce byte-identical
+prompt text** (#1 vs #7). Before the resolution moved ahead of the gate they did not.
+
+Across all eight: no disowned Location identifier, no `undefined`, no `NaN`, no `null`
+token, no `XX` placeholder, and the cash rate is the in-force target with both dates on
+every one — including the five where no area statistics exist at all.
+
+**One honest reading recorded rather than smoothed:** every live resolution is
+`resolved_with_warning`, not `resolved`, because both this path and the sweep pass
+`directoryMatches: []` and `suburb_not_in_directory` is therefore raised on all of them.
+The flag is truthful — the directory cross-check is not being run — and it blocks
+nothing, because `subjectPostcodeOf` accepts the warned status and the ASGS boundary is
+the authority the directory only ever confirms. Carried forward (§10), not papered over.
 
 ---
 
@@ -385,7 +560,10 @@ every frontend route. No visual redesign. No Viewer or PDF migration. No other r
 family.
 
 - Edge Function type-check: **339 errors, baseline 339 — no new errors.**
-- `src/lib/reports`: **3,933 passing, 0 failing.**
+- `src/lib/reports`: **3,985 passing, 0 failing** (163 files, 3 skipped).
+- `resolve-report-geography` keeps its contract exactly: same selection, same batch
+  size, same response shape. Only the per-report body moved, and it moved into the
+  module the generators now share.
 - The activation never mutates its input, so nothing it touches can rewrite a stored row.
 - The migration is `ADD COLUMN IF NOT EXISTS` only — no UPDATE, no INSERT, no DROP.
 
@@ -426,18 +604,41 @@ dimension assessment or a score-derived verdict from that path. V2 is untouched.
 
 ## 9c. Post-deploy activation check (required)
 
-Code activation is ready; **production source load is not verified**. RF-7.2B.1 is
-not operationally complete merely because it fails closed. After merge and deploy:
+RF-7.2B.1 has **two statuses and they are not the same claim**:
 
-1. Load the authoritative sources —
-   `node scripts/rba/load-rba-tables.mjs --table cash-rate,f1`.
-2. Read back the current target and effective date; confirm **4.35% effective
-   12 August 2026**, last changed 6 May 2026.
-3. Read back trusted ABS for a known postcode.
-4. Run one production-shaped generation.
-5. Inspect the stored `market_fact_snapshot` — individual valued facts present.
-6. Inspect the prompt — no blocked fact present.
-7. Confirm no `market_claim` fault on a correct report.
+- **CODE READY** — all exact-head gates green. This is what this PR can establish.
+- **OPERATIONALLY VERIFIED** — established only after deployment, by the check below.
+
+Code activation is ready; **the production source load is not verified**. RF-7.2B.1 is
+not operationally complete merely because it fails closed, and **operational closure
+must not be declared before every step here passes.**
+
+1. **Load the RBA decision-history source** —
+   `node scripts/rba/load-rba-tables.mjs --table cash-rate,f1` — and confirm the run
+   reports a row count at or above `CASH_RATE_DECISIONS_MIN_ROWS` (350).
+2. **Read the target back** from `rba-data-service`: **4.35%**.
+3. **Read the effective date back**: **12 August 2026** — *not* 6 May 2026, which is the
+   last-changed date and is the error this correction removed.
+4. **Read trusted ABS back** for a known postcode (`abs-data-service`, POA 3338), and
+   confirm the payload stamps `ABS Census 2021 (POA 3338)`.
+5. **Create one new Investment Report** for a property with a trusted coordinate — a
+   FIRST generation, not a regeneration, because that is the path this phase changed.
+6. **Inspect `market_fact_snapshot`** on that row: individual valued facts present, each
+   with source, dataset, grain, geography id, reference period, as-of and ruling; and
+   `geography.source === 'pre_generation'`.
+7. **Inspect the final prompt payload** in the function logs.
+8. **Verify the disowned Location fields are absent** — no `walkScore`, no
+   `transport.qualityScore`, no `commute`, no `schools.schoolsWithin3km`, and no
+   livability conclusion derived from them.
+9. **Verify no hardcoded or LLM-sourced RBA input** reached the macro block: the
+   cash-rate rows must cite `FIRMMCRTD` / the decision history, never a model.
+10. **Verify no raw `null`, `undefined` or `XX`** reaches the prose.
+11. **Verify the template projection still receives the same report facts** — render the
+    same report through its selected template and confirm the figures match the
+    snapshot.
+
+Also confirm, on the same run, that `report_geography` now has a row for that report
+(it never has had one — §3), and that `method` reads `asgs_point_in_polygon`.
 
 ## 10. Carry-forwards — named, not taken
 
@@ -451,9 +652,18 @@ not operationally complete merely because it fails closed. After merge and deplo
    published file; the load runs after deployment. Fails closed until then.
 4. **Visibility policy and chart-null policy are still not the Viewer/PDF authority.**
    RF-7.2C.
-5. **Geography resolution runs after generation, not before** (§ "The ABS data must
-   describe THIS property"). Until that ordering changes, a first generation
-   withholds demographics. An owner decision, not a code default.
-6. **No delivery gate exists.** A market-claim fault makes a report non-clean and
-   high-severity on the QA page; nothing stops it being downloaded or shared,
-   because nothing ever did.
+5. **No delivery gate exists** (§6a). A market-claim fault makes a report non-clean and
+   high-severity on the QA page; nothing stops it being downloaded or shared, because
+   nothing ever did. Carried to the next operational control, before broad client
+   rollout. Documented rather than silently added.
+6. **The suburb directory cross-check is not run.** Both the sweep and the generators
+   pass `directoryMatches: []`, so every resolution carries `suburb_not_in_directory`
+   and reads `resolved_with_warning`. Honest and harmless today — the ASGS boundary is
+   the authority and the warned status admits area statistics — but it means the flag
+   carries no information, and the two disagreements it exists to catch
+   (`suburb_postcode_mismatch`, `state_mismatch`) can never be raised. Supplying the
+   directory is a new read in an edge function and is named rather than taken.
+7. **The snapshot covers ABS, SEIFA and RBA only.** Crime, climate, planning and
+   regional trends each reach the prompt through their own block carrying their own
+   provenance; extending "narrated implies snapshotted" to them is the natural next
+   step and is declared in `rf72b1SnapshotCoverage.spec.ts` rather than omitted.

@@ -13,7 +13,8 @@ import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
-import { activateSafeGenerationInputs } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
+import { activateSafeGenerationInputs, subjectPostcodeOf } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
+import { resolveOneReportGeography } from '../_shared/geography/resolveOneReportGeography.ts';
 import { auditMarketClaims, claimFaultToFlag } from '../_shared/reports/contract/marketClaimAudit.pure.ts';
 import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
@@ -2457,7 +2458,19 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     }
     
     let enhancedData: EnhancedData = {};
-    
+
+    /**
+     * RF-7.2B.1 §2 — the subject's TRUSTED geography, resolved from the
+     * verified coordinate during this run rather than read back from a sweep
+     * that has not visited this report yet. Declared out here because the
+     * Client-Safe Gate below the data block is what consumes it.
+     */
+    let subjectGeography: Record<string, unknown> | null = null;
+    /** How it was obtained, for the ledger and the run log. */
+    let geographyResolution: { source: string; status: string; requeried: boolean } = {
+      source: 'none', status: 'unresolved', requeried: false,
+    };
+
     // Declare suburb/state/postcode OUTSIDE try block so they're accessible in reportContent
     let postcode = detectedPostcode;
     let state = detectedState || 'NSW';
@@ -2883,6 +2896,121 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         console.error('❌ Location intelligence fetch failed:', error?.message || 'Unknown error');
       }
 
+      // ======================================================================
+      // RF-7.2B.1 §2 — PRE-GENERATION GEOGRAPHY RESOLUTION
+      // ======================================================================
+      // The order this establishes:
+      //
+      //   trusted coordinate → GEOGRAPHY → trusted POA → ABS → gate → snapshot
+      //
+      // The verified coordinate is the first trustworthy thing this function
+      // holds about WHERE the property is. Everything before it is the
+      // customer's typed address, which is exactly what produced the untrusted
+      // postcode the phase-1 ABS calls were keyed on: `propertyAddress.match(
+      // /\b(\d{4})\b/)` takes the first four digits in a free-text string.
+      //
+      // Until now the Client-Safe Gate's postal-area cross-check read
+      // `report_geography`, which is written by a sweep that self-selects
+      // reports whose `location_intelligence` is ALREADY PERSISTED — so a
+      // first generation never had a row and its demographics failed closed,
+      // while a regeneration of the same property got area statistics. Same
+      // property, two different documents, decided by whether a batch job had
+      // been past. That is the inconsistency this closes.
+      //
+      // There is no second geography algorithm: `resolveOneReportGeography` is
+      // the sweep's own per-report body, and the sweep now calls it too.
+      //
+      // What it does NOT do: restore data by trusting something weaker. An
+      // unresolved coordinate leaves `subjectGeography` null and the gate
+      // withholds, exactly as it does today. Nothing here reads the free-text
+      // suburb or postcode, borrows a neighbour's geography, or invents a
+      // demographic figure.
+      const subjectCoords = enhancedData.locationIntelligence?.coordinates;
+      const subjectLat = Number(subjectCoords?.lat);
+      const subjectLng = Number(subjectCoords?.lng);
+      if (reportId && supabaseClient) {
+        try {
+          const geoOutcome = await resolveOneReportGeography({
+            supabase: supabaseClient,
+            reportId,
+            latitude: Number.isFinite(subjectLat) ? subjectLat : null,
+            longitude: Number.isFinite(subjectLng) ? subjectLng : null,
+          });
+          geographyResolution = {
+            source: 'pre_generation', status: geoOutcome.status, requeried: false,
+          };
+          if (geoOutcome.writeError) {
+            // The row could not be persisted. The RESOLUTION is still sound —
+            // it came from the same point-in-polygon — so this run uses it and
+            // the sweep will write it later. Storage is not authority.
+            console.warn(
+              `⚠️ report_geography write failed (${geoOutcome.writeError}) — `
+              + 'resolution used for this run; the sweep will persist it.',
+            );
+          }
+          subjectGeography = geoOutcome.row === null ? null : {
+            postcode: geoOutcome.row.postcode,
+            status: geoOutcome.row.status,
+            suburb: geoOutcome.row.suburb,
+            state: geoOutcome.row.state,
+          };
+          console.log(
+            `🗺️ Geography resolved before the gate: ${geoOutcome.status}`
+            + (geoOutcome.row?.postcode ? ` (POA ${geoOutcome.row.postcode})` : ''),
+          );
+        } catch (error: any) {
+          // Total: a resolution that cannot be made is an absence, never a
+          // failed report. The gate withholds and the document says so.
+          console.warn(
+            '⚠️ Pre-generation geography resolution failed:',
+            error?.message || 'Unknown error',
+          );
+        }
+      }
+
+      // Where the boundary service disagrees with the typed address, the ABS
+      // payload fetched in phase 1 describes SOMEBODY ELSE'S postal area. It is
+      // re-fetched for the subject's own POA — and where that cannot be done,
+      // the wrong-area payload is DROPPED rather than kept: the gate would
+      // refuse it on the POA cross-check anyway, and carrying it forward into
+      // the snapshot would store a figure about the wrong place.
+      const trustedPostcode = subjectPostcodeOf(subjectGeography);
+      if (trustedPostcode && trustedPostcode !== postcode) {
+        const trustedState = typeof subjectGeography?.state === 'string' && subjectGeography.state
+          ? subjectGeography.state as string
+          : state;
+        console.log(
+          `📍 Trusted POA ${trustedPostcode} differs from the address-derived `
+          + `${postcode ?? '(none)'} — re-querying ABS demographics and SEIFA.`,
+        );
+        const requery = async (fn: string) => {
+          try {
+            const res = await fetchWithTimeout(`${supabaseUrl}/functions/v1/${fn}`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ postcode: trustedPostcode, state: trustedState }),
+            }, 30000, fn);
+            if (!res.ok) return null;
+            const body = await res.json();
+            return body?.success ? body.data : null;
+          } catch (_e) {
+            return null;
+          }
+        };
+        const [absAgain, seifaAgain] = await Promise.all([
+          requery('abs-data-service'),
+          requery('abs-seifa-service'),
+        ]);
+        enhancedData.demographics = absAgain ?? undefined;
+        enhancedData.seifaData = seifaAgain ?? undefined;
+        geographyResolution = { ...geographyResolution, requeried: true };
+        console.log(
+          `↻ ABS re-query for POA ${trustedPostcode}: demographics `
+          + `${absAgain ? 'retrieved' : 'unavailable (withheld)'}, SEIFA `
+          + `${seifaAgain ? 'retrieved' : 'unavailable (withheld)'}.`,
+        );
+      }
+
       // Planning & development intelligence — zoning, parcel, state
       // development instruments and DA activity from the jurisdiction's own
       // planning services. It keys on the verified coordinate the location
@@ -3241,18 +3369,18 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     //
     // The subject's TRUSTED geography, for the postal-area cross-check: a real
     // ABS retrieval for POA 3338 is authoritative about somebody else's suburb
-    // if this property sits in 3024. `report_geography` is the platform's
-    // point-in-polygon authority; the address-derived postcode this function
+    // if this property sits in 3024. The point-in-polygon resolution is the
+    // platform's authority on that; the address-derived postcode this function
     // computed is not, which is the whole reason the check exists.
     //
-    // NOTE (operational, recorded in RF72B1_FORWARD_SAFE_ACTIVATION.md):
-    // `resolve-report-geography` self-selects reports whose
-    // `location_intelligence` is ALREADY PERSISTED, so a first generation has
-    // no row here and demographics fail closed. That ordering is named as the
-    // follow-up decision rather than worked around by trusting a weaker
-    // postcode.
-    let subjectGeography: Record<string, unknown> | null = null;
-    if (reportId && supabaseClient) {
+    // `subjectGeography` is normally resolved during THIS run, from the
+    // verified coordinate, immediately after location intelligence — see the
+    // pre-generation block above. The stored-row read below is the fallback for
+    // the one case that block cannot cover: a run where the resolution itself
+    // failed (transport, or a coordinate that was never verified). Reading a
+    // row an earlier sweep wrote is the behaviour this function already had, so
+    // the fallback cannot make a report worse than it was.
+    if (subjectGeography === null && reportId && supabaseClient) {
       const { data: geoRow, error: geoError } = await supabaseClient
         .from('report_geography')
         .select('postcode, status, suburb, state')
@@ -3262,12 +3390,20 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         console.log(`⚠️ report_geography read failed (${geoError.message}) — area statistics will fail closed.`);
       } else if (geoRow) {
         subjectGeography = geoRow as Record<string, unknown>;
+        geographyResolution = {
+          ...geographyResolution, source: 'stored_row', status: String(geoRow.status ?? 'unknown'),
+        };
       }
     }
 
     const safeGeneration = activateSafeGenerationInputs({
       enhancedData,
       geography: subjectGeography,
+      geographyProvenance: {
+        source: geographyResolution.source,
+        status: geographyResolution.status,
+        absRequeried: geographyResolution.requeried,
+      },
       cashRateTarget: (enhancedData as any)?.economics?.cashRateTarget ?? null,
       cashRateMonthlyAverage: null,
       capturedAt: new Date().toISOString(),

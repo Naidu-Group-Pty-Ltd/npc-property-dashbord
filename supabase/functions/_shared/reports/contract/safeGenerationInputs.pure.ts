@@ -138,6 +138,42 @@ export const SNAPSHOT_ABS_METRICS: ReadonlyArray<{
 /** The SEIFA indices `seifaTable` narrates, from a separate payload. */
 export const SNAPSHOT_SEIFA_INDICES: readonly string[] = ['irsad', 'irsd', 'ier', 'ieo'];
 
+/**
+ * How many industry rows `industryTable` prints. Declared here rather than
+ * inferred, so the snapshot records exactly the rows a client is shown: five
+ * facts for a five-row table, and none for the sixth industry nobody sees.
+ */
+export const SNAPSHOT_INDUSTRY_ROWS = 5;
+
+/**
+ * RF-7.2B.1 §C5 — the exceptions to "narrated implies snapshotted".
+ *
+ * The rule: **any market fact admitted to a narrative prompt must have a
+ * corresponding snapshot fact**, so a future reader can determine exactly which
+ * values a document was written from without re-querying today's tables.
+ *
+ * `rf72b1SnapshotCoverage.spec.ts` enforces it by measurement rather than by
+ * inspection — it stamps every leaf of a production-shaped payload with a
+ * unique number, composes the real prompt blocks, and fails on any stamp that
+ * reaches the prose without reaching the snapshot. That probe found two real
+ * gaps on its first run (the four SEIFA DECILES, and the count of Board
+ * decisions held since the last change); both are snapshotted now.
+ *
+ * This list is the escape hatch, and it is deliberately EMPTY. What would
+ * belong here is static copy that merely looks like a fact — a threshold
+ * inside an instruction, a radius in a label — never a measured value. Adding
+ * an entry is a decision that a figure a client reads need not be recoverable
+ * from the record, so it costs a written reason.
+ */
+export interface NonSnapshottedNarrativePath {
+  /** Dotted path on `enhancedData`. */
+  readonly path: string;
+  /** Why this figure need not be reconstructable from the stored snapshot. */
+  readonly reason: string;
+}
+
+export const NON_SNAPSHOTTED_NARRATIVE_PATHS: readonly NonSnapshottedNarrativePath[] = [];
+
 // ---------------------------------------------------------------------------
 // Inputs and outputs
 // ---------------------------------------------------------------------------
@@ -158,8 +194,27 @@ export interface SafeGenerationInput {
   readonly cashRateTarget?: CashRateTargetReading | null;
   /** The monthly-average reading, for trend context only. */
   readonly cashRateMonthlyAverage?: RbaCashRateReading | null;
+  /**
+   * How the caller obtained that geography, for the snapshot's own record.
+   *
+   * The POA each area fact belongs to is already on the fact. This answers the
+   * different question a reader of a stored report cannot otherwise settle:
+   * whether the geography was resolved from the verified coordinate DURING this
+   * run, or read from a row a later sweep happened to have written. Those two
+   * used to produce different documents for the same property.
+   */
+  readonly geographyProvenance?: GeographyProvenance | null;
   /** ISO timestamp the caller is generating at — passed so this stays pure. */
   readonly capturedAt: string;
+}
+
+export interface GeographyProvenance {
+  /** `pre_generation` | `stored_row` | `none`. */
+  readonly source: string;
+  /** The resolver's own status word, or `unresolved`. */
+  readonly status: string;
+  /** True where the ABS payload was re-fetched on the trusted postal area. */
+  readonly absRequeried: boolean;
 }
 
 export interface RemovedFact {
@@ -186,6 +241,16 @@ export interface SnapshotFact {
 export interface MarketFactSnapshot {
   readonly capturedAt: string;
   readonly assuranceVersion: string;
+  /**
+   * The postal area every area fact below is keyed on, and how it was reached.
+   * Null geography is a real reading: no trusted postcode, area facts withheld.
+   */
+  readonly geography: {
+    readonly postcode: string | null;
+    readonly source: string;
+    readonly status: string;
+    readonly absRequeried: boolean;
+  };
   readonly facts: readonly SnapshotFact[];
 }
 
@@ -401,6 +466,25 @@ export function activateSafeGenerationInputs(
       hadValue: true,
     });
   }
+  // And so does the employment payload — a HOLE this phase's coverage probe
+  // found rather than reasoned about. `abs-employment-service` projects the
+  // SAME `abs_census_poa` row, keyed on the SAME address-derived postcode, and
+  // `industryTable` prints from it INDEPENDENTLY of the population table. So a
+  // report whose demographics were withheld because they describe postal area
+  // 3338 while the property resolves to 3024 still printed 3338's industry mix
+  // as a client-visible table, under its own heading. One rule, three payloads
+  // from one table.
+  const employmentPayload = next['employmentData'];
+  if (!demographicsKept && employmentPayload !== undefined && employmentPayload !== null) {
+    delete next['employmentData'];
+    removed.push({
+      path: 'employmentData',
+      reason: 'The employment and industry figures are the same postal-area Census row as '
+        + 'the demographics beside them, so they are withheld on the same ground. '
+        + demographicsRuling,
+      hadValue: true,
+    });
+  }
 
   const absContext = {
     grain: 'postcode' as const,
@@ -438,7 +522,51 @@ export function activateSafeGenerationInputs(
           absenceReason:
             `The SEIFA release carries no ${index.toUpperCase()} score for postal area ${subjectPostcode}.`,
         }));
+        // `seifaTable` prints BOTH the score and the decile, and the decile is
+        // the one a reader acts on ("7/10"). Snapshotting only the score left
+        // half of a printed row unaccounted for — found by the §C5 coverage
+        // probe. A decile is a separate published figure, not a rounding of
+        // the score, so it cannot be re-derived from the fact beside it.
+        facts.push(gateFact({
+          name: `abs.seifa.${index}Decile`,
+          value: readPath(seifa, [index, 'decile']),
+          safety: 'contextual',
+          source: 'abs_seifa_poa',
+          context: { ...absContext, dataset: 'abs_seifa_poa' },
+          absenceReason:
+            `The SEIFA release carries no ${index.toUpperCase()} decile for postal area ${subjectPostcode}.`,
+        }));
       }
+    }
+
+    // The industry mix is a client-visible TABLE — up to five named industries
+    // with a measured workforce share each — and it printed figures nothing
+    // recorded. Third gap found by the §C5 coverage probe. One fact per printed
+    // row, named by the industry, because a share means nothing without the
+    // industry it belongs to.
+    const industries = isRecord(next['employmentData'])
+      ? (next['employmentData'] as Record<string, unknown>)['majorIndustries']
+      : undefined;
+    const fallback = isRecord(demographics) && isRecord(demographics['employment'])
+      ? (demographics['employment'] as Record<string, unknown>)['topIndustries']
+      : undefined;
+    const printed = Array.isArray(industries) ? industries
+      : Array.isArray(fallback) ? fallback
+      : [];
+    for (const row of printed.slice(0, SNAPSHOT_INDUSTRY_ROWS)) {
+      if (!isRecord(row)) continue;
+      const name = str(row['name']);
+      if (name === null) continue;
+      facts.push(gateFact({
+        name: `abs.industryShare.${name}`,
+        value: readPath(row, ['percentage']),
+        safety: 'contextual',
+        source: 'abs_census_poa',
+        context: absContext,
+        absenceReason:
+          `The Census release carries no workforce share for ${name} in postal area `
+          + `${subjectPostcode}.`,
+      }));
     }
   }
 
@@ -493,6 +621,13 @@ export function activateSafeGenerationInputs(
     snapshot: {
       capturedAt: input.capturedAt,
       assuranceVersion: ASSURANCE_VERSION,
+      geography: {
+        postcode: subjectPostcode,
+        source: input.geographyProvenance?.source ?? 'none',
+        status: input.geographyProvenance?.status
+          ?? (subjectPostcode === null ? 'unresolved' : 'resolved'),
+        absRequeried: input.geographyProvenance?.absRequeried ?? false,
+      },
       facts: facts.map((f) =>
         snapshotFactOf(f, f.name.startsWith('abs.') || f.name === 'market.demographics'
           ? (demographicsKept ? subjectPostcode : null)

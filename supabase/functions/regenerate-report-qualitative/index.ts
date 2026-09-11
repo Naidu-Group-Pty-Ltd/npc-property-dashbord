@@ -19,8 +19,10 @@ import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pur
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
 import {
   activateSafeGenerationInputs,
+  subjectPostcodeOf,
   type SafeGenerationResult,
 } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
+import { resolveOneReportGeography } from '../_shared/geography/resolveOneReportGeography.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -467,7 +469,9 @@ async function fetchEnhancedData(
   propertyAddress: string,
   manualOverrides: Record<string, any>,
   supabaseUrl: string,
-  supabaseAnonKey: string
+  supabaseAnonKey: string,
+  /** RF-7.2B.1 §2 — for the pre-gate geography resolution. */
+  geographyContext?: { supabase: { from: (t: string) => any }; reportId: string } | null,
 ): Promise<{
   enhancedData: EnhancedData;
   suburb: string | null;
@@ -937,6 +941,79 @@ async function fetchEnhancedData(
 
   console.log('📊 Enhanced data fetch complete. Data sources:', Object.keys(enhancedData).filter(k => enhancedData[k as keyof EnhancedData]).join(', '));
 
+  // RF-7.2B.1 §2 — geography before the gate, from this run's own coordinate.
+  //
+  // Identical in intent to `generate-investment-report`, and through the SAME
+  // module: a regeneration must not reach a different conclusion about where
+  // the property is than a first generation of the same address did.
+  let subjectGeography: Record<string, unknown> | null = null;
+  let geographyProvenance = { source: 'none', status: 'unresolved', absRequeried: false };
+  if (geographyContext) {
+    const lat = Number(enhancedData.locationIntelligence?.coordinates?.lat);
+    const lng = Number(enhancedData.locationIntelligence?.coordinates?.lng);
+    try {
+      const geoOutcome = await resolveOneReportGeography({
+        supabase: geographyContext.supabase,
+        reportId: geographyContext.reportId,
+        latitude: Number.isFinite(lat) ? lat : null,
+        longitude: Number.isFinite(lng) ? lng : null,
+      });
+      geographyProvenance = {
+        source: 'pre_generation', status: geoOutcome.status, absRequeried: false,
+      };
+      if (geoOutcome.writeError) {
+        console.warn(`⚠️ report_geography write failed (${geoOutcome.writeError}) — resolution still used.`);
+      }
+      subjectGeography = geoOutcome.row === null ? null : {
+        postcode: geoOutcome.row.postcode,
+        status: geoOutcome.row.status,
+        suburb: geoOutcome.row.suburb,
+        state: geoOutcome.row.state,
+      };
+      console.log(`🗺️ Geography resolved before the gate: ${geoOutcome.status}`);
+    } catch (error: any) {
+      console.warn('⚠️ Pre-generation geography resolution failed:', error?.message);
+    }
+  }
+
+  // The trusted postal area, where it disagrees with the address-derived one.
+  // Same rule as the generator: re-fetch for the subject's own POA, and where
+  // that cannot be done DROP the wrong-area payload rather than carry it.
+  const trustedPostcode = subjectPostcodeOf(subjectGeography);
+  if (trustedPostcode && trustedPostcode !== postcode) {
+    const trustedState = typeof subjectGeography?.state === 'string' && subjectGeography.state
+      ? subjectGeography.state as string
+      : state;
+    console.log(
+      `📍 Trusted POA ${trustedPostcode} differs from the address-derived `
+      + `${postcode ?? '(none)'} — re-querying ABS demographics and SEIFA.`,
+    );
+    const requery = async (fn: string) => {
+      try {
+        const res = await fetchWithTimeout(`${supabaseUrl}/functions/v1/${fn}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseAnonKey}`,
+          },
+          body: JSON.stringify({ postcode: trustedPostcode, state: trustedState }),
+        }, 30000);
+        if (!res.ok) return null;
+        const body = await res.json();
+        return body?.success ? body.data : null;
+      } catch (_e) {
+        return null;
+      }
+    };
+    const [absAgain, seifaAgain] = await Promise.all([
+      requery('abs-data-service'),
+      requery('abs-seifa-service'),
+    ]);
+    enhancedData.demographics = absAgain ?? undefined;
+    enhancedData.seifaData = seifaAgain ?? undefined;
+    geographyProvenance = { ...geographyProvenance, absRequeried: true };
+  }
+
   // RF-7.2B.1 — the Client-Safe Gate, on the same object and by the same rules
   // as `generate-investment-report`. This path builds its OWN prompt context
   // (`buildEnhancedDataContext` below), so gating only the other generator
@@ -945,6 +1022,8 @@ async function fetchEnhancedData(
   // does there: the score engine reads three of the fields being withheld.
   const safeGeneration = activateSafeGenerationInputs({
     enhancedData,
+    geography: subjectGeography,
+    geographyProvenance,
     cashRateTarget: (enhancedData as any)?.economics?.cashRateTarget ?? null,
     cashRateMonthlyAverage: null,
     capturedAt: new Date().toISOString(),
@@ -1663,7 +1742,8 @@ const __regenerateQualHandler = async (req: Request): Promise<Response> => {
       propertyAddress,
       manualOverrides,
       supabaseUrl,
-      supabaseAnonKey
+      supabaseAnonKey,
+      { supabase, reportId },
     );
 
     // ========== FETCH TEMPLATE FROM DATABASE ==========
