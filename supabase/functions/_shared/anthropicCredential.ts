@@ -48,9 +48,12 @@
  */
 
 import {
+  ANTHROPIC_MODELS_URL,
   ANTHROPIC_TOKEN_URL,
   type AnthropicCredential,
   type AnthropicRoute,
+  anthropicRequestHeaders,
+  describeAnthropicFailure,
   resolveAnthropicRoute,
 } from './anthropicRoute.pure.ts';
 
@@ -201,6 +204,7 @@ async function requestIdentity(
 
 async function exchange(
   route: Extract<AnthropicRoute, { via: 'federated' }>,
+  opts?: { readonly cache?: boolean },
 ): Promise<CredentialResult> {
   const identity = await requestIdentity(route);
   if (!identity.ok) return { ok: false, why: identity.why, end: 'mission_control' };
@@ -265,7 +269,15 @@ async function exchange(
    * that believed the rule would serve an expired token.
    */
   const lifetimeMs = Math.max(60, Number(payload.expires_in) || 0) * 1000;
-  cached = { value: token, workspaceId: grant.workspace_id, expiresAt: Date.now() + lifetimeMs };
+  /*
+   * A diagnostic exchange is deliberately not banked. `describeAnthropicReach`
+   * asks for a FRESH chain, and writing its token here would hand inference a
+   * credential obtained for a different purpose — and, worse, let a probe that
+   * happened to run first mask a chain that had already broken.
+   */
+  if (opts?.cache !== false) {
+    cached = { value: token, workspaceId: grant.workspace_id, expiresAt: Date.now() + lifetimeMs };
+  }
 
   return {
     ok: true,
@@ -348,4 +360,172 @@ function runExchange(route: Extract<AnthropicRoute, { via: 'federated' }>): Prom
     inFlight = null;
   });
   return inFlight;
+}
+
+/**
+ * What a reach probe found. Carries no credential value, ever.
+ *
+ * `route` is how the deployment is CONFIGURED and `ok` is what happened when
+ * it was used — kept apart because they are the two readings this platform
+ * keeps collapsing into one green light. A deployment can be configured
+ * perfectly and reach nothing.
+ */
+export interface AnthropicReach {
+  /** Before anything was attempted. */
+  readonly route: AnthropicRoute['via'];
+  /** A real call to Anthropic succeeded. */
+  readonly ok: boolean;
+  /** Which end refused, when one did. */
+  readonly end: 'unconfigured' | 'mission_control' | 'anthropic' | 'workspace' | null;
+  readonly why: string | null;
+  /** The workspace the call was attributed to, or null where none is held. */
+  readonly workspaceId: string | null;
+  /** What was spent. Never the value it was spent with. */
+  readonly credentialKind: AnthropicCredential['kind'] | null;
+  /** How many models the vendor listed — the evidence the call was answered. */
+  readonly modelCount: number | null;
+  readonly probedAt: string;
+}
+
+/**
+ * Can this deployment actually reach Anthropic, right now?
+ *
+ * ## Why it is a call and not a flag
+ *
+ * `anthropicConfigured()` reads the environment, which is the question
+ * "is anything missing" — and the federated route has five moving parts no
+ * environment variable can vouch for: this clone's Mission Control key, that
+ * key's scope, Mission Control's signing key, whether Anthropic can fetch the
+ * published key set, and whether the federation rule still matches this
+ * clone's subject. Every one of those fails silently, at inference time, on a
+ * report somebody is waiting for.
+ *
+ * ## What it costs
+ *
+ * Nothing. A federated exchange is not a billable call, and `GET /v1/models`
+ * is metadata — no tokens are consumed, so a probe can be offered on a page an
+ * operator refreshes. It is deliberately NOT a message: proving the credential
+ * can complete a model call would cost money on every click.
+ *
+ * ## Why `freshCredential` exists
+ *
+ * A cached token outlives the chain that minted it by up to an hour, so a
+ * probe that accepted one would answer green for an hour after federation
+ * broke — the stale reading this replaces. An operator asking the question
+ * wants the whole chain exercised, so the diagnostic path takes a fresh
+ * credential that it neither reads from nor writes to the module cache.
+ * Inference is left entirely alone, which is the point: a diagnostic must
+ * never be able to disturb the thing it reports on.
+ */
+export async function describeAnthropicReach(
+  opts?: { readonly freshCredential?: boolean },
+): Promise<{ reach: AnthropicReach; models: unknown[] }> {
+  const probedAt = new Date().toISOString();
+  const route = anthropicRoute();
+
+  const resolved = opts?.freshCredential && route.via === 'federated'
+    ? await exchange(route, { cache: false })
+    : await resolveAnthropicCredential();
+
+  if (!resolved.ok) {
+    return {
+      reach: {
+        route: route.via,
+        ok: false,
+        end: resolved.end,
+        why: resolved.why,
+        workspaceId: route.via === 'unconfigured' ? null : route.workspaceId,
+        credentialKind: null,
+        modelCount: null,
+        probedAt,
+      },
+      models: [],
+    };
+  }
+
+  const { credential } = resolved;
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      ANTHROPIC_MODELS_URL,
+      { headers: anthropicRequestHeaders(credential) },
+      EXCHANGE_TIMEOUT_MS,
+    );
+  } catch (error) {
+    return {
+      reach: {
+        route: route.via,
+        ok: false,
+        end: 'anthropic',
+        why: `Anthropic could not be reached: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        workspaceId: credential.workspaceId,
+        credentialKind: credential.kind,
+        modelCount: null,
+        probedAt,
+      },
+      models: [],
+    };
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    // A workspace the credential may not act in is a configuration fault with
+    // its own remedy, and reading it as a generic vendor failure sends an
+    // operator to wait out an outage that is not happening.
+    const failure = describeAnthropicFailure({
+      status: response.status,
+      body,
+      workspaceId: credential.workspaceId,
+    });
+    return {
+      reach: {
+        route: route.via,
+        ok: false,
+        end: failure.end,
+        why: failure.message,
+        workspaceId: credential.workspaceId,
+        credentialKind: credential.kind,
+        modelCount: null,
+        probedAt,
+      },
+      models: [],
+    };
+  }
+
+  let models: unknown[];
+  try {
+    const payload = (await response.json()) as { data?: unknown[] };
+    models = Array.isArray(payload?.data) ? payload.data : [];
+  } catch {
+    return {
+      reach: {
+        route: route.via,
+        ok: false,
+        end: 'anthropic',
+        why: 'Anthropic answered the model list with a body this deployment could not read',
+        workspaceId: credential.workspaceId,
+        credentialKind: credential.kind,
+        modelCount: null,
+        probedAt,
+      },
+      models: [],
+    };
+  }
+
+  return {
+    reach: {
+      route: route.via,
+      ok: true,
+      end: null,
+      why: null,
+      workspaceId: credential.workspaceId,
+      credentialKind: credential.kind,
+      modelCount: models.length,
+      probedAt,
+    },
+    models,
+  };
 }

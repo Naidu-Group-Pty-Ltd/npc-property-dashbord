@@ -291,3 +291,175 @@ describe('failures name the end that failed', () => {
     vi.useRealTimers();
   });
 });
+
+/*
+ * The reach probe.
+ *
+ * Two properties carry it, and both are the kind that a test which only
+ * checked the happy path would miss: it must never hand a credential value to
+ * whoever asked, and it must never be able to disturb the inference path it
+ * reports on. A diagnostic that breaks the thing it measures is worse than no
+ * diagnostic.
+ */
+describe('describeAnthropicReach', () => {
+  it('reports an unconfigured deployment without calling anything', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const { describeAnthropicReach } = await load();
+
+    const { reach } = await describeAnthropicReach();
+    expect(reach.route).toBe('unconfigured');
+    expect(reach.ok).toBe(false);
+    expect(reach.end).toBe('unconfigured');
+    expect(reach.modelCount).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('proves a key route with the model list, which costs no tokens', async () => {
+    env.ANTHROPIC_API_KEY = 'sk-ant-api-x';
+    env.ANTHROPIC_WORKSPACE_ID = WORKSPACE;
+    const urls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init: any) => {
+      urls.push(String(input));
+      expect(init.headers['x-api-key']).toBe('sk-ant-api-x');
+      expect(init.headers['anthropic-workspace-id']).toBe(WORKSPACE);
+      return json({ data: [{ id: 'claude-a' }, { id: 'claude-b' }] });
+    });
+
+    const { describeAnthropicReach } = await load();
+    const { reach } = await describeAnthropicReach();
+
+    expect(reach.ok).toBe(true);
+    expect(reach.route).toBe('api_key');
+    expect(reach.credentialKind).toBe('api_key');
+    expect(reach.modelCount).toBe(2);
+    expect(reach.workspaceId).toBe(WORKSPACE);
+    // Metadata, never a message: proving a credential can complete a model
+    // call would bill the tenant on every click.
+    expect(urls).toEqual(['https://api.anthropic.com/v1/models']);
+  });
+
+  /*
+   * The one that matters most. A reach reading travels to Mission Control and
+   * onto an operator's screen, so anything it carries is as good as published.
+   */
+  it('never carries the credential value, on success or on failure', async () => {
+    federatedEnv();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+      if (String(input).startsWith(MC)) return json(GRANT);
+      if (String(input).includes('/oauth/token')) {
+        return json({ access_token: 'sk-ant-oat01-secret', expires_in: 3600 });
+      }
+      return json({ data: [{ id: 'claude-a' }] });
+    });
+
+    const { describeAnthropicReach } = await load();
+    const { reach } = await describeAnthropicReach({ freshCredential: true });
+
+    expect(reach.ok).toBe(true);
+    expect(reach.credentialKind).toBe('access_token');
+    expect(JSON.stringify(reach)).not.toContain('sk-ant-oat01-secret');
+    expect(JSON.stringify(reach)).not.toContain('clone-key');
+  });
+
+  /*
+   * A diagnostic must not be able to break inference. `freshCredential` runs
+   * its own exchange, and banking that token would hand the next report a
+   * credential obtained for a different purpose — and let a probe that ran
+   * first mask a chain that had already broken.
+   */
+  it('does not bank its own token, so the next caller still exchanges', async () => {
+    federatedEnv();
+    let exchanges = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+      if (String(input).startsWith(MC)) return json(GRANT);
+      if (String(input).includes('/oauth/token')) {
+        exchanges += 1;
+        return json({ access_token: `token-${exchanges}`, expires_in: 3600 });
+      }
+      return json({ data: [] });
+    });
+
+    const { describeAnthropicReach, resolveAnthropicCredential } = await load();
+    await describeAnthropicReach({ freshCredential: true });
+    expect(exchanges).toBe(1);
+
+    const after = await resolveAnthropicCredential();
+    expect(exchanges).toBe(2);
+    expect(after.ok && after.credential.value).toBe('token-2');
+  });
+
+  /*
+   * And the converse: without `freshCredential` it must NOT clear what is
+   * already held, because the catalog sweep runs on that path.
+   */
+  it('leaves a cached token in place when it is not asked for a fresh one', async () => {
+    federatedEnv();
+    let exchanges = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+      if (String(input).startsWith(MC)) return json(GRANT);
+      if (String(input).includes('/oauth/token')) {
+        exchanges += 1;
+        return json({ access_token: `token-${exchanges}`, expires_in: 3600 });
+      }
+      return json({ data: [] });
+    });
+
+    const { describeAnthropicReach, resolveAnthropicCredential } = await load();
+    await resolveAnthropicCredential();
+    await describeAnthropicReach();
+    expect(exchanges).toBe(1);
+  });
+
+  it('names Mission Control when the identity is refused, not the vendor', async () => {
+    federatedEnv();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+      if (String(input).startsWith(MC)) {
+        return json({ error: 'not_federated' }, {
+          status: 403,
+          headers: { 'x-mission-control-refusal': 'not_federated' },
+        });
+      }
+      throw new Error('should not have reached Anthropic');
+    });
+
+    const { describeAnthropicReach } = await load();
+    const { reach } = await describeAnthropicReach({ freshCredential: true });
+    expect(reach.ok).toBe(false);
+    expect(reach.end).toBe('mission_control');
+    expect(reach.route).toBe('federated');
+  });
+
+  /*
+   * A workspace the credential may not act in is a configuration fault with
+   * its own remedy. Read as a generic vendor failure it looks like an outage
+   * to wait out, which is the wrong thing for anybody to do.
+   */
+  it('separates a workspace fault from a vendor one', async () => {
+    env.ANTHROPIC_API_KEY = 'sk-ant-api-x';
+    env.ANTHROPIC_WORKSPACE_ID = WORKSPACE;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      json({ error: { message: 'workspace not found' } }, { status: 404 })
+    );
+
+    const { describeAnthropicReach } = await load();
+    const { reach } = await describeAnthropicReach();
+    expect(reach.ok).toBe(false);
+    expect(reach.end).toBe('workspace');
+    expect(reach.why).toContain(WORKSPACE);
+  });
+
+  it('reports a route that resolved and was then refused as still configured', async () => {
+    env.ANTHROPIC_API_KEY = 'sk-ant-api-x';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      json({ error: 'unauthorized' }, { status: 401 })
+    );
+
+    const { describeAnthropicReach } = await load();
+    const { reach } = await describeAnthropicReach();
+    // `route` is what the environment says and `ok` is what happened. An
+    // operator told "no key" would go and set one that is already there.
+    expect(reach.route).toBe('api_key');
+    expect(reach.ok).toBe(false);
+    expect(reach.end).toBe('anthropic');
+  });
+});

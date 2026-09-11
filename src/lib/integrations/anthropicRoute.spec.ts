@@ -321,3 +321,35 @@ describe('describeAnthropicFailure', () => {
     expect(failure.end).toBe('anthropic');
   });
 });
+
+/*
+ * The reach probe's answer leaves this deployment.
+ *
+ * Mission Control asks for it over the webhook and renders it on an operator's
+ * screen, so whatever the handler returns is effectively published. The
+ * behaviour test beside this one proves the value is absent from a real
+ * reading; this proves the handler cannot start returning one by accident,
+ * which is the edit somebody makes while debugging and does not undo.
+ */
+describe('the self-test answer carries no credential', () => {
+  const handler = readFileSync(
+    join(FUNCTIONS_DIR, "mission-control-webhook", "index.ts"),
+    'utf8',
+  );
+
+  it('answers the probe with the reach and nothing else', () => {
+    const block = /anthropic\.selftest[\s\S]*?\n {2}}\n/.exec(handler)?.[0] ?? '';
+    expect(block).toContain('describeAnthropicReach');
+    expect(block).toContain('reach');
+    // `credential` is the field on a CredentialResult that holds the value.
+    expect(block).not.toContain('credential');
+    expect(block).not.toContain('resolveAnthropicCredential');
+  });
+
+  it('asks for a fresh chain rather than whatever is cached', () => {
+    // A cached token outlives the chain that minted it by up to an hour, so a
+    // probe that accepted one answers green for an hour after federation
+    // broke — which is the stale reading it exists to replace.
+    expect(handler).toContain('freshCredential: true');
+  });
+});
