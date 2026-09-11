@@ -94,8 +94,12 @@ describe('raising the target re-schedules the sweep', () => {
     const setter = MIGRATION.slice(
       MIGRATION.indexOf('FUNCTION public.set_builder_stock_source_images_target'),
       MIGRATION.indexOf('CREATE OR REPLACE FUNCTION public.settle_builder_stock'));
-    expect(setter).toContain('cron.schedule');
-    expect(setter).toContain("jobname = 'settle-builder-stock-marketplace-eligibility'");
+    // Through the function that owns the schedule, never a second copy of the
+    // cron string — two places naming a schedule is how two schedules differ,
+    // and they already do: the eligibility setter says `*/5 * * * *` while the
+    // job this repair runs on is every minute.
+    expect(setter).toContain('public.ensure_builder_stock_settlement_scheduled()');
+    expect(setter).not.toContain('cron.schedule');
   });
 
   it('and never lowers the target', () => {

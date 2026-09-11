@@ -92,18 +92,13 @@ BEGIN
         updated_at = now()
   RETURNING source_images_version INTO v_version;
 
-  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
-    IF NOT EXISTS (
-      SELECT 1 FROM cron.job
-       WHERE jobname = 'settle-builder-stock-marketplace-eligibility'
-    ) THEN
-      PERFORM cron.schedule(
-        'settle-builder-stock-marketplace-eligibility',
-        '* * * * *',
-        $job$SELECT public.settle_builder_stock_marketplace_eligibility_tick();$job$
-      );
-    END IF;
-  END IF;
+  -- Through the function that OWNS the schedule rather than a second copy of
+  -- the cron string: `ensure_builder_stock_settlement_scheduled` is already
+  -- idempotent, already checks for pg_cron, and is what every other caller
+  -- uses. Two places naming a schedule is how two schedules come to differ —
+  -- the eligibility setter still says `*/5 * * * *` while the job this repair
+  -- actually runs on is every minute.
+  PERFORM public.ensure_builder_stock_settlement_scheduled();
 
   RETURN v_version;
 END;
