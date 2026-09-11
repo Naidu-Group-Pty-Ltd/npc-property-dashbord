@@ -16,6 +16,11 @@ through the real projections and templates, and a page-by-page review of the
 result. Every load-bearing number below is a fresh measurement dated
 2026-09-02, not a quotation of an earlier doc.
 
+**Picking this up cold?** Read
+[`REPORTING_ENGINE_HANDOVER.md`](./REPORTING_ENGINE_HANDOVER.md) first. This
+file records what was measured; that one records where the work stands, what
+is blocked, and which facts must not be re-derived.
+
 ---
 
 ## 1 · Architecture census
@@ -3931,3 +3936,3876 @@ at all, so the Executive Verdict scorecard draws nothing on most of them, and
   corrected my own hypothesis about which variants it reaches
 - `vitest run` full suite green; `tsc`, `eslint`, `audit:style`,
   `security:edge-check` at its 339 baseline
+
+---
+
+## §46 — Evidence-Backed Scoring: what market data this platform actually has (2026-09-08)
+
+Step 1 of the Evidence-Backed Scoring brief is to trace the real Cotality
+entitlement and every other authoritative market source, on the instruction not
+to assume a vendor's public field list is what this application is entitled to.
+It is a gate: the Growth Evidence Layer cannot be built on a source that returns
+nothing.
+
+**There is no capital-growth evidence in this platform.** Both candidate
+sources are traced below, and neither has ever delivered a value.
+
+### Cotality / CoreLogic — scaffolding, never connected
+
+`supabase/functions/cotality-service/index.ts` says so in its own header:
+*"SCAFFOLDING ONLY. Status: awaiting sandbox credentials from Cotality."* While
+`COTALITY_API_KEY` is unset every branch returns a `modelled` envelope with
+`value: null` and confidence 0.3.
+
+Measured rather than taken on trust:
+
+| check | result |
+| --- | ---: |
+| `data_provenance` rows (where the envelope would persist) | **0** |
+| `cotality_*` / `corelogic_*` tables | **none exist** |
+| calls in `api_usage_log` (7 months, 20 services) | **0** |
+| callers of `cotality-service` anywhere in the repo | **0** |
+
+The only references outside the function are three comments in
+`investment-scoring-service` — `cotalityReady: true`, *"when cotality-service
+envelopes land"*. It is a placeholder for an integration that was never
+completed.
+
+### Domain — wired, called, and returns nothing
+
+`domain-data-service` is real code against a real endpoint:
+
+```
+https://api.domain.com.au/v1/suburbPerformanceStatistics/{state}/{suburb}
+  ?propertyCategory={house|unit}&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12
+```
+
+Its declared `SuburbPerformance` is close to exactly what the Growth and Demand
+dimensions need — `medianSoldPrice`, `numberSold`, `medianRentListingPrice`,
+`numberRented`, `daysOnMarket`, `auctionClearanceRate`, `annualGrowth`,
+`rentalYield` — at suburb + state + dwelling-type granularity. It **is** called
+by `generate-investment-report` (guarded on `suburb && state`).
+
+And it has never returned a value. The generator's own provenance record is the
+proof, because it stamps every source it attempted:
+
+```
+"seifa":     { source: abs_seifa,   confidence: 0.9  }
+"economics": { source: rba,         confidence: 0.9  }
+"employment":{ source: abs_employment, confidence: 0.9 }
+"crimeStatistics": { source: state_crime_data, confidence: 0.8 }
+"locationIntelligence": { source: google_maps, confidence: 0.95 }
+"marketData": null                          ← the only null
+```
+
+46 of the 68 reports since June carry the `marketData` key; **0 of 68 carry a
+non-null value**, and `demographics_data.marketData.medianPrice`,
+`.annualGrowth`, `.vacancyRate` and `.daysOnMarket` are absent on **all 992**
+scored reports.
+
+**Absence from `api_usage_log` is not the evidence here**, and saying so would
+repeat a mistake this programme has already made twice: `domain-data-service`
+uses a bare `fetch` rather than `meteredFetch`, so a working call would not
+appear there either. What is evidence is that it writes nothing to
+`api_health_log` while six sibling services do, which matches the code path
+where `DOMAIN_API_KEY` is unset — that branch returns `dataQuality:
+'unavailable'` *before* any fetch or logging.
+
+So the distinction that matters commercially: **this is most likely a missing
+credential, not a missing capability.** Domain's Suburb Performance
+Statistics product would supply most of the Growth and Demand layer. That is a
+procurement question, not an engineering one, and it should be settled before
+any further scoring work.
+
+### What the platform DOES hold
+
+| source | rows | what it can evidence |
+| --- | ---: | --- |
+| `abs_sa2_population` | **61,335** (2001–2025, 2,454 SA2s) | population growth at 1/3/5/10-year horizons, real CAGR |
+| `rba_observations` | 3,518 | macro rate and lending series |
+| `abs_census_poa` | 2,643 | income, tenure, household composition |
+| `abs_seifa_poa` | 2,627 | socio-economic advantage deciles |
+| `suburb_directory` | 18,519 | geography resolution |
+| `median_rent_cache` | 156 (38 suburbs) | rents, thin |
+
+Every one of these is a **growth driver**, not capital growth. Under the
+brief's own §2 distinction — *"population growth is not itself evidence that
+property values have grown"* — the platform can currently evidence the
+supporting half of the Growth dimension and **none of the primary half**.
+
+### The consequence for scoring
+
+A Growth dimension built only on population, SEIFA and macro series would be
+labelled Capital Growth while measuring none of it. That is the same class of
+defect as the placeholder 50 it replaces — a dimension asserting more than its
+evidence supports — and it would fail the brief's own test of surviving a
+client challenge.
+
+Scoring V2 therefore stops here, unwired, pending a decision on the market-data
+source. The arithmetic corrections are built and backtested (§45); what is
+missing is the evidence, and no amount of engineering substitutes for it.
+
+---
+
+## §47 — The wire is cut in four places, and the ABS answers (2026-09-08)
+
+§46 stopped at "there is no market-data credential" and put a procurement
+question to the owner. That was the right gate and the wrong stopping point:
+following the payload the rest of the way to the scorer shows that **restoring
+a credential would not have moved a single score**, and probing the public
+registers shows that the primary evidence the brief demands is available for
+nothing.
+
+### Part 1 — Four independent breaks between market data and a grade
+
+Each is fatal on its own. Each reports as normal operation.
+
+**1. No credential.** `domain-data-service` reads `DOMAIN_API_KEY` and returns
+HTTP 500 `Domain API key not configured` before any fetch. It is alone among
+its siblings in writing no `api_health_log` row — `abs-census` (2,441),
+`climate-data` (2,289), `crime-statistics` (1,747), `public-transport` (639),
+`bc-segment-engine` (194) and `risk-assessment` (172) all do, Domain has never
+written one. Consistent with the unset branch; not proof of it, because the
+function logs health only after a successful call.
+
+**2. The payload never reaches the scorer.** This is the break that matters.
+`generate-investment-report` stores the Domain response as
+`enhancedData.domainData` — a **sibling** of `demographics` — and then calls
+the scorer with:
+
+```ts
+body: JSON.stringify({
+  property: { … },
+  demographics: enhancedData.demographics,
+  locationIntelligence: enhancedData.locationIntelligence,
+  financials: enhancedData.financials
+})            // ← domainData is not here, and never has been
+```
+
+while every scorer reads
+
+```ts
+const marketData = demographics.marketData || financials.marketData || {};
+```
+
+— `investment-scoring-service` (twice: `transformScoringInput` and
+`transformAreaInput`), `_shared/investmentScoreEngine.ts`, and
+`backfill-investment-scores`. **No writer anywhere in the repository writes
+`marketData` under either key.**
+
+Measured across the whole corpus on 2026-09-08:
+
+| assertion | result |
+| --- | ---: |
+| reports stored | 1,199 |
+| distinct keys ever present in `demographics_data` | **7** — `dataQuality`, `dataSource`, `population`, `employment`, `income`, `housing`, `cached` |
+| `demographics_data ? 'marketData'` | **0** |
+| `financial_calculations ? 'marketData'` | **0** |
+| `data_sources->'marketData'` populated | **0** of 1,049 carrying the key |
+
+So `marketData` has evaluated to `{}` on every report this platform has ever
+generated, and `medianSuburbPrice`, `priceGrowth1Year`, `priceGrowth3Year`,
+`vacancyRate` and `daysOnMarket` have been `undefined` every time. This is the
+`aml.cases.tenant_id` class again — reading a name no writer writes, with
+nothing to report it — except in JSONB, where there is not even a 42703.
+
+**3. A name mismatch behind the disconnect.** Were the payload routed, Domain
+returns `medianSoldPrice`; the scorer reads `marketData.medianPrice`.
+`annualGrowth` and `daysOnMarket` would map; the median would not.
+
+**4. The series is fetched and thrown away.** The request asks for twelve
+windows (`chronologicalSpan=12&tPlusFrom=1&tPlusTo=12`) and the handler keeps
+
+```ts
+series.seriesInfo[series.seriesInfo.length - 1]
+```
+
+— one point. So even a live, routed, correctly-named integration yields **one**
+growth horizon, where the brief's §3 requires 5-year, 3-year, 1-year and a
+consistency reading. And two fields the scorers want are not in the declared
+`SuburbPerformance` interface at all: `priceGrowth3Year` and `vacancyRate`.
+
+**The conclusion the credential question was hiding:** breaks 2–4 are ours, they
+are free to fix, and until they are fixed no market-data purchase can change a
+grade.
+
+### Part 2 — The primary evidence is public, and it was measured
+
+Probed live from this egress on 2026-09-08 (single range requests, no crawl):
+
+| source | result |
+| --- | --- |
+| ABS Data API (`data.api.abs.gov.au`) | **answers** |
+| VIC / QLD / SA open-data portals (CKAN) | answer |
+| NSW Valuer General bulk sales | blocked at this proxy (502 CONNECT) — re-probe from the Supabase egress, as G2 did |
+
+Two ABS dataflows carry property values. **`RPPI`** (Residential Property Price
+Index) returns nothing after **2021-Q4** — five years stale, and a reminder of
+the sanctions rule that *freshness of the load is not currency of the data*.
+**`RES_DWELL`** is current and is the answer:
+
+> **`ABS,RES_DWELL` — Residential Dwellings: Unstratified Medians and Transfer
+> Counts by Dwelling Type, GCCSA and Rest of State**
+>
+> - 4 measures: transfer **counts** and **median prices**, each split
+>   *established houses* vs *attached dwellings*
+> - 15 regions (8 Greater Capital Cities + 7 Rest-of-State), plus state and
+>   two weighted averages in the codelist
+> - **2002-Q1 → 2026-Q2**, 98 quarters, 60 series, 92–98 observations each
+> - medians are `AUD` at `UNIT_MULT=3`; counts are `NUM` at `0`
+
+Executed end to end, median price of established house transfers, growth to
+2026-Q2, annualised:
+
+| region | median | 1yr | 3yr p.a. | 5yr p.a. | 10yr p.a. |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Greater Sydney | $1,488,000 | −2.13% | 3.16% | 4.28% | 5.21% |
+| Rest of NSW | $810,000 | 5.06% | 4.49% | 6.54% | 6.66% |
+| Greater Melbourne | $850,000 | 1.19% | 0.38% | 0.48% | 3.37% |
+| Rest of Vic. | $625,000 | 8.70% | 3.12% | 5.49% | 7.44% |
+| Greater Brisbane | $1,155,000 | 18.83% | 14.22% | 12.89% | 8.84% |
+| Rest of Qld | $800,000 | 10.10% | 12.62% | 10.76% | 6.53% |
+| Greater Adelaide | $975,000 | 13.24% | 11.57% | 12.13% | 8.28% |
+| Rest of SA | $584,000 | 15.74% | 13.95% | 13.52% | 8.23% |
+| Greater Perth | $1,010,000 | 18.82% | 18.96% | 13.34% | 6.86% |
+| Rest of WA | $665,000 | 20.91% | 18.46% | 11.90% | 7.26% |
+| Greater Hobart | $750,000 | 4.90% | 2.50% | 3.55% | 7.47% |
+| Rest of Tas. | $625,000 | 13.64% | 5.32% | 8.27% | 9.47% |
+| Greater Darwin | $752,000 | 21.37% | 8.45% | 5.90% | 3.22% |
+| Rest of NT | $450,000 | 1.28% | −1.99% | −0.44% | 0.55% |
+| ACT | $1,030,000 | 3.00% | 1.57% | 2.62% | 5.16% |
+
+This is capital growth in the brief's own sense — **actual value movement**,
+measured, government-published, dwelling-type aware, and reproducible by anyone
+issuing the same request. It discriminates: Greater Perth and Greater Melbourne
+are twenty points apart on the three-year reading, where today both score 50.
+The transfer counts on the same dataflow are a genuine turnover signal for the
+Demand dimension.
+
+Two limits travel with it, and must be recorded on every figure rather than
+argued away:
+
+- **It is unstratified.** A raw median of transfers, not quality-adjusted, so
+  composition shifts move it. The ABS says so in the dataflow's own title.
+- **The grain is regional, not suburb** — Greater Sydney, Rest of NSW. Under
+  the brief's §9 (persist the geographical level) and §8 (evidence confidence)
+  that is exactly what the design already anticipates: a coarse measure,
+  labelled coarse, beats a placeholder 50 and beats a fabricated suburb figure.
+  It is a floor to build on, not a ceiling — suburb-grain sales registers are
+  the next layer, and NSW's needs re-probing from the Supabase egress.
+
+### What this changes
+
+The gate in §46 asked the owner to choose a vendor. The measurement says the
+first move needs no vendor and no spend: route the market payload to the
+scorer, fix the field names, keep the series, and stand a deterministic Growth
+dimension on `RES_DWELL`. A vendor purchase remains the route to *suburb*
+grain, vacancy and days-on-market — but it is now an improvement on a working
+dimension rather than the precondition for having one.
+
+Scoring V2 stays unwired, per the brief's §14.
+
+---
+
+## §48 — Backtesting the ABS growth layer: it works, and that is the problem (2026-09-08)
+
+§47 found a real, free, authoritative capital-growth source and recommended
+standing the Growth dimension on it. Requirement 12 of the brief says to
+backtest before wiring. Doing so changes the recommendation, and the reason is
+one the brief anticipated in its own §8.
+
+Method: the 992 scored reports, `scoringV2.pure.ts` **unmodified**, with
+`priceGrowth1Year` and `priceGrowth3Year` supplied from `ABS,RES_DWELL` for
+the report's state and dwelling type. Reads only; nothing written.
+
+### The grade becomes a statement about the state
+
+| state | n | growth subscore | composite min | median | max | spread |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| WA | 71 | **100** | 73 | **90** | 98 | 25 |
+| QLD | 52 | **100** | 66 | 82 | 91 | 25 |
+| VIC | 56 | 44 | 45 | 54 | 59 | 14 |
+| NSW | 13 | 35 | 46 | 53 | 55 | 9 |
+
+Growth carries 0.40 of the nominal weight and **every property in a state
+receives the identical figure**, so the within-state spread is 9–25 points
+while the between-state swing is 55. Under this layer the median Perth
+property is an **A+** and no Sydney property can reach **A** at all, whatever
+its merits.
+
+That fails the brief's own test. "Why is my property A+?" answered with
+"Greater Perth median house prices rose 18.8% last year" is a statement about
+Perth. "Why is mine C+?" answered with "Greater Sydney fell 2.1%" is a
+statement about Sydney. Neither is a defence of a grade awarded to a property.
+
+### Every A+ in that run is a renormalisation
+
+| the A/A+ cohort (119 of 216 resolvable) | |
+| --- | --- |
+| graded on 4 of 5 dimensions | 73 |
+| graded on **3 of 5** | 46 |
+| `weightCovered` values observed | **0.60, 0.70, 0.85** — never 1.00 |
+
+So not one A+ here rests on the full nominal evidence; each is ≤85% of it
+renormalised to 100%. Requirement 8 forbids precisely this — *"Do not simply
+renormalise 45% of evidence to 100% and allow an A+"* — and the backtest shows
+the gate is load-bearing rather than decorative. Arithmetic that renormalises
+correctly is still not a defensible grade when what it renormalises is thin.
+
+### A third finding, from the resolution attempt
+
+Only **216 of 992** reports could be resolved to a state from
+`property_address`, and the reason is not a parsing weakness: **743 of the 776
+unresolved carry no comma at all** — `6 Acer Court`, `1/27D Mitchell Street`,
+`Parmelia`, `The Glengarry Hotel (The Glen Pub)`. Bare street lines with no
+suburb, no state, no postcode.
+
+But 967 of 992 carry `location_intelligence.coordinates`. So the geography is
+recoverable, from the coordinate and never from the address string — and the
+join is already in the database: `abs_sa2_meta.gccsa_name` carries all fifteen
+region names **exactly** as `RES_DWELL` spells them ("Greater Sydney", "Rest of
+Vic.", "Australian Capital Territory"), so no correspondence needs inventing.
+Any growth layer must be keyed on the resolved coordinate.
+
+### What this changes
+
+The ABS layer is worth having and is not the Growth dimension. Three
+conclusions:
+
+1. **`RES_DWELL` belongs in the product as regional CONTEXT**, labelled as the
+   region's movement and carrying its own weight, never presented as this
+   property's capital growth.
+2. **Suburb-grain evidence is genuinely required** for a property-level growth
+   score that survives a client challenge. That is now measured rather than
+   asserted, and it is the case for the purchase §47 said was optional.
+3. **The evidence-confidence gate comes first, whatever the source.** On this
+   corpus it is the difference between a grade and a renormalisation, and no
+   data purchase substitutes for it.
+
+Scoring V2 stays unwired.
+
+---
+
+## §49 — The Domain trace, and one contract the engine may read (2026-09-08)
+
+Step 1 of the Canonical Market Evidence brief: trace the existing Domain
+integration completely before introducing another provider. No production
+calls were made and no live scoring was changed.
+
+### 1. What the integration requires
+
+One credential, `DOMAIN_API_KEY`, sent as an `X-Api-Key` header. It is the
+**only** Domain name anywhere in the repository — there is no OAuth client id
+or secret, so the integration is built for Domain's API-key style of access
+rather than its OAuth client-credentials style. It is declared in four places
+and nowhere else: the Integrations registry (`domain` card, one required
+password field), `integrationSecrets.ts`'s allow-list, the placeholder-key seed
+migration, and `apiUsageBilling.pure.ts`.
+
+`domain-data-service` reads it with `Deno.env.get('DOMAIN_API_KEY')` and, when
+it is absent, returns **HTTP 500** `Domain API key not configured` before any
+outbound request.
+
+### 2. Does a credential exist in this deployment?
+
+**Not established, and the three routes that should have answered it are all
+mute.** This is worth stating precisely rather than guessing:
+
+| route | reading |
+| --- | --- |
+| `integration_configs` row for `DOMAIN_API_KEY` | present, **empty**, `updated_at` still the 2026-08-02 seed |
+| `update-integration-secret` | writes the project environment through the Management API and **never writes that table**, so the empty row is suggestive, not conclusive |
+| `activity_logs` audit of secret updates | **zero rows** — and see below |
+| edge function logs | retain 24 h; the last report was generated 2026-09-05, so no runtime evidence survives |
+| `api_health_log` | Domain has never written a row, while six sibling services have |
+
+**A new finding sits inside that table.** `update-integration-secret` logs every
+change with `entity_type: 'settings'`, and `settings` **is not one of the 26
+values of the `activity_entity_type` enum**. The insert is `await`ed without
+its error being read, so PostgREST's rejection is discarded: every secret
+update ever made through the Integrations page has failed to write its audit
+row while returning `success: true` to the operator. That is an audit-trail
+gap in its own right, and it is why the log cannot answer the question above.
+Out of scope for this stage; recorded, not fixed.
+
+**What would settle it, in one look:** Supabase Dashboard → Project Settings →
+Edge Functions → Secrets, and check whether `DOMAIN_API_KEY` is listed. If it
+is absent, that is the whole answer. If it is present, the service already
+carries the exact probe — `POST domain-data-service { "healthCheck": true }`
+returns the status code and a decoded message, and because the health check
+runs *after* the missing-key guard it distinguishes **unset** (500, our own
+message) from **set but unentitled** (403) and **set but invalid** (401). That
+is a production call, so it is left for explicit go-ahead.
+
+### 3. Entitlement and scopes
+
+The endpoint is `GET /v1/suburbPerformanceStatistics/{state}/{suburb}`.
+Whether this deployment's key is entitled to it **cannot be established from
+the repository** — entitlement is a property of the Domain account, not of the
+code, and the audit log that would show a successful call has never recorded
+one. The honest statement is: *the required scope is whichever Domain package
+includes Suburb Performance Statistics, and confirming it needs either the
+dashboard or the health-check call above.* Anything more specific would be a
+guess presented as a trace.
+
+### 4. The exact fields, and the two that are not there
+
+The service declares and reads nine values off the latest series entry:
+`medianSoldPrice`, `numberSold`, `medianRentListingPrice`,
+`numberListedForRent`, `daysOnMarket`, `auctionClearanceRate`,
+`medianSoldPricePercentChange` (mapped to `annualGrowth`), plus a locally
+computed `rentalYield` and a `dataQuality` flag.
+
+Two fields the scorers ask for are **not in that interface at all**:
+`priceGrowth3Year` and `vacancyRate`. No configuration change produces them
+from this endpoint.
+
+### 5. The multi-period series
+
+The request is `?propertyCategory={house|unit}&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12`
+— twelve windows. The handler then keeps
+
+```ts
+series.seriesInfo[series.seriesInfo.length - 1]
+```
+
+one element, and discards the rest. **The history is fetched and thrown away.**
+This is the single most consequential line for the brief's §4, because
+multi-horizon growth needs exactly what is being dropped.
+
+### 6–8. The three breaks already recorded
+
+Traced in §47 and unchanged: `domainData` is a sibling of `demographics` and
+is never included in the scoring call; the scorers read
+`marketData.medianPrice` while Domain returns `medianSoldPrice`; and the
+series truncation above. Breaks 6–8 are ours and free to fix; break 2 is a
+credential question.
+
+### Can Domain be the national evidence source?
+
+On the evidence available: **partly, and not alone.** Suburb Performance
+Statistics is nationally consistent in shape and is keyed by state + suburb
+with a dwelling split, which is the right grain. But it carries no vacancy
+rate and no multi-year growth field, and its per-suburb coverage for thin
+markets is unknown until a key exists. It is a strong *primary* adapter for
+median, 1-year growth, days on market, sales count and rent — with the series
+retained rather than truncated, several horizons become derivable from the
+same call — and it needs the ABS and the state registers behind it for
+benchmarks and for the fields it does not carry.
+
+### The contract itself
+
+`_shared/reports/market/marketEvidence.pure.ts` is the structure the scoring
+engine will be allowed to read, and the only one. Its shaping rule:
+**provenance is per MEASURE, not per envelope.** The obvious design puts one
+`level`/`source`/`asOf` on the bundle, and it cannot work, because the
+hierarchy fills different fields from different levels in the same request — a
+median from the suburb, a vacancy from the postcode, a benchmark from the
+GCCSA. An envelope-level `level: 'suburb'` would be a false statement about
+most of the fields and the report would print it.
+
+So every measure is an `EvidencePoint` carrying its own level, area name,
+dwelling-type match, provider, period, sample size, periods available and
+method. Three rules are pinned by tests:
+
+- **Absent is absent.** Every field optional; a measured `0` is a value and an
+  absent point is the absence of one.
+- **A dwelling-type MATCH outranks a finer geography.** A suburb figure mixing
+  houses and units is a statement about a different market; a postcode house
+  figure is the same market read more broadly.
+- **Benchmarks resolve to the COARSER point.** Filling a benchmark from the
+  subject's own suburb makes every property exactly average against itself and
+  deletes the relative-performance signal §48 says the score needs.
+
+The module holds no score, grade, weight or confidence verdict — only the raw
+inputs a confidence calculation consumes. Nothing is wired.
+
+---
+
+## §50 — The credential audit trail was never written (2026-09-08)
+
+Found while tracing the Domain credential (§49) and fixed here as an isolated
+security correction, separate from any scoring change.
+
+### What was wrong
+
+`activity_logs.entity_type` is the Postgres enum `activity_entity_type`.
+`update-integration-secret` wrote `entity_type: 'settings'`, which is **not one
+of its 26 values**, and `await`ed the insert without reading its `error` — so
+PostgREST's `22P02` rejection was discarded and the handler returned
+`success: true`.
+
+**Every credential change ever made through the Integrations page failed to
+record who changed which secret, and told the operator it had worked.**
+Measured 2026-09-08: `activity_logs` holds **5,037 rows across 22 enum values**
+and not one `settings` row has ever existed, because not one could.
+
+A second instance had the same shape: `aml-verification` wrote
+`entity_type: 'aml_provider_config'` and discarded the error explicitly with
+`.then(() => undefined, () => undefined)`, so promoting the AML screening
+provider from simulator to live — a change to what the platform may do —
+recorded nothing either.
+
+An audit row that silently fails to write is worse than none, because the
+absence reads as *"nothing happened"* rather than *"nothing was recorded"*.
+
+### A correction on scope
+
+A first scan counted 108 invalid literals across 25 files and that was **wrong**
+— the pattern matched any `entity_type:` property, including AML purchasing
+structures (`Individual`, `Company`, `SMSF`) and the portal functions, which
+write to their own tables (`finance_portal_activity_log`,
+`solicitor_portal_activity_log`). Scoped to literals inside an actual
+`activity_logs` insert, the real count is **two**, both fixed here.
+
+### The fix
+
+`_shared/activityAudit.ts` is the one place that knows the vocabulary and the
+one way to write a row. Three rules:
+
+- **The vocabulary is checked before the write.** A PostgREST enum rejection is
+  an opaque runtime `22P02` on a path that may run rarely; `recordActivity`
+  throws a named error instead, and `check-activity-entity-types.mjs` makes it
+  a build failure. The guard reads `ACTIVITY_ENTITY_TYPES` from the module, so
+  a migration that extends the enum is declared in exactly one place.
+- **A failed audit write is reported, never swallowed.** `recordActivity`
+  returns an outcome rather than throwing for a database fault. For a secret
+  update the Management API write has *already* succeeded, so failing the
+  request would be a lie in the other direction — the response now carries
+  `auditLogged` and, when false, `auditError`.
+- **An audit row never carries a credential.** Metadata records secret
+  **names**; `assertNoSecretValues` refuses a value under a key matching
+  secret/token/password/api_key/credential.
+
+`entity_type: 'system'` is the enum's value for a platform-level change, which
+is what both call sites are.
+
+Verified by execution: the guard was re-run against the original defect and
+fails on it (`update-integration-secret/index.ts:227 entity_type: 'settings'`),
+then passes once restored. Test files are excluded from the scan, because a
+spec that feeds `'settings'` in to prove it is refused is the opposite of the
+defect. 12 new tests; edge type-check back to its 339 baseline.
+
+Secret-update behaviour is otherwise unchanged.
+
+---
+
+## §51 — The Domain integration is legacy, and the route is gone (2026-09-08)
+
+Step 2 of the brief: verify Domain authentication against the *current* API
+contract rather than assuming the repository's `X-Api-Key` implementation is
+right. Established by unauthenticated execution — **no credential was sent** in
+any of these calls.
+
+### The measurement
+
+| request (no credential) | result |
+| --- | --- |
+| `GET /v1/suburbPerformanceStatistics/NSW/Bowral` | **404** `{"title":"Not Found","detail":"No Matching Route"}` |
+| `GET /v2/suburbPerformanceStatistics/NSW/Bowral/2576` | **401** `{"title":"Not Authorized","detail":"Unable to verify credentials"}` |
+| `GET https://auth.domain.com.au/v1/connect/token` | **400** `{"error":"invalid_request"}` |
+
+**The v1 route this repository calls no longer exists.** That is a routing
+answer, not an authorisation one: Domain's gateway says there is no such
+endpoint, and it says so *before* any credential question arises. The v2 route
+— with the `{postcode}` third segment — exists and is credential-gated.
+
+The token endpoint answering `invalid_request` to a bare GET means it is live
+and rejecting a malformed request, rather than absent.
+
+### What that changes
+
+`domain-data-service` could not have worked in its current form **whether or
+not a credential was ever configured**. A valid key would have produced a 404,
+`response.ok` false, `return null`, and `marketData: null` — which is precisely
+the reading on every one of the 992 scored reports (§47). The missing
+credential was never the whole story, and on this evidence it may not have been
+any of it.
+
+The implementation is legacy on three independent counts:
+
+1. **Version** — `/v1/` is removed; the current route is `/v2/`.
+2. **Path shape** — v2 takes `{state}/{suburb}/{postcode}`; the repo sends
+   `{state}/{suburb}` and holds no postcode in that call at all.
+3. **Authentication** — the repo sends `X-Api-Key`. Domain's own access
+   documentation states *"All Authorisation and Token requests are via
+   `https://auth.domain.com.au/`"*, and the live token endpoint confirms an
+   OAuth2 client-credentials flow.
+
+### The limit of what probing can settle
+
+Sending a dummy `X-Api-Key`, a dummy `Authorization: Bearer`, and no header at
+all produced **byte-identical 401 bodies**. Domain's gateway does not
+distinguish "unrecognised scheme" from "invalid credential", so the accepted
+scheme cannot be read off an unauthenticated probe — it is settled by the
+project's own configuration, not by the API's error text. Saying otherwise
+would be a guess dressed as a trace.
+
+### Package and scope
+
+Domain's package catalogue lists **Properties & Locations** — *"Explore auction
+results and property datasets. Access market performance and demographic
+stats."* That is the package containing suburb performance statistics, and the
+brief names the scope as `api_suburbperformance_read`. Their documentation is
+explicit that *"You will not be able to access any API Endpoint until the
+required API package(s) have been added to your project."*
+
+Whether the Aurixa/Naidu project holds that package and scope is a fact about
+the Domain account and is not establishable from this repository or from an
+unauthenticated call.
+
+### What is required, named exactly
+
+- A Domain project with the **Properties & Locations** package added, granting
+  **`api_suburbperformance_read`**.
+- **`DOMAIN_CLIENT_ID`** and **`DOMAIN_CLIENT_SECRET`** for the OAuth2
+  client-credentials flow against `https://auth.domain.com.au/v1/connect/token`
+  — neither name exists anywhere in this repository today, which is itself
+  evidence that the integration predates the current contract.
+- The call rewritten to `/v2/.../{postcode}` with a Bearer token.
+
+### The probe
+
+`market-source-probe` is a read-only diagnostic added here and, as of this
+section, not yet run (it has since run exactly once, on 8 Sep 2026 — §66):
+it deploys on merge to `main`, and its own `verifyAuth` means it needs an
+authenticated administrator session rather than a session key this work holds.
+It reports which credential NAMES are set — never a value, never a length,
+never a prefix, because a length is a hint and a prefix identifies the issuer —
+and probes a **fixed allow-list** of source URLs. Targets are selected by name
+from that list and can never be supplied in the request body: a probe that took
+a URL from its caller would be server-side request forgery in a function
+holding the service-role key. It writes nothing, and it classifies rather than
+summarises — `credential_absent`, `credential_invalid_or_scope_missing`,
+`not_entitled`, `route_not_found`, `rate_limited`, `blocked_by_origin` and
+`reachable` are different findings with different owners, and "unavailable"
+sent this investigation to the wrong remedy twice already.
+
+It carries the government sources too (VIC, NSW Valuer General, SA, ABS),
+because those refuse *this* development egress — `land.vic.gov.au` answers 403
+and the NSW Valuer General 502 — exactly as `directory.gov.au` and `aph.gov.au`
+did during the PEP work, where the two egresses turned out to differ. Whether
+they answer the Supabase runtime is the open question, and it is the gate on
+whether any suburb-grain source is reachable without a purchase.
+
+---
+
+## §52 — What the Supabase runtime can actually reach (2026-09-08)
+
+The government suburb-grain sources were probed from **Supabase infrastructure**
+using `pg_net` (0.14.0), which is the same mechanism the platform's own
+scheduled HTTP already runs on. Read-only `GET`s; nothing written to any report.
+
+This matters because §48 recommended government sources as the free
+suburb-grain fallback on the strength of them answering *this repository's*
+development egress. They do not answer the platform's.
+
+### Measured
+
+| source | from Supabase | reading |
+| --- | --- | --- |
+| ABS `RES_DWELL` data | **200**, 43,854 bytes SDMX | works |
+| ABS dataflow catalogue | **200** | works |
+| VIC open-data **catalogue** (`discover.data.vic.gov.au`) | **200**, 11.5 KB JSON | works |
+| VIC median-house **file** (`land.vic.gov.au`) | **403** `<title>Just a moment…</title>` | Cloudflare JS challenge |
+| NSW Valuer General **index** | **200**, 26.6 KB | works |
+| NSW Valuer General **bulk zip** (`valuergeneral.nsw.gov.au/__psi/…`) | **403** `Just a moment…` | Cloudflare JS challenge |
+| QLD Government Statistician | **200**, 82 KB | works |
+| `data.qld.gov.au` API | **202**, empty body | bot interstitial |
+| `data.sa.gov.au` | **403**, and **403 again with a browser User-Agent** | IP-blocked |
+| Domain v2 | **401** "Unable to verify credentials" | reachable, needs credential |
+| Cotality `/property/au/v2/statistics/locality/…` | **401** "Access token is missing" | reachable, needs credential |
+
+### The pattern, and a correction
+
+**Catalogue and index pages are reachable; the bulk DATA FILES are behind
+Cloudflare bot challenges.** VIC and NSW both publish an openly licensed
+dataset whose landing page answers and whose file does not. `data.sa.gov.au`
+blocks the address range outright — and it answered **200** from the
+development egress, so this is the reverse of the assumption that the platform
+egress would be the more permissive one.
+
+One correction to record: the first NSW probe returned "Couldn't resolve host
+name", which looked like a block and was not. It used
+`www.valuation.property.nsw.gov.au`; the host is
+`valuation.property.nsw.gov.au` without the prefix, and it answers 200. The
+finding stands only because it was re-probed.
+
+A "Just a moment…" page is a JavaScript challenge. A server-side `fetch`
+cannot solve one by design — that is what it is for. So the free suburb-grain
+government route is **not automatable as a live fetch**. It remains viable
+exactly the way `abs_census_poa`, the crime registers and the GTFS feeds were
+loaded: an operator downloads the file, and a loader ingests it on a schedule.
+That is a periodic manual acquisition, not an API.
+
+**One caveat stated rather than glossed:** `pg_net` egresses from the database,
+and Edge Functions egress from Deno Deploy. The two are not guaranteed
+identical, and `market-source-probe` — now on `main` — is the definitive test
+for the runtime that generates reports. Cloudflare challenges are normally
+applied per ASN rather than per host, so the reading is expected to carry, but
+it is evidence about the database's egress until the edge probe runs.
+
+### Source qualification matrix
+
+| | ABS `RES_DWELL` | Domain v2 | Cotality | VIC / NSW files | SA |
+| --- | --- | --- | --- | --- | --- |
+| geographic precision | GCCSA + rest-of-state (15) | suburb + postcode | suburb (locality) | suburb | suburb |
+| dwelling-type precision | house vs attached | house vs unit | per product | house (VIC), all sales (NSW) | house |
+| history depth | **98 quarters, 2002→2026** | series per request | per product | 11 years (VIC) | multi-year |
+| transaction/sample depth | transfer counts | `numberSold` | per product | every sale (NSW) | counts |
+| freshness | quarterly, current | on demand | on demand | annual/quarterly | quarterly |
+| capital growth | **yes, measured** | yes (1yr; multi-year from the series) | yes (branch 4) | yes | yes |
+| demand | volume only | DOM, clearance, listings | DOM, vendor discount, stock | volume only | volume |
+| licence | open, attribution | commercial | commercial, **unverified** | CC-BY 4.0 | CC-BY |
+| runtime availability | **200** | 401 (credential) | 401 (credential) | **Cloudflare-blocked** | **IP-blocked** |
+| production suitability | benchmark/context only | primary candidate | primary candidate, licensing-gated | manual ingest | not available |
+
+### Recommended canonical ownership
+
+Per measure, not per provider — which is what the contract's per-measure
+provenance exists for:
+
+- **Capital growth (suburb)** — Domain or Cotality, whichever is credentialled
+  first. Neither is today.
+- **Demand (DOM, vacancy, listings, vendor discount)** — Domain or Cotality;
+  no government source publishes these at suburb grain.
+- **Regional benchmark** — **ABS `RES_DWELL`**, which is proven working, free
+  and openly licensed. It is the one source that needs no decision, and §48
+  already fixed its role as context and never as the property's score.
+- **State fallback** — VIC and NSW by scheduled manual ingest; SA unavailable
+  from this egress.
+
+### Licensing is now carried in the contract
+
+`EvidencePoint.licensingStatus` defaults to **`unverified`** and is never
+inferred. `mayReachClientReport` admits only `open` and
+`licensed_for_client_reports`, so a measure whose rights nobody has confirmed
+can be **scored in a shadow backtest and cannot be rendered or persisted as a
+derived metric**. That is what lets qualification proceed while Cotality's
+commercial questions stay open, without ever assuming an answer to them.
+
+### realestate.com.au — the licensed route is PropTrack, and scraping is refused in writing
+
+Asked whether suburb growth could also come from realestate.com.au. The answer
+is yes, through **PropTrack** — REA Group's data licensing arm, which is what
+realestate.com.au's data is sold as — and **not** by reading the consumer site.
+
+REA states the prohibition itself. `realestate.com.au/robots.txt`, fetched
+2026-09-08, opens:
+
+> *"In accessing or using any REA Group Website you agree that you will not use
+> any automated device, software, process or means to access, retrieve, scrape,
+> or index any REA Group Website…"*
+
+That is the site owner's own term, not an inference, and it settles the
+question without needing a view on whether a scraper would technically work.
+It would also be a *worse* version of the Cotality position: Cotality's rights
+are **unverified**, whereas this one is **expressly refused**, and the material
+would be going into a commercial document a client receives.
+
+**The slot already exists.** `registry.ts` declares `proptrack` — *"PropTrack
+(REA) — REA Group valuations, AVMs and listing performance data"*, tagged
+`realestate.com.au` — with `PROPTRACK_API_KEY` and `PROPTRACK_BASE_URL`. Both
+are empty, seeded 2026-08-02 and never set, exactly like Domain and Cotality.
+
+Probed from Supabase, no credential sent:
+
+| request | result |
+| --- | --- |
+| `data.proptrack.com/api/v2/market/sale/historic-median-sale-price?…` | **403 Access Denied** (edge) |
+| `data.proptrack.com/` | **403 Access Denied** |
+| `realestate.com.au/robots.txt` | 200 — the clause above |
+| `sqmresearch.com.au` | 200 |
+
+A 403 at the edge without a credential is what a gated commercial API looks
+like; it is not evidence of an entitlement problem.
+
+**Two further declared providers matter to the matrix**, both with empty slots:
+**Pricefinder** (*"property attributes, sales evidence and owner records"*) and
+**SQM Research** (*"vacancy rates, stock on market and rental series"*). SQM is
+the **only declared source for a vacancy rate at suburb grain** — no
+government publisher offers one — so if Demand is to include vacancy at all, it
+comes from there or from a provider that bundles it.
+
+So the commercial shortlist is four, not two: Domain, Cotality, PropTrack and
+Pricefinder, plus SQM for vacancy specifically. Every one of them has an empty
+credential slot, which is the single fact standing between this programme and
+suburb-grain evidence.
+
+---
+
+## §53 — ME-3: the deterministic methodology, and the dimension that was never once measured (2026-09-08)
+
+Three pure modules, none of them wired to report generation. They are the
+methodology; connecting it waits on a licensed suburb-grain source (§52) and on
+the shadow backtest (ME-4).
+
+- `_shared/reports/market/growthScoring.pure.ts`
+- `_shared/reports/market/demandScoring.pure.ts`
+- `_shared/reports/market/yieldScoring.pure.ts`
+- `_shared/reports/market/gradeEligibility.pure.ts`
+
+Each reads `MarketEvidence` (§49) and nothing else: no provider names, no HTTP,
+no model. Same evidence in, same score out, and every component can be shown to
+a client beside the measurement it came from.
+
+### 53.1 Demand was not mostly a placeholder — it was entirely one
+
+§46 recorded Growth pinned at a placeholder `50` on 975 of 992 reports. Demand
+is worse, and the measurement leaves no room for interpretation. Across the 999
+scored reports:
+
+```
+demandScore.score   = 50     999 of 999   (100.0%)
+demandScore.hasData = false  999 of 999
+demandScore.details = ""     999 of 999
+```
+
+The base score of `50`, never once moved by any evidence, on every report the
+platform has produced — holding **15% of the composite weight** and saying
+nothing at all about why. Not one report has a single demand data point.
+
+All four inputs fail, each for its own reason:
+
+| input | the scorer reads | what the record holds | reports |
+| --- | --- | --- | ---: |
+| `vacancyRate` | `marketData.vacancyRate` | no `marketData` key exists in any record | 0 of 1,201 |
+| `daysOnMarket` | `marketData.daysOnMarket` | ditto | 0 of 1,201 |
+| `medianSuburbPrice` | `marketData.medianPrice` | ditto | 0 of 1,201 |
+| `unemploymentRate` | `demographics.unemploymentRate` | `demographics.income.unemploymentRate`, as a **string** | 865 unreachable |
+
+The fourth is the instructive one, and it fails twice over. It is a **container
+error** — the value sits one level below where the reader looks, so a real
+number is invisible — and **849 of those 865 carry the identical value
+`"3.5"`**, stamped `source: "ABS Census 2021 estimates"`, `dataQuality:
+"estimated"`. Only 16 reports carry a figure that varies at all.
+
+That matters for what the repair had to be. Correcting the path would have
+moved Demand from one flat constant (50) to another (~68), attributed the
+second one to the ABS on the way, and produced a dimension that discriminates
+between properties exactly as well as the first: not at all. **A dimension can
+be wired correctly and still be worthless**, which is the argument for routing
+it through `MarketEvidence` rather than repairing the reader — a constant
+cannot pass as a measurement there, because every point has to name its
+provider, geography, period and sample size.
+
+### 53.2 One characteristic, charged once
+
+Three inputs to the property investment composite are scored in **two of its
+dimensions each**, and the second site says so in its own words:
+
+| input | scored in | and again in | what the second site calls it |
+| --- | --- | --- | --- |
+| `vacancyRate` | `calculateDemandScore:835` | `calculateRiskScore:1016` | *"Very high vacancy (>6%) signals weak rental **demand**"* |
+| `daysOnMarket` | `calculateDemandScore:861` | `calculateRiskScore:1036` | *"Very extended selling time (>120 days) indicates weak **demand**"* |
+| `populationGrowth` | — | `calculateGrowthScore:736` | *"Strong population growth driving **demand**"* |
+
+The Risk dimension deducts up to 22 points for a vacancy rate the Demand
+dimension has already scored, and its reason string names the characteristic as
+demand while doing it. The Growth dimension adds 10 points for population
+growth on the stated grounds that it drives demand — inside the dimension that
+measures capital growth, which is the confusion this programme's brief names
+directly: population growth is not evidence that values have risen.
+
+One thing this table deliberately does **not** claim. The same file also holds
+a separate *area* score (`calculateAreaScore` → `calcRentalMarket:420`,
+`calcMarketMomentum:348`, `calcEconomicStrength:360`) which reads the same
+three fields. That is a different product with its own composite, not a fourth
+count against the property score, and an earlier draft of this section
+mis-attributed those lines. The claim above is confined to one composite.
+
+`DEMAND_EXCLUSIONS` states what the module refuses and which dimension owns it,
+and a test asserts the refusal by feeding the scorer nothing but excluded keys
+and requiring `score === null`. Two boundaries are worth naming:
+
+**Demand is not Growth.** Price movement is Growth's at every horizon. A suburb
+where prices rose is not thereby in demand *as well* — that is one fact counted
+twice, and it is how a strong market comes to look exceptional on two
+dimensions for one reason. Population growth is the single exception, and only
+because it is a **driver**: people arriving is a reason to expect demand, not
+evidence that values rose. It carries 0.15, so it can inform a score and cannot
+carry one.
+
+**Demand is not Yield.** Yield measures the rent level against the price;
+vacancy measures whether the property lets at all. A 6% yield at 7% vacancy is
+a different proposition from a 6% yield at 0.8%, and collapsing them loses
+exactly that.
+
+### 53.3 The four Demand components
+
+| component | weight | measures |
+| --- | ---: | --- |
+| rental tightness | 0.35 | can it be let (`vacancyRate`) |
+| sale urgency | 0.35 | how hard buyers compete |
+| absorption | 0.15 | sales against stock advertised |
+| population driver | 0.15 | whether the resident base is growing |
+
+Sale urgency takes three readings — days on market, vendor discount, auction
+clearance — and **blends them into one component rather than scoring three**.
+They are three lenses on a single characteristic, and giving each its own
+weight would charge for it three times inside the dimension that exists to stop
+charging twice across dimensions. A test asserts that three strong readings
+carry the same 0.35 as one.
+
+Absorption needs both halves. A sales count alone is ambiguous: it rises with
+demand and it rises with churn, and nothing in the number says which.
+
+Two anchors put 50 in the middle, and in both cases **that 50 is a
+measurement**: 3.0% vacancy and a 60% auction clearance rate are the
+conventional balance points of the Australian market, where neither side has
+the upper hand. The rental-tightness component says so in its own sentence when
+the reading lands there, so a report cannot print a balanced-market 50 that
+looks like the placeholder this work removes.
+
+### 53.4 Demand confidence decays faster than Growth confidence
+
+| factor | Growth | Demand |
+| --- | ---: | ---: |
+| geography | 0.30 | 0.30 |
+| dwelling type | 0.20 | 0.15 |
+| sample | 0.20 | 0.25 |
+| history | 0.20 | — |
+| freshness | **0.10** | **0.30** |
+
+Not a copy with different numbers. A five-year CAGR ending two years ago still
+describes how a suburb compounds; a vacancy rate from two years ago describes a
+rental market that no longer exists — so freshness carries three times the
+weight and decays on a steeper curve, and a test asserts a stale demand reading
+loses more confidence than a stale growth reading.
+
+There is no `history` factor: demand measures are point-in-time. And breadth is
+deliberately **not** folded in — it is reported as `weightCovered` beside the
+score, because putting it in confidence too would break this module's own rule
+inside its own confidence calculation. A single impeccably sourced vacancy rate
+is high confidence and 35% coverage at the same time, and both are true.
+
+### 53.5 The Yield double-count, corrected at the economics
+
+`calculateYieldScore` bands the gross yield and then subtracts 20 more points
+when weekly cash flow is below −$100. Both halves measure the same economic
+fact, and the band's own wording says so. Measured across the stored scores,
+**every stored subscore is exactly 20 below the band its own `details` names**:
+
+| stored score | its own `details` | band that text comes from |
+| ---: | --- | ---: |
+| 0 | "Poor yield (<2%)" | 10 |
+| **10** (778 rows, 78.3%) | "Below average yield (2-3%)" | 30 |
+| 30 | "Average yield (3-4%)" | 50 |
+| 50 | "Good yield (4-5%)" | 70 |
+| 65 | "Excellent yield (5-6%)" | 85 |
+
+So a document says *"Good yield (4-5%) — Adequate cash flow"* beside a score of
+50 the reader cannot reconcile with it.
+
+The penalty also discriminates nothing: it landed on essentially the whole
+corpus, because an Australian residential property at current prices is almost
+always negatively geared before tax. **A term that applies to ~99% of cases
+carries no information** — it shifts the whole dimension down 20 points and
+compresses an already-narrow scale.
+
+The correction is economic, not a recalibration: **yield measures the
+property's rental return, and nothing else.** Whether the buyer's financing
+makes the holding position negative is a fact about the loan, the deposit and
+the tax position — not about the property — so it goes to `holdingCashFlowSignal`,
+exported separately and named for its destination, so wiring it back into Yield
+would be a visible decision rather than an accident. Its `typical_negative`
+reading is the honest label for ordinary negative gearing.
+
+Anchors are calibrated to the corpus rather than to intuition: the measured
+median gross yield is **4.36%** and p75 **5.49%**, so 4.36% scores 50. The
+bands were never the problem; the 20 points taken off afterwards were.
+
+**The module bands a figure and never derives one.** The first version of
+`scoreYield` computed `(weeklyRent * 52 / price) * 100` inline, and
+`derivedFigureDefinitions.spec.ts` — the ratchet §MX-B left behind — failed on
+it by name. That was the gate working: gross and net yield have exactly one
+definition in this programme, in `_shared/reports/metrics/propertyMetrics.pure.ts`,
+and adding a twenty-third module to the frozen list would have bought a green
+run at the cost of the thing the ratchet exists to hold. `scoreYield` calls
+`grossYield` and `netYield` now.
+
+Delegating forced a second correction, and it is the more valuable one. The
+input was `propertyPrice`, documented as *"purchase price or current value"* —
+the exact ambiguity `DERIVED_FIGURES.md` records as the reason six gross-yield
+sites disagreed while none of them was wrong. **Basis is part of the call**, so
+the input is `basisAmount` plus a required `basis`, the result carries a
+`BasedMetric` rather than a bare percentage, and `label` reads *"Gross yield
+(on purchase price)"* from `labelFor`. A report cannot now print one basis
+under the other's name.
+
+### 53.6 The evidence ceiling — where a high score does not become a high grade
+
+The fixtures produce one result that is correct and must not become an A+: a
+suburb with a single strong twelve-month figure, at regional level, on six
+transactions, two periods, dwelling type unmatched. It scores **93** with
+**10%** coverage and **low** confidence. Nothing is wrong with the 93 — it is
+what the evidence says. What would be wrong is printing "A+" on it, because the
+honest sentence underneath reads *"exceptional, on the strength of one year of
+regional data covering six sales of a different dwelling type."*
+
+`gradeEligibility.pure.ts` caps the grade and **never changes the score**, so
+the number and the reason stay legible side by side. Thresholds are untouched
+(A = 75, A+ = 85). It is deliberately **not** "4 of 5 dimensions" — counting
+dimensions treats a missing vacancy rate as equivalent to a missing five-year
+growth series, and they are nothing alike. The rule is about Growth
+specifically plus a floor on overall coverage:
+
+| | growth confidence | growth coverage | overall coverage |
+| --- | ---: | ---: | ---: |
+| A | ≥ 45 | ≥ 45% | ≥ 55% |
+| A+ | ≥ 70 | ≥ 70% | ≥ 70% |
+
+### 53.7 Synthetic methodology tests — NOT market evidence
+
+Every fixture is a controlled input constructed to exercise the mathematics.
+None is a real suburb, median or growth rate, and **no result below is a
+backtest, a forecast, or a statement about any Australian market**. Fixtures
+are named for the shape they test rather than for any place. The real
+historical backtest waits on a licensed suburb-grain source (§52, ME-4).
+
+```
+GROWTH                          score   conf    band   cover
+exceptional sustained              90     95    high    100%
+strong recent / weak long          31     95    high    100%
+average                            55     95    high    100%
+declining                          10     95    high    100%
+average in booming region          47     95    high    100%
+strong in slow region              85     95    high    100%
+thin but strong                    93     24     low     10%
+no evidence                         —     10     low      0%
+
+DEMAND                          score   conf    band   cover
+tight market, fast sales           95     93    high    100%
+balanced on every reading          53     93    high    100%
+oversupplied and slow               7     93    high    100%
+tight rental, slow sales           58     93    high     70%
+population only                   100     93    high     15%
+stale readings (2024-Q2)           88     68  medium     70%
+no evidence                         —     17     low      0%
+
+YIELD                           score  gross      basis
+4.5% gross, no gearing info        53   4.50%     gross
+4.5% gross, -$350/wk geared        53   4.50%     gross   (unchanged — the double-count is gone)
+9.9% gross                        100   9.88%     gross
+1.6% gross                          1   1.56%     gross
+rent unknown                        —       —     unavailable
+```
+
+Two readings deserve comment. *Average in booming region* scores **47** while
+*strong in slow region* scores **85** — the §48 failure inverted: a regional
+tide no longer lifts an ordinary property, and a slow region no longer sinks a
+strong one, because the benchmark carries 0.15 and the suburb's own performance
+carries 0.85. And *population only* scores 100 at 15% coverage: the component
+is genuinely at the top of its scale, the renormalisation is arithmetic, and it
+is the **coverage** beside it — not a suppressed score — that stops it becoming
+a grade.
+
+### 53.8 Legitimate A and A+ pathways exist without moving a threshold
+
+The question §48 left open was whether the engine can produce an A+ that Aurixa
+could defend. Composite over the five dimensions at the existing weights
+(growth 0.40, location 0.25, yield 0.15, demand 0.15, risk 0.05), with the
+evidence ceiling applied:
+
+```
+case                             growth   cover  score  grade  capped
+fully evidenced, exceptional         90    100%     87     A+   no
+fully evidenced, strong              85    100%     79      A   no
+fully evidenced, average             55    100%     56      B   no
+thin evidence, strong reading        93     40%     91     B+   yes (would have been A+)
+```
+
+A+ is reachable at 85 on fully evidenced, genuinely exceptional performance —
+without lowering anything. A is reachable on strong performance. An average
+property lands at B. And the fourth row is the point of the exercise: a
+composite of **91** is refused A+ and capped at B+, because 40% coverage and
+low growth confidence cannot carry the claim.
+
+**These are algorithm fixtures.** They demonstrate the scale is functional and
+the ceiling binds. They say nothing about how many real properties would earn
+an A, which is ME-4's question and needs real suburb evidence.
+
+### 53.9 "Evidence Behind the Score"
+
+A grade is a claim Aurixa has to defend to the client it was given to. Today it
+cannot be: the number arrives with a one-line `details` string which, on the
+corpus, either contradicts the score beside it (53.5) or is empty (53.1). A
+reader who disagrees with a B+ has nothing to disagree *with*.
+
+`evidenceStatement.pure.ts` composes the disclosure — per dimension, what was
+measured, where it came from, how far it can be relied on, and what could not
+be measured and what that cost. Rendered from the fixture bundle:
+
+```
+GRADE A+  (score alone: A+)
+
+Capital growth — 90, confidence 95 (high), 100% of methodology
+   [w 0.35]  93  Five-year capital growth: 11.5% per annum over five years
+   [w 0.25]  86  Three-year capital growth: 12.2% per annum over three years
+   [w 0.10]  76  Twelve-month movement: 10.8% over the last twelve months
+   [w 0.15]  94  Consistency of growth: 6 of 6 periods rose, spread 1.0 points
+   [w 0.15]  97  Against the wider market: +7.3 points over the five-year window
+
+Market demand — 92, confidence 93 (high), 70% of methodology
+   [w 0.35]  91  Rental vacancy: 0.9% rental vacancy
+   [w 0.35]  93  Competition for stock: 16 days on market, 84% auction clearance
+   not measured: Sales against stock advertised, Population growth
+
+Rental return — 52, 100% of methodology
+   [w 1.00]  52  Gross yield (on purchase price): 4.50% gross, 3.46% net …
+
+NOT AVAILABLE   cotality: no credential configured
+LIMITATIONS     Market demand was scored on 70% of its methodology; sales
+                against stock advertised, population growth could not be measured.
+```
+
+Four rules carry it. **It states and never derives** — every number is read
+from a result object, because a disclosure that recomputes its own subject can
+disagree with it, in the one place a reader is being invited to check the
+working. **Absence is content** — a dimension that could not be measured gets a
+row saying so, in the same shape as one that could, since silence about a
+missing five-year series reads as "there was nothing to say". **Licensing
+decides what may be shown, per measure** — the statement takes an AUDIENCE, and
+an unquotable source is named as withheld rather than dropped, because a source
+list with a silent hole is a worse disclosure than one that says a source is not
+quotable; the figure still informs the score for both readers. And **the cap is
+explained where the grade is stated**, not in a footnote, because it is the
+first thing a reader will ask about.
+
+Yield deliberately carries **no confidence reading**. It is not measured from
+market evidence — it is computed from this property's own rent and price — and
+printing a confidence beside it to make the table symmetrical would be
+inventing a number for a layout. For the same reason the property's own rent
+and price is never withheld from a client: it is not third-party licensed
+material.
+
+### 53.10 What is deliberately not done
+
+Nothing here is connected to report generation. `investment-scoring-service` is
+untouched, the stored corpus is untouched, and no document changes. The modules
+are the methodology, verified by execution against synthetic inputs; the
+decision to adopt them belongs after the shadow backtest, on real evidence.
+
+---
+
+## §54 — Provider discovery closes: PropTrack activation, SQM, and the final hierarchy (2026-09-08)
+
+Discovery stops here. This section fixes the source hierarchy and states, for
+the two sources that could change it, exactly what has to happen next — and
+what must not be assumed in the meantime.
+
+### 54.1 PropTrack qualification: what is known, and what cannot be known yet
+
+| question | answer | how established |
+| --- | --- | --- |
+| Is it the licensed route to realestate.com.au data? | Yes | PropTrack is REA Group's data-licensing arm |
+| Is scraping the consumer site an alternative? | **No** | `realestate.com.au/robots.txt` expressly refuses automated access (§52) |
+| Is the API reachable from this platform? | Yes — 403 at the edge without a credential | `pg_net` probe from Supabase |
+| Does this repository have a slot for it? | Yes — `PROPTRACK_API_KEY`, `PROPTRACK_BASE_URL` | `registry.ts:693` |
+| Is a credential present? | **No.** Both empty, seeded 2026-08-02, never set | credential presence check |
+| What does the API return? | **Unknown, and not guessed** | see below |
+| What does it cost? | **Unknown, and not guessed** | commercial |
+
+The last two are the honest answers. `developer.proptrack.com` does not
+resolve and `data.proptrack.com/docs` returns 403 — PropTrack's documentation
+is behind the same gate as its data. **No endpoint name, field name, response
+shape or price appears anywhere in this specification**, because inventing one
+is how an adapter comes to be written against an API that does not exist. The
+standing rule holds: entitlement is never inferred from public vendor
+documentation, and here there is not even public documentation to misread.
+
+### 54.2 PropTrack activation specification
+
+Three parts, in order. Part A is commercial and belongs to Aurixa; parts B and
+C are engineering and are specified precisely enough to start the day part A
+lands.
+
+**Part A — what to obtain from REA Group / PropTrack.** Not a shopping list: a
+set of questions whose answers determine whether the adapter is worth writing
+at all. Each maps to a field the scoring engine actually reads.
+
+| # | ask | why it decides something |
+| --- | --- | --- |
+| A1 | An API credential for a named environment (sandbox and production) | nothing below can be verified without one |
+| A2 | The **suburb-grain** median sale price series, house and unit separately, with the available history depth in periods | Growth's long-term component needs ≥ 5 years; `growth5YearCagr` is 0.35 of the dimension |
+| A3 | Whether the series is delivered as a series or as point statistics | `priceSeries` drives the consistency component; point figures alone forfeit 0.15 |
+| A4 | Transaction counts behind each median | `sampleSize` is 0.20–0.25 of every confidence reading; absent, it scores 30 rather than 0 |
+| A5 | Days on market, vendor discount, auction clearance at suburb grain | the three lenses of Demand's sale-urgency component |
+| A6 | Rental vacancy rate at suburb grain — **or a statement that it is not offered** | if not offered, vacancy has exactly one other declared source (54.3) |
+| A7 | Median advertised rent at suburb grain | Yield currently derives from a property-level rent only |
+| A8 | Rate limits, and whether they are per key or per tenant | this platform forwards the prime's keys to every clone; a per-key limit is a fleet-wide ceiling |
+| A9 | **Permitted cache duration** | the platform caches; an unstated duration cannot be complied with |
+| A10 | **Redistribution rights for a client-facing PDF**, in writing | this is the gate on `licensingStatus`; see below |
+| A11 | **The right to persist a derived metric** (a score computed from their data) | the grade is derived and stored |
+| A12 | Attribution wording required on a rendered document | it has to be typeset, not appended later |
+
+A10 and A11 are not paperwork. `EvidencePoint.licensingStatus` defaults to
+`unverified`, and `mayReachClientReport` admits only `open` and
+`licensed_for_client_reports` — so **until A10 is answered in writing, a
+PropTrack figure can be scored in a shadow backtest and cannot be rendered in
+a client document or persisted as a derived metric.** That is a working state,
+not a blocked one, and it is the reason qualification can proceed while the
+commercial conversation runs.
+
+Cost is deliberately absent from this table. It is a commercial negotiation
+and no figure is stated here.
+
+**Part B — what this repository must build.** One file and one registration.
+
+1. `_shared/reports/market/adapters/proptrackAdapter.pure.ts` — maps
+   PropTrack's response onto `MarketEvidence`. Pure, no HTTP.
+2. `'proptrack'` added to `EvidenceProvider` in `marketEvidence.pure.ts`.
+3. The fetch goes through `_shared/meteredFetch.ts`, never bare `fetch`, or the
+   call is billed to nobody (`API_USAGE_METERING.md`).
+4. `PROPTRACK_API_KEY` is added to `_shared/listingsPipelineSecrets.pure.ts`
+   **only if** it is to be Mission-Control-managed and forwarded to clones.
+   Otherwise it stays a per-workspace credential on the Integrations page.
+
+Nothing else changes. The scorers read `MarketEvidence` and do not know
+providers exist — which is the property §49 exists to create, and its first
+real test.
+
+**Part C — the qualification gate, before a single figure reaches a
+document.** Run `market-source-probe` against the credentialled endpoint and
+record, per measure: geographic level actually returned, whether the dwelling
+type matched what was asked, sample size, period covered, and history depth.
+A provider that answers 200 with a *postcode* median when a suburb was
+requested is a correct answer to a different question, and the contract already
+has the vocabulary to say so — but only if the adapter sets `level` from what
+came back rather than from what was asked.
+
+### 54.3 SQM Research qualification
+
+SQM matters for one reason and it is a sharp one: **it is the only declared
+source of a rental vacancy rate at suburb grain.** No Australian government
+publisher offers one. Vacancy is 0.35 of the Demand dimension — the single
+largest component — so without SQM or a commercial provider that bundles
+vacancy, Demand runs at a maximum of 65% coverage by construction.
+
+| question | answer |
+| --- | --- |
+| Declared in this repository? | Yes — `SQM_RESEARCH_API_KEY` (`registry.ts:817`) |
+| Credential present? | **No.** Empty, never set |
+| Reachable from Supabase? | `sqmresearch.com.au` answers 200 |
+| Scraping? | **Refused.** Not attempted, not planned |
+| What it publishes | vacancy rates, stock on market, rental series |
+| Grain | suburb / postcode |
+
+The same three questions decide it: does the licence permit a figure in a
+client-facing PDF, what cache duration is permitted, and may a derived metric
+be persisted. Until answered, the same rule applies — `unverified`, scorable,
+not renderable.
+
+One point of sequencing: **A6 above may make SQM unnecessary.** If PropTrack
+supplies vacancy, one commercial relationship covers growth, sale urgency and
+rental tightness together. So A6 is asked before SQM is pursued, not after.
+
+### 54.4 Pricefinder — deliberately not pursued
+
+Declared (`PRICEFINDER_API_KEY`), empty, and left there. Its stated coverage —
+property attributes, sales evidence, owner records — overlaps what Domain,
+Cotality and PropTrack already offer, and it publishes no measure the other
+three lack. A fourth commercial relationship is not investigated until the
+first one is credentialled and qualified.
+
+### 54.5 The final source hierarchy
+
+Resolved **per measure**, which is what per-measure provenance is for. First
+row that can answer wins; the contract's `mergeEvidence` implements the
+contest.
+
+| measure | 1st | 2nd | 3rd | if none |
+| --- | --- | --- | --- | --- |
+| suburb median price | Domain / Cotality / PropTrack | state file (manual ingest) | — | absent |
+| growth 1 / 3 / 5 yr (subject) | Domain / Cotality / PropTrack | state file (manual ingest) | — | absent |
+| price series | same, where delivered as a series | — | — | consistency excluded |
+| **regional benchmark growth** | **ABS `RES_DWELL`** | — | — | relative component excluded |
+| days on market | Domain / Cotality / PropTrack | — | — | lens dropped from sale urgency |
+| vendor discount | Cotality / PropTrack | — | — | lens dropped |
+| auction clearance | Domain / PropTrack | — | — | lens dropped |
+| **vacancy rate** | **SQM**, or PropTrack if A6 | — | — | rental tightness excluded |
+| sales count | Domain / Cotality / PropTrack | ABS transfer counts (regional) | — | absorption excluded |
+| listing activity | Domain / Cotality / PropTrack | — | — | absorption excluded |
+| population growth | ABS ERP | — | — | driver excluded |
+
+Three properties of that table are the point of it. **ABS is the benchmark row
+and only the benchmark row** — §48 is what happens when a regional figure
+stands in for a local one, and the contract keeps `benchmark*` as separate
+fields so the two can never be confused. **Every "if none" is *absent*, never a
+default** — no zero, no 50, and the coverage figure beside the score says how
+much of the methodology ran. And **no row is a scrape**: where a licensed route
+does not exist, the measure is absent and the report says so.
+
+### 54.6 What is still blocking the real backtest
+
+One thing, and it has not moved: **every commercial credential slot is empty.**
+Domain, Cotality, PropTrack, Pricefinder, SQM — five declared providers, five
+empty keys. ABS answers and is regional. The government suburb-grain files are
+behind Cloudflare challenges a server-side fetch cannot solve by design (§52).
+
+So the historical A/A+ backtest over the 992 stored reports **cannot be run**,
+and running it on regional data would reproduce §48's failure with better
+arithmetic. The methodology is built, tested and version-stamped; it waits on
+one credential, and the shortest path to it is A1.
+
+---
+
+## §55 — ME-4: scoring integration hardening and backtest readiness (2026-09-08)
+
+Nine pure modules now, still connected to nothing.
+`investment-scoring-service` is untouched, the stored corpus is untouched, no
+document changes, and thresholds are unmoved (A 75, A+ 85).
+
+### 55.1 The Dimension Ownership Matrix
+
+Extracting each live dimension scorer's body and listing the `input.*` it reads
+gives **five inputs read by two dimensions**:
+
+| input | read by | verdict |
+| --- | --- | --- |
+| `vacancyRate` | Demand, Risk | **duplicate** — Risk's reason string says *"weak rental **demand**"* |
+| `daysOnMarket` | Demand, Risk | **duplicate** — Risk's string says *"indicates weak **demand**"* |
+| `cashFlow` | Yield, Risk | **duplicate** — the ME-3 yield double-count |
+| `priceGrowth1Year` | Growth, Risk | **declared exception** |
+| `propertyPrice` | Yield, Demand | not a duplicate — a yield denominator and a price-to-median ratio are different quantities |
+
+The clearest evidence is that the code names the characteristic it is measuring
+and the name belongs to another dimension. Risk deducts up to 22 points for a
+vacancy rate Demand has already priced at 0.35 of its weight.
+
+`populationGrowth` is read by exactly one dimension — the wrong one. It sits
+inside `calculateGrowthScore` adding 10 points on the stated grounds that it
+*"drives demand"*, inside the dimension that measures capital growth.
+
+`dimensionOwnership.pure.ts` assigns one owner per input with the reason and the
+dimensions forbidden from reading it. Two rules: **an owner is the dimension
+whose QUESTION the input answers**, not the one that reads it first; and **a
+shared input needs a declared exception, never silence**. There is exactly one
+exception — Growth rewards twelve-month performance while Risk prices its
+reversal, in **opposite** directions, at a measured magnitude of roughly +4.0
+composite points against −0.9.
+
+### 55.2 Growth overlap: the components were awarding one signal three times
+
+The question was whether the five components measure different characteristics
+of one price series or award the same performance repeatedly. Measured over 600
+synthetic series varying trend, volatility, shape and benchmark independently:
+
+```
+                   longTerm  mediumTerm    momentum consistency    relative
+longTerm               1.00        0.97        0.81        0.47        0.86
+mediumTerm             0.97        1.00        0.91        0.40        0.83
+momentum               0.81        0.91        1.00        0.11        0.70
+consistency            0.47        0.40        0.11        1.00        0.41
+relative               0.86        0.83        0.70        0.41        1.00
+```
+
+**The five-year and three-year LEVELS correlate at r = 0.97.** They share three
+of their five years, so of course they agreed — and together they held **0.60
+of the Growth weight**. That is the inadvertent double-award this audit set out
+to detect, and the economic reasoning does not hold for it.
+
+The fix is economic, not a re-weighting. The question that component existed to
+answer was never *"what was the three-year rate?"* but **"has the recent period
+confirmed or contradicted the long run?"** — which is `3yr − 5yr`, orthogonal to
+the level by construction:
+
+```
+                   longTerm  trajectory    momentum consistency    relative
+longTerm               1.00        0.02        0.81        0.47        0.84
+trajectory             0.02        1.00        0.51       -0.21        0.02
+```
+
+**r = 0.97 → 0.02.** `longTerm` takes the freed weight (0.45) because it is now
+the sole measure of the rate, which is also the brief's own priority.
+
+Two correlations remain high and are kept deliberately, stated in the module
+rather than quietly carried. **Momentum's 0.81 is partly a sweep artefact** —
+the last-year return is a deterministic function of the same trend that drives
+the five-year rate, a real suburb's last year diverges far more, and at 0.10 the
+weight bounds it either way. **Relative's 0.84 is inherent to what "relative"
+means**: with the benchmark held still, out-performance is monotone in the
+subject's own growth, and it decorrelates exactly when benchmarks move, which is
+the case §48 protects.
+
+`GROWTH_WEIGHTS_V3_0` is retained so the harness can score a corpus both ways.
+
+### 55.3 Source independence is not performance breadth
+
+Confidence had **no measure of corroboration at all**, so a bundle drawn
+entirely from one vendor read exactly like one two providers agreed on. Three
+horizons from one provider are one source with more history.
+`sourceIndependence` counts distinct providers at 0.10, and `history` now reads
+*"periods of history"* so the two claims cannot be confused. A test asserts that
+adding a second horizon from the same provider raises history and leaves source
+independence unchanged.
+
+### 55.4 Location independence
+
+**Location is the dimension that works**, and that is worth saying: 972 of 1,001
+reports carry all three inputs, with 64 distinct walk scores and 512 distinct
+commute times across 21 distinct scores spanning 14–85. Three defects.
+
+**The state premium is not a locational characteristic.** Up to 15 of 100 points
+by state — NSW/VIC/QLD 15, WA/SA 12, TAS/ACT/NT 8 — so every NSW property
+collects the same 15 whether it stands in Mosman or 700 km inland, and a rural
+report prints *"Major capital city location"*. Removed; `state` is owned by
+nobody.
+
+**Absent evidence scored points**: no walk score +12, no commute +12, no schools
++8. Thirty-two of 100 points available to a property with no locational evidence
+at all. It bites on 29 of 1,001 reports, so the blast radius is small and the
+principle is not.
+
+**The walk score saturates.** `calculateWalkScore` sums five capped amenity
+terms that all max out in any suburb with a shopping strip: **62.8% of 1,112
+properties score 90 or above**, 87.1% score 70 or above, and p25→p75 spans just
+84→95. A "Walker's Paradise" band holding two thirds of an Australian investment
+corpus carries little information. The anchors are stretched to where the corpus
+sits, and a saturated reading says so on the result.
+
+### 55.5 Risk independence — the honest answer is that it is thin
+
+Vacancy and days on market removed. What remains, measured over 1,204 reports:
+
+| input | present | note |
+| --- | ---: | --- |
+| `propertyType` | 930 (77.2%) | at `property_specs.property_type` — **snake_case**, while the scorer reads `propertyType`, so it has never been read; 145 more rows hold the placeholder `"Residential Property"` |
+| `lvr` | 201 (16.7%) | |
+| `weeklyCashFlow` | 185 (15.4%) | effectively the same rows as `lvr` |
+
+So the answer to *"can the 5% Risk dimension be populated independently and
+defensibly?"* is **partly, and predominantly on one input**. Property type is
+reachable on 77% once the key name is corrected; leverage and serviceability
+exist on about a sixth of the corpus and are the same sixth. A Risk score on
+most reports will rest on property type alone. **No input was invented to fill
+the weight.**
+
+### 55.6 The shadow orchestrator
+
+`scoreInvestmentV2Shadow` is the one place the five dimensions, evidence
+confidence, grade eligibility and Evidence Behind the Score compose — because
+every defect this programme has found lived in the composition rather than in a
+dimension, and those are only visible where the pieces meet.
+
+It publishes what §48's A+ properties were never asked for: `effectiveWeights`
+beside nominal ones, and `evidenceCoverage` **discounted by how much of each
+dimension's own methodology ran**. Every A+ in that backtest was "85% of the
+nominal evidence renormalised to 100%", and that number is now on the result
+rather than implicit in it.
+
+### 55.7 Twenty-six invariants
+
+| rule | how it is checked |
+| --- | --- |
+| Monotonicity | five dimensions, each swept across its input range |
+| No duplicate reward | vacancy and DOM move Demand and leave Risk **identical**; cash flow moves Risk and leaves Yield identical; population growth moves Demand and leaves Growth identical |
+| The one exception | asserted to move its two dimensions in **opposite** directions |
+| Missing is absent | no dimension returns 0 or 50 from absence; an unmeasured dimension leaves the composite; a location with no evidence scores `null`, not 32 |
+| Depth ≠ corroboration | a second horizon from one provider raises history and not source independence |
+| Grade integrity | a high score on thin evidence is capped, and both grades are always reported |
+| State independence | changing **only** the benchmark is bounded to six composite points; a booming region cannot lift an ordinary property to an A |
+| Property differentiation | two suburbs in one region differ by more than 40 growth points on their own evidence |
+
+### 55.8 Corpus readiness — and a second blocker nobody had counted
+
+The resolver run over all 1,204 stored reports:
+
+```
+Readiness state                          Geography resolution
+  unresolved_geography  1204  100.0%       none               92    7.6%
+  backtest_ready           0    0.0%       coordinates_only  1112   92.4%
+                                           resolved             0    0.0%
+
+Missing field counts
+  suburb            1204  100.0%      purchase_price  1004  83.4%
+  weekly_rent       1023   85.0%      lvr             1003  83.3%
+  weekly_cash_flow  1019   84.6%      dwelling_type    311  25.8%
+```
+
+**0 of 1,204 are backtest-ready, and market evidence is not why.** Suburb,
+postcode and state are stored nowhere structurally — 0 of 1,204 — while
+coordinates are present on 92.4%. There are **two** blockers, not one, and the
+second is entirely within our control: a licensed suburb dataset cannot be
+joined to a corpus that has no suburb.
+
+The resolver will not parse `property_address` to close that gap, and
+`ADDRESS_COMPOSITION.md` is why: Make geocodes `{{address}},{{suburb}}` with no
+street number, Google answers with a suburb centroid, and a second model call
+writes eight address columns back over the extraction — so `Full Address` reads
+`Cobblebank VIC 3338, Australia` on a record that knows `Mortlock Street`. A
+string that has been through that loop cannot prove which suburb a property is
+in, and wrong geography would attach real market evidence to the wrong property
+with every downstream figure inheriting it.
+
+The pieces for the mapping exist and are simply not connected: `suburb_directory`
+holds 18,519 suburb/state/postcode rows but no coordinates; `listing_geocodes`
+resolves coordinate→suburb on 1,030 rows but is keyed for the Listings
+marketplace; `sa2_point_cache` holds one row. The remedy is a bounded
+reverse-geocode pass over 1,112 coordinates, validated against
+`suburb_directory` — a **proof** from the provider's own locality answer, not an
+inference from the address label.
+
+Two resolver corrections found by execution: neither `purchasePrice` nor
+`propertyPrice` appears anywhere in `financial_calculations` on any row (the
+figure is `initialCosts.propertyValue`, and for builder stock it is split across
+`landPrice` and `buildPrice`, so the sum is labelled as a sum in its
+provenance); and each field declares candidate paths in priority order with the
+result recording **which** path resolved, because the corpus spans several eras
+of the writer and a backtest has to be auditable back to the byte it read.
+
+### 55.9 Provider-neutral ingestion
+
+One contract over four routes — `api_adapter`, `licensed_csv`, `licensed_json`,
+`operator_import` — so a licensed export is usable the day it lands, without
+waiting for API access. **Licensing is enforced per ROW, not per file**, because
+a provider may deliver open ABS-derived benchmarks alongside proprietary medians
+in one export and refusing the file would discard material we are entitled to
+use. An unverified row is accepted for shadow scoring and refused a client
+document. Nothing in the module writes.
+
+### 55.10 The harness, and diagnostics that only report
+
+The harness scores exactly the rows it is handed evidence for and reports the
+rest as unresolved: **no synthetic fallback, no regional stand-in, no default**,
+because a backtest run on invented inputs produces a distribution that looks
+exactly like a real one and would be acted on.
+
+Nine checks — state domination, one dimension dominating, compression,
+inflation, single-grade collapse, top grades on low confidence, highs resting on
+one horizon, highs resting on renormalisation, and movement driven by data
+availability rather than performance. **Every one reports and none adjusts.**
+§48 was found by looking at a distribution, and a system that silently corrected
+for it would have hidden the finding instead of surfacing it.
+
+### 55.11 What is deliberately not done
+
+No production wiring. No historical backtest — real or simulated. No threshold
+change. The system is methodology-ready and backtest-ready; it is not data-ready
+until geography is resolved and a licensed suburb source lands, and it is not
+live until real distributions have been inspected.
+
+---
+
+## §56 — ME-5: canonical geography, and what the historical record really holds (2026-09-08)
+
+### 56.1 The geography blocker is removed
+
+ME-4 measured suburb, postcode and state stored on **0 of 1,204** reports. After
+this stage, **931 carry a full ASGS chain**.
+
+Resolution is point-in-polygon against the ABS ASGS 2021 boundaries — the ones
+the ABS publishes its own statistics against — so the geography and the
+evidence will share one definition. Reachability was proved from **Supabase
+infrastructure** rather than from this repository's development egress, because
+§52 already caught that distinction the hard way; all 25 ASGS layers answer 200.
+
+One coordinate resolves the chain:
+
+```
+SAL → suburb + locality code        POA → postcode
+SA2 → statistical area              → local join to abs_sa2_meta for SA3/SA4/GCCSA/state
+RA  → remoteness                    UCL → the urban centre it actually sits in
+```
+
+Deriving the hierarchy locally rather than fetching it means fewer calls **and**
+a hierarchy that cannot disagree with itself.
+
+| | reports |
+| --- | ---: |
+| resolved | **931** (83.6%) |
+| unresolved | 183 |
+| requires_review | 0 |
+| resolved_with_warning | 0 |
+| distinct suburbs / SA2s | 302 / 274 |
+
+445 distinct Australian coordinates, 2,225 point queries, **445 of 445 resolved
+on all five layers, zero failures.**
+
+Remoteness: Major Cities 657, Inner Regional 220, Outer Regional 46, Remote 6,
+Very Remote 2 — so **274 reports are non-metro**, which is the population the
+Location fairness work exists to protect.
+
+**The address is never consulted.** `ADDRESS_COMPOSITION.md` records why, and
+the corpus proves it: the coordinate whose stored address reads `Cobblebank VIC
+3338` resolves to **Melton South**, correctly, with urban centre **Melton**
+rather than Melbourne.
+
+### 56.2 Independently cross-validated, 100%
+
+All 144 initial `suburb_not_in_directory` warnings were the ABS's own
+disambiguating qualifier — `Fernvale (Qld)`, `Armadale (WA)`, `Churchill
+(Vic.)`, `Springfield (Ipswich - Qld)` — against a directory that stores plain
+names. Normalised, **all 144 matched, and postcode AND state agreed on all
+144, with zero disagreements.**
+
+So across all 931 resolved reports: **0 state mismatches, 0 postcode
+mismatches**, confirmed by a source independent of the boundaries themselves.
+
+### 56.3 The 183 unresolved are an integrity finding, not a resolver weakness
+
+**16.4% of stored coordinates fall outside Australia** — latitudes as far north
+as 55.9, longitudes as far west as −122.3. They are left unplaced. Coverage is
+not the objective: forcing them into a suburb would attach real market evidence
+to the wrong property, and every figure downstream would inherit it silently.
+
+### 56.4 The financial figures were not missing — they were in the wrong drawer
+
+ME-4 reported purchase price on 203 of 1,204. That was true of
+`financial_calculations` and wrong about the record.
+
+**997 of 1,207 reports have no financial block at all**, so the gaps are whole
+reports rather than scattered fields — but **459 carry `manual_overrides`**,
+and those hold exactly the figures in question, **entered by an operator**:
+
+| figure | `financial_calculations` | `manual_overrides` | **either** |
+| --- | ---: | ---: | ---: |
+| purchase price | 203 | **431** | **493** |
+| weekly rent | 184 | 193 | 227 |
+| LVR | 204 | 200 | 251 |
+
+`manual_overrides` also carries the full cost structure — council and water
+rates, management and letting fees, insurance, repairs, stamp duty, solicitor
+fees, occupancy rate, loan amount, interest rate, term.
+
+Purchase-price coverage is therefore **2.4× what ME-4 reported**, from a source
+that was already in the record. An operator-typed figure is the strongest
+provenance available and outranks anything derived.
+
+### 56.5 The historical transport data is fabricated, and it contaminates Location
+
+ME-4 recommended preferring "actual evidence such as amenity distances and
+transport" over the saturated walk score. **Measured, that recommendation
+cannot be followed on historical data, because the transport block is worse.**
+
+`distanceToStop` holds **five distinct values across 1,108 reports**, one per
+state:
+
+| distance | "nearest stop" | reports |
+| ---: | --- | ---: |
+| 450 m | Central Station | **822** |
+| 250 m | Swanston Street Tram | 117 |
+| 350 m | Queen Street Bus Station | 86 |
+| 320 m | Wellington Street Bus Station | 79 |
+| 280 m | Currie Street Bus Stop | 4 |
+
+This is precisely the defect `TRANSPORT_SOURCES.md` records — *"eight per-state
+fetchers that ignored the coordinate, so every NSW property was 450 m from
+Central Station"*. The GTFS work fixed the forward path; **the historical
+records still hold the fabricated values.**
+
+Three consequences, and the second is the one that bites:
+
+1. The transport block cannot complement or replace the walk score for a
+   backtest. It has 5 distinct values against the walk score's 65.
+2. **The historical walk score is itself contaminated.** `calculateWalkScore`
+   takes up to 30 of its 100 points from `publicTransportData.qualityScore` —
+   and that field is present, at one constant per state (83, 82, 56, 70, 78).
+   So the saturation is not only scale compression: roughly a third of the
+   historical walk score is a per-state constant.
+3. Location on historical reports therefore rests partly on fabricated input.
+   For the backtest it must be recomputed from the real GTFS stops the platform
+   now holds, or declared not-evidence. It must not be silently scored.
+
+This is why the walk-score recalibration in ME-4 was correctly marked
+provisional, and why recalibrating against this corpus would have been
+calibrating against a fabrication.
+
+---
+
+## §57 — ME-5: the Location evidence, measured end to end (2026-09-08)
+
+§56 closed the geography blocker. This is the item the revised brief called the
+highest remaining priority: *"Audit the entire historical Location intelligence
+object for common template/state-level patterns."*
+
+The audit's own Section 24 named one contaminated field, `distanceToStop`. A
+sweep of all **1,114** stored `location_intelligence` objects found five
+distinct kinds of contamination, and the headline is one number:
+
+> **Three reports of 1,114 carry both a measured walk score and a measured
+> commute.**
+
+### 57.1 The whole transport block is a per-state constant
+
+1,108 of 1,114 objects carry the legacy transport shape. Across all of them:
+
+| field | distinct values | modal value | reports at the mode |
+| --- | ---: | --- | ---: |
+| `stopsWithin1km` | **1** | `3` | 1,108 |
+| `nearestStop` | 5 | `Central Station` | 822 |
+| `distanceToStop` | 5 | `450` | 822 |
+| `qualityScore` | 5 | `83` | 822 |
+| `serviceFrequency` | 5 | `{peak:18, offPeak:8}` | 822 |
+| `routeCoverage` | 5 | `T2 Inner West Line …` | 822 |
+| `summary` | 5 | `Excellent public transport access with 3 stops within 1km.` | 822 |
+| `transportTypes` | 3 | `[Train, Light Rail, Bus, Ferry]` | 822 |
+
+The five values are the capital-city interchanges — Sydney's Central Station,
+Melbourne's Swanston Street trams, Brisbane's Queen Street, Perth's Wellington
+Street, Adelaide's Currie Street — and Sydney is the fallback. **The 822
+reports that say the nearest stop is Central Station, 450 m away, span all
+eight states and territories.**
+
+### 57.2 The walk score is that constant plus four saturated counts
+
+`calculateWalkScore` spends its whole 30-point transit allowance on
+`publicTransportData.qualityScore`. The other four components saturate at
+counts of 3–5, against a hard `.slice(0, 10)` in `fetchNearbyPlaces`:
+
+| component | formula | maxes at | reports maxed |
+| --- | --- | ---: | ---: |
+| Shopping & dining | `min(25, (shops + restaurants/2) × 2)` | 10 + 10 | 676 |
+| Schools | `min(15, count × 3)` | 5 | 952 |
+| Healthcare | `min(15, count × 5)` | 3 | 919 |
+| Recreation | `min(15, count × 3)` | 5 | 967 |
+
+**641 objects have all four maxed.** For those the walk score is the state
+constant and nothing else — **four distinct values across 641 properties**.
+Reconstructing the formula from the stored counts reproduces the stored score
+exactly on **1,109 of 1,114**, so this is the mechanism rather than a theory
+about it.
+
+### 57.3 The commute is a real query to the wrong city — and 438 are not queries at all
+
+`getCBDCoordinates` ended `|| cbdLocations['NSW']`, so a request carrying no
+state measured a transit journey to Sydney.
+
+The marker and the cause turn out to be one thing. Of the non-NSW reports:
+
+| stored `nearestStop` | non-NSW reports | commute consistent with Sydney only | with own capital only |
+| --- | ---: | ---: | ---: |
+| `Central Station` | 519 | **494** | **0** |
+| `Swanston Street Tram` | 117 | 0 | 93 |
+| `Queen Street Bus Station` | 86 | 0 | 68 |
+| `Wellington Street Bus Station` | 78 | 0 | 66 |
+| `Currie Street Bus Stop` | 4 | 0 | 4 |
+
+One absent `input.state`, two symptoms. Concretely: **Bentley WA, 8 km from
+Perth, stored 3,283.6 km and 82.1 hours** — straight-line Bentley→Sydney is
+3,284 km. Richmond Vic, 3 km from Melbourne, stored 968.7 km.
+
+This is not merely a wrong number. The Location score bands the commute in
+**minutes**, so all 494 land in *"Limited CBD access (>60 min)"* for **3 points
+of 30** — while **74 of them are within 10 km of their own CBD**, the closest
+0.4 km. A 27-point inversion on a dimension weighted at 25%.
+
+Separately, **438 of the 1,114 commutes were never a route**: when the Distance
+Matrix call fails, the helper returns straight-line distance × 1.5 minutes as
+`mode: 'estimated'`, mean 10,125 minutes. `commute.mode` is the only thing that
+tells the two apart.
+
+### 57.4 Counts, failed reads, and 183 foreign measurements
+
+Every "within N km" count is `min(actual, 10)` — the field names promise a
+radius count they do not deliver. At the ceiling: restaurants 990/1,114
+(88.9%), schools 851 (76.4%), parks 818 (73.4%), healthcare 686 (61.6%),
+shopping 596 (53.5%).
+
+A failed read is stored as an empty area: the fetch helper's `catch` returns
+`{ count: 0, results: [] }`, which becomes `nearest*: 'N/A'` and
+`distanceTo*: 0`. Zero is the modal school and hospital distance.
+
+And 183 objects measure a location outside Australia. **US school vocabulary
+appears in 31 of those 183 and in 0 of the 931** whose coordinate resolves to
+an ASGS boundary — an independent confirmation of §56's classification, from a
+completely different field. One object's coordinate is 53.44, −2.98 (Liverpool,
+England) with "Early Learners Day Nursery" as its nearest school.
+
+Two further findings that are real but weaker, recorded as such: Google's
+`type=school` admits childcare centres, driving, swim and music schools — the
+modal nearest school across the corpus is "Style Academy Australia", 66 reports
+at 0.02 km — and `topSchools[].rating` is a Google user rating, zero where
+absent, not an academic one.
+
+### 57.5 What was built
+
+`locationEvidenceProvenance.pure.ts` classifies every field into seven kinds.
+Four are non-evidence (`legacy_non_evidence`, `measured_misdirected`,
+`read_failed`, `offshore`); `measured_capped` and `measured_unverified_class`
+are **disclosed rather than discarded**, because a saturating count still
+separates a remote property from an urban one.
+
+`report_location_provenance` holds the verdict beside the record. Nothing
+edits `location_intelligence` and no issued report changes.
+
+| walk score | commute | reports |
+| --- | --- | ---: |
+| `legacy_non_evidence` | `measured_misdirected` | 364 |
+| `legacy_non_evidence` | `measured` | 307 |
+| `legacy_non_evidence` | `legacy_non_evidence` (estimated) | 253 |
+| `offshore` | `offshore` | 183 |
+| `measured_capped` | `measured` | **3** |
+| `measured_capped` | `legacy_non_evidence` | 2 |
+| `legacy_non_evidence` | `read_failed` | 2 |
+
+The table is materialised in SQL and the classifier is TypeScript, so
+`locationEvidenceProvenance.spec.ts` compares the two on **23 verbatim
+production objects** covering all four stored shapes. That comparison is what
+stops them drifting — and it is what caught the `estimated` commute, which the
+first version of the classifier wrongly called a measurement.
+
+**Three rules.** A template is not a measurement, and a measurement of the
+wrong thing is not a template — they need different remedies, and collapsing
+them would discard 364 recoverable commutes. A ceiling is disclosed, never
+silently trusted. And `legacy_non_evidence` is a status, not a deletion.
+
+### 57.6 The live writer, fixed
+
+Four faults, all still live before this:
+
+1. **The Sydney default is gone.** `resolveCbdDestination` returns null for an
+   absent or unrecognised state and the caller measures nothing rather than
+   something else.
+2. **The invented commute is gone.** A failed route returns an explicit
+   not-measured with a reason, and no number a reader could mistake for a
+   journey. `destination_unknown` and `no_route_returned` send an operator to
+   different remedies.
+3. **A latent crash is fixed.** `public-transport-service` answers
+   `{ success, data: {…} }` and the consumer took the *envelope*, so
+   `publicTransportData.stopsWithin1km.length` dereferenced undefined —
+   reproduced by execution against the service's real success body. It would
+   have thrown for every location a loaded feed covers: Sydney, south-east
+   Queensland, Darwin, Alice Springs, 185,177 stops. Latent rather than fired,
+   because the last eight reports are all outside those feeds.
+4. **The `qualityScore` branch is deleted, not left dormant.** The service
+   publishes no such field now, and a dormant branch is one service change away
+   from restoring the contamination.
+
+`projectTransportForLocationIntelligence` states the rule once: **naming a
+field the source cannot fill is how a template gets written.**
+`TEMPLATE_ONLY_TRANSPORT_FIELDS` names the nine a stops feed cannot answer and
+a test asserts the stored block contains none of them. Typing that projection
+caught a real error in this change's own first draft — it read
+`nearest.distanceMetres` where the field is `metres`, which would have stored
+null for every property.
+
+### 57.7 Staged readiness, recalculated
+
+Measured over the whole corpus of 1,207, with geography from §56 and the
+financial precedence from §56.4:
+
+| stage | ready | of 1,207 | what binds it |
+| --- | ---: | ---: | --- |
+| Geography | **931** | 77.1% | 183 coordinates outside Australia, 93 with none |
+| Growth | **0** | 0% | no licensed suburb price series is held |
+| Demand | **0** | 0% | no licensed vacancy / days-on-market series |
+| Yield | **222** | 18.4% | weekly rent — 493 have a price, 226 a rent |
+| Risk | **105** | 8.7% | weekly net (188), then LVR (251) |
+| Location | **3** | 0.2% | §57.5 |
+| Partial composite (≥3 dimensions) | **2** | 0.2% | |
+| Full composite (5 dimensions) | **0** | 0% | Growth and Demand are empty |
+| **A/A+ evidence ready** | **0** | 0% | |
+
+Component coverage, so the constraint is legible rather than only the verdict:
+
+| input | present | of 1,207 |
+| --- | ---: | ---: |
+| dwelling type (a real one) | 896 | 74.2% |
+| purchase price | 493 | 40.8% |
+| LVR | 251 | 20.8% |
+| weekly rent | 226 | 18.7% |
+| weekly net | 188 | 15.6% |
+
+The purchase-price figure is 493 rather than ME-4's 203 because §56.4's
+precedence reads `manual_overrides` as the calculator's input. That is a
+2.4× gain from data already stored, and it is the only one of these numbers
+that improved by better reading rather than by acquiring anything.
+
+**Nothing here changes the A = 75 / A+ = 85 thresholds, and nothing here is a
+backtest.** A backtest on this corpus would be a measurement of an empty
+Growth dimension and a quarantined Location one.
+
+---
+
+## §58 — ME-5: the centre a property belongs to, and the risk that is the buyer's (2026-09-08)
+
+§57 quarantined the historical Location evidence. This is what replaces it, and
+what the same measurement turned up about Risk.
+
+### 58.1 Two wrong commutes, only one of which is a bug
+
+The corpus measured every property's access to its **state capital**:
+
+* **Bentley WA, 8 km from Perth, stored 82.1 hours.** A defect — the
+  destination defaulted to Sydney (§57.3).
+* **Moranbah QLD stored 1,487 minutes to Brisbane.** *Not* a defect. The
+  Distance Matrix answered correctly. The **question** is wrong: nobody in
+  Moranbah commutes to Brisbane, and grading the property on how long that
+  takes grades it on being regional.
+
+`resolveActivityCentre` reads the answer the ABS already publishes, in three
+tiers, most specific first:
+
+| tier | what it is | why it is trusted |
+| --- | --- | --- |
+| `capital_labour_market` | a Greater capital's GCCSA | the GCCSA is *defined* from journey-to-work data |
+| `significant_urban_area` | an SUA of 10,000+ | the functional town outside a capital |
+| `local_centre` | the Urban Centre itself | where the property **is**, not where its jobs are |
+
+The UCL is deliberately **last**. The brief's caution — that a UCL is not
+automatically the right activity centre — is exactly right: a dormitory town's
+UCL says nothing about where its residents work.
+
+SUA was resolved for all 931 placed reports against the ABS ASGS 2021 layer
+(931 of 931 answered HTTP 200). The result:
+
+| tier | reports | distinct centres |
+| --- | ---: | ---: |
+| capital labour market | **587** | 12 |
+| significant urban area | **236** | 34 |
+| local centre | **108** | 35 |
+| none | 0 | — |
+
+So **344 reports — 37% — were being graded on a commute to a city they have no
+relationship with**, the Sunshine Coast's 92 among them.
+
+That resolution also found the trap a loader has to know about: **the ABS tiles
+the continent, so "no urban centre here" arrives as a NAMED polygon** —
+`Not in any Significant Urban Area (Qld)`, on 131 of 931 rows. Reading it as a
+place would route every rural property's access to a centre of that name.
+
+Two tiers resolve a **named centre with a null coordinate**, because the ABS
+publishes the boundary and not the centre, and a polygon centroid would be an
+invention of exactly the kind this programme keeps removing. Those report
+access as *not yet measurable* rather than measuring to a guess.
+
+### 58.2 A jurisdiction's own feed, or nothing
+
+Reconstructing the transport reading for all 931 placed reports against the
+185,177 loaded stops — boardable stops within 1,600 m, grouped to places by
+`parent_station`:
+
+* **355 have a stop within 1,600 m.** Median nearest 113 m, closest 11 m,
+  furthest-nearest 1,512 m. Against a stored template that said *"3 stops
+  within 1 km"* for all 1,108.
+
+But the raw reconstruction hides a trap. **`nsw_sydney` is Transport for NSW's
+whole bundle**, not Sydney's, and it carries the interstate rail and coach
+network — so a **Docklands property finds "Melbourne (Southern Cross) Station"
+225 m away**, a Wodonga property finds NSW border-town buses, and a Lyneham
+property finds NSW school services in Canberra.
+
+| state | a stop within 1.6 km | in-jurisdiction | interstate feed only |
+| --- | ---: | ---: | ---: |
+| QLD | 221 | 221 | 0 |
+| NSW | 123 | 123 | 0 |
+| VIC | 6 | **0** | **6** |
+| ACT | 4 | **0** | **4** |
+| SA | 1 | **0** | **1** |
+
+Every one of those 11 is a real stop at a real distance, and none measures the
+network the property's residents use. It is **worse than the honest
+`outside_loaded_networks`**, because a Docklands property with trams every three
+minutes would be reported as having one stop nearby. `readingIsInJurisdiction`
+applies the rule where both the live service and a backtest must apply it
+identically. **344 of 931 carry a genuine in-jurisdiction reading.**
+
+### 58.3 Location Evidence V2, and its neutrality
+
+| component | source | held today |
+| --- | --- | --- |
+| transit stops | loaded GTFS, by coordinate | NSW, QLD SEQ, NT ×2 |
+| activity centre | ABS ASGS 2021 | all 931 placed |
+| access to that centre | not acquired | no |
+| schools, shops, health | not acquired | no |
+
+Three rules, each with a test.
+
+**There is no composite score.** A weighting over one measured component and
+three absent ones is a confident answer to a question the evidence cannot
+settle. The module publishes components and coverage; whether that is enough to
+grade is the caller's decision.
+
+**Transit is measured or unmeasured, never poor.** Inner-metro Perth reads
+`not_covered` because WA publishes no loaded feed, and a test forbids that
+absence being worded as poor service. Scoring those 587 as badly served would
+grade them on which state government publishes an open feed.
+
+**Nothing compares across tiers or across coverage states.** Minutes to the
+Perth CBD and minutes to a country town's main street are different quantities.
+A test asserts a Moranbah property scores no worse than an inner-Perth one on
+components measured.
+
+### 58.4 Risk: 70% of its weight is the buyer, not the property
+
+The same repeated-address analysis settles the Risk model question with
+evidence rather than preference. 55 addresses appear in more than one report:
+
+| what differs for the same address | addresses |
+| --- | ---: |
+| purchase price | 7 of 55 |
+| **LVR** | **16 of 55** |
+| **weekly cash flow** | **21 of 55** |
+
+The property is stable; the financing is not. Concretely: **1 Boxer Drive,
+Wyndham Vale — two reports, the same day, the same $635,000, the same −$562
+weekly net — one at 80% LVR and one at 90%.** Three more Truganina addresses
+carry the identical pair. On the leverage anchors that is 62 → 30, weighted
+0.40: **12.8 points of Risk for a number an operator typed into a calculator.**
+
+| model | what it scores | the buyer's position |
+| --- | --- | --- |
+| **A** asset only | asset type, overheating | dropped |
+| **B** asset scored, finance disclosed | asset type, overheating | reported beside the grade |
+| **C** blended (today) | all four | folded into the grade |
+
+They are separated by an **invariant**: the same property, on the same day, at
+the same price must receive the same property Risk score. A and B hold it by
+construction; **C fails it on 16 of 55 repeated addresses.**
+
+The fair counter-argument, which is the strong one: a report IS about a
+specific purchase at a specific LVR, so the buyer's leverage really does bear
+on that investment's risk, and **Model A throws it away.** That is precisely
+why **B is preferable to A** — it moves the information out of a number
+presented as a property grade and reports it as what it is.
+
+The trade-off in the other direction is coverage: A and B are scoreable on
+**879** of 1,207 reports against C's **1,010** — and **131 of C's are scoreable
+on buyer facts alone**, which is to say C can produce a Risk score for a report
+that carries no property attribute at all. That is not a point in C's favour.
+
+**Recommendation: Model B**, on the invariance evidence and on the coverage
+composition — not because it was the preferred hypothesis. `scoreRisk` is
+untouched, nothing is switched, and no live path calls `riskModels.pure.ts`.
+
+**Overheating sensitivity (item 13).** The anchors are flat below 12% growth,
+so ordinary appreciation is not charged as risk — charging for it would be a
+second opinion on Growth. Dropping leverage raises overheating's share from
+0.10 to 0.33, which is the trade-off to weigh rather than a free improvement,
+and it is pinned by a test. Overheating remains **unscoreable on this corpus
+anyway**, because no suburb price series is held.
+
+### 58.5 The forward geography writer (item 15)
+
+`report_geography` holds 1,114 rows, all stamped 2026-09-08, all written by the
+backfill — and **nothing wrote a row for a report created afterwards.** A grep
+of the whole fleet finds the table named in four places, every one of them a
+pure module or a spec. The same is true of `report_location_provenance`.
+
+A derived table that only a backfill maintains is correct on the day it lands
+and silently stale from the next one, which is the failure this programme keeps
+finding. `resolve-report-geography` is what maintains it: it resolves the
+geography for reports that have no row, from the report's own stored
+coordinate, through the same `asgsGeography.pure.ts` the backfill used.
+
+Four rules. The **coordinate is the question** and the free-text address is
+never consulted. A **failed boundary service is `unresolved`, never guessed** —
+and the ArcGIS endpoint reports failure as HTTP 200 with an error body, so that
+shape is treated as transport and left retryable, unlike `outside_australia`,
+which is final. It **never writes to `investment_reports`**. And the **batch is
+bounded at eight** — one report costs six queries to a public service somebody
+else pays to run, so a small batch that drains over several invocations is the
+courteous shape, and a bad deploy cannot spend an afternoon of somebody's rate
+limit.
+
+`verify_jwt = true` is a decision rather than a default: the function holds the
+service-role key and performs no auth check of its own, so the gateway is the
+only thing between an anonymous caller and a sweep that spends the ABS
+geoserver's budget on our behalf. A service-role key is itself a valid JWT, so
+a scheduled invocation still reaches it.
+
+**It is not deployed and not scheduled**, and that is deliberate: deploying an
+Edge Function and adding a cron entry are production changes, and this stage's
+instruction was to fix the writer, not to switch it on.
+
+### 58.6 The asset-type component, challenged (item 12)
+
+`ASSET_TYPE_SCORES` asserts house 82, duplex 74, townhouse 66, unit 55,
+apartment 55, land 45. Four things are true of it, and none is comfortable.
+
+**The numbers are unevidenced.** Nothing in this repository justifies why a
+duplex is eight points safer than a townhouse. They are a plausible ordering
+somebody wrote down, and the programme's own rule — a point must come from a
+real observation or a deterministic calculation — does not admit them as they
+stand.
+
+**It barely discriminates.** The stored distribution:
+
+| stored type | reports | scored |
+| --- | ---: | ---: |
+| house | 631 | 82 |
+| *residential property* (placeholder) | 145 | — |
+| *(empty)* | 128 | — |
+| apartment | 110 | 55 |
+| land | 72 | 45 |
+| *other* (placeholder) | 38 | — |
+| unit | 37 | 55 |
+| duplex | 18 | 74 |
+| townhouse | 11 | 66 |
+| **house_and_land** | **9** | **—** |
+| **villa** | **8** | **—** |
+
+Of the 896 carrying a real type, **631 are `house`: 70.4% receive the identical
+82**, so for seven reports in ten this component is a constant.
+
+**Two real types resolve to nothing.** `house_and_land` and `villa` are genuine
+stored values absent from the table. Under Model C that costs 0.20 of the
+weight; under A and B, where asset type carries 0.67, it costs most of the
+dimension — a test asserts C keeps three components on such a report while A
+keeps one.
+
+**Vacant land is a category error, not a low score.** Land has no dwelling, no
+rent, no depreciation and different financing, so its risk is not a point on the
+same scale as a house's. Scoring it 45 says *"a somewhat worse house"*, which is
+not what it is.
+
+The honest conclusion: **asset type is a classifier, not a score.** Nothing here
+changes it — this records what it is worth *before* anybody weights it more
+heavily, which is precisely what Models A and B would do.
+
+---
+
+## §59 — ME-5.1: correcting Risk, and what the geography really contains (2026-09-08)
+
+### 59.1 The contradiction in ME-5's own recommendation
+
+§58.6 established with evidence that **asset type is a classifier, not a
+score**. §58.4 then recommended Model B — which weights `assetType` at **0.67**,
+more than triple the **0.20** the live model gives it. The recommendation would
+have *tripled* property-type bias while the same document argued it should not
+score at all.
+
+Property invariance did not catch it because **invariance is the wrong
+instrument**: it asserts the same property scores the same across reports, and
+is silent on whether a house and a unit are compared fairly. A test now records
+that Model B separates a house from a unit by more than ten points on type
+alone.
+
+### 59.2 Model D — type selects the questions and scores none of them
+
+    propertyType → selects the applicable risk QUESTIONS
+                 → genuine property evidence answers them
+                 → Risk exists only where enough of it does
+
+What Aurixa actually holds, measured rather than assumed:
+
+| candidate source | rows | grain | property-level? |
+| --- | ---: | --- | --- |
+| crime | 54,001 | postcode / LGA / SA2, four states | no |
+| SEIFA + Census | 5,270 | postcode | no |
+| climate | 1,237 | area | no |
+| `planning_data_cache` | **2** | — | effectively empty |
+| flood, bushfire, strata, condition, inspection | **none** | — | not held |
+
+**There is no property-level risk evidence in the platform**, so every question
+resolves `unavailable` and **Risk is null**. Crime and SEIFA remain *named* in
+each schema, excluded from scoring and attributed to Location, so the overlap is
+visible rather than silently double-counted. `acquisitionBacklog()` publishes the
+seven questions with what would answer each — the schema is also the shopping
+list, and **none of it is built in this stage**.
+
+### 59.3 The second renormalisation problem
+
+Removing asset type left a subtler version of the same fault: with exactly one
+question answered, averaging over "the questions that were answered" made that
+single observation **100% of Risk**.
+
+`observations` and `eligibility` are now separate. Hazard and planning are both
+the `site` category, so two answers there are **one** independent category, not
+two. `MINIMUM_INDEPENDENT_CATEGORIES` is declared **uncalibrated** and
+`RISK_METHODOLOGY_STATUS` is `provisional / uncalibrated`. **D2 remains the
+leading candidate and is explicitly not final.**
+
+A design flaw of mine that the tests caught: overheating was averaged in at 25%
+of the weight, and its anchors sit at 100 below 12% growth — so **a calm market
+raised the risk score of every property**. Taking `min()` instead lets a hot
+market become the whole score. It is now a bounded deduction: at most 25 points
+off, never an addition.
+
+### 59.4 Finance Suitability
+
+Two results, structurally separate. `FinanceSuitabilityResult` exposes no
+`score`, `points`, `value`, `weight` or `grade` field, so a composite cannot
+read it by accident. On the real Wyndham Vale pair the leverage reading differs
+and the property risk does not.
+
+### 59.5 The trusted geography population is 867, not 931
+
+Of the 931 ME-5 called trustworthy, **64 sit at exactly −33.8688, 151.2093 —
+Sydney CBD to four decimal places, the geocoder's former literal fallback.** All
+26 reports whose address is `Unknown Property (rec…)` are among them, and **none
+of the 64 has an address mentioning Sydney.** `assessAuPoint` could never catch
+them: Sydney is in Australia and in NSW.
+
+**Final classification of the 1,207:**
+
+| class | count |
+| --- | ---: |
+| trusted — anchored address | **336** |
+| trusted — unanchored but validated | **531** |
+| **trusted total** | **867** |
+| geocode failure value | 64 |
+| offshore / unplaceable | 183 |
+| no geography row (no coordinate stored) | 93 |
+
+### 59.6 Why the required-anchor gate was rejected
+
+| cohort | has state token / postcode / "Australia" | has none |
+| --- | ---: | ---: |
+| corrupted (183) | 3 | **180** |
+| resolved (931) | 338 | **593** |
+
+Recall is excellent and the cost is ruinous: **593 of 931 legitimate reports —
+63.7%** — are ordinary bare street lines that geocoded correctly.
+`property_specs.state` and `.postcode` are **NULL on every report in both
+cohorts**, so there is nothing to compose the missing context from. The anchor
+is a **disclosed signal**; 531 of the 867 trusted records are unanchored and
+validated, and their provenance says so.
+
+Enforcement sits where it discriminates: refuse what is definitively not an
+address, and adjudicate the answer. A fallback coordinate raises
+`suspected_failure_value`; `confirmed_failure_value` needs positive evidence.
+**A genuine 1 Martin Place must stay geocodable.**
+
+Item 5 asked whether the continent centre is measured or theoretical. I added it
+on theory and then checked: **two stored coordinates sit on it exactly.** Every
+entry now carries its measured `occurrences` — 64 and 2.
+
+### 59.7 Location provenance, all nine families
+
+Only `genuine_measured` is admissible to V2, and `admissibleToV2` is *derived*
+from the class so the two cannot drift. Beyond §57's transport findings:
+
+* every "within N km" count is the Places page slice — **Public Transport 974 of
+  1,114 at the ceiling (87.4%)**, restaurants 990, schools 851, recreation 818,
+  healthcare 686, shopping 596;
+* **`amenities[].score` is a pure function of the capped count**, taking 6–11
+  distinct values across 1,114 objects;
+* `schools.nearestSchool` is a real nearest place of Google type `school`, which
+  admits childcare, driving, swim and music schools — the modal value is **"Style
+  Academy Australia" on 66 reports at 0.02 km**;
+* `topSchools[].rating` is a Google *user* rating, zero where absent;
+* **no employment or activity-access field exists at all.**
+
+### 59.8 National transport coverage
+
+`nsw_sydney` is misnamed: its bounding box runs lat −37.82 to −27.46 and lon
+138.59 to 153.62, reaching Melbourne, Adelaide and Brisbane, because it is
+Transport for NSW's **whole** bundle. `route_type` is NULL on all 185,177 stops,
+so **mode is not established anywhere.**
+
+| state | settlement | reports | own-feed stop | interstate only | none |
+| --- | --- | ---: | ---: | ---: | ---: |
+| QLD | metro | 226 | 200 | 0 | 26 |
+| **WA** | **metro** | **164** | **0** | 0 | **164** |
+| **VIC** | **metro** | **145** | **0** | 3 | **142** |
+| QLD | inner regional | 149 | 44 | 0 | 105 |
+| NSW | metro | 47 | 47 | 0 | 0 |
+| ACT | metro | 4 | 0 | 4 | 0 |
+
+**The two largest metro cohorts after south-east Queensland — Perth and
+Melbourne — have no transport evidence at all.** Scoring transport on this
+coverage would rank a Brisbane property above an identical Perth one because
+Queensland publishes a feed and Western Australia has not been ingested. So
+transport is `unavailable`, never neutral-scored, and a test forbids the absence
+being worded as poor service.
+
+### 59.9 Readiness, recalculated
+
+| stage | ready | of 1,207 |
+| --- | ---: | ---: |
+| Geography Ready | **867** | 71.8% |
+| Growth Ready | **0** | 0% |
+| Demand Ready | **0** | 0% |
+| Yield Ready | 222 | 18.4% |
+| Property Risk **Evidence** Ready | **0** | 0% |
+| Finance Suitability Ready | 251 | 20.8% |
+| Location — centre resolvable | 867 | 71.8% |
+| Location — transport possible at all | 465 | 38.5% |
+| Partial composite (geography + yield) | 174 | 14.4% |
+| Full Composite Ready | **0** | 0% |
+| A/A+ Evidence Eligible | **0** | 0% |
+
+Property Risk and Finance Suitability are counted separately, as instructed.
+
+### 59.10 What is NOT done, and why
+
+**Item 14's stratified Location V2 sample is not delivered.** It would be
+dishonest to produce one: of the nine Location families, eight are inadmissible
+and the ninth (the coordinate) is not a Location reading. The only genuinely
+measurable components today are the activity centre — resolvable for all 867 —
+and transit, possible for 465 and *only* in NSW, QLD and NT. A "stratified
+sample" spanning Perth, Adelaide and regional Victoria would consist of rows
+reading `unavailable` in every column. **The sample becomes meaningful once at
+least one more evidence family is genuinely re-derived**, and that is the next
+piece of real work rather than something to simulate now.
+
+**No A/A+ backtest.** Growth 0, Demand 0.
+
+## §60 — ME-5.1: the provider activation pack, and one action (2026-09-08)
+
+Two deliverables close ME-5.1's stop point: what each of the four candidate
+providers must supply before an adapter is worth writing, and the single
+operator act that moves the programme off its one remaining blocker.
+
+### 60.1 What this pack may and may not state
+
+One rule decides the shape of everything below, and it is the same rule §54
+opened with: **entitlement is never inferred from public vendor
+documentation.** Three of the four providers publish their reference material
+behind the same gate as their data — `developer.proptrack.com` does not
+resolve, `data.proptrack.com/docs` answers 403 — so for those an endpoint name
+written here would be an invention, and an adapter written against an invented
+endpoint fails at the first call with a defect that looks like a credential
+problem.
+
+So each provider's row is split. **Measured** is what execution established
+from this platform, cited to the section that measured it. **To be obtained**
+is a question put to the vendor, phrased so its answer decides something in
+this repository. A cell that is neither is left as *not established* rather
+than filled.
+
+**No price appears in this pack.** Commercial terms are Aurixa's negotiation
+and no figure — not a band, not an order of magnitude — is stated or implied.
+
+### 60.2 What every provider is asked, and why each answer decides something
+
+The eleven questions are the same eleven for all four, because the thing being
+qualified is the same: whether a figure from this provider can reach a client's
+document, and what the scoring engine may do with it if it can.
+
+| # | question | what it decides in this repository |
+| --- | --- | --- |
+| Q1 | exact endpoints for each measure below | whether an adapter can be written at all |
+| Q2 | authentication scheme, token endpoint, scope names | `market-source-probe` cannot classify a 401 without it |
+| Q3 | finest geography grain actually returned | a postcode median answering a suburb request is a correct answer to a different question |
+| Q4 | dwelling-type segmentation (house / unit, separately) | `resolveAssetClass` distinguishes four classes; a blended median serves none |
+| Q5 | history depth, in periods | `growth5YearCagr` is 0.35 of Growth and needs ≥ 5 years |
+| Q6 | series or point statistic | the consistency component reads a series; point figures forfeit 0.15 |
+| Q7 | transaction count behind each figure | `sampleSize` is 0.20–0.25 of every confidence reading |
+| Q8 | rate limits, per key or per tenant | the prime's keys are forwarded to every clone, so a per-key limit is a fleet ceiling |
+| Q9 | **permitted cache duration** | the platform caches; an unstated duration cannot be complied with |
+| Q10 | **redistribution rights for a client-facing PDF**, in writing | `mayReachClientReport` admits only `open` and `licensed_for_client_reports` |
+| Q11 | **right to persist a derived metric**, and required attribution wording | the grade is derived and stored; attribution has to be typeset, not appended |
+
+Q9–Q11 are not paperwork. Until Q10 is answered in writing, a figure from that
+provider **may be scored in a shadow backtest and may not be rendered in a
+client document** — `EvidencePoint.licensingStatus` defaults to `unverified`
+and the gate is already enforced in code. That is a working state, which is why
+qualification can run while the commercial conversation does.
+
+### 60.3 Domain — the only provider whose contract has been measured
+
+| | |
+| --- | --- |
+| **Credential names declared** | `DOMAIN_API_KEY` (legacy) |
+| **Credential names required** | `DOMAIN_CLIENT_ID`, `DOMAIN_CLIENT_SECRET` — named only by `market-source-probe`, and **settable nowhere**: the Integrations registry's Domain card declares `DOMAIN_API_KEY` alone |
+| **Measured — route** | `/v1/suburbPerformanceStatistics/{state}/{suburb}` answers **404 No Matching Route**; `/v2/…/{state}/{suburb}/{postcode}` answers **401** (§51) |
+| **Measured — auth** | `https://auth.domain.com.au/v1/connect/token` is live and answers `invalid_request` to a bare GET — an OAuth2 client-credentials endpoint (§51) |
+| **Measured — limit of probing** | a dummy key, a dummy Bearer and no header at all produced **byte-identical 401 bodies**; the accepted scheme cannot be read off an unauthenticated probe (§51) |
+| **Package named** | Properties & Locations, scope `api_suburbperformance_read` |
+
+Domain is the one provider where Q1 and Q2 are already answered by execution.
+What remains is Q3–Q11 plus one account fact: whether the Aurixa/Naidu project
+holds that package. Domain's own documentation is explicit that no endpoint is
+reachable until the package is added, and that is a property of the account
+rather than of this code.
+
+One thing the pack surfaced that was not previously recorded: **the credentials
+Domain's current contract requires cannot be entered anywhere in this product.**
+`DOMAIN_CLIENT_ID` and `DOMAIN_CLIENT_SECRET` are named only by
+`market-source-probe`'s presence list; the Integrations registry's Domain card
+declares a single `DOMAIN_API_KEY` field. So even with the commercial side
+settled and a client id and secret in hand, an operator has no field to put them
+in — the card would have to gain two, and the service would have to read them.
+That is small and it is a genuine blocker sitting behind the commercial one,
+and it is recorded here rather than fixed, because changing an Integrations card
+is not this stage's scope.
+
+The engineering consequence is fixed and small: `domain-data-service` calls a
+route that no longer exists, so **it could not have worked whether or not a
+credential was ever configured** — a valid key would have produced 404,
+`response.ok` false, `return null`, and the `marketData: null` that is the
+reading on all 992 scored reports. Rewriting it is `/v2/` plus the postcode
+segment plus a Bearer token; nothing downstream changes, because the scorers
+read `MarketEvidence` and do not know providers exist.
+
+**Growth fields sought:** median sale price by period, house and unit
+separately, at suburb grain, ≥ 5 years. **Demand fields sought:** days on
+market, auction clearance. **Sample fields sought:** transaction count per
+period. **Not offered as far as is established:** vacancy rate.
+
+### 60.4 Cotality (CoreLogic) — an existing relationship, no outbound call
+
+| | |
+| --- | --- |
+| **Credential names declared** | `COTALITY_API_KEY`, `COTALITY_BASE_URL` |
+| **Credential names likely required** | `COTALITY_CLIENT_ID`, `COTALITY_CLIENT_SECRET` — the probe reports presence for both shapes because the repository models a single key while the API wants client credentials |
+| **Measured — implementation** | **scaffolding only.** Every branch resolver in `cotality-service` is a stub; there is no `fetch` to Cotality anywhere in it, so a credential alone changes nothing (§52) |
+| **Measured — licensing** | `unverified`. Cotality's own scoping document leaves cache duration, redistribution rights for client PDFs and derived-metric persistence **open** |
+| **Endpoints** | *not established.* Behind the account |
+
+Cotality is the provider with the strongest commercial starting position and
+the weakest engineering position: Aurixa already holds a relationship, and this
+repository has never made a call. It is therefore the one where Q1 has to be
+answered before anything else, and where **Q10 and Q11 are the decisive
+questions** — the scoping document raising them and not settling them is
+recorded evidence that they are live, not an oversight to be assumed away.
+
+The additional ask specific to Cotality: whether the entitlement includes
+**vendor discount**, which is one of the three lenses of Demand's sale-urgency
+component and which Domain is not established to publish.
+
+### 60.5 PropTrack — the licensed route to realestate.com.au
+
+| | |
+| --- | --- |
+| **Credential names declared** | `PROPTRACK_API_KEY`, `PROPTRACK_BASE_URL` (both empty, seeded 2026-08-02, never set) |
+| **Measured — reachability** | 403 at the edge without a credential, from the Supabase runtime (§54) |
+| **Measured — documentation** | `developer.proptrack.com` does not resolve; `data.proptrack.com/docs` answers **403**. The documentation is behind the same gate as the data (§54) |
+| **Scraping the consumer site** | **refused.** `realestate.com.au/robots.txt` expressly bars automated access (§52). Not attempted, not planned |
+| **Endpoints, fields, response shape** | *not established, and deliberately not guessed* |
+
+Every one of Q1–Q11 is open for PropTrack, and that is the honest reading
+rather than a gap in this work: there is not even public documentation to
+misread. One question is sequenced ahead of the others — **Q-vacancy: does
+PropTrack publish a rental vacancy rate at suburb grain?** If it does, one
+commercial relationship covers growth, sale urgency and rental tightness
+together, and SQM need not be pursued at all. So it is asked before SQM is
+approached, not after.
+
+### 60.6 SQM Research — one measure nobody else is established to publish
+
+| | |
+| --- | --- |
+| **Credential name declared** | `SQM_RESEARCH_API_KEY` (empty, never set) |
+| **Measured — reachability** | `sqmresearch.com.au` answers 200 from the Supabase runtime (§54) |
+| **Scraping** | **refused.** Not attempted, not planned |
+| **What it publishes** | vacancy rates, stock on market, rental series |
+| **Grain** | suburb / postcode |
+| **Endpoints and licence** | *not established* |
+
+SQM matters for exactly one reason and it is a sharp one: it is **the only
+declared source of a rental vacancy rate at suburb grain**, and no Australian
+government publisher offers one. Vacancy is 0.35 of Demand — the single largest
+component — so absent SQM or a provider that bundles vacancy, **Demand runs at
+a maximum of 65% coverage by construction**, and that ceiling is a fact about
+the methodology rather than about any property.
+
+Its pack is therefore the eleven questions narrowed to three measures
+(vacancy rate, stock on market, advertised rent series) plus Q9–Q11 unchanged.
+
+### 60.7 The order, and what it turns on
+
+Not a preference — each step's outcome decides whether the next is needed.
+
+1. **Domain.** The only measured contract, an account that may already hold the
+   package, and the smallest engineering delta (`/v2/` + postcode + Bearer).
+2. **Cotality.** An existing relationship; Q1 and Q10/Q11 in the same
+   conversation.
+3. **PropTrack**, with Q-vacancy asked first.
+4. **SQM**, only if none of the three above returns vacancy.
+
+**Pricefinder is deliberately not pursued.** Declared, empty, and left there:
+its stated coverage overlaps Domain, Cotality and PropTrack and it publishes no
+measure the other three lack. A fourth relationship is not investigated until
+the first is credentialled and qualified.
+
+### 60.8 What does not change while this runs
+
+The scoring engine reads `MarketEvidence` and does not know providers exist, so
+adding one is an adapter plus a `EvidenceProvider` value — not a change to any
+scorer. Three standing rules hold throughout:
+
+- **Every "if none" is absent, never a default.** No zero, no 50; the coverage
+  figure beside a score says how much of the methodology ran.
+- **ABS is the benchmark row and only the benchmark row.** §48 records what
+  happens when a regional figure stands in for a local one, and the contract
+  keeps `benchmark*` separate so the two cannot be confused.
+- **No row is a scrape.** Where a licensed route does not exist, the measure is
+  absent and the report says so.
+
+### 60.9 The probe had no door, and now has one
+
+The probe was written in §51 and, when this section was written, had **never
+been run** (its one production run came 28 minutes after this work deployed —
+§66). Not because it is
+broken: `verify_jwt = true` at the gateway *and* its own `verifyAuth` mean it
+needs an authenticated administrator session, and **no surface in the product
+invoked it** — a grep of `src/` returns nothing. The only ways to reach it were
+a browser console or a service-role key on the wire, and neither is an
+instruction worth giving. A diagnostic nobody can run is a diagnostic that does
+not exist.
+
+So the deliverable for this item is a door rather than a procedure:
+`MarketSourceProbePanel` on the Integrations page — one button, invoked with
+`invokeSecureFunction` on the operator's own session, which is exactly the
+authentication the probe already requires. Nothing about the probe changed; it
+still writes nothing, still takes its targets by name from its own allow-list,
+and still never returns a credential value.
+
+The verdict vocabulary is now **one implementation**, in
+`sourceProbeReading.pure.ts`, which the panel renders and a spec checks against
+the function's own `Verdict` and `ProviderStatus` unions and its
+`CREDENTIAL_NAMES` list by reading the source. Two copies of "what does
+`not_entitled` mean and whose problem is it" is precisely how a commercial
+question comes to be handed to an engineer.
+
+Three rules are pinned by that spec. **A credential is presence only** — the
+reading takes `Record<string, boolean>`, so no value, length or prefix is ever
+in scope; a length is a hint and a prefix identifies the issuer. **An
+unrecognised verdict is its own reading, never a default**, and a test asserts
+no unknown value can be drawn as positive — a fabricated finding here routes a
+real problem to the wrong person. And **owner is part of the finding**:
+`not_entitled` is `commercial` (entitlement is a property of the provider
+account and is never worked around in code), `route_not_found` is
+`engineering`, `credential_absent` is `operator`, `server_error` is `vendor`.
+"Unavailable" sent this investigation to the wrong remedy twice; a verdict that
+does not say whose it is gets routed by guesswork.
+
+One more thing the reading refuses to say: `reachable` does **not** mean the
+payload carries the measures the engine needs. It means the route exists and
+the request was accepted. Qualification — geographic level actually returned,
+dwelling type matched, sample size, period covered, history depth — is a
+separate step, and a test asserts the reading says so.
+
+### 60.10 The one operator action
+
+> **Where:** the Command Centre, signed in as an administrator —
+> **Integrations** — reached from the sidebar under Administration. The route
+> is **`/integrations`**; there is no `/admin/integrations` and the router
+> 404s on it.
+>
+> **What to do:** press **Run source probe** at the top of the page. One click.
+> Nothing is written, no report or score is touched, and no credential value
+> leaves the runtime.
+>
+> **What to send back:** the panel's three blocks — the credential-name list
+> (which names read *set* / *not set*), the per-provider standing, and the
+> per-source verdict rows. Presence only. **Do not send a key, a fragment of
+> one, or a screenshot that includes one.**
+
+**Correction — this instruction named the wrong URL when first written.**
+ME-5.1 said `/admin/integrations`. `App.tsx` declares
+`<Route path="integrations">` and the navigation registry points at
+`/integrations`; loading `/admin/integrations` in a built bundle logs
+*"404 Error: User attempted to access non-existent route"* and renders the
+not-found page. An operator clicking the sidebar entry was never affected —
+that link has always been right — but an instruction naming a URL that 404s
+is one an operator cannot follow, and it is exactly the kind of detail that
+turns "the feature is missing" into a half-day investigation.
+
+Two things that answer are worth the click even though every credential slot is
+expected to be empty.
+
+**The runtime presence read has never been taken.** §49 recorded the
+`integration_configs` row for `DOMAIN_API_KEY` as present-and-empty and said in
+as many words that this is *suggestive, not conclusive* — because
+`update-integration-secret` writes the project environment through the
+Management API and **never writes that table**. Only the runtime can see
+`Deno.env`, and this is the first read of it across all twelve names.
+
+**The government sources are being asked from the right egress.** VIC, the NSW
+Valuer General, SA and ABS refuse *this development* egress — `land.vic.gov.au`
+answers 403 and the NSW Valuer General 502 — exactly as `directory.gov.au` and
+`aph.gov.au` did during the PEP work, where the two egresses turned out to
+differ. §52 answered part of this with `pg_net`; the probe asks from the Edge
+Function runtime, which is where a report generator would ask.
+
+If every credential reads *not set*, that is the answer and it is a complete
+one: the blocker recorded in §54.6 has not moved, it is commercial, and no
+engineering step unblocks it. The provider order in §60.7 is then the next act,
+and it is Aurixa's rather than this repository's.
+
+---
+
+## §61 — ME-6: real market evidence activation (2026-09-08)
+
+ME-6's objective is one thing: get genuine, licensed, suburb-level Australian
+market evidence flowing through `MarketEvidence` so Growth (40%) and Demand
+(15%) can be computed from real data. This section records what was established
+by execution, what was built, and the exact point at which provider access
+becomes the gate.
+
+**Stage outcome: B — commercial activation remains blocked.** No credential
+exists for any provider, so no genuine market figure was retrieved. Everything
+that does not require one is complete, and §61.8 states precisely what unblocks
+it. **No substitute Growth or Demand data was invented to keep engineering
+moving.**
+
+### 61.1 The ME-5.1 components are present
+
+All eleven confirmed on `0eda00b02`: canonical geography and its maintenance
+columns, trusted/untrusted classification, the `MarketEvidence` contract,
+provider-neutral ingestion, the shadow scorer, the backtest harness, Model D
+property Risk, separate Finance Suitability, Location evidence provenance,
+`market-source-probe`, and the Integrations probe UI. None was redesigned.
+
+### 61.2 Provider contracts, established by execution — and two ME-5.1 corrections
+
+Every call below was made **with no credential**. Reproducing §51's
+measurements on today's date:
+
+| request | result | reading |
+| --- | --- | --- |
+| `GET /v1/suburbPerformanceStatistics/NSW/Bowral` | **404** No Matching Route | the route the repo calls is gone |
+| `GET /v2/suburbPerformanceStatistics/NSW/Bowral` | **401** | exists, credential-gated |
+| `GET /v2/suburbPerformanceStatistics/NSW/Bowral/2576` | **401** | exists, credential-gated |
+
+**Domain's developer portal is public**, which §54 did not establish — the 401
+body names it, and its sitemap enumerates every page. Reading it corrects ME-5.1
+§60.3 on two counts.
+
+**Correction 1 — `X-API-Key` is NOT obsolete.** `/docs/latest/authentication/`
+documents *two* current schemes side by side: an API key (as an `X-API-Key`
+header or an `api_key` query parameter) **and** OAuth2 client credentials. ME-5.1
+called the repository's implementation "legacy on three independent counts" and
+the third count was wrong. The correct reading is that Domain offers both and
+the account decides which applies.
+
+**Correction 2 — the path shape was not wrong either.** `/v2/…/{state}/{suburb}`
+exists as its own documented route beside `/v2/…/{state}/{suburb}/{postcode}`,
+and both answer 401. So of the three counts, exactly one survives: **the version
+prefix**. That is a materially smaller change than ME-5.1 recorded, and it is
+the kind of error that comes from inferring a contract from an error code
+instead of reading the vendor's own documentation.
+
+What the documentation settles, precisely:
+
+| question | Domain's answer |
+| --- | --- |
+| token endpoint | `POST https://auth.domain.com.au/v1/connect/token` |
+| token auth | **HTTP Basic** — client_id as username, client_secret as password |
+| scope for suburb performance | `api_suburbperformance_read` |
+| allowed environments | **Any** (sandbox included) |
+| user context required | **No** — client credentials suffice |
+| unavailable scope | `400 invalid_scope` |
+| authorisation rate limit | 3,000 token requests/hour; cache to expiry |
+| general rate limit | 1,000–3,000 requests/minute by plan |
+| daily quota | per plan, reset **10am AEST** |
+| usage headers | `X-Quota-PerMinute-Limit`, `-Remaining`, `X-Quota-PerDay-Limit` |
+| package gate | *"You will not be able to access any API Endpoint until the required API package(s) have been added to your project."* |
+
+One measured obstacle: from **this development egress**, presenting an
+`Authorization` header to the token endpoint returns **403 Access Denied** from
+an edge WAF, while a bare POST returns the ordinary `400 invalid_request`. That
+is an egress fact, not a credential fact, and it is exactly the class §52
+recorded — two egresses differing. It must be re-measured from the Supabase
+runtime before any conclusion is drawn, which is what `market-source-probe` is
+for.
+
+**Cotality/CoreLogic — a live gateway, and the registry points at the wrong
+host.** `developer.corelogic.asia` answers 200 (a client-rendered portal, no
+server-side content). The API gateway is real:
+
+| request (no real credential) | result |
+| --- | --- |
+| `POST api.corelogic.asia/access/oauth/token`, no credential | `401 {"error":"unauthorized","error_description":"There is no client authentication…"}` |
+| same, Basic auth with an obviously-fake key | `401 …"clientId 'not-a-real-key' not known"` |
+| `https://api.cotality.com` (the registry's placeholder base URL) | **404** |
+
+Two things follow. The registry's `COTALITY_BASE_URL` placeholder names a host
+that does not serve the API; `api.corelogic.asia` does. And — decisively for
+diagnosis — **CoreLogic's gateway distinguishes "no credential" from "unknown
+client", which Domain's does not.** §51 recorded that a dummy key, a dummy
+Bearer and no header at all produced byte-identical 401s from Domain, so the
+accepted scheme cannot be read off an unauthenticated probe. CoreLogic's
+Apigee gateway names the failure. That materially improves what
+`market-source-probe` can report once a credential exists.
+
+**PropTrack — unchanged from §54.** `developer.proptrack.com` does not resolve;
+`data.proptrack.com/docs` answers 403. There is still no public documentation to
+read, so no endpoint, field or response shape is written anywhere in this repo.
+
+**SQM Research** — `sqmresearch.com.au` answers 200; no public API
+documentation was found.
+
+### 61.3 What the corpus gives a provider to match on
+
+The provider-independent denominator, measured against the 867 trusted
+geography records (item 19's structural half — the provider-matched numerator
+waits on access).
+
+A provider is asked for `(state, suburb, postcode, dwelling type)`. **All 867
+trusted records carry the first three and no untrusted record carries all
+three** — the trusted set and the provider-addressable set are the same set,
+which is a useful accident of how ME-5 resolved geography.
+
+| state | trusted | house | attached | land | type unresolved | growth-addressable | provider calls |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| QLD | 404 | 276 | 60 | 20 | 48 | 336 | 112 |
+| VIC | 201 | 100 | 11 | 3 | 87 | 111 | 37 |
+| WA | 179 | 88 | 47 | 3 | 41 | 135 | 59 |
+| NSW | 59 | 27 | 9 | 0 | 23 | 36 | 26 |
+| SA | 11 | 7 | 0 | 0 | 4 | 7 | 5 |
+| TAS | 7 | 5 | 1 | 0 | 1 | 6 | 3 |
+| ACT | 4 | 4 | 0 | 0 | 0 | 4 | 2 |
+| NT | 2 | 2 | 0 | 0 | 0 | 2 | 1 |
+| **total** | **867** | **509** | **128** | **26** | **204** | **637** | **245** |
+
+Three readings matter.
+
+**245 provider calls cover 637 properties.** One call answers a (suburb,
+postcode, dwelling type), and the corpus concentrates: 225 distinct suburbs
+behind 637 properties, a 2.6:1 amplification. Whatever the plan, the first
+genuine extraction is a few hundred calls — well inside a single day's quota on
+any tier. Cost is not the blocker and should not be modelled as one.
+
+**637 of 867 (73.5%) are growth-addressable**, or 52.8% of the whole
+1,207-report corpus.
+
+**The largest single loss is ours, not the provider's.** 204 records — 23.5% —
+carry no resolvable dwelling type: `residential property` (81), `other` (28),
+absent (95). ME-5 already ruled those must resolve to unavailable rather than
+default to house. Recovering them needs no provider and no licence, and it is
+worth more than any secondary provider would add.
+
+### 61.4 The sample frame — structural, never outcome-selected
+
+`evidenceSampleFrame.pure.ts` fixes 37 cells across NSW/VIC/QLD/WA/SA, four
+remoteness classes and both dwelling types.
+
+The brief asks the sample to span strong, average and weak markets and also
+forbids cherry-picking historically strong examples. Those are in tension only
+if the first is satisfied at selection time — and we have no growth data, which
+is the whole reason ME-6 exists. **Any strong/average/weak label applied now
+would be our guess about a market, and selecting on it would manufacture the
+spread the extraction is meant to test for.** So the frame is drawn on measured
+structural axes (state × ABS remoteness × dwelling type, ordered
+deterministically), and the performance spread is **verified after retrieval**.
+If the sample turns out to contain no falling market, that is a finding about
+the corpus and a real one. A test asserts no cell carries a performance label
+and that the module cannot even spell one.
+
+Item 15's differentiation tests are **named before the data arrives**, so the
+eventual result cannot be a search for whichever pair happened to differ:
+Parmelia vs Gosnells (WA metro houses), Elanora Heights vs Kellyville (NSW
+metro houses), and Buddina QLD 4575 house vs unit — with Truganina VIC 3029
+house vs unit as a second-state control so the first is not a QLD artefact.
+
+### 61.5 Aurixa owns the growth arithmetic
+
+`growth/growthPeriods.pure.ts` computes 1-year movement and 3- and 5-year CAGR
+from a provider's observations. Every result persists the start observation, the
+end observation, the exact elapsed period, the formula version, the value, the
+provider and the working as a reader would check it.
+
+Four mixings are refused before any arithmetic runs, because none is detectable
+from the numbers afterwards: house with unit, suburb with regional, observed
+with forecast, median price with valuation index. A blended series looks
+entirely plausible.
+
+Three rules bite. **A shorter window is never reported as a longer one** — the
+start observation must sit within ±0.5 years of the anniversary, `actualYears`
+records what was really used, and 2 years of history refuses a 5-year figure
+rather than producing one. **A refusal is never a zero.** And **each period
+refuses independently**, so a missing 5-year does not cost the 1-year.
+
+### 61.6 The validator rejects what is not evidence and never rewrites a market
+
+`evidenceQuality.pure.ts` separates two failures that look alike in a validator
+and are opposites in a market.
+
+**Malformed** — a period in the future, a duplicated period, a series running
+backwards, a suburb the request never asked about, a coarser geography than was
+requested — is **rejected**. Using it is using something that is not evidence.
+
+**Extreme** — a 75% quarter-on-quarter move — is **flagged and passed through at
+full value**. Perth houses genuinely moved like that; a thin regional median
+genuinely halves when three cheap sales land together. Clipping it would rewrite
+a real market event into a plausible one and nothing downstream could tell. The
+words `clip`, `clamp`, `winsorise` and `Math.min(Math.max` do not appear in the
+module and a test asserts it, and no finding may carry a corrected value.
+
+Geography is **matched against the trusted Aurixa record, never trusted from the
+provider's echo** — including the state, because Australian suburb names repeat.
+That check found a real defect in this module's first version: the suburb
+normaliser strips a bracketed state disambiguator (`Araluen (NSW)`), and
+applying it to the *state field* reduced every state to the empty string, so
+`VIC` matched `NSW`. Two separate normalisers now, and the regression is pinned.
+
+Dwelling-type substitution is **flagged, not rejected** — usable as context,
+never as this dwelling type's own growth. Sample sizes are retained exactly and
+absence is flagged rather than assumed. Freshness is measured from the period
+the source describes, never from when we fetched.
+
+### 61.7 The snapshot that makes ME-7 reproducible
+
+`evidenceSnapshot.pure.ts` plus `20261117090000_market_evidence_snapshots.sql`.
+
+ME-7 decides whether the methodology needs calibrating; that is only meaningful
+if re-running it gives the same answer. A provider's median moves every quarter
+and its API can be re-priced or withdrawn, so a backtest driven by live calls is
+a measurement whose instrument changes while it is being read.
+
+A snapshot is `draft` while records accumulate and `sealed` afterwards, and
+sealing takes a content hash over a canonical ordering — so re-extraction in a
+different order hashes identically while any changed value does not.
+`extractedAt` (when we asked) and `evidenceAsOf` (the newest period the data
+describes) are separate fields, for the reason the sanctions work settled.
+Licensing aggregates to the **most restrictive** record and defaults to
+`unverified`, which means scorable in a shadow backtest and not renderable to a
+client.
+
+**Sealed is enforced by the database, not only by TypeScript**, because this
+repository has twice found a rule that lived only in application code and was
+bypassed by the one caller that mattered. Proven by execution in production: a
+draft is editable; a sealed snapshot cannot be edited, cannot be deleted, and
+cannot have a record added to it. The fixture was removed and 0 rows remain.
+
+### 61.8 The gate, exactly
+
+Everything above is provider-neutral and complete. What ME-6 cannot do without
+access:
+
+| item | state |
+| --- | --- |
+| 10 — retrieve a real multi-state sample | **blocked** — frame ready, 37 cells, 245-call budget known |
+| 11 — normalise through `MarketEvidence` | **blocked** — contract and validator ready |
+| 13 — Growth Performance + Confidence on real data | **blocked** — arithmetic ready and tested |
+| 14 — Demand Performance + Confidence on real data | **blocked** — which components a provider supports cannot be known until one answers |
+| 15 — real property differentiation | **blocked** — four pairs named in advance |
+| 19 — provider coverage of the corpus | **half done** — denominator measured (§61.3); numerator needs a provider |
+| 20 — is a secondary provider necessary | **blocked** — it is a question about measured coverage, and there is none |
+
+**The provider decision is deliberately not made.** Item 3 says to decide from
+evidence rather than preference once actual entitlement is established, and
+entitlement is a property of an account that this repository cannot read. What
+the evidence so far favours is worth recording without pretending it is a
+decision: Domain has a fully public contract, both auth schemes documented, a
+named scope, sandbox access and published quotas; Cotality has an existing
+commercial relationship and a gateway that diagnoses failures precisely, but no
+outbound call has ever been written and its own scoping document leaves cache
+duration, client-report redistribution and derived-metric persistence open.
+
+**No credential model was changed.** Item 5 says to correct Domain's
+configuration *if* the real contract confirms it is needed — and the real
+contract says `X-API-Key` remains current, so ripping it out on ME-5.1's reading
+would have removed a working scheme on a false premise. What ME-5.1 recorded as
+a defect (that `DOMAIN_CLIENT_ID`/`DOMAIN_CLIENT_SECRET` cannot be entered
+anywhere) is real and still true, but it is now an *addition* to make when
+OAuth is the chosen scheme, not a replacement.
+
+### 61.9 What did not change
+
+Scoring V2 is not wired into live report generation. A = 75 and A+ = 85 are
+untouched. No Growth weight, Demand weight, dimension weight or eligibility rule
+was modified — calibration belongs to ME-7. Risk remains `null` and no
+flood/strata/planning acquisition was started. Finance Suitability remains
+separate. No contaminated historical Location composite was reused.
+
+---
+
+## §62 — ME-6: the first authoritative runtime result, and what it corrected (2026-09-08)
+
+`market-source-probe` ran from the deployed Command Centre. This is the first
+reading of this deployment's own runtime, and it settled a question §49 could
+only call *suggestive* — **`DOMAIN_API_KEY` is SET**. It also exposed a defect in
+the probe itself, which is recorded first because two of its findings were
+fabrications.
+
+### 62.1 What the run returned
+
+**Credential presence — 1 of 11 names set.** `DOMAIN_API_KEY` set;
+`DOMAIN_CLIENT_ID`, `DOMAIN_CLIENT_SECRET`, all four Cotality names, both
+PropTrack names, Pricefinder and SQM Research all **not set**.
+
+| target | status | first verdict | corrected verdict |
+| --- | ---: | --- | --- |
+| `domain_v2_suburb_performance` | 403 | Not entitled | **under diagnosis** (62.3) |
+| `domain_v1_suburb_performance` | **404** | Route does not exist | unchanged |
+| `cotality_suburb_statistics` | 401 | Credential rejected, or scope missing | **credential absent** |
+| `proptrack_market_api` | **404** | Route does not exist | unchanged |
+| `vic_data_catalogue` | 206 | Reachable | unchanged |
+| `qld_statistician` | 206 | Reachable | unchanged |
+| `vic_median_house_by_suburb` | 403 | Not entitled | **refused, not about entitlement** |
+| `nsw_valuer_general_psi` | — | Unreachable | unchanged |
+| `sa_data_portal` | 200 | Reachable | unchanged |
+| `abs_res_dwell` | 200 | Reachable | unchanged |
+
+Four government sources answer this runtime, which is a real and useful finding
+in its own right: VIC's catalogue, the QLD Statistician, data.sa.gov.au and ABS
+are all reachable where the development egress could not always reach them.
+
+### 62.2 The classification defect — two fabricated findings
+
+`classify(response.status, isDomain ? hasDomainKey || hasDomainOAuth : true)`.
+The third argument is the literal `true` for **every non-Domain target**, so the
+classifier was told a credential had been sent when none had.
+
+Two consequences reached an operator as instructions:
+
+**Cotality** answered 401 to an unauthenticated request and was reported as
+*"Credential rejected, or scope missing — confirm the credential and that the
+account holds the named scope."* There is no Cotality credential. The advice was
+to check something that does not exist.
+
+**A Victorian Government spreadsheet** answered 403 and was reported as *"Not
+entitled — owner: commercial. Entitlement is a property of the provider account;
+it is added to the account, never worked around here."* Nobody holds an account
+with `land.vic.gov.au`. That is a fabricated finding pointing at a fabricated
+commercial relationship, and it is precisely the class of error this programme
+exists to remove — it would have sent someone to negotiate with a vendor that
+is not a vendor.
+
+The correction has three parts. **`classify` takes real credential presence**,
+resolved per target from the names that would authenticate it. **Every target
+declares its `kind`**, and a `government` 403 can never be an entitlement
+finding however the request was made — only a commercial party has an
+entitlement to withhold. And **`auth` is declared per target**, because a
+credential that exists is not a credential that was sent: Cotality needs an
+OAuth token exchange this diagnostic does not perform, and PropTrack publishes
+no documentation at all, so the header its key belongs in is unknown and
+inventing one would be fabricating a contract. Those read as
+`authNotImplemented` and the panel says so in words.
+
+Two rules, pinned by tests that read the function's source: **an
+unauthenticated refusal says nothing about entitlement**, and **no call site may
+assert that a credential was sent**.
+
+### 62.3 The Domain 403 — what it does and does not prove
+
+The word "not entitled" is withheld until the evidence carries it. What is
+measured:
+
+| request | credential | result |
+| --- | --- | --- |
+| v2 suburb performance, development egress (§61.2) | none | **401** *"Unable to verify credentials"* |
+| v2 suburb performance, Supabase runtime | `DOMAIN_API_KEY` | **403** |
+
+**The transition is the evidence.** Domain's gateway answers 401 when it cannot
+verify a credential and 403 when it can but refuses the request. Moving from one
+to the other on the same route, when the only difference is that a key was
+attached, is consistent with the key being **recognised** — and inconsistent
+with hypothesis B, an invalid or disabled key, which would have stayed at 401.
+
+Domain's own documentation supplies the mechanism: *"You will not be able to
+access any API Endpoint until the required API package(s) have been added to
+your project."* A project whose key is valid but which does not hold
+**Properties & Locations** would answer exactly this.
+
+That is strong, and it is not yet conclusive, because a WAF refusal (hypothesis
+D) also presents as 403 — and §61.2 measured this development egress being
+403'd by an edge WAF on Domain's token host. Two things settle it and both are
+now in the probe rather than in an argument:
+
+1. **The provider's own diagnostic is captured and rendered** — content type,
+   a bounded body preview, and an allow-list of response headers
+   (`www-authenticate`, the `X-Quota-*` family, `retry-after`, `server`,
+   `cf-ray`). A JSON body in Domain's own error shape is the API refusing; an
+   HTML *"Access Denied"* page is a WAF. The allow-list never reads
+   `authorization`, `cookie` or `set-cookie`, so no credential or session
+   material can travel in this field.
+2. **A second Domain package is probed on the same key** —
+   `domain_address_suggest`, Domain's documented read-only Address Suggestion
+   route. If the key answers 200 there and 403 on suburb performance, the key
+   is valid and the product is not in the project. If it answers 403 on both,
+   the key is unpackaged entirely. If 401 on both, the key is not recognised.
+   One run, three distinguishable outcomes.
+
+Item 4 asked whether the key is already used successfully elsewhere in this
+repository. It is not: `domain-data-service` is the only Domain caller and it
+calls the **v1 route Domain has removed**, so it has never succeeded and cannot
+serve as a control. The second package is therefore the control, and it is
+Domain's own published route rather than one invented for testing.
+
+### 62.4 Dwelling-type recovery — the record does not hold it
+
+204 of 867 trusted reports carry no resolvable dwelling type. Every deterministic
+route was measured; none infers from narrative, price or address.
+
+| route | recoverable |
+| --- | ---: |
+| sibling report on the same `canonical_property_key`, unambiguous | **4** |
+| same key, ambiguous (two different types) | 0 |
+| `property_listing_id` → `listings_cache` | **0** — 41 links, **0 rows survive** |
+| an alternative structured key in `property_specs` | **0** — one key exists, `property_type`, present on 109 and specific on none |
+| `client_property_id` → `client_properties` | **0** — no report carries one |
+| **total recovered** | **4** |
+| **not recoverable from the record** | **200** |
+
+The revised Growth-addressable denominator is therefore **641 of 867 (73.9%)**,
+against 637 before. That is the honest answer and it is a small one: item 8's
+premise — that lineage recovery would return a material number — does not hold
+against this record.
+
+The reason the listing route returns nothing is documented elsewhere in this
+repository and is the same fault: Airtable prunes `Property Intake Master` at 30
+days, and `listings_cache` mirrored that prune until it was made an archive. The
+41 listings that would have answered this question aged out before the archive
+existed. **The dwelling type for 200 properties is not somewhere else in the
+system; it is gone.**
+
+### 62.5 Why it was gone — and the writer that will stop taking the next 200
+
+`generate-investment-report/index.ts` composed the stored property type as
+`… : (rawPropertyType.includes('house') ? 'House' : … : rawPropertyType ||
+'Residential Property')`. When nothing was known, the generator wrote the
+literal `'Residential Property'` — and that string is indistinguishable, to
+every downstream reader, from a type somebody actually established.
+
+This repository had already written the rule down. `propertyRecord.pure.ts`
+says in as many words: *"Absent is absent — never a placeholder."* The generator
+did it anyway, and it is why 81 rows say `residential property` today.
+
+One value became two. **`resolvedPropertyType` is the fact** and is `null` when
+nothing authoritative is known — it is what reaches `composePropertySpecs` and
+the stored record. **`propertyTypeLabel` is prose**, used in the six prompt and
+table positions where a readable phrase is wanted and no fact is asserted. A
+generic label can no longer overwrite absence, and it never could overwrite a
+specific value — the specific branches are unchanged and still win.
+
+### 62.6 Provider standing corrected
+
+The live panel read *"Credential present, scheme obsolete"* and described this
+repository as *"v1 + X-Api-Key (obsolete)"*. §61.2 had already established from
+Domain's public developer portal that the API key is a **current documented
+scheme**, so that status was stale the moment it was measured. With
+`DOMAIN_API_KEY` set, Domain now reads **configured — testable**, `authScheme`
+is `api_key`, and the repository description names the one defect that survives:
+the version prefix.
+
+### 62.7 Cotality and PropTrack stay where they are
+
+Neither has a runtime credential, so neither unauthenticated result says
+anything about entitlement — which is the whole point of 62.2. They remain
+fallback candidates. Domain remains the first activation path because a
+credential exists, the contract is public and measured, the required route is
+documented, and the implementation delta is a version prefix.
+
+---
+
+## §63 — ME-6: one trustworthy Domain diagnostic (2026-09-08)
+
+§62 corrected a probe that fabricated two findings. This pass corrects a third
+thing it still did — concluding from a status code — and adds the one header
+Domain itself says to read.
+
+### 63.1 `X-Domain-Security-Reason`
+
+Domain's troubleshooting guidance names it as the **first** diagnostic for a 401
+or 403. It carries a reason phrase, never credential material, so it joins the
+response-header allow-list and is lifted into its own field because it is the
+one header that decides what the verdict means. The panel renders it under the
+Domain row, quoted verbatim.
+
+The allow-list stays an allow-list: `authorization`, `cookie`, `set-cookie`,
+`x-api-key` and `proxy-authorization` are never read, and nothing anywhere reads
+back the request headers the probe sent. Three tests assert it.
+
+### 63.2 A 403 with a credential is not an entitlement finding
+
+The `not_entitled` reading asserted its own conclusion — *"the account is not
+entitled to this endpoint"* — and routed it to `commercial`. Domain documents
+several causes for one 403: a missing scope, a plan that does not include the
+API, an environment restriction, an access restriction, an invalid or expired
+key, and other internal denials. **They do not share an owner.** Sending that to
+a commercial negotiation on the status alone routes a key problem to the wrong
+department.
+
+The verdict is now *"Refused with a credential — reason required"*, owner
+`unassigned`, next action: read the provider's own reason before assigning it to
+anybody. A standing test permits `unassigned` **only** where the reading also
+states what would resolve it — a verdict that names nobody and asks for nothing
+is a dead end rather than a caution.
+
+### 63.3 The two-product matrix, and the case it refuses to conclude
+
+`domain_address_suggest` requires `api_properties_read`; suburb performance
+requires `api_suburbperformance_read`. Probing both on one key separates a key
+problem from a product problem, which no single status can.
+
+| Address Suggestion | Suburb Performance | reading |
+| --- | --- | --- |
+| 2xx | 2xx | the key works and both capabilities are reachable — qualify the payload |
+| 2xx | 403 | **strong**: the key itself works; the issue is specific to Suburb Performance access, scope or plan. The stated reason names which |
+| 401 | 401 | an authentication or key problem is likely — qualify with the header and body before replacing anything |
+| 403 | 403 | **AMBIGUOUS.** Never *"the key has no packages"* |
+
+The both-403 row is the point of this section. It is the reading that was
+written here once and is now refused: project or package configuration, missing
+scopes, an environment restriction, a plan restriction, the key's own state, a
+WAF or origin refusal that never reached Domain's gateway, and other Domain
+access policies all present identically. `interpretDomainAccess` returns
+`conclusive: false` and `owner: null` for it, and its next step forbids raising
+a commercial request until something names the cause. Where Domain does state a
+reason it is quoted into the reading verbatim.
+
+Two more rules fall out. **One product alone concludes nothing** — a single
+result cannot separate the two failure modes, so the matrix says so rather than
+reading the one it has. And **an unnamed combination is never concluded from**:
+anything the matrix does not name is a reason to look, not a reason to guess.
+
+### 63.4 The v1 404 is a deprecation control, not a blocker
+
+Domain deprecated v1 Suburb Performance and replaced it with v2. The v1 target
+stays in the probe as evidence the old route is gone — that is what it proves,
+and it proved it — but it is not an ME-6 blocker and the production adapter
+targets v2. Its note now says so.
+
+### 63.4a The local gate runner was under-reporting, and that is on me
+
+CI failed `security` on a head my local run had called clean. The cause was not
+the repository: **the local harness was reporting the wrong exit status.** Each
+step ran as `( cmd1 \n cmd2 \n … ); echo "EXIT:$?"`, and without `set -e` a
+subshell's `$?` is the status of the LAST command only. Any failure earlier in a
+multi-command step was swallowed, and every step in that runner is
+multi-command.
+
+So the "all 47 gates, 0 failures" reported for the ME-6 heads was weaker than it
+sounded: it meant *the last command of each of 47 steps passed*. The runner now
+carries `set -e` in all 47 groups, and the first failure in a group is the
+group's status.
+
+Re-running it immediately surfaced a second failure that had been hidden — and
+both remaining local failures are the same environment-bound class rather than
+defects: `migrationSyntax.test.ts` at 5,029 ms and `diditProviderConfigTruth`
+at 8,584 ms, each against a 5,000 ms limit, on a corpus of 1,030 migrations and
+4,495 tests. CI settled it on this exact head: **`verify` passed on GitHub**,
+running both of those specs, while `security` failed on the one real defect
+below. This container is slower than the runner; the repository is not broken.
+
+The real defect CI caught was `check-cors-contract.mjs`, and its finding was
+sound in the way it was raised even though the conclusion did not apply. The
+gate scans `src/` for `headers.get('x-…')` and requires the header to be in
+`CORS_EXPOSED_RESPONSE_HEADERS`. It matched a **test file** — the spec asserting
+that the probe lifts `x-domain-security-reason` into its own field quoted the
+whole call expression as a string literal.
+
+The header is read **server-side**, inside the Edge Function, from *Domain's*
+response, and its value leaves in the probe's JSON body; it never crosses a
+browser CORS boundary. Adding it to the expose list to quiet the gate would have
+declared that our own function emits a header it does not — a false statement to
+a security gate, in order to go green. The test asserts the same rule without
+embedding the call expression instead, and the gate is untouched.
+
+### 63.5 What is settled, and what the next run decides
+
+The dwelling-type conclusion stands as measured: 204 unresolved, **4**
+deterministically recovered, ~200 genuinely unrecoverable from the structured
+record, and a Growth-addressable corpus of **641 of 867**. No LLM, narrative,
+price or address inference was used to manufacture the missing types and none
+will be. `resolvedPropertyType` is the fact and is null when unknown;
+`propertyTypeLabel` is prose; a generic label can no longer be persisted as a
+factual type.
+
+Demand qualification is deliberately deferred until Suburb Performance actually
+answers. Domain's documented series may expose median sold price, number sold,
+sale listing count, auction counts, days on market, discount percentage, median
+rent listing price and rent listing count — which could carry a substantial part
+of Demand as well as Growth. Only the fields genuinely present under this
+deployment's data access will be used, and **no secondary provider is added
+unless a measured evidence gap remains** after that inspection.
+
+---
+
+## §64 ME-6 zero-cost evidence strategy — how far $0 actually goes
+
+A commercial constraint arrived mid-phase: **no additional property-data
+subscriptions.** The instruction was to continue ME-6 on authoritative open
+data, entitlements already held, and legitimate free trials — without lowering
+the evidence standard and without scraping commercial sites.
+
+This section is the measurement. Every reachability reading was taken on
+2026-09-08 from two networks: this repository's development container, and the
+**production Supabase egress** through `pg_net`, which is the network a
+scheduled ingestion would actually run on. The inventory is code
+(`_shared/reports/market/zeroCostSources.pure.ts`), not prose, because a
+markdown table cannot be executed and therefore cannot be wrong out loud — the
+failure mode this programme has hit repeatedly.
+
+### 64.1 The finding that reframes the strategy
+
+The open data is **not where the properties are.**
+
+Measured over `report_geography` joined to `investment_reports`, resolving
+dwelling type exactly as §62.4 did:
+
+| state | geo reports | Growth-addressable | share | open suburb × type median sale price |
+| --- | ---: | ---: | ---: | --- |
+| QLD | 404 | **356** | 53.7% | **none** |
+| WA | 179 | **138** | 20.8% | **none openly licensed** |
+| VIC | 201 | **114** | 17.2% | yes, CC BY — **unreachable** |
+| NSW | 59 | 36 | 5.4% | raw bulk sales only |
+| SA | 11 | 7 | 1.1% | partial, file host 403 |
+| TAS | 7 | 6 | 0.9% | rental bonds only |
+| ACT | 4 | 4 | 0.6% | not established |
+| NT | 2 | 2 | 0.3% | not established |
+| **total** | **867** | **663** | | |
+
+*(663 on this resolution against §62.4's 641; the two differ because §62.4 also
+required the sibling-recovery pass. The distribution is what matters here and it
+is unaffected.)*
+
+**Three quarters of the corpus sits in the two states with the least usable open
+data.** Queensland's Government Statistician publishes building approvals under
+its housing theme and no median sale price series at all; Western Australia's
+only candidate is Landgate's *Residential Property Attributes Data*, licensed
+`Custom (Other)`. Neither is a suburb-level median residential sale price.
+
+ABS does not close the gap either. All **1,227** published dataflows were
+enumerated: `RES_DWELL_ST` is *state* grain, `RPPI` is *capital city* grain, and
+**none** carries suburb-level price.
+
+### 64.2 Licence and reachability are independent, and both were measured
+
+The finest-grained open dataset in the country is Victoria's **Property Sales
+Report — Median House / Unit by Suburb, Time Series**: CC BY 3.0 Australia,
+quarterly, dwelling-segmented, published as XLSX for exactly this use.
+
+It cannot be fetched. `land.vic.gov.au` answers **403** with a Cloudflare
+*"Just a moment…"* interstitial — to curl with no User-Agent, to curl with the
+repository's own identifying User-Agent convention, and to the **production**
+egress via `pg_net` (requests 126902, 126922). Two independent networks, the
+same refusal: it is the host's bot protection, not our address.
+`www.dffh.vic.gov.au` (Moving Annual Rents by Suburb, also CC BY) failed
+separately — an Akamai block from development citing volume from our network,
+and *"Stream error in the HTTP/2 framing layer"* from production.
+
+So the inventory records `licence` and `reachability` as **separate fields that
+are never inferred from one another**, and `blockedByTransport()` is its own
+reading — because a licensing gap needs a commercial conversation and a
+transport gap needs the publisher contacted about their bot rules, and
+reporting one as the other sends somebody to the wrong door.
+
+What *is* reachable from production, verified by execution: `data.gov.au`
+(206, real XLSX payload), `catalogue.data.wa.gov.au` (206),
+`valuation.property.nsw.gov.au` (200), `data.api.abs.gov.au` (200), and
+`data.melbourne.vic.gov.au` — whose CSV export answered 200 with the header
+`sale_year;small_area;type;median_price;transaction_count`, exactly the Growth
+shape, for exactly one local government area.
+
+### 64.3 The acquisition footing — so a trial can never become production
+
+`EvidencePoint` now carries `acquisition`, orthogonal to `licensingStatus`.
+Licensing asks *may this be printed for a client*. Acquisition asks *on what
+footing do we hold it at all* — and the footing decides whether a number may
+become production evidence, which no rendering rule decides.
+
+`open_public` · `existing_licensed` · `trial_shadow_only` ·
+`commercial_upgrade_required` · `licensing_unverified` (the default).
+
+The failure this closes is specific and quiet: **a trial measure silently
+becoming production evidence.** Nothing about a number's shape reveals its
+footing — a PropTrack trial median and a licensed one are the same float — so
+the footing travels on the point and `acquisitionLicensingConflict` refuses the
+contradictory combinations outright.
+
+Three rules. **The default is conservative** — an undeclared footing is not
+production evidence. **A trial may be shadow-scored and never rendered**, which
+is what makes `trial_shadow_only` genuinely useful for ME-7 rather than merely
+blocked. And **the addition is additive**: `mayReachClientReport` keeps its
+exact meaning and all four existing callers
+(`evidenceStatement`, `growthScoring`, `demandScoring`, its spec) are untouched,
+with a test pinning that.
+
+### 64.4 SQM — recorded, not automated
+
+SQM Research publishes free property charts, and its terms prohibit automated
+and systematic retrieval without permission; its historical series is sold
+commercially. **No scraping, no hidden endpoints, no browser automation, no
+systematic ingestion, no client-report use.** SQM is
+`manual/context only — automated commercial ingestion not authorised`, and that
+stands unless SQM gives explicit written permission or offers a free commercial
+API. This is the one source where the block is a considered policy rather than
+a generic WAF rule, and the distinction is why land.vic was retried and SQM was
+not.
+
+### 64.5 The strongest $0 stack, and what it cannot do
+
+In the brief's own preference order:
+
+1. **Authoritative open government data** — real, and it serves *Demand and
+   context*, not Growth: Tasmanian rental bonds (CC BY 4.0, reachable), NSW
+   bulk sales (CC BY, reachable, medians must be derived and dwelling type is
+   not a column), QLD land valuations (CC BY, and a land valuation is not a
+   sale price), ABS `RES_DWELL_ST` / `RPPI` / Census / SEIFA as benchmark.
+2. **Domain's existing entitlement, if it costs nothing** — the pending probe.
+3. **The official PropTrack trial** — Market API supply & demand, rent
+   insights, sale insights, per suburb; qualification request drafted.
+4. **ABS benchmark** — already loaded.
+5. **SQM manual/context only.**
+
+**Growth coverage attainable for $0 today: effectively none of the corpus.**
+Not one zero-cost source can serve suburb-level, dwelling-segmented median sale
+price for QLD or WA, and a test asserts that no row in the inventory claims
+otherwise. Victoria's would reach 17.2% if the host admitted a scripted client.
+NSW's 5.4% is reachable but requires deriving medians from individual sales
+without a dwelling-type column.
+
+**Demand coverage attainable for $0: partial and real** — rental evidence in
+VIC (blocked), TAS (reachable), SA (blocked at the file host), plus ABS
+population and household context nationally.
+
+### 64.6 Is the free stack strong enough to begin ME-7?
+
+**No — not on open data alone.** A historical shadow backtest needs Growth for
+the properties the corpus actually contains, and the zero-cost open stack
+reaches almost none of them. Proceeding on it would mean scoring three quarters
+of the corpus with Growth absent, which the methodology correctly renders as
+absent rather than as a number — a backtest with no signal in its principal
+dimension.
+
+**It becomes strong enough the moment either commercial lever lands at $0**:
+Domain's two scopes enabled on the existing key, or a PropTrack trial that
+permits internal evaluation. Either supplies suburb-level, dwelling-segmented
+Growth across QLD, WA and VIC together.
+
+So ME-7 is not blocked on a purchase — it is blocked on two questions that cost
+nothing to ask, both of which are now drafted
+(`DOMAIN_ACTIVATION_REQUEST.md` §Zero-cost addendum, `PROPTRACK_TRIAL_REQUEST.md`).
+
+### 64.7 How the ME-7 shadow stack would differ from a production stack
+
+If ME-7 runs on `trial_shadow_only` evidence, the difference is not cosmetic and
+is enforced rather than remembered:
+
+| | ME-7 shadow stack | production-authorised stack |
+| --- | --- | --- |
+| Growth source | PropTrack trial (`trial_shadow_only`) | a source classified `existing_licensed` or `open_public` |
+| may be rendered to a client | **no** — `acquisitionLicensingConflict` refuses the combination | yes |
+| may be sealed as production evidence | **no** — `mayEnterProductionEvidence` returns false | yes |
+| may be scored in a backtest | yes | yes |
+| what the calibration proves | that the **methodology** is sound | that the **deployment** is sound |
+
+A methodology validated on trial evidence is a validated methodology. It is not
+a licence to ship, and the two must never be conflated — which is exactly why
+the footing is a field on the point rather than a note in a document.
+
+## §65 ME-6 closure — one denominator, and a frozen ME-7 population
+
+ME-6 reported two Growth-addressable counts for the same idea — **641** and
+**663** — and an ambiguous denominator makes every coverage percentage that
+follows unfalsifiable. This section settles it by arithmetic and freezes the
+result, so that ME-7 has a subject population that cannot move under it.
+
+### 65.1 Why the two numbers differed — measured, not inferred
+
+Both were computed over the same 867 trusted-geography reports. They are the
+same predicate with and without one exclusion:
+
+| step | count |
+| --- | ---: |
+| trusted geography (suburb AND state present) | 867 |
+| `property_specs.property_type` present and not a placeholder | **663** |
+| less `land` (26) | **637** |
+| plus §62.4's sibling recovery (4) | **641** |
+
+Neither was wrong about what it measured. They measured different things while
+both being called "Growth-addressable".
+
+**663 was too loose** — it counted 26 vacant-land reports. A land parcel has no
+dwelling, so no house/unit median series describes it: Domain segments
+`suburbPerformanceStatistics` by house and unit, and PropTrack's sale insights
+do the same. Counting land inflates the denominator with rows no provider can
+ever answer for.
+
+**641 was too narrow** — it read one field. Two further deterministic routes to
+the same fact were already in the record and unused.
+
+### 65.2 The canonical answer is 665, and it is not "the bigger one"
+
+`_shared/reports/market/growthPopulation.pure.ts`, predicate `me7.pop.1`:
+
+| route | reports |
+| --- | ---: |
+| `property_specs.property_type` | 663 |
+| `financial_calculations.propertySpecs.propertyType` | +15 |
+| unambiguous sibling on the same `canonical_property_key` | +13 |
+| any type resolved | 691 |
+| less `land` | −26 |
+| **canonical Growth-ready** | **665** |
+
+It is simultaneously **stricter** than 663 (land excluded) and **more complete**
+than 641 (three routes instead of one). Landing two above 663 is a coincidence
+of two independent corrections, not a preference for a larger number.
+
+The 15 the financial block adds are **all `house`** — specific, and stated by
+the operator rather than derived, which `historicalFactAuthority.pure.ts`
+already established: `financial_calculations.propertySpecs` is the calculator's
+INPUT record. The sibling route yields 13 against §62.4's 4 because its pool is
+enriched by the financial route, which §62.4 did not consult.
+
+A measurement bug of my own is fixed here too: coalescing the raw values and
+*then* testing for a placeholder never consults the second source, because
+`'Residential Property'` is non-null. Each route is now tested for specificity
+before the fall-through, and a test pins it.
+
+### 65.3 What Growth readiness requires — and what it must never require
+
+**Required**: trusted geography (suburb AND state), and a dwelling type
+resolvable by one of the three routes that maps to a class a provider
+publishes.
+
+**Not required, deliberately**: LVR, cash flow, rent, Risk, composite scoring
+readiness — none is an input to a suburb median series. **Postcode is not
+required either**: measured, 0 of the 663 lack one, so it discriminates nothing
+today, and Domain's route is `/{state}/{suburb}` with postcode an optional
+refinement.
+
+**Sibling recovery is a ROUTE, never a REQUIREMENT.** §62.4 introduced it while
+measuring what could be recovered. It belongs in the definition as one of three
+ways the type may be established, not as a condition — requiring one would
+exclude 663 reports to gain 13.
+
+### 65.4 The frozen population
+
+`me7_backtest_populations` / `me7_backtest_population_members`, sealed under
+`me7.pop.1`: **867 considered, 665 ready**, one row per considered report
+carrying canonical geography, dwelling type and class, resolution route, and
+inclusion or an exclusion reason.
+
+| state | Growth-ready | houses | attached |
+| --- | ---: | ---: | ---: |
+| QLD | 338 | 278 | 60 |
+| WA | 137 | 89 | 48 |
+| VIC | 131 | 120 | 11 |
+| NSW | 40 | 31 | 9 |
+| SA / TAS / ACT / NT | 19 | 18 | 1 |
+| **total** | **665** | **536** | **129** |
+
+228 distinct suburbs. Excluded: 176 `dwelling_type_unresolved`, 26
+`dwelling_type_not_segmentable`.
+
+The rule the table exists to enforce: **provider coverage is measured AGAINST
+the population and never defines it.** Without that, a provider outage shrinks
+the denominator and the coverage percentage *improves* — the metric moves the
+wrong way under exactly the fault it should reveal. Membership is therefore
+settled before any provider is called, and immutability mirrors
+`market_evidence_snapshots`: draft → sealed once, no unseal, UPDATE and DELETE
+refused on a sealed row and on its members. Both refusals were proven by
+execution against the sealed row.
+
+### 65.5 Precedence, and the ME-7 entry gate
+
+`me7EntryGate.pure.ts` carries both as code. Subject Growth resolves
+Domain-at-$0 → PropTrack trial → open state suburb series → **unavailable**;
+Demand resolves provider/open → government context → **unavailable**. There is
+no benchmark tier in the subject ordering, and `mayServeSubjectGrowth` refuses
+the ABS series by name — a state mean price is identical for hundreds of
+properties, so using it as the subject's own Growth is how a score comes to
+rest on nothing about the suburb.
+
+The gate refuses a sample without QLD or WA, because those two are 475 of the
+665 and a VIC/NSW-only backtest would validate the methodology against 26% of
+the portfolio while reporting a number about the other 74%. It explicitly does
+**not** require 100% coverage, a complete Demand set, or Victoria.
+
+### 65.6 Where this leaves ME-7
+
+The population is locked and the gate is written. What the gate is waiting on is
+evidence, and both remaining zero-cost levers are **outside this repository's
+reach**: Domain's answer on enabling two scopes at no charge, and PropTrack's
+answer on trial terms. Neither can be measured, inferred, or substituted — and
+an ME-7 run assembled from anything else would be a backtest of a methodology
+against evidence it will never use in production.
+
+---
+
+## §66 ME-6 — the probe ran once, and the answer is the ambiguous case
+
+*Run 2026-09-08; recorded 2026-09-11.*
+
+The operator ran the source probe exactly once, from the Integrations page, 28
+minutes after #2575 deployed the corrected function. The run is verified in
+the production function logs rather than assumed: `function_edge_logs` holds
+exactly one non-OPTIONS invocation of `market-source-probe` across the whole
+retained window (8–11 Sep, swept in 24-hour slices) — `POST | 200` at
+**2026-09-08T15:42:54Z**, 3,331 ms. The probe persists nothing by design
+(§60.9), so the per-target readings below are the operator surface's own
+rendering of that one response.
+
+What it read:
+
+- `DOMAIN_API_KEY` **present**; Domain classified configured/testable.
+- `domain_address_suggest` → **HTTP 403**.
+- `domain_v2_suburb_performance` → **HTTP 403**.
+- **No `X-Domain-Security-Reason`** visible on either refusal — the one header
+  Domain names as the first diagnostic for a 401/403.
+- Cotality credentials **absent**. PropTrack credentials **absent**. SQM **not
+  authorised** for automated ingestion (policy, not transport — §64).
+
+Under the pre-registered four-case reading (§63, unchanged), 403 + 403 is the
+ambiguous case and **stays ambiguous**: it is equally consistent with a
+project or account configuration, a missing scope, a plan or environment
+restriction, the key's own state, and a WAF refusal that never reached
+Domain's gateway. Entitlement, an invalid key, a WAF and a missing scope were
+each deliberately **not** inferred from the status code alone — inferring any
+one of them sends an operator to the wrong remedy, and with no security-reason
+header nothing on the wire distinguishes them.
+
+Three consequences:
+
+1. **The probe does not need to be run again.** Its question — what does this
+   key get, from this deployment, today — is answered, and the answer is
+   deterministic on Domain's side. Re-run only if Domain configuration changes
+   (a new key, an activated scope, an account change); one run then re-settles
+   the state.
+2. **The resolution is with the provider, not the pipeline.**
+   `DOMAIN_ACTIVATION_REQUEST.md` now carries the both-403 branch as the
+   applicable message: because no security reason was returned there is
+   nothing to quote, so the message asks Domain to state which restriction
+   produces the 403 on this key, and whether `api_properties_read` and
+   `api_suburbperformance_read` can be enabled on the existing application at
+   no additional charge.
+3. **Nothing upstream of the gate moves.** The ME-7 entry gate (§65) still
+   waits on evidence, and a 403 whose cause is unresolved contributes none.
+
+---
+
+## §67 Scoring V2 finalisation — the buyer leaves the composite, and absence stops buying badges (2026-09-11)
+
+The owner's mandate for this phase: finish Scoring V2 completely — final
+specification, independence, missing-data contract, A/A+ eligibility,
+adversarial synthetic proof, one canonical output — before any report-family
+refinement, with the real backtest still gated on real QLD + WA evidence.
+Everything below is synthetic-proof work; **no market evidence was fabricated
+and no real corpus was scored.**
+
+### 67.1 The drift finding: the composition never adopted its own decision
+
+§59–60 decided Risk Model D — property type selects the schema and scores
+nothing; buyer LVR and buyer cash flow score nothing; finance is the separate
+Finance Suitability reading; one observation is never the dimension. The
+report-side modules were built then (`riskModelD.pure.ts`,
+`financeSuitability.pure.ts`). **The shadow composition was not moved onto
+them**: `scoreInvestmentV2Shadow` still called the ME-4 interim scorer, whose
+components were 40% buyer leverage, 30% buyer serviceability, 20% asset type,
+10% overheating. Under it, 1 Boxer Drive's two same-day reports at 80% and
+90% LVR would have carried different property Risk — the exact defect Model D
+was designed against, alive in the engine that will run ME-7.
+
+**Corrected**: `2.1.0-shadow` composes `scorePropertyRisk(…, 'D2')`; the
+buyer's position rides beside the score as `financeSuitability`;
+`RiskInputs`/`FinanceInputs` make the separation type-level; the ownership
+matrix moves `lvr` and `weeklyCashFlow` to a non-dimension `finance` owner
+with every dimension forbidden. The ME-4 scorer is retained, marked
+superseded, solely as the component record the A/B/C model comparison is
+expressed over. Consequence stated plainly: with no property-risk question
+answerable from today's record, **Risk is structurally null platform-wide**
+and the composite renormalises over four dimensions with that fact published
+— which is the honest state, not a regression.
+
+### 67.2 A calibration, in the required form
+
+- **Before**: eligibility `1.0.0` — Growth-centred ceilings plus an overall
+  coverage floor of 0.70 for A+.
+- **Defect (measured by fixture, before any real evidence)**: the composite
+  renormalises over measured dimensions, so removing a WEAK dimension raises
+  it. Growth 90 / Location 80 / Yield 85 / Demand 55 composites to ~81 with
+  Demand measured and ~86 without it — absence crossing the A+ line that
+  presence could not. "Do not reward missing evidence through
+  renormalisation" was a stated rule with no mechanism.
+- **Correction**: eligibility `2.0.0` adds a second ceiling —
+  `gradeFor(nominalMeasuredScore)`, the points the evidence actually
+  delivered at nominal weights over the full 100. The score, the coverage and
+  every disclosure are untouched (absence still never punishes); the printed
+  grade simply cannot exceed what was delivered, and adding a measured score
+  (≥ 0) can only raise the ceiling — the anti-reward property holds by
+  construction, not by threshold.
+- **After, measured**: dimension ceilings — Growth saturates at 91, Location
+  reaches 95, Yield 100, Demand 93 — so the maximum deliverable with Risk
+  structurally null is ≈ 89.1 of 100. **A+ (85) remains mathematically
+  reachable**, on genuinely exceptional evidence across all four live
+  dimensions; A (75) needs a ~79 average. The renormalisation-reward fixture
+  now shows the badge holding while the renormalised score rises, with the
+  mechanism on the record in `gradeCapReason`.
+- **Distribution manipulation**: none possible — no real property has been
+  scored under either version; the first distribution ME-7 produces will be
+  the first ever read.
+
+### 67.3 What is now pinned, and where
+
+- `SCORING_V2_METHODOLOGY.md` — the one authoritative specification;
+  `scoringMethodology.spec.ts` pins every load-bearing number and version in
+  it to the modules, and asserts **no production edge-function entrypoint
+  imports the engine** (the unwired guard — checked, not promised).
+- `scoringInvariants.spec.ts` (29) — renegotiated to Model D: buyer leverage
+  and cash flow move Finance Suitability and nothing else; the property type
+  selects the schema and moves no score; one Risk observation cannot become
+  the dimension; the declared exception charges overheating only beside a
+  measured peer; the Boxer Drive rule as a test.
+- `scoringScenarios.spec.ts` (17) — the mandate's adversarial matrix:
+  sustained vs surge vs declining growth, the yield/growth and
+  demand/location trade-offs, regional-excellent vs metro-weak (commute
+  measured to the NEAREST centre per §58 — a 95-minute figure describes a
+  remote property, not a regional hub), house/attached and state parity,
+  missing-Growth and missing-Demand behaviour, the renormalisation-reward
+  regression, capped-grade-states-a-reason.
+- `scoreOutputContract.pure.ts` (`1.0.0`) — the canonical object no renderer
+  recalculates: versions, score, both grades, cap reasons, per-dimension
+  performance/confidence/effective weight/contribution/reason, provenance
+  rows with acquisition footing, unavailable dimensions, Finance Suitability
+  separately. Contributions reconcile to the composite by test.
+  `overallConfidence` is deliberately null until methodology lock, and the
+  field says where the definition will be made.
+- Suite state at the finding of record: **154 files, 3,673 tests, all
+  passing** under `src/lib/reports/`.
+
+### 67.4 What still gates ME-7, exactly
+
+Unchanged and outside this repository: real QLD + WA subject-Growth evidence
+at $0 — Domain's answer to the both-403 letter (§66) or PropTrack's trial
+terms. The moment either lands: record the acquisition footing, build that
+one adapter, ingest QLD + WA, normalise into `MarketEvidence`, seal the first
+genuine snapshot, evaluate the gate, and if it opens, run the backtest.
+
+## §68 Scoring V2 Core frozen — shadow only (2026-09-11)
+
+**SCORING V2 CORE FROZEN — SHADOW ONLY.** PR #2588 was merged into `main`
+(merge commit `db59a8056`, PR head `846db6f2b`) after a final adversarial
+closure review run against that exact head, and the core is now a settled
+structure: changes to anything in §68.2 require a demonstrated defect, a
+version bump and a re-run of whatever backtest has run by then — never a
+silent edit.
+
+### 68.1 The closure review, and what it found
+
+A closure audit, not a new methodology exercise. Method: the composition path
+was traced through the callers (not the type definitions), the repository was
+swept for the engine's markers, and the mandated invariants were re-proved by
+execution in a new closure spec (`scoringV2Closure.spec.ts`, 14 checks) run
+beside the full suite — **155 files, 3,687 tests, all passing** on the merged
+head.
+
+What the review confirmed, each item measured rather than trusted:
+
+- **Risk ownership.** `scoreInvestmentV2Shadow` calls
+  `scorePropertyRisk(input.propertyRisk, 'D2_requires_a_peer')` — Model D is
+  the composition's Risk, not merely a module beside it. `PropertyRiskInputs`
+  cannot express a buyer fact, so LVR, cash flow, serviceability, borrowing
+  capacity, deposit and affordability have no path into the dimension at the
+  type level, and the body reads none of them. The asset class appears in
+  schema selection and the result, and in no arithmetic. One answered
+  category cannot compose (`MINIMUM_INDEPENDENT_CATEGORIES = 2`); overheating
+  only ever deducts (max 25), only beside an eligible peer, floored at 0.
+- **Finance Suitability isolation.** `assessFinanceSuitability` returns a
+  band, readings and prose — no field a composite can read. End to end, two
+  scenarios at 60%/95% LVR and +$50/−$900 weekly produce byte-identical
+  score-side results and different suitability bands.
+- **Missing evidence never improves the printed grade.** Proved at the
+  boundaries (`gradeFor` and `applyEligibility` at 74.99/75/75.01 and
+  84.99/85/85.01) and pairwise on every dimension removal — weak removed,
+  strong removed, two removed, sparse-strong, sparse-weak, single-dimension.
+  A = 75 and A+ = 85, unchanged; A+ reachable uncapped on the exceptional
+  fixture. The construction argument: the composite always ≥ the delivered
+  points (renormalising divides by ≤ 1), and the printed grade ≤
+  `gradeFor(delivered points)`, so removing a measured dimension can raise
+  the composite but never the badge.
+- **Absent is not zero.** A measured terrible yield scores 0, carries weight
+  and drags the composite; an unknown rent scores null, carries zero weight
+  and leaves the composite, with the reason printable. Risk distinguishes
+  no-schema / nothing-answered / one-category, each with its own sentence.
+- **Output contract.** Every mandated field present on
+  `scoreOutputContract.pure.ts` (`1.0.0`); contributions reconcile to the
+  composite within rounding; no consumer needs to recompute anything.
+- **Shadow isolation.** Repo-wide marker sweep: the engine's modules, their
+  `src` bridges and the test suites are the only references. **No edge
+  function entrypoint imports anything from `_shared/reports/market` or
+  `_shared/reports/risk` at all**, so the transitive route to the engine is
+  empty, not merely unused. The one non-test `src` importer of the bridges is
+  `MarketSourceProbePanel` importing `sourceProbeReading.pure` — operator
+  diagnostics for the probe, not a scoring consumer. The CI guard in
+  `scoringMethodology.spec.ts` continues to assert entrypoint cleanliness on
+  every run.
+- **Determinism and numeric integrity.** Same input → byte-identical output
+  (scorer and contract). An adversarial battery (zero/negative rents and
+  bases, absurd yields, ±50% growth, scored Risk under maximum overheating,
+  buyer at −$50k/week, nothing at all) produced no NaN, no Infinity, no
+  negative weight, no dimension outside 0–100, effective weights summing to
+  1 where a composite exists, and a stated reason wherever there is none.
+  Rounding sits at the publication boundaries only (dimension scores,
+  composite, 4-dp weights, 2-dp points).
+
+**No genuine defect was found.** The two defects of this release — the
+composition still calling the ME-4 interim Risk, and renormalisation buying a
+badge — were found and fixed before this review (§67); the review confirms
+their fixes hold under adversarial input.
+
+### 68.2 Structurally complete (the frozen set)
+
+Scoring architecture and composition; dimension ownership; Growth, Yield,
+Demand and Location methodologies; Risk Model D; Finance Suitability
+separation; missing-evidence behaviour; grade eligibility (both ceilings);
+A = 75 / A+ = 85; the score output contract; the scenario suite; the
+invariant suite; the closure suite.
+
+### 68.3 Explicitly incomplete — the programme is NOT production complete
+
+- **ME-7**: the real historical evidence backtest has **not run** — the
+  sealed population (`me7.pop.1`, 665 ready of 867 considered) is a
+  denominator, not a result.
+- **Real-world grade-distribution and empirical calibration**: none has
+  happened; every threshold is calibrated against fixtures and the corpus's
+  own stored figures only, and `RISK_METHODOLOGY_STATUS` still reads
+  `provisional / uncalibrated`.
+- **Production activation (ME-8)**: not authorised. The engine is unwired and
+  the guard asserts it.
+- **Migration of production reports to Scoring V2**: not begun, and no mass
+  backfill of historical reports will occur.
+
+Reporting work (RF-7) may build against the score output contract — shape
+compatibility, developer-only shadow comparison — without any of the above
+moving. Trial-footed evidence stays shadow-only throughout.
+
+
+## §69 SCORING ACCURACY $0 PROGRAMME — CLOSED (2026-09-11)
+
+Merged into `main` as `11920f1e7` (PR #2596, head `0759bbf4b`), after
+`1695fab74` (#2594, the trusted-input gate) and `db59a8056` (#2588, the V2
+freeze). **The programme is closed.** Scoring is not reopened unless a genuine
+defect is discovered, or actual V2 activation is separately authorised.
+
+### 69.1 What the replays established
+
+Read-only, over the live corpus, no production write at any point.
+
+| Reading | Measurement |
+| --- | --- |
+| Growth scored exactly `50` | **1,005 of 1,006** reports, `hasData: false` on all 1,006 |
+| Demand scored exactly `50` | **1,005 of 1,006** reports, `hasData: false` on all 1,006 |
+| Share of every issued grade that was a placeholder | **55%** (Growth 0.40 + Demand 0.15) |
+| Grade-eligible under frozen V2 (≥3 measured dimensions) | **0 of 1,006** |
+| Location coverage before the trust gate / after | **975 → 0** |
+| Yield coverage before / after (operator-entry recovery) | **164 → 188** |
+| Walk score reproducing a per-state constant | **1,109 of 1,114** |
+| Commute mean, with 494 non-NSW reports routed to Sydney | **10,125 minutes** |
+| Schools at the ceiling | **851 of 1,114** |
+| Risk narratives citing buyer LVR / buyer cash flow / a type bonus | **235 / 167 / 418** |
+
+No V2 defect was found by any replay. The corpus is not grade-eligible because
+the evidence does not exist, not because the methodology is wrong.
+
+### 69.2 The closing state — what is authoritative and what is not
+
+| Item | State |
+| --- | --- |
+| Historical V1 snapshots | **PRESERVED.** No rewrite, recompute, migration or backfill. A score carrying no policy stamp is a legacy snapshot and renders exactly as it always did. |
+| New V1 overall score | **NOT AUTHORITATIVE.** `totalScore` is null when no engine holds authority. |
+| New V1 letter grade | **NOT AUTHORITATIVE.** Withheld with a client sentence, never a letter, never a zero. |
+| New V1 dimension assessments | **NOT AUTHORITATIVE** under `unavailable` authority. |
+| New V1 score-derived qualitative verdicts | **NOT AUTHORITATIVE.** `claimPermits` gates every SWOT push; a sentence is an assessment. |
+| Trusted deterministic metrics | **AVAILABLE.** Price, rent, the finance block, stamp duty, demographics, crime, climate, transport — unchanged and fully rendered. |
+| Buyer finance (LVR, holding cash flow) | **FINANCE SUITABILITY ONLY.** Owned by `finance`, admitted to no dimension under any authority. A borrowing position is not a property weakness. |
+| Scoring V2 | **FROZEN / UNWIRED.** §68.2 is the frozen set; the CI guard asserts no entrypoint reaches it. |
+| Future V2 activation | **MUST WIRE THE ACTUAL V2 ENGINE** and consume its published score output contract. It is structurally NOT a constant edit: `LegacyScoringAuthority = Exclude<ScoringAuthority, 'v2'>` makes `PRODUCTION_SCORING_AUTHORITY = 'v2'` a `TS2322` and passing `'v2'` to `policyStamp` a `TS2345`. |
+| Empirical calibration | **DEFERRED.** ME-7 has not run; `RISK_METHODOLOGY_STATUS` stays `provisional / uncalibrated`. |
+| Historical rewrite | **NONE.** Zero rows written by this programme. |
+
+### 69.3 The two independent questions, kept apart
+
+**Evidence** — may a dimension *count* this input? `scoringInputPolicy.pure.ts`
+rules on **ownership** first (does this dimension own the input at all?) then on
+**trust** (is the value believable?). The order matters: ownership is why V1's
+Risk has no admissible input left even where the buyer's figures are perfectly
+trustworthy.
+
+**Authority** — which engine may *speak*? Separate and prior. Gating inputs
+alone left a trapdoor: verify three inputs later and the legacy methodology
+silently becomes the production grade engine. A grade issues only when
+**authority and evidence both hold**.
+
+### 69.4 Deliberately not done
+
+- No historical report rewritten, recomputed or migrated.
+- V1 not deleted; the area scorer untouched; `verify_jwt` untouched.
+- No new feature-flag framework.
+- `verifiedInputs` is **not propagated by the live request path** —
+  `transformInputData` rebuilds the nested request field by field and no caller
+  sets it. Internal and test use only, and a test forbids the overstated
+  wording returning.
+- No data purchased, no prohibited source scraped, no LLM asked to determine
+  geography or to supply a missing figure.
+
+### 69.5 The successor's rule
+
+Absent is absent. A withheld grade is a statement about the **evidence**, never
+about the **asset** — and the client wording, the viewer block and the PDF
+projection all read the one shared module so no surface can print a grade
+another withholds.
+
+## §70 RF-7.1 — the Report Fact Contract, added beside the engine (2026-09-11)
+
+`REPORT_FACT_CONTRACT_V1.md` is the specification;
+`RF71_CAPABILITY_INVENTORY.md` is the characterisation it rests on. This
+section records only what a successor needs to know without opening either.
+
+**The shape of the stage.** A strangler, not a replacement:
+`existing system + contract`. Forty-eight Investment Report capabilities were
+inventoried by tracing ACTUAL callers, the contract was built as an adapter over
+owners that were not touched, and **zero production consumers were switched**.
+
+### 70.1 What the caller census corrected
+
+Two readings that a naive search gets wrong, recorded because both would have
+justified deleting something live:
+
+- **The frontend does not call `supabase.functions.invoke`.** It calls
+  `invokeSecureFunction`. A census on the first form reports **0 callers** for
+  `generate-investment-report`, which has six.
+- **A function with no frontend caller may be the most important one.**
+  `resume-investment-reports` has none and runs every two minutes under pg_cron
+  (`investment-report-resume-2min`) — it is the watchdog that finishes a report
+  the browser abandoned.
+
+### 70.2 The finding that shaped the design
+
+`facts/historicalFactAuthority.pure.ts` — a complete, tested, measured
+precedence layer for eight fields (140/140, 150/150, 153/153 exact agreement
+across 443 paired rows) — has **zero production consumers**. Its only non-test
+reference in the repository is a doc comment.
+
+So the contract ADAPTS it rather than becoming a third implementation of the
+same ordering. That is the difference between a truth layer and a second
+opinion, and it is why this stage adds one file family rather than editing five.
+
+### 70.3 Parity, measured
+
+Thirty-two real production rows across twenty strata (overrides, sentinel and
+missing coordinates, finance with and without rent, house-and-land, land,
+attached, placeholder types, high LVR, metro, regional, forked, derived,
+multi-version, and each of the five variants):
+
+```
+comparisons  896
+matched      896
+mismatches   0
+non-null     504 of 896  (56.2%)
+```
+
+Every material fact — price, rent, LVR, deposit, loan, cash flow, outgoings,
+duty, upfront, gross and net yield, origination LVR, type, beds, baths, parking,
+land, building, year built, suburb, postcode, state, coordinates, variant, tier,
+version, grade issuance — reproduces the current path exactly, on the first run.
+
+### 70.4 Three deliberate refusals
+
+Each would be a plausible figure and each would be a new one:
+
+- **LVR at settlement is not reconstructed** as `price − deposit`. That identity
+  breaks on 21 stored reports, so a reconstruction is most confident exactly
+  where the record is least reliable.
+- **Stamp duty is read, never re-run.** Duty needs a purchase intent and a
+  concession status the report does not record.
+- **Current LVR is absent**, because it is a different quantity from origination
+  LVR and they coincide only at settlement.
+
+### 70.5 Surfaced, deliberately not changed
+
+`annualOutgoings`' second authority path (`annualCosts.total`) is **inert on the
+whole live corpus**: measured across 1,207 rows, `total` exists on **0**,
+`totalAnnual` on 208, `totalAnnualExcludingLandTax` on 173. The engine has never
+emitted `total`. On the 35 rows carrying only `totalAnnual`, `annualOutgoings`
+therefore resolves as absent — which is the CORRECT outcome reached by accident,
+because `totalAnnual` includes land tax and the other excludes it. Pointing the
+fallback at `totalAnnual` would silently change a published figure's basis, so
+it is recorded rather than repaired: the remedy is a labelled `BasedMetric`, in a
+later stage.
+
+### 70.6 The preservation guarantees, and how each is proved
+
+| Guarantee | Proof |
+| --- | --- |
+| No production consumer switched | a test walks `src` and `supabase/functions` and fails on any non-test file naming `buildReportFactContract` |
+| No owner edited | a test asserts no owner module names the contract |
+| The arrow points one way | a test walks three roots for reverse imports |
+| Pure — no clock, network, database, write or `await` | the module's own source is read and asserted |
+| Absent never becomes 0 / '' / false / a default | asserted per leaf, on fixtures and on all 32 real rows |
+| Every historical shape tolerated | nine adversarial shapes plus the real corpus; nothing throws |
+| Nothing mutated | input rows are JSON-compared before and after |
+| Capabilities intact | 65 characterisation tests over 22 edge functions, 17 surfaces, the routes, the cron schedule and the delivery fallback chain |
+
+`rf71Preservation.spec.ts` is deliberately the inverse of the rest of the suite:
+a failure there does not mean the code is wrong, it means **a capability that
+existed has changed** — which must then be deliberate, named and approved.

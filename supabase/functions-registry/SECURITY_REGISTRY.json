@@ -1977,6 +1977,12 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "market-source-probe": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "reporting-engine-program",
+      "reviewed": true
+    },
     "market-source-relay": {
       "verify_jwt": false,
       "exposure_class": "internal-service",
@@ -2591,6 +2597,12 @@
       "verify_jwt": false,
       "exposure_class": "module-gated",
       "owner": "security-remediation-program",
+      "reviewed": true
+    },
+    "resolve-report-geography": {
+      "verify_jwt": true,
+      "exposure_class": "cron-worker",
+      "owner": "reporting-engine-audit",
       "reviewed": true
     },
     "resume-bulk-generation": {

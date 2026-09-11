@@ -84,15 +84,18 @@ import {
   PROJECTION_TOTAL_LABEL_INNER_CLASS,
 } from '@/lib/cashFlow/projectionTableGeometry.pure';
 import {
-  get10YearLoanProjection,
-  type MortgageInput,
-  type RateChange,
-  type RepaymentFrequency,
-  type LoanType
-} from '@/utils/mortgageCalculations';
+  NEGATIVE_FIGURE_INK,
+  POSITIVE_FIGURE_INK,
+  signedFigureInk,
+} from '@/lib/cashFlow/figureInk.pure';
+import {
+  buildLoanSchedule,
+  buildProjection,
+  fixedExpenseBase,
+  type ProjectionYear,
+} from '@/lib/cashFlow/projectionEngine.pure';
 import {
   parseFinancialInput,
-  resolveYearDepreciation,
   hydrateYearlyOverrides,
 } from '@/utils/cashFlowDepreciation';
 import {
@@ -126,31 +129,8 @@ interface CashFlowAnalysisModalProps {
   backLabel?: string;
 }
 
-interface YearlyProjection {
-  year: number;
-  capitalGrowthRate: number;
-  cpiGrowthRate: number;
-  propertyMarketValue: number;
-  loanAmount: number;
-  equityInProperty: number;
-  loanToValueRatio: number;
-  rentalIncome: number;
-  grossYield: number;
-  netYield: number;
-  propertyExpenses: number;
-  interestRate: number;
-  interestPayments: number;
-  principalPayments: number;
-  preTaxCashFlowPA: number;
-  preTaxCashFlowPW: number;
-  depreciation: number;
-  totalDeductions: number;
-  netProfitLoss: number;
-  taxRefund: number;
-  landTax: number;
-  afterTaxCashFlowPA: number;
-  afterTaxCashFlowPW: number;
-}
+/** The projection row type is the engine's — one shape, one producer. */
+type YearlyProjection = ProjectionYear;
 
 // Per-year override fields
 interface YearOverrides {
@@ -723,172 +703,55 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     }
   }, [toast]);
 
-  // Calculate projections for all comparison reports (using same chained cascade logic)
+  // Calculate projections for all comparison reports.
+  /**
+   * Peers go through the SAME reader and the SAME engine as the property this
+   * modal has open. They used to go through neither: this block re-read every
+   * field with its own cascade, and its loan was flat for ten years under a
+   * comment reading "simplified for comparison - no amortization engine" — so
+   * a peer's equity, LVR, principal and cash flow were all measured on debt
+   * that never reduced, while the subject's reduced. `readBaseFinancials` was
+   * already extracted for exactly this reason and the metrics below already
+   * call it; the projections did not.
+   */
   const allComparisonProjections = useMemo(() => {
     return comparisonReports.map(compReport => {
-      const fc = compReport.financial_calculations || {};
+      const compBase = readBaseFinancials(compReport, new Date().getFullYear());
       const mo = compReport.manual_overrides || {};
-      const cashFlow = fc.cashFlow || {};
-      const assumptions = fc.assumptions || {};
-      const initialCosts = fc.initialCosts || {};
-      // Merge depreciationSchedule into cfOverrides for comparison reports.
-      // Schedule values are authoritative here as well.
-      let cfOverrides = { ...(mo.cashFlowYearlyOverrides || {}) };
+
+      // A generated depreciation schedule is authoritative for a peer too, so
+      // it is folded in as a per-year override before the engine runs.
+      const cfOverrides: Record<number, YearOverrides> = { ...(mo.cashFlowYearlyOverrides || {}) };
       const compDepSchedule = mo.depreciationSchedule as Record<string | number, number> | undefined;
       if (compDepSchedule) {
         for (let y = 1; y <= 10; y++) {
           const sv = compDepSchedule[y] ?? compDepSchedule[String(y)];
-          if (sv != null) {
-            if (!cfOverrides[y]) cfOverrides[y] = {};
-            cfOverrides[y] = { ...cfOverrides[y], depreciation: sv };
-          }
+          if (sv != null) cfOverrides[y] = { ...(cfOverrides[y] ?? {}), depreciation: sv };
         }
       }
-      const includeDepreciation = mo.includeDepreciationInCashFlow !== false;
 
-      // CRITICAL: Use same fallback paths as baseFinancialData
-      const purchasePrice = mo.purchasePrice ?? initialCosts.propertyValue ?? fc.purchasePrice ?? fc.propertyValue ?? 0;
-      const loanAmount = mo.loanAmount ?? cashFlow.loanAmount ?? (purchasePrice * ((mo.loanToValueRatio ?? fc.loanToValueRatio ?? 80) / 100));
-      const weeklyRent = mo.weeklyRent ?? fc.weeklyRent ?? 0;
-      const occupancyRate = mo.occupancyRate ?? cashFlow.occupancyRate ?? 52;
-      // CRITICAL: capitalGrowth may be in assumptions.capitalGrowth (nested) or fc.capitalGrowth (root)
-      const baseCapitalGrowthRate = (mo.capitalGrowth ?? assumptions.capitalGrowth ?? fc.capitalGrowth ?? 5) / 100;
-      const baseInterestRate = (mo.interestRate ?? fc.interestRate ?? 5.5) / 100;
-      // CPI Growth: independent macro indicator, NOT derived from capital growth. Fallback to 2.5% (RBA target midpoint)
-      const baseCpiRate = (mo.cpiGrowthRate ?? cashFlow.cpiGrowthRate ?? 2.5) / 100;
-      const taxRate = (mo.taxRate ?? cashFlow.taxRate ?? 30) / 100;
-      const baseDepreciation = includeDepreciation ? (mo.depreciation ?? cashFlow.depreciation ?? 6000) : 0;
-      const depreciationSchedule = mo.depreciationSchedule as Record<number, number> | undefined;
-      const baseLandTax = mo.landTax ?? fc.landTax ?? 0;
-      const marketValueNow = mo.marketValueNow ?? cashFlow.marketValueNow ?? purchasePrice;
+      const loanSchedule = buildLoanSchedule(compBase, cfOverrides);
+      const projections = buildProjection(
+        {
+          marketValueNow: compBase.marketValueNow || compBase.purchasePrice,
+          initialLoanAmount:
+            compBase.loanAmount || compBase.purchasePrice * (compBase.loanToValueRatio / 100),
+          baseAnnualRent: compBase.weeklyRent * compBase.occupancyRate,
+          baseFixedExpenses: fixedExpenseBase(compBase),
+          propertyManagementRate: compBase.propertyManagementFees / 100,
+          capitalGrowthRate: compBase.capitalGrowth / 100,
+          cpiRate: compBase.cpiGrowthRate / 100,
+          interestRate: compBase.interestRate / 100,
+          taxRate: compBase.taxRate / 100,
+          baseDepreciation: compBase.depreciation,
+          depreciationSchedule: compBase.depreciationSchedule,
+          baseLandTax: compBase.landTax,
+        },
+        cfOverrides,
+        (year) => loanSchedule?.[year - 1] ?? null,
+      );
 
-      // Fixed expenses (excluding management fee)
-      const baseFixedExpenses = 
-        (mo.councilRates ?? fc.councilRates ?? 0) +
-        (mo.waterRates ?? fc.waterRates ?? 0) +
-        (mo.bodyCorporateFees ?? fc.bodyCorporateFees ?? 0) +
-        (mo.buildingLandlordInsurance ?? fc.buildingLandlordInsurance ?? 0) +
-        (mo.repairsMaintenance ?? fc.repairsMaintenance ?? 0);
-      const propertyManagementPercent = (mo.propertyManagementFees ?? fc.propertyManagementFees ?? 7) / 100;
-      const baseAnnualRent = weeklyRent * occupancyRate;
-
-      const results: YearlyProjection[] = [];
-      
-      // Track previous year values for CHAINED cascade
-      let previousPropertyValue = marketValueNow;
-      let previousRentalIncome = baseAnnualRent;
-      let previousFixedExpenses = baseFixedExpenses;
-
-      for (let year = 0; year <= 10; year++) {
-        const yearOverrides = cfOverrides[year] || {};
-        
-        const yearCapitalGrowthRate = year >= 1 && yearOverrides.capitalGrowthRate != null
-          ? yearOverrides.capitalGrowthRate / 100 : baseCapitalGrowthRate;
-        const yearCpiRate = year >= 1 && yearOverrides.cpiGrowthRate != null
-          ? yearOverrides.cpiGrowthRate / 100 : baseCpiRate;
-        const yearInterestRate = year >= 1 && yearOverrides.interestRate != null
-          ? yearOverrides.interestRate / 100 : baseInterestRate;
-
-        // Property value - CHAINED cascade
-        let propertyValue: number;
-        if (year === 0) {
-          propertyValue = marketValueNow;
-        } else if (yearOverrides.propertyMarketValue != null) {
-          propertyValue = yearOverrides.propertyMarketValue;
-        } else {
-          // CHAINED: Grow from previous year's actual value
-          propertyValue = previousPropertyValue * (1 + yearCapitalGrowthRate);
-        }
-        previousPropertyValue = propertyValue;
-
-        const currentLoanAmount = loanAmount;
-        const equity = propertyValue - currentLoanAmount;
-        const lvr = propertyValue > 0 ? (currentLoanAmount / propertyValue) * 100 : 0;
-
-        // Rental income - CHAINED cascade
-        let annualRent: number;
-        if (year === 0) {
-          annualRent = baseAnnualRent;
-        } else if (yearOverrides.rentalIncome != null) {
-          annualRent = yearOverrides.rentalIncome;
-        } else {
-          // CHAINED: Grow from previous year's actual rent using current year's CPI
-          annualRent = previousRentalIncome * (1 + yearCpiRate);
-        }
-        previousRentalIncome = annualRent;
-
-        // Property expenses - HYBRID: Fixed portion chains, mgmt fee is dynamic
-        let totalExpenses: number;
-        let currentFixedExpenses: number;
-        if (year === 0) {
-          currentFixedExpenses = baseFixedExpenses;
-          totalExpenses = currentFixedExpenses + (annualRent * propertyManagementPercent);
-        } else if (yearOverrides.propertyExpenses != null) {
-          totalExpenses = yearOverrides.propertyExpenses;
-          currentFixedExpenses = totalExpenses - (annualRent * propertyManagementPercent);
-        } else {
-          // CHAINED: Fixed expenses grow from previous year using current year's CPI
-          currentFixedExpenses = previousFixedExpenses * (1 + yearCpiRate);
-          totalExpenses = currentFixedExpenses + (annualRent * propertyManagementPercent);
-        }
-        previousFixedExpenses = currentFixedExpenses;
-
-        // Interest & Principal (simplified for comparison - no amortization engine)
-        let interestPayments = year === 0 ? 0 : 
-          yearOverrides.interestPayment != null ? yearOverrides.interestPayment : 
-          currentLoanAmount * yearInterestRate;
-        let principalPayments = year === 0 ? 0 : yearOverrides.principalPayment ?? 0;
-        
-        // Depreciation - LOCKED (schedule-based or direct)
-        let depreciation: number;
-        if (year === 0) {
-          depreciation = 0;
-        } else if (yearOverrides.depreciation != null) {
-          depreciation = yearOverrides.depreciation;
-        } else if (depreciationSchedule && depreciationSchedule[year] != null) {
-          depreciation = depreciationSchedule[year];
-        } else {
-          depreciation = baseDepreciation;
-        }
-        
-        // Land tax - LOCKED
-        let landTax = year === 0 ? 0 : yearOverrides.landTax ?? baseLandTax;
-
-        const grossYield = year === 0 ? 0 : (annualRent / propertyValue) * 100;
-        const netYield = year === 0 ? 0 : ((annualRent - totalExpenses) / propertyValue) * 100;
-        const preTaxCashFlow = year === 0 ? 0 : annualRent - totalExpenses - interestPayments - principalPayments - landTax;
-        const totalDeductions = totalExpenses + interestPayments + depreciation + landTax;
-        const netProfitLoss = year === 0 ? 0 : annualRent - totalDeductions;
-        const taxRefund = year === 0 ? 0 : (netProfitLoss < 0 ? Math.abs(netProfitLoss) * taxRate : 0);
-        const afterTaxCashFlow = year === 0 ? 0 : preTaxCashFlow + taxRefund;
-
-        results.push({
-          year,
-          capitalGrowthRate: year === 0 ? 0 : yearCapitalGrowthRate * 100,
-          cpiGrowthRate: year === 0 ? 0 : yearCpiRate * 100,
-          propertyMarketValue: Math.round(propertyValue),
-          loanAmount: Math.round(currentLoanAmount),
-          equityInProperty: Math.round(equity),
-          loanToValueRatio: Math.round(lvr * 100) / 100,
-          rentalIncome: Math.round(annualRent),
-          grossYield: Math.round(grossYield * 100) / 100,
-          netYield: Math.round(netYield * 100) / 100,
-          propertyExpenses: Math.round(totalExpenses),
-          interestRate: year === 0 ? 0 : yearInterestRate * 100,
-          interestPayments: Math.round(interestPayments),
-          principalPayments: Math.round(principalPayments),
-          preTaxCashFlowPA: Math.round(preTaxCashFlow),
-          preTaxCashFlowPW: Math.round(preTaxCashFlow / 52),
-          depreciation: Math.round(depreciation),
-          totalDeductions: Math.round(totalDeductions),
-          netProfitLoss: Math.round(netProfitLoss),
-          taxRefund: Math.round(taxRefund),
-          landTax: Math.round(landTax),
-          afterTaxCashFlowPA: Math.round(afterTaxCashFlow),
-          afterTaxCashFlowPW: Math.round(afterTaxCashFlow / 52),
-        });
-      }
-      return { report: compReport, projections: results };
+      return { report: compReport, projections };
     });
   }, [comparisonReports]);
 
@@ -911,47 +774,12 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     [report],
   );
 
-  // Generate 10-year loan projection using amortisation engine
-  const loanProjections = useMemo(() => {
-    if (!baseFinancialData) return null;
-    
-    const loanAmount = baseFinancialData.loanAmount || 
-      (baseFinancialData.purchasePrice * (baseFinancialData.loanToValueRatio / 100));
-    
-    if (loanAmount <= 0) return null;
-    
-    // Convert monthly extra repayment to the appropriate frequency
-    const periodsPerYear = baseFinancialData.repaymentFrequency === 'weekly' ? 52 : 
-                           baseFinancialData.repaymentFrequency === 'fortnightly' ? 26 : 12;
-    const extraPerPeriod = baseFinancialData.extraRepaymentPerMonth * 12 / periodsPerYear;
-    
-    const mortgageInput: MortgageInput = {
-      loanAmount,
-      annualInterestRate: baseFinancialData.interestRate,
-      loanTermYears: baseFinancialData.loanTermYears,
-      repaymentFrequency: baseFinancialData.repaymentFrequency,
-      loanType: baseFinancialData.loanType === 'interest_only' ? 'interest_only' : 'principal_interest',
-      interestOnlyPeriodYears: baseFinancialData.interestOnlyPeriodYears,
-      extraRepaymentPerPeriod: extraPerPeriod,
-      offsetBalance: baseFinancialData.offsetBalance,
-    };
-    
-    // Build rate changes from yearly overrides (including Year 1)
-    const rateChanges: RateChange[] = [];
-    Object.entries(yearlyOverrides).forEach(([yearStr, overrides]) => {
-      const year = parseInt(yearStr);
-      if (overrides.interestRate !== undefined && overrides.interestRate !== null && year >= 1) {
-        rateChanges.push({
-          effectiveFromPeriod: (year - 1) * periodsPerYear + 1,
-          newAnnualRate: overrides.interestRate,
-        });
-      }
-    });
-    // Sort rate changes by period to ensure proper application
-    rateChanges.sort((a, b) => a.effectiveFromPeriod - b.effectiveFromPeriod);
-    
-    return get10YearLoanProjection(mortgageInput, rateChanges);
-  }, [baseFinancialData, yearlyOverrides]);
+  // Generate the 10-year loan schedule. `buildLoanSchedule` is shared with the
+  // comparison path above, so peers and the subject amortise identically.
+  const loanProjections = useMemo(
+    () => (baseFinancialData ? buildLoanSchedule(baseFinancialData, yearlyOverrides) : null),
+    [baseFinancialData, yearlyOverrides],
+  );
 
   // Get override value for a specific year and field
   const getOverrideValue = useCallback((year: number, field: EditableFieldKey): number | null => {
@@ -1067,234 +895,31 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   const projections = useMemo(() => {
     if (!baseFinancialData) return [];
 
-    const results: YearlyProjection[] = [];
-    
-    // Calculate initial values
-    const purchasePrice = baseFinancialData.purchasePrice;
-    const initialLoanAmount = baseFinancialData.loanAmount || (purchasePrice * (baseFinancialData.loanToValueRatio / 100));
-    const weeklyRent = baseFinancialData.weeklyRent;
-    const occupancyRate = baseFinancialData.occupancyRate;
-    const baseCapitalGrowthRate = baseFinancialData.capitalGrowth / 100;
-    const baseInterestRate = baseFinancialData.interestRate / 100;
-    const baseCpiRate = baseFinancialData.cpiGrowthRate / 100;
-    const taxRate = baseFinancialData.taxRate / 100;
-
-    // Calculate initial fixed expenses (excluding property management which is rent-based)
-    const baseFixedExpenses = 
-      baseFinancialData.councilRates +
-      baseFinancialData.waterRates +
-      baseFinancialData.bodyCorporateFees +
-      baseFinancialData.buildingLandlordInsurance +
-      baseFinancialData.repairsMaintenance;
-
-    // Calculate property management as percentage of rent
-    const propertyManagementPercent = baseFinancialData.propertyManagementFees / 100;
-
-    // Base calculated values for Year 0
-    const baseAnnualRent = weeklyRent * occupancyRate;
-
-    // Track previous year values for CHAINED cascade (not compound from base)
-    let previousPropertyValue = baseFinancialData.marketValueNow || purchasePrice;
-    let previousRentalIncome = baseAnnualRent;
-    let previousFixedExpenses = baseFixedExpenses;
-
-    for (let year = 0; year <= 10; year++) {
-      const yearOverrides = yearlyOverrides[year] || {};
-      
-      // Get rates for this year (use override or base)
-      // FIX: Year 1 can now use override if provided
-      const yearCapitalGrowthRate = year >= 1 && yearOverrides.capitalGrowthRate !== undefined && yearOverrides.capitalGrowthRate !== null
-        ? yearOverrides.capitalGrowthRate / 100
-        : baseCapitalGrowthRate;
-      
-      const yearCpiRate = year >= 1 && yearOverrides.cpiGrowthRate !== undefined && yearOverrides.cpiGrowthRate !== null
-        ? yearOverrides.cpiGrowthRate / 100
-        : baseCpiRate;
-      
-      const yearInterestRate = year >= 1 && yearOverrides.interestRate !== undefined && yearOverrides.interestRate !== null
-        ? yearOverrides.interestRate / 100
-        : baseInterestRate;
-
-      // =====================================================
-      // PROPERTY VALUE - Chained cascade from previous year
-      // =====================================================
-      let propertyValue: number;
-      if (year === 0) {
-        propertyValue = baseFinancialData.marketValueNow || purchasePrice;
-      } else if (yearOverrides.propertyMarketValue !== undefined && yearOverrides.propertyMarketValue !== null) {
-        // Direct override - use it, but still chain from here for subsequent years
-        propertyValue = yearOverrides.propertyMarketValue;
-      } else {
-        // CHAINED: Grow from PREVIOUS year's actual value (including any overrides)
-        // This applies the CURRENT year's growth rate to the previous year's value
-        propertyValue = previousPropertyValue * (1 + yearCapitalGrowthRate);
-      }
-      // Update tracker for next iteration
-      previousPropertyValue = propertyValue;
-
-      // =====================================================
-      // LOAN CALCULATIONS - Amortization engine with rate changes
-      // =====================================================
-      let currentLoanAmount: number;
-      let interestPayments: number;
-      let principalPayments: number;
-      
-      if (year === 0) {
-        currentLoanAmount = initialLoanAmount;
-        interestPayments = 0;
-        principalPayments = 0;
-      } else if (loanProjections && loanProjections[year - 1]) {
-        const yearProjection = loanProjections[year - 1];
-        
-        // Use override values if provided (locked), otherwise use amortization engine values
-        if (yearOverrides.interestPayment !== undefined && yearOverrides.interestPayment !== null) {
-          interestPayments = yearOverrides.interestPayment;
-        } else {
-          interestPayments = yearProjection.interestPayment;
-        }
-        
-        if (yearOverrides.principalPayment !== undefined && yearOverrides.principalPayment !== null) {
-          principalPayments = yearOverrides.principalPayment;
-        } else {
-          principalPayments = yearProjection.principalPayment;
-        }
-        
-        // Loan balance comes from amortization engine (reflects rate changes)
-        currentLoanAmount = yearProjection.closingBalance;
-      } else {
-        // Fallback to simple calculation if amortization engine not available
-        currentLoanAmount = initialLoanAmount;
-        interestPayments = initialLoanAmount * yearInterestRate;
-        principalPayments = 0;
-      }
-
-      // Equity - derived from property value and loan balance
-      const equity = propertyValue - currentLoanAmount;
-
-      // LVR - derived from loan balance and property value
-      const lvr = propertyValue > 0 ? (currentLoanAmount / propertyValue) * 100 : 0;
-
-      // =====================================================
-      // RENTAL INCOME - Chained cascade from previous year
-      // =====================================================
-      let annualRent: number;
-      if (year === 0) {
-        annualRent = baseAnnualRent;
-      } else if (yearOverrides.rentalIncome !== undefined && yearOverrides.rentalIncome !== null) {
-        // Direct override - use it, subsequent years chain from here
-        annualRent = yearOverrides.rentalIncome;
-      } else {
-        // CHAINED: Grow from PREVIOUS year's actual rent using CURRENT year's CPI
-        annualRent = previousRentalIncome * (1 + yearCpiRate);
-      }
-      // Update tracker for next iteration
-      previousRentalIncome = annualRent;
-
-      // =====================================================
-      // PROPERTY EXPENSES - Hybrid: Fixed portion chains, Mgmt fee is dynamic
-      // =====================================================
-      let totalExpenses: number;
-      let currentFixedExpenses: number;
-      
-      if (year === 0) {
-        currentFixedExpenses = baseFixedExpenses;
-        const propertyManagement = annualRent * propertyManagementPercent;
-        totalExpenses = currentFixedExpenses + propertyManagement;
-      } else if (yearOverrides.propertyExpenses !== undefined && yearOverrides.propertyExpenses !== null) {
-        // Direct override - LOCKED value, doesn't cascade
-        totalExpenses = yearOverrides.propertyExpenses;
-        // Estimate fixed expenses for tracking (approximate)
-        currentFixedExpenses = totalExpenses - (annualRent * propertyManagementPercent);
-      } else {
-        // CHAINED: Fixed expenses grow from PREVIOUS year's fixed expenses using CURRENT year's CPI
-        currentFixedExpenses = previousFixedExpenses * (1 + yearCpiRate);
-        // Property management is ALWAYS recalculated from current year's rent
-        const propertyManagement = annualRent * propertyManagementPercent;
-        totalExpenses = currentFixedExpenses + propertyManagement;
-      }
-      // Update tracker for next iteration
-      previousFixedExpenses = currentFixedExpenses;
-
-      // Gross yield - derived from rent and property value
-      const grossYield = year === 0 ? 0 : (annualRent / propertyValue) * 100;
-
-      // Net yield - derived from rent, expenses, and property value
-      const netYield = year === 0 ? 0 : ((annualRent - totalExpenses) / propertyValue) * 100;
-
-      // =====================================================
-      // DEPRECIATION - LOCKED (schedule-based or direct override)
-      // Priority: saved/draft manual override > generated 10-year schedule >
-      // single default. Manual overrides (incl. 0) always win so saved edits
-      // are never overwritten by the generated figure during recalculation.
-      // =====================================================
-      const depreciation = resolveYearDepreciation({
-        year,
-        override: yearOverrides.depreciation,
-        scheduleValue: baseFinancialData.depreciationSchedule?.[year],
-        defaultValue: baseFinancialData.depreciation,
-      });
-
-      // =====================================================
-      // LAND TAX - LOCKED (direct override or base value)
-      // =====================================================
-      let landTax: number;
-      if (excludeLandTaxFromCashFlow) {
-        landTax = 0;
-      } else if (year === 0) {
-        landTax = 0;
-      } else if (yearOverrides.landTax !== undefined && yearOverrides.landTax !== null) {
-        landTax = yearOverrides.landTax;
-      } else {
-        landTax = baseFinancialData.landTax;
-      }
-
-      // =====================================================
-      // CASH FLOW CALCULATIONS - All derived from above values
-      // =====================================================
-      
-      // Pre-tax cash flow (includes land tax as a cash expense)
-      const preTaxCashFlow = year === 0 ? 0 : annualRent - totalExpenses - interestPayments - principalPayments - landTax;
-
-      // Total deductions (includes land tax for tax calculation)
-      const totalDeductions = totalExpenses + interestPayments + depreciation + landTax;
-
-      // Net profit/loss (taxable income/loss)
-      const netProfitLoss = year === 0 ? 0 : annualRent - totalDeductions;
-
-      // Tax refund (negative gearing benefit when in loss position)
-      const taxRefund = year === 0 ? 0 : (netProfitLoss < 0 ? Math.abs(netProfitLoss) * taxRate : 0);
-
-      // After-tax cash flow
-      const afterTaxCashFlow = year === 0 ? 0 : preTaxCashFlow + taxRefund;
-
-      results.push({
-        year,
-        capitalGrowthRate: year === 0 ? 0 : (yearCapitalGrowthRate * 100),
-        cpiGrowthRate: year === 0 ? 0 : (yearCpiRate * 100),
-        propertyMarketValue: Math.round(propertyValue),
-        loanAmount: Math.round(currentLoanAmount),
-        equityInProperty: Math.round(equity),
-        loanToValueRatio: Math.round(lvr * 100) / 100,
-        rentalIncome: Math.round(annualRent),
-        grossYield: Math.round(grossYield * 100) / 100,
-        netYield: Math.round(netYield * 100) / 100,
-        propertyExpenses: Math.round(totalExpenses),
-        interestRate: year === 0 ? 0 : (yearInterestRate * 100),
-        interestPayments: Math.round(interestPayments),
-        principalPayments: Math.round(principalPayments),
-        preTaxCashFlowPA: Math.round(preTaxCashFlow),
-        preTaxCashFlowPW: Math.round(preTaxCashFlow / 52),
-        depreciation: Math.round(depreciation),
-        totalDeductions: Math.round(totalDeductions),
-        netProfitLoss: Math.round(netProfitLoss),
-        taxRefund: Math.round(taxRefund),
-        landTax: landTax,
-        afterTaxCashFlowPA: Math.round(afterTaxCashFlow),
-        afterTaxCashFlowPW: Math.round(afterTaxCashFlow / 52),
-      });
-    }
-
-    return results;
+    // One engine, shared with the comparison path below. It carries the audit
+    // of the Moranbah report: a rental PROFIT is now taxed (it never was), and
+    // letting fees now reach the expense base (they never did). See
+    // `src/lib/cashFlow/projectionEngine.pure.ts`.
+    return buildProjection(
+      {
+        marketValueNow: baseFinancialData.marketValueNow || baseFinancialData.purchasePrice,
+        initialLoanAmount:
+          baseFinancialData.loanAmount ||
+          baseFinancialData.purchasePrice * (baseFinancialData.loanToValueRatio / 100),
+        baseAnnualRent: baseFinancialData.weeklyRent * baseFinancialData.occupancyRate,
+        baseFixedExpenses: fixedExpenseBase(baseFinancialData),
+        propertyManagementRate: baseFinancialData.propertyManagementFees / 100,
+        capitalGrowthRate: baseFinancialData.capitalGrowth / 100,
+        cpiRate: baseFinancialData.cpiGrowthRate / 100,
+        interestRate: baseFinancialData.interestRate / 100,
+        taxRate: baseFinancialData.taxRate / 100,
+        baseDepreciation: baseFinancialData.depreciation,
+        depreciationSchedule: baseFinancialData.depreciationSchedule,
+        baseLandTax: baseFinancialData.landTax,
+        excludeLandTax: excludeLandTaxFromCashFlow,
+      },
+      yearlyOverrides,
+      (year) => loanProjections?.[year - 1] ?? null,
+    );
   }, [baseFinancialData, yearlyOverrides, loanProjections, excludeLandTaxFromCashFlow]);
 
   // Construction Progress Payment Schedule calculation
@@ -2582,7 +2207,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     projectionData.push(['SUMMARY']);
     projectionData.push(['Total Deductions $', ...projections.map(p => p.year === 0 ? '' : p.totalDeductions)]);
     projectionData.push(['Net Profit/Loss $', ...projections.map(p => p.year === 0 ? '' : p.netProfitLoss)]);
-    projectionData.push(['Tax Refund $', ...projections.map(p => p.year === 0 ? '' : p.taxRefund)]);
+    projectionData.push(['Tax Refund / (Payable) $', ...projections.map(p => p.year === 0 ? '' : p.taxEffect)]);
     projectionData.push(['After-Tax Cash Flow p/a $', ...projections.map(p => p.year === 0 ? '' : p.afterTaxCashFlowPA)]);
     projectionData.push(['After-Tax Cash Flow p/w $', ...projections.map(p => p.year === 0 ? '' : p.afterTaxCashFlowPW)]);
 
@@ -2837,7 +2462,16 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
         // Draw inputs in two columns
         drawInputRow('Purchase Price:', formatCurrency(baseFinancialData.purchasePrice), 'Weekly Rent:', formatCurrency(baseFinancialData.weeklyRent));
-        drawInputRow('Land Price:', formatCurrency(baseFinancialData.landPrice), 'Gross Rental Yield:', projections.length > 1 ? `${projections[1].grossYield.toFixed(2)}%` : '-');
+        // Gross Rental Yield on the PURCHASE PRICE. It used to print
+        // `projections[1].grossYield`, which is Year 1 rent over the Year 1
+        // GROWN value — so in an Input Summary sitting beside "Purchase Price"
+        // it answered a question nobody asked and understated the buying yield
+        // (on the audited Moranbah report, 7.22% shown against 7.67% actual).
+        const _annualRentNow = baseFinancialData.weeklyRent * baseFinancialData.occupancyRate;
+        const _purchaseYield = baseFinancialData.purchasePrice > 0
+          ? `${((_annualRentNow / baseFinancialData.purchasePrice) * 100).toFixed(2)}%`
+          : '-';
+        drawInputRow('Land Price:', formatCurrency(baseFinancialData.landPrice), 'Gross Rental Yield (on purchase):', _purchaseYield);
         drawInputRow('Build Price:', formatCurrency(baseFinancialData.buildPrice || (baseFinancialData.purchasePrice - baseFinancialData.landPrice)), 'Council Rates (p.a.):', formatCurrency(baseFinancialData.councilRates));
         drawInputRow('Deposit Amount:', formatCurrency(baseFinancialData.depositValue), 'Water Rates (p.a.):', formatCurrency(baseFinancialData.waterRates));
         drawInputRow('Loan Amount:', formatCurrency(baseFinancialData.loanAmount || (baseFinancialData.purchasePrice * (baseFinancialData.loanToValueRatio / 100))), 'Property Management:', `${baseFinancialData.propertyManagementFees}%`);
@@ -2846,6 +2480,22 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         drawInputRow('CPI Growth Rate:', `${baseFinancialData.cpiGrowthRate}%`, 'Repairs & Maintenance:', formatCurrency(baseFinancialData.repairsMaintenance));
         drawInputRow('Tax Rate (MTR):', `${baseFinancialData.taxRate}%`, 'Body Corporate:', formatCurrency(baseFinancialData.bodyCorporateFees));
         drawInputRow('Depreciation (Yr 1):', formatCurrency(baseFinancialData.depreciation), 'Stamp Duty:', formatCurrency(baseFinancialData.stampDuty));
+        // The rent basis and the loan structure were both absent, and both
+        // explain a figure in the table. Rent is charged for `occupancyRate`
+        // weeks, not 52; and an interest-only period is why cash flow steps
+        // down in the year principal starts — on the audited report that was a
+        // ~$4,000 fall at Year 3 with nothing on the page to account for it.
+        const _ioYears = baseFinancialData.loanType === 'interest_only'
+          ? baseFinancialData.interestOnlyPeriodYears
+          : 0;
+        drawInputRow(
+          'Loan Structure:',
+          _ioYears > 0
+            ? `Interest only ${_ioYears} yr${_ioYears === 1 ? '' : 's'}, then P&I (${baseFinancialData.loanTermYears} yr term)`
+            : `Principal & interest (${baseFinancialData.loanTermYears} yr term)`,
+          'Rent Basis:',
+          `${baseFinancialData.occupancyRate} weeks p.a.`,
+        );
         drawInputRow('', '', 'Conveyancing:', formatCurrency(baseFinancialData.solicitorFees));
         if (baseFinancialData.lmiAmount > 0) {
           drawInputRow('', '', 'LMI:', formatCurrency(baseFinancialData.lmiAmount));
@@ -3248,7 +2898,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       drawRow(['SUMMARY'], false, true);
       drawRow(['Total Deductions $', '', ...years1to10.map(p => formatCurrency(p.totalDeductions))]);
       drawRow(['Net Profit/Loss $', '', ...years1to10.map(p => formatCurrency(p.netProfitLoss))], false, false, true);
-      drawRow(['Tax Refund $', '', ...years1to10.map(p => formatCurrency(p.taxRefund))]);
+      drawRow(['Tax Refund / (Payable) $', '', ...years1to10.map(p => formatCurrency(p.taxEffect))], false, false, true);
       drawRow(['After-Tax Cash Flow p/a $', '', ...years1to10.map(p => formatCurrency(p.afterTaxCashFlowPA))], false, false, true);
       drawRow(['After-Tax Cash Flow p/w $', '', ...years1to10.map(p => formatCurrency(p.afterTaxCashFlowPW))], false, false, true);
 
@@ -3662,7 +3312,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           
           let yieldInsight = `Gross Yield: Moves from ${yr1Gross}% (Year 1) to ${yr10Gross}% (Year 10), a shift of ${grossDelta} percentage points. This compression occurs because property value appreciates faster than rental income, which is a hallmark of capital-growth-oriented investment properties.\n\n`;
           yieldInsight += `Net Yield: Shifts from ${yr1Net}% to ${yr10Net}% (${netDelta}pp change). Net yield accounts for property expenses including council rates, insurance, maintenance, and management fees, providing a more accurate picture of actual return on asset value.\n\n`;
-          yieldInsight += `Expense Drag: The average spread between gross and net yield is ${avgSpread.toFixed(2)} percentage points, representing the proportion of rental income consumed by holding costs. A narrowing spread over time indicates improving operational efficiency as rental growth outpaces expense inflation.`;
+          // The spread between the two yields is (rent - (rent - expenses)) / value,
+          // which is simply expenses over value: rent cancels out entirely. So the
+          // old sentence here — "a narrowing spread indicates improving operational
+          // efficiency as rental growth outpaces expense inflation" — asserted a
+          // cause the arithmetic makes impossible, and in this model rent and
+          // expenses are both indexed to the same CPI anyway. It narrows because
+          // the value it is divided by compounds faster than the costs do.
+          yieldInsight += `Expense Drag: The average spread between gross and net yield is ${avgSpread.toFixed(2)} percentage points. This spread is the year's holding costs measured against the property's value, so it narrows as the value compounds faster than the costs — it is a statement about the growing asset base, not about costs falling.`;
           
           drawInsightBox(yieldInsight, margin, chartWidth);
         }
@@ -4367,9 +4024,9 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
               ${projections.slice(1).map(p => `<td class="${p.netProfitLoss < 0 ? 'text-red' : 'text-green'}">${formatCurrency(p.netProfitLoss)}</td>`).join('')}
             </tr>
             <tr>
-              <td>Tax Refund $</td>
+              <td>Tax Refund / (Payable) $</td>
               <td></td>
-              ${projections.slice(1).map(p => `<td class="text-green">${formatCurrency(p.taxRefund)}</td>`).join('')}
+              ${projections.slice(1).map(p => `<td class="${p.taxEffect < 0 ? 'text-red' : 'text-green'}">${formatCurrency(p.taxEffect)}</td>`).join('')}
             </tr>
             <tr style="background: #eff6ff; font-weight: bold;">
               <td>After-Tax Cash Flow p/a $</td>
@@ -4630,7 +4287,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                           <span className="font-medium">
                                             ${Number(entry.value).toLocaleString('en-AU')}
                                             {yoyVal !== null && yoyVal !== 0 && (
-                                              <span className={`ml-1.5 ${yoyVal > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                              <span className={`ml-1.5 ${signedFigureInk(yoyVal)}`}>
                                                 {yoyVal > 0 ? '↑' : '↓'}{Math.abs(yoyVal).toFixed(1)}%
                                               </span>
                                             )}
@@ -4807,7 +4464,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                   <div className="flex items-end justify-between">
                                     <div>
                                       <p className="text-xs font-bold">{kpi.yr10}</p>
-                                      <p className={`text-[10px] font-semibold ${kpi.positive ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                      <p className={`text-[10px] font-semibold ${kpi.positive ? POSITIVE_FIGURE_INK : NEGATIVE_FIGURE_INK}`}>
                                         {kpi.change}
                                       </p>
                                     </div>
@@ -4957,7 +4614,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                         <span className="font-medium">
                                           {Number(gross.value).toFixed(2)}%
                                           {yoyGross !== 0 && (
-                                            <span className={`ml-1.5 ${yoyGross > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                            <span className={`ml-1.5 ${signedFigureInk(yoyGross)}`}>
                                               {yoyGross > 0 ? '↑' : '↓'}{Math.abs(yoyGross).toFixed(2)}pp
                                             </span>
                                           )}
@@ -4973,7 +4630,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                         <span className="font-medium">
                                           {Number(net.value).toFixed(2)}%
                                           {yoyNet !== 0 && (
-                                            <span className={`ml-1.5 ${yoyNet > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                            <span className={`ml-1.5 ${signedFigureInk(yoyNet)}`}>
                                               {yoyNet > 0 ? '↑' : '↓'}{Math.abs(yoyNet).toFixed(2)}pp
                                             </span>
                                           )}
@@ -5234,7 +4891,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             <div key={cat.label} className="bg-muted/40 rounded-lg p-2.5 text-center space-y-1">
                               <p className="text-[10px] text-muted-foreground font-medium">{cat.icon} {cat.label}</p>
                               <p className="text-xs font-bold truncate" style={{ color: winner.color }}>{winner.name}</p>
-                              <p className="text-[10px] font-semibold text-success-foreground">{cat.format(cat.getValue(winner))}</p>
+                              <p className="text-[10px] font-semibold text-success">{cat.format(cat.getValue(winner))}</p>
                             </div>
                           );
                         })}
@@ -5413,19 +5070,19 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <SelectContent>
                         <SelectItem value="growth">
                           <div className="flex items-center gap-2">
-                            <TrendingUp className="h-3 w-3 text-info-foreground" />
+                            <TrendingUp className="h-3 w-3 text-info" />
                             Growth Focused
                           </div>
                         </SelectItem>
                         <SelectItem value="income">
                           <div className="flex items-center gap-2">
-                            <DollarSign className="h-3 w-3 text-success-foreground" />
+                            <DollarSign className="h-3 w-3 text-success" />
                             Income Focused
                           </div>
                         </SelectItem>
                         <SelectItem value="balanced">
                           <div className="flex items-center gap-2">
-                            <Zap className="h-3 w-3 text-accent-foreground" />
+                            <Zap className="h-3 w-3 text-accent" />
                             Balanced
                           </div>
                         </SelectItem>
@@ -5496,7 +5153,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <ul className="text-xs space-y-1">
                             {propertyRecommendation.insights.map((insight, i) => (
                               <li key={i} className="flex items-start gap-1">
-                                <span className="text-success-foreground mt-0.5">✓</span>
+                                <span className="text-success mt-0.5">✓</span>
                                 <span>{insight}</span>
                               </li>
                             ))}
@@ -5653,7 +5310,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                   {isGeneratingAiAnalysis && (
                     <div className="flex items-center justify-center py-8">
                       <div className="text-center">
-                        <RotateCcw className="h-8 w-8 animate-spin mx-auto mb-2 text-info-foreground" />
+                        <RotateCcw className="h-8 w-8 animate-spin mx-auto mb-2 text-info" />
                         <p className="text-sm text-muted-foreground">Analyzing cash flow projections...</p>
                       </div>
                     </div>
@@ -6124,7 +5781,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       {/* Custom Stage Month Selection (only in custom mode) */}
                       {schedulePreset === 'custom' && (
                         <div className="rounded-2xl border border-info/30 bg-info/10 p-4 dark:border-info/30 dark:bg-info/30">
-                          <h5 className="text-sm font-medium mb-3 text-info dark:text-info-foreground">Custom Stage Positioning</h5>
+                          <h5 className="text-sm font-medium mb-3 text-info">Custom Stage Positioning</h5>
                           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
                             {[
                               { index: 0, label: 'Deposit' },
@@ -6472,10 +6129,18 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         ))}
                       </TableRow>
                       
+                      {/* `signedFigureInk`, never `text-destructive-foreground`.
+                          These five rows are the only ones in the table whose
+                          colour carries meaning, and all five spelled the loss
+                          colour as the ink for text on a SOLID destructive fill
+                          — which is `0 0% 100%` in both themes, so every
+                          negative figure on this screen was painted white while
+                          the PDF and the HTML export printed the same rows in
+                          red. See `src/lib/cashFlow/figureInk.pure.ts`. */}
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/a $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.preTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${signedFigureInk(p.preTaxCashFlowPA)}`}>
                             {p.year === 0 ? '' : p.preTaxCashFlowPA.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6484,7 +6149,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/w $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.preTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${signedFigureInk(p.preTaxCashFlowPW)}`}>
                             {p.year === 0 ? '' : p.preTaxCashFlowPW.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6543,16 +6208,16 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Net Profit/Loss $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.netProfitLoss < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${signedFigureInk(p.netProfitLoss)}`}>
                             {p.year === 0 ? '' : p.netProfitLoss.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
                       </TableRow>
                       
                       <TableRow className="transition-colors hover:bg-primary/5">
-                        <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Tax Refund $</TableCell>
+                        <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Tax Refund / (Payable) $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} text-success`}>{p.year === 0 ? '' : p.taxRefund.toLocaleString('en-AU')}</TableCell>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${signedFigureInk(p.taxEffect)}`}>{p.year === 0 ? '' : p.taxEffect.toLocaleString('en-AU')}</TableCell>
                         ))}
                       </TableRow>
                       
@@ -6566,7 +6231,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <div className={PROJECTION_TOTAL_LABEL_INNER_CLASS}>After-Tax Cash Flow p/a $</div>
                         </TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${p.afterTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${signedFigureInk(p.afterTaxCashFlowPA)}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPA.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6577,7 +6242,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <div className={PROJECTION_TOTAL_LABEL_INNER_CLASS}>After-Tax Cash Flow p/w $</div>
                         </TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${p.afterTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${signedFigureInk(p.afterTaxCashFlowPW)}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPW.toLocaleString('en-AU')}
                           </TableCell>
                         ))}

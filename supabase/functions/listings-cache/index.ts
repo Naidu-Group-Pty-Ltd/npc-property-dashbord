@@ -6,6 +6,12 @@ import {
   createCorsHeaders,
 } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import {
+  listingsRequestUrl,
+  describeListingsFailure,
+  resolveListingsRoute,
+  type ListingsRoute,
+} from '../_shared/airtableListingsRoute.pure.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import {
   enforceActorQuota,
@@ -112,20 +118,24 @@ async function tableAliases(): Promise<Map<string, string>> {
     return aliasCache;
   }
 
-  const token = Deno.env.get('AIRTABLE_TOKEN');
-  const baseId = Deno.env.get('AIRTABLE_BASE_ID');
-  if (!token || !baseId) return new Map();
+  const route = currentRoute();
+  if (route.via === 'unconfigured') return new Map();
 
   try {
     const response = await fetchWithTimeout(
-      `https://api.airtable.com/v0/meta/bases/${baseId}/tables`,
-      { headers: { Authorization: `Bearer ${token}` } },
+      listingsRequestUrl(route, 'tables', ''),
+      { headers: route.headers },
       10_000,
     );
     if (!response.ok) {
       // Not fatal. Resolution falls back to the raw string, which is what the
-      // code did before this existed.
-      console.warn('[listings-cache] table metadata unavailable', response.status);
+      // code did before this existed — but name which end declined, for the
+      // same reason the records walk does.
+      const failure = describeListingsFailure(route, response);
+      console.warn(
+        '[listings-cache] table metadata unavailable',
+        failure.detail ? `${failure.code}; ${failure.detail}` : failure.code,
+      );
       return new Map();
     }
     const payload = (await response.json()) as { tables?: Array<{ id?: string; name?: string }> };
@@ -149,9 +159,29 @@ async function tableAliases(): Promise<Map<string, string>> {
 /* Airtable                                                                    */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The route this deployment reads Airtable on.
+ *
+ * Resolved from the environment on every call rather than cached: a clone that
+ * is given its own token later must start using it without a redeploy, and the
+ * read is four `Deno.env.get`s.
+ */
+function currentRoute(): ListingsRoute {
+  return resolveListingsRoute({
+    airtableToken: Deno.env.get('AIRTABLE_TOKEN'),
+    airtableBaseId: Deno.env.get('AIRTABLE_BASE_ID'),
+    missionControlUrl: Deno.env.get('MISSION_CONTROL_URL'),
+    cloneApiKey: Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'),
+  });
+}
+
 interface AirtableConfig {
-  token: string;
-  baseId: string;
+  /**
+   * Where this deployment reads Airtable: directly with its own token, or
+   * through Mission Control's broker when it holds none. Resolved ONCE by the
+   * caller and carried, so a walk cannot take a different route page to page.
+   */
+  route: ListingsRoute;
   table: string;
 }
 
@@ -180,21 +210,17 @@ async function walkAirtable(config: AirtableConfig): Promise<WalkResult> {
 
   while (pages < MAX_PAGES) {
     pages += 1;
-    const url = new URL(
-      `https://api.airtable.com/v0/${config.baseId}/${encodeURIComponent(config.table)}`,
-    );
-    url.searchParams.set('pageSize', String(AIRTABLE_PAGE_SIZE));
-    if (offset) url.searchParams.set('offset', offset);
-    if (!sortRejected) {
-      url.searchParams.set('sort[0][field]', INTAKE_SORT_FIELD);
-      url.searchParams.set('sort[0][direction]', 'desc');
-    }
+    const url = listingsRequestUrl(config.route, 'records', config.table, {
+      pageSize: AIRTABLE_PAGE_SIZE,
+      ...(offset ? { offset } : {}),
+      ...(sortRejected ? {} : { sortField: INTAKE_SORT_FIELD, sortDirection: 'desc' as const }),
+    });
 
     let response: Response;
     try {
       response = await fetchWithTimeout(
-        url.toString(),
-        { headers: { Authorization: `Bearer ${config.token}` } },
+        url,
+        { headers: config.route.via === 'unconfigured' ? {} : config.route.headers },
         20_000,
       );
     } catch (error) {
@@ -217,11 +243,34 @@ async function walkAirtable(config: AirtableConfig): Promise<WalkResult> {
         pages -= 1;
         continue;
       }
+      /*
+       * Say which END answered, because the remedies are opposite and there
+       * are THREE of them.
+       *
+       * `airtable_401` is what this used to write for both "Airtable rejected
+       * the token Mission Control holds" and "Mission Control rejected this
+       * clone's key" — the first is fixed in Mission Control's environment,
+       * the second on this deployment. Measured 8 Sep 2026 on NPC Test: the
+       * first brokered read wrote `airtable_401`, which happened to be true,
+       * but it was true by luck and the same six characters would have been
+       * written had the key been wrong.
+       *
+       * The third reading is the one that cost a morning. A brokered answer
+       * Mission Control did not MARK never reached Mission Control at all, and
+       * on 8 Sep one clone read its own wrong `MISSION_CONTROL_URL` as
+       * `airtable_404` on every tick while the two beside it were served
+       * normally. `describeListingsFailure` is the one place that separates
+       * the three, so this walk and the metadata lookup above cannot disagree.
+       */
+      const failure = describeListingsFailure(config.route, response);
       return {
         records,
         complete: false,
         sorted: !sortRejected,
-        error: `airtable_${response.status}`,
+        // The sync row is the only record an operator sees for a cron-driven
+        // read, so what VARIES travels with the stable code rather than only
+        // reaching a log nothing in the product renders.
+        error: failure.detail ? `${failure.code}; ${failure.detail}` : failure.code,
       };
     }
 
@@ -623,12 +672,16 @@ Deno.serve(async (req) => {
         return createUnauthorizedResponse('Service role required', corsHeaders);
       }
 
-      const token = Deno.env.get('AIRTABLE_TOKEN');
-      const baseId = Deno.env.get('AIRTABLE_BASE_ID');
-      if (!token || !baseId) return j({ success: false, error: 'airtable_not_configured' }, 500);
+      const route = currentRoute();
+      if (route.via === 'unconfigured') {
+        // Names WHICH half is missing rather than a bare "not configured":
+        // a deployment with no token needs Mission Control's two names, and
+        // one with a token needs its base id. Opposite remedies.
+        return j({ success: false, error: 'airtable_not_configured', detail: route.why }, 500);
+      }
 
       try {
-        const outcome = await runSync(supabase, { token, baseId, table: tableKey }, tableKey);
+        const outcome = await runSync(supabase, { route, table: tableKey }, tableKey);
         return j({ success: true, op, tableKey, ...outcome });
       } catch (error) {
         const message = redactError(error);

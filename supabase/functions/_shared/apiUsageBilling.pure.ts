@@ -110,6 +110,17 @@ const BINDINGS: Record<string, ServiceBinding> = {
     unit: "render",
     quantityFrom: "requests",
   },
+  // The same again for the Builder Stock PDF election worker — a Cloudflare
+  // Worker running the shared `electFromPdfBytes` on the workspace's own
+  // account, because that one unit exceeds an Edge Function's CPU ceiling. Its
+  // token is the workspace's own service secret rather than a forwarded vendor
+  // key, so Mission Control rates the usage at nothing; the binding exists so
+  // the call is visible in the ledger rather than untracked.
+  builderstockpdfworker: {
+    secretName: "BUILDER_STOCK_PDF_WORKER_TOKEN",
+    unit: "document",
+    quantityFrom: "requests",
+  },
   docusign: { secretName: "DOCUSIGN_INTEGRATION_KEY", unit: "document", quantityFrom: "requests" },
 
   // ── Compliance ──

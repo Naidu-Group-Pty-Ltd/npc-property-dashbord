@@ -6,7 +6,37 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { checkModuleView } from '../_shared/permissions.ts';
 import { isSuperadmin, rateLimit, redactUpstreamError } from '../_shared/wp08Guards.ts';
 import { projectAirtableRecord } from '../_shared/airtableListing.pure.ts';
+import {
+  describeListingsFailure,
+  listingsRequestUrl,
+  resolveListingsRoute,
+  type ListingsRoute,
+} from '../_shared/airtableListingsRoute.pure.ts';
 import { allowlistAdmits, buildAllowlist, parseTableAliases } from '../_shared/airtableTableKey.pure.ts';
+
+/**
+ * Which end refused, so the error names it.
+ *
+ * Mission Control and Airtable both answer 401, 403 and 429, and the remedies
+ * are opposite: one is fixed in Mission Control's environment, the other on
+ * this deployment. There is a third end, and it is the one that cost a
+ * morning: a brokered answer Mission Control did not MARK as its own never
+ * reached Mission Control, so `MISSION_CONTROL_URL` is the thing to look at
+ * and no amount of investigating Airtable will help.
+ *
+ * `describeListingsFailure` is the one place that separates the three, shared
+ * with `listings-cache` so the proxy and the cron cannot disagree about what
+ * happened to the same call. Written once here too because three branches
+ * report an upstream failure and two of them used to say "Airtable" whatever
+ * had happened.
+ */
+function refusingEnd(
+  route: ListingsRoute,
+  response: Response,
+): { service: string; refusal: string } {
+  const failure = describeListingsFailure(route, response);
+  return { service: failure.service, refusal: failure.code };
+}
 
 interface AirtableRecord {
   id: string;
@@ -77,24 +107,32 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get secrets from environment variables (managed by Supabase)
-    const token = Deno.env.get('AIRTABLE_TOKEN');
-    const baseId = Deno.env.get('AIRTABLE_BASE_ID');
+    /*
+     * Where this deployment reads Airtable. The prime holds the token and goes
+     * direct; a clone holds none and the CALL travels to Mission Control's
+     * broker instead — see `_shared/airtableListingsRoute.pure.ts` for why the
+     * credential stops there.
+     */
+    const route = resolveListingsRoute({
+      airtableToken: Deno.env.get('AIRTABLE_TOKEN'),
+      airtableBaseId: Deno.env.get('AIRTABLE_BASE_ID'),
+      missionControlUrl: Deno.env.get('MISSION_CONTROL_URL'),
+      cloneApiKey: Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'),
+    });
     const defaultTableName = Deno.env.get('AIRTABLE_TABLE_NAME');
 
     console.log('Environment check:', {
-      hasToken: !!token,
-      hasBaseId: !!baseId,
+      route: route.via,
       hasDefaultTableName: !!defaultTableName,
     });
 
-    if (!token || !baseId) {
-      console.error('Missing required credentials');
+    if (route.via === 'unconfigured') {
+      // Names WHICH half is missing. A deployment with no token needs Mission
+      // Control's two names; one with a token needs its base id. Opposite
+      // remedies, so a bare "not configured" sends an operator the wrong way.
+      console.error('Airtable route unconfigured:', route.why);
       return new Response(
-        JSON.stringify({
-          error: 'Airtable credentials not configured',
-          missing: { token: !token, baseId: !baseId },
-        }),
+        JSON.stringify({ error: 'Airtable credentials not configured', detail: route.why }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -153,13 +191,18 @@ Deno.serve(async (req) => {
           { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      const metaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables`;
-      const metaRes = await fetch(metaUrl, { headers: { Authorization: `Bearer ${token}` } });
+      const metaUrl = listingsRequestUrl(route, 'tables', '');
+      const metaRes = await fetch(metaUrl, { headers: route.headers });
       if (!metaRes.ok) {
         const errorText = await metaRes.text();
-        console.error('Airtable metadata error:', metaRes.status, errorText);
+        const { service, refusal } = refusingEnd(route, metaRes);
+        console.error(
+          `${service} metadata error:`,
+          metaRes.status,
+          refusal ? `${refusal}; ${errorText}` : errorText,
+        );
         return new Response(
-          JSON.stringify({ error: redactUpstreamError(metaRes.status, 'Airtable') }),
+          JSON.stringify({ error: redactUpstreamError(metaRes.status, service) }),
           { status: metaRes.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -189,28 +232,20 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Build Airtable API URL
-    const airtableUrl = new URL(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`);
-    airtableUrl.searchParams.set('pageSize', pageSize);
-    if (offset) {
-      airtableUrl.searchParams.set('offset', offset);
-    }
-    // Only add sorting if sortField is specified
-    if (sortField) {
-      airtableUrl.searchParams.set('sort[0][field]', sortField);
-      airtableUrl.searchParams.set('sort[0][direction]', sortDirection);
-    }
-
-    console.log('Making request to Airtable:', airtableUrl.toString());
-
-
-    // Make request to Airtable
-    let airtableResponse = await fetch(airtableUrl.toString(), {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+    // Built by the route: Airtable's own shape when direct, Mission Control's
+    // when brokered — and on the brokered route there is no base id to put in
+    // it, because the route does not carry one.
+    const airtableUrl = listingsRequestUrl(route, 'records', tableName, {
+      pageSize: Number(pageSize),
+      ...(offset ? { offset } : {}),
+      ...(sortField
+        ? { sortField, sortDirection: sortDirection === 'asc' ? 'asc' as const : 'desc' as const }
+        : {}),
     });
+
+    console.log('Making listings request via', route.via);
+
+    let airtableResponse = await fetch(airtableUrl, { headers: route.headers });
 
     // Retry without sort if the chosen sort field doesn't exist on this table
     if (!airtableResponse.ok && sortField) {
@@ -221,20 +256,21 @@ Deno.serve(async (req) => {
 
       if (looksLikeUnknownSortField) {
         console.warn(`Sort field "${sortField}" rejected by table "${tableName}". Retrying without sort.`);
-        const retryUrl = new URL(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`);
-        retryUrl.searchParams.set('pageSize', pageSize);
-        if (offset) retryUrl.searchParams.set('offset', offset);
-        airtableResponse = await fetch(retryUrl.toString(), {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
+        const retryUrl = listingsRequestUrl(route, 'records', tableName, {
+          pageSize: Number(pageSize),
+          ...(offset ? { offset } : {}),
         });
+        airtableResponse = await fetch(retryUrl, { headers: route.headers });
       } else {
         // Non-sort error — redact upstream body (WP-08).
-        console.error('Airtable API error:', airtableResponse.status, errorText);
+        const { service, refusal } = refusingEnd(route, airtableResponse);
+        console.error(
+          `${service} API error:`,
+          airtableResponse.status,
+          refusal ? `${refusal}; ${errorText}` : errorText,
+        );
         return new Response(
-          JSON.stringify({ error: redactUpstreamError(airtableResponse.status, 'Airtable') }),
+          JSON.stringify({ error: redactUpstreamError(airtableResponse.status, service) }),
           { status: airtableResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -242,9 +278,14 @@ Deno.serve(async (req) => {
 
     if (!airtableResponse.ok) {
       const errorText = await airtableResponse.text();
-      console.error('Airtable API error:', airtableResponse.status, errorText);
+      const { service, refusal } = refusingEnd(route, airtableResponse);
+      console.error(
+        `${service} error:`,
+        airtableResponse.status,
+        refusal ? `${refusal}; ${errorText}` : errorText,
+      );
       return new Response(
-        JSON.stringify({ error: redactUpstreamError(airtableResponse.status, 'Airtable') }),
+        JSON.stringify({ error: redactUpstreamError(airtableResponse.status, service) }),
         { status: airtableResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -252,18 +293,26 @@ Deno.serve(async (req) => {
     const data: AirtableResponse = await airtableResponse.json();
     console.log(`Successfully fetched ${data.records.length} records from Airtable`);
 
-    // Log Airtable API usage
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
-    await logApiUsage(supabase, {
-      service_name: 'airtable',
-      endpoint: `/v0/${baseId}/${tableName}`,
-      status: 'success',
-      model_used: 'rest-api',
-      user_id: auth.userId,
-      metadata: { records_fetched: data.records.length, has_offset: !!data.offset, table: tableName, op: op || 'list' },
-    });
+    /*
+     * Metered HERE only on the direct route, which is the one that spends this
+     * deployment's own Airtable token. A brokered read is metered by Mission
+     * Control, because Mission Control made the vendor call — logging it at
+     * both ends bills the tenant twice, which this platform's own rule names
+     * as worse than not billing at all.
+     */
+    if (route.meter) {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      await logApiUsage(supabase, {
+        service_name: 'airtable',
+        endpoint: `/v0/${route.baseId}/${tableName}`,
+        status: 'success',
+        model_used: 'rest-api',
+        user_id: auth.userId,
+        metadata: { records_fetched: data.records.length, has_offset: !!data.offset, table: tableName, op: op || 'list' },
+      });
+    }
 
     // Transform the data to match the expected format. The projection lives in
     // `_shared/airtableListing.pure.ts` because `listings-cache` stores Airtable

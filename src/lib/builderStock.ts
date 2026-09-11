@@ -11,6 +11,7 @@
  * would reject.
  */
 import { addressWithoutLeadingDesignation } from '../../supabase/functions/_shared/builderStock/normalise.pure';
+import { parseBuilderAddressLine } from '../../supabase/functions/_shared/builderStockAddress.pure';
 import {
   comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from '../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
@@ -127,6 +128,17 @@ export interface BuilderStockItem {
   property_type: string | null;
   land_size_sqm: number | null;
   building_size_sqm: number | null;
+  /**
+   * The house on the land — `Vanta 20`, `Nex 20`, `Cura 20B`.
+   *
+   * Projected out of `source_row` by `STOCK_ITEM_SELECT`, because it is not a
+   * column of its own. It is what NAMES a package: a lot sells several houses
+   * and they share the lot, the suburb, the land size and often the bed count,
+   * so without this two siblings are one card drawn twice. Optional because a
+   * deployment whose server predates the projection sends no such field, and
+   * every reader must treat its absence as "not stated" rather than invent one.
+   */
+  house_design?: string | null;
   price: number | null;
   price_display: string | null;
   availability_status: StockAvailability;
@@ -182,6 +194,21 @@ export interface BuilderStockItem {
    */
   source_documents_unprocessed?: number;
   source_documents_unreachable?: number;
+  /**
+   * What the documents we DID read said about themselves, where they named no
+   * picture for this property.
+   *
+   * The opposite case to the two counts above, and the reason it is text
+   * rather than a number: those cover OUR failures and a builder can do
+   * nothing with the mechanism, while this is a finding about the builder's
+   * own document and is the only thing that tells a brochure with no
+   * photograph apart from a brochure for the wrong property. Only `inspected`
+   * refusals reach it — `stockDocumentNotes` is the gate, server-side.
+   *
+   * Optional because a deployment whose server predates the projection sends
+   * none, and a row with none reads exactly as it did before.
+   */
+  source_document_notes?: Array<{ document: string; detail: string }>;
   builder_organisation?: { id: string; legal_name: string; trading_name: string | null } | null;
   selection_count?: number;
   latest_selection?: {
@@ -309,12 +336,196 @@ export const STOCK_SELECTION_STATUS_LABELS: Record<StockSelectionStatus, string>
 // Display helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * THE PICTURE FRAME'S SHAPE, AS A NUMBER THE ARITHMETIC CAN USE.
+ *
+ * `BuilderStockTab` draws the frame with the Tailwind literal `aspect-[16/9]`,
+ * which cannot be composed from a variable without defeating the class
+ * extractor — so the two are written separately and pinned together by
+ * `builderStockCardPicture.test.ts` rather than trusted to stay in step.
+ *
+ * SIXTEEN BY NINE BECAUSE THAT IS WHAT A FACADE RENDER IS. Measured over the
+ * 94 properties live on 11 September 2026:
+ *
+ *     1.778   66 cards   the modal shape, by a factor of six
+ *                        (64 exactly 16:9, 2 at 1.7780)
+ *     1.600   11 cards
+ *     1.258    7 cards
+ *     1.400    3 cards
+ *     1.019    3 cards
+ *     1.416    2 cards
+ *     1.717    2 cards
+ *
+ * The previous frame was 16:10, fitted to a corpus of twenty-seven that a
+ * later stock list replaced entirely — which is the lesson: a frame fitted to
+ * one upload is wrong for the next. 16:9 is not fitted, it is what the
+ * builders' rendering software emits, and 70% of the live list matches it
+ * exactly.
+ */
+export const CARD_PICTURE_ASPECT = 16 / 9;
+
+/**
+ * HOW MUCH MAY BE CROPPED DEPENDS ON WHICH WAY THE CROP RUNS.
+ *
+ * This is the rule, and it is about what a facade photograph IS rather than
+ * about a percentage fitted to one upload. A picture TALLER than the frame is
+ * cropped top and bottom, and on a facade render that is sky and foreground
+ * planting — verified by eye on the three worst-case live images, where a
+ * 43% crop removed nothing but sky and shrubs and improved the composition.
+ * A picture WIDER than the frame is cropped left and right, which is where a
+ * house extends, and a page crop of a brochure banner can put the building
+ * anywhere along it.
+ *
+ * So the vertical allowance is generous and the horizontal one is tight. Past
+ * either, the picture is contained whole rather than cut.
+ */
+export const CARD_PICTURE_MAX_VERTICAL_CROP = 0.5;
+export const CARD_PICTURE_MAX_HORIZONTAL_CROP = 0.2;
+
+export type CardPictureFit = 'cover' | 'contain';
+
+/**
+ * How a picture of this shape should sit in the frame.
+ *
+ * A picture whose dimensions cannot be read answers `contain`: showing it
+ * whole is the choice that cannot cut a house in half, so the unmeasured case
+ * takes the safe one.
+ */
+export function cardPictureFit(width: number, height: number): CardPictureFit {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return 'contain';
+  if (width <= 0 || height <= 0) return 'contain';
+  const ratio = width / height;
+  if (ratio === CARD_PICTURE_ASPECT) return 'cover';
+  // Taller than the frame: covering discards HEIGHT — sky and planting.
+  if (ratio < CARD_PICTURE_ASPECT) {
+    return 1 - ratio / CARD_PICTURE_ASPECT <= CARD_PICTURE_MAX_VERTICAL_CROP
+      ? 'cover' : 'contain';
+  }
+  // Wider than the frame: covering discards WIDTH — where a house extends.
+  return 1 - CARD_PICTURE_ASPECT / ratio <= CARD_PICTURE_MAX_HORIZONTAL_CROP
+    ? 'cover' : 'contain';
+}
+
+/**
+ * What share of the frame a CONTAINED picture leaves bare.
+ *
+ * Only meaningful where `cardPictureFit` said `contain`; a covered picture
+ * leaves none. The ground is drawn whenever a contained picture leaves any
+ * worth filling.
+ */
+export function cardPictureGroundShare(width: number, height: number): number {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return 0;
+  if (width <= 0 || height <= 0) return 0;
+  const ratio = width / height;
+  return 1 - Math.min(ratio, CARD_PICTURE_ASPECT) / Math.max(ratio, CARD_PICTURE_ASPECT);
+}
+
+/** Whether a contained picture needs ground drawn behind it. */
+export function cardPictureNeedsGround(width: number, height: number): boolean {
+  return cardPictureFit(width, height) === 'contain'
+    && cardPictureGroundShare(width, height) > 0;
+}
+
+/*
+ * A LIST'S OWN DISAMBIGUATOR IS DATA, NOT A NAME.
+ *
+ * Where two packages are sold on one lot the source list says so in the
+ * address itself — `Lot 60941 - Cloverton Estate, Kalkallo VIC 3064
+ * [3 Bed · 140 m²]` — and `parseBuilderAddressLine` hands that bracketed text
+ * back as the design name, because on every other row it IS one (`Ilya 15`).
+ *
+ * Printed verbatim it made the card say a thing twice and a different thing
+ * once: the bed count is already an icon two lines below, while `140 m²` is
+ * the HOUSE and the row underneath reads `286 m² land`, so one card carried
+ * two unlike square-metre figures and labelled neither.
+ */
+const CONFIGURATION_TOKEN_SOURCE =
+  '\\b\\d+(?:\\.\\d+)?\\s*'
+  + '(?:bed(?:s|room|rooms)?|bath(?:s|room|rooms)?|car(?:s|\\s*spaces?)?'
+  + '|garages?|m2|sqm|m\u00b2)(?![a-z0-9])';
+
+/** Separators a list uses between those tokens, and nothing else. */
+const CONFIGURATION_GLUE = /[\u00b7,;:\-\u2013\u2014/+&|]/g;
+
+/**
+ * True when every word of `text` is a bed/bath/car/size token — so the text
+ * describes the package's configuration and names nothing.
+ *
+ * Deliberately conservative: one unrecognised word makes it a NAME, because
+ * suppressing a real design name loses the only thing that tells two packages
+ * apart, while keeping a stray data suffix merely looks untidy.
+ */
+export function describesConfigurationOnly(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (!new RegExp(CONFIGURATION_TOKEN_SOURCE, 'i').test(trimmed)) return false;
+  const rest = trimmed
+    .replace(new RegExp(CONFIGURATION_TOKEN_SOURCE, 'gi'), ' ')
+    .replace(CONFIGURATION_GLUE, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return rest.length === 0;
+}
+
+/** The house size a configuration annotation states, where it states one. */
+export function sizeFromConfiguration(text: string): number | null {
+  const match = text.match(/\b(\d+(?:\.\d+)?)\s*(?:m2|sqm|m\u00b2)(?![a-z0-9])/i);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * THE HOUSE SIZE AS A CARD SHOWS IT: WHOLE SQUARE METRES.
+ *
+ * ROUNDED FOR DISPLAY AND NOWHERE ELSE. Builders quote a house plan to the
+ * centimetre — seven of the thirty-one rows live on 11 September 2026 carry
+ * `179.82`, `190.38`, `174.65` — and two decimals beside a whole `563 m²
+ * land` reads as noise on a card that has one line for both. The COLUMN is
+ * untouched and nothing here writes: `building_size_sqm` keeps every digit
+ * the builder supplied, for the contract, the report and the export, and
+ * this is only what a card prints.
+ *
+ * A size that rounds AWAY is nothing rather than `0 m²`, because `0.4 m²` is
+ * a bad record and a card must never state a house has no floor area.
+ */
+export function homeSizeDisplay(sqm: number | null | undefined): number | null {
+  if (sqm === null || sqm === undefined) return null;
+  const value = Number(sqm);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const whole = Math.round(value);
+  return whole > 0 ? whole : null;
+}
+
+/** `179.82` → `180 m² home`; a number that is not one → nothing. */
+export function homeSizeLabel(sqm: number | null | undefined): string | null {
+  const value = homeSizeDisplay(sqm);
+  return value === null ? null : `${value} m\u00b2 home`;
+}
+
 export function stockItemTitle(item: Pick<BuilderStockItem,
   'unit_number' | 'lot_number' | 'address_line' | 'development_name'
-  | 'project_name' | 'external_reference'>): string {
+  | 'project_name' | 'external_reference' | 'building_size_sqm'
+  | 'house_design'>): string {
+  /*
+   * The column first, then the line. A Notion list has no Lot column — it
+   * states the lot inside the title — and that lot is deliberately not
+   * written to `lot_number`, because the column is half of the duplicate
+   * match key and two packages on one lot would collide there. Reading it
+   * here costs nothing and decides nothing.
+   */
+  const parsed = parseBuilderAddressLine(item.address_line);
+  /*
+   * THE DESIGNATION THE LINE OPENED WITH, not whichever field the parse
+   * happened to fill. `Lot 1 - 13/15 Rose Street` carries BOTH — lot 1 is the
+   * row, and 13 is a unit over street number 15 — and reading the unit made
+   * the two dual-key halves of that address, Lot 1 and Lot 2, render as one
+   * title: `Unit 13, 15 Rose Street`, twice.
+   */
+  const leading = /^\s*(lot|unit)\s*\.?\s*([0-9]+[a-z]?)\b/i.exec(item.address_line ?? '');
   const designation: { word: 'Lot' | 'Unit'; value: string } | null = item.unit_number
     ? { word: 'Unit', value: String(item.unit_number) }
-    : item.lot_number ? { word: 'Lot', value: String(item.lot_number) } : null;
+    : item.lot_number ? { word: 'Lot', value: String(item.lot_number) }
+    : leading ? { word: leading[1].toLowerCase() === 'unit' ? 'Unit' : 'Lot', value: leading[2] }
+    : null;
   const prefix = designation ? `${designation.word} ${designation.value}` : '';
   /*
    * The address without the designation the prefix is about to repeat — the
@@ -325,10 +536,75 @@ export function stockItemTitle(item: Pick<BuilderStockItem,
   const address = designation
     ? addressWithoutLeadingDesignation(item.address_line, designation.word, designation.value)
     : (item.address_line ?? '');
-  const body = address
+
+  /*
+   * AND NOT THE LOCALITY THE CARD PRINTS DIRECTLY UNDERNEATH.
+   *
+   * `stockItemLocality` already renders the suburb, state and postcode on
+   * their own line, so a title carrying them again spends its width twice on
+   * one fact — and the width is finite. Measured on the 10 September 2026
+   * list, `Lot 60941 - Cloverton Estate, Kalkallo VIC 3064 [4 Bed · 154 m²]`
+   * truncated at `[4 B…`, which is where the two packages offered on that one
+   * lot differ; the cards for a 3-bed and a 4-bed house read identically.
+   *
+   * The parts come from `parseBuilderAddressLine`, the same reading the map
+   * and the geocoder take, so what a card calls a property and what a pin is
+   * placed by cannot drift apart.
+   *
+   * ONLY WHERE THE PARSE DID NOT HAVE TO GUESS, for the reason it always
+   * carries: a line opening with a bare number is ambiguous and the parser
+   * resolves it as a lot, so composing from its parts would turn the supplied
+   * `12 Hornsea Street` into `Hornsea Street`. The parts are used where the
+   * line NAMED its lot or a street number was positively identified, and
+   * every other line is titled exactly as it was before.
+   */
+  // `13/15 Rose Street` is one address and stays one: a unit over a street
+  // number says which door, and dropping it names the building instead.
+  const houseNumber = parsed.unitNumber && parsed.streetNumber
+    ? `${parsed.unitNumber}/${parsed.streetNumber}`
+    : parsed.streetNumber;
+  const street = (leading || parsed.streetNumber)
+    ? [houseNumber, parsed.streetName, parsed.streetType]
+      .filter(Boolean).join(' ').trim()
+    : '';
+  const place = street || (leading ? (parsed.estate ?? '') : '');
+
+  const body = place || address
     || item.development_name || item.project_name || item.external_reference || '';
-  if (prefix && body) return `${prefix}, ${body}`;
-  return prefix || body || 'Unnamed property';
+
+  /*
+   * The house, where the line named one. Two packages on one lot are two
+   * different things to sell — different price, different bedrooms, different
+   * brochure — and the design is the only part of the line that says which.
+   *
+   * WHERE THE LIST SAID IT IN DATA RATHER THAN IN A NAME, THE DATA IS
+   * RESTATED, NOT ECHOED. `[3 Bed · 140 m²]` is how the Cloverton rows are
+   * told apart, and printed verbatim it put the bed count on a card that
+   * already draws it as an icon and an unlabelled `140 m²` two lines above
+   * `286 m² land`. The house size is the one fact there that the card does
+   * not otherwise carry, so that is what survives — labelled, and read from
+   * the column rather than from the text wherever the column has it.
+   */
+  /*
+   * THE RECORD'S OWN FIELD FIRST, THEN THE ADDRESS LINE.
+   *
+   * A Notion list states the design inside the address (`… [Ilya 15]`); a
+   * spreadsheet gives it a column of its own, which arrives here as
+   * `house_design` and never touches `address_line` at all. Measured on the
+   * 95 properties live on 11 September 2026, 35 cards across 15 lots shared
+   * every other visible fact with a sibling, and the design separated all 35.
+   * Reading only the address line left every one of those a card drawn twice.
+   */
+  const annotation = (item.house_design ?? '').trim() || (parsed.designName ?? '');
+  const suffix = !annotation ? ''
+    : describesConfigurationOnly(annotation)
+      ? (homeSizeLabel(item.building_size_sqm)
+        ?? homeSizeLabel(sizeFromConfiguration(annotation)) ?? '')
+      : (body.includes(annotation) ? '' : annotation);
+  const titled = suffix ? `${body} · ${suffix}` : body;
+
+  if (prefix && titled) return `${prefix}, ${titled}`;
+  return prefix || titled || 'Unnamed property';
 }
 
 export function stockItemLocality(item: Pick<BuilderStockItem,

@@ -122,6 +122,59 @@ Deno.serve(async (req) => {
     });
   }
 
+  /*
+   * The full loop, with real image parts.
+   *
+   * Separate from the probe on purpose. The probe's guarantee is that it
+   * spends nothing; this one sends real captures and a 2xx from any of the
+   * three calls is a billable unit, so folding them into one event would make
+   * a free diagnostic quietly start billing. A caller has to ask for this by
+   * name.
+   *
+   * Answered before the de-dupe for the same reason the probe is: it is a
+   * question asked now, not an event to be applied once.
+   */
+  if (event === "verification.loopcheck") {
+    const { runStandaloneLoopCheck } = await import(
+      "../_shared/aml/providers/diditStandaloneLoopCheck.ts"
+    );
+    const report = await runStandaloneLoopCheck();
+    return new Response(JSON.stringify({ ok: true, event, report }), {
+      headers: { ...corsHeaders, "content-type": "application/json" },
+    });
+  }
+
+  /*
+   * Can this deployment actually reach ANTHROPIC?
+   *
+   * The same question as the verification probe above and the same reason for
+   * asking it here: on the federated route this clone's own Mission Control
+   * key, that key's scope, Mission Control's signing key, whether Anthropic
+   * can fetch the published key set and whether the federation rule still
+   * matches this clone's subject all sit between an edge function and an
+   * answer — and only a call made HERE crosses all five. Every one of them
+   * fails silently, at inference time, on a report somebody is waiting for.
+   *
+   * Answered before the de-dupe for the reason the verification probe is: a
+   * probe is a question asked NOW, and keyed like an event it would answer the
+   * second caller out of a table without making the call.
+   *
+   * It spends nothing — a federated exchange is not billable and the model
+   * list is metadata, so no tokens are consumed — and it is deliberately not a
+   * message, which would cost money on every click. It takes a FRESH
+   * credential rather than the cached one, because a cached token outlives the
+   * chain that minted it by up to an hour and would answer green for that hour
+   * after federation broke. Nothing is written and no credential value ever
+   * leaves this function.
+   */
+  if (event === "anthropic.selftest") {
+    const { describeAnthropicReach } = await import("../_shared/anthropicCredential.ts");
+    const { reach } = await describeAnthropicReach({ freshCredential: true });
+    return new Response(JSON.stringify({ ok: true, event, reach }), {
+      headers: { ...corsHeaders, "content-type": "application/json" },
+    });
+  }
+
   // De-dupe on (event, idempotency-key), falling back to a digest of the raw
   // body. NEVER key on tenant id alone: that made the FIRST balance event for
   // a tenant permanently block every later one, freezing token_balance_cache.

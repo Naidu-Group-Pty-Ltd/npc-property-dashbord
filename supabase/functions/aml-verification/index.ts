@@ -11,6 +11,7 @@
  * analyst / reviewer / MLRO. Auditor is read-only.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
+import { recordActivity } from "../_shared/activityAudit.ts";
 import { verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
@@ -89,6 +90,11 @@ async function hasCaseAccess(
   return false;
 }
 import { reserveTokens, commitTokens, cancelTokens } from "../_shared/missionControl.ts";
+import {
+  VERIFICATION_ATTEMPT_TOKENS, VERIFICATION_METERING_KIND,
+  describeVerificationCharge, verificationReserveTokens, verificationTokenCharge,
+} from "../_shared/aml/verificationTokenPrice.pure.ts";
+import { getCreditCostForKind } from "../_shared/missionControlCatalog.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import { probeStandaloneRoute } from '../_shared/aml/providers/diditStandaloneClient.ts';
@@ -123,7 +129,21 @@ async function consumedAttempts(
   return (data ?? []).length;
 }
 
-const IDV_ESTIMATED_TOKENS = 400;
+/**
+ * What one identity verification costs a workspace, in tokens.
+ *
+ * Resolved from Mission Control's cost index, never written here. It used to
+ * be `400` — against a `tokenEstimator` price list saying 4 — and the
+ * standalone path that actually runs in production reserved nothing at all,
+ * so the two live verification routes disagreed by two orders of magnitude
+ * and one of them charged nobody. The rule is stated once, in
+ * `_shared/aml/verificationTokenPrice.pure.ts`: the index carries the ATTEMPT
+ * price and a verified identity costs it twice.
+ */
+async function idvAttemptTokens(): Promise<number> {
+  return (await getCreditCostForKind(VERIFICATION_METERING_KIND))
+    ?? VERIFICATION_ATTEMPT_TOKENS;
+}
 const SCREENING_ESTIMATED_TOKENS = 250;
 
 const jr = (data: unknown, status = 200) =>
@@ -217,11 +237,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
 
         const idempotencyKey = `aml-idv-${caseId}-${Date.now()}`;
+        // Read once, before the reserve, and used again at the commit: the
+        // catalog is cached for minutes and a reprice between the two would
+        // settle a charge at a price the reservation was not taken at.
+        const attemptTokens = await idvAttemptTokens();
         let reservation: { jobId: string } | null = null;
         try {
           reservation = await reserveTokens({
-            kind: "aml_identity_check",
-            estimatedTokens: IDV_ESTIMATED_TOKENS,
+            kind: VERIFICATION_METERING_KIND,
+            estimatedTokens: verificationReserveTokens(attemptTokens),
             idempotencyKey,
             userId,
             requestPayload: { case_id: caseId, method, provider: provider.name },
@@ -273,12 +297,22 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             provider_reference: result.providerReference,
             result_payload: stripImagePayloads(result.raw),
             completed_at: new Date().toISOString(),
-            mc_tokens_committed: IDV_ESTIMATED_TOKENS,
+            mc_tokens_committed: verificationTokenCharge(
+              { attemptConsumed: true, outcome: result.status }, attemptTokens,
+            ),
           }).eq("id", inserted.id).select().single();
 
+          /* The provider examined the subject, so the attempt is spent
+             whatever it concluded — `verified` earns the success charge on
+             top, a decline or a referral costs the attempt alone. Reaching
+             here at all is what "attempt consumed" means on this route: the
+             catch below is every condition in which nothing was examined. */
+          const charge = { attemptConsumed: true, outcome: result.status };
+          const chargedTokens = verificationTokenCharge(charge, attemptTokens);
           if (reservation) {
-            await commitTokens(reservation.jobId, IDV_ESTIMATED_TOKENS, {
+            await commitTokens(reservation.jobId, chargedTokens, {
               provider: provider.name, provider_reference: result.providerReference, status: result.status,
+              charge: describeVerificationCharge(charge, attemptTokens),
             });
           }
 
@@ -1013,9 +1047,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
               screening = { mode: "live", changed: true, reason: promotion.reason };
               // Recorded against the register rather than a case: this is a
               // change to what the platform may do, not to one customer's file.
-              await admin.from("activity_logs").insert({
+              // `aml_provider_config` is not an `activity_entity_type`, so this
+              // insert was rejected by the enum on every promotion — and the
+              // `.then(() => undefined, () => undefined)` discarded the error,
+              // which is how it stayed invisible. `system` is the enum's value
+              // for a platform-level change, which is exactly what the comment
+              // above describes. A failure is now logged rather than swallowed.
+              await recordActivity(admin, {
                 action_type: "aml_screening_provider_promoted",
-                entity_type: "aml_provider_config",
+                entity_type: "system",
+                entity_name: "AML screening provider",
                 entity_id: String(current.id),
                 metadata: {
                   capability: "pep_sanctions", provider_key: "local_lists",
@@ -1024,7 +1065,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
                   list_code: listCode, entries: written, sync_id: sync.id,
                   performed_by: userEmail, performed_at: new Date().toISOString(),
                 },
-              }).then(() => undefined, () => undefined);
+              });
             }
           }
         }
