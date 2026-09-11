@@ -52,22 +52,39 @@ Three corollaries that have each been paid for at least once:
 
 ## 2. Where the work is right now
 
-| | |
-| --- | --- |
-| Branch | `claude/reporting-engine-audit-4850hs` |
-| Base | `main` @ `bf2ec99dda79472d61c618497036db015a15587e` |
-| Open PR | **#2578** — no merge conflict |
-| PR state | **DRAFT** — this is now the only thing stopping it merging |
-| CI | green (the `supply-chain` blocker was resolved on `main`; see §3.1) |
+The branch is **`claude/reporting-engine-audit-4850hs`** and the open PR is
+**#2578**. Head SHA, base SHA and CI state move with every push and every
+transient, so **read them from the PR, not from this file** — this file went
+stale on those three facts twice in its first day. What this file records is
+what does *not* move: the decisions, the measurements, and the two commits
+that carry the actual work.
 
-Four commits are on the branch and **not yet in `main`**:
+The **code content** of the branch is two commits (everything after them is
+documentation and merges of `main`):
 
 1. `dc08be5e5` — ME-6 zero-cost evidence strategy (audit §64)
 2. `b0185fc92` — ME-6 closure: one Growth denominator, frozen ME-7 population (audit §65)
-3. `35babc76c` — this handover document (documentation only)
-4. `31ddd12fe` — merge of `main`, to take the `@tiptap` lockfile fix (see §3.1)
 
 Everything below §64 in the audit document **is** merged and live.
+
+Two CI episodes hit this PR on 9 Sep and **both are closed**; neither was this
+PR's, and both are recorded so a successor does not re-diagnose them:
+
+- **`supply-chain`** — two new `@tiptap/core` advisories; fixed on `main` by
+  #2579 and taken here by merging `main`. §3.1 has the detail, including the
+  correction to the first diagnosis.
+- **`render-container`** — `dl.google.com` served an apt `Release` file whose
+  recorded hash for `Packages.gz` did not match the file it was serving, so
+  `apt-get update` failed and `pdffonts` (the assertion tool, installed one
+  line later) was never installed. Everything the job *tests* passed both
+  times. Deterministic across two runs (identical hashes), so it was a
+  publisher fault, not a flake; Google republished a consistent index on
+  10 Sep (verified by fetching and hashing both files) and the check passes
+  again. The one-line hardening that would immunise the step —
+  `apt-get update -qq -o Dir::Etc::SourceParts=/dev/null`, so a third-party
+  repo the job never uses cannot kill an install from Ubuntu's archive — is
+  proposed in PR #2578's `issuecomment-5606444180` and deliberately **not**
+  pushed into an evidence-layer PR; it is the owner's to take.
 
 ---
 
