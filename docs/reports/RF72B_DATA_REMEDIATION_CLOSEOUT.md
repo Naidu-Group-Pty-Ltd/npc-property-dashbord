@@ -1,8 +1,51 @@
 # RF-7.2B — data integrity remediation: closeout
 
+## 0. What is built versus what is live — read this first
+
+RF-7.2B built the safety infrastructure. **It did not switch production onto
+it.** A report generated today receives exactly what it received before, because
+nothing calls the gate yet.
+
+Stating that distinction plainly matters more than the work sounding finished:
+an earlier draft of this document and its pull request asserted that new reports
+were already protected, and that was wrong.
+
+### IMPLEMENTED / PROVEN
+
+| Item | State |
+| --- | --- |
+| Client-Safe Gate module | exists, tested |
+| Safe ABS routing (geography → POA → `abs_census_poa`) | exists, tested |
+| Safe RBA monthly-average projection | exists, tested |
+| Unsafe Location inputs **can be** blocked | exists, tested |
+| Safe narrative bundle | exists, tested |
+| Market-claim reconciliation | exists, tested |
+| Visibility / null policy | exists, tested |
+| Rent-basis metadata **understood if supplied** | exists, tested |
+| `bindingResolver` null-before-formatting fix | **LIVE in production** |
+| Template inline-expression guard | exists, proven safe across all families |
+| Historical impact register | exists |
+
+### NOT YET PRODUCTION-ACTIVE
+
+| Item | State |
+| --- | --- |
+| Investment generator consumes the Client-Safe Gate | **NO** |
+| Production narrative consumes only `narrativeBundle` | **NO** |
+| Generated demographics structurally prevented from new generation | **NO** |
+| Hardcoded / LLM RBA values structurally prevented from the live generator | **NO** |
+| Safe ABS data is the live generator's market-data source | **NO** |
+| Safe RBA data is the live generator's economic-data source | **NO** |
+| Visibility policy is the Viewer/PDF visibility authority | **NO** |
+| Chart-null policy adopted by production charts | **NO** |
+| Rent-basis production capture | **NO** — contract support only |
+
+**Ready for RF-7.2C: NO — RF-7.2B.1 forward-safe data activation required.**
+
 ## 1. What changed in production, precisely
 
-**One change reaches production: the binding formatter.**
+**Exactly one change reaches production: the binding formatter.** Nothing else
+in this stage is on the live path — see §0.
 
 `bindingResolver.resolveBindable` now establishes presence **before** applying
 filters. Previously filters ran first and the null check second, so
@@ -153,7 +196,7 @@ superseded. The seven segments are exhaustive and sum to 1,207.
 
 | Item | Why |
 | --- | --- |
-| Wiring the gate into the generator | RF-7.2B proves the layer; adoption is a controlled later stage |
+| Wiring the gate into the generator | RF-7.2B proves the layer; **RF-7.2B.1** is the activation stage |
 | Connecting SEIFA, crime, climate, schools, transport | grain/date/semantics cannot all be matched honestly yet (§8 of the mandate) |
 | Extending `reconcileFacts` over market statistics | the inputs must be sound first — reconciliation proves faithfulness, not truth |
 | Any visual redesign | RF-7.2C |

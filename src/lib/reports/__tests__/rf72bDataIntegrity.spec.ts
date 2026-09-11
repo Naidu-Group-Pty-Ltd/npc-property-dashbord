@@ -572,3 +572,54 @@ describe('§20 — no template may carry business logic, and none does', () => {
     expect(RESOLVER).toContain('evalConditional');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The status claim itself, pinned
+// ---------------------------------------------------------------------------
+
+describe('RF-7.2B is infrastructure, and the record must keep saying so', () => {
+  /**
+   * An earlier draft of this stage's pull request claimed new reports were
+   * already protected. They are not: the gate exists and nothing calls it.
+   *
+   * This test makes the claim falsifiable in both directions — it fails if the
+   * gate quietly acquires a production consumer while the documents still say
+   * "not active", and it is the test to DELETE (with the docs updated) when
+   * RF-7.2B.1 genuinely activates it.
+   */
+  it('the safe-data layer has no production consumer', () => {
+    const offenders: string[] = [];
+    const markers = ['gateFact', 'safeDemographics', 'safeCashRate', 'narrativeBundle', 'decideSection'];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(resolve(REPO, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '__tests__' || entry.name === 'contract') continue;
+          walk(rel);
+          continue;
+        }
+        if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+        if (/\.(spec|test)\.tsx?$/.test(entry.name)) continue;
+        const src = read(rel);
+        if (markers.some((m) => src.includes(m))) offenders.push(rel);
+      }
+    };
+    for (const root of ['src', 'supabase/functions']) walk(root);
+    expect(
+      offenders,
+      'RF-7.2B ships the layer UNWIRED. If this fails, either a consumer was '
+      + 'added — in which case RF72B_DATA_REMEDIATION_CLOSEOUT.md §0 must stop '
+      + 'saying "NOT YET PRODUCTION-ACTIVE" — or the activation is RF-7.2B.1 '
+      + 'and this test should be retired with it.',
+    ).toEqual([]);
+  });
+
+  it('the closeout leads with the built-versus-live distinction', () => {
+    const closeout = read('docs/reports/RF72B_DATA_REMEDIATION_CLOSEOUT.md');
+    expect(closeout).toContain('NOT YET PRODUCTION-ACTIVE');
+    expect(closeout).toContain('It did not switch production onto');
+    expect(closeout).toContain('RF-7.2B.1');
+    // And it must not claim readiness for the presentation stage.
+    expect(closeout).toMatch(/Ready for RF-7\.2C:\s*NO\b/);
+  });
+});
