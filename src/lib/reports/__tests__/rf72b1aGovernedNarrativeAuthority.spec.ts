@@ -59,12 +59,38 @@ const presentFact = (name: string, value: number): SnapshotFact => ({
 /** The shape the two production reports actually carried. */
 const WITHHELD = { facts: [absentFact('market.demographics')] };
 
-/** A healthy report: demographics resolved against the subject postal area. */
+/** A partially-resolved report: three demographic figures held, the rest not. */
 const ADMISSIBLE = {
   facts: [
     presentFact('market.population', 13795),
     presentFact('market.medianAge', 36),
     presentFact('market.medianHouseholdIncomeWeekly', 1640),
+  ],
+};
+
+/**
+ * Everything the gate can evidence, present. Built fact by fact rather than
+ * by asserting a category, because the gate emits per metric and a fixture
+ * that skipped one would prove the opposite of what it claims.
+ */
+const FULLY_ADMISSIBLE = {
+  facts: [
+    presentFact('market.demographics', 1),
+    presentFact('market.population', 13795),
+    presentFact('market.medianAge', 36),
+    presentFact('market.medianHouseholdIncomeWeekly', 1640),
+    presentFact('market.medianRentWeekly', 300),
+    presentFact('market.medianMortgageMonthly', 1517),
+    presentFact('market.ownerOccupierRate', 60.5),
+    presentFact('market.renterRate', 36.2),
+    presentFact('abs.seifa.irsdDecile', 2),
+    presentFact('abs.seifa.irsadDecile', 2),
+    presentFact('abs.seifa.ierDecile', 3),
+    presentFact('abs.seifa.ieoDecile', 1),
+    presentFact('abs.unemploymentRate', 5.7),
+    presentFact('abs.labourForceParticipation', 59.3),
+    presentFact('abs.labourForce', 6406),
+    presentFact('abs.industryShare.Mining', 32),
   ],
 };
 
@@ -117,8 +143,13 @@ describe('RF-7.2B.1A — category standing', () => {
     expect(standing.employment).toBe('withheld');
   });
 
-  it('reads a present fact as admissible', () => {
-    expect(governedCategoryStanding(ADMISSIBLE).demographics).toBe('admissible');
+  it('reads a fully-evidenced category as admissible', () => {
+    expect(governedCategoryStanding(FULLY_ADMISSIBLE).demographics).toBe('admissible');
+  });
+
+  it('does NOT read a partly-evidenced category as admissible', () => {
+    // population/age/income held; rent, mortgage, tenure and household size not.
+    expect(governedCategoryStanding(ADMISSIBLE).demographics).toBe('withheld');
   });
 });
 
@@ -140,15 +171,17 @@ describe('RF-7.2B.1A — pre-generation directive', () => {
     expect(governedCategoryDirective(WITHHELD)).toMatch(/qualitatively/i);
   });
 
-  it('is empty when every governed category is admissible, so a healthy prompt is unchanged', () => {
-    const all = {
-      facts: [
-        ...ADMISSIBLE.facts,
-        presentFact('abs.seifa.irsdDecile', 2),
-        presentFact('abs.industryShare.Health Care and Social Assistance', 15.1),
-      ],
-    };
-    expect(governedCategoryDirective(all)).toBe('');
+  it('is empty when every governed figure is admissible, so a healthy prompt is unchanged', () => {
+    expect(governedCategoryDirective(FULLY_ADMISSIBLE)).toBe('');
+  });
+
+  it('names the specific missing figures when a category is only PARTLY available', () => {
+    const directive = governedCategoryDirective(ADMISSIBLE);
+    expect(directive).toMatch(/PARTLY AVAILABLE/);
+    expect(directive).toMatch(/median rent/i);
+    expect(directive).toMatch(/tenure split/i);
+    // and must not claim the figures it DOES hold are unavailable
+    expect(directive).not.toMatch(/- resident population;/);
   });
 });
 
@@ -221,17 +254,9 @@ describe('RF-7.2B.1A — PASS cases (the detector must not be brittle)', () => {
     expect(governedAuthorityBlocks(auditGovernedNarrativeAuthority(prose, ADMISSIBLE))).toBe(false);
   });
 
-  it('raises no new fault on a healthy report whose categories are all admissible', () => {
+  it('raises no new fault on a healthy report whose figures are all admissible', () => {
     const body = [MUSWELLBROOK_CENSUS, MUSWELLBROOK_INCOME, MUSWELLBROOK_LABOUR].join('\n\n');
-    const all = {
-      facts: [
-        ...ADMISSIBLE.facts,
-        presentFact('abs.unemploymentRate', 5.7),
-        presentFact('abs.labourForce', 6406),
-        presentFact('abs.seifa.irsdDecile', 2),
-      ],
-    };
-    expect(auditGovernedNarrativeAuthority(body, all)).toEqual([]);
+    expect(auditGovernedNarrativeAuthority(body, FULLY_ADMISSIBLE)).toEqual([]);
   });
 });
 
@@ -318,6 +343,70 @@ describe('RF-7.2B.1A — wired into the real generator', () => {
  * would withhold good reports, which is a worse failure than the one being
  * fixed — so these are the shapes a careless detector trips on.
  */
+/**
+ * Fact-level authority. Proved from the gate rather than assumed: it emits one
+ * snapshot fact per metric, so a path the ABS row lacks yields an ABSENT fact
+ * beside present siblings. The categories are NOT atomic, and a present figure
+ * must not authorise the absent one next to it.
+ */
+describe('RF-7.2B.1A — one present fact does not authorise its absent siblings', () => {
+  const partial = (present: string[], absent: string[]) => ({
+    facts: [
+      ...present.map((n) => presentFact(n, 1)),
+      ...absent.map((n) => absentFact(n)),
+    ],
+  });
+
+  it('population present + median age absent → median age claim BLOCKS', () => {
+    const snap = partial(['market.population'], ['market.medianAge', 'abs.medianAge']);
+    const faults = auditGovernedNarrativeAuthority(
+      'The suburb records a median age of 35 years.', snap);
+    expect(faults.some((f) => f.topic === 'medianAge')).toBe(true);
+  });
+
+  it('population present + income absent → income claim BLOCKS', () => {
+    const snap = partial(['market.population'],
+      ['market.medianHouseholdIncomeWeekly', 'abs.medianWeeklyIncome']);
+    const faults = auditGovernedNarrativeAuthority(
+      'Median weekly household income is approximately $1,603.', snap);
+    expect(faults.some((f) => f.topic === 'income')).toBe(true);
+  });
+
+  it('population present → a population claim still PASSES', () => {
+    const snap = partial(['market.population'], ['market.medianAge']);
+    const faults = auditGovernedNarrativeAuthority(
+      'The postal area recorded a population of 13,795.', snap);
+    expect(faults.some((f) => f.topic === 'population')).toBe(false);
+  });
+
+  it('one SEIFA index present + another absent → the absent index BLOCKS', () => {
+    const snap = partial(['abs.seifa.irsdDecile'], ['abs.seifa.ieoDecile']);
+    const faults = auditGovernedNarrativeAuthority(
+      'The area scores an IEO decile of 1.', snap);
+    expect(faults.some((f) => f.topic === 'seifaIeo')).toBe(true);
+    // and the one it DOES hold is not blocked
+    expect(auditGovernedNarrativeAuthority('The IRSD decile is 2.', snap)
+      .some((f) => f.topic === 'seifaIrsd')).toBe(false);
+  });
+
+  it('industry share present + unemployment absent → unemployment claim BLOCKS', () => {
+    const snap = partial(['abs.industryShare.Mining'],
+      ['abs.unemploymentRate', 'market.unemploymentRate']);
+    const faults = auditGovernedNarrativeAuthority(
+      'The unemployment rate sits at 5.7%.', snap);
+    expect(faults.some((f) => f.topic === 'unemployment')).toBe(true);
+  });
+
+  it('two different absent figures each report, rather than collapsing into one', () => {
+    const snap = partial(['market.population'],
+      ['market.medianAge', 'market.medianHouseholdIncomeWeekly']);
+    const body = 'The median age is 35.\nMedian household income is $1,603.';
+    const topics = auditGovernedNarrativeAuthority(body, snap).map((f) => f.topic);
+    expect(topics).toContain('medianAge');
+    expect(topics).toContain('income');
+  });
+});
+
 describe('RF-7.2B.1A — false-positive guard', () => {
   const CLEAN: ReadonlyArray<readonly [string, string]> = [
     ['purchase price near demographic language',
@@ -397,6 +486,22 @@ describe('RF-7.2B.1A — enforcement is wired into the client deliverable', () =
   it('the refusal retains the report rather than deleting or failing it', () => {
     expect(pdf).not.toMatch(/delete\(\)[\s\S]{0,120}governed/i);
     expect(pdf).toMatch(/retained for review/i);
+  });
+
+  it('the portal refuses a blocked report even when a PDF was rendered earlier', () => {
+    const portal = readFileSync(
+      resolve(__dirname, '../../../../supabase/functions/get-portal-client-data/index.ts'),
+      'utf-8',
+    );
+    expect(portal).toContain('governedAuthorityBlockFromFlags');
+    expect(portal).toContain('report_not_client_ready');
+    // The check must run on the SOURCE report whenever one exists — not only
+    // when storage_path is missing, because this function caches that path and
+    // never consults the investment report again once it has.
+    const check = portal.indexOf('governedAuthorityBlockFromFlags');
+    const cache = portal.indexOf("let storagePath = report.storage_path");
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(cache);
   });
 
   it('qualitative regeneration carries the same directive and audit', () => {

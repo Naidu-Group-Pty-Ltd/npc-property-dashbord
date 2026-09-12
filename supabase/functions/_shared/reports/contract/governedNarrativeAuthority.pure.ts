@@ -80,72 +80,206 @@ export type GovernedFaultKind =
 
 export interface GovernedClaimFault {
   readonly category: GovernedCategory;
+  /** The specific figure, so two missing figures in one category both report. */
+  readonly topic: string;
   readonly kind: GovernedFaultKind;
   /** The sentence the claim was found in, trimmed for a reviewer. */
   readonly excerpt: string;
   readonly message: string;
 }
 
-interface CategorySpec {
+/**
+ * Authority is per FACT, not per category — proved from the gate, not assumed.
+ *
+ * `activateSafeGenerationInputs` emits one snapshot fact per narrated metric:
+ *
+ *     for (const metric of SNAPSHOT_ABS_METRICS)
+ *       facts.push(gateFact({ name: metric.name,
+ *                             value: readPath(demographics, metric.path), … }))
+ *
+ * A path the ABS row does not carry yields an ABSENT fact standing beside
+ * present siblings, so `population` present with `medianAge` absent is a state
+ * the gate can really produce. SEIFA is looser still — `if (!isRecord(
+ * seifa[index])) continue` emits NO fact for a missing index — and industry
+ * shares are capped at `SNAPSHOT_INDUSTRY_ROWS`, so an unlisted industry has
+ * no fact either.
+ *
+ * The categories are therefore NOT atomic, and a category-level reading would
+ * let one present figure authorise every absent one beside it: exactly the
+ * substitution this module exists to refuse, performed with the module's own
+ * blessing. Standing is resolved per topic, against the facts that topic owns.
+ *
+ * A topic with `owns: null` has no fact of its own in the snapshot vocabulary
+ * — average household size is narrated but never snapshotted individually — so
+ * it is evidenced by the category roll-up instead. That keeps a healthy report
+ * free to state it while a withheld one still cannot invent it.
+ */
+interface TopicSpec {
+  readonly topic: string;
   readonly category: GovernedCategory;
   readonly label: string;
-  /** Snapshot fact names that carry this category. */
-  readonly owns: (factName: string) => boolean;
+  /** Snapshot facts that evidence this topic; null = the category roll-up does. */
+  readonly owns: ((factName: string) => boolean) | null;
   /** Governed labels as they appear in prose. */
   readonly terms: RegExp;
-  /** What the directive forbids, named rather than gestured at. */
-  readonly banned: readonly string[];
 }
 
-const CATEGORIES: readonly CategorySpec[] = [
+/** The roll-up each category carries, used only by `owns: null` topics. */
+const UMBRELLA: Record<GovernedCategory, string> = {
+  demographics: 'market.demographics',
+  seifa: 'market.demographics',
+  employment: 'market.demographics',
+};
+
+const TOPICS: readonly TopicSpec[] = [
   {
+    topic: 'population',
     category: 'demographics',
-    label: 'resident demographics',
+    label: 'resident population',
+    owns: (n) => n === 'market.population' || n === 'abs.population',
+    terms: /\b(population|residents?)\b/gi,
+  },
+  {
+    topic: 'medianAge',
+    category: 'demographics',
+    label: 'median age',
+    owns: (n) => n === 'market.medianAge' || n === 'abs.medianAge',
+    terms: /\bmedian age\b/gi,
+  },
+  {
+    topic: 'income',
+    category: 'demographics',
+    label: 'median income',
     owns: (n) =>
-      n === 'market.demographics'
-      || /^market\.(population|medianAge|medianRentWeekly|medianHouseholdIncomeWeekly|medianMortgageMonthly|ownerOccupierRate|renterRate)$/.test(n)
-      || /^abs\.(population|medianAge|medianHouseholdIncomeAnnual|medianWeeklyIncome)$/.test(n),
+      n === 'market.medianHouseholdIncomeWeekly'
+      || n === 'abs.medianHouseholdIncomeAnnual'
+      || n === 'abs.medianWeeklyIncome',
+    terms: /\bmedian (?:weekly |annual )?(?:household |personal |family )?income\b/gi,
+  },
+  {
+    topic: 'medianRent',
+    category: 'demographics',
+    label: 'median rent',
+    owns: (n) => n === 'market.medianRentWeekly',
+    terms: /\bmedian rent\b/gi,
+  },
+  {
+    topic: 'medianMortgage',
+    category: 'demographics',
+    label: 'median mortgage repayment',
+    owns: (n) => n === 'market.medianMortgageMonthly',
+    terms: /\bmedian mortgage\b/gi,
+  },
+  {
+    topic: 'tenure',
+    category: 'demographics',
+    label: 'tenure split',
+    owns: (n) => n === 'market.ownerOccupierRate' || n === 'market.renterRate',
     // Plurals matter: the defect corpus contains a model-drawn occupier-mix
     // chart reading `Local owner-occupiers 35`, which asserts an
-    // owner-occupier RATE — a governed fact — and `owner[- ]occupier` alone
-    // does not match it.
-    terms:
-      /\b(population|residents?|median age|household size|median (?:weekly |annual )?(?:household |personal |family )?income|median rent|median mortgage|owner[- ]occupiers?|renters?|rented dwellings?|tenure)\b/gi,
-    banned: [
-      'a population or resident count',
-      'a median age',
-      'a median household, personal or family income',
-      'a median rent or mortgage figure',
-      'an owner-occupier, renter or tenure percentage',
-    ],
+    // owner-occupier RATE, and `owner[- ]occupier` alone does not match it.
+    terms: /\b(owner[- ]occupiers?|renters?|rented dwellings?|tenure)\b/gi,
   },
   {
+    topic: 'householdSize',
+    category: 'demographics',
+    label: 'average household size',
+    owns: null,
+    terms: /\bhousehold size\b/gi,
+  },
+  {
+    topic: 'seifaIrsd',
     category: 'seifa',
-    label: 'SEIFA socio-economic indexes',
-    owns: (n) => n.startsWith('abs.seifa.'),
-    terms: /\b(seifa|irsd|irsad|\bier\b|\bieo\b|socio[- ]economic (?:index|advantage|disadvantage)|decile)\b/gi,
-    banned: [
-      'a SEIFA score or decile',
-      'an IRSD, IRSAD, IER or IEO figure',
-      'a socio-economic ranking expressed as a number',
-    ],
+    label: 'the IRSD index',
+    owns: (n) => n === 'abs.seifa.irsd' || n === 'abs.seifa.irsdDecile',
+    terms: /\birsd\b/gi,
   },
   {
+    topic: 'seifaIrsad',
+    category: 'seifa',
+    label: 'the IRSAD index',
+    owns: (n) => n === 'abs.seifa.irsad' || n === 'abs.seifa.irsadDecile',
+    terms: /\birsad\b/gi,
+  },
+  {
+    topic: 'seifaIer',
+    category: 'seifa',
+    label: 'the IER index',
+    owns: (n) => n === 'abs.seifa.ier' || n === 'abs.seifa.ierDecile',
+    terms: /\bier\b/gi,
+  },
+  {
+    topic: 'seifaIeo',
+    category: 'seifa',
+    label: 'the IEO index',
+    owns: (n) => n === 'abs.seifa.ieo' || n === 'abs.seifa.ieoDecile',
+    terms: /\bieo\b/gi,
+  },
+  {
+    topic: 'seifaGeneral',
+    category: 'seifa',
+    label: 'SEIFA socio-economic ranking',
+    owns: (n) => n.startsWith('abs.seifa.'),
+    terms: /\b(seifa|socio[- ]economic (?:index|advantage|disadvantage)|decile)\b/gi,
+  },
+  {
+    topic: 'unemployment',
     category: 'employment',
-    label: 'workforce and employment composition',
-    owns: (n) =>
-      n.startsWith('abs.industryShare.')
-      || /^abs\.(unemploymentRate|labourForce|labourForceParticipation|employmentRate)$/.test(n)
-      || /^market\.(unemploymentRate|participationRate)$/.test(n),
-    terms:
-      /\b(unemployment rate|participation rate|labour force|labor force|employed residents?|employment rate|workforce|industry share|largest (?:single )?industry|employing)\b/gi,
-    banned: [
-      'an unemployment or participation rate',
-      'a labour-force or employed-persons count',
-      'an industry share or workforce percentage',
-    ],
+    label: 'the unemployment rate',
+    owns: (n) => n === 'abs.unemploymentRate' || n === 'market.unemploymentRate',
+    terms: /\bunemployment rate\b/gi,
+  },
+  {
+    topic: 'participation',
+    category: 'employment',
+    label: 'the labour-force participation rate',
+    owns: (n) => n === 'abs.labourForceParticipation' || n === 'market.participationRate',
+    terms: /\bparticipation rate\b/gi,
+  },
+  {
+    topic: 'labourForce',
+    category: 'employment',
+    label: 'the labour force',
+    owns: (n) => n === 'abs.labourForce' || n === 'abs.employmentRate',
+    terms: /\b(labour force|labor force|employed residents?|employment rate)\b/gi,
+  },
+  {
+    topic: 'industryShare',
+    category: 'employment',
+    label: 'workforce composition by industry',
+    owns: (n) => n.startsWith('abs.industryShare.'),
+    terms: /\b(industry share|workforce|largest (?:single )?industry|employing)\b/gi,
   },
 ];
+
+/** What each category's directive forbids, named rather than gestured at. */
+const CATEGORY_BANNED: Record<GovernedCategory, readonly string[]> = {
+  demographics: [
+    'a population or resident count',
+    'a median age',
+    'a median household, personal or family income',
+    'a median rent or mortgage figure',
+    'an owner-occupier, renter or tenure percentage',
+  ],
+  seifa: [
+    'a SEIFA score or decile',
+    'an IRSD, IRSAD, IER or IEO figure',
+    'a socio-economic ranking expressed as a number',
+  ],
+  employment: [
+    'an unemployment or participation rate',
+    'a labour-force or employed-persons count',
+    'an industry share or workforce percentage',
+  ],
+};
+
+const CATEGORY_LABEL: Record<GovernedCategory, string> = {
+  demographics: 'resident demographics',
+  seifa: 'SEIFA socio-economic indexes',
+  employment: 'workforce and employment composition',
+};
+
+const ALL_CATEGORIES: readonly GovernedCategory[] = ['demographics', 'seifa', 'employment'];
 
 /** Attribution to an official statistical source. */
 const ATTRIBUTION =
@@ -211,8 +345,21 @@ function claimUnits(text: string): string[] {
 
 const trim = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, 240);
 
-/** Does the snapshot hold at least one PRESENT fact for this category? */
-function standingOf(spec: CategorySpec, facts: readonly SnapshotFact[]): CategoryStanding {
+/**
+ * Where ONE topic stands: admissible only where the snapshot holds a PRESENT
+ * fact that evidences that topic specifically.
+ *
+ * A topic with no fact of its own in the snapshot at all reads `withheld`,
+ * not `admissible` — absence of evidence is the whole condition this guards.
+ */
+function standingOf(spec: TopicSpec, facts: readonly SnapshotFact[]): CategoryStanding {
+  if (spec.owns === null) {
+    const umbrella = UMBRELLA[spec.category];
+    for (const fact of facts) {
+      if (fact.name === umbrella && fact.status === 'present') return 'admissible';
+    }
+    return 'withheld';
+  }
   for (const fact of facts) {
     if (!spec.owns(fact.name)) continue;
     if (fact.status === 'present') return 'admissible';
@@ -220,18 +367,36 @@ function standingOf(spec: CategorySpec, facts: readonly SnapshotFact[]): Categor
   return 'withheld';
 }
 
+/** Every governed topic and where it stands for this report. */
+export function governedTopicStanding(
+  snapshot: Pick<MarketFactSnapshot, 'facts'> | null | undefined,
+): Record<string, CategoryStanding> {
+  const facts = snapshot?.facts ?? [];
+  const out: Record<string, CategoryStanding> = {};
+  for (const spec of TOPICS) out[spec.topic] = standingOf(spec, facts);
+  return out;
+}
+
 /**
- * Every governed category and where it stands for this report.
+ * Category standing, kept for the directive and for reporting.
  *
- * A category with no fact of its own in the snapshot at all reads `withheld`,
- * not `admissible` — absence of evidence is the whole condition this guards.
+ * A category is `admissible` only when EVERY topic in it is — because the
+ * directive it drives says "this category is not available", and saying that
+ * while one of its figures is genuinely held would be false. Enforcement does
+ * not read this: the audit resolves per topic, so a partially-present category
+ * still refuses exactly the figures it cannot evidence.
  */
 export function governedCategoryStanding(
   snapshot: Pick<MarketFactSnapshot, 'facts'> | null | undefined,
 ): Record<GovernedCategory, CategoryStanding> {
   const facts = snapshot?.facts ?? [];
   const out = {} as Record<GovernedCategory, CategoryStanding>;
-  for (const spec of CATEGORIES) out[spec.category] = standingOf(spec, facts);
+  for (const category of ALL_CATEGORIES) {
+    const topics = TOPICS.filter((t) => t.category === category);
+    out[category] = topics.every((t) => standingOf(t, facts) === 'admissible')
+      ? 'admissible'
+      : 'withheld';
+  }
   return out;
 }
 
@@ -247,22 +412,37 @@ export function governedCategoryStanding(
 export function governedCategoryDirective(
   snapshot: Pick<MarketFactSnapshot, 'facts'> | null | undefined,
 ): string {
-  const standing = governedCategoryStanding(snapshot);
-  const withheld = CATEGORIES.filter((s) => standing[s.category] === 'withheld');
-  if (withheld.length === 0) return '';
+  const topicStanding = governedTopicStanding(snapshot);
+  const withheldTopics = TOPICS.filter((t) => topicStanding[t.topic] === 'withheld');
+  if (withheldTopics.length === 0) return '';
 
   const lines: string[] = [
     '',
-    '**GOVERNED DATA UNAVAILABLE FOR THIS PROPERTY.** The categories below could',
-    'not be established for the subject property from an authoritative source, so',
-    'this report does NOT have them. They are unavailable, not merely missing from',
-    'the context above.',
+    '**GOVERNED DATA UNAVAILABLE FOR THIS PROPERTY.** The figures below could not',
+    'be established for the subject property from an authoritative source, so this',
+    'report does NOT have them. They are unavailable, not merely missing from the',
+    'context above.',
     '',
   ];
 
-  for (const spec of withheld) {
-    lines.push(`- **${spec.label} — NOT AVAILABLE.** Do not state:`);
-    for (const banned of spec.banned) lines.push(`    - ${banned};`);
+  // Named per CATEGORY where the whole category is gone, and per FIGURE where
+  // only some of it is: "demographics are unavailable" is misleading on a
+  // report that genuinely holds the population and is missing only the median
+  // age, and a directive that misdescribes the data is one a model discounts.
+  const categoryStanding = governedCategoryStanding(snapshot);
+  for (const category of ALL_CATEGORIES) {
+    const missing = withheldTopics.filter((t) => t.category === category);
+    if (missing.length === 0) continue;
+    if (categoryStanding[category] === 'withheld'
+        && missing.length === TOPICS.filter((t) => t.category === category).length) {
+      lines.push(`- **${CATEGORY_LABEL[category]} — NOT AVAILABLE.** Do not state:`);
+      for (const banned of CATEGORY_BANNED[category]) lines.push(`    - ${banned};`);
+    } else {
+      lines.push(`- **${CATEGORY_LABEL[category]} — PARTLY AVAILABLE.** These specific`);
+      lines.push('  figures are NOT held for this property and must not be stated:');
+      for (const t of missing) lines.push(`    - ${t.label};`);
+      lines.push('  Figures in this category that ARE supplied above may be used normally.');
+    }
   }
 
   lines.push(
@@ -301,8 +481,8 @@ export function auditGovernedNarrativeAuthority(
   snapshot: Pick<MarketFactSnapshot, 'facts'> | null | undefined,
 ): GovernedClaimFault[] {
   if (typeof reportText !== 'string' || reportText.trim() === '') return [];
-  const standing = governedCategoryStanding(snapshot);
-  const withheld = CATEGORIES.filter((s) => standing[s.category] === 'withheld');
+  const standing = governedTopicStanding(snapshot);
+  const withheld = TOPICS.filter((t) => standing[t.topic] === 'withheld');
   if (withheld.length === 0) return [];
 
   const faults: GovernedClaimFault[] = [];
@@ -317,6 +497,7 @@ export function auditGovernedNarrativeAuthority(
       if (ATTRIBUTION.test(unit)) {
         faults.push({
           category: spec.category,
+          topic: spec.topic,
           kind: 'false_attribution',
           excerpt: trim(unit),
           message:
@@ -330,6 +511,7 @@ export function auditGovernedNarrativeAuthority(
       if (OTHER_GRAIN.test(unit)) {
         faults.push({
           category: spec.category,
+          topic: spec.topic,
           kind: 'cross_grain_substitution',
           excerpt: trim(unit),
           message:
@@ -342,6 +524,7 @@ export function auditGovernedNarrativeAuthority(
 
       faults.push({
         category: spec.category,
+        topic: spec.topic,
         kind: 'substituted_figure',
         excerpt: trim(unit),
         message:
@@ -356,7 +539,7 @@ export function auditGovernedNarrativeAuthority(
   // text; the same finding twenty times is how a flag list stops being read.
   const seen = new Set<string>();
   return faults.filter((f) => {
-    const key = `${f.category}|${f.kind}`;
+    const key = `${f.topic}|${f.kind}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -428,6 +611,7 @@ export function governedFaultToFlag(fault: GovernedClaimFault): {
     value: {
       kind: fault.kind,
       category: fault.category,
+      topic: fault.topic,
       excerpt: fault.excerpt,
       blocking: true,
       readiness: 'blocked',
