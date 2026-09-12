@@ -333,3 +333,85 @@ describe('RF-7.2B.1A.2 — both writers run the lifecycle, and store the repair'
     expect(rewriteAt).toBeGreaterThan(assignAt);
   });
 });
+
+// ── Production replay ────────────────────────────────────────────────────────
+//
+// Not a constructed case. This is the exact sentence a real production run
+// wrote, taken byte-for-byte out of `investment_reports.validation_flags` on
+// report 0ec278ea-9d35-4b27-a948-88572411241d (48 Redfern Street, Cowra NSW
+// 2794), generated 2026-09-12 through the ordinary cron/resume worker AFTER
+// the RF-7.2B.1A.1 precision fix had deployed.
+//
+// It is the whole arc in one document. A.1 took that report from ten governed
+// flags, nine of them false, down to these TWO — and both are real: the model
+// reached outside the governed sources for a population figure the snapshot
+// does not hold, and attached a tenure claim to it. Under the code on `main`
+// that is `blocking: true` and the client gets nothing. Under A.2 the claim
+// comes out, the gap is disclosed, and the report is delivered.
+//
+// The U+2011 non-breaking hyphen in "owner‑occupiers" is verbatim: it is the
+// character the model actually writes, and the recall hole A.1 closed.
+describe('RF-7.2B.1A.2 — the real production fabrication, replayed', () => {
+  const FABRICATION =
+    'Public profiles describe Cowra as a town of around **10,000 residents** '
+    + 'with a predominance of detached houses, a meaningful share of '
+    + 'owner‑occupiers and a material rental sector.';
+
+  const REPORT = [
+    '## Demographic & Economic Profile',
+    '',
+    FABRICATION,
+    '',
+    'Population and demographic statistics for the specific 2794 postal area '
+      + 'could not be established from authoritative sources, so no resident '
+      + 'counts, age profiles, income medians or SEIFA scores have been used '
+      + 'in this report.',
+    '',
+    'The property at 48 Redfern Street is a detached house on 988 m² of land, '
+      + 'leased at $445 per week.',
+    '',
+    'BOCSAR records 1,144 offences per 100,000 residents for the Cowra local '
+      + 'government area.',
+  ].join('\n');
+
+  it('blocks on `main` — two real faults, population and tenure', () => {
+    const faults = audit(REPORT);
+    expect(faults).toHaveLength(2);
+    expect(faults.map((f) => f.topic).sort()).toEqual(['population', 'tenure']);
+    expect(faults.every((f) => f.category === 'demographics')).toBe(true);
+    expect(
+      governedAuthorityBlockFromFlags(faults.map(governedFaultToFlag)).blocked,
+    ).toBe(true);
+  });
+
+  it('delivers after remediation, with the fabrication gone', () => {
+    const out = lifecycle(REPORT);
+    expect(out.faults).toHaveLength(0);
+    expect(out.removed).toHaveLength(2);
+    expect(out.block.blocked).toBe(false);
+    expect(out.content).not.toContain('10,000');
+    expect(out.content).not.toContain('Public profiles describe Cowra');
+  });
+
+  it('replaces it with a disclosure and keeps every legitimate line', () => {
+    const { content } = lifecycle(REPORT);
+    expect(content).toContain('was not available for this analysis');
+    // The model's own, correct absence disclosure is not touched.
+    expect(content).toContain('could not be established from authoritative sources');
+    // Subject-property measurements, its own tenancy, the crime evidence and
+    // the heading all survive — these are the A.1 exemptions, still holding
+    // once the remediator has run over the same document.
+    expect(content).toContain('988 m²');
+    expect(content).toContain('$445 per week');
+    expect(content).toContain('1,144 offences');
+    expect(content).toContain('## Demographic & Economic Profile');
+  });
+
+  it('leaks no internal vocabulary and no blank-line artefact', () => {
+    const { content } = lifecycle(REPORT);
+    expect(content).not.toMatch(
+      /\[REMOVED\]|\[BLOCKED\]|governed_authority|substituted_figure|validation_flag|blocking/i,
+    );
+    expect(content).not.toMatch(/\n{3,}/);
+  });
+});
