@@ -65,6 +65,79 @@ workspace (role-gated on its own axis). Superadmin-only cards that already
 hide themselves by role (entitlement diagnostics, Mission Control key) keep
 that behaviour — the operator debugging a client workspace still needs them.
 
+## The flag is ONE constant (and once was two)
+
+`isClientFacingDeployment()` returns `__CLIENT_FACING__`, the `define`
+`vite.config.ts` folds in. That is the whole mechanism, and it is worth saying
+why it is stated so firmly.
+
+The function used to read the environment instead:
+
+```ts
+resolveClientFacingFlag((import.meta as { env?: … })?.env?.VITE_CLIENT_FACING)
+```
+
+which looks equivalent and is not. The TypeScript cast sends the expression
+through esbuild's TS transform, which lowers the optional chain into
+temporaries — `(_a = import.meta) == null ? void 0 : _a.env` — so the token
+`import.meta.env` no longer exists by the time Vite substitutes it.
+`import.meta` survives into the browser, where it carries `url` and `resolve`
+and **no `env` at all**, so the expression is `undefined` and the flag is
+`false`. Written plainly as `import.meta.env.VITE_CLIENT_FACING` it would have
+folded correctly; the cast was the bug, not the idea.
+
+Nothing reproduced it. The dev server, `vitest` and every SSR-ish consumer give
+`import.meta` a real `env`, so the mode worked everywhere except in a built
+bundle — and the built bundle is the only place it matters. Measured on the
+deployed `npc.aurixasystems.com.au` bundle: `bw()` carried the lowered
+expression verbatim, and all five `__EXCLUDE_*__` chunks were correctly absent
+beside it.
+
+What that cost, on every client-facing build ever deployed:
+
+- **The navigation filter never engaged** — `useNavigationVisibility` asked a
+  flag that answered `false`, so the sidebar, mobile sidebar, bottom bar and
+  command palette all listed every operator tool.
+- **`ClientFacingGate` waved every hidden URL through**, including the routes
+  that carry no `ModuleGuard` at all.
+- **Every component-level gate in the table above rendered its control** — Test
+  Numbers, the data-integrity debug panel, the Airtable Sync card, the pricing
+  mock.
+- **And the one visible symptom**: `/integrations` resolved to
+  `RouteExcludedFromBuild`, which was `() => null`, because the build half of
+  the decision HAD worked and dropped the chunk. The page drew a blank content
+  area — no title, no cards, no explanation — which reads as broken rather than
+  as withheld.
+
+Three things hold it now. The runtime reads the folded constant, so the two
+halves cannot disagree. `RouteExcludedFromBuild` renders the gate's own
+`NotOnThisDeployment` notice, so a route with no chunk explains itself whatever
+the flag says. And the rule is asserted rather than trusted —
+`src/lib/__tests__/clientFacing.test.ts` fails if `clientFacing.ts` names
+`import.meta` outside a comment, `scripts/check-clone-invariants.sh` repeats it,
+and `src/lib/__tests__/routeExclusionGates.test.ts` cross-checks every
+`__EXCLUDE_*__` against the hidden-path list.
+
+## Keeping one named page on a deployment
+
+`VITE_CLIENT_FACING_ALLOW` is a comma-separated list of entries from
+`CLIENT_FACING_HIDDEN_PATHS` that this build keeps. An allowance can only give
+back something the list took: a path that is not in the list verbatim is
+ignored, so a typo cannot name a surface nobody reviewed, and a child with its
+own entry (`/admin/finance-portal/health`) keeps its own decision when the
+parent is allowed.
+
+It has to reach **both** halves of the mode or it is a trap — a routable page
+whose chunk was never built is exactly the blank screen above — so
+`vite.config.ts` parses it once and derives the runtime list
+(`__CLIENT_FACING_ALLOW__`) and each `__EXCLUDE_*__` from that one value.
+Allowing a path therefore also re-admits its chunk, which for these five is the
+point of hiding them; weigh that before adding one.
+
+The prime is the internal operations console: `VITE_CLIENT_FACING` is unset,
+so the constant folds to `false` and nothing here is hidden or excluded. The
+module is shared with `npc-client-dashboard`, which is where the mode runs.
+
 ## Which Supabase project the build talks to
 
 A second deployment usually wants a second backend, and that used not to be
