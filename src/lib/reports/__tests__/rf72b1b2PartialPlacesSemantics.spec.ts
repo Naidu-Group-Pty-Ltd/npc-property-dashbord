@@ -423,4 +423,33 @@ describe('RF-7.2B.1B2 §4 — the distinction survives persistence and resume', 
     expect(scorer).toContain('schoolsNearby: schools.schoolsWithin3km ?? undefined');
     expect(scorer).toContain('const walkScore = locationIntelligence.walkScore ?? undefined;');
   });
+
+  it('no scoring input builder floors an unavailable Places figure at zero', () => {
+    // The targeted sentinel scan found the same `|| 0` in three builders, not
+    // one. All three are pinned here by the RULE rather than by one file, so a
+    // fourth builder copied from any of them fails this test rather than
+    // shipping a livability score depressed by a provider outage.
+    for (const builder of [
+      'supabase/functions/investment-scoring-service/index.ts',
+      'supabase/functions/_shared/investmentScoreEngine.ts',
+      'supabase/functions/backfill-investment-scores/index.ts',
+    ]) {
+      const src = readFileSync(resolve(REPO, builder), 'utf8');
+      expect(src, builder).not.toMatch(/walkScore:\s*locationIntelligence\.walkScore\s*\|\|\s*0/);
+      expect(src, builder).not.toMatch(/schoolsNearby:\s*schools\.schoolsWithin3km\s*\|\|\s*0/);
+      expect(src, builder).toMatch(/schoolsNearby:\s*schools\.schoolsWithin3km\s*\?\?\s*undefined/);
+    }
+  });
+
+  it('`?? undefined` keeps a measured zero and drops an unavailable one', () => {
+    // The whole semantic difference, stated as arithmetic. `||` cannot tell
+    // these apart; `??` can.
+    const measuredZero = 0 as number | null;
+    const unavailable = null as number | null;
+    expect(measuredZero ?? undefined).toBe(0);
+    expect(unavailable ?? undefined).toBeUndefined();
+    // what the old operator did instead
+    expect(measuredZero || 0).toBe(0);
+    expect(unavailable || 0).toBe(0);   // <- the defect, in one line
+  });
 });

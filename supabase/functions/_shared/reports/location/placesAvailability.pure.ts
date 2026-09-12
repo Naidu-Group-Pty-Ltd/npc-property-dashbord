@@ -45,9 +45,15 @@
  *     for a missing count, unchanged from today's `0 || 'XX'`.
  *   - `null || '[Station Name]'` renders the placeholder instead of the
  *     literal `N/A` that a failed lookup used to put in front of the model.
- *   - `investment-scoring-service` reads `walkScore || undefined` and
- *     `schoolsWithin3km || 0`, and gates on `hasNum(...)`, so an absent value
- *     is simply not scored.
+ *   - the three scoring input builders (`investment-scoring-service`,
+ *     `_shared/investmentScoreEngine`, `backfill-investment-scores`) read
+ *     `?? undefined` and gate on `hasNum(...)`, so an absent value is not
+ *     scored at all. They used to read `|| 0`, which would have floored this
+ *     null straight back to a measured zero — and worse than inertly:
+ *     `hasNum(0)` is true, so the dimension counted as EVIDENCED while
+ *     `if (input.walkScore)` was falsy and scored nothing, depressing a
+ *     livability score with an outage nobody measured. `0 ?? undefined` is
+ *     `0`, so a genuine measured zero is untouched.
  *
  * A category that WAS reached and genuinely holds nothing still reports `0`.
  * That distinction is the whole point: a rural address with no hospital within
