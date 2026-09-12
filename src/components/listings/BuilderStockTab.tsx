@@ -28,7 +28,7 @@ import {
   useMarketplaceClientSearch, useSelectBuilderStockForClient,
 } from '@/lib/marketplaceBuilderStock';
 import {
-  cardPictureFit, homeSizeDisplay, type CardPictureFit,
+  homeSizeDisplay,
   primaryStockImage, stockImageProvenance, STOCK_PROVENANCE_LABEL,
   SELECTABLE_AVAILABILITY, stockItemConfiguration, stockItemLocality,
   stockItemPrice, stockItemTitle, STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
