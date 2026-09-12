@@ -30,6 +30,22 @@
  *   SECURITY DEFINER role oracles. Doing that takes the platform down: those
  *   functions are called from inside RLS predicates, a policy is evaluated as
  *   the querying role, and 176 live policies depend on them.
+ *
+ * WHY THIS FILE LIVES IN `src/lib/security/`.
+ *
+ * It was written in `src/lib/__tests__/`, where CI never would have run it.
+ * The only step naming that directory is `npx vitest run
+ * src/lib/__tests__/builderStock src/lib/__tests__/builderPortal`, and vitest
+ * matches those positionally as path substrings — so the guard above, the one
+ * whose whole purpose is to stop somebody taking the authorisation layer down
+ * by "finishing the audit", would have been green by never executing.
+ *
+ * That is the failure ci.yml already records twice in its own comments, once
+ * for the Cloudflare worker and once for the cash-flow specs: "a guard nobody
+ * runs still reads as coverage". Its stated remedy is not to extend a list —
+ * "a list that has to be edited to stay correct will be wrong again" — so this
+ * moved into a directory CI already runs whole (`npx vitest run
+ * src/lib/security`) rather than adding a fourteenth path to the argv.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
