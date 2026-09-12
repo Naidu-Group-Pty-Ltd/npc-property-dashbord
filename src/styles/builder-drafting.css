@@ -484,4 +484,157 @@
     font-weight: 600;
     letter-spacing: 0.04em;
   }
+
+  /* ══════════════════════════════════════════════════════════════════
+     THE RE-SKIN
+
+     Everything below converts the portal's EXISTING surfaces rather than
+     asking twenty-eight pages to change their class lists — the same
+     move glass.css makes, and for the same reason it records: the
+     portals were built largely from bare Tailwind utilities, so
+     rewriting each call site would be a very large, very mechanical diff
+     with a lot of room to break layout.
+
+     Descendant-of-root is (0,2,0) or better, which is what it takes to
+     out-rank a Tailwind utility. Nothing here changes a layout, a
+     spacing scale or a behaviour: corners, line weights and the register
+     of small type, only.
+
+     A dialog is deliberately NOT caught. Radix portals its content to
+     `body`, outside `.builder-portal-theme`, so overlays keep the app's
+     own treatment — which is correct: a modal is the platform's surface,
+     not the portal's sheet.
+     ══════════════════════════════════════════════════════════════════ */
+
+  /* Cards become sheets. `bg-card` is the hook glass.css already
+     established for this, and every shadcn `Card` in the portal carries
+     it, so one rule reaches all of them. */
+  .builder-portal-theme .bg-card {
+    border-radius: var(--radius-sm);
+    border-color: var(--bd-thin);
+  }
+
+  /* Form controls are drawn on the sheet, so they take its corner and
+     its line weight. The focus ring is untouched — it is an
+     accessibility affordance, not a decoration. */
+  .builder-portal-theme input,
+  .builder-portal-theme textarea,
+  .builder-portal-theme select,
+  .builder-portal-theme [role="combobox"] {
+    border-radius: var(--radius-sm);
+  }
+
+  /* ── Tables become ledgers ────────────────────────────────────────
+     Every table in the portal, not a class a page has to remember. The
+     head is annotated and tinted; rows are separated by the hairline
+     rather than by the app's heavier default; figures stay tabular so a
+     column of money reads down the page.
+
+     `th`/`td` padding is deliberately left alone: the pages set their
+     own column widths and paddings, and overriding them here would
+     re-flow eleven tables to serve a border. */
+  .builder-portal-theme thead th {
+    font-family: var(--font-mono);
+    font-size: 0.5625rem;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+    background-color: hsl(var(--primary) / 0.06);
+    border-bottom: 1px solid var(--bd-thin);
+  }
+
+  .builder-portal-theme tbody td {
+    border-bottom: 1px solid var(--bd-hair);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .builder-portal-theme tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  /* ── Tab rails read as sheet tabs ─────────────────────────────────
+     Annotation type, square corners, and the active tab marked by the
+     cut weight rather than by a filled pill. */
+  .builder-portal-theme [role="tablist"] {
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--bd-thin);
+    background-color: hsl(var(--card) / 0.4);
+  }
+
+  .builder-portal-theme [role="tab"] {
+    border-radius: calc(var(--radius-sm) - 1px);
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .builder-portal-theme [role="tab"][data-state="active"] {
+    box-shadow: inset 0 -2px 0 hsl(var(--primary));
+  }
+
+  /* ── The navigation rail ──────────────────────────────────────────
+     Group labels are drawing notes. The active entry takes a wash that
+     falls away to the right and a 2px cut on its leading edge, which is
+     how a drawing marks the thing in hand. */
+  .builder-portal-theme .bd-nav-group {
+    font-family: var(--font-mono);
+    font-size: 0.5rem;
+    font-weight: 500;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .builder-portal-theme .bd-nav-active {
+    position: relative;
+    background-image: linear-gradient(
+      90deg,
+      hsl(var(--primary) / 0.22),
+      hsl(var(--primary) / 0)
+    );
+  }
+
+  .builder-portal-theme .bd-nav-active::before {
+    content: "";
+    position: absolute;
+    top: 0.375rem;
+    bottom: 0.375rem;
+    left: 0;
+    width: 2px;
+    border-radius: 9999px;
+    background-color: hsl(var(--primary));
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     AUTHENTICATION
+
+     The first surface anyone sees, and the one that was most templated.
+     The setout grid runs at full strength behind a single column, and
+     the mark carries the brand ramp. `BuilderAuthShell` is the only
+     root that wears this, so login, invite, forgot-password and
+     reset-password all inherit it from one place.
+     ══════════════════════════════════════════════════════════════════ */
+  .builder-portal-theme .bd-auth-grid {
+    --bd-grid: hsl(var(--foreground) / 0.07);
+  }
+
+  .builder-portal-theme .bd-mark {
+    display: grid;
+    place-items: center;
+    flex: none;
+    border-radius: var(--radius-sm);
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--primary)),
+      hsl(var(--brand)) 52%,
+      hsl(var(--accent))
+    );
+    color: hsl(var(--primary-foreground));
+    font-family: var(--font-mono);
+    font-weight: 700;
+    box-shadow: inset 0 1px 0 hsl(var(--primary-foreground) / 0.3);
+  }
 }
