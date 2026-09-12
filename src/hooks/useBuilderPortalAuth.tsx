@@ -187,18 +187,31 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
    * a person reaches for a button in a tab they left open.
    */
   useEffect(() => {
-    const recheck = () => { void checkSession(); };
-    const onVisible = () => { if (!document.hidden) recheck(); };
+    /*
+     * `focus` fires on every alt-tab, and each one would otherwise be a
+     * request. A short floor keeps a person moving between windows from
+     * hammering the endpoint while still being far below the time it takes to
+     * reach for a button — the case this exists for. A BROADCAST IS NEVER
+     * THROTTLED: it means another tab has just changed identity, which is the
+     * one signal that must always be acted on.
+     */
+    const FOCUS_RECHECK_FLOOR_MS = 3_000;
+    let lastChecked = 0;
+    const recheck = () => { lastChecked = Date.now(); void checkSession(); };
+    const recheckThrottled = () => {
+      if (Date.now() - lastChecked >= FOCUS_RECHECK_FLOOR_MS) recheck();
+    };
+    const onVisible = () => { if (!document.hidden) recheckThrottled(); };
     let channel: BroadcastChannel | null = null;
     try {
       channel = new BroadcastChannel(BUILDER_IDENTITY_CHANNEL);
       channel.onmessage = recheck;
     } catch { channel = null; }
-    window.addEventListener('focus', recheck);
+    window.addEventListener('focus', recheckThrottled);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       channel?.close();
-      window.removeEventListener('focus', recheck);
+      window.removeEventListener('focus', recheckThrottled);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [checkSession]);

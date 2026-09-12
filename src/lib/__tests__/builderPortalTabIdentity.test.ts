@@ -62,6 +62,18 @@ describe('a stale tab finds out that it is no longer who it thinks it is', () =>
     expect(HOOK).toMatch(/addEventListener\(\s*'visibilitychange'/);
   });
 
+  /*
+   * Focus fires on every alt-tab. A floor keeps that from becoming a request
+   * each time, and it is far below the time it takes to reach for a button.
+   * A BROADCAST IS NEVER THROTTLED — it means another tab has just taken the
+   * session, which is the one signal that must always be acted on.
+   */
+  it('throttles focus but never a broadcast', () => {
+    expect(HOOK).toMatch(/FOCUS_RECHECK_FLOOR_MS/);
+    expect(HOOK).toMatch(/addEventListener\(\s*'focus',\s*recheckThrottled\)/);
+    expect(HOOK).toMatch(/channel\.onmessage = recheck;/);
+  });
+
   it('announces the change so the other tabs get that message at all', () => {
     expect(HOOK).toMatch(/channel\.postMessage\(identity\)/);
     expect(HOOK).toMatch(/if \(identityChanged\)/);
