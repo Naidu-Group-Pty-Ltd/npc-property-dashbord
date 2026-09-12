@@ -162,14 +162,36 @@ const OTHER_GRAIN =
  */
 const QUANT = /\$\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?%|\d{1,3}(?:,\d{3})+(?:\.\d+)?|\b\d+(?:\.\d+)?\b/g;
 
+/**
+ * A figure this sentence has already attributed to something that is NOT a
+ * governed category — the property's own facts and the deal's finance.
+ *
+ * Checked against the text immediately BEFORE each figure, because that is
+ * where the attribution sits: "the local tenant population and was purchased
+ * for $555,000" carries a governed term and a figure in one sentence, and the
+ * figure is the purchase price. Without this the detector blocks a report for
+ * quoting what the customer paid.
+ *
+ * Deliberately absent from this list: income, rent as a MEDIAN, tenure and
+ * anything else that is itself a governed category — `median rent` and
+ * `median household income` must keep firing.
+ */
+const NON_GOVERNED_ATTRIBUTION =
+  /\b(purchased|purchase price|bought|sold|sale price|price|valued at|valuation|stamp duty|solicitor|conveyanc|loan|deposit|lvr|loan[- ]to[- ]value|interest rate|repayment|land size|block of|build size|floor area|bedrooms?|bathrooms?|car spaces?|settlement|occupancy|insurance|council rates|water rates|strata|body corporate|management fee|letting fee|depreciation|yield|cash flow|per week|per annum|m²|sqm|square metres)\b[^.]{0,34}$/i;
+
+/** Characters of preceding context examined for that attribution. */
+const ATTRIBUTION_LOOKBEHIND = 46;
+
 function hasQuantitativeAssertion(sentence: string): boolean {
-  const tokens = sentence.match(QUANT);
-  if (!tokens) return false;
-  for (const raw of tokens) {
-    const token = raw.trim();
+  QUANT.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = QUANT.exec(sentence)) !== null) {
+    const token = match[0].trim();
     const bare = token.replace(/[\s,$%]/g, '');
     const decorated = /[$%]/.test(token) || /,/.test(token);
     if (!decorated && /^(?:19|20)\d{2}$/.test(bare)) continue; // a year, not a figure
+    const before = sentence.slice(Math.max(0, match.index - ATTRIBUTION_LOOKBEHIND), match.index);
+    if (NON_GOVERNED_ATTRIBUTION.test(before)) continue; // the deal's figure, not the area's
     return true;
   }
   return false;
@@ -352,6 +374,41 @@ export function governedAuthorityBlocks(faults: readonly GovernedClaimFault[]): 
   return faults.length > 0;
 }
 
+/** Named once: both writers and the delivery gate must agree on this string. */
+export const GOVERNED_AUTHORITY_FLAG_TYPE = 'governed_authority';
+
+/**
+ * Is this report blocked, read from its STORED `validation_flags`?
+ *
+ * The delivery gate cannot re-run the audit — it holds a row, not a snapshot
+ * and a draft — so it reads the verdict the generator recorded. Same rule,
+ * one spelling of the flag type, so a gate and a writer cannot drift.
+ *
+ * Unreadable or absent flags are NOT a block: this refuses a report that
+ * demonstrably asserts what it does not hold, and every report generated
+ * before this existed has no such flag. Failing open here is deliberate —
+ * failing closed would withhold 1,190 stored reports on no evidence.
+ */
+export function governedAuthorityBlockFromFlags(flags: unknown): {
+  blocked: boolean;
+  categories: string[];
+} {
+  if (!Array.isArray(flags)) return { blocked: false, categories: [] };
+  const categories: string[] = [];
+  for (const flag of flags) {
+    if (typeof flag !== 'object' || flag === null) continue;
+    const row = flag as Record<string, unknown>;
+    if (row.type !== GOVERNED_AUTHORITY_FLAG_TYPE) continue;
+    const value = typeof row.value === 'object' && row.value !== null
+      ? row.value as Record<string, unknown>
+      : {};
+    if (value.blocking !== true) continue;
+    const category = typeof value.category === 'string' ? value.category : 'unknown';
+    if (!categories.includes(category)) categories.push(category);
+  }
+  return { blocked: categories.length > 0, categories };
+}
+
 /** The shape `validation_flags` already carries, so these sit beside the rest. */
 export function governedFaultToFlag(fault: GovernedClaimFault): {
   type: string;
@@ -361,7 +418,7 @@ export function governedFaultToFlag(fault: GovernedClaimFault): {
   value: Record<string, unknown>;
 } {
   return {
-    type: 'governed_authority',
+    type: GOVERNED_AUTHORITY_FLAG_TYPE,
     // `critical`, and blocking with it. `high` is the band `market_claim` uses
     // for a fact that is real but described wrongly; this band is for a fact
     // the report does not have at all.

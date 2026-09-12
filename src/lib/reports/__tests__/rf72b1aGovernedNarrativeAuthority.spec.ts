@@ -22,6 +22,7 @@ import { resolve } from 'node:path';
 
 import {
   auditGovernedNarrativeAuthority,
+  governedAuthorityBlockFromFlags,
   governedAuthorityBlocks,
   governedCategoryDirective,
   governedCategoryStanding,
@@ -309,6 +310,104 @@ describe('RF-7.2B.1A — wired into the real generator', () => {
   it('runs the audit over the assembled report and feeds validation_flags', () => {
     expect(generator).toContain('auditGovernedNarrativeAuthority(');
     expect(generator).toContain('...governedFlags,');
+  });
+});
+
+/**
+ * High-precision guard. A blocking audit that fires on ordinary numeric prose
+ * would withhold good reports, which is a worse failure than the one being
+ * fixed — so these are the shapes a careless detector trips on.
+ */
+describe('RF-7.2B.1A — false-positive guard', () => {
+  const CLEAN: ReadonlyArray<readonly [string, string]> = [
+    ['purchase price near demographic language',
+      'The home suits the local tenant population and was purchased for $555,000.'],
+    ['land size', 'The dwelling sits on 988 m² with a 136 m² build footprint.'],
+    ['census year only', 'The area was last enumerated at the 2021 Census.'],
+    ['interest rate', 'Modelling assumes an interest rate of 6.5% over a 30-year term.'],
+    ['postcode', 'The property is located in Cowra NSW 2794.'],
+    ['dates', 'Settlement is projected for 12 August 2026, with review in 2027.'],
+    ['qualitative occupier commentary',
+      'Demand is driven by families and retirees who value space near town services.'],
+    ['weekly rent', 'The property returns $445 per week to its owner.'],
+    ['stamp duty', 'Stamp duty of $19,162 and solicitor fees of $1,800 apply at settlement.'],
+    ['occupancy', 'The model assumes 50 weeks of occupancy per year.'],
+  ];
+
+  it.each(CLEAN)('passes: %s', (_label, text) => {
+    expect(auditGovernedNarrativeAuthority(text, WITHHELD)).toEqual([]);
+  });
+
+  it('passes a legitimate governed number when the snapshot fact is present', () => {
+    const prose = 'The postal area recorded an unemployment rate of 5.7% at the 2021 Census.';
+    const withEmployment = { facts: [presentFact('abs.unemploymentRate', 5.7)] };
+    expect(auditGovernedNarrativeAuthority(prose, withEmployment)
+      .filter((f) => f.category === 'employment')).toEqual([]);
+  });
+});
+
+describe('RF-7.2B.1A — the stored verdict drives the delivery gate', () => {
+  it('reads a blocking flag back out of stored validation_flags', () => {
+    const [fault] = auditGovernedNarrativeAuthority(MUSWELLBROOK_CENSUS, WITHHELD);
+    const stored = [governedFaultToFlag(fault)];
+    const verdict = governedAuthorityBlockFromFlags(stored);
+    expect(verdict.blocked).toBe(true);
+    expect(verdict.categories).toContain('demographics');
+  });
+
+  it('does not block on other flag types', () => {
+    const stored = [
+      { type: 'market_claim', severity: 'high', field: 'x', message: 'm', value: { kind: 'grain' } },
+      { type: 'quality', severity: 'medium', field: 'y', message: 'm', value: {} },
+    ];
+    expect(governedAuthorityBlockFromFlags(stored).blocked).toBe(false);
+  });
+
+  it('does not block a governed flag that is not marked blocking', () => {
+    const stored = [{ type: 'governed_authority', severity: 'critical', field: 'f', message: 'm', value: { blocking: false } }];
+    expect(governedAuthorityBlockFromFlags(stored).blocked).toBe(false);
+  });
+
+  it('fails OPEN on absent or unreadable flags — 1,190 stored reports predate this', () => {
+    expect(governedAuthorityBlockFromFlags(null).blocked).toBe(false);
+    expect(governedAuthorityBlockFromFlags(undefined).blocked).toBe(false);
+    expect(governedAuthorityBlockFromFlags('not an array').blocked).toBe(false);
+    expect(governedAuthorityBlockFromFlags([]).blocked).toBe(false);
+    expect(governedAuthorityBlockFromFlags([null, 3, 'x']).blocked).toBe(false);
+  });
+});
+
+describe('RF-7.2B.1A — enforcement is wired into the client deliverable', () => {
+  const pdf = readFileSync(
+    resolve(__dirname, '../../../../supabase/functions/render-investment-report-pdf/index.ts'),
+    'utf-8',
+  );
+  const regen = readFileSync(
+    resolve(__dirname, '../../../../supabase/functions/regenerate-report-qualitative/index.ts'),
+    'utf-8',
+  );
+
+  it('the PDF route selects validation_flags and refuses a blocked report', () => {
+    expect(pdf).toContain('governedAuthorityBlockFromFlags');
+    expect(pdf).toMatch(/validation_flags/);
+    expect(pdf).toContain('report_not_client_ready');
+    expect(pdf).toContain('status: 409');
+  });
+
+  it('the refusal retains the report rather than deleting or failing it', () => {
+    expect(pdf).not.toMatch(/delete\(\)[\s\S]{0,120}governed/i);
+    expect(pdf).toMatch(/retained for review/i);
+  });
+
+  it('qualitative regeneration carries the same directive and audit', () => {
+    expect(regen).toContain('governedCategoryDirective(safeGeneration.snapshot)');
+    expect(regen).toContain('auditGovernedNarrativeAuthority(');
+    expect(regen).toContain('updatePayload.validation_flags');
+  });
+
+  it('regeneration reuses the shared module, never its own category list', () => {
+    expect(regen).toContain('governedNarrativeAuthority.pure.ts');
+    expect(regen).not.toMatch(/const\s+\w*CATEGORIES\w*\s*[:=]/);
   });
 });
 
