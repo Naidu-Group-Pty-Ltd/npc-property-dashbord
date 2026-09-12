@@ -85,8 +85,22 @@ export function BuilderPortalShell({
                 {description}
               </p>
             ) : null}
+            {/*
+              NAMED, NOT ADDRESSED BY POSITION.
+
+              A page that wants to frame this cluster must be able to reach it
+              by class. The Stock List used to do it positionally —
+              `.builder-portal-page-header > div > div:last-child` — which was
+              true only while `actions` was the header row's second child.
+              Moving it under the title made that selector match the whole
+              title/description/actions block, so the frame meant for two
+              buttons wrapped the heading as well.
+
+              The class is the contract. The layout inside this header is the
+              shell's to change; what a page is entitled to target is a name.
+            */}
             {actions ? (
-              <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center [&>*]:w-full sm:[&>*]:w-auto">
+              <div className="builder-portal-page-actions mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center [&>*]:w-full sm:[&>*]:w-auto">
                 {actions}
               </div>
             ) : null}
