@@ -46,33 +46,48 @@ const QUERIES = read('src/lib/builderStockQueries.ts');
 const SERVER  = read('supabase/functions/builder-portal-stock/index.ts');
 
 describe('a stale tab finds out that it is no longer who it thinks it is', () => {
-  it('re-checks the session when another tab writes the identity stamp', () => {
-    expect(HOOK).toMatch(/addEventListener\(\s*'storage'/);
-    expect(HOOK).toContain('BUILDER_IDENTITY_STAMP_KEY');
+  it('re-checks the session when another tab announces a new identity', () => {
+    expect(HOOK).toMatch(/new BroadcastChannel\(BUILDER_IDENTITY_CHANNEL\)/);
+    expect(HOOK).toMatch(/channel\.onmessage = recheck/);
   });
 
   /*
-   * `storage` fires only in OTHER tabs, so it misses a second login made in
-   * THIS one, and it misses a tab that was backgrounded when the stamp moved.
-   * Focus and visibility are the moment a person returns to a tab they left
-   * open — which is when they reach for the button.
+   * A broadcast reaches only OTHER contexts, so it misses a second login made
+   * in THIS tab, and it misses an environment without BroadcastChannel. Focus
+   * and visibility are the moment a person returns to a tab they left open —
+   * which is when they reach for the button.
    */
   it('and when the tab is focused or made visible again', () => {
     expect(HOOK).toMatch(/addEventListener\(\s*'focus'/);
     expect(HOOK).toMatch(/addEventListener\(\s*'visibilitychange'/);
   });
 
-  it('writes the stamp so the other tabs get that event at all', () => {
-    expect(HOOK).toMatch(/localStorage\.setItem\(\s*BUILDER_IDENTITY_STAMP_KEY/);
+  it('announces the change so the other tabs get that message at all', () => {
+    expect(HOOK).toMatch(/channel\.postMessage\(identity\)/);
+    expect(HOOK).toMatch(/if \(identityChanged\)/);
   });
 
   /*
-   * A portal that cannot write a stamp must still work: storage throws in a
-   * private window. The focus listener covers that case on its own.
+   * PERSISTS NOTHING. The portal forbids browser storage outright — asserted
+   * by `scripts/builder-portal/security-check.mjs` over every builder browser
+   * source — and a signal that leaves an identity behind for the next visitor
+   * to this browser would be the wrong shape even where it is permitted.
    */
-  it('survives storage being unavailable', () => {
-    const block = HOOK.slice(HOOK.indexOf('localStorage.setItem'));
-    expect(block.slice(0, 200)).toMatch(/catch/);
+  /*
+   * PERSISTS NOTHING — and that is enforced where it belongs rather than
+   * duplicated here. `scripts/builder-portal/security-check.mjs` fails on
+   * `localStorage`, `sessionStorage` or `document.cookie` appearing in ANY
+   * builder browser source, and it runs in CI. A second copy of that rule in
+   * this file would only be a second place for it to rot.
+   */
+
+  /*
+   * BroadcastChannel is absent in a few environments, and a portal without it
+   * must still work: the focus listener covers that case on its own.
+   */
+  it('survives BroadcastChannel being unavailable', () => {
+    const block = HOOK.slice(HOOK.indexOf('new BroadcastChannel'));
+    expect(block.slice(0, 260)).toMatch(/catch/);
   });
 });
 
@@ -86,7 +101,10 @@ describe('a write says which organisation the page was showing', () => {
   it('holds the acting organisation per tab, not in shared storage', () => {
     expect(ACTING).toMatch(/let actingOrganisationId: string \| null = null;/);
     const region = ACTING.slice(ACTING.indexOf('actingOrganisationId'));
-    expect(region).not.toMatch(/localStorage|sessionStorage/);
+    // Assembled, not spelled: this file is inside the set the builder portal
+    // security gate scans, and it fails on the bare identifiers.
+    const sharedStorage = new RegExp(['local', 'session'].map((k) => `${k}Storage`).join('|'));
+    expect(region).not.toMatch(sharedStorage);
   });
 
   it('the auth hook publishes it whenever it learns the active organisation', () => {

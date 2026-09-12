@@ -14,7 +14,7 @@ import {
   type BuilderOrganisation,
   type BuilderPermissionMatrix,
   type BuilderPortalUser,
-  BUILDER_IDENTITY_STAMP_KEY,
+  BUILDER_IDENTITY_CHANNEL,
 } from '@/lib/builderPortal';
 import { setActingOrganisation } from '@/lib/builderActingOrganisation';
 
@@ -126,22 +126,26 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
        * tenant's either way.
        */
       const identity = `${data.user.id}:${data.active_organisation?.organisation_id ?? ''}`;
-      if (cachedIdentity.current !== null && cachedIdentity.current !== identity) {
+      const identityChanged = cachedIdentity.current !== null
+        && cachedIdentity.current !== identity;
+      if (identityChanged) {
         queryClient.removeQueries({ queryKey: ['builder'] });
       }
       cachedIdentity.current = identity;
       /*
-       * The cross-tab signal. Writing it fires `storage` in every OTHER tab on
-       * this origin, which is the only notification a stale tab can get that
-       * the single session cookie now belongs to somebody else. Wrapped
-       * because storage throws in a private window and a portal that cannot
-       * write a stamp must still work.
+       * Tell the other tabs, and store nothing. A tab that is still rendering
+       * the previous organisation has no other way to learn that the single
+       * session cookie now belongs to somebody else. Wrapped because
+       * `BroadcastChannel` is absent in a few environments, and a portal
+       * without it must still work — the focus listener below covers that.
        */
-      try {
-        if (window.localStorage.getItem(BUILDER_IDENTITY_STAMP_KEY) !== identity) {
-          window.localStorage.setItem(BUILDER_IDENTITY_STAMP_KEY, identity);
-        }
-      } catch { /* storage unavailable — the focus listener still covers it */ }
+      if (identityChanged) {
+        try {
+          const channel = new BroadcastChannel(BUILDER_IDENTITY_CHANNEL);
+          channel.postMessage(identity);
+          channel.close();
+        } catch { /* no BroadcastChannel — focus and visibility still apply */ }
+      }
 
       setUser(data.user);
       setOrganisations(data.organisations ?? []);
@@ -177,22 +181,23 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
    * The purge above fixes "sign out, sign in as somebody else, same tab". It
    * cannot see "two tabs, one cookie", because the stale tab never asks again.
    *
-   * So it asks again: on another tab's identity stamp (`storage` fires only in
-   * OTHER tabs, which is exactly the case that was blind), and when this tab
-   * is focused or made visible — the moment before a person reaches for a
-   * button in a tab they left open.
+   * So it asks again: on a message from another tab (BroadcastChannel
+   * delivers only to OTHER contexts, which is exactly the case that was
+   * blind), and when this tab is focused or made visible — the moment before
+   * a person reaches for a button in a tab they left open.
    */
   useEffect(() => {
     const recheck = () => { void checkSession(); };
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === BUILDER_IDENTITY_STAMP_KEY) recheck();
-    };
     const onVisible = () => { if (!document.hidden) recheck(); };
-    window.addEventListener('storage', onStorage);
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel(BUILDER_IDENTITY_CHANNEL);
+      channel.onmessage = recheck;
+    } catch { channel = null; }
     window.addEventListener('focus', recheck);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
-      window.removeEventListener('storage', onStorage);
+      channel?.close();
       window.removeEventListener('focus', recheck);
       document.removeEventListener('visibilitychange', onVisible);
     };
