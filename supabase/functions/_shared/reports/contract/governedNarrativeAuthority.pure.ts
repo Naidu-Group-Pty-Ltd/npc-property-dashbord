@@ -394,25 +394,31 @@ const RATE_DENOMINATOR = /per\s+100,?000\s+(?:residents?|people|persons|populati
 const CRIME_GOVERNED_PROXIMITY = 24;
 
 /**
- * An explicit statement that the data could NOT be established.
+ * There is deliberately NO disclosure or negation exemption.
  *
- * RF-7.2B.1A.1, and the sharpest edge of the whole class: the directive ASKS
- * the model to write the absence down, and the production run did exactly
- * that — "Population and demographic statistics for the specific 2794 postal
- * area could not be established from authoritative sources, so no resident
- * counts, age profiles, income medians or SEIFA scores have been used in this
- * report." Blocking that sentence means the better the model behaves, the
- * more certainly its report is refused.
+ * RF-7.2B.1A.1 first carried one: a unit naming an explicit absence
+ * ("could not be established") was exempt while no surviving figure sat within
+ * 40 characters of the topic it disclaimed. The adversarial pass then showed
+ * the distance IS the evasion — state the term once, push the figure past the
+ * window, and an unsupported claim rides through on the disclaimer:
  *
- * This is NOT a negation exemption. A disclosure still blocks the moment an
- * unexempt figure sits near a governed term — so "Population could not be
- * established, though the area has 13,795 residents" is caught on the second
- * clause, which is the smuggling route a bare `not` rule would have opened.
+ *   "Median age could not be established from authoritative sources for this
+ *    particular postal area, but other commentary sources put it at about 41."
+ *   "Population statistics could not be established ... and after considerable
+ *    additional desktop review the number appears to be 12,272."
+ *   "SEIFA scores could not be established ... though secondary commentary
+ *    elsewhere indicates a score of about 947."
+ *
+ * All three passed on a 40-character window, and any fixed window has the same
+ * hole one clause further out. The rule is therefore GONE rather than widened:
+ * it could only ever permit, the production disclosure needs no exemption
+ * because the subject-postcode rule already leaves it with no figure at all,
+ * and deleting the parameter removes the thing there was to game.
+ *
+ * A disclosure carrying a genuinely unexempt figure now blocks. That is the
+ * conservative side of a client-delivery gate, and it is a shape production
+ * has never produced.
  */
-const ABSENCE_DISCLOSURE =
-  /\b(could not be established|could not be verified|could not be determined|has not been established|have not been established|(?:are|is) not available|(?:are|is) unavailable|no authoritative|not been used in this report|have been used in this report|were not used|cannot be stated|no such figure is held|not available for this property)\b/i;
-/** How close an unexempt figure must be to a governed term to defeat a disclosure. */
-const DISCLOSURE_PROXIMITY = 40;
 
 /** Context a claim unit is judged in. */
 export interface GovernedAuditContext {
@@ -501,29 +507,6 @@ function unexemptFigures(
   return out;
 }
 
-/**
- * Does an explicit absence disclosure carry a figure that contradicts it?
- *
- * The disclosure only stands while no surviving figure sits within
- * `DISCLOSURE_PROXIMITY` of a term for a withheld topic.
- */
-function disclosureStands(
-  sentence: string, figures: readonly Figure[], withheld: readonly TopicSpec[],
-): boolean {
-  for (const spec of withheld) {
-    const terms = new RegExp(spec.terms.source, 'gi');
-    let m: RegExpExecArray | null;
-    while ((m = terms.exec(sentence)) !== null) {
-      for (const fig of figures) {
-        const gap = fig.index >= m.index
-          ? fig.index - (m.index + m[0].length)
-          : m.index - (fig.index + fig.length);
-        if (gap <= DISCLOSURE_PROXIMITY) return false;
-      }
-    }
-  }
-  return true;
-}
 
 
 /**
@@ -713,9 +696,6 @@ export function auditGovernedNarrativeAuthority(
   for (const unit of units) {
     const figures = unexemptFigures(unit, context, withheld);
     if (figures.length === 0) continue;
-    // An explicit "this could not be established" asserts nothing — unless a
-    // surviving figure sits right beside the very topic it disclaims.
-    if (ABSENCE_DISCLOSURE.test(unit) && disclosureStands(unit, figures, withheld)) continue;
     for (const spec of withheld) {
       spec.terms.lastIndex = 0;
       if (!spec.terms.test(unit)) continue;

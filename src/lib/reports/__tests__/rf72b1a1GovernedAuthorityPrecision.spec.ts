@@ -247,39 +247,82 @@ describe('RF-7.2B.1A.1 — a crime chart is not a demographic chart', () => {
 
 // ── Disclosure vs smuggling ─────────────────────────────────────────────────
 
-describe('RF-7.2B.1A.1 — an absence disclosure asserts nothing, and cannot smuggle', () => {
-  it('accepts the production disclosure verbatim', () => {
+describe('RF-7.2B.1A.1 — there is NO disclosure or negation exemption', () => {
+  /*
+   * The first cut of this hotfix exempted a unit naming an explicit absence
+   * while no surviving figure sat within 40 characters of the topic. The
+   * adversarial pass showed the distance IS the evasion. The rule is gone; the
+   * production disclosure passes because the subject-postcode exemption leaves
+   * it with no figure at all, not because it disclaims anything.
+   */
+
+  it('1. same sentence, distant figure — BLOCKS', () => {
+    expect(blocks(
+      'Median age could not be established from authoritative sources for this postal area; '
+      + 'however, broader commentary suggests the current median age is 41.',
+    )).toBe(true);
+  });
+
+  it('2. disclosure followed by an unsupported population — BLOCKS', () => {
+    expect(blocks(
+      'Population data for the postcode could not be established from authoritative sources. '
+      + 'Based on broader market information, the area has approximately 12,272 residents.',
+    )).toBe(true);
+  });
+
+  it('3. disclosure followed by cross-grain substitution — BLOCKS as cross_grain', () => {
+    const t = 'No authoritative postcode-level income figure was available. At the wider SA2 '
+      + 'level the median household income is $1,742 per week.';
+    expect(blocks(t)).toBe(true);
+    expect(topicsOf(t)).toContain('income/cross_grain_substitution');
+  });
+
+  it('4. legitimate pure disclosure — PASSES', () => {
     expect(blocks(P2_DISCLOSURE)).toBe(false);
   });
 
-  it('accepts a disclosure carrying an incidental, unrelated figure', () => {
+  it('5. the production disclosure containing 2794 — PASSES', () => {
     expect(blocks(
-      'Population statistics could not be established for this property; 3 alternative '
-      + 'registers were checked without result.',
+      'Population and demographic statistics for the specific 2794 postal area could not be '
+      + 'established from authoritative sources, so no resident counts, age profiles, income '
+      + 'medians or SEIFA scores have been used in this report.',
     )).toBe(false);
   });
 
-  it('ADVERSARIAL: negation cannot carry an unsupported figure through', () => {
+  // ── distance-evasion probes: the term stated ONCE, the figure pushed away ──
+
+  it('EVASION: a pronoun places the figure far from the term — still BLOCKS', () => {
     expect(blocks(
-      'Population statistics could not be established, though the area has 13,795 residents.',
+      'Median age could not be established from authoritative sources for this particular '
+      + 'postal area, but other commentary sources put it at about 41.',
     )).toBe(true);
   });
 
-  it('ADVERSARIAL: a disclaimer followed by a median age still blocks', () => {
+  it('EVASION: padding between the disclaimer and a bare figure — still BLOCKS', () => {
     expect(blocks(
-      'SEIFA scores are not available for this postcode, but the median age is 36 years.',
+      'Population statistics could not be established from authoritative sources for this area, '
+      + 'and after considerable additional desktop review the number appears to be 12,272.',
     )).toBe(true);
   });
 
-  it('ADVERSARIAL: "not available" beside an income figure still blocks', () => {
+  it('EVASION: a SEIFA disclaimer with a distant score — still BLOCKS', () => {
     expect(blocks(
-      'Income data is not available; median household income sits at $1,450 per week.',
+      'SEIFA scores could not be established from authoritative sources for this postal area, '
+      + 'though secondary commentary elsewhere indicates a score of about 947.',
     )).toBe(true);
   });
 
-  it('is not a blanket negation exemption', () => {
-    // No absence-disclosure wording at all — an ordinary "not" must not exempt.
+  it('an ordinary negation exempts nothing', () => {
     expect(blocks('This is not a small area: the population is 13,795.')).toBe(true);
+  });
+
+  it('the module carries no disclosure or negation exemption at all', () => {
+    const src = readFileSync(resolve(__dirname,
+      '../../../../supabase/functions/_shared/reports/contract/governedNarrativeAuthority.pure.ts'),
+      'utf-8');
+    expect(src).not.toMatch(/const ABSENCE_DISCLOSURE\s*=/);
+    expect(src).not.toMatch(/function disclosureStands/);
+    expect(src).not.toMatch(/DISCLOSURE_PROXIMITY/);
   });
 });
 
