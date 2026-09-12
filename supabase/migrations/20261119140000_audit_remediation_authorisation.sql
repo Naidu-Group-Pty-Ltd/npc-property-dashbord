@@ -77,6 +77,13 @@ COMMENT ON TABLE public._report_templates_backup_20260906 IS
 -- ownership test that has not been in force since the disjunct was added.
 DROP POLICY IF EXISTS tpl_comments_update_own_or_resolve ON public.template_comments;
 
+-- And the NEW name too, so this file can be applied twice. `apply-migration.yml`
+-- applies one named file on human dispatch, and every other statement here is
+-- idempotent; `CREATE POLICY` is the only one that is not. Postgres has no
+-- `CREATE POLICY IF NOT EXISTS` — writing one is the invalid-clause class
+-- `migrationSyntax.test.ts` exists to catch — so drop-then-create is the idiom.
+DROP POLICY IF EXISTS tpl_comments_update_resolution ON public.template_comments;
+
 CREATE POLICY tpl_comments_update_resolution ON public.template_comments
   FOR UPDATE TO authenticated
   USING (true)
