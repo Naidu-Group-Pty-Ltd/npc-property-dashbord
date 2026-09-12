@@ -59,7 +59,7 @@ VALUES
   ),
   (
     'pg_net',
-    'public,
+    'public',
     'extensions',
     'deferred',
     '1. Backup database
