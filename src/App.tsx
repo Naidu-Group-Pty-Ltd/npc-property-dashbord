@@ -233,6 +233,7 @@ const BuilderMessages = lazyWithRetry(() => import("@/pages/builder/BuilderMessa
 const BuilderTasks = lazyWithRetry(() => import("@/pages/builder/BuilderTasks"));
 const BuilderNotifications = lazyWithRetry(() => import("@/pages/builder/BuilderNotifications"));
 const BuilderActivity = lazyWithRetry(() => import("@/pages/builder/BuilderActivity"));
+const BuilderSectionWithdrawn = lazyWithRetry(() => import("@/pages/builder/BuilderSectionWithdrawn"));
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
 const FinancePortalLogin = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalLogin"));
@@ -600,16 +601,35 @@ const App = () => (
                                   <Route path="dashboard" element={<BuilderDashboard />} />
                                   <Route path="projects" element={<BuilderProjects />} />
                                   <Route path="projects/:projectId" element={<BuilderProjectDetail />} />
-                                  <Route path="inventory" element={<BuilderInventory />} />
-                                  <Route path="inventory/:unitId" element={<BuilderUnitDetail />} />
+                                  {/*
+                                    WITHDRAWN SECTIONS — declared, not deleted.
+
+                                    Inventory, Transactions, Pipeline,
+                                    Construction and Documents are not offered
+                                    in this portal. The set is named once in
+                                    `builderHiddenSections.pure.ts`; these
+                                    paths stay DECLARED so a bookmark or an old
+                                    link still resolves, inside the portal
+                                    chrome, to a notice that says the section
+                                    is not part of it — a route that stops
+                                    existing falls through to the catch-all and
+                                    lands on the dashboard with no explanation,
+                                    which reads as a broken link.
+
+                                    The page components are untouched and still
+                                    imported; swapping the element back is what
+                                    re-offers a section.
+                                  */}
+                                  <Route path="inventory" element={<BuilderSectionWithdrawn />} />
+                                  <Route path="inventory/:unitId" element={<BuilderSectionWithdrawn />} />
                                   <Route path="stock" element={<BuilderStockList />} />
-                                  <Route path="transactions" element={<BuilderTransactions />} />
-                                  <Route path="transactions/:transactionId" element={<BuilderTransactionDetail />} />
-                                  <Route path="pipeline" element={<BuilderPipeline />} />
-                                  <Route path="construction" element={<BuilderConstruction />} />
-                                  <Route path="construction/:constructionCaseId" element={<BuilderConstructionDetail />} />
-                                  <Route path="construction/:constructionCaseId/delivery" element={<BuilderDeliveryDetail />} />
-                                  <Route path="documents" element={<BuilderDocuments />} />
+                                  <Route path="transactions" element={<BuilderSectionWithdrawn />} />
+                                  <Route path="transactions/:transactionId" element={<BuilderSectionWithdrawn />} />
+                                  <Route path="pipeline" element={<BuilderSectionWithdrawn />} />
+                                  <Route path="construction" element={<BuilderSectionWithdrawn />} />
+                                  <Route path="construction/:constructionCaseId" element={<BuilderSectionWithdrawn />} />
+                                  <Route path="construction/:constructionCaseId/delivery" element={<BuilderSectionWithdrawn />} />
+                                  <Route path="documents" element={<BuilderSectionWithdrawn />} />
                                   <Route path="messages" element={<BuilderMessages />} />
                                   <Route path="tasks" element={<BuilderTasks />} />
                                   <Route path="notifications" element={<BuilderNotifications />} />
