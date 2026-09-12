@@ -52,7 +52,14 @@ export function BuilderSchedule({ figures, className }: BuilderScheduleProps) {
 
   return (
     <div
-      className={cn('bd-schedule', figures.length === 4 && 'bd-schedule-4', className)}
+      className={cn(
+        'bd-schedule',
+        /* Three and four across from `md`; anything else stays two, which is
+           the only column count that divides cleanly at every width. */
+        figures.length === 3 && 'bd-schedule-3',
+        figures.length === 4 && 'bd-schedule-4',
+        className,
+      )}
     >
       {figures.map((figure) => {
         const body = (

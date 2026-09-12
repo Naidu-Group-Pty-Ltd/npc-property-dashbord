@@ -305,6 +305,10 @@
   }
 
   @media (min-width: 768px) {
+    .builder-portal-theme .bd-schedule-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
     .builder-portal-theme .bd-schedule-4 {
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
@@ -317,10 +321,12 @@
   }
 
   @media (min-width: 768px) {
+    .builder-portal-theme .bd-schedule-3 > *,
     .builder-portal-theme .bd-schedule-4 > * {
       border-bottom: 0;
     }
 
+    .builder-portal-theme .bd-schedule-3 > *:last-child,
     .builder-portal-theme .bd-schedule-4 > *:last-child {
       border-right: 0;
     }
