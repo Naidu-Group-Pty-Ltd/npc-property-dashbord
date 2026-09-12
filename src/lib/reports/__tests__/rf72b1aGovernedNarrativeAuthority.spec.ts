@@ -577,9 +577,16 @@ describe('RF-7.2B.1A — the template route is gated too, and it is tried first'
   });
 
   it('the check is scoped to investment reports and leaves the other nine formats alone', () => {
-    const before = tpl.slice(Math.max(0, callSite - 700), callSite);
-    expect(before).toContain("from('investment_reports')");
-    expect(before).toContain('validation_flags');
+    // Ordering, not a byte window: the lookup must sit inside the guard and
+    // before the verdict is read. A distance assertion breaks the moment a
+    // comment is added, which says nothing about whether the code is right.
+    const guard = tpl.indexOf("mode === 'final' && boundReportId");
+    const lookup = tpl.indexOf("from('investment_reports')", guard);
+    const flags = tpl.indexOf('validation_flags', lookup);
+    expect(guard).toBeGreaterThan(-1);
+    expect(lookup).toBeGreaterThan(guard);
+    expect(flags).toBeGreaterThan(lookup);
+    expect(flags).toBeLessThan(callSite);
   });
 
   it('an unnamed report renders exactly as it did — the gate cannot break the other formats', () => {

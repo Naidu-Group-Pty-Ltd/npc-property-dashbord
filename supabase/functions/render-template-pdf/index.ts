@@ -172,11 +172,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       ? payload.reportId.trim()
       : null;
     if (mode === 'final' && boundReportId) {
-      const { data: boundReport } = await supabase
+      const { data: boundReport, error: boundErr } = await supabase
         .from('investment_reports')
         .select('id, validation_flags')
         .eq('id', boundReportId)
         .maybeSingle();
+      // A read that FAILED is not a row that is ABSENT. It still fails open —
+      // withholding a document because a lookup broke is the worse failure —
+      // but it is SAID, because a silently discarded error is the exact class
+      // this repository has been bitten by (`aml.cases`' phantom `tenant_id`,
+      // the fifty-eight sweep). An id that names no investment report is the
+      // ordinary case for the other nine formats and is not an error.
+      if (boundErr) {
+        console.warn(
+          `[render-template-pdf] client-readiness lookup failed for ${boundReportId} `
+          + `(${boundErr.code ?? 'no code'}) — rendering, because a failed read must not `
+          + 'withhold a document',
+        );
+      }
       const governedBlock = governedAuthorityBlockFromFlags(
         (boundReport as Record<string, unknown> | null)?.validation_flags,
       );
