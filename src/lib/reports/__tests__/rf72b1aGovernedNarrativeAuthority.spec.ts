@@ -516,6 +516,80 @@ describe('RF-7.2B.1A — enforcement is wired into the client deliverable', () =
   });
 });
 
+/*
+ * The template route is the OTHER renderer, and `produceInvestmentDocument`
+ * asks it FIRST. Measured in production 2026-09-12: `report_templates` carries
+ * three active `investment_compass` rows plus one `investment`, and
+ * `template_render_jobs` holds eleven succeeded `final`-mode Investment Compass
+ * renders (most recent 2026-09-04). A gate on the fallback alone was a gate on
+ * the path that is taken second.
+ */
+describe('RF-7.2B.1A — the template route is gated too, and it is tried first', () => {
+  const tpl = readFileSync(
+    resolve(__dirname, '../../../../supabase/functions/render-template-pdf/index.ts'),
+    'utf-8',
+  );
+  const route = readFileSync(
+    resolve(__dirname, '../../reportTemplate/routeReportThroughTemplate.ts'),
+    'utf-8',
+  );
+  const produce = readFileSync(
+    resolve(__dirname, '../investment/deliverInvestmentPdf.ts'),
+    'utf-8',
+  );
+
+  it('the template route really is attempted before the gated legacy route', () => {
+    const templated = produce.indexOf('tryTemplateDocument(');
+    const legacy = produce.indexOf("'render-investment-report-pdf'");
+    expect(templated).toBeGreaterThan(-1);
+    expect(legacy).toBeGreaterThan(-1);
+    expect(templated).toBeLessThan(legacy);
+  });
+
+  it('the caller names the report, so the renderer can ask about it', () => {
+    const call = route.indexOf("'render-template-pdf'");
+    expect(call).toBeGreaterThan(-1);
+    // `reportId` must appear inside the payload object of that call.
+    expect(route.slice(call, call + 900)).toMatch(/\breportId,/);
+  });
+
+  it('the renderer reads the stored verdict and refuses with the same 409', () => {
+    expect(tpl).toContain('governedAuthorityBlockFromFlags');
+    expect(tpl).toContain('governedNarrativeAuthority.pure.ts');
+    expect(tpl).toContain('report_not_client_ready');
+    expect(tpl).toContain('status: 409');
+  });
+
+  // The CALL site, not the import line — `indexOf` finds the import first, and
+  // an import sits before everything, so anchoring on it would make the
+  // ordering assertions below pass whatever the code did.
+  const callSite = tpl.indexOf('governedAuthorityBlockFromFlags(', tpl.indexOf('\n', tpl.indexOf('import { governedAuthorityBlockFromFlags')));
+
+  it('the refusal happens BEFORE the document is drawn', () => {
+    const draw = tpl.indexOf('await callWeasyPrint(');
+    expect(callSite).toBeGreaterThan(-1);
+    expect(draw).toBeGreaterThan(-1);
+    expect(callSite).toBeLessThan(draw);
+  });
+
+  it('a preview is exempt — the refusal is about a finished client document', () => {
+    expect(tpl).toMatch(/mode === 'final' && boundReportId/);
+  });
+
+  it('the check is scoped to investment reports and leaves the other nine formats alone', () => {
+    const before = tpl.slice(Math.max(0, callSite - 700), callSite);
+    expect(before).toContain("from('investment_reports')");
+    expect(before).toContain('validation_flags');
+  });
+
+  it('an unnamed report renders exactly as it did — the gate cannot break the other formats', () => {
+    // No reportId in the payload means no lookup and no refusal: a Cash Flow or
+    // Client Details render is untouched by this.
+    expect(tpl).toMatch(/typeof payload\.reportId === 'string'/);
+    expect(tpl).toMatch(/:\s*null;/);
+  });
+});
+
 describe('RF-7.2B.1A — the fault is blocking, not advisory', () => {
   it('emits a critical, blocking validation flag', () => {
     const [fault] = auditGovernedNarrativeAuthority(MUSWELLBROOK_CENSUS, WITHHELD);
