@@ -3037,6 +3037,70 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         );
       }
 
+      // ==================================================================
+      // RF-7.2B.1B0-F4 — the crime rate's denominator is ADMITTED, not found
+      // ==================================================================
+      // `crime-statistics-service` used to read `abs_census_poa.population`
+      // itself, keyed on whatever postcode it was handed. With geography
+      // unresolved that was the untrusted postcode scraped out of the address,
+      // so the service restored a population the Client-Safe Gate had withheld
+      // — and production report 0ec278ea printed "10,891 offences per 100,000"
+      // (1,144 / 10,504) on a page that also said population for 2794 was
+      // "explicitly unavailable and must not be substituted".
+      //
+      // The service no longer looks anything up. The denominator now enters as
+      // admitted evidence from HERE, where the trust decision already lives,
+      // and only once geography has RESOLVED — so an unresolved case yields
+      // offence counts, trend and change with no per-capita rate, which is the
+      // honest reading rather than a contradiction.
+      //
+      // The grain is stated explicitly and checked at the far end: a postcode
+      // population may only ever divide postcode offence counts.
+      const crimePoa = subjectPostcodeOf(subjectGeography);
+      if (crimePoa && supabaseClient && (state === 'NSW' || state === 'SA')) {
+        try {
+          const { data: poaPop, error: poaErr } = await supabaseClient
+            .from('abs_census_poa').select('population').eq('poa', crimePoa).maybeSingle();
+          // A read that FAILED is not a population that is ABSENT, and neither
+          // one licenses a rate — but they are different operator problems.
+          if (poaErr) {
+            console.warn(`⚠️ abs_census_poa unreadable for POA ${crimePoa} (${poaErr.message}) — crime rate withheld.`);
+          }
+          const value = typeof poaPop?.population === 'number' ? poaPop.population : null;
+          if (value && value > 0) {
+            const crimeAgain = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                suburb: typeof subjectGeography?.suburb === 'string' ? subjectGeography.suburb : suburb,
+                state,
+                postcode: crimePoa,
+                population: {
+                  value,
+                  source: 'abs_census_poa',
+                  geography: crimePoa,
+                  grain: 'postcode',
+                  vintage: '2021 Census usual residents',
+                },
+              }),
+            }, 20000, 'crime-statistics-service');
+            if (crimeAgain.ok) {
+              const body = await crimeAgain.json();
+              if (body?.success && body.data) {
+                enhancedData = { ...enhancedData, crimeStatistics: body.data };
+                console.log(`✓ Crime rate admitted for POA ${crimePoa} (population ${value}, 2021 Census).`);
+              }
+            }
+          } else {
+            console.log(`↺ No admitted population for POA ${crimePoa} — crime counts stand, no per-capita rate.`);
+          }
+        } catch (error: any) {
+          // Never fails the report: the first crime call already supplied the
+          // counts, and this only ever ADDS a rate.
+          console.warn('⚠️ Crime rate admission skipped:', error?.message?.substring(0, 80));
+        }
+      }
+
       // Planning & development intelligence — zoning, parcel, state
       // development instruments and DA activity from the jurisdiction's own
       // planning services. It keys on the verified coordinate the location
