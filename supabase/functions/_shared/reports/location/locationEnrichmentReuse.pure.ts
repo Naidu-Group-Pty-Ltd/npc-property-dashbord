@@ -81,6 +81,56 @@ export interface EnrichmentAcquisition {
   readonly stages: EnrichmentStages;
   /** Google's own `formatted_address`, for verification. Null when supplied. */
   readonly matchedAddress: string | null;
+  /** How many times this subject has been acquired. 1 on a first success. */
+  readonly attempt?: number;
+}
+
+/**
+ * How many times a PARTIAL enrichment may be re-acquired before it is accepted
+ * as the best this address is going to get.
+ *
+ * Without this the incompleteness rule is its own amplification: a Places
+ * category that fails persistently — a quota, a category Google has no data
+ * for — would refuse reuse on every resume and re-buy all eight calls each
+ * time, which is the 88-call behaviour this module exists to stop, reached by
+ * the guard meant to prevent it.
+ *
+ * Three acquisitions caps a pathological report at 24 calls rather than 88,
+ * and the two extra attempts are worth buying because a transient Places
+ * failure is common and a complete set is materially better evidence.
+ *
+ * Accepting a partial set is NOT calling it complete: `stages.places` still
+ * reads `partial` afterwards, so nothing downstream can mistake it for a full
+ * acquisition. What is exhausted is the re-buying, not the honesty.
+ */
+export const MAX_PARTIAL_ACQUISITIONS = 3;
+
+/** The attempt number a fresh acquisition for this subject should carry. */
+export function nextAcquisitionAttempt(stored: unknown, subject: EnrichmentSubject): number {
+  if (!stored || typeof stored !== 'object') return 1;
+  const prior = (stored as Record<string, unknown>)[ENRICHMENT_STAMP] as
+    EnrichmentAcquisition | undefined;
+  // A different subject starts its own count — attempts are per property, not
+  // per row, or moving a report to a new address would inherit its exhaustion.
+  if (!prior || typeof prior.subjectKey !== 'string') return 1;
+  if (prior.subjectKey !== subjectKeyFor(subject)) return 1;
+  const n = typeof prior.attempt === 'number' && Number.isFinite(prior.attempt)
+    ? prior.attempt : 0;
+  return n + 1;
+}
+
+/**
+ * Carry the attempt count onto a freshly acquired enrichment.
+ *
+ * Kept here rather than at the call site so the counter and the rule that reads
+ * it cannot drift apart.
+ */
+export function recordAcquisitionAttempt<T>(fresh: T, attempt: number): T {
+  if (!fresh || typeof fresh !== 'object') return fresh;
+  const record = fresh as Record<string, unknown>;
+  const stamp = record[ENRICHMENT_STAMP] as EnrichmentAcquisition | undefined;
+  if (!stamp || typeof stamp !== 'object') return fresh;
+  return { ...record, [ENRICHMENT_STAMP]: { ...stamp, attempt } } as T;
 }
 
 export interface EnrichmentSubject {
@@ -89,8 +139,23 @@ export interface EnrichmentSubject {
   readonly state?: unknown;
 }
 
+/**
+ * The SAME normalisation the database already uses for
+ * `canonical_property_key`:
+ *
+ *   regexp_replace(lower(trim(raw_address)), '[^a-z0-9]+', ' ', 'g')
+ *
+ * (`20260724100000_canonical_generated_report_property_identity.sql`.) Reusing
+ * it rather than inventing a second rule means a formatting-equivalent resume —
+ * a comma dropped, a double space, different casing — is the SAME subject here
+ * and the same subject to the rest of the platform. A key that disagreed with
+ * the canonical one would refuse reuse on reports the database considers one
+ * property, which is safe but pointless, and would drift the day either moved.
+ */
 const text = (value: unknown): string =>
-  typeof value === 'string' ? value.trim().toLowerCase().replace(/\s+/g, ' ') : '';
+  typeof value === 'string'
+    ? value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    : '';
 
 /**
  * The identity an enrichment belongs to.
@@ -118,7 +183,8 @@ export type ReuseVerdict =
   | 'no_acquisition_stamp'
   | 'subject_changed'
   | 'missing_coordinates'
-  | 'incomplete_acquisition';
+  | 'incomplete_acquisition'
+  | 'partial_retry_exhausted';
 
 export interface ReuseDecision {
   readonly reuse: boolean;
@@ -184,12 +250,34 @@ export function assessEnrichmentReuse(
   }
 
   if (acquisition.stages?.places !== 'complete') {
-    // A Places outage stores zeros that read exactly like a quiet rural suburb.
-    return refuse(
-      'incomplete_acquisition',
-      'The stored enrichment was acquired while at least one amenity lookup '
-      + 'failed, so its counts may understate the area. Re-acquiring.',
-    );
+    const attempts = typeof acquisition.attempt === 'number' && Number.isFinite(acquisition.attempt)
+      ? acquisition.attempt
+      : 1;
+    if (attempts < MAX_PARTIAL_ACQUISITIONS) {
+      // A Places outage stores zeros that read exactly like a quiet rural
+      // suburb, and a complete set is worth a bounded number of retries.
+      return refuse(
+        'incomplete_acquisition',
+        `The stored enrichment was acquired while at least one amenity lookup `
+        + `failed, so its counts may understate the area. Re-acquiring `
+        + `(attempt ${attempts} of ${MAX_PARTIAL_ACQUISITIONS}).`,
+      );
+    }
+    // The retries are spent. Reuse what we have rather than re-buying eight
+    // calls on every remaining resume — which is the amplification this whole
+    // module exists to stop, and refusing forever would reach it through the
+    // guard meant to prevent it. The stamp still says `partial`, so nothing
+    // downstream can read this as a complete acquisition.
+    return {
+      reuse: true,
+      verdict: 'partial_retry_exhausted',
+      note:
+        `Reusing an incomplete location enrichment after `
+        + `${MAX_PARTIAL_ACQUISITIONS} acquisitions — at least one amenity `
+        + 'lookup keeps failing for this address, and re-buying the whole set '
+        + 'on every resume costs more than it recovers. Still recorded as '
+        + 'partial.',
+    };
   }
 
   return {

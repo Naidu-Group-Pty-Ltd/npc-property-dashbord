@@ -44,14 +44,51 @@
  *   `structured_subject`   `propertyDetails.postcode`, a field the caller filled
  *                          in, as opposed to a number found inside a sentence
  *
- * One does not:
+ * Two do not:
  *
  *   `free_text_parse`      a regex over the address string. It cannot tell a
  *                          postcode from a lot number, and it has no way to
  *                          report that it is unsure.
+ *   `structured_subject`   `propertyDetails.postcode`. It LOOKS structured, and
+ *                          it is not — see below.
  *
- * `propertyDetails.postcode` is already supplied and logged by the generator and
- * has never been read for this — the free-text parse won on every path.
+ * ## Why the "structured" field is not trusted
+ *
+ * The first cut of this module trusted `propertyDetails.postcode`, on the
+ * reasoning that a field a caller fills in is an assertion rather than a number
+ * found inside a sentence. Tracing every production origin of that field
+ * refutes it. Measured across the callers:
+ *
+ *   `InvestmentReportGenerator` (3 call sites)  never sets `postcode` at all
+ *   `ClientPropertyInvestmentReport`            never sets it
+ *   `useChunkedRegeneration`                    never sets it
+ *   `bulkReportWorker`                          sends `zipCode`, a different key
+ *   `auto-report-sync`                          `listing.zipcode`, from Airtable
+ *   `auto-report-webhook`                       `detectedPostcode`
+ *
+ * and `detectedPostcode` is a CASCADE that falls through to exactly the
+ * mechanisms this module exists to refuse:
+ *
+ *   `extractPostcodeFromText(listing.address)`  a free-text parse
+ *   `lookupSuburbInDatabase(listing.suburb)`    a suburb-name lookup
+ *   `lookupSuburbStatic(listing.suburb)`        a hardcoded table — `BRISBANE`
+ *                                               resolves to 4000, the CBD, for
+ *                                               a property anywhere in Brisbane
+ *
+ * A suburb-name lookup returns the suburb's REPRESENTATIVE postcode, which for
+ * any suburb spanning more than one is the wrong one for most properties in it.
+ * The Airtable route is no safer: `NPC_EMAIL_1_AUDIT`/`ADDRESS_COMPOSITION`
+ * record that Make geocodes `{{address}},{{suburb}}` and a second model call
+ * re-parses the answer over eight address columns, so that column can itself be
+ * model-derived.
+ *
+ * There is no origin metadata on the field to tell these apart at the point of
+ * use, and no `postcode` in the manual-override allow-list, so there is no
+ * authoritative override either. Rather than add a migration to carry
+ * provenance, the narrowest safe distinction the existing data contract
+ * supports is the honest one: **only the resolved POA selects evidence, and
+ * everything else withholds.** Correct omission is safer than confidently
+ * selecting statistics for the wrong postcode.
  *
  * A withheld rate and a withheld count are different losses, and this is the
  * second one: where no trusted postcode exists the counts are withheld, because
@@ -68,11 +105,25 @@ export type PostcodeProvenance =
   | 'free_text_parse'
   | 'none';
 
-/** Only the first two may select evidence. */
+/**
+ * Only the canonical POA may select evidence.
+ *
+ * `structured_subject` was in this set, and tracing every production origin of
+ * `propertyDetails.postcode` proved that wrong — see the header. It is kept as
+ * its own provenance because it is its own REFUSAL: "a postcode arrived but its
+ * origin cannot be established" sends an operator somewhere different from "the
+ * address was parsed for a number".
+ */
 const TRUSTED_PROVENANCE: ReadonlySet<PostcodeProvenance> = new Set([
   'resolved_geography',
-  'structured_subject',
 ]);
+
+/**
+ * One definition of "may this provenance select evidence", so a branch below
+ * cannot quietly disagree with the set above.
+ */
+export const isTrustedProvenance = (p: PostcodeProvenance): boolean =>
+  TRUSTED_PROVENANCE.has(p);
 
 export interface CrimePostcodeInputs {
   /** `subjectPostcodeOf(subjectGeography)` — the ABS POA, or null. */
@@ -165,7 +216,7 @@ export function resolveCrimePostcodeAuthority(
     return {
       postcode: geography,
       provenance: 'resolved_geography',
-      trusted: true,
+      trusted: isTrustedProvenance('resolved_geography'),
       note:
         `Crime evidence keyed on POA ${geography}, resolved by point-in-polygon `
         + 'from the verified coordinate.',
@@ -173,23 +224,19 @@ export function resolveCrimePostcodeAuthority(
   }
 
   if (structured) {
-    if (!postcodeMatchesState(structured, inputs.state)) {
-      return {
-        postcode: null,
-        provenance: 'none',
-        trusted: false,
-        note:
-          `The supplied postcode ${structured} does not belong to `
-          + `${String(inputs.state)}. No postcode-level crime evidence was selected.`,
-      };
-    }
+    // Refused, and named separately from a free-text parse because the remedy
+    // differs: this one is "resolve the geography, or give this field a
+    // provenance we can read", not "the address was scanned for a number".
     return {
-      postcode: structured,
+      postcode: null,
       provenance: 'structured_subject',
-      trusted: true,
+      trusted: false,
       note:
-        `Crime evidence keyed on postcode ${structured}, supplied as a structured `
-        + 'property field rather than parsed from the address.',
+        `Postcode ${structured} arrived as a property field, but no production `
+        + 'path populates that field from a source whose origin can be established '
+        + '— it can be a suburb-name lookup or an address parse. It is not '
+        + 'authoritative on its own, so no postcode-level crime evidence was '
+        + 'selected.',
     };
   }
 

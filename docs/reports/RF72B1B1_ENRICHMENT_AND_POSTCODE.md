@@ -77,6 +77,52 @@ records `places: 'complete' | 'partial'`, so a Places outage cannot be locked in
 as "this address has no schools". A commute that is `no_route` or
 `destination_unknown` is still a complete acquisition — those are real answers.
 
+### The identity is the database's own, not a second one
+
+`subjectKeyFor` normalises with **exactly the rule
+`canonical_property_key` uses** —
+`regexp_replace(lower(trim(raw_address)), '[^a-z0-9]+', ' ', 'g')`, from
+`20260724100000_canonical_generated_report_property_identity.sql` — over the
+address, postcode and state together. All three steer the result, because
+`buildAuGeocodeQuery` composes all three into the geocode request, so a change
+in any of them can move the coordinate.
+
+Inventing a second normalisation would have refused reuse on reports the
+database considers one property — safe but pointless — and would drift the day
+either rule moved.
+
+### A partial acquisition retries a bounded number of times
+
+The incompleteness rule is its own amplification if left unbounded: a Places
+category that fails persistently — a quota, a category Google has no data for —
+would refuse reuse on every resume and re-buy **all eight calls** each time,
+reaching the 88-call behaviour through the guard written to prevent it.
+
+`MAX_PARTIAL_ACQUISITIONS = 3`. A partial enrichment is re-acquired twice more
+and then accepted:
+
+| resumes | complete first time | persistently partial | before this change |
+| --- | --- | --- | --- |
+| 11 | **8 calls** | **24 calls** | 88 calls |
+
+Two extra attempts are worth buying because a transient Places failure is
+common and a complete set is materially better evidence. Past that, re-buying
+costs more than it recovers.
+
+**Accepting a partial set is not calling it complete.** `stages.places` still
+reads `partial` afterwards and the verdict is its own value,
+`partial_retry_exhausted`, never `reusable` — what is exhausted is the
+re-buying, not the honesty. The counter is per PROPERTY, not per row, so moving
+a report to a new address does not inherit the old address's exhaustion.
+
+One wiring detail is load-bearing: the early-write guard was "only write what is
+missing", which is right for a reused object and **wrong for a retried one** —
+a re-acquired partial would never persist its incremented count, so the bound
+would never be reached. The write now also fires on a re-acquisition, tracked by
+a handler-scoped `locationEnrichmentReused`. The first attempt scoped that flag
+to the enrichment block and the edge-function gate caught it as a
+`ReferenceError` before it could ship.
+
 ### What is persisted, and who consumes it
 
 | Google call | persisted field | downstream consumer |
@@ -153,13 +199,60 @@ from a source that ASSERTED it as a postcode.**
 
 | provenance | trusted | what it is |
 | --- | --- | --- |
-| `resolved_geography` | yes | the ABS point-in-polygon POA for the verified coordinate |
-| `structured_subject` | yes | `propertyDetails.postcode`, a field the caller filled in |
-| `free_text_parse` | **no** | a regex over the address string |
+| `resolved_geography` | **yes** | the ABS point-in-polygon POA for the verified coordinate |
+| `structured_subject` | no | `propertyDetails.postcode` — see below |
+| `free_text_parse` | no | a regex over the address string |
 | `none` | no | nothing available |
 
-`propertyDetails.postcode` has always been supplied and logged by the generator
-and **had never been read for this** — the free-text parse won on every path.
+### Why the "structured" field is not trusted either
+
+The first cut trusted `propertyDetails.postcode`, reasoning that a field a
+caller fills in is an assertion rather than a number found inside a sentence.
+**Tracing every production origin refutes that.**
+
+| producer | what it sets |
+| --- | --- |
+| `InvestmentReportGenerator` (3 call sites) | never sets `postcode` |
+| `ClientPropertyInvestmentReport` | never sets it |
+| `useChunkedRegeneration` | never sets it |
+| `bulkReportWorker` | sends `zipCode` — a different key |
+| `auto-report-sync` | `listing.zipcode`, from Airtable |
+| `auto-report-webhook` | `detectedPostcode` |
+
+and `detectedPostcode` is a cascade that falls through to exactly the mechanisms
+this module exists to refuse:
+
+```
+extractPostcodeFromText(listing.address)   a free-text parse
+lookupSuburbInDatabase(listing.suburb)     a suburb-name lookup
+lookupSuburbStatic(listing.suburb)         a hardcoded table —
+                                           'BRISBANE': { postcode: '4000' }
+```
+
+A suburb-name lookup returns the suburb's **representative** postcode, which for
+any suburb spanning more than one is wrong for most properties in it. `BRISBANE`
+resolves to the CBD for a property anywhere in Brisbane. The Airtable route is
+no safer: `NPC_EMAIL_1_AUDIT` and `ADDRESS_COMPOSITION` record that Make
+geocodes `{{address}},{{suburb}}` and a second model call re-parses the answer
+over eight address columns, so that column can itself be model-derived.
+
+There is no origin metadata on the field to tell these apart at the point of
+use, and no `postcode` in the manual-override allow-list, so there is no
+authoritative override either. Rather than add a migration to carry provenance,
+the narrowest safe distinction the existing data contract supports is the honest
+one: **only the resolved POA selects evidence.**
+
+`structured_subject` is kept as its own provenance because it is its own
+*refusal*: "a postcode arrived but its origin cannot be established" sends an
+operator somewhere different from "the address was scanned for a number".
+
+### State consistency is a rejection test, not authority
+
+`postcodeMatchesState` refuses a candidate that contradicts the subject's state
+at any rank, which catches `Lot 2267 … VIC` on its face rather than relying on
+Victoria's register being absent. It is **necessary and not sufficient**:
+belonging to the right state is not evidence of belonging to the right property.
+Positive authority comes only from the hierarchy above.
 
 A candidate that contradicts the subject's state is refused **at any rank**,
 using Australia Post's allocation. That is what catches the measured case

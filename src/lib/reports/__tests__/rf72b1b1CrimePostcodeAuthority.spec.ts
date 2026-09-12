@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   CRIME_EVIDENCE_WITHHELD_NOTE,
+  isTrustedProvenance,
   postcodeMatchesState,
   resolveCrimePostcodeAuthority,
 } from '../../../../supabase/functions/_shared/reports/location/crimePostcodeAuthority.pure.ts';
@@ -60,24 +61,52 @@ describe('1 — a canonical resolved postcode permits crime evidence', () => {
   });
 });
 
-describe('2 — a structured subject postcode is trusted, per the input contract', () => {
-  it('a field the caller filled in is an assertion, not a guess', () => {
+describe('2 — a structured subject postcode is NOT trusted, because it is not structured', () => {
+  // The first cut trusted `propertyDetails.postcode`. Tracing every production
+  // origin refuted it: `auto-report-webhook` builds `detectedPostcode` from a
+  // cascade ending in `extractPostcodeFromText(listing.address)`, a
+  // `schools_directory` suburb lookup, and a hardcoded SUBURB_LOOKUP table
+  // where BRISBANE resolves to 4000 — the CBD, for a property anywhere in
+  // Brisbane. No frontend caller sets the field at all, `bulkReportWorker`
+  // sends a different key, and the Airtable route can be model-rewritten.
+  // There is no origin metadata to tell them apart at the point of use.
+  it('it is refused, and refused as its OWN reading', () => {
     const a = resolveCrimePostcodeAuthority({
       structuredPostcode: '2794', freeTextPostcode: '9999', state: 'NSW',
     });
-    expect(a.postcode).toBe('2794');
+    expect(a.postcode).toBeNull();
+    expect(a.trusted).toBe(false);
+    // Not collapsed into the free-text reading: the remedy differs.
     expect(a.provenance).toBe('structured_subject');
-    expect(a.trusted).toBe(true);
+    expect(a.note).toContain('suburb-name lookup');
   });
 
-  it('the generator reads the structured field, which it never did before', () => {
+  it('only the resolved POA is trusted, asserted from the one definition', () => {
+    expect(isTrustedProvenance('resolved_geography')).toBe(true);
+    for (const p of ['structured_subject', 'free_text_parse', 'none'] as const) {
+      expect(isTrustedProvenance(p)).toBe(false);
+    }
+  });
+
+  it('the traced origins are still in the code, so the trace can be re-checked', () => {
+    const webhook = readFileSync(
+      resolve(REPO, 'supabase/functions/auto-report-webhook/index.ts'), 'utf8',
+    );
+    expect(webhook).toContain('extractPostcodeFromText(listing.address)');
+    expect(webhook).toContain('lookupSuburbStatic(listing.suburb)');
+    expect(webhook).toMatch(/'BRISBANE':\s*\{\s*state:\s*'QLD',\s*postcode:\s*'4000'\s*\}/);
+    // ...and it reaches propertyDetails.postcode.
+    expect(webhook).toContain('postcode: detectedPostcode || null');
+  });
+
+  it('the generator still passes the field, so the refusal is explicit not accidental', () => {
     expect(generator).toContain('structuredPostcode: propertyDetails?.postcode');
   });
 
-  it('a malformed structured value is not promoted', () => {
+  it('a malformed value is refused too', () => {
     for (const bad of ['27941', '279', 'NSW', '', null, undefined, 2794, {}]) {
-      const a = resolveCrimePostcodeAuthority({ structuredPostcode: bad, state: 'NSW' });
-      expect(a.trusted).toBe(false);
+      expect(resolveCrimePostcodeAuthority({ structuredPostcode: bad, state: 'NSW' }).trusted)
+        .toBe(false);
     }
   });
 });

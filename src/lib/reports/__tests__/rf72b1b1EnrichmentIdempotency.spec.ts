@@ -3,7 +3,9 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   ENRICHMENT_STAMP,
+  MAX_PARTIAL_ACQUISITIONS,
   assessEnrichmentReuse,
+  nextAcquisitionAttempt,
   stampAcquisition,
   subjectKeyFor,
   type EnrichmentAcquisition,
@@ -108,6 +110,80 @@ describe('D — an incomplete acquisition may finish the missing work', () => {
     const d = assessEnrichmentReuse(stored, SUBJECT);
     expect(d.reuse).toBe(false);
     expect(d.verdict).toBe('incomplete_acquisition');
+  });
+
+  it('the retry is BOUNDED — a persistent Places failure cannot re-buy forever', () => {
+    // Without a bound, the incompleteness rule is its own amplification: a
+    // category Google keeps failing would refuse reuse on every resume and
+    // re-buy all eight calls each time, reaching the 88-call behaviour through
+    // the guard meant to prevent it.
+    const partialAt = (attempt: number) => stampAcquisition(
+      { coordinates: { lat: -33.8, lng: 148.6 } },
+      { ...ACQUISITION, attempt, stages: { ...ACQUISITION.stages, places: 'partial' } },
+    );
+    expect(assessEnrichmentReuse(partialAt(1), SUBJECT).reuse).toBe(false);
+    expect(assessEnrichmentReuse(partialAt(2), SUBJECT).reuse).toBe(false);
+    const exhausted = assessEnrichmentReuse(partialAt(MAX_PARTIAL_ACQUISITIONS), SUBJECT);
+    expect(exhausted.reuse).toBe(true);
+    expect(exhausted.verdict).toBe('partial_retry_exhausted');
+  });
+
+  it('an exhausted partial is still recorded as partial, never as complete', () => {
+    const stored = stampAcquisition(
+      { coordinates: { lat: -33.8, lng: 148.6 } },
+      { ...ACQUISITION, attempt: 9, stages: { ...ACQUISITION.stages, places: 'partial' } },
+    );
+    const d = assessEnrichmentReuse(stored, SUBJECT);
+    expect(d.reuse).toBe(true);
+    expect(d.verdict).not.toBe('reusable');
+    expect(d.note).toContain('Still recorded as partial');
+    // The stamp is untouched — nothing downstream can read it as complete.
+    expect((stored as Record<string, never>)[ENRICHMENT_STAMP].stages.places).toBe('partial');
+  });
+
+  it('eleven resumes of a persistently partial address cost 3 acquisitions, not 11', () => {
+    let stored: unknown = null;
+    let acquisitions = 0;
+    for (let resume = 0; resume < 11; resume++) {
+      if (!assessEnrichmentReuse(stored, SUBJECT).reuse) {
+        acquisitions++;
+        stored = stampAcquisition(
+          { coordinates: { lat: -33.8, lng: 148.6 } },
+          {
+            ...ACQUISITION,
+            attempt: nextAcquisitionAttempt(stored, SUBJECT),
+            stages: { ...ACQUISITION.stages, places: 'partial' },
+          },
+        );
+      }
+    }
+    // 3 × 8 = 24 Google calls, not 11 × 8 = 88.
+    expect(acquisitions).toBe(MAX_PARTIAL_ACQUISITIONS);
+  });
+
+  it('once the missing work lands, every later resume reuses it', () => {
+    let stored: unknown = stampAcquisition(
+      { coordinates: { lat: -33.8, lng: 148.6 } },
+      { ...ACQUISITION, attempt: 1, stages: { ...ACQUISITION.stages, places: 'partial' } },
+    );
+    expect(assessEnrichmentReuse(stored, SUBJECT).reuse).toBe(false);
+    // The retry succeeds completely.
+    stored = goodEnrichment();
+    for (let resume = 0; resume < 8; resume++) {
+      expect(assessEnrichmentReuse(stored, SUBJECT).reuse).toBe(true);
+    }
+  });
+
+  it('the attempt counter is per PROPERTY, not per row', () => {
+    const exhausted = stampAcquisition(
+      { coordinates: { lat: -33.8, lng: 148.6 } },
+      { ...ACQUISITION, attempt: 3, stages: { ...ACQUISITION.stages, places: 'partial' } },
+    );
+    // Moving the report to a new address must not inherit the old address's
+    // exhaustion, or the new property would never be acquired at all.
+    expect(nextAcquisitionAttempt(exhausted, SUBJECT)).toBe(4);
+    expect(nextAcquisitionAttempt(exhausted, { ...SUBJECT, address: '28 Bligh Street' })).toBe(1);
+    expect(nextAcquisitionAttempt(null, SUBJECT)).toBe(1);
   });
 
   it('a commute with no route is still a complete acquisition', () => {
@@ -238,10 +314,25 @@ describe('the guard is wired where the cost is', () => {
     expect(guardAt).toBeLessThan(fetchAt);
   });
 
-  it('the old write-only guard is still there — this adds, it does not replace', () => {
+  it('a REUSED enrichment is not rewritten, and a RE-ACQUIRED one is', () => {
+    // The original guard was "only write what is missing", which is right for a
+    // reused object (it is the same object already banked) and wrong for a
+    // retried one: a partial acquisition bought again would never persist its
+    // incremented attempt count, so the bounded retry would never reach its
+    // bound and the amplification would come back through the fix for it.
     expect(generator).toContain(
-      '!existingEnhancedFields.locationIntelligence && enhancedData?.locationIntelligence',
+      '(!existingEnhancedFields.locationIntelligence || !locationEnrichmentReused)',
     );
+    // Handler-scoped, because the decision and the write are thousands of lines
+    // apart — the block-scoped first attempt was a ReferenceError the edge gate
+    // caught before it could ship.
+    expect(generator).toContain('let locationEnrichmentReused = false;');
+    expect(generator).toContain('locationEnrichmentReused = true;');
+  });
+
+  it('the attempt counter is carried by the generator on every acquisition', () => {
+    expect(generator).toContain('recordAcquisitionAttempt(');
+    expect(generator).toContain('nextAcquisitionAttempt(');
   });
 
   it('the service stamps every successful acquisition', () => {

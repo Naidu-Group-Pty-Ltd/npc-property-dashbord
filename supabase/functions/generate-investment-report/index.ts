@@ -15,7 +15,11 @@ import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.t
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
 import { activateSafeGenerationInputs, subjectPostcodeOf } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
 import { resolveOneReportGeography } from '../_shared/geography/resolveOneReportGeography.ts';
-import { assessEnrichmentReuse } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
+import {
+  assessEnrichmentReuse,
+  nextAcquisitionAttempt,
+  recordAcquisitionAttempt,
+} from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
 import {
   resolveCrimePostcodeAuthority,
   CRIME_EVIDENCE_WITHHELD_NOTE,
@@ -2077,6 +2081,15 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     // Initialize Supabase client for database updates
     let supabaseClient = null;
     let existingManualOverrides = null;
+    /**
+     * RF-7.2B.1B1 — did this run REUSE the banked location enrichment, or buy
+     * a fresh one? Declared at handler scope because the enrichment decision and
+     * the early write are thousands of lines apart, and the write needs to know:
+     * a reused object must not be rewritten, a re-acquired one must be, or its
+     * incremented attempt count never persists and the bounded retry never
+     * reaches its bound.
+     */
+    let locationEnrichmentReused = false;
     // Track which enhanced fields are already persisted on the report (so we don't overwrite them)
     let existingEnhancedFields: {
       investmentScore?: any;
@@ -2499,11 +2512,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     // `propertyDetails.postcode` is a field the caller filled in; the generator
     // has always received it and logged it, and has never read it for this.
     //
-    // The geography is not resolved yet at intake, so only the structured field
-    // can be trusted here. The re-key after the coordinate lands promotes this
-    // to the canonical POA. Deliberately narrow: this decides which AREA is
-    // described, and never touches F4, which decides whether a rate may be
-    // divided at all.
+    // The geography is not resolved yet at intake, and tracing every production
+    // origin of `propertyDetails.postcode` proved it is NOT independently
+    // structured — `auto-report-webhook` falls through to an address parse, a
+    // suburb-name database lookup and a hardcoded suburb table. So nothing is
+    // trusted at intake today and this call does not go out; the condition is
+    // computed rather than hardcoded so a genuinely authoritative origin would
+    // re-enable it without another change here.
+    //
+    // Deliberately narrow: this decides which AREA is described, and never
+    // touches F4, which decides whether a rate may be divided at all.
     const crimePostcodeAtIntake = resolveCrimePostcodeAuthority({
       structuredPostcode: propertyDetails?.postcode,
       freeTextPostcode: detectedPostcode,
@@ -2941,6 +2959,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         enrichmentSubject,
       );
       if (reuse.reuse) {
+        locationEnrichmentReused = true;
         enhancedData = {
           ...enhancedData,
           locationIntelligence: existingEnhancedFields.locationIntelligence,
@@ -2968,7 +2987,20 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           const locationData = await locationResponse.json();
           
           if (locationData.success && locationData.data) {
-            enhancedData = { ...enhancedData, locationIntelligence: locationData.data };
+            // RF-7.2B.1B1 — carry the attempt count forward. A partial
+            // acquisition is retried a bounded number of times and then
+            // accepted, so a persistently failing amenity category cannot
+            // re-buy all eight calls on every remaining resume.
+            enhancedData = {
+              ...enhancedData,
+              locationIntelligence: recordAcquisitionAttempt(
+                locationData.data,
+                nextAcquisitionAttempt(
+                  existingEnhancedFields.locationIntelligence,
+                  enrichmentSubject,
+                ),
+              ),
+            };
             console.log('✓ Location intelligence data fetched successfully');
             
             if (locationData.usingMockData) {
@@ -5935,7 +5967,14 @@ YOUR DEDICATED PROPERTY PARTNER
         if (!existingEnhancedFields.economics && enhancedData?.economics) {
           earlyUpdate.economic_data = enhancedData.economics;
         }
-        if (!existingEnhancedFields.locationIntelligence && enhancedData?.locationIntelligence) {
+        // RF-7.2B.1B1 — also write it when this run RE-ACQUIRED it. The guard
+        // below is "don't overwrite what is already banked", which is right for
+        // a reused enrichment (it is the same object) and wrong for a retried
+        // one: a partial acquisition that was bought again would never persist
+        // its incremented attempt count, so the bounded retry would never reach
+        // its bound and the amplification would return.
+        if (enhancedData?.locationIntelligence
+          && (!existingEnhancedFields.locationIntelligence || !locationEnrichmentReused)) {
           earlyUpdate.location_intelligence = enhancedData.locationIntelligence;
         }
         // The snapshot goes down with the first enhanced write, so a run that is
