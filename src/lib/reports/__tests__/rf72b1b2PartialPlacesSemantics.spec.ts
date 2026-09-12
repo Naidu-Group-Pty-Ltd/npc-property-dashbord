@@ -259,3 +259,168 @@ describe('RF-7.2B.1B2 §4 — partial Places failure must not become factual abs
     expect(locationService).not.toContain('].every((r) => r.ok)');
   });
 });
+
+/**
+ * §4 — the distinction must survive PERSISTENCE and RESUME, not merely hold in
+ * memory. This pipeline is resume-driven: `location_intelligence` is a jsonb
+ * column, the enrichment is written once and read back by every later
+ * invocation, and the report's own context is composed from the RELOADED
+ * object rather than from the one the producer built.
+ *
+ * `persist()` is the real boundary: `JSON.stringify` then `JSON.parse`, which
+ * is exactly what a jsonb write and read do to this object. It is what makes
+ * `null` load-bearing rather than cosmetic — `undefined` would be DROPPED by
+ * the serialiser, and a dropped key is a key a later reader cannot tell from
+ * one that was never part of the schema.
+ */
+const persist = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+
+/** What the generator stores, and what a resume reads back. */
+const storedFor = (l: PlacesLookups, attempt = 1) => stampAcquisition(
+  {
+    coordinates: { lat: -33.8329, lng: 148.6934 },
+    walkScore: measuredWalkScore(41, l),
+    ...project(l),
+  } as Record<string, unknown>,
+  {
+    subjectKey: subjectKeyFor(SUBJECT),
+    acquiredAt: '2026-09-12T11:00:00.000Z',
+    stages: {
+      geocode: 'fetched',
+      places: placesAreComplete(l) ? 'complete' : 'partial',
+      placesUnavailable: unavailableCategories(l),
+      commute: 'measured',
+    },
+    matchedAddress: '48 Redfern St, Cowra NSW 2794, Australia',
+    attempt,
+  },
+);
+
+const SUBJECT = { address: '48 Redfern Street, Cowra', postcode: '2794', state: 'NSW' };
+
+/**
+ * The scorer's input builder, as `investment-scoring-service` writes it.
+ * Copied so the test measures that consumer rather than only the producer.
+ */
+const scorerInput = (loc: any) => ({
+  walkScore: loc.walkScore ?? undefined,
+  schoolsNearby: loc.schools?.schoolsWithin3km ?? undefined,
+});
+const hasNum = (v: unknown) => typeof v === 'number' && !Number.isNaN(v);
+
+describe('RF-7.2B.1B2 §4 — the distinction survives persistence and resume', () => {
+  // -- A -------------------------------------------------------------------
+  it('A — a successful zero reloads as a measured zero', () => {
+    const lookups: PlacesLookups = { ...allAnswered(), schools: answered(0) };
+    const reloaded = persist(storedFor(lookups)) as any;
+
+    expect(reloaded.schools.schoolsWithin3km).toBe(0);
+    expect(reloaded.schools.schoolsWithin3km).not.toBeNull();
+    expect(reloaded.__acquisition.stages.places).toBe('complete');
+    expect(reloaded.__acquisition.stages.placesUnavailable).toEqual([]);
+    // Every category answered, so the composite is still measurable.
+    expect(reloaded.walkScore).toBe(41);
+
+    // A complete acquisition is reused on resume rather than re-bought.
+    const decision = assessEnrichmentReuse(reloaded, SUBJECT);
+    expect(decision.reuse).toBe(true);
+    expect(decision.verdict).toBe('reusable');
+
+    // and the reloaded zero is still a fact the report may state.
+    expect(scorerInput(reloaded).schoolsNearby).toBe(0);
+    expect(hasNum(scorerInput(reloaded).schoolsNearby)).toBe(true);
+  });
+
+  // -- B -------------------------------------------------------------------
+  it('B — a failed lookup reloads as unavailable, never as 0, N/A or []', () => {
+    const lookups: PlacesLookups = { ...allAnswered(), schools: failed() };
+    const reloaded = persist(storedFor(lookups)) as any;
+
+    expect(reloaded.schools.schoolsWithin3km).toBeNull();
+    expect(reloaded.schools.nearestSchool).toBeNull();
+    expect(reloaded.schools.distanceToSchool).toBeNull();
+
+    // Explicitly none of the shapes that could be mistaken for measured absence.
+    for (const mistakable of [0, 'N/A', '', 'n/a']) {
+      expect(reloaded.schools.schoolsWithin3km).not.toBe(mistakable);
+      expect(reloaded.schools.nearestSchool).not.toBe(mistakable);
+    }
+    // The key SURVIVES the round-trip as an explicit null rather than being
+    // dropped — `undefined` would vanish here and read as "never collected".
+    expect(Object.prototype.hasOwnProperty.call(reloaded.schools, 'schoolsWithin3km')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(reloaded.schools, 'nearestSchool')).toBe(true);
+
+    // The stamp reloads naming the category.
+    expect(reloaded.__acquisition.stages.places).toBe('partial');
+    expect(reloaded.__acquisition.stages.placesUnavailable).toEqual(['schools']);
+
+    // And the scorer sees absence, not a zero it would count as evidence.
+    expect(scorerInput(reloaded).schoolsNearby).toBeUndefined();
+    expect(hasNum(scorerInput(reloaded).schoolsNearby)).toBe(false);
+  });
+
+  // -- C -------------------------------------------------------------------
+  it('C — a partial acquisition reloads with the good categories intact', () => {
+    const lookups: PlacesLookups = { ...allAnswered(), healthcare: failed() };
+    const reloaded = persist(storedFor(lookups, 3)) as any;
+
+    // successful categories survive
+    expect(reloaded.schools.schoolsWithin3km).toBe(4);
+    expect(reloaded.schools.nearestSchool).toBe('Cowra Public School');
+    expect(reloaded.lifestyle.shoppingCenters).toBe(1);
+    expect(reloaded.lifestyle.parks).toBe(5);
+    expect(reloaded.lifestyle.restaurants).toBe(9);
+    expect(reloaded.transport.stationsWithin2km).toBe(3);
+
+    // the failed one stays unavailable
+    expect(reloaded.healthcare.facilitiesWithin5km).toBeNull();
+    expect(reloaded.healthcare.nearestHospital).toBeNull();
+
+    // the stamp identifies it, and reuse is the bounded-retry answer
+    expect(reloaded.__acquisition.stages.placesUnavailable).toEqual(['healthcare']);
+    const decision = assessEnrichmentReuse(reloaded, SUBJECT);
+    expect(decision.reuse).toBe(true);
+    expect(decision.verdict).toBe('partial_retry_exhausted');
+    // reuse is not promotion: the record still says partial after reloading
+    expect(reloaded.__acquisition.stages.places).toBe('partial');
+
+    // the composite stays unavailable rather than depressed
+    expect(reloaded.walkScore).toBeNull();
+    expect(scorerInput(reloaded).walkScore).toBeUndefined();
+    expect(hasNum(scorerInput(reloaded).walkScore)).toBe(false);
+  });
+
+  // -- D -------------------------------------------------------------------
+  it('D — after resume the model context still omits the failed category', () => {
+    const outage = persist(storedFor({
+      ...allAnswered(), healthcare: failed(), shopping: failed(),
+    })) as any;
+
+    const lines = contextLines(outage);
+    expect(lines.some((l) => l.startsWith('- Healthcare facilities'))).toBe(false);
+    expect(lines.some((l) => l.startsWith('- Shopping centres'))).toBe(false);
+    expect(lines.join('\n')).not.toMatch(/:\s*0\b/);
+    expect(lines).toContain('- Nearest school: Cowra Public School');
+
+    // and a genuine zero still reaches it after the same round-trip
+    const measured = persist(storedFor({ ...allAnswered(), healthcare: answered(0) })) as any;
+    expect(contextLines(measured)).toContain('- Healthcare facilities within 5km: 0');
+  });
+
+  it('the resume path hands the stored object straight through, uncoerced', () => {
+    const generator = readFileSync(
+      resolve(REPO, 'supabase/functions/generate-investment-report/index.ts'), 'utf8',
+    );
+    // RF-7.2B.1B1's reuse branch assigns the persisted object itself — there is
+    // no re-projection on resume that could reintroduce a zero.
+    expect(generator).toContain('locationIntelligence: existingEnhancedFields.locationIntelligence');
+    // and the scorer no longer floors an absent figure at zero
+    const scorer = readFileSync(
+      resolve(REPO, 'supabase/functions/investment-scoring-service/index.ts'), 'utf8',
+    );
+    expect(scorer).not.toContain('schoolsNearby: schools.schoolsWithin3km || 0');
+    expect(scorer).not.toContain('const walkScore = locationIntelligence.walkScore || 0;');
+    expect(scorer).toContain('schoolsNearby: schools.schoolsWithin3km ?? undefined');
+    expect(scorer).toContain('const walkScore = locationIntelligence.walkScore ?? undefined;');
+  });
+});
