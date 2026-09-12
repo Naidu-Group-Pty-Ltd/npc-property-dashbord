@@ -185,13 +185,25 @@ describe('F4 — 7: the crime module cannot bypass governed evidence authority',
       .toBe('not_a_population');
   });
 
-  it('the generator supplies the denominator only from RESOLVED geography', () => {
-    // `subjectPostcodeOf(subjectGeography)` is the trusted POA; an unresolved
-    // geography yields none, so the admission block never runs.
+  it('the generator requires BOTH trusted geography AND canonical admission', () => {
+    // (1) trusted geography — the boundary service's own POA.
     expect(generator).toContain('const crimePoa = subjectPostcodeOf(subjectGeography);');
-    expect(generator).toMatch(/if \(crimePoa && supabaseClient/);
+    // (2) canonical admission — the population comes from the ADMITTED
+    //     demographics payload, not from a table this function reads itself.
+    expect(generator).toContain('const admittedPop = (enhancedData.demographics as {');
+    expect(generator).toContain('const admittedPopValue = typeof admittedPop?.total === \'number\'');
+    // Both, in one condition. Either alone must not authorise a denominator.
+    expect(generator).toMatch(/if \(crimePoa && admittedPopValue &&/);
     expect(generator).toContain("grain: 'postcode'");
-    expect(generator).toContain("source: 'abs_census_poa'");
+  });
+
+  it('the generator performs no population lookup of its own', () => {
+    // The whole repair: holding a correct postcode must not let anything go
+    // and FIND a population. A direct read here would simply move the side
+    // channel one function upstream.
+    const code = codeOnly(generator);
+    expect(code).not.toMatch(/from\('abs_census_poa'\)[\s\S]{0,200}crimePoa/);
+    expect(code).not.toMatch(/crimePoa[\s\S]{0,300}from\('abs_census_poa'\)/);
   });
 
   it('every refusal has an operator-facing note and none names a client', () => {
@@ -224,5 +236,85 @@ describe('F4 — 8: the Cowra replay', () => {
     expect(reading(admitted.value)?.ratePer100k?.area).toBe(10_891);
     expect(admitted.admitted?.source).toBe('abs_census_poa');
     expect(admitted.admitted?.vintage).toBe('2021 Census usual residents');
+  });
+});
+
+
+// ── §3 — the five provenance cases, stated as the release instruction states them
+//
+// "Resolved geography alone must never authorise a population denominator.
+//  The crime denominator must require BOTH (1) trusted/resolved geography at
+//  the required grain AND (2) population evidence admitted through the
+//  canonical evidence-authority pathway."
+//
+// The generator's gate is `crimePoa && admittedPopValue`, so each case below
+// is modelled as the pair that gate receives, and then carried through the
+// service's own admission check to the reading that is actually served.
+describe('F4 §3 — provenance cases A to E', () => {
+  /** Exactly the generator's two conditions, then the service's admission. */
+  const served = (
+    trustedPoa: string | null,
+    admitted: AdmittedPopulation | null,
+    areaKey = '2794',
+  ) => {
+    // (1) no trusted geography → the generator never offers a population.
+    // (2) no admitted demographics → likewise.
+    const offered = trustedPoa && admitted ? admitted : null;
+    const verdict = admitPopulationForArea(offered, 'postcode', areaKey);
+    return { verdict, reading: reading(verdict.value) };
+  };
+
+  it('A. resolved geography + admitted same-grain population → rate permitted', () => {
+    const { verdict, reading: r } = served('2794', COWRA);
+    expect(verdict.refusedBecause).toBeNull();
+    expect(r?.ratePer100k?.area).toBe(10_891);
+    expect(r?.ratePer100k?.denominator).toContain('2021 Census usual residents');
+  });
+
+  it('B. resolved geography + population withheld → rate NOT calculated', () => {
+    // The demographics payload is absent, so `admittedPopValue` is null even
+    // though the POA is trusted. Condition (1) alone is not enough.
+    const { verdict, reading: r } = served('2794', null);
+    expect(verdict.refusedBecause).toBe('not_admitted');
+    expect(r?.ratePer100k).toBeNull();
+    expect(r?.totalLast12Months).toBe(1144); // counts survive
+  });
+
+  it('C. correct postcode + candidate fails canonical admission → rate NOT calculated', () => {
+    // A population that exists but carries no provenance never became admitted
+    // evidence, so it cannot become a denominator however right the postcode is.
+    const unprovenanced = { ...COWRA, source: '', vintage: '' };
+    const { verdict, reading: r } = served('2794', unprovenanced);
+    expect(verdict.value).toBeNull();
+    expect(r?.ratePer100k).toBeNull();
+  });
+
+  it('D. unresolved geography + free-text postcode → rate NOT calculated', () => {
+    // This is the production defect. `subjectPostcodeOf(null)` yields nothing,
+    // so the generator offers no population at all — and even if a candidate
+    // were somehow constructed, the service has no lookup to fall back on.
+    const { verdict, reading: r } = served(null, COWRA);
+    expect(verdict.refusedBecause).toBe('not_admitted');
+    expect(r?.ratePer100k).toBeNull();
+    expect(r?.totalLast12Months).toBe(1144);
+    expect(r?.area).toBe('2794');
+    expect(r?.areaKind).toBe('postcode');
+  });
+
+  it('E. admitted population at a mismatched grain → not presented as postcode evidence', () => {
+    const lga: AdmittedPopulation = {
+      ...COWRA, grain: 'lga', geography: 'Cowra Shire',
+    };
+    const { verdict, reading: r } = served('2794', lga);
+    expect(verdict.refusedBecause).toBe('grain_mismatch');
+    expect(r?.ratePer100k).toBeNull();
+    // What IS presented still names its own grain honestly.
+    expect(r?.areaKind).toBe('postcode');
+  });
+
+  it('the two conditions are independent — neither alone authorises', () => {
+    expect(served('2794', null).verdict.value).toBeNull();   // geography only
+    expect(served(null, COWRA).verdict.value).toBeNull();    // admission only
+    expect(served('2794', COWRA).verdict.value).toBe(10_504); // both
   });
 });

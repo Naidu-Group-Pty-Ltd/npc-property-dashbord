@@ -3038,7 +3038,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       }
 
       // ==================================================================
-      // RF-7.2B.1B0-F4 — the crime rate's denominator is ADMITTED, not found
+      // RF-7.2B.1B0-F4 — the crime rate's denominator is ADMITTED EVIDENCE
       // ==================================================================
       // `crime-statistics-service` used to read `abs_census_poa.population`
       // itself, keyed on whatever postcode it was handed. With geography
@@ -3048,57 +3048,74 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       // (1,144 / 10,504) on a page that also said population for 2794 was
       // "explicitly unavailable and must not be substituted".
       //
-      // The service no longer looks anything up. The denominator now enters as
-      // admitted evidence from HERE, where the trust decision already lives,
-      // and only once geography has RESOLVED — so an unresolved case yields
-      // offence counts, trend and change with no per-capita rate, which is the
-      // honest reading rather than a contradiction.
+      // TWO conditions, both necessary and neither sufficient:
       //
-      // The grain is stated explicitly and checked at the far end: a postcode
-      // population may only ever divide postcode offence counts.
+      //   (1) TRUSTED GEOGRAPHY — `subjectPostcodeOf(subjectGeography)` is the
+      //       boundary service's own POA. An unresolved coordinate yields
+      //       none, so a free-text postcode can never reach this at all.
+      //
+      //   (2) CANONICAL ADMISSION — the population is taken from
+      //       `enhancedData.demographics`, which is the payload
+      //       `abs-data-service` produced and the evidence layer admitted
+      //       (re-keyed onto the trusted POA above where the two differed).
+      //       Where that payload is absent the demographics were withheld,
+      //       and the denominator is withheld with them.
+      //
+      // Holding a correct postcode is deliberately NOT enough. Nothing here
+      // reads a population table: doing so is what made the crime module a
+      // second door onto evidence the report had already refused, and the
+      // whole repair is that the only population that can reach a rate is one
+      // the report itself is willing to state.
       const crimePoa = subjectPostcodeOf(subjectGeography);
-      if (crimePoa && supabaseClient && (state === 'NSW' || state === 'SA')) {
+      const admittedPop = (enhancedData.demographics as {
+        population?: { total?: unknown; source?: unknown; referencePeriod?: unknown };
+      } | undefined)?.population;
+      const admittedPopValue = typeof admittedPop?.total === 'number'
+        && Number.isFinite(admittedPop.total) && admittedPop.total > 0
+        ? admittedPop.total
+        : null;
+      if (crimePoa && admittedPopValue && (state === 'NSW' || state === 'SA')) {
         try {
-          const { data: poaPop, error: poaErr } = await supabaseClient
-            .from('abs_census_poa').select('population').eq('poa', crimePoa).maybeSingle();
-          // A read that FAILED is not a population that is ABSENT, and neither
-          // one licenses a rate — but they are different operator problems.
-          if (poaErr) {
-            console.warn(`⚠️ abs_census_poa unreadable for POA ${crimePoa} (${poaErr.message}) — crime rate withheld.`);
-          }
-          const value = typeof poaPop?.population === 'number' ? poaPop.population : null;
-          if (value && value > 0) {
-            const crimeAgain = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
-              method: 'POST',
-              headers,
-              body: JSON.stringify({
-                suburb: typeof subjectGeography?.suburb === 'string' ? subjectGeography.suburb : suburb,
-                state,
-                postcode: crimePoa,
-                population: {
-                  value,
-                  source: 'abs_census_poa',
-                  geography: crimePoa,
-                  grain: 'postcode',
-                  vintage: '2021 Census usual residents',
-                },
-              }),
-            }, 20000, 'crime-statistics-service');
-            if (crimeAgain.ok) {
-              const body = await crimeAgain.json();
-              if (body?.success && body.data) {
-                enhancedData = { ...enhancedData, crimeStatistics: body.data };
-                console.log(`✓ Crime rate admitted for POA ${crimePoa} (population ${value}, 2021 Census).`);
-              }
+          const crimeAgain = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              suburb: typeof subjectGeography?.suburb === 'string' ? subjectGeography.suburb : suburb,
+              state,
+              postcode: crimePoa,
+              population: {
+                value: admittedPopValue,
+                // Provenance travels from the admitted payload rather than
+                // being asserted here, so the served rate describes the
+                // denominator the report is actually relying on.
+                source: typeof admittedPop?.source === 'string' && admittedPop.source
+                  ? admittedPop.source
+                  : 'abs_census_poa',
+                geography: crimePoa,
+                grain: 'postcode',
+                vintage: typeof admittedPop?.referencePeriod === 'string' && admittedPop.referencePeriod
+                  ? admittedPop.referencePeriod
+                  : '2021 Census usual residents',
+              },
+            }),
+          }, 20000, 'crime-statistics-service');
+          if (crimeAgain.ok) {
+            const body = await crimeAgain.json();
+            if (body?.success && body.data) {
+              enhancedData = { ...enhancedData, crimeStatistics: body.data };
+              console.log(`✓ Crime rate admitted for POA ${crimePoa} (population ${admittedPopValue}, from admitted demographics).`);
             }
-          } else {
-            console.log(`↺ No admitted population for POA ${crimePoa} — crime counts stand, no per-capita rate.`);
           }
         } catch (error: any) {
           // Never fails the report: the first crime call already supplied the
           // counts, and this only ever ADDS a rate.
           console.warn('⚠️ Crime rate admission skipped:', error?.message?.substring(0, 80));
         }
+      } else if (crimePoa && (state === 'NSW' || state === 'SA')) {
+        console.log(
+          `↺ POA ${crimePoa} is trusted but no population was admitted — `
+          + 'crime counts stand, no per-capita rate.',
+        );
       }
 
       // Planning & development intelligence — zoning, parcel, state

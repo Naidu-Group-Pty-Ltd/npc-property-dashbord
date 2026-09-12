@@ -19,8 +19,28 @@ import { toReportableEvent } from '../../../../supabase/functions/_shared/apiUsa
  *   toReportableEvent → status 'success', quantity 1, googlemaps is per-REQUEST
  *   report-api-usage → forwarded to Mission Control as billable
  *
- * So the tenant was charged for calls that returned nothing, and every health
- * surface read the vendor as perfectly well throughout a total outage.
+ * ...so a refused call is INDISTINGUISHABLE from a served one all the way to
+ * the invoice, and every health surface read the vendor as perfectly well
+ * throughout a total outage.
+ *
+ * ## What was NOT true, measured before claiming it
+ *
+ * The exposure is LATENT, not realised. Checked on 2026-09-12:
+ *
+ *   api_usage_log, googlemaps, all time  2,331 rows,  0 forwarded, 0 attempted
+ *   api_usage_log, ALL services          109,800 rows, 0 forwarded, 0 attempted
+ *   cron.job matching report-api-usage   (no rows)
+ *
+ * `report-api-usage` has never been scheduled on this deployment, so not one
+ * usage row has ever reached Mission Control and **no customer credit, balance
+ * or invoice was affected by the refused geocodes**. No reconciliation is owed.
+ *
+ * That does not make the defect cosmetic — it makes it a bill waiting to be
+ * wrong. The moment forwarding is switched on, every historical row goes with
+ * the status it was written with, and 2,331 googlemaps rows are already
+ * standing there marked `success`. Fixing the write is what stops the queue
+ * filling with the wrong answer; the unscheduled forwarder is a separate,
+ * pre-existing gap and is recorded as backlog rather than chased here.
  *
  * The fix is opt-in and default-preserving: `judgeBody` lets a call site whose
  * vendor answers 200-with-error say so. Nothing that does not pass it changes.
@@ -43,7 +63,7 @@ const row = (status: string) => ({
   metadata: {},
 });
 
-describe('F3 — the billing consequence is real, not cosmetic', () => {
+describe('F3 — the billing path does not distinguish a refusal from a sale', () => {
   it('a row marked success is forwarded as a billable unit', () => {
     const event = toReportableEvent(row('success') as never);
     expect(event).not.toBeNull();
