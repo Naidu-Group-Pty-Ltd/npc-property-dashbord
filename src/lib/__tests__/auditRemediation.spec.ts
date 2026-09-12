@@ -158,14 +158,44 @@ describe('the recommendation that would have caused an outage', () => {
     expect(revokes).not.toContain(fn);
   });
 
-  it('revokes only the two trigger bodies, which no policy calls', () => {
-    const revokes = [...MIGRATION.matchAll(/REVOKE\s+EXECUTE\s+ON\s+FUNCTION\s+public\.([A-Za-z0-9_]+)/gi)]
-      .map((m) => m[1])
-      .sort();
+  /*
+   * An EXPLICIT list, not a count, so adding a revoke is a deliberate edit with
+   * a reason rather than a number that quietly goes up. Three functions are
+   * revoked and none of them is called from a policy predicate:
+   *
+   *   enforce_step_up_session_owner            trigger body, no arguments
+   *   validate_property_comparison_report_types trigger body, no arguments
+   *   gc_pdf_import_jobs                        the nightly GC in section 4
+   *
+   * The GC is the one that needs saying. `CREATE OR REPLACE` preserves an
+   * existing function's ACL, and on this project that ACL is already correct
+   * (`postgres=X, service_role=X`). But replayed onto an empty database — a
+   * restore, a preview branch, a fresh clone — the same statement is a plain
+   * CREATE, which grants EXECUTE to PUBLIC, and `anon` inherits it. Its 03:17
+   * cron job runs as `postgres`, which owns it, so the revoke cannot touch the
+   * scheduled run.
+   */
+  it('revokes exactly the three functions no policy calls', () => {
+    const revokes = [...new Set(
+      [...MIGRATION.matchAll(/REVOKE\s+EXECUTE\s+ON\s+FUNCTION\s+public\.([A-Za-z0-9_]+)/gi)]
+        .map((m) => m[1]))].sort();
     expect(revokes).toEqual([
       'enforce_step_up_session_owner',
+      'gc_pdf_import_jobs',
       'validate_property_comparison_report_types',
     ]);
+  });
+
+  /*
+   * The GC's revoke is only sound because nothing in an RLS predicate calls it.
+   * Asserted rather than assumed: `check-migration-security.mjs` is what asked
+   * for the revoke, and this is the other half of that judgement.
+   */
+  it('and the GC it revokes is server-side only, granted back to service_role', () => {
+    expect(MIGRATION).toContain(
+      'REVOKE EXECUTE ON FUNCTION public.gc_pdf_import_jobs() FROM PUBLIC;');
+    expect(MIGRATION).toContain(
+      'GRANT EXECUTE ON FUNCTION public.gc_pdf_import_jobs() TO service_role;');
   });
 
   it('records why, so the next reader does not "finish the job"', () => {

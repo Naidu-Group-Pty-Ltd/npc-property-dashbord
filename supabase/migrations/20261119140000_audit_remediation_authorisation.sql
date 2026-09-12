@@ -155,6 +155,27 @@ BEGIN
 END;
 $$;
 
+-- CREATE OR REPLACE PRESERVES AN EXISTING FUNCTION'S ACL, AND THAT IS EXACTLY
+-- WHY THIS IS STATED RATHER THAN ASSUMED. On this project the function already
+-- carries `postgres=X/postgres, service_role=X/postgres` and neither `anon` nor
+-- `authenticated` can execute it — verified on the live catalogue. But a
+-- migration has to be correct when it is REPLAYED onto an empty database: a
+-- restore, a preview branch, a newly provisioned clone. There
+-- `CREATE OR REPLACE` on a function that does not exist yet is a plain CREATE,
+-- and CREATE grants EXECUTE to PUBLIC by default, which `anon` inherits — so a
+-- SECURITY DEFINER nightly GC would ship callable over
+-- /rest/v1/rpc/gc_pdf_import_jobs by any holder of the publishable key.
+--
+-- Revoking from `anon` alone is a no-op while the PUBLIC grant stands, which is
+-- the trap this restates. The three statements below reproduce the live ACL
+-- exactly, so this is an assertion on the prime and a fix everywhere else.
+--
+-- The 03:17 cron job runs `SELECT public.gc_pdf_import_jobs();` as `postgres`,
+-- which owns the function, so nothing here touches the scheduled run.
+REVOKE EXECUTE ON FUNCTION public.gc_pdf_import_jobs() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.gc_pdf_import_jobs() FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.gc_pdf_import_jobs() TO service_role;
+
 COMMENT ON FUNCTION public.gc_pdf_import_jobs() IS
   'Times out PDF import jobs stalled past 15 minutes. Storage retention for '
   'pdf-import-diagnostics is deliberately NOT done here — direct deletion from '
