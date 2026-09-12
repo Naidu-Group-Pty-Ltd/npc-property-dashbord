@@ -5,6 +5,10 @@ import { execSync } from "node:child_process";
 import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/supabase/vite";
 import { inlineXlsxPlugin } from "./vite-inline-xlsx";
 import { stagingTargetPlugin } from "./vite-staging-target";
+import {
+  parseDeploymentAllowances,
+  resolveClientFacingFlag,
+} from "./src/lib/clientFacing";
 
 // Identifies the deployed build. `version.json` carries the same value, so a
 // tab can tell whether it is running the current bundle or a cached older one
@@ -26,6 +30,15 @@ function resolveBuildId(): string {
 }
 
 const BUILD_ID = resolveBuildId();
+
+// Read once, here, so the two halves of the mode cannot be computed from
+// different expressions: the constant below is what the running code reads,
+// and the allowances are what `__EXCLUDE_*__` gates are derived from wherever
+// a repository carries them.
+const CLIENT_FACING = resolveClientFacingFlag(process.env.VITE_CLIENT_FACING);
+const CLIENT_FACING_ALLOWANCES = parseDeploymentAllowances(
+  process.env.VITE_CLIENT_FACING_ALLOW,
+);
 
 /** Writes the build id next to the bundle so the running app can compare. */
 function buildVersionManifest(): Plugin {
@@ -50,6 +63,14 @@ export default defineConfig(({ mode }) => ({
   },
   define: {
     __BUILD_ID__: JSON.stringify(BUILD_ID),
+
+    // Client-facing mode, as a literal. It has to be a `define` rather than a
+    // function call: `isClientFacingDeployment()` reads THIS, and reading the
+    // environment at runtime instead is what broke the mode once already (see
+    // src/lib/clientFacing.ts). The prime is the internal operations console,
+    // so both resolve to their off values unless a build explicitly opts in.
+    __CLIENT_FACING__: JSON.stringify(CLIENT_FACING),
+    __CLIENT_FACING_ALLOW__: JSON.stringify(CLIENT_FACING_ALLOWANCES),
   },
   plugins: [
     // Inert unless run with `--mode staging` AND the local staging variables
