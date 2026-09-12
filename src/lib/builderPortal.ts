@@ -272,3 +272,16 @@ export function builderRevokeSession(sessionId: string) {
 export function builderRevokeOtherSessions() {
   return invokeBuilderFunction('builder-portal-verify', { action: 'revoke_other_sessions' });
 }
+
+/**
+ * The cross-tab identity stamp. Not a credential and never read as one — it
+ * carries `<builder_user_id>:<organisation_id>` purely so that a write in one
+ * tab raises a `storage` event in the others. The session itself stays in the
+ * HttpOnly `__Host-builder_session_token` cookie, which JavaScript cannot
+ * read; nothing here could reconstruct it.
+ *
+ * It exists because that cookie is ONE name per origin, so signing into a
+ * second builder account destroys the first tab's session without telling it.
+ * See the listener in `useBuilderPortalAuth`.
+ */
+export const BUILDER_IDENTITY_STAMP_KEY = 'npc.builder.identity';

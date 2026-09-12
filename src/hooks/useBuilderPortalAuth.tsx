@@ -14,7 +14,9 @@ import {
   type BuilderOrganisation,
   type BuilderPermissionMatrix,
   type BuilderPortalUser,
+  BUILDER_IDENTITY_STAMP_KEY,
 } from '@/lib/builderPortal';
+import { setActingOrganisation } from '@/lib/builderActingOrganisation';
 
 /**
  * Builder / Developer Portal authentication provider.
@@ -104,6 +106,7 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
     setUser(null);
     setOrganisations([]);
     setActiveOrganisation(null);
+    setActingOrganisation(null);
     setPermissions({});
     setGovernance(null);
     setRequiresOrganisationSelection(false);
@@ -127,10 +130,24 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
         queryClient.removeQueries({ queryKey: ['builder'] });
       }
       cachedIdentity.current = identity;
+      /*
+       * The cross-tab signal. Writing it fires `storage` in every OTHER tab on
+       * this origin, which is the only notification a stale tab can get that
+       * the single session cookie now belongs to somebody else. Wrapped
+       * because storage throws in a private window and a portal that cannot
+       * write a stamp must still work.
+       */
+      try {
+        if (window.localStorage.getItem(BUILDER_IDENTITY_STAMP_KEY) !== identity) {
+          window.localStorage.setItem(BUILDER_IDENTITY_STAMP_KEY, identity);
+        }
+      } catch { /* storage unavailable — the focus listener still covers it */ }
 
       setUser(data.user);
       setOrganisations(data.organisations ?? []);
       setActiveOrganisation(data.active_organisation ?? null);
+      // Per-tab, so a write carries the organisation THIS tab is showing.
+      setActingOrganisation(data.active_organisation?.organisation_id ?? null);
       setPermissions(data.permissions ?? {});
       setGovernance(data.governance ?? null);
       setRequiresOrganisationSelection(!!data.requires_organisation_selection);
@@ -140,6 +157,46 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
   }, [clearAuthState, queryClient]);
 
   useEffect(() => { void checkSession(); }, [checkSession]);
+
+  /**
+   * A TAB MUST NOTICE THAT IT IS NO LONGER WHO IT THINKS IT IS.
+   *
+   * REPORTED AND CONFIRMED 12 SEPTEMBER 2026: a stock list uploaded from a tab
+   * showing one organisation landed in a different one. Traced through
+   * the audit log — Kopi session last used 01:19:04, a Bob login at 01:21:28,
+   * the upload at 01:22:32 attributed to Bob — and the server was right every
+   * step of the way.
+   *
+   * `__Host-builder_session_token` is ONE cookie name per origin, so two
+   * builder accounts cannot be signed in at once: the second login destroys
+   * the first token and replaces it. Every already-open tab then sends the new
+   * account's credential on `credentials: 'include'` while still rendering the
+   * old organisation's name, stock and chrome — because `checkSession` ran
+   * only on mount, and nothing here listened for anything.
+   *
+   * The purge above fixes "sign out, sign in as somebody else, same tab". It
+   * cannot see "two tabs, one cookie", because the stale tab never asks again.
+   *
+   * So it asks again: on another tab's identity stamp (`storage` fires only in
+   * OTHER tabs, which is exactly the case that was blind), and when this tab
+   * is focused or made visible — the moment before a person reaches for a
+   * button in a tab they left open.
+   */
+  useEffect(() => {
+    const recheck = () => { void checkSession(); };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === BUILDER_IDENTITY_STAMP_KEY) recheck();
+    };
+    const onVisible = () => { if (!document.hidden) recheck(); };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', recheck);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', recheck);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [checkSession]);
 
   const signIn = useCallback(async (email: string, password: string, turnstileToken?: string) => {
     const { data, error } = await builderLogin(email, password, turnstileToken);
