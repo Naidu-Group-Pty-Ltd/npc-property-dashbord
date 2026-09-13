@@ -2033,8 +2033,9 @@ async function decorateItems(
    * Applied to the incoming rows rather than inside the mapper below, so
    * everything downstream — the spread, the eligibility reading, anything
    * added later — sees the effective property rather than the extraction.
-   * Both read paths do exactly this, and `manualStatsOverlay.spec.ts` fails
-   * either one that stops.
+   * Both read paths do exactly this, and the "every read path
+   * applies the overlay" case in `builderStockManualStats.test.ts` reads both
+   * sources and fails either one that stops.
    */
   items = applyManualStatsToAll(items);
   const ids = items.map((item) => item.id);
