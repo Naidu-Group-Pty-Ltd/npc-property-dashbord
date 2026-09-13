@@ -240,23 +240,48 @@ export async function generateInvestmentPdfBlob(
   // Helper to sanitize AI-generated content - fix word merges, duplicates, and malformed text
   const sanitizeAIContent = (text: string): string => {
     return text
-      // ===== ISSUE 8 FIX: Comprehensive word merge corrections =====
-      // Fix camelCase splits: "WyndhamVale" -> "Wyndham Vale", "FreewayUpgrades" -> "Freeway Upgrades"
-      .replace(/([a-z])([A-Z])/g, '$1 $2')
-      // Fix letter-number merges: "Year1" -> "Year 1", "Section2" -> "Section 2"
-      .replace(/([a-z])(\d)/g, '$1 $2')
-      // Fix number-letter merges (but preserve units like "100km"): "2024The" -> "2024 The"
+      // ===== ISSUE 8: word-merge corrections, narrowed to what they repair =====
+      //
+      // Two of these split a name apart wherever they found a case boundary,
+      // and a name is the commonest thing a case boundary means. Measured over
+      // the completed corpus, the camelCase splitter's own hit list is
+      // essentially a list of this product's data sources and of Australian
+      // agencies: CoreLogic 3,975, OpenAgent 447, AreaSearch 160, OnTheHouse
+      // 97, PropTrack 83, QuickStats, MacKillop, MidCoast, VicRoads, VicPlan,
+      // VicPol, VicEmergency, TrainLink, FloodCheck, OpenStreetMap. Every
+      // standard-presentation PDF printed "Core Logic" and "Prop Track", so
+      // the report misnamed the sources it cites. The letter-digit splitter is
+      // the same story on units and codes — `988 m2` came out `988 m 2` — and
+      // the letter+digit tokens the corpus actually holds are statistical
+      // geography and zoning: SA2 1,290, SA4 778, SA3 776, FY21, GRZ2, Yr10.
+      // A merged word is a defect in the model's output; splitting a proper
+      // noun is a defect this renderer introduces into a client's document,
+      // and the template presentation repairs neither, so the two were not
+      // even producing the same prose from one record.
+      //
+      // Number-letter is kept: it only fires where a digit runs straight into
+      // a capital, which is a merge rather than a name.
       .replace(/(\d)([A-Z])/g, '$1 $2')
-      // Fix punctuation-capital merges: "done.The" -> "done. The", "finished:Next" -> "finished: Next"
-      .replace(/([.!?:,;])([A-Za-z])/g, '$1 $2')
+      // Sentence boundaries only. `([.!?:,;])([A-Za-z])` split anything with a
+      // full stop in it — `e.g.,` became `e. g.`, and a contact line came out
+      // as `www. npcservices. com. au` and `admin@example. com. au`, which is
+      // a URL a reader cannot use. A lowercase letter, then punctuation, then
+      // a CAPITAL is the shape of "done.The"; a lowercase letter after the
+      // stop is the shape of a domain, an abbreviation or a file name.
+      .replace(/([a-z])([.!?:,;])([A-Z])/g, '$1$2 $3')
       // Fix possessive merges: "Vale'sdemographic" -> "Vale's demographic", "City'sinfrastructure" -> "City's infrastructure"
       .replace(/([a-z])'s([a-z])/gi, "$1's $2")
       // Fix closing paren merges: ")The" -> ") The", ")and" -> ") and"
       .replace(/(\))([A-Za-z])/g, '$1 $2')
       // Fix opening paren merges after words: "word(example" -> "word (example"
       .replace(/([a-z])(\([A-Za-z])/g, '$1 $2')
-      // Fix hyphen merges for compound words that got mashed: "Western-Freewayupgrades" or "Westernfreeway" patterns
-      .replace(/([a-z]{3,})(freeway|highway|road|street|avenue|drive|boulevard|upgrades?|improvements?|developments?)/gi, '$1 $2')
+      // Fix compound words that got mashed: "Westernfreeway" -> "Western freeway".
+      // Case-SENSITIVE, because a capital is what tells a merge apart from a
+      // name: `/gi` matched the `Road` in `VicRoads` and the `Street` in
+      // `OpenStreetMap`, and printed the two agencies as "Vic Roads" and
+      // "Open StreetMap" in every client document. A genuine merge is all
+      // lower case on the second half; a compound name is not.
+      .replace(/([a-z]{3,})(freeway|highway|road|street|avenue|drive|boulevard|upgrades?|improvements?|developments?)/g, '$1 $2')
       // Fix common infrastructure word merges
       .replace(/(infrastructure|developments?|projects?|investments?)([A-Z])/g, '$1 $2')
       // ===== ISSUE 3 FIX: Remove broken/repeated phrases with data =====

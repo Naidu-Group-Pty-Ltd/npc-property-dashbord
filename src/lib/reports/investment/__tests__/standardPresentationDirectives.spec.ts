@@ -149,4 +149,49 @@ describe('the standard Investment presentation and chart directives', () => {
     expect(flat).toContain('GROSSYIELD');
     expect(flat).toContain('4.17%');
   }, 120_000);
+
+  /**
+   * The presentation does not rewrite the report's prose.
+   *
+   * `sanitizeAIContent` repairs merged words in model output, and two of its
+   * rules split every case boundary they found — which is what a NAME looks
+   * like. Measured over the completed corpus, the camelCase splitter's hit
+   * list is this product's own data sources and Australian agencies:
+   * CoreLogic 3,975, OpenAgent 447, AreaSearch 160, OnTheHouse 97, PropTrack
+   * 83, plus QuickStats, MacKillop, VicRoads, VicPlan, TrainLink and
+   * OpenStreetMap. Every standard-presentation PDF printed "Core Logic" and
+   * "Prop Track", so the document misnamed the sources it cites — while the
+   * template presentation printed them correctly, which means one record was
+   * producing two different sentences.
+   *
+   * The punctuation rule was the same defect on a contact line: `e.g.,` came
+   * out `e. g.` and `www.npcservices.com.au` came out `www. npcservices. com.
+   * au`, which is a URL a reader cannot use.
+   */
+  it('leaves a proper noun, a URL and a unit exactly as the record wrote them', async () => {
+    const KEEP = [
+      'CoreLogic', 'PropTrack', 'OpenAgent', 'AreaSearch', 'SuburbCheck', 'OnTheHouse',
+      'QuickStats', 'VicRoads', 'VicPlan', 'TrainLink', 'OpenStreetMap', 'MacKillop',
+      'www.npcservices.com.au', 'admin@example.com.au', 'e.g.,', '988 m2', 'SA2', 'R2',
+      'Section 10.7(2)',
+    ];
+    const prose = [
+      'CoreLogic and PropTrack and OpenAgent and AreaSearch and SuburbCheck and OnTheHouse report data.',
+      'QuickStats from VicRoads and VicPlan and TrainLink and OpenStreetMap and MacKillop College.',
+      'See Section 10.7(2) and e.g., Yarrabilly Estate, plus the R2 zone and the Cowra SA2 area.',
+      'Visit www.npcservices.com.au or email admin@example.com.au about a 988 m2 holding.',
+      'The 2026 report said done.The next line, which is a real merge and must be repaired.',
+    ];
+    const text = await drawnText({
+      ...REPORT,
+      content: ['# Investment Report: 9 Test Street', '', '## Prose Section', '',
+        ...prose.flatMap((p) => [p, '']),
+      ].join('\n'),
+    });
+    const flat = text.replace(/\s+/g, ' ');
+    for (const phrase of KEEP) expect(flat, `must survive: ${phrase}`).toContain(phrase);
+    // …and the one repair the rules are actually for still happens.
+    expect(flat).toContain('done. The next line');
+    expect(flat).not.toContain('done.The');
+  }, 120_000);
 });
