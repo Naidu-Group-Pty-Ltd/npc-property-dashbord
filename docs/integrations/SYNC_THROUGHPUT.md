@@ -303,6 +303,17 @@ ten pages of fifty.
 `{ locationId, contactId }` and took `data.conversations` as final. The endpoint
 pages. **Nothing in the product had ever paged it**, so a contact with more
 conversations than one page silently lost the rest on every path.
+
+Unlike the other two, this one is **not** visible in the data, and the
+distinction is worth keeping: 0 of the prime's 753 contacts hold more than one
+conversation. That is consistent with GoHighLevel genuinely holding one
+conversation per contact here, and equally consistent with never having seen
+past page one — the reading cannot separate them, because the only evidence
+either way would come from the request nobody made. So this is a latent
+correctness fix rather than a measured recovery, and it should not be described
+as one. The depth cap, by contrast, IS visible: six threads sit at exactly 20
+messages (the old cron's page) and one at exactly 500 (ten pages of fifty, the
+bulk cap), out of 93 at or past 20.
 `ghl-migrate-conversations-worker:245-252` is the one correct copy in the
 repository, and it stays where it is — it walks the LOCATION rather than a
 contact and checkpoints into `migration_jobs`.
@@ -415,6 +426,16 @@ only the absence of a cursor ends a walk; the copy this replaces ended on
 `messages.length < 50`. And **`data.nextPage` is never read on the conversation
 search**: that field exists only on the messages sub-endpoint, and reading it
 there is what made a previous worker exit after one page.
+
+The conversation search carries one exception to the first rule, and it is an
+exception about COST rather than about evidence. A cursor the vendor supplies
+is always followed, whatever the page length. A cursor SYNTHESISED from the
+page tail is followed only off a full page — because with one conversation per
+contact, synthesising unconditionally makes every contact in every band pay a
+second request that comes back empty, which doubles the largest band's spend to
+learn nothing. A short page the vendor did not paginate is the strongest
+evidence of the end there is; a short page with a vendor cursor is still
+followed.
 
 ## 12. Reading a set PostgREST will not give you whole
 

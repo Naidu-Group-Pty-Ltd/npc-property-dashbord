@@ -45,6 +45,11 @@ const conv = (id: string, lastMessageDate = "2026-09-01T00:00:00.000Z") => ({
 });
 const msg = (id: string) => ({ id, direction: "inbound", dateAdded: "2026-09-01T00:00:00.000Z" });
 
+/** A page GHL filled to the limit, so the walk has reason to ask for another. */
+const fullPage = (tailId: string) =>
+  Array.from({ length: GHL_CONVERSATION_PAGE_LIMIT }, (_, i) =>
+    conv(i === GHL_CONVERSATION_PAGE_LIMIT - 1 ? tailId : `c${i}`, "2026-08-02T03:04:05.000Z"));
+
 beforeEach(() => ghlFetchShared.mockReset());
 
 describe("searchConversationsForContact", () => {
@@ -56,14 +61,15 @@ describe("searchConversationsForContact", () => {
   it("pages until the vendor offers no further cursor", async () => {
     ghlFetchShared
       .mockResolvedValueOnce(ok({ conversations: [conv("a"), conv("b")], meta: { startAfterId: "b", startAfter: 1756684800000 } }))
-      .mockResolvedValueOnce(ok({ conversations: [conv("c")], meta: {} }))
-      .mockResolvedValueOnce(ok({ conversations: [] }));
+      .mockResolvedValueOnce(ok({ conversations: [conv("c")], meta: {} }));
 
+    // Page two is short and carries no cursor, so the walk ends there rather
+    // than buying a third request to be told the same thing.
     const w = await run();
     expect(w.items.map((i) => i.id)).toEqual(["a", "b", "c"]);
     expect(w.exhausted).toBe(true);
     expect(w.failed).toBe(false);
-    expect(w.requests).toBe(3);
+    expect(w.requests).toBe(2);
   });
 
   it("sends the cursor GHL's search actually takes, and asks for a full page", async () => {
@@ -93,9 +99,38 @@ describe("searchConversationsForContact", () => {
     expect(w.items).toHaveLength(2);
   });
 
-  it("falls back to the page tail when the vendor sends no meta", async () => {
+  it("does not synthesise a cursor off a short page the vendor did not paginate", async () => {
+    /*
+      Measured on the prime: 0 of 753 contacts hold more than one conversation,
+      so synthesising a cursor unconditionally makes every contact cost a
+      second request that comes back empty — double the largest band's spend,
+      to learn nothing.
+    */
+    ghlFetchShared.mockResolvedValueOnce(ok({ conversations: [conv("a")] }));
+    const w = await run();
+    expect(w.requests).toBe(1);
+    expect(w.exhausted).toBe(true);
+    expect(w.items.map((i) => i.id)).toEqual(["a"]);
+  });
+
+  it("still follows an EXPLICIT cursor off a short page", async () => {
+    // The saving must never cost a page. A vendor cursor wins whatever the
+    // page length — this is not the `length < limit` rule the message walk
+    // forbids.
     ghlFetchShared
-      .mockResolvedValueOnce(ok({ conversations: [conv("a"), conv("z", "2026-08-02T03:04:05.000Z")] }))
+      .mockResolvedValueOnce(ok({ conversations: [conv("a")], meta: { startAfterId: "a", startAfter: 1756684800000 } }))
+      .mockResolvedValueOnce(ok({ conversations: [conv("b")] }));
+    const w = await run();
+    expect(w.requests).toBe(2);
+    expect(w.items.map((i) => i.id)).toEqual(["a", "b"]);
+    expect(w.exhausted).toBe(true);
+  });
+
+  it("falls back to the page tail when the vendor sends no meta on a FULL page", async () => {
+    // A full page with no cursor is very likely not the end, so the tail is
+    // synthesised rather than the walk being abandoned.
+    ghlFetchShared
+      .mockResolvedValueOnce(ok({ conversations: fullPage("z") }))
       .mockResolvedValueOnce(ok({ conversations: [] }));
 
     await run();
@@ -168,8 +203,15 @@ describe("searchConversationsForContact", () => {
       without it returns page one, for ever — so an unrenderable boundary with
       no id beside it ends the walk instead, and does not report exhaustion.
     */
+    // A FULL page, so the walk genuinely wants to continue and the boundary
+    // is the only thing stopping it. On a short page the vendor has simply
+    // not paginated, and the walk is exhausted for an ordinary reason.
     ghlFetchShared.mockResolvedValueOnce(
-      ok({ conversations: [{ type: "TYPE_SMS", lastMessageDate: "not a date" }] }),
+      ok({
+        conversations: Array.from({ length: GHL_CONVERSATION_PAGE_LIMIT }, () => ({
+          type: "TYPE_SMS", lastMessageDate: "not a date",
+        })),
+      }),
     );
     const w = await run();
     expect(w.requests).toBe(1);

@@ -178,8 +178,33 @@ export async function searchConversationsForContact(
 
     const tail = page[page.length - 1] as Row;
     const meta = (data?.meta ?? {}) as Row;
-    const nextId = (meta.startAfterId ?? tail.id ?? null) as string | null;
-    const nextAfterRaw = meta.startAfter ?? tail.lastMessageDate ?? tail.dateUpdated ?? tail.dateAdded ?? null;
+
+    /*
+      The vendor's own cursor decides; a synthesised one is the fallback, and
+      it is only followed off a FULL page.
+
+      Most of these walks are one contact's conversations, and the measured
+      shape on the prime is one conversation per contact — 0 of 753 hold more
+      than one. Synthesising a cursor from the page tail unconditionally means
+      every one of those costs a second request that comes back empty, which
+      doubles the largest band's spend to learn nothing.
+
+      A short page with NO cursor from the vendor is the strongest evidence of
+      the end there is. This is deliberately NOT the `page.length < limit`
+      rule the message walk forbids: an explicit cursor always wins, whatever
+      the page length, so a vendor that really does paginate is followed
+      exactly as before.
+    */
+    const explicitId = (meta.startAfterId ?? null) as string | null;
+    const explicitAfter = meta.startAfter ?? null;
+    const pageWasFull = page.length >= GHL_CONVERSATION_PAGE_LIMIT;
+
+    if (!explicitId && explicitAfter === null && !pageWasFull) {
+      return done(items, pages, requests, { stoppedOnBudget: false, hitPageCap: false, failed: false, failureStatus: null, noCursor: true });
+    }
+
+    const nextId = (explicitId ?? tail.id ?? null) as string | null;
+    const nextAfterRaw = explicitAfter ?? tail.lastMessageDate ?? tail.dateUpdated ?? tail.dateAdded ?? null;
     const nextAfter = toStartAfterMs(nextAfterRaw);
 
     // A boundary we were given but cannot render is a STOP, never a dropped
