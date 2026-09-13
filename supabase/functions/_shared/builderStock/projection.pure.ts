@@ -51,7 +51,19 @@ export const STOCK_ITEM_SELECT = `
   lifecycle_status, enrichment_status, enriched_at, primary_image_id,
   created_at, updated_at, last_seen_at,
   image_work_stage,
-  house_design:source_row->>house_design
+  house_design:source_row->>house_design,
+  /*
+   * THE FIGURES THE BUILDER STATED THEMSELVES, where their stock list did
+   * not. Selected here because this list is what BOTH audiences read, and a
+   * property's bedroom count is not a disclosure boundary — it is the same
+   * fact for the builder and for the Command Centre, and the two screens
+   * disagreeing about one house is the failure this prevents.
+   *
+   * It is not the effective value: `applyManualStats` overlays it, and
+   * `manualStatsOverlay.spec.ts` fails any read path that selects this list
+   * without applying it.
+   */
+  manual_stats
 `;
 
 /**

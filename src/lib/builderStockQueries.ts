@@ -15,6 +15,7 @@ import {
 } from '../../supabase/functions/_shared/builderStock/imageProgress.pure';
 import type {
   BuilderStockItem, BuilderStockSelectionForBuilder, BuilderStockUpload,
+  ManualStatField,
 } from '@/lib/builderStock';
 
 export const builderStockKeys = {
@@ -422,6 +423,30 @@ export function useSetBuilderStockAvailability() {
         operation: 'set_availability',
         stock_item_id: input.stockItemId,
         availability_status: input.availability,
+      }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: builderStockKeys.root() }); },
+  });
+}
+
+/**
+ * State the figures this property's stock list did not.
+ *
+ * Sends only the fields the builder filled; a cleared field is omitted, which
+ * is how a correction is taken back and the document's own reading returns.
+ * The server refuses an out-of-range figure rather than clamping it, so a
+ * rejection carries a message worth showing.
+ */
+export function useSetBuilderStockManualStats() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      stockItemId: string;
+      stats: Partial<Record<ManualStatField, number | null>>;
+    }) =>
+      invoke<{ record: BuilderStockItem }>({
+        operation: 'set_manual_stats',
+        stock_item_id: input.stockItemId,
+        stats: input.stats,
       }),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: builderStockKeys.root() }); },
   });
