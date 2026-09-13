@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   CONVERSATION_ROW_KEYS,
+  GHL_NON_MESSAGE_CHANNELS,
   MESSAGE_ROW_KEYS,
+  classifyGhlEntry,
+  isCorrespondence,
   mapChannelType,
   mapContentType,
   mapMessageDirection,
@@ -211,5 +214,75 @@ describe("toMessageRow", () => {
   it("binds the row to the LOCAL conversation id, never GHL's", () => {
     expect(toMessageRow({ id: "m", conversationId: "ghl-side" }, "local-uuid").conversation_id)
       .toBe("local-uuid");
+  });
+});
+
+/*
+  AN ENTRY IS NOT ALWAYS A MESSAGE.
+
+  `/conversations/{id}/messages` returns a thread's ENTRIES. GHL interleaves
+  its own activity records among them under the same field that carries the
+  channel, so one value has to answer both "how was this sent" and "was
+  anything sent at all". It cannot, which is why the kind is asked separately.
+
+  Measured on the prime 13 Sep 2026, after the deep backfill: 4,753 of 13,255
+  rows (36%) were non-message entries, reaching 1,150 of 1,272 conversations,
+  and 465 threads held NOTHING else.
+*/
+describe("classifyGhlEntry", () => {
+  it("calls every activity kind production actually wrote an activity", () => {
+    for (const channel of ["type_activity_opportunity", "type_activity_appointment", "type_activity_contact"]) {
+      expect(classifyGhlEntry(channel)).toBe("activity");
+    }
+  });
+
+  it("recognises an activity kind this deployment has never seen", () => {
+    // GHL publishes TYPE_ACTIVITY_INVOICE and TYPE_ACTIVITY_PAYMENT. An
+    // enumeration is a list of what we happened to meet; the prefix is the
+    // rule, so an invoice does not arrive as an untyped bubble.
+    expect(classifyGhlEntry("type_activity_invoice")).toBe("activity");
+    expect(classifyGhlEntry("type_activity_payment")).toBe("activity");
+  });
+
+  it("separates a call from a message, though both are real events", () => {
+    expect(classifyGhlEntry("type_call")).toBe("call");
+    expect(isCorrespondence("type_call")).toBe(false);
+  });
+
+  it("leaves every real channel alone", () => {
+    for (const channel of ["sms", "email", "whatsapp", "facebook", "instagram", "live_chat", "type_sms", "type_email"]) {
+      expect(classifyGhlEntry(channel)).toBe("message");
+      expect(isCorrespondence(channel)).toBe(true);
+    }
+  });
+
+  it("treats an unknown channel as a message, because refusing to draw is the greater harm", () => {
+    // Pass-through is `mapChannelType`'s rule and it holds here: a channel
+    // nobody has seen before must reach a reader as itself. Only the two
+    // families GHL documents as non-messages are withheld.
+    expect(classifyGhlEntry("type_some_new_channel")).toBe("message");
+    expect(isCorrespondence("")).toBe(true);
+    expect(isCorrespondence(null)).toBe(true);
+    expect(isCorrespondence(undefined)).toBe(true);
+  });
+
+  it("is case- and whitespace-insensitive, because the column is not normalised on read", () => {
+    expect(classifyGhlEntry("  TYPE_ACTIVITY_OPPORTUNITY  ")).toBe("activity");
+    expect(classifyGhlEntry("TYPE_CALL")).toBe("call");
+  });
+
+  it("withholds exactly the kinds it names and nothing else", () => {
+    for (const channel of GHL_NON_MESSAGE_CHANNELS) {
+      expect(isCorrespondence(channel)).toBe(false);
+    }
+  });
+
+  it("never withholds a channel the channel map can produce", () => {
+    // The two vocabularies must not collide: anything `mapChannelType`
+    // resolves to one of our own channel names is correspondence by
+    // construction, or the sync would write rows the thread refuses to draw.
+    for (const ours of ["sms", "email", "whatsapp", "facebook", "instagram", "live_chat"]) {
+      expect(isCorrespondence(mapChannelType(ours))).toBe(true);
+    }
   });
 });

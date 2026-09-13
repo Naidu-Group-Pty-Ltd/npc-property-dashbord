@@ -108,6 +108,89 @@ export function mapChannelType(ghlType: unknown): GhlChannel {
 }
 
 /**
+ * Is this entry CORRESPONDENCE, or is it GoHighLevel's audit trail?
+ *
+ * `/conversations/{id}/messages` does not return messages. It returns a
+ * conversation's ENTRIES, and GHL interleaves its own activity records among
+ * them under the same `messageType` field that carries the channel — so the
+ * value that answers "which channel was this sent on" also has to answer
+ * "was this sent at all".
+ *
+ * Nothing noticed while the walk was one page of twenty. Paging the history
+ * properly is what made it visible: measured on the prime 13 Sep 2026, the
+ * deep backfill wrote **4,753 non-message entries, 36% of the whole table** —
+ * 3,821 `type_activity_opportunity` (body: "Opportunity updated"), 673
+ * `type_activity_appointment`, 194 `type_call`, 65 `type_activity_contact`
+ * ("DnD enabled by customer") — reaching **1,150 of 1,272 conversations**.
+ *
+ * They rendered, and the near miss is the instructive part: BOTH copies of the
+ * UI's `normalizeChannel` already mapped `type_activity_*` to `'activity'`.
+ * Knowing was never the problem — nothing CONSUMED it.
+ * `getOutboundBubbleClass()` switches on that value and has arms for `sms`,
+ * `whatsapp` and `email` only, so `'activity'` fell to `default`, which is the
+ * SMS treatment: "Opportunity updated" drew as a blue outbound bubble a reader
+ * cannot tell from a text message the business actually sent its customer, on
+ * 90% of threads. "DnD enabled by customer" drew INBOUND, as though the
+ * customer had written it. And both copies map `type_call` to `'sms'`, which
+ * throws away the one fact that mattered — all 194 call rows carry a null
+ * body, the render guards only the TEXT (`msg.body && …`) and never the
+ * bubble, so each drew an empty bubble with a timestamp in it.
+ *
+ * That is why this is a classifier and not another entry in a channel map. A
+ * value can be normalised perfectly and still be acted on by nothing; the
+ * thread has to ASK whether an entry may be drawn, and there has to be one
+ * place that answers.
+ *
+ * ## The rule
+ *
+ * **A channel says how something was sent; it cannot say whether anything
+ * was.** So the kind is asked separately, and only `message` may be drawn as
+ * correspondence.
+ *
+ * Two things about the shape. The activity family is matched by PREFIX rather
+ * than enumerated, because GHL publishes more of them than this deployment has
+ * seen — `TYPE_ACTIVITY_INVOICE` and `TYPE_ACTIVITY_PAYMENT` are in its
+ * vocabulary and would otherwise arrive as untyped bubbles the day an invoice
+ * is raised. An enumeration is a list of what we happened to meet. And
+ * **nothing here deletes**: an activity row is a real GHL record, it stays in
+ * the table, and this decides only what the message thread draws — the same
+ * read-path rule the image library and the finance heal already answer to,
+ * because a re-sync writes these rows again and a write-path fix would leave
+ * every existing one rendering.
+ *
+ * A call is deliberately in the non-correspondence set even though a call IS a
+ * real communication event, because the only honest alternative is a call
+ * timeline with direction, status and duration, and that is a surface to
+ * design rather than a bug to fix. Excluding it restores what a reader saw
+ * before the deep walk and loses nothing that was ever legible: an empty
+ * bubble is not a record of a phone call.
+ */
+export type GhlEntryKind = 'message' | 'activity' | 'call';
+
+/** GHL's audit-trail family. Matched as a prefix — see the header. */
+export const GHL_ACTIVITY_PREFIX = 'type_activity_';
+
+/** Non-channel entry kinds seen in production, named so a reader can find them. */
+export const GHL_NON_MESSAGE_CHANNELS = [
+  'type_activity_opportunity',
+  'type_activity_appointment',
+  'type_activity_contact',
+  'type_call',
+] as const;
+
+export function classifyGhlEntry(channelType: unknown): GhlEntryKind {
+  const raw = String(channelType ?? '').trim().toLowerCase();
+  if (raw.startsWith(GHL_ACTIVITY_PREFIX)) return 'activity';
+  if (raw === 'type_call' || raw === 'call') return 'call';
+  return 'message';
+}
+
+/** True only for an entry that may be drawn as a message in a thread. */
+export function isCorrespondence(channelType: unknown): boolean {
+  return classifyGhlEntry(channelType) === 'message';
+}
+
+/**
  * Which way a message went.
  *
  * The ladder is verbatim from the live cron, including its final

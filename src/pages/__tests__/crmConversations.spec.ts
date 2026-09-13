@@ -23,6 +23,10 @@ const shared = (name: string) =>
 const paging = shared('ghlConversationPaging.ts');
 const store = shared('ghlConversationStore.ts');
 const mapper = shared('ghlConversationMap.pure.ts');
+const clientTab = readFileSync(
+  join(root, 'src', 'components', 'clients', 'ClientConversationsTab.tsx'),
+  'utf8',
+);
 
 describe('item 37 — the client waits as long as the server is allowed', () => {
   /**
@@ -535,5 +539,67 @@ describe('a walk that failed is never reported as one that finished', () => {
   it('both callers read the failure rather than inferring it from a count', () => {
     expect(sync).toMatch(/if \(search\.failed\)/);
     expect(cron).toMatch(/if \(search\.failed\)/);
+  });
+});
+
+describe('a thread draws correspondence, and nothing else', () => {
+  /**
+   * The classifier existing is worth nothing on its own — that is precisely
+   * how this defect survived. BOTH surfaces already normalised
+   * `type_activity_*` to `'activity'` and neither ACTED on it, so 3,821
+   * "Opportunity updated" rows drew through `getOutboundBubbleClass()`'s
+   * `default` arm, which is the SMS treatment, on 1,150 of 1,272 threads.
+   *
+   * So these assert the WIRING, not the module: that what each surface groups
+   * and counts is the filtered list.
+   */
+  const surfaces: ReadonlyArray<readonly [string, string]> = [
+    ['the CRM inbox', page],
+    ['the client conversations tab', clientTab],
+  ];
+
+  for (const [label, source] of surfaces) {
+    it(`${label} asks the shared classifier rather than keeping its own list`, () => {
+      expect(source).toMatch(/import \{ isCorrespondence \} from ['"]@\/lib\/ghl\/conversationEntry['"]/);
+      expect(source).toMatch(/messages\.filter\(\(msg\) => isCorrespondence\(msg\.channel_type\)\)/);
+    });
+
+    it(`${label} groups the filtered list, not the raw entries`, () => {
+      expect(source).toMatch(/correspondence\.forEach\(\(msg\) => \{/);
+      expect(source).not.toMatch(/\n {4}messages\.forEach\(\(msg\) => \{/);
+    });
+
+    it(`${label} keys its empty state on what is drawn`, () => {
+      // 465 of this deployment's threads hold activity entries and NOTHING
+      // else. Keyed on `messages.length` the empty state never fires on them
+      // and the reader gets a blank scroller with no explanation.
+      expect(source).toMatch(/correspondence\.length === 0/);
+      expect(source).not.toMatch(/messages\.length === 0 \?/);
+    });
+
+    it(`${label} says what it is withholding rather than silently dropping it`, () => {
+      expect(source).toContain('withheldEntryCount');
+      expect(source).toMatch(/activity entr/i);
+    });
+  }
+
+  it('the classifier is declared once and re-exported, never copied', () => {
+    // `normalizeChannel` is written twice in this repository and the copies
+    // have already drifted. A third private copy of "is this a message" is the
+    // same failure with worse consequences.
+    expect(mapper).toContain('export function isCorrespondence');
+    const shim = readFileSync(join(root, 'src', 'lib', 'ghl', 'conversationEntry.ts'), 'utf8');
+    expect(shim).toContain('ghlConversationMap.pure.ts');
+    for (const [, source] of surfaces) {
+      expect(source).not.toContain('function isCorrespondence');
+    }
+  });
+
+  it('nothing in the read path deletes an activity row', () => {
+    // An activity is a real GHL record. This decides what is drawn; it must
+    // never decide what is kept.
+    for (const [, source] of surfaces) {
+      expect(source).not.toMatch(/delete[\s\S]{0,40}ghl_conversation_messages/);
+    }
   });
 });
