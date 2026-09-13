@@ -21,12 +21,15 @@ describe('browser production export guard', () => {
     // `exportCapability` calls this a warning, which is right for an operator
     // exporting a draft and wrong for a document leaving the building: a
     // dashed box reading "renders in HTML/PDF pipeline" looks deliberate.
+    // `sparkline` is still html-first. `definition-list` and `chart-line` were
+    // the examples here until RC-3.2 gave them real renderers — which is the
+    // guard working, not the guard breaking.
     const verdict = judgeBrowserProductionExport({
-      pages: [page(['text-block', 'definition-list'])],
+      pages: [page(['text-block', 'sparkline'])],
     } as never);
     expect(verdict.ok).toBe(false);
     if (verdict.ok) return;
-    expect(verdict.blockTypes.join(' ')).toMatch(/definition/i);
+    expect(verdict.blockTypes.join(' ')).toMatch(/sparkline/i);
   });
 
   it('refuses a block with no renderer at all', () => {
@@ -38,7 +41,7 @@ describe('browser production export guard', () => {
 
   it('names the blocks for the operator without naming internals to a client', () => {
     const verdict = judgeBrowserProductionExport({
-      pages: [page(['chart-line'])],
+      pages: [page(['swot'])],
     } as never);
     expect(verdict.ok).toBe(false);
     if (verdict.ok) return;
@@ -51,5 +54,22 @@ describe('browser production export guard', () => {
   it('permits when there is no template — the standard document has no blocks', () => {
     expect(judgeBrowserProductionExport(null).ok).toBe(true);
     expect(judgeBrowserProductionExport(undefined).ok).toBe(true);
+  });
+});
+
+describe('RC-3.2 — what active production templates use', () => {
+  it('permits the two blocks RC-3.2 gave real renderers', () => {
+    expect(judgeBrowserProductionExport({
+      pages: [page(['definition-list', 'chart-line'])],
+    } as never).ok).toBe(true);
+  });
+
+  it('still refuses markdown-block, which has no browser renderer yet', () => {
+    // The last of the three, and the one that carries the Q&A and Market
+    // Intelligence prose — 215 instances across seven active templates.
+    const verdict = judgeBrowserProductionExport({
+      pages: [page(['markdown-block'])],
+    } as never);
+    expect(verdict.ok).toBe(false);
   });
 });
