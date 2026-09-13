@@ -26,7 +26,7 @@
  * template that is not ready for production export, and the honest answer is
  * to say so rather than to ship a page with a hole in it.
  */
-import { analyzeExportCapability } from './exportCapability';
+import { getBlockRendererCapabilities } from './blocks';
 import type { ReportTemplate } from './templateSchema';
 
 export interface BrowserExportRefusal {
@@ -59,21 +59,35 @@ export function judgeBrowserProductionExport(
 ): BrowserExportVerdict {
   if (!template) return PERMITTED;
 
-  const report = analyzeExportCapability(template as ReportTemplate, 'jspdf');
-  const blocking = report.issues.filter(
-    (issue) => issue.code === 'jspdf-placeholder' || issue.code === 'jspdf-unsupported',
-  );
-  if (blocking.length === 0) return PERMITTED;
-
-  // The block TYPES, recovered from the messages the analysis already builds,
-  // so there is one place that knows how a block is named.
-  const blockTypes = Array.from(new Set(
-    blocking.flatMap((issue) => issue.message.match(/\(([^)]+)\)/)?.[1]?.split(', ') ?? []),
-  )).filter(Boolean).sort();
+  /*
+   * The block types are read from the TEMPLATE and judged by the renderer's
+   * own declared capability, not recovered from a human-readable message.
+   *
+   * This used to parse the block names out of `analyzeExportCapability`'s
+   * prose with `/\(([^)]+)\)/`, which made an operator-facing sentence into a
+   * data structure: rewording it — adding a clause, dropping the parenthesis,
+   * naming two blocks instead of one — would have silently emptied the list
+   * this guard reports, while the refusal itself carried on working. The
+   * capability table is the fact; the sentence is a rendering of it.
+   */
+  const blockTypes = new Set<string>();
+  for (const page of template.pages ?? []) {
+    for (const block of page.blocks ?? []) {
+      const type = String((block as { type?: unknown }).type ?? '');
+      if (!type) continue;
+      // `partial` is the placeholder and `unsupported` is no renderer at all.
+      // Both refuse, and that is the whole point: a placeholder is WORSE than
+      // a missing block, because it looks deliberate. The severity split
+      // `exportCapability` uses is right for an operator deciding whether to
+      // export a draft, and wrong for a document leaving the building.
+      if (getBlockRendererCapabilities(type).jspdf !== 'full') blockTypes.add(type);
+    }
+  }
+  if (blockTypes.size === 0) return PERMITTED;
 
   return {
     ok: false,
-    blockTypes,
+    blockTypes: [...blockTypes].sort(),
     reason:
       'This template uses layout blocks the in-app renderer cannot draw yet, so it would '
       + 'produce a document with placeholder panels in it. The standard report has been '
