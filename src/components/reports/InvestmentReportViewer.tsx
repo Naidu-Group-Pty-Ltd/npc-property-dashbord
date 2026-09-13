@@ -627,10 +627,10 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
                   </div>
                   {/* Unified delivery first; the browser generator is the
                       named legacy layout beside it. */}
-                  <PremiumPdfButton
-                    reportId={report.id}
-                    propertyAddress={report.property_address}
-                  />
+                  {/* ONE client-PDF action, carrying all five controls. The
+                      "legacy layout" generator that used to sit beside it took
+                      a different half of them, so the document a client
+                      received depended on which button was pressed. */}
                   <ErrorBoundary
                     fallback={
                       <div className="text-sm text-muted-foreground">
@@ -638,7 +638,12 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
                       </div>
                     }
                   >
-                    <ClientPDFGenerator report={report} includeSources={includeSources} includeScoring={includeScoring} appearance="legacy" />
+                    <PremiumPdfButton
+                      reportId={report.id}
+                      propertyAddress={report.property_address}
+                      includeSources={includeSources}
+                      includeScoring={includeScoring}
+                    />
                   </ErrorBoundary>
                   <RegenerateWithPerplexityButton
                     reportId={report.id}
