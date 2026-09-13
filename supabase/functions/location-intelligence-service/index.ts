@@ -2,6 +2,7 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import {
+  COMMUTE_CAP_REACHED,
   COMMUTE_DESTINATION_UNKNOWN,
   COMMUTE_NO_ROUTE,
   resolveCbdDestination,
@@ -25,6 +26,7 @@ import {
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { consumeGoogleDailyCap } from "../_shared/googleMapsDailyCaps.ts";
 import { assessAuPoint } from "../_shared/auGeoSanity.pure.ts";
 import { buildAuGeocodeQuery } from "../_shared/auGeocodeQuery.pure.ts";
 import { sourceUnavailable, isSourceUnavailable } from "../_shared/sourceUnavailable.pure.ts";
@@ -109,7 +111,7 @@ Deno.serve(async (req) => {
     console.log('✓ Google Maps API key found, fetching real data...');
     
     try {
-      const location = await fetchLocationIntelligence(input, googleMapsApiKey);
+      const location = await fetchLocationIntelligence(input, googleMapsApiKey, supabase);
 
       if (!location.resolved) {
         // Deliberately NOT the mock branch below. An address we cannot place
@@ -202,6 +204,7 @@ Deno.serve(async (req) => {
 type UnresolvedReason =
   | 'address_not_resolved'
   | 'geocoder_unavailable'
+  | 'geocoder_daily_cap_reached'
   | 'supplied_coordinates_rejected';
 
 const UNRESOLVED_MESSAGE: Record<UnresolvedReason, string> = {
@@ -210,6 +213,15 @@ const UNRESOLVED_MESSAGE: Record<UnresolvedReason, string> = {
   geocoder_unavailable:
     'The geocoding service did not answer for this request, so no location could be established. '
     + 'This is a fault in this deployment\'s map service access — the address supplied was never rejected as invalid.',
+  // A ceiling is not a fault, and it must not send an operator to the remedy
+  // for one. `geocoder_unavailable` tells them to go and look at map service
+  // access; this tells them the deployment declined to spend, which is a
+  // configuration decision they made and can revisit.
+  geocoder_daily_cap_reached:
+    'This deployment\'s daily allowance for address lookups was already spent when this '
+    + 'request was made, so no location could be established. Nothing is wrong with the '
+    + 'address or with map service access — the ceiling is set by '
+    + 'GOOGLE_GEOCODING_DAILY_LIMIT.',
   supplied_coordinates_rejected:
     'The supplied coordinates are not a location in Australia — location intelligence is unavailable for this property.',
 };
@@ -221,6 +233,10 @@ type LocationIntelligenceResult =
 async function fetchLocationIntelligence(
   input: LocationIntelligenceInput,
   apiKey: string,
+  // The counter is shared across isolates, so it is consumed through the
+  // database rather than held in memory. `publicAbuseControls` explains why a
+  // process-local ceiling is not a ceiling.
+  db: unknown,
 ): Promise<LocationIntelligenceResult> {
   let coordinates: { lat: number; lng: number } | null;
   let reason: UnresolvedReason;
@@ -241,14 +257,18 @@ async function fetchLocationIntelligence(
     }
     reason = 'supplied_coordinates_rejected';
   } else {
-    const geocoded = await geocodeAddress(input, apiKey);
+    const geocoded = await geocodeAddress(input, apiKey, db);
     coordinates = geocoded.ok ? { lat: geocoded.lat, lng: geocoded.lng } : null;
     matchedAddress = geocoded.ok ? geocoded.matchedAddress : null;
     // Which of the two it was is decided where the provider's own status is
     // in hand, never re-derived here from the absence of a point.
-    reason = geocoded.ok || !geocoded.providerRefused
+    reason = geocoded.ok
       ? 'address_not_resolved'
-      : 'geocoder_unavailable';
+      : geocoded.capped
+        ? 'geocoder_daily_cap_reached'
+        : geocoded.providerRefused
+          ? 'geocoder_unavailable'
+          : 'address_not_resolved';
   }
 
   if (!coordinates) return { resolved: false, reason };
@@ -323,19 +343,19 @@ async function fetchLocationIntelligence(
     recreationData,
     restaurantsData
   ] = await Promise.all([
-    fetchNearbyPlaces(coordinates, 'transit_station', apiKey),
-    fetchNearbyPlaces(coordinates, 'school', apiKey),
-    fetchNearbyPlaces(coordinates, 'hospital', apiKey),
-    fetchNearbyPlaces(coordinates, 'shopping_mall', apiKey),
-    fetchNearbyPlaces(coordinates, 'park', apiKey),
-    fetchNearbyPlaces(coordinates, 'restaurant', apiKey)
+    fetchNearbyPlaces(coordinates, 'transit_station', apiKey, db),
+    fetchNearbyPlaces(coordinates, 'school', apiKey, db),
+    fetchNearbyPlaces(coordinates, 'hospital', apiKey, db),
+    fetchNearbyPlaces(coordinates, 'shopping_mall', apiKey, db),
+    fetchNearbyPlaces(coordinates, 'park', apiKey, db),
+    fetchNearbyPlaces(coordinates, 'restaurant', apiKey, db)
   ]);
 
   // Calculate CBD commute time. No state means no known destination, and a
   // guessed destination is what put a Perth property 82 hours from "the CBD".
   const cbdCoordinates = resolveCbdDestination(input.state);
   const commuteData = cbdCoordinates
-    ? await calculateCommuteTime(coordinates, cbdCoordinates, apiKey)
+    ? await calculateCommuteTime(coordinates, cbdCoordinates, apiKey, db)
     : COMMUTE_DESTINATION_UNKNOWN;
 
   // RF-7.2B.1B2 — the six lookups, named once so that every projection below
@@ -515,7 +535,10 @@ async function fetchLocationIntelligence(
  */
 type GeocodeOutcome =
   | { ok: true; lat: number; lng: number; matchedAddress: string | null }
-  | { ok: false; providerRefused: boolean };
+  // `capped` is separate from `providerRefused` because the two send an
+  // operator to opposite remedies — the same reason the Didit broker reads a
+  // refusal from a header rather than guessing it from a body.
+  | { ok: false; providerRefused: boolean; capped?: boolean };
 
 /**
  * The only Google geocoder status that is a statement about the ADDRESS.
@@ -545,6 +568,7 @@ const judgeGoogleMapsBody = (body: unknown): 'success' | 'error' | null => {
 async function geocodeAddress(
   input: LocationIntelligenceInput,
   apiKey: string,
+  db: unknown,
 ): Promise<GeocodeOutcome> {
   // The suburb, postcode and state were already in hand — used for the CBD
   // lookup and the transport call, and withheld from the one request that
@@ -555,6 +579,15 @@ async function geocodeAddress(
     // provider's refusal.
     console.warn('[location-intelligence-service] no address to geocode');
     return { ok: false, providerRefused: false };
+  }
+
+  // One unit, immediately before the one request it pays for. Consuming
+  // earlier would charge for a lookup that never happens; consuming after
+  // would let concurrent isolates pass the ceiling together.
+  const budget = await consumeGoogleDailyCap(db, 'geocoding');
+  if (!budget.ok) {
+    console.warn(`[location-intelligence-service] geocode not attempted (${budget.reason})`);
+    return { ok: false, providerRefused: false, capped: true };
   }
 
   try {
@@ -642,8 +675,19 @@ async function geocodeAddress(
 async function fetchNearbyPlaces(
   coordinates: { lat: number; lng: number },
   type: string,
-  apiKey: string
+  apiKey: string,
+  db: unknown,
 ) {
+  // A refused category takes the SAME shape a failed one takes — `ok: false`
+  // with a zero count — so `unavailableCategories` records it as unmeasured
+  // and every projection downstream omits the line rather than printing a
+  // zero. That contract is RF-7.2B.1B2's and nothing here re-implements it.
+  const budget = await consumeGoogleDailyCap(db, 'places');
+  if (!budget.ok) {
+    console.warn(`[location-intelligence-service] ${type} lookup not attempted (${budget.reason})`);
+    return { ok: false, count: 0, results: [] };
+  }
+
   try {
     const radius = type === 'school' ? 3000 : type === 'park' ? 2000 : 5000;
     const response = await meteredFetch(
@@ -694,8 +738,18 @@ async function fetchNearbyPlaces(
 async function calculateCommuteTime(
   origin: { lat: number; lng: number },
   destination: { lat: number; lng: number },
-  apiKey: string
+  apiKey: string,
+  db: unknown,
 ) {
+  // One origin and one destination, so one request is one billable ELEMENT
+  // and one unit is honest here. A call site that ever sends more must consume
+  // that many — see `googleMapsDailyCaps.ts`.
+  const budget = await consumeGoogleDailyCap(db, 'distanceMatrix');
+  if (!budget.ok) {
+    console.warn(`[location-intelligence-service] commute not attempted (${budget.reason})`);
+    return COMMUTE_CAP_REACHED;
+  }
+
   try {
     const response = await meteredFetch(
       `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin.lat},${origin.lng}&destinations=${destination.lat},${destination.lng}&mode=transit&key=${apiKey}`,
