@@ -2041,6 +2041,19 @@ silently blocking submit made the server's own message unreachable; and
 product. Also fixed there: `price_display` of `"$863,850 *"` drew a lone
 asterisk as the price's terms, a footnote marker with no footnote.
 
+And the rule that reaches past this feature: **a JSONB shape constraint states
+key PRESENCE before key type.** A CHECK constraint passes on NULL and fails
+only on FALSE, and `->` on an absent key is SQL NULL — so
+`jsonb_typeof(col -> 'values') = 'object'` is NULL rather than false on an
+object with no `values` key, the whole `and` chain evaluates to NULL, and
+Postgres ACCEPTS the row along with every test below it. `manual_stats`
+shipped that way for a day and took `{"recorded_at":"x"}` without complaint.
+Assert `col ? 'values'` first, which is strictly true or false, and assert it
+ABOVE the first dereference, because `and` short-circuits left to right. It
+was found by probing the live constraint rather than by reading it, which is
+the same rule the retention purge and the verification self-test already
+answer to: **asserted by effect, never by configuration**.
+
 Three rules bite. **Off-sequence is not a position** — `on_hold` and
 `cancelled` are real statuses and not points on the line, so they resolve to
 null and the rail states the absence; placing them at an index invents a fact

@@ -333,7 +333,7 @@ Price is deliberately **not** stateable here: it is the offer rather than a
 description of the product, every document this pipeline reads states one, and
 a builder changes it by re-issuing the stock list.
 
-### Two things found by looking
+### Three things found by looking
 
 `price_display` arrives as `"$863,850 *"` — builders footnote their own
 sheets — so `splitPriceLine` handed the card a terms line of `*`, a footnote
@@ -346,3 +346,34 @@ was covered; `src/components/builder-portal/`, `src/pages/builder/` and
 `src/styles/__tests__/` were not — so **both mount guards in §1 and §7, written
 precisely because unreachable code shipped twice, were themselves never run by
 CI.** `ci.yml` now names them.
+
+And **the column's own CHECK constraint could be satisfied by a NULL.** This
+one was found by probing the live constraint rather than by reading it, which
+is the only reason it was found at all. A CHECK constraint **passes on NULL and
+fails only on FALSE**, and the constraint opened with
+`jsonb_typeof(manual_stats -> 'values') = 'object'` — where `->` on an *absent*
+key is SQL NULL, so the comparison was NULL rather than false, the whole `and`
+chain evaluated to NULL, and Postgres accepted the row. Every test below it was
+skipped for the same reason, so none of `{"recorded_at":"x"}`, a bare `{}`,
+`{"values": null}` or `{"values": [3]}` was refused.
+
+No reader was fooled — `readManualStats` already answered null for that shape,
+and the write path is one validated operation — but a constraint that does not
+enforce what its own comment claims is asserted by **configuration** rather
+than by **effect**, which is the failure this repository keeps paying for
+(`retention_effective`, the pg_cron jobs that were never scheduled, the green
+readiness readings on three tenants that had never completed a verification).
+
+The fix is to assert the key's PRESENCE first, with `?`, which is strictly true
+or false; once it holds, every dereference below it is non-NULL and each test
+means what it says. Re-probed after the change: **4 accepted** (an ordinary
+override, a stated zero, a half bathroom, all five fields with metadata) plus
+SQL NULL, and **11 refused**. Nothing persisted — the probe ran in a block that
+aborted.
+
+Two rules follow. **A JSONB shape constraint states key presence before it
+states key type**, pinned by a test that also checks the ORDER, because `and`
+short-circuits left to right and a dereference above the presence test puts the
+NULL straight back. And **a test that reads SQL strips the comments first** —
+the migration's header quotes the broken expression in order to explain it, so
+the ordering check failed on correct SQL the first time it ran.
