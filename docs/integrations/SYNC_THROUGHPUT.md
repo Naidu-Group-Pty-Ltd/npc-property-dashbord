@@ -487,10 +487,25 @@ was absent from the thread it was sent in.
 Three of those columns are real again. `20260723150000_conversation_message_delivery_safety.sql`
 adds `client_request_id`, `error_message` and `available_channels`, it was
 committed on 23 July 2026, and **it has never been applied to any database in
-the fleet** — Mission Control's `schema_migration_queue` was built on 28 August
-and its oldest entry is `20260828020000`, so nothing committed before that date
-was ever enqueued. It is re-issued as `20260913094500`, idempotent throughout,
-and applied to the prime: 684 of 834 conversations now carry a real
+the fleet**.
+
+The cause is not a bug, it is the design, and it is worth stating plainly
+because it will do this again. **Nothing applies a migration on merge.**
+`apply-migration.yml` is `workflow_dispatch` only, and deliberately so — its
+own header records why `supabase db push` is unsafe here: measured 13 Aug 2026,
+the ledger called 133 migrations pending while all but one family of the tables
+and functions they declare already existed, so `db push` would replay ~130
+files including data mutations that are not idempotent. "Deciding *which* file
+is a human judgement made before dispatch." So a migration is committed, CI
+goes green, the PR merges, the cascade carries the FILE to every clone — and
+the columns exist nowhere until somebody dispatches it by hand. Nobody
+dispatched this one, for fifty-two days, while three features quietly did
+nothing.
+
+It is re-issued as `20260913094500`, idempotent throughout, and applied to the
+prime and all three clones — **asserted by effect**, by reading
+`information_schema.columns` back rather than by trusting the call: 684 of the
+prime's 834 conversations and 78 of the clone's 320 now carry a real
 `available_channels`, which the inbox's channel filter has been reading as
 `undefined` on every row since the day it was written.
 
