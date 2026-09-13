@@ -12,9 +12,9 @@
  *
  *  * `security_consume_rate_limit` increments by **exactly one per call**
  *    (`count = limits.count + 1`), so **one unit is one outbound request**, and
- *    it must be consumed once immediately before each one. A caller that makes
- *    four billable requests behind one check has a ceiling that under-counts
- *    the bill fourfold — which is what `builderStock/images.ts` did.
+ *    it must be consumed once immediately before each one. A caller that made
+ *    several billable requests behind a single check would have a ceiling that
+ *    under-counts the bill by that factor.
  *  * The allow test is `count <= p_max`: a ceiling of 250 admits the 250th
  *    request and refuses the 251st.
  *  * The window is **fixed, not calendar**. `window_start` is stamped on first
@@ -183,6 +183,50 @@ export interface CapVerdict {
 }
 
 const ALLOWED: CapVerdict = { ok: true };
+
+/**
+ * What a caller may say OUT LOUD about a refusal.
+ *
+ * The three internal reasons are three different operational facts and stay
+ * distinct in logs. Only one of them is "you have used your allowance for
+ * today"; a provider somebody switched off and a shared counter that cannot be
+ * reached are both **availability**, and reporting either as an exhausted quota
+ * is simply untrue — it tells an operator to wait until tomorrow for a state
+ * that waiting will not clear.
+ *
+ * `temporarily_unavailable` and `daily_quota_exceeded` are both existing codes
+ * at these call sites; nothing new is introduced.
+ */
+export type GoogleCapClientStatus = 'daily_quota_exceeded' | 'temporarily_unavailable';
+
+export function clientStatusFor(reason: GoogleCapRefusal | undefined): GoogleCapClientStatus {
+  return reason === 'daily_cap' ? 'daily_quota_exceeded' : 'temporarily_unavailable';
+}
+
+/**
+ * The HTTP reading of the same distinction.
+ *
+ * 429 says "you have asked too often, try later" and is true of an exhausted
+ * allowance. 503 says "this is not available right now", which is what a
+ * switched-off provider and an unreadable counter actually are. Owned here so
+ * a caller never spells either literal and the two readings cannot drift apart.
+ */
+export function clientHttpStatusFor(reason: GoogleCapRefusal | undefined): 429 | 503 {
+  return reason === 'daily_cap' ? 429 : 503;
+}
+
+/**
+ * The same distinction as prose, for a status a person or a record will read.
+ *
+ * Neither sentence names a vendor, a configuration key, a limit or a piece of
+ * infrastructure — a persisted `error_message` outlives the incident and is
+ * read by people who were not there.
+ */
+export function clientMessageFor(reason: GoogleCapRefusal | undefined): string {
+  return reason === 'daily_cap'
+    ? 'The daily allowance for this kind of lookup has been used. It resets automatically.'
+    : 'This lookup is temporarily unavailable.';
+}
 
 /**
  * Consume one unit of the daily allowance for ONE outbound Google request.

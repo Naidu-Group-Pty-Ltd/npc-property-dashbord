@@ -176,12 +176,17 @@ describe('RF-7.2B.1B0 — the reason reaches the caller', () => {
     expect(assignment.indexOf('geocoded.providerRefused'))
       .toBeLessThan(assignment.indexOf("'geocoder_unavailable'"));
 
-    // RC-2 — and a spending ceiling is NOT a provider refusal. It produces no
+    // RC-2 — and a refused SPEND is not a provider refusal. It produces no
     // coordinate either, but it sends an operator to a completely different
-    // remedy: their own configured limit rather than broken map access. The
-    // two must never collapse into one reason.
+    // remedy: this deployment's own controls rather than broken map access.
+    // The two must never collapse into one reason.
+    //
+    // The state is named for what happened rather than for one of its causes:
+    // the lookup was not attempted, and it might not have been because the
+    // provider was switched off, because the allowance was spent, or because
+    // the shared counter could not be read. `capReason` carries which.
     expect(assignment).toContain('geocoded.capped');
-    expect(assignment).toContain("'geocoder_daily_cap_reached'");
+    expect(assignment).toContain("'geocoder_not_attempted'");
     expect(assignment.indexOf('geocoded.capped'))
       .toBeLessThan(assignment.indexOf('geocoded.providerRefused'));
   });

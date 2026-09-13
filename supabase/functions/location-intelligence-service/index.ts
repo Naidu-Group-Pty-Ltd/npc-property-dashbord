@@ -26,7 +26,7 @@ import {
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
-import { consumeGoogleDailyCap } from "../_shared/googleMapsDailyCaps.ts";
+import { consumeGoogleDailyCap, type GoogleCapRefusal } from "../_shared/googleMapsDailyCaps.ts";
 import { assessAuPoint } from "../_shared/auGeoSanity.pure.ts";
 import { buildAuGeocodeQuery } from "../_shared/auGeocodeQuery.pure.ts";
 import { sourceUnavailable, isSourceUnavailable } from "../_shared/sourceUnavailable.pure.ts";
@@ -204,7 +204,7 @@ Deno.serve(async (req) => {
 type UnresolvedReason =
   | 'address_not_resolved'
   | 'geocoder_unavailable'
-  | 'geocoder_daily_cap_reached'
+  | 'geocoder_not_attempted'
   | 'supplied_coordinates_rejected';
 
 const UNRESOLVED_MESSAGE: Record<UnresolvedReason, string> = {
@@ -213,16 +213,22 @@ const UNRESOLVED_MESSAGE: Record<UnresolvedReason, string> = {
   geocoder_unavailable:
     'The geocoding service did not answer for this request, so no location could be established. '
     + 'This is a fault in this deployment\'s map service access — the address supplied was never rejected as invalid.',
-  // A ceiling is not a fault, and it must not send an operator to the remedy
-  // for one — `geocoder_unavailable` tells them to go and look at map service
-  // access, which would be a wasted afternoon.
+  // Named for what happened rather than for one of its causes. The lookup was
+  // not attempted, and there are three reasons it might not have been: the
+  // provider was switched off, the day's allowance was spent, or the shared
+  // counter could not be read. `daily_cap_reached` was true for only one of
+  // them and told an operator to wait until tomorrow for two states that
+  // waiting will not clear. The exact reason is on the outcome and in the log.
+  //
+  // It is still distinct from `geocoder_unavailable`, which means map service
+  // access is broken and is a genuinely different afternoon's work.
   //
   // This string is returned in the response body and can reach a client
   // surface, so it names no environment variable, no limit and no piece of
   // infrastructure. Which of the three refusals it was — the provider turned
   // off, the allowance spent, the shared limiter unreachable — is in the logs,
   // where an operator looks and a customer does not.
-  geocoder_daily_cap_reached:
+  geocoder_not_attempted:
     'Location details are not available for this property at the moment. Nothing is '
     + 'wrong with the address — it was never rejected — and no location information has '
     + 'been estimated in its place.',
@@ -269,7 +275,7 @@ async function fetchLocationIntelligence(
     reason = geocoded.ok
       ? 'address_not_resolved'
       : geocoded.capped
-        ? 'geocoder_daily_cap_reached'
+        ? 'geocoder_not_attempted'
         : geocoded.providerRefused
           ? 'geocoder_unavailable'
           : 'address_not_resolved';
@@ -541,8 +547,10 @@ type GeocodeOutcome =
   | { ok: true; lat: number; lng: number; matchedAddress: string | null }
   // `capped` is separate from `providerRefused` because the two send an
   // operator to opposite remedies — the same reason the Didit broker reads a
-  // refusal from a header rather than guessing it from a body.
-  | { ok: false; providerRefused: boolean; capped?: boolean };
+  // refusal from a header rather than guessing it from a body. `capReason`
+  // carries WHICH of the three it was, so the diagnostic record is true even
+  // though the client-facing reading deliberately is not that specific.
+  | { ok: false; providerRefused: boolean; capped?: boolean; capReason?: GoogleCapRefusal };
 
 /**
  * The only Google geocoder status that is a statement about the ADDRESS.
@@ -591,7 +599,7 @@ async function geocodeAddress(
   const budget = await consumeGoogleDailyCap(db, 'geocoding');
   if (!budget.ok) {
     console.warn(`[location-intelligence-service] geocode not attempted (${budget.reason})`);
-    return { ok: false, providerRefused: false, capped: true };
+    return { ok: false, providerRefused: false, capped: true, capReason: budget.reason };
   }
 
   try {

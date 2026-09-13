@@ -23,7 +23,12 @@
  */
 import { meteredFetch } from '../meteredFetch.ts';
 import { killSwitchActive } from '../publicAbuseControls.ts';
-import { consumeGoogleDailyCap, type GoogleCapKind } from '../googleMapsDailyCaps.ts';
+import {
+  clientMessageFor,
+  consumeGoogleDailyCap,
+  type GoogleCapKind,
+  type GoogleCapRefusal,
+} from '../googleMapsDailyCaps.ts';
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import { geocodableAddress, hasPhotographableStreetAddress } from './normalise.pure.ts';
 import { hasReadySourceImage } from './sourceImages.ts';
@@ -332,8 +337,15 @@ export async function enrichFromGoogle(
   //
   // `GOOGLE_CIRCUIT_SCOPE` is untouched: it still names this caller's breaker,
   // which is about Google failing rather than about what we have spent.
+  // The refusal REASON travels out, because the message built from it is
+  // persisted on the row as `error_message` and outlives the incident. Saying
+  // "the daily limit has been reached" about a provider somebody switched off,
+  // or about a counter that could not be read, is a false record that whoever
+  // reads it next will act on.
+  let lastRefusal: GoogleCapRefusal | undefined;
   const spend = async (kind: GoogleCapKind): Promise<boolean> => {
     const verdict = await consumeGoogleDailyCap(db, kind);
+    lastRefusal = verdict.reason;
     if (!verdict.ok) console.warn(`[builderStock] ${kind} not attempted (${verdict.reason})`);
     return verdict.ok;
   };
@@ -342,7 +354,7 @@ export async function enrichFromGoogle(
     if (!await spend('geocoding')) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'The daily limit for location imagery has been reached.', 'google', false);
+        clientMessageFor(lastRefusal), 'google', false);
     }
     const geocoded = await meteredFetch(
       `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&region=au&key=${apiKey}`,
@@ -382,7 +394,7 @@ export async function enrichFromGoogle(
     if (!await spend('streetView')) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'The daily limit for location imagery has been reached.', 'google', false);
+        clientMessageFor(lastRefusal), 'google', false);
     }
     const metadata = await meteredFetch(
       `https://maps.googleapis.com/maps/api/streetview/metadata?location=${encodeURIComponent(point)}&key=${apiKey}`,

@@ -10,7 +10,7 @@ import {
   redactError,
   sanitizeShortText,
 } from "../_shared/publicAbuseControls.ts";
-import { consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
+import { clientHttpStatusFor, clientStatusFor, consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
 
 // WP-10 — Google Places autocomplete abuse controls.
 //   * Per-IP + per-session + global daily quotas.
@@ -75,8 +75,16 @@ Deno.serve(async (req) => {
     // is still a form an operator can type into.
     const globalCheck = await consumeGoogleDailyCap(supabase, 'placesAutocomplete');
     if (!globalCheck.ok) {
+      // The exact reason goes to the log; the caller is told only whether this
+      // is an exhausted allowance (which clears tomorrow) or unavailability
+      // (which does not). Reporting a kill switch or an unreachable counter as
+      // "daily quota exceeded" sends an operator away to wait for a state that
+      // waiting will not change.
       console.warn(`[google-places-autocomplete] not attempted (${globalCheck.reason})`);
-      return j({ error: 'daily_quota_exceeded', success: false }, 429);
+      return j(
+        { error: clientStatusFor(globalCheck.reason), success: false },
+        clientHttpStatusFor(globalCheck.reason),
+      );
     }
 
     const params = new URLSearchParams({

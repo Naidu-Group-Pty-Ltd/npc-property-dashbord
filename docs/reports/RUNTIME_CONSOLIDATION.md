@@ -203,11 +203,12 @@ Two corrections to earlier readings, recorded because the method matters more
 than the conclusion:
 
 * `builderStock/images.ts` was described as spending "one unit for up to four
-  requests". It was not. It has a `spend()` helper called immediately before
-  each of its four billable requests — the per-request **accounting** was
-  already right. What was wrong is the **routing**: all four counted against
-  `google_street_view`, so its geocode never touched the geocoding budget and
-  a static map was billed to Street View.
+  requests". **That was wrong and no such defect ever existed.** It has a
+  `spend()` helper called immediately before each of its four billable
+  requests, so the per-request accounting was always correct. The real defect
+  was **routing**: all four counted against `google_street_view`, so its
+  geocode never touched the geocoding budget and a static map was billed to
+  Street View.
 * The earlier count came from grepping how many times `enforceGlobalDailyQuota`
   appears in a file, which counts the import and the helper definition rather
   than the call sites. `googleMapsDailyCaps.spec.ts` now asserts the matrix by
@@ -336,3 +337,48 @@ hold:
 | every geocoding caller | consumes the one product-wide budget |
 | every ceiling | declared in the registry and the generated allow-list |
 | every client-reachable refusal | no env name, no infrastructure wording, no digit |
+
+---
+
+## §6 — A refusal is reported for what it actually was
+
+Three internal reasons, and only one of them is "you have used today's
+allowance". The first pass let all three reach a caller as
+`daily_quota_exceeded` — `google-places-autocomplete` and `street-view`
+answered it on every refusal, and `builderStock/images.ts` **persisted** "The
+daily limit for location imagery has been reached" onto the row, where it
+outlives the incident and is read by people who were not there.
+
+That is not a wording nit. "Daily quota exceeded" tells an operator to wait
+until tomorrow, and waiting clears neither of the other two: a provider
+somebody switched off stays off, and a shared counter that cannot be read stays
+unreadable.
+
+| internal reason | client / persisted status | HTTP |
+| --- | --- | ---: |
+| `daily_cap` | `daily_quota_exceeded` | 429 |
+| `kill_switch` | `temporarily_unavailable` | 503 |
+| `limiter_unavailable` | `temporarily_unavailable` | 503 |
+| unknown / absent | `temporarily_unavailable` | 503 |
+
+Both codes already existed at these call sites; nothing new is introduced.
+`clientStatusFor`, `clientHttpStatusFor` and `clientMessageFor` are the one
+mapping, so four callers cannot drift — and no call site spells either literal,
+which is what a test can then assert.
+
+The exact reason still reaches the log at every caller, and
+`location-intelligence-service` carries it on the outcome as `capReason`.
+
+**The geocoder's own state was renamed for the same reason.**
+`geocoder_daily_cap_reached` is returned in the response body and was true of
+one refusal in three. It is `geocoder_not_attempted` now — named for what
+happened rather than for one of its causes — and it stays distinct from
+`geocoder_unavailable`, which means map service access is broken and is a
+genuinely different afternoon's work.
+
+Four tests pin it: the mapping itself; that the two neutral reasons never
+produce allowance wording; that no client-reachable string carries a
+configuration name, infrastructure vocabulary or a digit; and that no caller
+spells the exhausted-quota claim itself. The last is judged on **code with
+comments stripped** — a comment may quote the false claim in order to forbid
+it, which is `rf72b1b0GeocodeRefusal`'s own rule.

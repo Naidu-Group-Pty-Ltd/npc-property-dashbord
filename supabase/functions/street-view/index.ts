@@ -10,7 +10,7 @@ import {
   killSwitchActive,
   redactError,
 } from '../_shared/publicAbuseControls.ts';
-import { consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
+import { clientHttpStatusFor, clientStatusFor, consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
 
 // Server-side Google Street View proxy. The browser never sees the server key.
 // Returns coverage metadata plus a base64 static preview when imagery exists.
@@ -89,7 +89,10 @@ Deno.serve(async (req) => {
     const metadataQuota = await consumeGoogleDailyCap(supabase, 'streetView');
     if (!metadataQuota.ok) {
       console.warn(`[street-view] metadata not attempted (${metadataQuota.reason})`);
-      return j({ error: 'daily_quota_exceeded', success: false }, 429);
+      return j(
+        { error: clientStatusFor(metadataQuota.reason), success: false },
+        clientHttpStatusFor(metadataQuota.reason),
+      );
     }
 
     const metaResponse = await fetchWithTimeout(
@@ -119,7 +122,10 @@ Deno.serve(async (req) => {
     const imageQuota = await consumeGoogleDailyCap(supabase, 'streetView');
     if (!imageQuota.ok) {
       console.warn(`[street-view] image not attempted (${imageQuota.reason})`);
-      return j({ error: 'daily_quota_exceeded', success: false }, 429);
+      return j(
+        { error: clientStatusFor(imageQuota.reason), success: false },
+        clientHttpStatusFor(imageQuota.reason),
+      );
     }
     const imageResponse = await fetchWithTimeout(`https://maps.googleapis.com/maps/api/streetview?${params.toString()}`, {}, 6000);
     if (!imageResponse.ok) {

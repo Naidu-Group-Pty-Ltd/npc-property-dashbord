@@ -7,11 +7,14 @@ import {
   COMMUTE_NO_ROUTE,
 } from '@/lib/reports/location/cbdDestination.pure';
 import {
+  clientMessageFor,
+  clientStatusFor,
   consumeGoogleDailyCap,
   dailyCapFor,
   GOOGLE_CAP_ENV_NAMES,
   GOOGLE_CAP_SCOPES,
   type GoogleCapKind,
+  type GoogleCapRefusal,
 } from '../../../../supabase/functions/_shared/googleMapsDailyCaps.ts';
 import {
   measuredCount,
@@ -20,6 +23,16 @@ import {
 
 const ROOT = join(__dirname, '../../../..');
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+
+/**
+ * Source with comments removed.
+ *
+ * `rf72b1b0GeocodeRefusal.spec.ts` established the rule these assertions
+ * follow: a claim may appear in PROSE — including a comment that quotes the
+ * false claim in order to forbid it — and may not appear in CODE.
+ */
+const codeOnly = (text: string) =>
+  text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 
 const ALL_KINDS: GoogleCapKind[] = [
   'geocoding', 'placesNearby', 'placesAutocomplete',
@@ -168,7 +181,7 @@ describe('RC-2 — no client-facing output may carry infrastructure wording', ()
     // The geocode refusal is returned in `location-intelligence-service`'s
     // response body, so it is judged the same way.
     (read('supabase/functions/location-intelligence-service/index.ts')
-      .match(/geocoder_daily_cap_reached:[\s\S]*?',\n/)?.[0] ?? ''),
+      .match(/geocoder_not_attempted:[\s\S]*?',\n/)?.[0] ?? ''),
   ];
 
   it('exposes no environment-variable name', () => {
@@ -269,5 +282,71 @@ describe('RC-2 — every billable production caller is accounted for', () => {
       expect(registry, name).toContain(name);
       expect(allowlist, name).toContain(name);
     }
+  });
+});
+
+describe('RC-2 — a refusal is reported for what it actually was', () => {
+  const ALL_REASONS: GoogleCapRefusal[] = ['kill_switch', 'daily_cap', 'limiter_unavailable'];
+
+  it('calls it an exhausted quota ONLY when the allowance is genuinely spent', () => {
+    // "Daily quota exceeded" tells an operator to wait until tomorrow. That is
+    // true of exactly one of the three, and waiting clears neither of the
+    // others — a provider somebody switched off stays off, and a counter that
+    // cannot be read stays unreadable.
+    expect(clientStatusFor('daily_cap')).toBe('daily_quota_exceeded');
+    expect(clientStatusFor('kill_switch')).toBe('temporarily_unavailable');
+    expect(clientStatusFor('limiter_unavailable')).toBe('temporarily_unavailable');
+    // An unknown or absent reason takes the neutral reading, never the
+    // specific claim.
+    expect(clientStatusFor(undefined)).toBe('temporarily_unavailable');
+  });
+
+  it('says the same thing in prose, for a status a person will read', () => {
+    expect(clientMessageFor('daily_cap')).toMatch(/allowance/i);
+    for (const reason of ['kill_switch', 'limiter_unavailable'] as GoogleCapRefusal[]) {
+      expect(clientMessageFor(reason)).not.toMatch(/daily|allowance|limit|quota/i);
+    }
+  });
+
+  it('never leaks configuration or infrastructure vocabulary in either form', () => {
+    for (const reason of [...ALL_REASONS, undefined]) {
+      const text = clientMessageFor(reason);
+      expect(text).not.toMatch(/GOOGLE_[A-Z_]+/);
+      expect(text).not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/);
+      expect(text).not.toMatch(/\b(Google|Maps|API|endpoint|kill switch|rate.?limit|env)\b/i);
+      expect(text).not.toMatch(/\d/);
+    }
+  });
+
+  it('no caller flattens all three refusals into an exhausted-quota claim', () => {
+    // The defect this replaces: `street-view` and `google-places-autocomplete`
+    // answered `daily_quota_exceeded` for every refusal, and
+    // `builderStock/images.ts` PERSISTED "the daily limit ... has been reached"
+    // onto the row, where it outlives the incident.
+    const callers = [
+      'supabase/functions/google-places-autocomplete/index.ts',
+      'supabase/functions/street-view/index.ts',
+      'supabase/functions/_shared/builderStock/images.ts',
+    ];
+    for (const caller of callers) {
+      const code = codeOnly(read(caller));
+      // The claim may only be made through the shared mapping...
+      expect(code, caller).toMatch(/clientStatusFor|clientMessageFor/);
+      // ...never spelled at the call site, in either form.
+      expect(code, caller).not.toMatch(/'daily_quota_exceeded'/);
+      expect(code, caller).not.toMatch(/daily limit .{0,40}reached/i);
+    }
+  });
+
+  it("the geocoder's own state is named for what happened, not for one cause", () => {
+    // The reason CODE is returned in the response body, so it has to be true
+    // for all three refusals. `geocoder_daily_cap_reached` was true for one.
+    const src = read('supabase/functions/location-intelligence-service/index.ts');
+    expect(src).not.toContain('geocoder_daily_cap_reached');
+    expect(src).toContain('geocoder_not_attempted');
+    // And the exact reason still travels, so the diagnostic record is true
+    // even though the client-facing reading deliberately is not that specific.
+    expect(src).toMatch(/capReason\??:\s*GoogleCapRefusal/);
+    expect(src).toContain('capReason: budget.reason');
   });
 });
