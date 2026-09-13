@@ -54,17 +54,33 @@ export function dateFieldFor(folder: MailFolder | string): string {
  * It was nearly invisible while the read was one `$top=30` page of the newest
  * mail. The backfill made it structural: walking that path backwards imported
  * the team's own outbound mail, drafts and deleted mail into Email Co-Pilot as
- * unread incoming correspondence. Measured on the prime 13 Sep 2026, after one
- * day of it — 934 rows whose sender is our own domain sitting in
- * `folder = 'inbox'`, 34 messages present in BOTH folders because the same
- * Graph message was imported twice under two names, and every one of the
- * 2,303 rows written that morning stamped `status = 'unread'` with a bell
- * notification fired per row per viewer, for mail dating to 2025.
+ * unread incoming correspondence. Measured on the prime 13 Sep 2026, the whole
+ * of it landed in ONE hour (07:00–08:00 UTC): 2,303 rows, every one written
+ * `folder = 'inbox'` and `status = 'unread'`, carrying `received_at` between
+ * 2025-01-27 and 2025-11-24.
  *
- * There is no column that can tell a wrongly-filed row from a real one after
- * the fact, which is why the repair migration keys on the two things that ARE
- * decidable — a sender inside our own domain, and a (subject, received_at)
- * that also exists under `sent`.
+ * **How much of that is repairable by SQL was measured, and it is less than it
+ * first looked.** Two signatures were proposed and neither survives:
+ *
+ *   - 934 rows in `folder = 'inbox'` whose sender is our own domain — but 660
+ *     of those pre-date the incident. A colleague emailing you lands in your
+ *     Inbox and belongs there, so an own-domain sender is an ordinary inbox
+ *     state rather than a marker of anything.
+ *   - 34 messages present in BOTH folders — real, and every one created
+ *     between January and 2 September 2026. Not one is in the damage hour.
+ *     Inside it, the (subject, received_at) and (conversation_id, received_at)
+ *     cross-folder tests both return ZERO.
+ *
+ * So nothing stored can tell a wrongly-filed row from a real one, and re-filing
+ * on a guess would HIDE real inbox mail. **The folder is repaired by re-reading
+ * Graph through the corrected path above, never by SQL.**
+ *
+ * What IS decidable is the arrival stamp, and that is what
+ * `20261119190000_email_backfill_was_not_an_arrival.sql` repairs: mail already
+ * more than thirty days old when it was imported was never a new arrival. The
+ * bell it rang is the larger harm — 9,196 notifications in that hour, four
+ * recipients times ~2,299 messages, against three to six in every other hour
+ * of the preceding three days.
  */
 export function mailboxPathFor(
   mailboxEmail: string,
