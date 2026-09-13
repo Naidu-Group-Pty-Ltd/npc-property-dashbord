@@ -1,11 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   COMMUTE_CAP_REACHED,
   COMMUTE_NO_ROUTE,
 } from '@/lib/reports/location/cbdDestination.pure';
 import {
+  consumeGoogleDailyCap,
   dailyCapFor,
+  GOOGLE_CAP_ENV_NAMES,
   GOOGLE_CAP_SCOPES,
   type GoogleCapKind,
 } from '../../../../supabase/functions/_shared/googleMapsDailyCaps.ts';
@@ -14,124 +18,256 @@ import {
   unavailableCategories,
 } from '../../../../supabase/functions/_shared/reports/location/placesAvailability.pure.ts';
 
+const ROOT = join(__dirname, '../../../..');
+const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+
+const ALL_KINDS: GoogleCapKind[] = [
+  'geocoding', 'placesNearby', 'placesAutocomplete',
+  'distanceMatrix', 'streetView', 'staticMaps',
+];
+
 /**
- * RC-2 — the daily ceiling on paid Google Maps requests.
+ * A `supabase`-shaped double for `security_consume_rate_limit`.
  *
- * The rule under test is the mandate's, and it is the one that makes a
- * spending control safe to switch on: **cost safety must never create false
- * data.** A ceiling that answered with a substituted figure would be worse
- * than no ceiling, because a reader cannot tell a cheap number from a measured
- * one.
+ * `unavailable` returns an error, which is what drives `consumeQuota` onto its
+ * per-isolate fallback and sets `degraded`.
  */
-describe('Google Maps daily caps', () => {
+function limiter(mode: 'healthy' | 'exhausted' | 'unavailable') {
+  const calls: string[] = [];
+  return {
+    calls,
+    rpc: async (_fn: string, args: { p_key: string }) => {
+      calls.push(args.p_key);
+      if (mode === 'unavailable') return { data: null, error: { message: 'rpc down' } };
+      return { data: [{ allowed: mode === 'healthy', retry_after_seconds: 0 }], error: null };
+    },
+  };
+}
+
+const noEnv = () => undefined;
+
+describe('RC-2 — the Maps spending boundary', () => {
   const env = (values: Record<string, string>) => (k: string) => values[k];
 
-  it('reads the EXISTING environment names — no second vocabulary', () => {
-    // These three names are what `resolve-listing-coordinates`,
-    // `google-places-autocomplete` and `street-view` already read. A new name
-    // here would mean an operator configuring a ceiling that half the product
-    // ignores.
-    expect(dailyCapFor('geocoding', env({ GOOGLE_GEOCODING_DAILY_LIMIT: '42' }))).toBe(42);
-    expect(dailyCapFor('places', env({ GOOGLE_PLACES_DAILY_LIMIT: '7' }))).toBe(7);
-    expect(dailyCapFor('distanceMatrix', env({ GOOGLE_DISTANCE_MATRIX_DAILY_LIMIT: '9' }))).toBe(9);
-  });
-
-  it('shares ONE Places bucket with the autocomplete function', () => {
-    // `google-places-autocomplete` consumes under exactly this scope. Sharing
-    // it is what makes `GOOGLE_PLACES_DAILY_LIMIT` mean what it says across
-    // the product rather than being a per-function allowance.
-    expect(GOOGLE_CAP_SCOPES.places).toBe('google_places');
+  it('has one scope per Google BILLING SKU, not per API family', () => {
+    // Nearby Search and Autocomplete are separately priced, so one bucket
+    // would let a busy address field spend the allowance a report needs.
+    expect(GOOGLE_CAP_SCOPES.placesNearby).not.toBe(GOOGLE_CAP_SCOPES.placesAutocomplete);
+    expect(new Set(Object.values(GOOGLE_CAP_SCOPES)).size)
+      .toBe(Object.keys(GOOGLE_CAP_SCOPES).length);
   });
 
   it('uses scopes the rate-limit key regex accepts', () => {
-    // `security_consume_rate_limit` refuses a key outside
-    // `^[a-z0-9:_./-]{1,200}$` by RAISING, which would turn a ceiling into a
-    // 500 on every request rather than a refusal.
+    // `security_consume_rate_limit` RAISES on a key outside this pattern, which
+    // would turn a ceiling into a 500 on every request rather than a refusal.
     for (const scope of Object.values(GOOGLE_CAP_SCOPES)) {
       expect(`public:global:${scope}:daily`).toMatch(/^[a-z0-9:_./-]{1,200}$/);
     }
   });
 
-  it('defaults to a zero-paid-usage ceiling, never to uncapped', () => {
-    const kinds: GoogleCapKind[] = ['geocoding', 'places', 'distanceMatrix'];
-    for (const kind of kinds) {
-      const cap = dailyCapFor(kind, () => undefined);
+  it('defaults to a zero-paid ceiling for every SKU, never to uncapped', () => {
+    for (const kind of ALL_KINDS) {
+      const cap = dailyCapFor(kind, noEnv);
       expect(cap).toBeGreaterThan(0);
-      // The existing sites default to 5000. These call sites had NO ceiling at
-      // all, so their default is the guardrail rather than a generous bound.
       expect(cap).toBeLessThanOrEqual(250);
     }
+    expect(dailyCapFor('placesNearby', noEnv)).toBe(150);
   });
 
   it('treats a malformed limit as the default, never as uncapped', () => {
-    // A typo must not remove a paid provider's ceiling, and must not disable a
-    // working feature either.
     for (const bad of ['', 'abc', '0', '-5', '12.5', 'NaN']) {
-      expect(dailyCapFor('places', env({ GOOGLE_PLACES_DAILY_LIMIT: bad })))
-        .toBe(dailyCapFor('places', () => undefined));
+      expect(dailyCapFor('placesNearby', env({ GOOGLE_PLACES_NEARBY_DAILY_LIMIT: bad })))
+        .toBe(dailyCapFor('placesNearby', noEnv));
     }
   });
 
-  it('keeps Places at the binding constraint for a report enrichment', () => {
-    // One enrichment is 1 geocode + 6 Places + 1 Distance Matrix, confirmed by
-    // the ledger's exact 6:1 Places:Distance ratio. Places is therefore what
-    // actually limits report throughput, and it is deliberately the tightest.
-    const places = dailyCapFor('places', () => undefined);
-    const geocoding = dailyCapFor('geocoding', () => undefined);
-    expect(places).toBeLessThan(geocoding);
-    expect(Math.floor(places / 6)).toBeGreaterThanOrEqual(20);
-  });
-
-  it('says a ceiling was reached WITHOUT claiming anything about the place', () => {
-    // The whole point. `no_route_returned` is a measurement — we asked, and
-    // transit does not connect these points — and a reader may act on it.
-    // A ceiling means nobody asked, and must never be readable as the former.
-    expect(COMMUTE_CAP_REACHED.measured).toBe(false);
-    expect(COMMUTE_CAP_REACHED.reason).toBe('daily_cap_reached');
-    expect(COMMUTE_CAP_REACHED.reason).not.toBe(COMMUTE_NO_ROUTE.reason);
-    // No digit may appear in a refusal: a number here is a number a report can
-    // print.
-    expect(COMMUTE_CAP_REACHED.detail).not.toMatch(/\d/);
-    // And it must name the ceiling as ours rather than as a fact about the
-    // location, or an operator goes looking for a broken provider.
-    expect(COMMUTE_CAP_REACHED.detail).toMatch(/not a finding about the location/i);
+  it('still honours the legacy Places name for autocomplete', () => {
+    // Splitting the SKUs must not silently discard a value an operator set.
+    expect(dailyCapFor('placesAutocomplete', env({ GOOGLE_PLACES_DAILY_LIMIT: '42' }))).toBe(42);
+    // The specific name wins where both are set.
+    expect(dailyCapFor('placesAutocomplete', env({
+      GOOGLE_PLACES_DAILY_LIMIT: '42',
+      GOOGLE_PLACES_AUTOCOMPLETE_DAILY_LIMIT: '7',
+    }))).toBe(7);
+    // Nearby has no legacy name — it never had a ceiling at all.
+    expect(dailyCapFor('placesNearby', env({ GOOGLE_PLACES_DAILY_LIMIT: '42' }))).toBe(150);
   });
 });
 
-/**
- * The refusal shapes the service returns, asserted against the contract each
- * one has to satisfy downstream. These are the literal values wired into
- * `location-intelligence-service`; the test exists so that a future edit which
- * "simplifies" a refusal into a zero fails here rather than in a client's PDF.
- */
-describe('a refused lookup is absent, never zero', () => {
-  it('a refused Places category is unmeasured, not a measured zero', () => {
-    // This is the literal shape `fetchNearbyPlaces` returns when the ceiling
-    // refuses. `count: 0` is there for shape compatibility with a genuinely
-    // empty result; `ok: false` is what every reader keys on.
-    const refused = { ok: false, count: 0, results: [] };
-    const reached = { ok: true, count: 0, results: [] };
-
-    // A refusal is unmeasured...
-    expect(measuredCount(refused)).toBeNull();
-    // ...while a rural address the provider DID answer for keeps its real
-    // zero, because "no hospital within five kilometres" is a fact worth
-    // printing. Collapsing these two is the defect this contract exists for.
-    expect(measuredCount(reached)).toBe(0);
-
-    const lookups = {
-      transit: reached, schools: reached, healthcare: refused,
-      shopping: reached, recreation: reached, restaurants: reached,
-    };
-    expect(unavailableCategories(lookups)).toEqual(['healthcare']);
+describe('RC-2 release gate — the four refusal states and the two success states', () => {
+  it('limiter healthy → the request is permitted, and one unit is consumed', async () => {
+    const db = limiter('healthy');
+    const verdict = await consumeGoogleDailyCap(db, 'geocoding', noEnv);
+    expect(verdict).toEqual({ ok: true });
+    // One consume per call, against the geocoding scope.
+    expect(db.calls).toEqual(['public:global:google_geocoding:daily']);
   });
 
-  it('a refused geocode is flagged capped, so the operator is not sent to the wrong remedy', () => {
-    // `providerRefused` means map service access is broken and an operator
-    // should go and look at it. `capped` means this deployment declined to
-    // spend. Both produce no coordinate; only one is a fault.
-    const refusal = { ok: false as const, providerRefused: false, capped: true };
-    expect(refusal.capped).toBe(true);
-    expect(refusal.providerRefused).toBe(false);
+  it('daily allowance exhausted → the paid request is refused', async () => {
+    const verdict = await consumeGoogleDailyCap(limiter('exhausted'), 'placesNearby', noEnv);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toBe('daily_cap');
+  });
+
+  it('global limiter DEGRADED → the paid request is refused', async () => {
+    // The rule this test exists for. `consumeQuota` falls back to a per-isolate
+    // counter and answers `ok: true` for the first N requests of EVERY isolate.
+    // Edge Functions scale horizontally, so that is not a product-wide ceiling
+    // — under the exact fault the ceiling exists for, spend would be unbounded.
+    const verdict = await consumeGoogleDailyCap(limiter('unavailable'), 'geocoding', noEnv);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toBe('limiter_unavailable');
+    // And it must NOT be reported as an exhausted allowance: they send an
+    // operator to opposite remedies.
+    expect(verdict.reason).not.toBe('daily_cap');
+  });
+
+  it('kill switch active → refused, for the correct internal reason', async () => {
+    const verdict = await consumeGoogleDailyCap(
+      limiter('healthy'), 'streetView',
+      (k) => (k === 'GOOGLE_STREET_VIEW_KILL_SWITCH' ? '1' : undefined),
+    );
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toBe('kill_switch');
+    // A provider somebody turned off and an allowance that ran out are
+    // different operational facts and stay distinct.
+    expect(verdict.reason).not.toBe('daily_cap');
+  });
+
+  it('provider failure → unavailable, not zero', () => {
+    const refused = { ok: false, count: 0, results: [] };
+    expect(measuredCount(refused)).toBeNull();
+  });
+
+  it('a genuine successful zero is RETAINED', () => {
+    // A rural address with no hospital within five kilometres is a fact worth
+    // printing. Collapsing it with a failure is the defect this guards.
+    const reached = { ok: true, count: 0, results: [] };
+    expect(measuredCount(reached)).toBe(0);
+  });
+
+  it('a successful measurement is retained unchanged', () => {
+    expect(measuredCount({ ok: true, count: 7, results: [] })).toBe(7);
+  });
+
+  it('names exactly the refused category, not the whole lookup', () => {
+    const ok = { ok: true, count: 3, results: [] };
+    const refused = { ok: false, count: 0, results: [] };
+    expect(unavailableCategories({
+      transit: ok, schools: ok, healthcare: refused,
+      shopping: ok, recreation: ok, restaurants: ok,
+    })).toEqual(['healthcare']);
+  });
+});
+
+describe('RC-2 — no client-facing output may carry infrastructure wording', () => {
+  /** Strings a paying client could read. */
+  const CLIENT_FACING = [
+    COMMUTE_CAP_REACHED.detail,
+    COMMUTE_NO_ROUTE.detail,
+    // The geocode refusal is returned in `location-intelligence-service`'s
+    // response body, so it is judged the same way.
+    (read('supabase/functions/location-intelligence-service/index.ts')
+      .match(/geocoder_daily_cap_reached:[\s\S]*?',\n/)?.[0] ?? ''),
+  ];
+
+  it('exposes no environment-variable name', () => {
+    for (const text of CLIENT_FACING) {
+      expect(text).toBeTruthy();
+      expect(text).not.toMatch(/GOOGLE_[A-Z_]+/);
+      expect(text).not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/);
+    }
+  });
+
+  it('exposes no infrastructure or vendor plumbing vocabulary', () => {
+    for (const text of CLIENT_FACING) {
+      expect(text).not.toMatch(/\b(quota|rate limit|rate-limit|API|endpoint|Google|kill switch|env|environment variable)\b/i);
+    }
+  });
+
+  it('carries no digit — a number in a refusal is a number a report can print', () => {
+    expect(COMMUTE_CAP_REACHED.detail).not.toMatch(/\d/);
+  });
+
+  it('keeps a ceiling distinct from a measurement', () => {
+    // `no_route_returned` is a MEASUREMENT a reader may act on: we asked, and
+    // transit does not connect these points. A ceiling means nobody asked.
+    expect(COMMUTE_CAP_REACHED.reason).toBe('daily_cap_reached');
+    expect(COMMUTE_CAP_REACHED.reason).not.toBe(COMMUTE_NO_ROUTE.reason);
+  });
+});
+
+describe('RC-2 — every billable production caller is accounted for', () => {
+  /**
+   * The targeted scan, as an executable assertion rather than a claim in a
+   * document. Any file making an outbound Google Maps Platform request must
+   * consume the shared allowance — the earlier version of this work asserted
+   * "location-intelligence-service is the only uncapped site" and was wrong
+   * twice over, because nothing checked it.
+   */
+  const CALLERS = [
+    '_shared/builderStock/images.ts',
+    'google-places-autocomplete/index.ts',
+    'location-intelligence-service/index.ts',
+    'parse-property-pdf/index.ts',
+    'resolve-listing-coordinates/index.ts',
+    'school-data-service/index.ts',
+    'street-view/index.ts',
+  ];
+
+  it('every known caller consumes the shared allowance', () => {
+    for (const caller of CALLERS) {
+      const src = read(`supabase/functions/${caller}`);
+      expect(src, caller).toMatch(/maps\.googleapis\.com\/maps\/api\//);
+      expect(src, caller).toContain('consumeGoogleDailyCap');
+    }
+  });
+
+  it('no caller still spends a paid Maps request on the raw abuse-control quota', () => {
+    // `enforceGlobalDailyQuota` does not fail closed, so a Maps call site that
+    // still used it directly would have a ceiling that evaporates under the
+    // exact fault it exists for.
+    for (const caller of CALLERS) {
+      expect(read(`supabase/functions/${caller}`), caller)
+        .not.toMatch(/enforceGlobalDailyQuota\s*\(/);
+    }
+  });
+
+  it('ONE product-wide Geocoding budget across every geocoding caller', () => {
+    // Google bills every geocode in this deployment together. A per-function
+    // bucket would make GOOGLE_GEOCODING_DAILY_LIMIT mean "N times however many
+    // functions happen to geocode", which is not a ceiling anybody can reason
+    // about — and it is the "configure N/2" workaround this replaces.
+    const geocoders = [
+      '_shared/builderStock/images.ts',
+      'location-intelligence-service/index.ts',
+      'parse-property-pdf/index.ts',
+      'resolve-listing-coordinates/index.ts',
+    ];
+    for (const caller of geocoders) {
+      const src = read(`supabase/functions/${caller}`);
+      expect(src, caller).toMatch(/maps\.googleapis\.com\/maps\/api\/geocode/);
+      expect(src, caller).toMatch(/'geocoding'/);
+    }
+    expect(GOOGLE_CAP_SCOPES.geocoding).toBe('google_geocoding');
+  });
+
+  it('a circuit-breaker scope is a different axis and survives', () => {
+    // A breaker is about one caller's error rate; a budget is about the
+    // account's spend. Collapsing them would make one ceiling trip the other.
+    expect(read('supabase/functions/resolve-listing-coordinates/index.ts'))
+      .toContain("CIRCUIT_SCOPE = 'google_listing_geocoding'");
+  });
+
+  it('every ceiling the runtime reads is declared in the Integrations registry', () => {
+    // A spending limit that exists only in code is configuration an operator
+    // cannot see, which is how a ceiling goes unset for a year.
+    const registry = read('src/lib/integrations/registry.ts');
+    const allowlist = read('supabase/functions/_shared/integrationSecrets.ts');
+    for (const name of GOOGLE_CAP_ENV_NAMES) {
+      if (name.endsWith('_KILL_SWITCH')) continue; // an incident control, not a setting
+      expect(registry, name).toContain(name);
+      expect(allowlist, name).toContain(name);
+    }
   });
 });

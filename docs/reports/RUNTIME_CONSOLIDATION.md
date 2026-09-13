@@ -13,10 +13,13 @@ number that matters is not how many report formats route through Cloud Run
 
 ---
 
-## §1 — The finding that reshaped the cutover
+## §1 — What the delivery evidence does and does not say
 
-**96% of every Investment PDF this product has ever delivered was produced in
-the browser, not by Cloud Run.**
+**The browser renderer is mature and proven in production. It is not the
+current delivery path.** Both halves matter, and conflating them would send
+RC-3 after the wrong thing.
+
+### What it says: the browser renderer has done the work
 
 `investment_reports.pdf_url` carries the storage path of the delivered
 document, and the two engines write different path shapes. That difference is
@@ -29,10 +32,31 @@ the code's intentions:
 | `generated/<YYYY-MM-DD>/<uuid>-<name>` | `render-investment-report-pdf` — **Cloud Run WeasyPrint** | **12** |
 | | **total delivered** | **275** |
 
-The browser generator is therefore not an untested alternative to be built and
-proven. It is the path that has produced almost every document a client has
-received, and it has been doing so continuously. What the cutover removes is
-the newer, less-travelled leg.
+So the browser leg is not a prototype. 263 real client documents came out of
+it, with its own upload through `secureStorageUpload` and its own `pdf_url`
+write. That is what de-risks RC-3: the target machinery has run at volume.
+
+### What it does NOT say: that the cut has already happened
+
+The **current** unified path is `produceInvestmentDocument` in
+`src/lib/reports/investment/deliverInvestmentPdf.ts`, and it is Cloud Run
+end to end:
+
+```
+tryTemplateDocument('investment', …)   → render-template-pdf  → WeasyPrint (Cloud Run)
+  └─ null (no active template) ──────→ render-investment-report-pdf → WeasyPrint (Cloud Run)
+```
+
+Every surface — the primary download, Send to Client, the premium button, the
+flatten copy — was deliberately folded onto that one module, so **both** of its
+legs terminate at Cloud Run. The 263 rows are historical: they predate that
+consolidation.
+
+**RC-3 therefore has to migrate a live contract, not delete an unused
+renderer.** The renderer implementation is what changes; template selection,
+Supabase Storage, `pdf_url`, download, Send to Client and portal delivery all
+stay exactly where they are, and the browser renderer becomes the standard
+path rather than a second "legacy layout" control beside it.
 
 ### How much work Cloud Run has actually done
 
@@ -152,13 +176,42 @@ checklist rather than assumed.
 
 ---
 
-## §5 — Maps cost control (RC-2)
+## §5 — Maps cost control
 
-`location-intelligence-service` was the one paid Google call site in the
-product with **no ceiling of any kind** — no daily quota, no kill switch, no
-circuit breaker — and it is the one that report generation drives. It makes
-three kinds of call, all through `meteredFetch`, so the spend was measured and
-unbounded at the same time.
+The first pass of this section claimed `location-intelligence-service` was the
+only uncapped paid Google call site. **That was wrong, twice over**, and
+nothing in the repository could have caught it because nothing checked. A
+targeted scan for outbound Google Maps Platform requests found seven callers
+and two with no ceiling at all.
+
+### The production caller matrix
+
+Scanned for actual outbound requests to `maps.googleapis.com/maps/api/*`, not
+for mentions of the key:
+
+| caller | billable SKU(s) | before | now |
+| --- | --- | --- | --- |
+| `location-intelligence-service` | Geocoding, Places Nearby, Distance Matrix | **none** | per-SKU |
+| `parse-property-pdf` | Geocoding | **none** | `geocoding` |
+| `school-data-service` | Places Nearby | **none** | `placesNearby` |
+| `resolve-listing-coordinates` | Geocoding | own bucket | `geocoding` (product-wide) |
+| `google-places-autocomplete` | Places Autocomplete | shared `google_places` | `placesAutocomplete` |
+| `street-view` | Street View metadata + imagery | one scope, one unit each | `streetView` |
+| `_shared/builderStock/images.ts` | Geocoding, SV metadata, SV imagery, Static Maps | **all four billed to the Street View bucket** | routed per SKU |
+
+Two corrections to earlier readings, recorded because the method matters more
+than the conclusion:
+
+* `builderStock/images.ts` was described as spending "one unit for up to four
+  requests". It was not. It has a `spend()` helper called immediately before
+  each of its four billable requests — the per-request **accounting** was
+  already right. What was wrong is the **routing**: all four counted against
+  `google_street_view`, so its geocode never touched the geocoding budget and
+  a static map was billed to Street View.
+* The earlier count came from grepping how many times `enforceGlobalDailyQuota`
+  appears in a file, which counts the import and the helper definition rather
+  than the call sites. `googleMapsDailyCaps.spec.ts` now asserts the matrix by
+  execution instead.
 
 ### What the existing counter actually does
 
@@ -166,62 +219,120 @@ Read off the deployed `security_consume_rate_limit`, not inferred:
 
 | property | measured behaviour |
 | --- | --- |
-| increment | `count = count + 1` — **one unit per call**, and every existing site calls it once per outbound Google request |
+| increment | `count = count + 1` — **one unit per call**, consumed once immediately before each outbound request |
 | allow test | `count <= p_max` — a ceiling of 250 admits the 250th and refuses the 251st |
 | window | **fixed, not calendar**: `window_start` is stamped on first use and reset only once it is older than the window |
-| key | `public:global:<scope>:daily`, regex-checked `^[a-z0-9:_./-]{1,200}$` — an invalid scope RAISES, which would turn a ceiling into a 500 |
-| unavailable RPC | falls back to a per-isolate counter and flags `degraded` rather than denying |
+| key | `public:global:<scope>:daily`, regex-checked `^[a-z0-9:_./-]{1,200}$` — an invalid scope RAISES, turning a ceiling into a 500 |
+| unavailable RPC | falls back to a **per-isolate** counter and flags `degraded` |
 
-### Unit vs bill — reconciled before anything was hard-coded
+### Fail closed — this is a spending boundary, not abuse control
 
-Geocoding, Places Nearby and Static Maps are billed **per request**, so one
-unit is one billable event and the mandate's numbers apply directly. Two
-places where the unit and the bill differ are recorded rather than papered
-over:
+That last row is the one that decides the design. A per-isolate counter is not
+a product-wide ceiling under horizontal Edge scaling: every isolate gets its
+own first N, so under the exact fault the ceiling exists for, spend is
+unbounded while the limiter still answers `ok: true`.
 
-* **Distance Matrix is billed per ELEMENT** (origins × destinations). It
-  matches here only because the one call site sends a single origin and a
-  single destination — 1 request = 1 element. A call site that ever sends more
-  must consume that many units.
-* **Street View metadata is free and its images are not**, and `street-view`
-  consumes a unit for each. That counter over-counts relative to the bill,
-  which is the safe direction, so it is left alone.
+`publicAbuseControls` is right to fail open — for abuse control, disabling a
+working feature is the more expensive failure, and its header records what
+treating an unreadable store as "denied" once cost. **The Maps wrapper fails
+closed instead**, and the general abuse-control behaviour for the rest of
+Aurixa is untouched. `degraded` is checked *before* `ok`, because reading `ok`
+first would let a degraded limiter permit spend while looking healthy.
 
-### The ceilings
+### Scopes follow Google's billing SKUs
 
-`_shared/googleMapsDailyCaps.ts` names them once, reads the **existing**
-environment variables and uses the **existing** primitive. No second metering
-system, no new vocabulary.
+One scope per billable SKU, because Google prices them separately and a shared
+bucket makes each configured number meaningless on its own:
 
-| API | scope | env | default |
+| SKU | scope | env | default |
 | --- | --- | --- | ---: |
 | Geocoding | `google_geocoding` | `GOOGLE_GEOCODING_DAILY_LIMIT` | 250 |
-| Places Nearby | `google_places` — **shared with `google-places-autocomplete`** | `GOOGLE_PLACES_DAILY_LIMIT` | 150 |
+| Places Nearby | `google_places_nearby` | `GOOGLE_PLACES_NEARBY_DAILY_LIMIT` | 150 |
+| Places Autocomplete | `google_places_autocomplete` | `GOOGLE_PLACES_AUTOCOMPLETE_DAILY_LIMIT` (legacy `GOOGLE_PLACES_DAILY_LIMIT` still read) | 250 |
 | Distance Matrix | `google_distance_matrix` | `GOOGLE_DISTANCE_MATRIX_DAILY_LIMIT` | 250 |
+| Street View | `google_street_view` | `GOOGLE_STREET_VIEW_DAILY_LIMIT` | 250 |
+| Static Maps | `google_static_maps` | `GOOGLE_STATIC_MAPS_DAILY_LIMIT` | 250 |
 
-Places is deliberately the tightest because it is what actually limits report
-throughput: one enrichment is 1 geocode + 6 Places + 1 Distance Matrix, so 150
-admits ~25 enrichments a day against a corpus that created 32 reports in the
-last thirty.
+Nearby and Autocomplete are split because they were sharing one bucket, which
+meant a busy address field could spend the allowance a client's report needed.
 
-**Residual, stated:** `resolve-listing-coordinates` counts geocodes under its
-own `google_listing_geocoding` scope, which is also its circuit-breaker scope.
-Both sites read the same `GOOGLE_GEOCODING_DAILY_LIMIT`, so the product-wide
-geocoding ceiling is up to **twice** the configured number. Merging them would
-merge the circuit breakers too, which is a larger change than closing this gap;
-an operator wanting a true N should configure N/2 until it is done.
+**Geocoding is the opposite case and the rule is the same: one SKU, one
+budget.** All four geocoding callers consume `google_geocoding`, so
+`GOOGLE_GEOCODING_DAILY_LIMIT` has one honest meaning across Aurixa. The
+earlier "configure N/2 because two buckets exist" workaround is gone — the
+architecture was fixed rather than documented around.
+
+Circuit-breaker scopes are a **different axis** and survive untouched:
+`resolve-listing-coordinates` keeps `google_listing_geocoding` for its breaker,
+because a breaker is about one caller's error rate while a budget is about the
+account's spend.
+
+Street View metadata is free and is counted with the imagery — a deliberate
+over-count, because a second counter for a SKU that costs nothing buys nothing
+and over-counting spend is the safe direction.
+
+Defaults are set to keep ordinary **pay-as-you-go** usage under Google's free
+monthly thresholds with room for month-boundary timing. Nothing here subscribes
+to a paid Maps plan. Places Nearby is the tightest because it is what limits
+report throughput: one enrichment is 1 geocode + 6 Nearby + 1 Distance Matrix,
+so 150 admits ~25 enrichments a day against a corpus that created 32 reports in
+thirty.
+
+### Configuration is visible, not hidden
+
+Every ceiling the runtime reads is declared on the **existing** Google Maps
+Platform card in `src/lib/integrations/registry.ts` and flows through the
+generated `integrationSecrets.ts` allow-list. No second integration card, no
+second secret system. A spending limit that exists only in code is
+configuration an operator cannot see, and a test asserts the declaration.
+
+### Three refusals, kept distinct — and none of them reaches a client
+
+`kill_switch`, `daily_cap` and `limiter_unavailable` are different operational
+facts sending an operator to three different places, so they stay separate
+internally and appear in logs verbatim.
+
+**None of them may be paraphrased into client-facing prose.** The geocode
+refusal is returned in the response body, so it names no environment variable,
+no limit, no vendor and no piece of infrastructure — it says location details
+are unavailable, that the address was never rejected, and that nothing has been
+estimated in its place. A test scans every client-reachable refusal string for
+`GOOGLE_*`, for any SCREAMING_SNAKE identifier, and for infrastructure
+vocabulary.
 
 ### A ceiling produces absence, never a value
 
-This is the half that makes the control safe to switch on, and it needed no new
-machinery — the service already had the right absence semantics and a refusal
-simply takes them:
+This needed no new machinery — each caller already had the right absence
+semantics and a refusal takes them:
 
-| refused call | what it returns | what a reader gets |
+| refused call | returns | what a reader gets |
 | --- | --- | --- |
-| Places category | `{ ok: false, count: 0 }` | `unavailableCategories` names it; `measuredCount` answers **null**, so the line is omitted rather than printed as `0` |
-| Geocode | `{ ok: false, capped: true }` | `geocoder_daily_cap_reached` — a **new reason**, because `geocoder_unavailable` sends an operator to look at broken map access and a ceiling is not a fault |
-| Distance Matrix | `COMMUTE_CAP_REACHED` | distinct from `no_route_returned`, which is a **measurement** a reader may act on. Nobody asked, so nothing is claimed. |
+| Places category | `{ ok: false, count: 0 }` | `measuredCount` answers **null**; the line is omitted, not printed as `0` |
+| Geocode (location intelligence) | `{ ok: false, capped: true }` | `geocoder_daily_cap_reached` — its own reason, because `geocoder_unavailable` sends an operator to hunt broken map access |
+| Geocode (`parse-property-pdf`) | the payload untouched | the address keeps what the extraction genuinely read; nothing is filled in |
+| Places Nearby (`school-data-service`) | `[]` | the caller answers `null` — "nothing honest to return" — rather than a location with no schools |
+| Distance Matrix | `COMMUTE_CAP_REACHED` | distinct from `no_route_returned`, which is a **measurement** a reader may act on |
 
-The refusal text carries **no digit at all** — a number in a refusal is a number
-a report can print.
+A reached-and-empty lookup keeps its real zero: a rural address with no
+hospital within five kilometres is a fact worth printing. Collapsing that with
+a failure is the defect this guards.
+
+### Release-gate proofs
+
+`googleMapsDailyCaps.spec.ts` — 22 assertions, each a state the boundary must
+hold:
+
+| state | asserted outcome |
+| --- | --- |
+| limiter healthy | permitted, exactly one unit consumed, against the right scope |
+| daily allowance exhausted | refused, `daily_cap` |
+| **global limiter degraded** | **refused**, `limiter_unavailable`, and never reported as `daily_cap` |
+| kill switch active | refused, `kill_switch`, and never reported as `daily_cap` |
+| provider failure | unavailable, not zero |
+| successful measurement | real value retained |
+| genuine successful zero | zero retained |
+| every known caller | consumes the shared allowance |
+| every caller | no longer spends a paid request on the raw abuse-control quota |
+| every geocoding caller | consumes the one product-wide budget |
+| every ceiling | declared in the registry and the generated allow-list |
+| every client-reachable refusal | no env name, no infrastructure wording, no digit |

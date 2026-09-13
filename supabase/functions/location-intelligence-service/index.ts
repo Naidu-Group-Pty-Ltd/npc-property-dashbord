@@ -214,14 +214,18 @@ const UNRESOLVED_MESSAGE: Record<UnresolvedReason, string> = {
     'The geocoding service did not answer for this request, so no location could be established. '
     + 'This is a fault in this deployment\'s map service access — the address supplied was never rejected as invalid.',
   // A ceiling is not a fault, and it must not send an operator to the remedy
-  // for one. `geocoder_unavailable` tells them to go and look at map service
-  // access; this tells them the deployment declined to spend, which is a
-  // configuration decision they made and can revisit.
+  // for one — `geocoder_unavailable` tells them to go and look at map service
+  // access, which would be a wasted afternoon.
+  //
+  // This string is returned in the response body and can reach a client
+  // surface, so it names no environment variable, no limit and no piece of
+  // infrastructure. Which of the three refusals it was — the provider turned
+  // off, the allowance spent, the shared limiter unreachable — is in the logs,
+  // where an operator looks and a customer does not.
   geocoder_daily_cap_reached:
-    'This deployment\'s daily allowance for address lookups was already spent when this '
-    + 'request was made, so no location could be established. Nothing is wrong with the '
-    + 'address or with map service access — the ceiling is set by '
-    + 'GOOGLE_GEOCODING_DAILY_LIMIT.',
+    'Location details are not available for this property at the moment. Nothing is '
+    + 'wrong with the address — it was never rejected — and no location information has '
+    + 'been estimated in its place.',
   supplied_coordinates_rejected:
     'The supplied coordinates are not a location in Australia — location intelligence is unavailable for this property.',
 };
@@ -682,7 +686,7 @@ async function fetchNearbyPlaces(
   // with a zero count — so `unavailableCategories` records it as unmeasured
   // and every projection downstream omits the line rather than printing a
   // zero. That contract is RF-7.2B.1B2's and nothing here re-implements it.
-  const budget = await consumeGoogleDailyCap(db, 'places');
+  const budget = await consumeGoogleDailyCap(db, 'placesNearby');
   if (!budget.ok) {
     console.warn(`[location-intelligence-service] ${type} lookup not attempted (${budget.reason})`);
     return { ok: false, count: 0, results: [] };

@@ -1,47 +1,62 @@
 /**
- * The daily ceiling on paid Google Maps requests, in one place.
+ * The daily ceiling on paid Google Maps Platform requests, in one place.
  *
  * This is **not a second metering system**. It is the existing one —
  * `enforceGlobalDailyQuota` from `publicAbuseControls.ts`, backed by the
- * `security_consume_rate_limit` RPC — named once so that a call site which has
- * never had a ceiling can acquire one without inventing a vocabulary.
- * `resolve-listing-coordinates`, `google-places-autocomplete`, `street-view`
- * and `builderStock/images.ts` keep the inline form they already had; nothing
- * about their behaviour changes.
+ * `security_consume_rate_limit` RPC — named once so that every billable caller
+ * consumes the same allowance under the same vocabulary.
  *
  * ## The unit, measured rather than assumed
  *
- * The mandate's warning was precise: do not accidentally count a different
- * unit than Google bills. So the primitive's semantics were read off the
- * deployed function rather than inferred.
+ * The primitive's semantics were read off the deployed function:
  *
  *  * `security_consume_rate_limit` increments by **exactly one per call**
- *    (`count = limits.count + 1`), and every existing site calls it once
- *    immediately before one outbound Google request. **One unit is one
- *    request.**
- *  * The allow test is `count <= p_max`, so a ceiling of 250 admits the 250th
+ *    (`count = limits.count + 1`), so **one unit is one outbound request**, and
+ *    it must be consumed once immediately before each one. A caller that makes
+ *    four billable requests behind one check has a ceiling that under-counts
+ *    the bill fourfold — which is what `builderStock/images.ts` did.
+ *  * The allow test is `count <= p_max`: a ceiling of 250 admits the 250th
  *    request and refuses the 251st.
- *  * The window is **fixed, not calendar**: `window_start` is stamped on the
- *    first call and reset only once it is more than the window old. The "day"
- *    therefore begins at the first request after a 24-hour idle gap. An
- *    operator reading "250/day" gets 250 per rolling 24h from first use, which
- *    is at least as conservative as a calendar day.
- *  * The key is `public:global:<scope>:daily` and is regex-checked
- *    `^[a-z0-9:_./-]{1,200}$`, so a scope is lowercase and punctuation-light.
+ *  * The window is **fixed, not calendar**. `window_start` is stamped on first
+ *    use and reset only once it is older than the window, so "250/day" means
+ *    250 per rolling 24h from first use — at least as conservative as a
+ *    calendar day.
+ *  * The key is `public:global:<scope>:daily`, regex-checked
+ *    `^[a-z0-9:_./-]{1,200}$`. An invalid scope RAISES, which would turn a
+ *    ceiling into a 500 on every request rather than a refusal.
  *
- * That unit matches Google's billing for Geocoding, Places Nearby Search and
- * Static Maps, which are all billed per request. Two mismatches exist in the
- * wider product and are recorded here rather than silently "fixed":
+ * ## Scopes follow Google's BILLING SKUs, not its API families
  *
- *  * **Distance Matrix is billed per ELEMENT** (origins × destinations), not
- *    per request. It matches here only because the one call site in
- *    `location-intelligence-service` sends a single origin and a single
- *    destination — 1 request = 1 element. A call site that ever sends more
- *    must consume that many units, or the counter under-counts the bill.
- *  * **Street View metadata is free and its images are not**, and
- *    `street-view` consumes one unit for each. That counter therefore
- *    over-counts relative to the bill, which is the safe direction, so it is
- *    left alone.
+ * Places Nearby Search and Places Autocomplete are separate SKUs at separate
+ * prices, and putting them in one bucket means a busy address field can spend
+ * the allowance a report's amenity lookups need. One scope per billable SKU is
+ * what makes each configured number mean something on its own.
+ *
+ * Geocoding is the opposite case and the rule is the same: **one SKU, one
+ * budget.** Four call sites geocode (`location-intelligence-service`,
+ * `resolve-listing-coordinates`, `parse-property-pdf`,
+ * `builderStock/images.ts`) and Google bills them together, so they share
+ * `google_geocoding`. A per-function bucket would make
+ * `GOOGLE_GEOCODING_DAILY_LIMIT` mean "N times however many functions happen
+ * to geocode", which is not a ceiling anybody can reason about.
+ *
+ * Circuit-breaker scopes are a **different axis** and are deliberately left
+ * alone: `resolve-listing-coordinates` keeps `google_listing_geocoding` for
+ * its breaker, because a breaker is about one caller's error rate while a
+ * budget is about the account's spend.
+ *
+ * ## Fail closed — this is a spending boundary, not abuse control
+ *
+ * `consumeQuota` falls back to a **per-isolate** counter when the shared RPC
+ * is unavailable, and flags it `degraded`. That trade-off is right for abuse
+ * control (see `publicAbuseControls`' header: disabling a working feature is
+ * the more expensive failure) and **wrong here**. Edge Functions scale
+ * horizontally, so a per-isolate counter is not a product-wide ceiling — under
+ * the exact fault the ceiling exists for, spend would be unbounded.
+ *
+ * So a degraded limiter **refuses the paid request**. The general abuse-control
+ * behaviour for the rest of Aurixa is untouched; only this wrapper fails
+ * closed.
  *
  * ## A ceiling may never invent a value
  *
@@ -51,102 +66,142 @@
  * — absent is never zero — applied to spend: **cost safety must never create
  * false data.**
  */
-import { enforceGlobalDailyQuota, killSwitchActive } from './publicAbuseControls.ts';
+import { enforceGlobalDailyQuota } from './publicAbuseControls.ts';
 
-/**
- * One scope per Google billable API.
- *
- * `google_places` is deliberately the SAME string `google-places-autocomplete`
- * already uses, so autocomplete and the report enrichment share one bucket and
- * one `GOOGLE_PLACES_DAILY_LIMIT` means what it says across the product.
- *
- * Geocoding is the one place that does not share, and it is worth stating:
- * `resolve-listing-coordinates` counts under `google_listing_geocoding`, which
- * is also its circuit-breaker scope. Merging the two would merge the breakers
- * as well, which is a larger change than closing this gap. So both sites read
- * the same `GOOGLE_GEOCODING_DAILY_LIMIT` and hold separate buckets — the
- * product-wide ceiling on geocoding is therefore up to **twice** the configured
- * number, and an operator who wants a true N should configure N/2.
- */
+/** One scope per Google billable SKU. */
 export const GOOGLE_CAP_SCOPES = {
   geocoding: 'google_geocoding',
-  places: 'google_places',
+  placesNearby: 'google_places_nearby',
+  placesAutocomplete: 'google_places_autocomplete',
   distanceMatrix: 'google_distance_matrix',
+  /**
+   * Street View imagery. Metadata is FREE and is counted here with it — a
+   * deliberate over-count, because the alternative is a second counter for a
+   * SKU that costs nothing, and over-counting spend is the safe direction.
+   */
+  streetView: 'google_street_view',
+  staticMaps: 'google_static_maps',
 } as const;
 
 export type GoogleCapKind = keyof typeof GOOGLE_CAP_SCOPES;
 
 /**
- * Defaults chosen for **zero paid usage**, not for throughput.
+ * Defaults chosen to stay under Google's monthly free usage thresholds with
+ * room for month-boundary timing — **not** for throughput, and never as a step
+ * towards a paid Maps plan. Ordinary pay-as-you-go with the application
+ * refusing before the free allowance is spent.
  *
- * The binding constraint is Places: one report enrichment is 1 geocode +
- * 6 Places Nearby + 1 Distance Matrix (the ledger's exact 6:1 Places:Distance
- * ratio confirms it), so 150 Places admits ~25 enrichments a day against a
- * corpus that created 32 reports in the last thirty. The headroom is ~25x.
- *
- * The existing sites default to 5000 and keep doing so. These are the
- * ceilings for the call sites that had none, which is where a surprise bill
- * would actually have come from.
+ * Places Nearby is the tightest because it is what actually limits report
+ * throughput: one location enrichment is 1 geocode + 6 Nearby + 1 Distance
+ * Matrix (the ledger's exact 6:1 ratio confirms it), so 150 admits ~25
+ * enrichments a day against a corpus that created 32 reports in thirty.
  */
 const CAP_DEFAULTS: Record<GoogleCapKind, number> = {
   geocoding: 250,
-  places: 150,
+  placesNearby: 150,
+  placesAutocomplete: 250,
   distanceMatrix: 250,
+  streetView: 250,
+  staticMaps: 250,
 };
 
-/** The existing environment names. No new ones are introduced. */
+/**
+ * The environment name per SKU.
+ *
+ * Every one of these is declared on the **existing** Google Maps Platform
+ * integration card so an operator can see and set it. A runtime ceiling that
+ * exists only in code is hidden configuration.
+ */
 const CAP_ENV: Record<GoogleCapKind, string> = {
   geocoding: 'GOOGLE_GEOCODING_DAILY_LIMIT',
-  places: 'GOOGLE_PLACES_DAILY_LIMIT',
+  placesNearby: 'GOOGLE_PLACES_NEARBY_DAILY_LIMIT',
+  placesAutocomplete: 'GOOGLE_PLACES_AUTOCOMPLETE_DAILY_LIMIT',
   distanceMatrix: 'GOOGLE_DISTANCE_MATRIX_DAILY_LIMIT',
+  streetView: 'GOOGLE_STREET_VIEW_DAILY_LIMIT',
+  staticMaps: 'GOOGLE_STATIC_MAPS_DAILY_LIMIT',
 };
 
-/** Per-API kill switches, in the shape `killSwitchActive` already reads. */
+/**
+ * `GOOGLE_PLACES_DAILY_LIMIT` was the single Places ceiling and its only
+ * consumer was autocomplete. Splitting the SKUs must not silently discard a
+ * value an operator has already set, so the old name still answers for
+ * autocomplete when the new one is unset. Nearby has no legacy name because it
+ * never had a ceiling at all.
+ */
+const CAP_ENV_LEGACY: Partial<Record<GoogleCapKind, string>> = {
+  placesAutocomplete: 'GOOGLE_PLACES_DAILY_LIMIT',
+};
+
+/** Per-SKU kill switches, in the shape `killSwitchActive` already reads. */
 const CAP_KILL_SWITCH: Record<GoogleCapKind, string> = {
   geocoding: 'GOOGLE_GEOCODING_KILL_SWITCH',
-  places: 'GOOGLE_PLACES_KILL_SWITCH',
+  placesNearby: 'GOOGLE_PLACES_KILL_SWITCH',
+  placesAutocomplete: 'GOOGLE_PLACES_KILL_SWITCH',
   distanceMatrix: 'GOOGLE_DISTANCE_MATRIX_KILL_SWITCH',
+  streetView: 'GOOGLE_STREET_VIEW_KILL_SWITCH',
+  staticMaps: 'GOOGLE_STATIC_MAPS_KILL_SWITCH',
 };
+
+/** Every environment name this module reads, for the registry's declaration. */
+export const GOOGLE_CAP_ENV_NAMES: readonly string[] = [
+  ...Object.values(CAP_ENV),
+  ...Object.values(CAP_ENV_LEGACY).filter((n): n is string => Boolean(n)),
+  ...new Set(Object.values(CAP_KILL_SWITCH)),
+];
 
 /**
  * The configured ceiling, or the default.
  *
  * A value that is not a positive integer is the default rather than an error:
- * a typo in an environment variable must not uncap a paid provider, and it
- * must not disable a working feature either.
+ * a typo must not uncap a paid provider, and must not disable a working
+ * feature either.
  */
 export function dailyCapFor(kind: GoogleCapKind, env: (k: string) => string | undefined): number {
-  const raw = Number(env(CAP_ENV[kind]));
-  return Number.isInteger(raw) && raw > 0 ? raw : CAP_DEFAULTS[kind];
+  for (const name of [CAP_ENV[kind], CAP_ENV_LEGACY[kind]]) {
+    if (!name) continue;
+    const raw = Number(env(name));
+    if (Number.isInteger(raw) && raw > 0) return raw;
+  }
+  return CAP_DEFAULTS[kind];
 }
 
+/**
+ * Why a paid request was not made.
+ *
+ * Three distinct operational facts, kept distinct: somebody turned the
+ * provider off; the day's allowance is spent; the shared limiter cannot be
+ * reached so the ceiling cannot be enforced. They send an operator to three
+ * different places. **None of them may be paraphrased into client-facing
+ * prose** — a report says the measurement is unavailable and omits the claim;
+ * the reason lives in logs.
+ */
+export type GoogleCapRefusal = 'kill_switch' | 'daily_cap' | 'limiter_unavailable';
+
 export interface CapVerdict {
-  /** True when this request may be made. */
   ok: boolean;
-  /** Why it may not be, for a log line. Never surfaced to a client. */
-  reason?: 'kill_switch' | 'daily_cap';
+  reason?: GoogleCapRefusal;
 }
 
 const ALLOWED: CapVerdict = { ok: true };
 
 /**
- * Consume one unit of the daily allowance for one outbound Google request.
+ * Consume one unit of the daily allowance for ONE outbound Google request.
  *
- * Call it immediately before the request, once per request, exactly as the
- * existing sites do — a unit consumed and then not spent is a ceiling that
- * drifts below the bill, and a request made before consuming is a ceiling that
- * can be exceeded under concurrency.
- *
- * A degraded limiter (the RPC unavailable, falling back to a per-isolate
- * counter) still answers; `publicAbuseControls` decided that trade-off and the
- * reasoning is in its header.
+ * Call it immediately before the request, once per request. A unit consumed
+ * and then not spent is a ceiling that drifts below the bill; a request made
+ * before consuming is a ceiling that concurrency can step over.
  */
 export async function consumeGoogleDailyCap(
   supabase: unknown,
   kind: GoogleCapKind,
   env: (k: string) => string | undefined = (k) => Deno.env.get(k),
 ): Promise<CapVerdict> {
-  if (killSwitchActive(CAP_KILL_SWITCH[kind])) {
+  // `publicAbuseControls`' `killSwitchActive` reads `Deno.env` itself, so it
+  // would ignore the reader injected here — one function reading the
+  // environment two ways. The predicate is three comparisons and is repeated
+  // rather than reached for, so every value this module consults comes from
+  // one place and the boundary can be exercised by a test.
+  if (['1', 'true', 'TRUE'].includes(env(CAP_KILL_SWITCH[kind]) ?? '')) {
     return { ok: false, reason: 'kill_switch' };
   }
   const verdict = await enforceGlobalDailyQuota(
@@ -154,5 +209,12 @@ export async function consumeGoogleDailyCap(
     GOOGLE_CAP_SCOPES[kind],
     dailyCapFor(kind, env),
   );
+  // Checked BEFORE `ok`, and that order is the whole point: the per-isolate
+  // fallback answers `ok: true` for the first N requests of every isolate, so
+  // reading `ok` first would let a degraded limiter permit unbounded spend
+  // while looking healthy.
+  if ((verdict as { degraded?: boolean }).degraded) {
+    return { ok: false, reason: 'limiter_unavailable' };
+  }
   return verdict.ok ? ALLOWED : { ok: false, reason: 'daily_cap' };
 }
