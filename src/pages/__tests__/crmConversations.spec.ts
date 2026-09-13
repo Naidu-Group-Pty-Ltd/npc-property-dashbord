@@ -315,6 +315,36 @@ describe('the scheduled conversation sync stops sleeping too', () => {
     expect(cron).toMatch(/runBand\(staleBand,[\s\S]{0,160}?deepProbe: true/);
   });
 
+  it('claims a contact when it is STARTED, never when it is listed', () => {
+    /*
+      A band is cut short by its deadline. Claiming at assembly struck contacts
+      off the stale tail that the earlier band then never started — band A
+      lists 50 and may start 17, and the other 33 got neither band's work.
+      Band A does not stamp, and an unstarted contact is never upserted, so
+      nothing about those rows changed and the SAME tail was excluded next
+      tick: the most recently active threads in the account, permanently.
+
+      `startedCount` is exact because `mapWithConcurrency` starts tasks in
+      order even though they complete out of order.
+    */
+    expect(cron).toMatch(/claimUpTo\(entries, outcome\.startedCount\);/);
+    // The stale band is assembled AFTER the two bands above have run, so it
+    // sees what they actually reached rather than what they listed.
+    const afterBootstrap = cron.slice(cron.indexOf("tag: 'bootstrap'"));
+    expect(afterBootstrap).toMatch(/const staleBand = withoutClaimed\(/);
+    expect(afterBootstrap.indexOf('const staleBand')).toBeLessThan(afterBootstrap.indexOf("tag: 'stale'"));
+  });
+
+  it('never reads a counter across an await', () => {
+    // `x += await f()` evaluates `x` BEFORE the await, so six concurrent
+    // contacts each read the same value and the last write wins.
+    for (const src of [cron, sync]) {
+      expect(src).not.toMatch(/\+= await writeMessages\(/);
+    }
+    expect(cron).toMatch(/const wroteTop = await writeMessages\(/);
+    expect(cron).toMatch(/const wroteDeep = await writeMessages\(/);
+  });
+
   it('stamps the rotation column on every attempt, not only on success', () => {
     /*
       `last_synced_at` is what orders the stale-tail band. A conversation whose
@@ -401,6 +431,37 @@ describe('one conversation mapper, one conversation store', () => {
       expect(src).not.toMatch(/ghl_message_id: msg\.id/);
       expect(src).not.toMatch(/\.from\('ghl_conversation_messages'\)\s*\n\s*\.upsert/);
     }
+  });
+
+  it('a failed write may TRUNCATE what we hold, never PERFORATE it', () => {
+    /*
+      Items arrive newest-first and are written in chunks. `continue` on a
+      failed chunk writes the one after it, leaving a HOLE in the middle of the
+      thread — and a hole below the first fully-held page is unreachable by
+      both walks at once: the top-down walk stops on page one because that page
+      is held, and the deep probe seeds from the OLDEST held message, which
+      sits below the hole. `break` leaves a contiguous prefix of the newest
+      messages, which is the invariant the pager's stop condition assumes.
+    */
+    const chunkLoop = store.slice(store.indexOf('for (let i = 0; i < rows.length; i += WRITE_CHUNK)'));
+    const body = chunkLoop.slice(0, chunkLoop.indexOf('\n  }'));
+    expect(body).toMatch(/error\.code !== '23505'[\s\S]{0,700}?break;/);
+    expect(body).not.toMatch(/error\.code !== '23505'[\s\S]{0,700}?continue;/);
+  });
+
+  it('keeps a writer for the column the inbox filter reads', () => {
+    /*
+      `available_channels` had a writer before this rewrite and lost one: the
+      old `.update({ available_channels })` named a column that did not exist,
+      so it silently did nothing, and deleting the dead line left NO writer.
+      The migration backfills once; every conversation the bootstrap band
+      discovers after that would hold `{}` and be invisible to the filter.
+      It MERGES, because one batch is a page of a thread and not the thread.
+    */
+    expect(store).toMatch(/async function refreshAvailableChannels\(/);
+    expect(store).toMatch(/\[\.\.\.new Set\(\[\.\.\.current, \.\.\.seen\]\)\]/);
+    // Never fails the message write — the rows are already in the table.
+    expect(store).toMatch(/console\.warn\(`\[\$\{logTag\}\] available_channels not updated/);
   });
 
   it('deduplicates a batch before the upsert', () => {

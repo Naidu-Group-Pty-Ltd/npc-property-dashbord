@@ -124,6 +124,33 @@ describe("mapMessageDirection", () => {
   });
 });
 
+describe("the mapper and the migration are one vocabulary", () => {
+  it("normalises every alias the reissue migration normalises", () => {
+    /*
+      The migration rewrites eight aliases to sms/email/whatsapp. The mapper
+      knew four of them, and because an unrecognised value passes THROUGH, the
+      very next sync wrote `type_sms` and `mail` straight back over the rows
+      the migration had just cleaned — undoing a repair, tick after tick,
+      while `available_channels` and the inbox filter key on the clean values.
+
+      The migration is PARSED rather than the list restated, so the two cannot
+      drift apart in the direction that matters.
+    */
+    const migration = readFileSync(
+      join(__dirname, "..", "..", "..", "..", "supabase", "migrations",
+        "20260913094500_conversation_delivery_safety_reissue.sql"),
+      "utf8",
+    );
+    const pairs = [...migration.matchAll(/WHEN '([a-z_]+)' THEN '([a-z]+)'/g)];
+    expect(pairs.length).toBeGreaterThanOrEqual(8);
+    for (const [, alias, canonical] of pairs) {
+      expect(mapChannelType(alias)).toBe(canonical);
+      // And upper-cased, which is how GHL actually sends several of them.
+      expect(mapChannelType(alias.toUpperCase())).toBe(canonical);
+    }
+  });
+});
+
 describe("mapChannelType", () => {
   it("normalises GHL's several spellings of one channel", () => {
     for (const v of ["sms", "1", "phone", "TYPE_PHONE"]) expect(mapChannelType(v)).toBe("sms");

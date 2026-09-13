@@ -78,14 +78,28 @@ export function parseGhlDate(val: unknown): string | null {
  * path has been writing with. An unrecognised value passes THROUGH rather
  * than collapsing to `sms`: a new GHL channel should arrive in the column as
  * itself and be visible, not be silently recorded as a text message.
+ *
+ * **This table must cover every alias the migration normalises**, and it did
+ * not. `20260913094500_conversation_delivery_safety_reissue.sql` rewrites
+ * eight — `type_email`, `mail`, `type_whatsapp`, `whats_app`, `type_sms`,
+ * `type_sms_reaction`, `type_phone`, `phone` — and this knew only four of
+ * them. Because an unrecognised value passes through, the very next sync
+ * wrote `type_sms` and `mail` straight back over the rows the migration had
+ * just cleaned, and `available_channels`, the inbox channel filter and the
+ * message history all key on `sms` / `email` / `whatsapp`. Pass-through is
+ * right for a channel nobody has seen before; it is wrong for one the
+ * database already has an opinion about. The two vocabularies are the same
+ * vocabulary, and `ghlConversationMap.test.ts` now asserts it by parsing the
+ * migration rather than by restating the list.
  */
 export function mapChannelType(ghlType: unknown): GhlChannel {
   if (ghlType === null || ghlType === undefined || ghlType === '') return 'sms';
   const typeStr = String(ghlType).toLowerCase();
   const mapping: Record<string, string> = {
     'sms': 'sms', '1': 'sms', 'phone': 'sms', 'type_phone': 'sms',
-    'email': 'email', '2': 'email', 'type_email': 'email',
-    'whatsapp': 'whatsapp', '3': 'whatsapp', 'type_whatsapp': 'whatsapp',
+    'type_sms': 'sms', 'type_sms_reaction': 'sms',
+    'email': 'email', '2': 'email', 'type_email': 'email', 'mail': 'email',
+    'whatsapp': 'whatsapp', '3': 'whatsapp', 'type_whatsapp': 'whatsapp', 'whats_app': 'whatsapp',
     'fb': 'facebook', 'facebook': 'facebook', '4': 'facebook', 'type_facebook': 'facebook',
     'ig': 'instagram', 'instagram': 'instagram', '5': 'instagram', 'type_instagram': 'instagram',
     'live_chat': 'live_chat', 'livechat': 'live_chat', '6': 'live_chat', 'type_live_chat': 'live_chat',
