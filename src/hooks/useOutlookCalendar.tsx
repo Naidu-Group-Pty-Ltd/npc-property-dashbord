@@ -23,12 +23,25 @@ export interface OutlookEvent {
   status: string;
 }
 
+/**
+ * What `teamAvailability` sends — availability, never the appointments.
+ *
+ * This used to declare `events: OutlookEvent[]` and `email: string`, and the
+ * function used to send both. Nothing ever rendered either: every consumer
+ * reads `username`, `outlookConnected`, `error` and `busySlots`. The events
+ * array carried each colleague's `bodyPreview`, `organizer`, `attendees`,
+ * `location` and `categories` to any authenticated browser, through an action
+ * that had no authorization check at all, so it is no longer sent and no
+ * longer declared. `outlookConnected` was always sent and never declared.
+ *
+ * (`email` on a team member is unrelated to `useTeamUsers()`, which is a
+ * different hook and still carries addresses for the attendee picker.)
+ */
 export interface OutlookTeamMember {
   userId: string;
   username: string;
-  email: string;
-  events: OutlookEvent[];
-  busySlots: { start: string; end: string; title: string }[];
+  outlookConnected: boolean;
+  busySlots: { start: string; end: string; title: string; showAs?: string }[];
   error?: string;
 }
 

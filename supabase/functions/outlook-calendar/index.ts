@@ -624,8 +624,54 @@ Deno.serve(async (req) => {
       if (!startTime || !endTime) {
         return jsonResponse({ error: 'startTime and endTime required' }, corsHeaders, 400);
       }
+      /**
+       * THIS HAD NO CHECK OF ANY KIND, directly beneath the one that does.
+       *
+       * `freeBusy`, immediately above, passes every requested address through
+       * `assertMailboxOwnership` — WP-13 hardened it precisely so a caller
+       * could not read arbitrary colleagues' calendars through the `emails`
+       * array. `teamAvailability` reaches the same data by a different door:
+       * it walks every active `custom_users` row and calls `listEvents` for
+       * each against the APP-ONLY Graph token, which is not scoped to the
+       * caller at all. Any authenticated dashboard user who posted
+       * `{action:'teamAvailability', startTime, endTime}` got every
+       * colleague's calendar back.
+       *
+       * Two things are wrong and both are fixed here.
+       *
+       * A caller must be a real, active staff account. `loadCallerAccount`
+       * returning null is the file's own test for that, and it is what the
+       * settings actions below already use.
+       */
+      if (!userId || userId === 'service_role') {
+        return jsonResponse({ error: 'Authentication required' }, corsHeaders, 401);
+      }
+      const teamCaller = await loadCallerAccount(supabase, effectiveUserId!);
+      if (!teamCaller) {
+        return jsonResponse({ error: 'Authentication required' }, corsHeaders, 401);
+      }
+      /**
+       * And the response carries availability, never the appointments.
+       *
+       * `listTeamAvailability` returned a full `events` array per colleague —
+       * each entry carrying `title`, `bodyPreview`, `organizer`, `attendees`
+       * (address, name and response status), `location` and `categories` from
+       * `normalizeEvent`. NOTHING renders it: every consumer
+       * (`OutlookCalendarPanel`, `TeamOutlookAvailability`) reads `username`,
+       * `outlookConnected`, `error` and `busySlots` alone. It was the whole
+       * disclosure and none of the feature, so it does not leave the function.
+       */
       const team = await listTeamAvailability(supabase, accessToken, startTime, endTime);
-      return jsonResponse({ success: true, team }, corsHeaders);
+      const availability = (team || []).map((m: any) => ({
+        userId: m.userId,
+        username: m.username,
+        outlookConnected: m.outlookConnected,
+        // `busySlots` passes through whole: it is already the narrowed shape
+        // (`start`, `end`, `title`, `showAs`) and every field of it is drawn.
+        busySlots: m.busySlots ?? [],
+        ...(m.error ? { error: m.error } : {}),
+      }));
+      return jsonResponse({ success: true, team: availability }, corsHeaders);
     }
 
     if (action === 'setMicrosoftEmail') {
@@ -715,6 +761,18 @@ Deno.serve(async (req) => {
 
     // Agent tool: get team member Outlook settings
     if (action === 'getTeamOutlookStatus') {
+      // Same door, same rule: this enumerates every active colleague and their
+      // linked Microsoft address. A service-role caller (the dashboard agent)
+      // is allowed; an unauthenticated one is not.
+      if (userId !== 'service_role') {
+        if (!userId) {
+          return jsonResponse({ error: 'Authentication required' }, corsHeaders, 401);
+        }
+        const statusCaller = await loadCallerAccount(supabase, effectiveUserId!);
+        if (!statusCaller) {
+          return jsonResponse({ error: 'Authentication required' }, corsHeaders, 401);
+        }
+      }
       const { data: users } = await supabase
         .from('custom_users')
         .select('id, username, microsoft_email, outlook_auto_prep_enabled')
