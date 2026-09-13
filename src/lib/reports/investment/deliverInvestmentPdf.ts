@@ -46,15 +46,29 @@ import {
   saveTemplateDocument,
   tryTemplateDocument,
 } from '@/lib/reportTemplate/templateDocument';
-import { fetchPdfBlob } from '@/lib/pdf/downloadPdf';
+import {
+  generateInvestmentPdfBlob,
+  BROWSER_PDF_RENDERER,
+} from '@/lib/reports/investment/investmentPdfDocument';
+import {
+  loadInvestmentReportForPdf,
+  projectRowForPdf,
+} from '@/lib/reports/investment/investmentPdfSource';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import type { PdfDesignOptions } from '@/components/reports/premiumPdfDesign';
 
 export interface InvestmentDocument {
   blob: Blob;
   fileName: string;
-  /** Which machinery produced the bytes. */
-  engine: 'template' | 'legacy_server';
+  /**
+   * Which machinery produced the bytes.
+   *
+   * `browser_pdf_lib` replaced `legacy_server`: the standard document is drawn
+   * in this browser with pdf-lib now, not by a Cloud Run WeasyPrint route. The
+   * value is carried into the render event so production telemetry can show
+   * the path an artefact actually took.
+   */
+  engine: 'template' | typeof BROWSER_PDF_RENDERER;
   /** The template that rendered it, when the template engine did. */
   templateId: string | null;
 }
@@ -69,11 +83,6 @@ export interface ProduceInvestmentOptions {
   designOptions?: PdfDesignOptions;
 }
 
-interface LegacyRenderResponse {
-  fileUrl: string;
-  fileName: string;
-  renderer?: string;
-}
 
 /**
  * The document, template-first.
@@ -99,26 +108,30 @@ export async function produceInvestmentDocument(
     };
   }
 
-  const { data, error } = await invokeSecureFunction<LegacyRenderResponse>(
-    'render-investment-report-pdf',
-    {
-      reportId,
-      includeCharts: options.includeCharts ?? true,
-      includeHeroImages: options.includeHeroImages ?? false,
-      includeSparklines: options.includeSparklines ?? true,
-      designOptions: options.designOptions,
-    },
-    { timeoutMs: 240_000 },
-  );
-  if (error || !data?.fileUrl) {
-    throw new Error(error?.message || 'PDF generation failed');
-  }
-  const blob = await fetchPdfBlob(data.fileUrl);
-  if (!blob.size) throw new Error('The rendered PDF was empty.');
+  // The standard document, drawn HERE.
+  //
+  // This used to POST to `render-investment-report-pdf`, which composed HTML
+  // and handed it to WeasyPrint on Cloud Run. The drawing is now
+  // `investmentPdfDocument` — the same pdf-lib implementation that produced
+  // 263 of the 275 Investment PDFs this product has delivered — so the
+  // document reaches a client without leaving the browser and Supabase.
+  //
+  // The projection is shared with `ClientPDFGenerator` rather than repeated,
+  // because it is where stored financials are healed and an historic row's
+  // overrides are overlaid. One transform, one set of numbers.
+  const row = await loadInvestmentReportForPdf(reportId);
+  const { report, reportTier } = projectRowForPdf(row);
+  const drawn = await generateInvestmentPdfBlob({
+    report,
+    reportTier,
+    includeSources: true,
+    includeScoring: true,
+  });
+  if (!drawn.blob.size) throw new Error('The rendered PDF was empty.');
   return {
-    blob,
-    fileName: data.fileName || `investment-report-${reportId}.pdf`,
-    engine: 'legacy_server',
+    blob: drawn.blob,
+    fileName: drawn.fileName,
+    engine: drawn.renderer,
     templateId: null,
   };
 }
@@ -135,9 +148,6 @@ export async function deliverInvestmentPdf(
 
 const STORAGE_BUCKET = 'investment-reports';
 
-/** True for a stored storage path (as opposed to an external URL or nothing). */
-const isStoragePath = (value: unknown): value is string =>
-  typeof value === 'string' && value.length > 0 && !/^https?:\/\//i.test(value);
 
 /**
  * Record the published path on the row, through the one broker every client
@@ -166,34 +176,21 @@ export interface PublishedInvestmentPdf {
 /**
  * Produce the document and make it a stored artefact a portal can serve.
  *
- * The legacy route persists its own render and records the path on the row,
- * so that path is reused rather than uploading the same bytes twice; a
- * template render (and the route's external-URL fallback) is uploaded here
- * and recorded through the same broker. Either way the returned path IS what
- * `pdf_url` now names.
+ * Every document is uploaded here and recorded through the same broker, and
+ * the returned path IS what `pdf_url` names.
+ *
+ * There used to be a shortcut: the server route persisted its own render and
+ * wrote the path to the row, so this read it back rather than uploading the
+ * same bytes twice. Nothing persists a render behind our back any more — the
+ * document is drawn in this browser and exists only as a Blob until it is
+ * stored — so the shortcut is gone rather than left to return a stale path
+ * from whichever render happened to run last.
  */
 export async function publishInvestmentPdf(
   reportId: string,
   options: ProduceInvestmentOptions = {},
 ): Promise<PublishedInvestmentPdf> {
   const doc = await produceInvestmentDocument(reportId, options);
-
-  if (doc.engine === 'legacy_server') {
-    // The route's WeasyPrint leg has just written the persisted path to the
-    // row; read it back rather than re-uploading the same document.
-    try {
-      const { data } = await invokeSecureFunction('get-investment-reports', {
-        reportId,
-        listOptions: { select: 'id, pdf_url' },
-      });
-      const stored = (data?.report as { pdf_url?: unknown } | undefined)?.pdf_url;
-      if (isStoragePath(stored)) {
-        return { path: stored, engine: doc.engine, templateId: null };
-      }
-    } catch {
-      // Fall through to uploading the bytes we already hold.
-    }
-  }
 
   const safeName = doc.fileName.replace(/[^a-zA-Z0-9._-]+/g, '-');
   const path = `${reportId}_${Date.now()}_${safeName}`;

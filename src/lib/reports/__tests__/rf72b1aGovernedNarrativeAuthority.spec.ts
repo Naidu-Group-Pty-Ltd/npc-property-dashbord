@@ -538,12 +538,16 @@ describe('RF-7.2B.1A — the template route is gated too, and it is tried first'
     'utf-8',
   );
 
-  it('the template route really is attempted before the gated legacy route', () => {
+  it('the template route really is attempted before the standard renderer', () => {
+    // The ORDER is the rule: a person's chosen template wins, and the standard
+    // document is what happens when there isn't one. RC-3.1 replaced the
+    // standard renderer (Cloud Run WeasyPrint → the browser's pdf-lib
+    // generator) and left that order exactly as it was.
     const templated = produce.indexOf('tryTemplateDocument(');
-    const legacy = produce.indexOf("'render-investment-report-pdf'");
+    const standard = produce.indexOf('generateInvestmentPdfBlob(');
     expect(templated).toBeGreaterThan(-1);
-    expect(legacy).toBeGreaterThan(-1);
-    expect(templated).toBeLessThan(legacy);
+    expect(standard).toBeGreaterThan(-1);
+    expect(templated).toBeLessThan(standard);
   });
 
   it('the caller names the report, so the renderer can ask about it', () => {

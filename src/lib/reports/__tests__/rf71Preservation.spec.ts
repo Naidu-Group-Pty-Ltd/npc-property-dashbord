@@ -38,6 +38,10 @@ const has = (p: string) => existsSync(resolve(REPO, p));
 // Every capability still has its entrypoint
 // ---------------------------------------------------------------------------
 
+/** Source with comments stripped: a comment may name what was removed. */
+const codeOnly = (text: string) =>
+  text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
 describe('the Investment Report capability surface still exists', () => {
   const EDGE_FUNCTIONS = [
     'generate-investment-report',       // creation + the section loop
@@ -117,9 +121,17 @@ describe('document delivery keeps its engines and its fallback', () => {
     expect(delivery).toContain("tryTemplateDocument('investment'");
   });
 
-  it('still falls back to the legacy server renderer', () => {
-    expect(delivery).toContain("'render-investment-report-pdf'");
-    expect(delivery).toContain("engine: 'legacy_server'");
+  it('still has a second engine behind the template route, and names it', () => {
+    // The RULE is that `produceInvestmentDocument` does not depend on a
+    // template being active: something draws the standard document, and the
+    // result says which engine did. RC-3.1 changed WHICH engine — the Cloud
+    // Run WeasyPrint route became the browser's pdf-lib generator — without
+    // changing that contract.
+    expect(delivery).toContain('generateInvestmentPdfBlob');
+    expect(delivery).toContain('BROWSER_PDF_RENDERER');
+    // And the route it replaced is genuinely gone from the code, not merely
+    // unreachable.
+    expect(codeOnly(delivery)).not.toContain('render-investment-report-pdf');
   });
 
   it('still forwards the same presentation switches to the legacy route', () => {
