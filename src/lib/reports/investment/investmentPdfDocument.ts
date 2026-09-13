@@ -43,6 +43,7 @@ import {
   sparklineSeries,
   type FigurePalette,
 } from './investmentPdfFigures';
+import { VIZ_DIRECTIVE_KINDS, VIZ_DIRECTIVE_RE_G } from '@/lib/reports/vizDirectives.pure';
 import { fetchGlobalReportSettings, type GlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawPdfLibDisclaimerPage } from '@/utils/pdfDisclaimerPage';
 
@@ -351,6 +352,47 @@ export async function generateInvestmentPdfBlob(
    */
   const applyContentRules = (sections: Record<string, string>): Record<string, string> =>
     filterSections(sections, presentation);
+
+  /**
+   * A chart directive this presentation cannot draw is REMOVED, never printed.
+   *
+   * The generator's prompt tells the model to write its figures as
+   * `{{bars: …}}`, `{{gauge: …}}`, `{{glance: …}}` and nine more kinds, and
+   * `markdown.pure.ts` states the rule for them: a directive is an instruction
+   * to the renderer — it is drawn or it is dropped, and either way its source
+   * is never printed. The design-system presentation obeys that through
+   * `vizFigures.pure.ts`. This one had never heard of them, so it set each one
+   * as body copy: measured on report 783bb982, THIRTY-SIX raw directives on a
+   * client's pages, one of them repeated on four consecutive pages because the
+   * line was carried as a table header. 60 of the 1,195 completed reports
+   * carry directives — 4,652 of them, 77.5 a report — and they are the ones
+   * the current generator writes, so this is the shape of every new report.
+   *
+   * Dropping loses nothing a reader could use: the figure was never drawn, and
+   * the prose around it and every number in that prose are untouched. The
+   * figures this presentation CAN draw are drawn from the record in the
+   * "AT A GLANCE" block below, which is where a chart in this document comes
+   * from — never from a directive, and never recomputed.
+   *
+   * The vocabulary is the shared one rather than a second regex here, so a
+   * kind added to the model's prompt cannot start leaking through this path.
+   */
+  const stripUndrawableDirectives = (content: string): string => {
+    if (!content || !content.includes('{{')) return content;
+    let removed = 0;
+    const out = content.replace(VIZ_DIRECTIVE_RE_G, (whole, rawKind: string) => {
+      if (!(VIZ_DIRECTIVE_KINDS as readonly string[]).includes(String(rawKind).toLowerCase())) {
+        return whole;
+      }
+      removed += 1;
+      return '';
+    });
+    if (removed) console.log(`🧹 Removed ${removed} chart directive(s) this presentation cannot draw`);
+    // A directive that sat alone on its line leaves the line behind; collapse
+    // the run of blank lines so the prose does not gain a hole where a figure
+    // used to be named.
+    return removed ? out.replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n') : out;
+  };
 
   const injectOverridesIntoContent = (content: string, financialData: any): string => {
     if (!financialData) {
@@ -1090,7 +1132,13 @@ export async function generateInvestmentPdfBlob(
     // CRITICAL: Prioritize structured financial data over markdown-parsed values
     // This ensures manual overrides are reflected in the PDF
     let medianPrice = financialData?.initialCosts?.propertyValue || domainData.medianPrice;
-    let rentalYield = financialData?.keyMetrics?.grossYield || investmentScore.cashFlowScore;
+    // `grossRentalYield` is the key every producer writes: measured over the
+    // 204 completed reports that carry a `keyMetrics` block, 188 hold
+    // `grossRentalYield` and ZERO hold `grossYield`. Reading the name that was
+    // never written made this fall through to a SCORE where a yield belongs.
+    let rentalYield = financialData?.keyMetrics?.grossRentalYield
+      ?? financialData?.keyMetrics?.grossYield
+      ?? investmentScore.cashFlowScore;
     let growthRate = financialData?.assumptions?.capitalGrowth || domainData.growthRate || investmentScore.capitalGrowthScore;
 
     // Only fall back to parsing markdown if structured data is not available
@@ -1245,7 +1293,7 @@ export async function generateInvestmentPdfBlob(
         report.content,
         report.enhanced_data?.financialData
       );
-      
+
       // Parse report content into sections
       const parsedSections = parseReportContent(contentWithOverrides);
       console.log('✓ Parsed sections:', Object.keys(parsedSections));
@@ -2312,11 +2360,13 @@ export async function generateInvestmentPdfBlob(
             });
           }
           
-          // Gross Yield
-          if (keyMetrics?.grossYield) {
+          // Gross Yield — see the note above `rentalYield`: the stored key is
+          // `grossRentalYield`, so this tile could never render.
+          const grossYield = keyMetrics?.grossRentalYield ?? keyMetrics?.grossYield;
+          if (grossYield) {
             row1.push({
               label: 'Gross Yield',
-              value: Number(keyMetrics.grossYield).toFixed(2) + '%',
+              value: Number(grossYield).toFixed(2) + '%',
               subtitle: 'Annual rental return',
             });
           }
@@ -2791,8 +2841,22 @@ export async function generateInvestmentPdfBlob(
       let sectionCount = 0;
       for (const sectionName of allSectionNames) {
         sectionCount++;
-        let content = sections[sectionName];
-        if (!content) continue;
+        /*
+         * Stripped HERE, at paint time, and nowhere earlier.
+         *
+         * Removing the directives from the content before `parseReportContent`
+         * cost the document FOUR CHAPTERS and the disclaimer: a chapter whose
+         * own body is a single `{{glance: …}}` opener — "Why This Location
+         * Matters", "Amenity & Access", "Property Fit Within the Suburb",
+         * "Appendix, Source Notes & Disclaimer" — then had a body of nothing,
+         * and `allSectionNames` drops anything under 40 characters, so the
+         * heading, its table-of-contents entry and its H3 children's parentage
+         * all went with it. Sectioning, the section filter and the contents
+         * therefore see exactly what the record holds; only the painted text
+         * loses the tokens.
+         */
+        let content = stripUndrawableDirectives(sections[sectionName]);
+        if (!sections[sectionName]) continue;
 
         // Strip orphan "What This Means:" labels with no body before next heading/EOF.
         content = content.replace(

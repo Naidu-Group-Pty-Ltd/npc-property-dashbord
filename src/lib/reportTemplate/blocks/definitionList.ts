@@ -23,15 +23,33 @@ import { hex } from './_shared';
 
 interface DefinitionItem { term: string; definition: string }
 
-/** Accepts the authored shape and the two aliases the HTML twin tolerates. */
-function readItems(raw: unknown): DefinitionItem[] {
+/**
+ * Accepts the authored shape and the two aliases the HTML twin tolerates.
+ *
+ * Both halves go through `resolveBindable`, because a definition list is where
+ * the Investment Compass masters put the report's own facts: the assumptions
+ * page binds `{{assumptions.capitalGrowth | percent}}`, the colophon binds
+ * `{{org.name}}` and `{{property.address}}`. `String(o.definition)` printed
+ * those tokens verbatim on the client's page — THIRTEEN of them on every
+ * rendered document, identical across all three selectable structures, which
+ * is the one thing this renderer's own contract forbids: an unresolved binding
+ * renders as the empty string, never as a visible `{{…}}`.
+ */
+function readItems(raw: unknown, ctx: BlockRenderContext): DefinitionItem[] {
   if (!Array.isArray(raw)) return [];
+  const read = (...candidates: unknown[]): string => {
+    for (const c of candidates) {
+      if (c === undefined || c === null) continue;
+      return resolveBindable(c, ctx).trim();
+    }
+    return '';
+  };
   return raw
     .map((it) => {
       const o = (it ?? {}) as Record<string, unknown>;
       return {
-        term: String(o.term ?? o.label ?? o.name ?? '').trim(),
-        definition: String(o.definition ?? o.value ?? o.description ?? '').trim(),
+        term: read(o.term, o.label, o.name),
+        definition: read(o.definition, o.value, o.description),
       };
     })
     .filter((it) => it.term || it.definition);
@@ -57,7 +75,7 @@ export function drawDefinitionListBlock(block: Block, ctx: BlockRenderContext): 
     y += 14;
   }
 
-  const items = readItems(p.items ?? p.data);
+  const items = readItems(p.items ?? p.data, ctx);
   // An authored list with nothing in it draws nothing at all — no heading rule
   // hanging over empty space, and above all no placeholder.
   if (items.length === 0) return;
