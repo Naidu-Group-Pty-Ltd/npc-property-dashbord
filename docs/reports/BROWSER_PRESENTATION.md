@@ -102,6 +102,59 @@ contents see what the record holds; only the painted text loses the tokens.
 **A removed figure never removes a sentence.** The prose around a directive, and
 every number in it, is untouched.
 
+## The presentation does not rewrite the report's prose
+
+`sanitizeAIContent` repairs merged words in model output, and two of its rules
+split every case boundary they found — which is what a NAME looks like.
+Measured over the completed corpus, the camelCase splitter's own hit list is
+this product's data sources and Australian agencies: **CoreLogic 3,975**,
+OpenAgent 447, AreaSearch 160, OnTheHouse 97, PropTrack 83, plus QuickStats,
+MacKillop, MidCoast, VicPlan, VicRoads, VicPol, VicEmergency, TrainLink,
+FloodCheck and OpenStreetMap. Every standard-presentation PDF printed "Core
+Logic" and "Prop Track", so the document misnamed the sources it cites — while
+the template presentation printed them correctly, which means **one record was
+producing two different sentences**. That is the parity question, asked of
+prose rather than of figures.
+
+The letter-digit splitter was the same defect on units and codes (`988 m2` →
+`988 m 2`; the corpus's letter+digit tokens are SA2 1,290, SA4 778, SA3 776,
+FY21, GRZ2, Yr10 — geography and zoning, not merges). The punctuation rule split
+on any letter after a stop, so `e.g.,` came out `e. g.` and the firm's own
+contact line came out `www. npcservices. com. au`.
+
+What still repairs: `done.The` → `done. The` (a lowercase letter, a stop, then
+a CAPITAL — a lowercase letter after the stop is the shape of a domain, an
+abbreviation or a file name), `2026The`, `Westernfreeway`, `Vale'sdemographic`.
+The compound-word rule is case-SENSITIVE for the same reason: `/gi` matched the
+`Road` in `VicRoads`.
+
+## Punctuation sits against the word it belongs to
+
+`parseMarkdownText` returns one run per emphasis span, and the drawing split
+every run on spaces into independent words — so `**988 m² land size**, paired`
+drew the comma as its OWN word with a space in front of it. Three on the first
+page of prose.
+
+A word carries `glue`: no space before it, no gap allocated to it when the line
+is justified, and it may not START a line (the word in front comes down with
+it). **Both sides decide** whether a run continues the one before: a run's own
+text never begins with the space that separates it — that space is at the END
+of the previous run — so gluing on "does not start with white space" alone
+produced "is aland-rich". The page-overflow hand-off carries the flag too,
+because rebuilding the continuation with `join(' ')` is what would put the
+comma back on its own.
+
+## A list with nothing in it draws nothing at all
+
+`strengths-watch` resolved each item inside the draw and placed the glyph badge
+before the text, so an item resolving to nothing left a coloured dot under a
+heading bar with no words beside it. `investment_score.strengths` and
+`.weaknesses` are `[]` on a report whose evidence was insufficient to grade —
+the ordinary state — so the Verdict page of all three structures carried
+"STRENGTHS" and "CONSIDERATIONS" as two title bars each with one stray bullet.
+Items are resolved first, empties dropped, and a column with none left draws
+nothing including its title bar.
+
 ## An unresolved binding renders as the empty string, never as a visible `{{…}}`
 
 That is the presentation renderer's own contract, and `definition-list` broke it
@@ -145,6 +198,21 @@ spellings):
 | Luxury Editorial — Frontispiece · Midnight Editorial | `investment_compass` | 53 | 325 | 16 |
 
 ## What is NOT settled
+
+**The Verdict page's sentence overflows into the KPI tiles** on all three
+template structures. The master places a `text-block` at a fixed `y` and the KPI
+grid at another, and `{{recommendation.gradedLine}}` on the certification record
+is 137 characters where the geometry was fitted for about 90. It is **not a
+browser-renderer regression**: `htmlRenderer` positions blocks absolutely at the
+same coordinates and only the PAGE clips, so the WeasyPrint document overflows
+identically. The fix belongs to the template library — the masters' fitted
+geometry, regenerated through `templates:compass:generate` — and the class is
+already named in `CLAUDE.md`: a declared block height is a promise the renderer
+keeps only if the text is as short as the author assumed.
+
+**KPI tile labels are muted-on-dark** in the dark colourways and read faintly.
+A design-token question rather than a renderer one.
+
 
 **The standard presentation withholds the financial KPI set on a Compass report
 and the templates publish it.** `extractKPIMetrics` opens with
