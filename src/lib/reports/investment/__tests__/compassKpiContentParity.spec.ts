@@ -219,4 +219,48 @@ describe('the Compass standard presentation carries the core investment facts', 
     expect(flat).toContain(money(bound.purchasePrice!).replace(/\s+/g, ''));
     expect(flat).toContain(Number(bound.grossYield).toFixed(2) + '%');
   }, 180_000);
+  /**
+   * The fallback host is additive.
+   *
+   * The band has always attached to a section whose NAME invites it, and only
+   * 141 of the 1,123 Compass reports carry such a heading — which is why a
+   * fallback exists at all. It must not MOVE the band on the 141 that do: a
+   * report naming a financial section still hosts it there, so every document
+   * that drew the band before draws it in the same place.
+   */
+  it('leaves a report that names a financial section hosting the band there', async () => {
+    const content = [
+      '# Investment Report: 9 Test Street, Cowra NSW 2794',
+      '',
+      '## Location Overview',
+      '',
+      'The suburb profile and its surrounding amenity are set out here at length so that',
+      'this section clears the forty-character floor the section filter applies to bodies.',
+      '',
+      '## Financial Snapshot',
+      '',
+      'The holding position for this property is set out below, with the acquisition and',
+      'the annual return stated against the contract price.',
+      '',
+    ].join('\n');
+    const { generateInvestmentPdfBlob } = await import('../investmentPdfDocument');
+    const { blob } = await generateInvestmentPdfBlob({
+      report: { ...reportWith(COWRA_FINANCIALS), content } as any, reportTier: 'compass',
+    });
+    const pdfjs: any = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const doc = await pdfjs.getDocument({
+      data: new Uint8Array(await blob.arrayBuffer()), useSystemFonts: false,
+    }).promise;
+    const pages: string[] = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      const c = await (await doc.getPage(i)).getTextContent();
+      pages.push(c.items.map((it: any) => it.str ?? '').join('').replace(/\s+/g, ''));
+    }
+    const bandPage = pages.find((p) => p.includes('PURCHASEPRICE'));
+    expect(bandPage, 'the band must be drawn somewhere').toBeDefined();
+    expect(bandPage, 'it must sit with the section that invites it')
+      .toContain('FinancialSnapshot');
+    expect(bandPage!.indexOf('FinancialSnapshot'))
+      .toBeLessThan(bandPage!.indexOf('PURCHASEPRICE'));
+  }, 180_000);
 });
