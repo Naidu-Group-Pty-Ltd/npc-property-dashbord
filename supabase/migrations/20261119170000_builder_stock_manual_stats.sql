@@ -40,6 +40,18 @@ comment on column public.builder_stock_items.manual_stats is
 -- An object, and its `values` an object. The column is written by one edge
 -- function that validates every field, but a constraint is what makes that
 -- true of every writer there will ever be — including a hand-run statement.
+--
+-- A CHECK CONSTRAINT PASSES ON NULL AND FAILS ONLY ON FALSE, which is the one
+-- thing that makes a shape constraint over JSONB hard to write. The first
+-- version of this opened with `jsonb_typeof(manual_stats -> 'values') =
+-- 'object'`, and `->` on an ABSENT key is SQL NULL, so that comparison was
+-- NULL rather than false, the whole `and` chain evaluated to NULL, and the
+-- constraint ACCEPTED an object carrying no `values` key at all. Found by
+-- probing the live constraint rather than by reading it — `{"recorded_at":"x"}`
+-- was stored without complaint, and every expression below it was skipped for
+-- the same reason. So the key's PRESENCE is asserted first, with `?`, which is
+-- strictly true or false; once it holds, `-> 'values'` is never NULL and each
+-- test below means what it says.
 alter table public.builder_stock_items
   drop constraint if exists builder_stock_items_manual_stats_shape;
 
@@ -48,6 +60,7 @@ alter table public.builder_stock_items
     manual_stats is null
     or (
       jsonb_typeof(manual_stats) = 'object'
+      and manual_stats ? 'values'
       and jsonb_typeof(manual_stats -> 'values') = 'object'
       -- Never an empty override: clearing every field removes the row's
       -- override entirely, so `{"values":{}}` is a state that cannot be

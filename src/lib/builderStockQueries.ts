@@ -431,8 +431,16 @@ export function useSetBuilderStockAvailability() {
 /**
  * State the figures this property's stock list did not.
  *
- * Sends only the fields the builder filled; a cleared field is omitted, which
- * is how a correction is taken back and the document's own reading returns.
+ * All five fields are sent every time, and a box the builder cleared is sent
+ * as `null` rather than left out — `parseManualStats` reads an absent key, a
+ * null and an empty string identically, so either shape works, and sending
+ * the field states plainly that the correction was WITHDRAWN rather than
+ * simply not mentioned this time.
+ *
+ * A cleared field therefore returns the document's own reading, and clearing
+ * every field withdraws the whole override. `0` is NOT a cleared field: a
+ * townhouse may have no car space, so it travels as the figure it is.
+ *
  * The server refuses an out-of-range figure rather than clamping it, so a
  * rejection carries a message worth showing.
  */

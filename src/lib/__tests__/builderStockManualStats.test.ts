@@ -220,6 +220,60 @@ describe('every read path applies the overlay', () => {
 
 });
 
+/**
+ * A CHECK CONSTRAINT PASSES ON NULL AND FAILS ONLY ON FALSE.
+ *
+ * The first version of the column's constraint opened with
+ * `jsonb_typeof(manual_stats -> 'values') = 'object'`. On an object with no
+ * `values` key, `->` is SQL NULL, so that comparison is NULL rather than
+ * false, the whole `and` chain evaluates to NULL, and Postgres ACCEPTS the
+ * row — every test after it skipped for the same reason. Probed against the
+ * live constraint, `{"recorded_at":"x"}` stored without complaint.
+ *
+ * No reader was fooled (`readManualStats` answers null for it, which the cases
+ * above pin), but a constraint that does not enforce what its own comment
+ * claims is the shape this repo has been burned by before: asserted by
+ * configuration rather than by effect.
+ *
+ * This pins the fix at the source, because the effect can only be measured
+ * against a live database and CI has none.
+ */
+describe('the column\u2019s own constraint cannot be satisfied by a NULL', () => {
+  /*
+   * THE SQL, NOT THE PROSE ABOUT THE SQL. The migration's header quotes the
+   * broken expression verbatim in order to explain it, so a check over the
+   * raw file finds that quotation and reports the defect it documents — which
+   * is how the ordering case below failed on correct SQL the first time it
+   * ran. `--` comments go before anything is judged.
+   */
+  const migration = () => readFileSync(
+    join(process.cwd(),
+      'supabase/migrations/20261119170000_builder_stock_manual_stats.sql'),
+    'utf8',
+  ).replace(/^\s*--.*$/gm, '');
+
+  it('asserts the `values` KEY is present, not merely that its type is object', () => {
+    const sql = migration();
+    // `?` is strictly true or false, so it cannot leak a NULL into the chain.
+    expect(sql).toContain("manual_stats ? 'values'");
+  });
+
+  it('asserts presence BEFORE any expression that dereferences it', () => {
+    const sql = migration();
+    const presence = sql.indexOf("manual_stats ? 'values'");
+    const firstDeref = sql.indexOf("jsonb_typeof(manual_stats -> 'values')");
+    expect(presence).toBeGreaterThan(-1);
+    expect(firstDeref).toBeGreaterThan(-1);
+    // Order matters: `and` short-circuits left to right, so a dereference
+    // above the presence test is a NULL reaching the chain again.
+    expect(presence).toBeLessThan(firstDeref);
+  });
+
+  it('still admits a null column, which is what every existing row holds', () => {
+    expect(migration()).toContain('manual_stats is null');
+  });
+});
+
 describe('what the plate says about the figures', () => {
   const item = (over: Partial<BuilderStockItem> = {}) => ({
     id: 'item-1', bedrooms: null, bathrooms: null, car_spaces: null,
