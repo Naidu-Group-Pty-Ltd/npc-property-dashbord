@@ -163,7 +163,11 @@ Deno.serve(async (req) => {
     const startedAt = Date.now();
     const startIndex = Math.max(0, Number(cursor) || 0);
     const queue = targetContactIds.slice(startIndex);
-    const tokenKey = tokenKeyFor(_ghlCreds.label === 'legacy' ? 'legacy' : 'new', apiKey);
+    // `label` is already `'legacy' | 'new'`, so it is passed straight through
+    // the way the migration workers do it. Collapsing an unrecognised label to
+    // 'new' with a ternary would hand two DIFFERENT tokens the same bucket key,
+    // which is the one way a shared limiter can under-count.
+    const tokenKey = tokenKeyFor(_ghlCreds.label, apiKey);
 
     // The budget is now a predicate rather than a `break`: it stops the pool
     // taking NEW contacts while everything already in flight finishes, so a
