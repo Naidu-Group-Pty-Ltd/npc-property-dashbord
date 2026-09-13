@@ -56,6 +56,7 @@ import {
   saveTemplateDocument,
   tryTemplateDocument,
 } from '@/lib/reportTemplate/templateDocument';
+import { BROWSER_PRESENTATION_RENDERER } from '@/lib/reportTemplate/routeReportThroughTemplate';
 import {
   generateInvestmentPdfBlob,
   BROWSER_PDF_RENDERER,
@@ -65,6 +66,12 @@ import {
   projectRowForPdf,
 } from '@/lib/reports/investment/investmentPdfSource';
 import { assertInvestmentReportClientReady } from '@/lib/reports/investment/clientReadiness';
+import {
+  applyPresentationOptionsToContent,
+  resolvePresentationOptions,
+  type InvestmentPresentationOptions,
+} from '@/lib/reports/investment/presentationOptions';
+import { loadInvestmentHeroImages } from '@/lib/reports/investment/investmentHeroImages';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import type { PdfDesignOptions } from '@/components/reports/premiumPdfDesign';
 
@@ -72,25 +79,24 @@ export interface InvestmentDocument {
   blob: Blob;
   fileName: string;
   /**
-   * Which machinery produced the bytes.
+   * Which renderer produced these exact bytes.
    *
-   * `browser_pdf_lib` replaced `legacy_server`: the standard document is drawn
-   * in this browser with pdf-lib now, not by a Cloud Run WeasyPrint route. The
-   * value is carried into the render event so production telemetry can show
-   * the path an artefact actually took.
+   * Two browser renderers, two identities, because they draw two different
+   * documents: `browser_pdf_lib` is the standard presentation composed with
+   * pdf-lib, `browser_template_jspdf` is a chosen template drawn by the Report
+   * Presentation Renderer. Neither is a render service — `legacy_server` and
+   * `premium_weasyprint` named one that no longer runs, and a telemetry value
+   * naming a retired service is worse than none, because it is read as
+   * evidence.
    */
-  engine: 'template' | typeof BROWSER_PDF_RENDERER;
+  engine: typeof BROWSER_PRESENTATION_RENDERER | typeof BROWSER_PDF_RENDERER;
   /** The template that rendered it, when the template engine did. */
   templateId: string | null;
 }
 
-export interface ProduceInvestmentOptions {
+export interface ProduceInvestmentOptions extends Partial<InvestmentPresentationOptions> {
   /** The report's variant (financial / briefing / snapshot), for the adapter. */
   variant?: string | null;
-  /** Legacy-route presentation switches, forwarded untouched. */
-  includeCharts?: boolean;
-  includeHeroImages?: boolean;
-  includeSparklines?: boolean;
   designOptions?: PdfDesignOptions;
 }
 
@@ -125,14 +131,47 @@ export async function produceInvestmentDocument(
   const row = await loadInvestmentReportForPdf(reportId);
   assertInvestmentReportClientReady(row);
 
+  /*
+   * The five controls, resolved once and applied once.
+   *
+   * Two of them — Sources and Scoring — decide what the report CONTAINS, and
+   * the other three decide what is DRAWN. The content rules are applied to the
+   * report's own Markdown here, above the choice of presentation, so a chosen
+   * template and the standard document agree about which sections belong in
+   * this client's copy. They were inside the standard generator before, which
+   * meant a report delivered through a template carried its source notes and
+   * its scoring sections however the switches were set. See
+   * `presentationOptions.ts` for why the two kinds are kept apart.
+   *
+   * Nothing here recalculates, re-scores or re-narrates anything. A section
+   * that is not included is not printed; every figure in every section that IS
+   * printed is the figure the record holds.
+   */
+  const presentation = resolvePresentationOptions(options);
+  const presentedRow = {
+    ...row,
+    report_content: applyPresentationOptionsToContent(
+      typeof row.report_content === 'string' ? row.report_content : '',
+      presentation,
+    ),
+  };
+
+  const heroImages = presentation.includeHeroImages
+    ? await loadInvestmentHeroImages(reportId)
+    : [];
+
   const templated = await tryTemplateDocument('investment', reportId, {
     variant: options.variant ?? null,
+    // The SAME payload the standard presentation would draw. The adapter reads
+    // the record itself for everything else; this is the one thing the
+    // operator's switches changed, so it is the one thing that travels.
+    payload: { reportContent: presentedRow.report_content },
   });
   if (templated) {
     return {
       blob: templated.blob,
       fileName: templated.fileName,
-      engine: 'template',
+      engine: BROWSER_PRESENTATION_RENDERER,
       templateId: templated.templateId,
     };
   }
@@ -148,12 +187,12 @@ export async function produceInvestmentDocument(
   // The projection is shared with `ClientPDFGenerator` rather than repeated,
   // because it is where stored financials are healed and an historic row's
   // overrides are overlaid. One transform, one set of numbers.
-  const { report, reportTier } = projectRowForPdf(row);
+  const { report, reportTier } = projectRowForPdf(presentedRow);
   const drawn = await generateInvestmentPdfBlob({
     report,
     reportTier,
-    includeSources: true,
-    includeScoring: true,
+    presentation,
+    heroImages,
   });
   if (!drawn.blob.size) throw new Error('The rendered PDF was empty.');
   return {

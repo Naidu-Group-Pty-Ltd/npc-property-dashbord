@@ -29,6 +29,20 @@
  * plain one, and the return.
  */
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import {
+  filterSections,
+  resolvePresentationOptions,
+  type InvestmentPresentationOptions,
+} from './presentationOptions';
+import {
+  drawProjectionLineChart,
+  drawScoreBars,
+  drawSparkline,
+  readProjectionSeries,
+  readScoreComponents,
+  sparklineSeries,
+  type FigurePalette,
+} from './investmentPdfFigures';
 import { fetchGlobalReportSettings, type GlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawPdfLibDisclaimerPage } from '@/utils/pdfDisclaimerPage';
 
@@ -68,9 +82,32 @@ export interface InvestmentPdfDocument extends InvestmentPdfBlob {
 
 export interface GenerateInvestmentPdfOptions {
   report: InvestmentReportData;
-  includeSources?: boolean;
-  includeScoring?: boolean;
   reportTier?: ReportTier;
+  /**
+   * The export panel's five controls. Two of them are content-inclusion rules
+   * and three are presentation rules; `presentationOptions.ts` is where that
+   * distinction is stated and where the content rules' section lists live, so
+   * a chosen template and this document apply the same ones.
+   */
+  presentation?: Partial<InvestmentPresentationOptions>;
+  /**
+   * Imagery already stored against this report, resolved by the caller.
+   *
+   * Passed in rather than fetched: this module draws, and a renderer that
+   * reached for a network of its own would be a second place a document could
+   * fail to be produced. An empty list is the ordinary state — a report has
+   * hero imagery only once somebody has placed some.
+   */
+  heroImages?: readonly InvestmentHeroImage[];
+}
+
+/** One placed hero image, already fetched and decoded by the caller. */
+export interface InvestmentHeroImage {
+  /** The section heading it was placed against, matched case-insensitively. */
+  sectionKey: string;
+  /** PNG or JPEG bytes. */
+  bytes: Uint8Array;
+  format: 'png' | 'jpeg';
 }
 
 /**
@@ -85,10 +122,11 @@ export async function generateInvestmentPdfBlob(
 ): Promise<InvestmentPdfDocument> {
   const {
     report,
-    includeSources = true,
-    includeScoring = true,
     reportTier = 'compass',
+    heroImages = [],
   } = options;
+  const presentation = resolvePresentationOptions(options.presentation);
+  const { includeSources, includeScoring } = presentation;
 
   const extractSuburbState = (address: string | undefined | null): { suburb: string; state: string } => {
     // Handle undefined/null address gracefully
@@ -298,84 +336,21 @@ export async function generateInvestmentPdfBlob(
     return chunks;
   };
 
-  const filterSourcesSections = (sections: Record<string, string>): Record<string, string> => {
-    if (includeSources) {
-      console.log('✓ Including sources in PDF (toggle is ON)');
-      return sections;
-    }
-    
-    console.log('🚫 Filtering out sources sections from PDF (toggle is OFF)');
-    console.log('📋 Available sections before filtering:', Object.keys(sections));
-    
-    // Create a new object without source-related and methodology sections
-    // These sections have been removed from the report structure per user request
-    const filteredSections: Record<string, string> = {};
-    const sourceSectionPatterns = [
-      /market data sources?/i,
-      /data sources?/i,
-      /data availability/i,
-      /data.*sourcing/i,
-      /methodology\s*notes?/i,
-      /data\s*transparency/i,
-      /data\s*limitations?/i,
-      /limitations?\s*(&|and)?\s*transparency/i,
-      /demographic.*economic data/i,
-      /economic data sources?/i,
-      /sources?$/i
-    ];
-    
-    let removedCount = 0;
-    for (const [key, value] of Object.entries(sections)) {
-      const isSourceSection = sourceSectionPatterns.some(pattern => pattern.test(key));
-      if (isSourceSection) {
-        console.log(`  ❌ Removing section: "${key}"`);
-        removedCount++;
-      } else {
-        filteredSections[key] = value;
-      }
-    }
-    
-    console.log(`✓ Filtered out ${removedCount} source section(s)`);
-    console.log('📋 Remaining sections:', Object.keys(filteredSections));
-    return filteredSections;
-  };
-
-  const filterScoringSections = (sections: Record<string, string>): Record<string, string> => {
-    if (includeScoring) {
-      console.log('✓ Including scoring breakdown in PDF (toggle is ON)');
-      return sections;
-    }
-    
-    console.log('🚫 Filtering out scoring sections from PDF (toggle is OFF)');
-    console.log('📋 Available sections before filtering:', Object.keys(sections));
-    
-    // Create a new object without scoring-related sections
-    const filteredSections: Record<string, string> = {};
-    const scoringSectionPatterns = [
-      /investment scor/i,
-      /score breakdown/i,
-      /scoring breakdown/i,
-      /investment grade/i,
-      /investment rating/i,
-      /overall score/i,
-      /property score/i
-    ];
-    
-    let removedCount = 0;
-    for (const [key, value] of Object.entries(sections)) {
-      const isScoringSection = scoringSectionPatterns.some(pattern => pattern.test(key));
-      if (isScoringSection) {
-        console.log(`  ❌ Removing scoring section: "${key}"`);
-        removedCount++;
-      } else {
-        filteredSections[key] = value;
-      }
-    }
-    
-    console.log(`✓ Filtered out ${removedCount} scoring section(s)`);
-    console.log('📋 Remaining sections:', Object.keys(filteredSections));
-    return filteredSections;
-  };
+  /**
+   * The two content rules, from the one module that states them.
+   *
+   * These were two inline pattern lists here, which meant the rule applied to
+   * THIS document and to nothing else: a report delivered through a chosen
+   * template carried its source notes and its scoring sections however the
+   * switches were set, and nobody was told. `presentationOptions.ts` holds the
+   * lists now and the delivery module applies them to the report content
+   * before either renderer sees it, so this is the same rule applied a second
+   * time to a document whose sections have usually already been filtered —
+   * which is harmless, and is what keeps this function correct for a caller
+   * that draws from an unfiltered record.
+   */
+  const applyContentRules = (sections: Record<string, string>): Record<string, string> =>
+    filterSections(sections, presentation);
 
   const injectOverridesIntoContent = (content: string, financialData: any): string => {
     if (!financialData) {
@@ -1276,10 +1251,10 @@ export async function generateInvestmentPdfBlob(
       console.log('✓ Parsed sections:', Object.keys(parsedSections));
       
       // Filter out sources sections if toggle is off (AFTER parsing for reliability)
-      const sectionsWithoutSources = filterSourcesSections(parsedSections);
+      const sectionsWithoutSources = applyContentRules(parsedSections);
       
       // Filter out scoring sections if toggle is off
-      const sections = filterScoringSections(sectionsWithoutSources);
+      const sections = sectionsWithoutSources;
       console.log('✓ Final sections for PDF:', Object.keys(sections));
 
       // Load the PDF template
@@ -3288,6 +3263,178 @@ export async function generateInvestmentPdfBlob(
         }
 
         yPosition -= 10; // Reduced spacing between sections
+      }
+
+      // ========== FIGURES ==========
+      /*
+       * Charts, sparklines and placed imagery — the three PRESENTATION
+       * controls, drawn here because they are drawn from what the document has
+       * already said. Every series is read from the stored record, nothing is
+       * recomputed, and a series the record does not carry draws nothing.
+       *
+       * They sit after the sections deliberately: a figure is a second reading
+       * of a figure already stated, so it follows the statement rather than
+       * interrupting it, and turning them all off removes pages without
+       * removing a single fact.
+       */
+      const figurePalette: FigurePalette = {
+        ink: NAVY_RGB,
+        muted: FOOTER_TEXT_RGB,
+        accent: GOLD_RGB,
+        rule: TABLE_BORDER,
+        positive: rgb(46 / 255, 125 / 255, 50 / 255),
+        negative: rgb(178 / 255, 34 / 255, 34 / 255),
+      };
+      const figureFonts = { regular: helveticaFont, bold: helveticaBold };
+      // `enhanced_data` is where `projectRowForPdf` puts the healed financials
+      // and the stored score — the same objects every figure in the prose above
+      // was drawn from, so a chart cannot disagree with the table beside it.
+      const projectionSeries = readProjectionSeries(report.enhanced_data?.financialData);
+      const scoreComponents = readScoreComponents(report.enhanced_data?.investmentScore);
+
+      const wantsCharts = presentation.includeCharts
+        && ((projectionSeries?.length ?? 0) >= 2 || scoreComponents.length > 0);
+      const wantsSparklines = presentation.includeSparklines && (projectionSeries?.length ?? 0) >= 2;
+      const wantsHeroes = presentation.includeHeroImages && heroImages.length > 0;
+
+      if (wantsCharts || wantsSparklines || wantsHeroes) {
+        currentPage = await addContentPage();
+        yPosition = pageHeight - topMargin - 20;
+
+        const headingText = 'AT A GLANCE';
+        currentPage.drawText(headingText, {
+          x: margin, y: yPosition, size: 12, font: helveticaBold, color: NAVY_RGB,
+        });
+        yPosition -= 6;
+        currentPage.drawLine({
+          start: { x: margin, y: yPosition },
+          end: { x: pageWidth - margin, y: yPosition },
+          thickness: 1, color: GOLD_RGB,
+        });
+        yPosition -= 16;
+
+        const contentWidth = pageWidth - 2 * margin;
+
+        if (presentation.includeCharts && projectionSeries) {
+          const chartHeight = 150;
+          if (yPosition - chartHeight < bottomMargin) {
+            currentPage = await addContentPage();
+            yPosition = pageHeight - topMargin - 20;
+          }
+          if (drawProjectionLineChart(
+            currentPage, projectionSeries, 'propertyValue',
+            'Projected property value (moderate scenario)',
+            { x: margin, y: yPosition - chartHeight, width: contentWidth, height: chartHeight },
+            figureFonts, figurePalette,
+          )) {
+            yPosition -= chartHeight + 18;
+          }
+
+          if (yPosition - chartHeight < bottomMargin) {
+            currentPage = await addContentPage();
+            yPosition = pageHeight - topMargin - 20;
+          }
+          if (drawProjectionLineChart(
+            currentPage, projectionSeries, 'cumulativeCashFlow',
+            'Cumulative cash flow (moderate scenario)',
+            { x: margin, y: yPosition - chartHeight, width: contentWidth, height: chartHeight },
+            figureFonts, figurePalette,
+          )) {
+            yPosition -= chartHeight + 18;
+          }
+        }
+
+        if (presentation.includeCharts && scoreComponents.length) {
+          const barsHeight = 24 + scoreComponents.slice(0, 8).length * 14;
+          if (yPosition - barsHeight < bottomMargin) {
+            currentPage = await addContentPage();
+            yPosition = pageHeight - topMargin - 20;
+          }
+          if (drawScoreBars(
+            currentPage, scoreComponents, 'Scored dimensions',
+            { x: margin, y: yPosition - barsHeight, width: contentWidth, height: barsHeight },
+            figureFonts, figurePalette,
+          )) {
+            yPosition -= barsHeight + 18;
+          }
+        }
+
+        /*
+         * The sparkline strip: three series, each beside the words for what it
+         * is. No axis and no scale — a sparkline says "rising" or "falling"
+         * next to a figure the document has already printed, and the moment it
+         * needs a label it wants to be a chart instead.
+         */
+        if (wantsSparklines && projectionSeries) {
+          const strip: Array<[string, 'propertyValue' | 'annualRent' | 'loanBalance']> = [
+            ['Value', 'propertyValue'],
+            ['Rent', 'annualRent'],
+            ['Loan balance', 'loanBalance'],
+          ];
+          const rowHeight = 16;
+          const stripHeight = 14 + strip.length * rowHeight;
+          if (yPosition - stripHeight < bottomMargin) {
+            currentPage = await addContentPage();
+            yPosition = pageHeight - topMargin - 20;
+          }
+          currentPage.drawText('Ten-year shape', {
+            x: margin, y: yPosition - 9, size: 9, font: helveticaBold, color: NAVY_RGB,
+          });
+          let sparkY = yPosition - 22;
+          for (const [label, field] of strip) {
+            const values = sparklineSeries(projectionSeries, field);
+            if (values.length < 2) continue;
+            currentPage.drawText(label, {
+              x: margin, y: sparkY, size: 7, font: helveticaFont, color: BODY_TEXT_RGB,
+            });
+            drawSparkline(
+              currentPage, values,
+              { x: margin + 76, y: sparkY - 1, width: 120, height: 9 },
+              figurePalette,
+            );
+            sparkY -= rowHeight;
+          }
+          yPosition = sparkY - 8;
+        }
+
+        /*
+         * Imagery a person placed against this report, drawn at the width of
+         * the text block and never scaled up past its own pixels. Nothing is
+         * generated here: a report has hero imagery only when somebody has
+         * already put some there, and a report with none simply has one fewer
+         * thing on this page.
+         */
+        if (wantsHeroes) {
+          for (const hero of heroImages.slice(0, 6)) {
+            let embedded;
+            try {
+              embedded = hero.format === 'png'
+                ? await pdfDoc.embedPng(hero.bytes)
+                : await pdfDoc.embedJpg(hero.bytes);
+            } catch (err) {
+              console.warn('[investmentPdfDocument] hero image could not be embedded', err);
+              continue;
+            }
+            const scale = Math.min(contentWidth / embedded.width, 1);
+            const drawWidth = embedded.width * scale;
+            const drawHeight = embedded.height * scale;
+            if (yPosition - drawHeight - 20 < bottomMargin) {
+              currentPage = await addContentPage();
+              yPosition = pageHeight - topMargin - 20;
+            }
+            if (hero.sectionKey) {
+              currentPage.drawText(hero.sectionKey.slice(0, 80), {
+                x: margin, y: yPosition - 8, size: 7.5,
+                font: helveticaBold, color: FOOTER_TEXT_RGB,
+              });
+              yPosition -= 14;
+            }
+            currentPage.drawImage(embedded, {
+              x: margin, y: yPosition - drawHeight, width: drawWidth, height: drawHeight,
+            });
+            yPosition -= drawHeight + 16;
+          }
+        }
       }
 
       // ========== SECOND PASS: DRAW TABLE OF CONTENTS WITH ACTUAL PAGE NUMBERS ==========

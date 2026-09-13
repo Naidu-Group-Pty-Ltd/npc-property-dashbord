@@ -134,9 +134,21 @@ describe('document delivery keeps its engines and its fallback', () => {
     expect(codeOnly(delivery)).not.toContain('render-investment-report-pdf');
   });
 
-  it('still forwards the same presentation switches to the legacy route', () => {
-    for (const flag of ['includeCharts', 'includeHeroImages', 'includeSparklines', 'designOptions']) {
-      expect(delivery, `${flag} must keep reaching the renderer`).toContain(flag);
+  /**
+   * The switches still reach the renderer — all FIVE of them now, rather than
+   * the three this checked. `ProduceInvestmentOptions` extends the five-control
+   * contract, so the names are the contract's rather than repeated here, and
+   * the delivery module resolves them once above the choice of presentation.
+   */
+  it('still forwards the presentation switches, and now all five of them', () => {
+    expect(delivery).toContain('InvestmentPresentationOptions');
+    expect(delivery).toContain('resolvePresentationOptions(options)');
+    expect(delivery).toContain('designOptions');
+    const options = read('src/lib/reports/investment/presentationOptions.ts');
+    for (const flag of [
+      'includeSources', 'includeScoring', 'includeCharts', 'includeHeroImages', 'includeSparklines',
+    ]) {
+      expect(options, `${flag} must be part of the one contract`).toContain(flag);
     }
   });
 

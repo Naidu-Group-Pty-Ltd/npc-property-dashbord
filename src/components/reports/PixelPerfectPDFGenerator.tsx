@@ -59,7 +59,7 @@ export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandl
    */
   const generateCore = async (): Promise<{ blob: Blob; publicUrl: string; suburb: string; state: string }> => {
     const { blob, fileName, suburb, state } = await generateInvestmentPdfBlob({
-      report, includeSources, includeScoring, reportTier,
+      report, reportTier, presentation: { includeSources, includeScoring },
     });
 
     console.log('☁️ Step 7: Uploading to Supabase Storage...');

@@ -35,6 +35,9 @@ import {
   generateInvestmentPdfBlob,
   BROWSER_PDF_RENDERER,
 } from '@/lib/reports/investment/investmentPdfDocument';
+// Two browser renderers, two identities: telemetry has to answer WHICH one
+// produced these exact bytes, and one name for both answers ends that.
+import { BROWSER_PRESENTATION_RENDERER } from '@/lib/reportTemplate/routeReportThroughTemplate';
 import { loadInvestmentReportForPdf } from '@/lib/reports/investment/investmentPdfSource';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import {
@@ -54,6 +57,17 @@ const pdfBlob = (content = '%PDF-1.7 test') => new Blob([content], { type: 'appl
 
 beforeEach(() => {
   vi.resetAllMocks();
+  /*
+   * The record is read ONCE, before a presentation is chosen, because the
+   * client-readiness gate and the two content rules both apply above that
+   * choice. Every test here therefore needs a row — a template-path test that
+   * supplied none used to pass by never reading one.
+   */
+  loadRow.mockResolvedValue({
+    id: 'r-1',
+    report_content: '# 1. Summary\n\nThe property was purchased for $700,000.\n',
+    validation_flags: [],
+  } as never);
 });
 
 describe('produceInvestmentDocument', () => {
@@ -62,16 +76,21 @@ describe('produceInvestmentDocument', () => {
 
     const doc = await produceInvestmentDocument('r-1', { variant: 'briefing' });
 
-    expect(doc.engine).toBe('template');
+    expect(doc.engine).toBe(BROWSER_PRESENTATION_RENDERER);
     expect(doc.templateId).toBe('t-1');
-    expect(tryTemplate).toHaveBeenCalledWith('investment', 'r-1', { variant: 'briefing' });
+    // The route is handed the report's presented content — the record's own
+    // Markdown with the operator's content rules already applied — so the
+    // template draws the same sections the standard presentation would.
+    expect(tryTemplate).toHaveBeenCalledWith('investment', 'r-1', {
+      variant: 'briefing',
+      payload: { reportContent: expect.stringContaining('$700,000') },
+    });
     expect(invoke).not.toHaveBeenCalled();
     expect(draw).not.toHaveBeenCalled();
   });
 
   it('draws the standard document in the browser when no template applies', async () => {
     tryTemplate.mockResolvedValue(null);
-    loadRow.mockResolvedValue({ id: 'r-1' } as any);
     draw.mockResolvedValue({
       blob: pdfBlob(), fileName: 'r-1_Cowra_NSW_1.pdf',
       suburb: 'Cowra', state: 'NSW', renderer: BROWSER_PDF_RENDERER,
@@ -132,7 +151,7 @@ describe('publishInvestmentPdf', () => {
 
     const published = await publishInvestmentPdf('r-1');
 
-    expect(published).toMatchObject({ path: 'stored/My-Doc-v2.pdf', engine: 'template', templateId: 't-1' });
+    expect(published).toMatchObject({ path: 'stored/My-Doc-v2.pdf', engine: BROWSER_PRESENTATION_RENDERER, templateId: 't-1' });
     expect(upload).toHaveBeenCalledWith(
       'investment-reports',
       expect.stringContaining('r-1_'),

@@ -205,7 +205,7 @@ describe('the generic entry point', () => {
       variant: 'optimistic',
     });
     expect(result).toMatchObject({
-      renderer: 'browser_pdf_lib',
+      renderer: 'browser_template_jspdf',
       templateId: TEMPLATE_ROW.id,
       source: 'global:portfolio',
     });

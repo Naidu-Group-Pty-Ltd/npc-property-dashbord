@@ -107,8 +107,17 @@ export interface TemplateBuilderRouteResult {
   source: string;
 }
 
-/** Named once, and imported by anything that reports which engine drew a file. */
-export const BROWSER_PRESENTATION_RENDERER = 'browser_pdf_lib' as const;
+/**
+ * Named once, and imported by anything that reports which engine drew a file.
+ *
+ * It is NOT the same identity as the standard presentation's. Both draw in the
+ * browser, and they are different renderers drawing different documents —
+ * `investmentPdfDocument` composes the standard document with pdf-lib, this
+ * draws a chosen template with jsPDF. Telemetry has one question to answer:
+ * which renderer produced these exact bytes. One name for two answers is how
+ * that question stops being answerable.
+ */
+export const BROWSER_PRESENTATION_RENDERER = 'browser_template_jspdf' as const;
 
 function candidateAdapters(reportType?: string | null): ReportTemplateAdapter[] {
   const explicit = getAdapter(reportType);
