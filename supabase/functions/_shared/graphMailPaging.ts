@@ -45,13 +45,34 @@ export function dateFieldFor(folder: MailFolder | string): string {
   return folder === "sent" ? "sentDateTime" : "receivedDateTime";
 }
 
+/**
+ * **Both branches name a FOLDER.** The inbox branch used to fall through to
+ * `/users/{email}/messages`, which is not the Inbox — Graph documents it as
+ * every message in the mailbox, Sent Items, Drafts, Deleted Items, Junk and
+ * Archive included.
+ *
+ * It was nearly invisible while the read was one `$top=30` page of the newest
+ * mail. The backfill made it structural: walking that path backwards imported
+ * the team's own outbound mail, drafts and deleted mail into Email Co-Pilot as
+ * unread incoming correspondence. Measured on the prime 13 Sep 2026, after one
+ * day of it — 934 rows whose sender is our own domain sitting in
+ * `folder = 'inbox'`, 34 messages present in BOTH folders because the same
+ * Graph message was imported twice under two names, and every one of the
+ * 2,303 rows written that morning stamped `status = 'unread'` with a bell
+ * notification fired per row per viewer, for mail dating to 2025.
+ *
+ * There is no column that can tell a wrongly-filed row from a real one after
+ * the fact, which is why the repair migration keys on the two things that ARE
+ * decidable — a sender inside our own domain, and a (subject, received_at)
+ * that also exists under `sent`.
+ */
 export function mailboxPathFor(
   mailboxEmail: string,
   folder: MailFolder | string,
 ): string {
   return folder === "sent"
     ? `https://graph.microsoft.com/v1.0/users/${mailboxEmail}/mailFolders/sentitems/messages`
-    : `https://graph.microsoft.com/v1.0/users/${mailboxEmail}/messages`;
+    : `https://graph.microsoft.com/v1.0/users/${mailboxEmail}/mailFolders/inbox/messages`;
 }
 
 /**
