@@ -32,9 +32,9 @@ import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { fetchGlobalReportSettings, type GlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawPdfLibDisclaimerPage } from '@/utils/pdfDisclaimerPage';
 
-type ReportTier = 'compass' | 'briefing' | 'snapshot' | 'financial';
+export type ReportTier = 'compass' | 'briefing' | 'snapshot' | 'financial';
 
-interface InvestmentReportData {
+export interface InvestmentReportData {
   id: string;
   address: string;
   content: string;

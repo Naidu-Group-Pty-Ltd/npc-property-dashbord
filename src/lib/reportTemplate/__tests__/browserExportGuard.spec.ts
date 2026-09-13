@@ -33,8 +33,11 @@ describe('browser production export guard', () => {
   });
 
   it('refuses a block with no renderer at all', () => {
+    // `gantt` has never had a jsPDF renderer and no active template uses it,
+    // which is exactly the shape this guard exists to catch: a template that
+    // WOULD draw a hole.
     const verdict = judgeBrowserProductionExport({
-      pages: [page(['text-block', 'markdown-block'])],
+      pages: [page(['text-block', 'gantt'])],
     } as never);
     expect(verdict.ok).toBe(false);
   });
@@ -57,19 +60,36 @@ describe('browser production export guard', () => {
   });
 });
 
-describe('RC-3.2 — what active production templates use', () => {
-  it('permits the two blocks RC-3.2 gave real renderers', () => {
-    expect(judgeBrowserProductionExport({
-      pages: [page(['definition-list', 'chart-line'])],
-    } as never).ok).toBe(true);
+describe('what active production templates use', () => {
+  /**
+   * Every block type the sixteen active `report_templates` rows actually
+   * carry, counted from the live schemas rather than from the vocabulary:
+   * 877 text-block, 397 footer, 397 page-number, 341 divider, 215
+   * markdown-block, 165 data-table, 122 definition-list, 121 callout, 36
+   * kpi-grid, 31 two-column, 19 image, 16 disclaimer, 13 toc, 9
+   * strengths-watch, 6 hero, 6 chart-line, 4 risk-register, 4 decision-box.
+   *
+   * The guard has to permit all eighteen, because a refusal here sends a real
+   * report to the fallback presentation.
+   */
+  const ACTIVE_PRODUCTION_BLOCK_TYPES = [
+    'text-block', 'footer', 'page-number', 'divider', 'markdown-block',
+    'data-table', 'definition-list', 'callout', 'kpi-grid', 'two-column',
+    'image', 'disclaimer', 'toc', 'strengths-watch', 'hero', 'chart-line',
+    'risk-register', 'decision-box',
+  ];
+
+  it('permits every block type the active templates carry', () => {
+    const verdict = judgeBrowserProductionExport({
+      pages: [page(ACTIVE_PRODUCTION_BLOCK_TYPES)],
+    } as never);
+    expect(verdict.ok).toBe(true);
   });
 
-  it('still refuses markdown-block, which has no browser renderer yet', () => {
-    // The last of the three, and the one that carries the Q&A and Market
-    // Intelligence prose — 215 instances across seven active templates.
-    const verdict = judgeBrowserProductionExport({
-      pages: [page(['markdown-block'])],
-    } as never);
-    expect(verdict.ok).toBe(false);
+  it('permits each of them on its own, so one bad type cannot hide behind the rest', () => {
+    const refused = ACTIVE_PRODUCTION_BLOCK_TYPES.filter(
+      (type) => !judgeBrowserProductionExport({ pages: [page([type])] } as never).ok,
+    );
+    expect(refused).toEqual([]);
   });
 });
