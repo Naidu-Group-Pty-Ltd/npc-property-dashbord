@@ -307,6 +307,15 @@ conversations than one page silently lost the rest on every path.
 repository, and it stays where it is — it walks the LOCATION rather than a
 contact and checkpoints into `migration_jobs`.
 
+Two functions keep their unpaged copy deliberately, and the reason is that
+**neither has a caller**: no pg_cron job, no UI, no workflow invokes
+`ghl-conversations-cron` or `one-time-bulk-conversation-sync`; the scheduled
+job (`sync-ghl-conversations-cron`, every ten minutes) fires
+`conversation-sync-cron`, and the browser fires `sync-ghl-conversations`. They
+are named in `ghlConversationPaging.ts`'s header so a fifth copy does not
+appear by accident, and so that anyone who schedules one knows what it would
+do.
+
 ## 9. The shape of the fix: three bands, and no cursor anywhere
 
 `conversation-sync-cron` is three sequential passes now, because `stop` is a
