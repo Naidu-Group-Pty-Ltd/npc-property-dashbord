@@ -2587,23 +2587,54 @@ export async function generateInvestmentPdfBlob(
         let currentY = startY;
         
         // Collect all words with their fonts first
-        const allWords: Array<{word: string, font: any}> = [];
+        /*
+         * `glue` — this word takes no space before it.
+         *
+         * `parseMarkdownText` returns a run per emphasis span, and every run
+         * was split on spaces into independent words. `**988 m² land size**,
+         * paired with…` therefore drew the comma as its OWN word, with a space
+         * in front of it: "988 m² land size , paired with". Every bold phrase
+         * followed by punctuation had it — three on the first page of prose in
+         * the certification render — and it is the most visible typographic
+         * fault in the document.
+         *
+         * A run that does not begin with white space continues the previous
+         * word. The punctuation keeps its own run's font, which is why this is
+         * a flag rather than a string concatenation.
+         */
+        const allWords: Array<{word: string, font: any, glue: boolean}> = [];
+        let openGap = true; // nothing drawn yet, so no gap to close
         for (const part of parts) {
           const words = part.text.split(' ').filter(w => w.length > 0);
           const font = part.bold ? boldFont : normalFont;
-          for (const word of words) {
-            allWords.push({ word, font });
+          /*
+           * BOTH sides decide. A run's own text never begins with the space
+           * that separates it from the run before — `…is a ` + `land-rich…`
+           * keeps that space at the END of the first run — so asking only
+           * whether this run starts with white space glues every bold phrase
+           * onto the word in front of it: "is aland-rich".
+           */
+          const continues = allWords.length > 0 && !openGap && !/^\s/.test(part.text);
+          for (let wi = 0; wi < words.length; wi++) {
+            allWords.push({ word: words[wi], font, glue: wi === 0 && continues });
           }
+          if (words.length > 0) openGap = /\s$/.test(part.text);
         }
         
         // Build lines for text wrapping
-        type LineData = { words: Array<{word: string, font: any}>, totalWidth: number };
+        type LineData = { words: Array<{word: string, font: any, glue: boolean}>, totalWidth: number };
         const lines: LineData[] = [];
         let currentLine: LineData = { words: [], totalWidth: 0 };
         const spaceWidth = normalFont.widthOfTextAtSize(' ', size);
         
+        /** The width a line's words occupy, honouring glue. */
+        const measureLine = (words: LineData['words']): number => words.reduce(
+          (sum, w, i) => sum + w.font.widthOfTextAtSize(w.word, size) + (i > 0 && !w.glue ? spaceWidth : 0),
+          0,
+        );
+
         for (let i = 0; i < allWords.length; i++) {
-          const { word, font } = allWords[i];
+          const { word, font, glue } = allWords[i];
           const wordWidth = font.widthOfTextAtSize(word, size);
           
           // Handle words that are wider than maxWidth by breaking them
@@ -2614,19 +2645,30 @@ export async function generateInvestmentPdfBlob(
               if (currentLine.words.length > 0) {
                 lines.push(currentLine);
               }
-              currentLine = { words: [{ word: part, font }], totalWidth: partWidth };
+              currentLine = { words: [{ word: part, font, glue: false }], totalWidth: partWidth };
             }
             continue;
           }
           
-          const neededWidth = currentLine.words.length > 0 ? wordWidth + spaceWidth : wordWidth;
+          const needsSpace = currentLine.words.length > 0 && !glue;
+          const neededWidth = needsSpace ? wordWidth + spaceWidth : wordWidth;
           
           if (currentLine.totalWidth + neededWidth > maxWidth && currentLine.words.length > 0) {
-            // Line is full, push and start new line
-            lines.push(currentLine);
-            currentLine = { words: [{ word, font }], totalWidth: wordWidth };
+            // Line is full. A glued word may not start one — it is punctuation
+            // belonging to the word before it — so that word moves down with
+            // it rather than being left with a comma on the next line.
+            if (glue && currentLine.words.length > 1) {
+              const carried = currentLine.words.pop()!;
+              currentLine.totalWidth = measureLine(currentLine.words);
+              lines.push(currentLine);
+              currentLine = { words: [{ ...carried, glue: false }, { word, font, glue: true }], totalWidth: 0 };
+              currentLine.totalWidth = measureLine(currentLine.words);
+            } else {
+              lines.push(currentLine);
+              currentLine = { words: [{ word, font, glue: false }], totalWidth: wordWidth };
+            }
           } else {
-            currentLine.words.push({ word, font });
+            currentLine.words.push({ word, font, glue });
             currentLine.totalWidth += neededWidth;
           }
         }
@@ -2649,9 +2691,11 @@ export async function generateInvestmentPdfBlob(
               .flatMap(l => l.words);
 
             // Reconstruct a markdown-ish string that preserves bold styling (italic is not rendered anyway).
+            // Glue survives the hand-off: joining every word with a space here
+            // is what would put the comma back on its own on the next page.
             const remainingText = remainingWords
               .map(({ word, font }) => (font === boldFont ? `**${word}**` : word))
-              .join(' ');
+              .reduce((acc, w, i) => (i === 0 ? w : acc + (remainingWords[i].glue ? '' : ' ') + w), '');
 
             return {
               needsNewPage: true,
@@ -2663,7 +2707,8 @@ export async function generateInvestmentPdfBlob(
           // For left alignment OR single word OR last line of justified text - use left alignment
           if (align === 'left' || line.words.length === 1 || isLastLine) {
             let drawX = x;
-            for (const { word, font } of line.words) {
+            for (let wi = 0; wi < line.words.length; wi++) {
+              const { word, font } = line.words[wi];
               page.drawText(word, {
                 x: drawX,
                 y: currentY,
@@ -2671,14 +2716,19 @@ export async function generateInvestmentPdfBlob(
                 font,
                 color: rgb(0.2, 0.2, 0.2),
               });
-              drawX += font.widthOfTextAtSize(word + ' ', size);
+              // The gap belongs to the word that FOLLOWS: a glued one takes none.
+              const next = line.words[wi + 1];
+              drawX += font.widthOfTextAtSize(word, size) + (next && !next.glue ? spaceWidth : 0);
             }
           } else {
             // Multiple words, not last line, justify alignment - distribute space evenly
             const totalWordsWidth = line.words.reduce((sum, { word, font }) => 
               sum + font.widthOfTextAtSize(word, size), 0);
             const extraSpace = maxWidth - totalWordsWidth;
-            const spaceBetween = extraSpace / (line.words.length - 1);
+            // Justification distributes the extra across the REAL gaps. A
+            // glued word has no gap before it, so counting it would open one.
+            const gaps = line.words.filter((w, i) => i > 0 && !w.glue).length;
+            const spaceBetween = gaps > 0 ? extraSpace / gaps : 0;
             
             let drawX = x;
             for (let wi = 0; wi < line.words.length; wi++) {
@@ -2690,7 +2740,8 @@ export async function generateInvestmentPdfBlob(
                 font,
                 color: rgb(0.2, 0.2, 0.2),
               });
-              drawX += font.widthOfTextAtSize(word, size) + spaceBetween;
+              const next = line.words[wi + 1];
+              drawX += font.widthOfTextAtSize(word, size) + (next && !next.glue ? spaceBetween : 0);
             }
           }
           

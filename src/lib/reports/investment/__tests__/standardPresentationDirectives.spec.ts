@@ -194,4 +194,46 @@ describe('the standard Investment presentation and chart directives', () => {
     expect(flat).toContain('done. The next line');
     expect(flat).not.toContain('done.The');
   }, 120_000);
+
+  /**
+   * Punctuation sits against the word it belongs to, and a bold phrase keeps
+   * the space in front of it.
+   *
+   * `parseMarkdownText` returns a run per emphasis span, and every run was
+   * split on spaces into independent words — so `**988 m² land size**, paired`
+   * drew the comma as its own word with a space in front: "land size , paired".
+   * Three of them on the first page of prose in the certification render.
+   *
+   * The other half of the rule is what the first attempt at it broke: a run's
+   * own text never begins with the space that separates it from the run
+   * before (that space is at the END of the previous run), so gluing on "does
+   * not start with white space" alone produced "is aland-rich". BOTH sides
+   * decide.
+   */
+  it('sets punctuation against its word and keeps the space before a bold run', async () => {
+    const text = await drawnText({
+      ...REPORT,
+      content: [
+        '# Investment Report: 9 Test Street',
+        '',
+        '## Emphasis Section',
+        '',
+        'The core insight is that this is a **land-rich, house-on-a-large-block play**, more about '
+        + 'conservative growth than rapid transformation, and the **988 m² land size**, paired with '
+        + 'the designation as a **Residential Property** and on-site parking for **1 vehicle**. That '
+        + 'gives you a **land-banking angle**: your investment is backed by land.',
+        '',
+      ].join('\n'),
+    });
+    const flat = text.replace(/\s+/g, ' ');
+    // Nothing has a space before its punctuation…
+    expect(flat).not.toMatch(/[A-Za-z0-9%²] [,.;:]/);
+    // …and nothing lost the space in front of a bold run.
+    for (const phrase of [
+      'is a land-rich', 'the 988 m² land size', 'as a Residential Property',
+      'for 1 vehicle', 'a land-banking angle',
+    ]) {
+      expect(flat, `must keep its space: ${phrase}`).toContain(phrase);
+    }
+  }, 120_000);
 });
