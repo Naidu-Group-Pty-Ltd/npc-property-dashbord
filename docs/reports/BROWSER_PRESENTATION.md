@@ -169,6 +169,81 @@ report, identically across all three selectable structures.
 because that is the only place it is actually answered: a renderer that forgets
 to resolve a prop typechecks, lints and draws a plausible page.
 
+## A presentation may not decide which core facts a client sees
+
+`extractKPIMetrics` opened with `if (reportTier !== 'financial') return null`,
+so on a Compass report the standard presentation drew **no financial band at
+all** — while every selectable template binds `financials.*` unconditionally and
+printed the same figures from the same record. 1,124 of the 1,195 completed
+reports are Compass tier, so for almost the whole corpus the purchase price, the
+weekly rent, the LVR and the yields appeared or vanished according to which
+presentation the operator happened to choose. That is not a design difference;
+it is one record producing two different statements about the money.
+
+The rule is **availability, not tier**: an authoritative value exists → it may be
+presented; it is absent → that one KPI is omitted. Nothing in the presentation
+calculates, derives, substitutes or fetches — every tile is a stored value
+formatted. The Financial tier keeps its deeper modelling, its extra sections and
+its specialist commentary; what it stops having is a monopoly on the basics.
+
+Four things carry it.
+
+**The tier line was not the only suppressor.** The band also required a section
+NAME to invite it, and only 141 of the 1,123 Compass reports have one — so
+deleting the tier test alone would have left 982 reports, the certification
+subject among them, with no band. `sectionInvitesKpiBand` is now asked once and
+also decides a fallback host: where no section invites the band, the first
+section carries it.
+
+**A complete record must not crowd its own facts out.** Net Yield, Deposit and
+Loan were gated on `row1.length < 4` behind a four-tile cap, so the more the
+record knew the less the client was shown. `drawKPIBoxes` still draws at most
+four to a row — the primitive is unchanged — but the financial set is no longer
+truncated to one row.
+
+**Where two presentations read the same fact, they read it the same way.**
+`financials.loanAmount` is `loanDetails.loanAmount ?? initialCosts.loanAmount`
+and `financials.lvr` is `keyMetrics.lvr ?? loanDetails.lvr`; the band now reads
+both in that order, because reading them in a different one is how a single
+record comes to state two LVRs. The yields go through `rentIsEstablished` —
+the same rule `reportBindingProjection.pure.ts` gates them with — so the standard
+document cannot print a yield the engine says is unfounded. That is this
+programme's `0.00%` defect in the other direction.
+
+**Omission is the whole mechanism, and a zero is an omission here.** The
+per-KPI checks are truthiness, which was already the rule and is deliberately
+kept: measured over the 204 reports carrying a `keyMetrics` block, none holds a
+zero price, rent or LVR, and the five with a zero gross yield are exactly the
+reports whose rent was never established. Nothing prints `0`, `N/A` or a dash in
+place of a figure the record does not hold.
+
+`compassKpiContentParity.spec.ts` pins all three cases, and takes its
+expectations from `applyInvestmentProjection` — what the selected template is
+actually bound to — rather than from a list written in the test that could drift
+from both.
+
+### Measured content parity, 13 Sep 2026
+
+The certification record rendered four ways (A standard, B Dictionary,
+C Frontispiece, D Chancery), 25 figures compared in the drawn bytes:
+
+| | before | after |
+| --- | ---: | ---: |
+| figures agreeing across all four | 12 / 25 | 21 / 25 |
+
+The four that still differ are understood and none is a contradiction:
+
+- **Annual rent** and **annual net cash flow** — the same facts the standard
+  publishes weekly (`$445`/wk, `-$450`/wk). One fact, two units.
+- **Net yield** — the standard publishes it (1.85%); the masters do not lay it
+  out, though the projection publishes it to them. Standard carries *more*.
+- **Score / grade** — the templates print `Assessment grade — N/A · out of 100`
+  on a record with no score; the standard omits it, which is what this
+  programme's own rule requires. Standard is the correct one.
+
+The last two are master-layout questions and belong to the deferred template
+geometry work, not to the presentation's content policy.
+
 ## Template failure is a fallback, never a worse document
 
 `routeReportThroughTemplate` answers `null` for ten named reasons and the
@@ -199,30 +274,33 @@ spellings):
 
 ## What is NOT settled
 
-**The Verdict page's sentence overflows into the KPI tiles** on all three
-template structures. The master places a `text-block` at a fixed `y` and the KPI
-grid at another, and `{{recommendation.gradedLine}}` on the certification record
-is 137 characters where the geometry was fitted for about 90. It is **not a
-browser-renderer regression**: `htmlRenderer` positions blocks absolutely at the
-same coordinates and only the PAGE clips, so the WeasyPrint document overflows
-identically. The fix belongs to the template library — the masters' fitted
-geometry, regenerated through `templates:compass:generate` — and the class is
-already named in `CLAUDE.md`: a declared block height is a promise the renderer
-keeps only if the text is as short as the author assumed.
+These three are **deferred by decision**, not overlooked. The owner has stated
+that the rendered output is not yet at the desired quality level, and that the
+question this work answers is "does every presentation faithfully render the
+same validated report without Cloud Run?" — not visual perfection. None of them
+is to be started here.
 
-**KPI tile labels are muted-on-dark** in the dark colourways and read faintly.
-A design-token question rather than a renderer one.
+**DEFERRED REPORT QUALITY — TEMPLATE MASTER GEOMETRY.** The Verdict page's
+sentence overflows into the KPI tiles on all three template structures. The
+master places a `text-block` at a fixed `y` and the KPI grid at another, and
+`{{recommendation.gradedLine}}` on the certification record is 137 characters
+where the geometry was fitted for about 90. It is **not a browser-renderer
+regression**: `htmlRenderer` positions blocks absolutely at the same coordinates
+and only the PAGE clips, so the WeasyPrint document overflows identically. The
+fix belongs to the template library — the masters' fitted geometry, regenerated
+through `templates:compass:generate` — and the class is already named in
+`CLAUDE.md`: a declared block height is a promise the renderer keeps only if the
+text is as short as the author assumed. The 50 masters are **not** to be
+regenerated in this PR.
 
+**DEFERRED REPORT QUALITY — TEMPLATE TOKEN / CONTRAST.** KPI tile labels are
+muted-on-dark in the dark colourways and read faintly. A design-token question
+rather than a renderer one. The colourways are **not** to be redesigned in this
+PR.
 
-**The standard presentation withholds the financial KPI set on a Compass report
-and the templates publish it.** `extractKPIMetrics` opens with
-`if (reportTier !== 'financial') return null` under a comment reading "purchase
-price, LVR, yield, rent and similar KPI tiles must never render", while the
-masters' Verdict and Financials pages bind `financials.*` unconditionally. On
-report `783bb982` that is eleven figures present in all three templates and
-absent from the standard document — every one of them correct and drawn from the
-same record, so nothing contradicts anything, but the same report delivered two
-ways tells a client different things. **1,124 of 1,195 completed reports are
-`compass` tier**; eleven are `financial`. Which of the two decisions is current
-is a product question, not an engineering one, and it is recorded here rather
-than resolved by whichever side was easier to change.
+**DEFERRED REPORT QUALITY — FULL REPORT PRESENTATION REVIEW.** A whole-document
+review of typography, hierarchy, figure placement and page rhythm across both
+presentations, to be run as its own programme. Two known inputs to it are
+recorded above: the masters print `Assessment grade — N/A · out of 100` where
+the record carries no score, and they do not lay out the net yield the
+projection publishes to them.

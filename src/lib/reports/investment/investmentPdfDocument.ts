@@ -44,6 +44,7 @@ import {
   type FigurePalette,
 } from './investmentPdfFigures';
 import { VIZ_DIRECTIVE_KINDS, VIZ_DIRECTIVE_RE_G } from '@/lib/reports/vizDirectives.pure';
+import { rentIsEstablished } from '@/lib/reports/investment/rentalEvidence.pure';
 import { fetchGlobalReportSettings, type GlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawPdfLibDisclaimerPage } from '@/utils/pdfDisclaimerPage';
 
@@ -2336,136 +2337,247 @@ export async function generateInvestmentPdfBlob(
       };
 
       // Helper to detect KPI-style content and extract metrics
-      const extractKPIMetrics = (sectionName: string, content: string, enhancedData: any): { row1: Array<{ label: string; value: string; subtitle?: string }>; row2?: Array<{ label: string; value: string; subtitle?: string }> } | null => {
-        // Compass / Compass-40 reports are explicitly NON-financial under the
-        // current product brief — purchase price, LVR, yield, rent and similar
-        // KPI tiles must never render. KPI tiles are reserved for the separate
-        // Financial Analysis report tier.
-        if (reportTier !== 'financial') return null;
+      /**
+       * Which section names invite the KPI band, when the report has one.
+       *
+       * Named rather than inline because the band's PLACEMENT is now decided
+       * before the section loop as well as inside it.
+       */
+      const sectionInvitesKpiBand = (name: string): boolean => {
+        const n = name.toLowerCase();
+        return n.includes('financial') || n.includes('investment snapshot')
+          || n.includes('key metric') || n.includes('market kpi')
+          || n.includes('property snapshot') || n.includes('executive summary');
+      };
 
+      /**
+       * The basic investment KPIs, from the canonical record and nowhere else.
+       *
+       * ## The tier no longer decides
+       *
+       * This opened with `if (reportTier !== 'financial') return null`, under a
+       * comment saying purchase price, LVR, yield and rent "must never render"
+       * outside the Financial tier. A selected template, meanwhile, binds
+       * `financials.*` unconditionally — so on report 783bb982 eleven correct
+       * figures appeared in all three selectable templates and in none of the
+       * standard document, and which core facts a client saw depended on which
+       * presentation was chosen. 1,124 of 1,195 completed reports are Compass
+       * tier, so that was almost the whole corpus.
+       *
+       * The architecture says the Report Engine decides substance and the
+       * template decides presentation, so a presentation may not withhold a
+       * fact the record holds. The rule is availability, not tier: **an
+       * authoritative value exists → it may be presented; it is absent → that
+       * one KPI is omitted.** Nothing here calculates, derives, substitutes or
+       * fetches — every tile is a stored value formatted.
+       *
+       * The per-KPI checks below were already that rule and are untouched. They
+       * omit a zero as well as a null, which is correct for these fields and is
+       * this programme's "absent is never zero": measured over the 204 reports
+       * carrying a `keyMetrics` block, none holds a zero price, rent or LVR,
+       * and the five with a zero gross yield are the reports whose rent was
+       * never established.
+       *
+       * The Financial tier is not flattened into Compass — it keeps its deeper
+       * modelling, its extra sections and its specialist commentary. What it
+       * stops having is a monopoly on the basic facts.
+       */
+      const extractKPIMetrics = (sectionName: string, content: string, enhancedData: any, isBandHost = false): { row1: Array<{ label: string; value: string; subtitle?: string }>; row2?: Array<{ label: string; value: string; subtitle?: string }> } | null => {
         const sectionLower = sectionName.toLowerCase();
+        if (!isBandHost && !sectionInvitesKpiBand(sectionLower)) return null;
         const financialData = enhancedData?.financialData || {};
         const keyMetrics = financialData?.keyMetrics || {};
         const assumptions = financialData?.assumptions || {};
         const initialCosts = financialData?.initialCosts || {};
+        const loanDetails = financialData?.loanDetails || {};
         const income = financialData?.income || {};
         const absData = enhancedData?.absData || {};
         
-        // Only show KPIs for specific financial/market sections
-        if (sectionLower.includes('financial') || sectionLower.includes('investment snapshot') || 
-            sectionLower.includes('key metric') || sectionLower.includes('market kpi') ||
-            sectionLower.includes('property snapshot') || sectionLower.includes('executive summary')) {
-
-          
-          const row1: Array<{ label: string; value: string; subtitle?: string }> = [];
-          
-          // Purchase Price
-          if (initialCosts?.propertyValue) {
-            row1.push({
-              label: 'Purchase Price',
-              value: '$' + Number(initialCosts.propertyValue).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
-            });
-          }
-          
-          // Weekly Rent — always include prominently
-          if (income?.weeklyRent) {
-            row1.push({
-              label: 'Weekly Rent',
-              value: '$' + Number(income.weeklyRent).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
-              subtitle: 'Current market rate',
-            });
-          }
-          
-          // LVR
-          if (keyMetrics?.lvr) {
-            row1.push({
-              label: 'LVR',
-              value: Number(keyMetrics.lvr).toFixed(1) + '%',
-              subtitle: 'Loan-to-Value Ratio',
-            });
-          }
-          
-          // Gross Yield — see the note above `rentalYield`: the stored key is
-          // `grossRentalYield`, so this tile could never render.
-          const grossYield = keyMetrics?.grossRentalYield ?? keyMetrics?.grossYield;
-          if (grossYield) {
-            row1.push({
-              label: 'Gross Yield',
-              value: Number(grossYield).toFixed(2) + '%',
-              subtitle: 'Annual rental return',
-            });
-          }
-          
-          // Net Yield (overflow to ensure we capture it)
-          if (keyMetrics?.netRentalYield && row1.length < 4) {
-            row1.push({
-              label: 'Net Yield',
-              value: Number(keyMetrics.netRentalYield).toFixed(2) + '%',
-              subtitle: 'After all costs',
-            });
-          }
-          
-          // Capital Growth (overflow)
-          if (assumptions?.capitalGrowth && row1.length < 4) {
-            row1.push({
-              label: 'Capital Growth',
-              value: Number(assumptions.capitalGrowth).toFixed(1) + '%',
-              subtitle: 'Annual forecast',
-            });
-          }
-
-          if (row1.length < 2) return null;
-
-          // ─── Row 2: Demographic KPIs ───
-          const row2: Array<{ label: string; value: string; subtitle?: string }> = [];
-          
-          // Extract demographic data from absData
-          const demographics = absData?.demographics || absData?.populationData || absData;
-          
-          // Population
-          const population = demographics?.population || demographics?.totalPopulation || demographics?.total_population;
-          if (population) {
-            row2.push({
-              label: 'Population',
-              value: Number(population).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
-              subtitle: 'Local area',
-            });
-          }
-          
-          // Median Age
-          const medianAge = demographics?.medianAge || demographics?.median_age;
-          if (medianAge) {
-            row2.push({
-              label: 'Median Age',
-              value: String(Math.round(Number(medianAge))),
-              subtitle: 'Years',
-            });
-          }
-          
-          // Median Income
-          const medianIncome = demographics?.medianIncome || demographics?.median_income || demographics?.medianHouseholdIncome || demographics?.median_household_income;
-          if (medianIncome) {
-            row2.push({
-              label: 'Median Income',
-              value: '$' + Number(medianIncome).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
-              subtitle: 'Household p.a.',
-            });
-          }
-          
-          // Median House Price (bonus demographic)
-          const medianHousePrice = demographics?.medianHousePrice || demographics?.median_house_price;
-          if (medianHousePrice && row2.length < 4) {
-            row2.push({
-              label: 'Median House Price',
-              value: '$' + Number(medianHousePrice).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
-              subtitle: 'Local market',
-            });
-          }
-          
-          return { row1: row1.slice(0, 4), row2: row2.length >= 2 ? row2.slice(0, 4) : undefined };
+        const row1: Array<{ label: string; value: string; subtitle?: string }> = [];
+        
+        // Purchase Price
+        if (initialCosts?.propertyValue) {
+          row1.push({
+            label: 'Purchase Price',
+            value: '$' + Number(initialCosts.propertyValue).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+          });
         }
         
-        return null;
+        // Weekly Rent — always include prominently
+        if (income?.weeklyRent) {
+          row1.push({
+            label: 'Weekly Rent',
+            value: '$' + Number(income.weeklyRent).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+            subtitle: 'Current market rate',
+          });
+        }
+        
+        // LVR. `metrics.lvr ?? loan.lvr` is the order
+        // `reportBindingProjection.pure.ts` reads it in, and reading it in a
+        // different order is how one record comes to state two LVRs.
+        const lvr = keyMetrics?.lvr ?? loanDetails?.lvr;
+        if (lvr) {
+          row1.push({
+            label: 'LVR',
+            value: Number(lvr).toFixed(1) + '%',
+            subtitle: 'Loan-to-Value Ratio',
+          });
+        }
+
+        // Gross Yield — see the note above `rentalYield`: the stored key is
+        // `grossRentalYield`, so this tile could never render.
+        //
+        // A yield rests on a rent, and `rentIsEstablished` is the one rule
+        // that decides whether this record has one. The template projection
+        // withholds both yields when it answers false, so asking it here is
+        // what keeps the two presentations from disagreeing in the OTHER
+        // direction — the standard document printing a figure the engine
+        // says is unfounded.
+        const yieldIsFounded = rentIsEstablished(income);
+        const grossYield = yieldIsFounded
+          ? (keyMetrics?.grossRentalYield ?? keyMetrics?.grossYield)
+          : undefined;
+        if (grossYield) {
+          row1.push({
+            label: 'Gross Yield',
+            value: Number(grossYield).toFixed(2) + '%',
+            subtitle: 'Annual rental return',
+          });
+        }
+        
+        // Net Yield — a different measure of return, not a spare tile. It
+        // and the two below used to be gated on `row1.length < 4`, so on any
+        // record complete enough to fill the first four they were dropped:
+        // the more the record knew, the less the client was shown.
+        if (yieldIsFounded && keyMetrics?.netRentalYield) {
+          row1.push({
+            label: 'Net Yield',
+            value: Number(keyMetrics.netRentalYield).toFixed(2) + '%',
+            subtitle: 'After all costs',
+          });
+        }
+
+        // Deposit and loan. "Where relevant" is the stored value itself — a
+        // cash purchase carries no loan, so the check omits that tile rather
+        // than printing a zero beside a price.
+        if (initialCosts?.deposit) {
+          row1.push({
+            label: 'Deposit',
+            value: '$' + Number(initialCosts.deposit).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+            subtitle: 'Cash contribution',
+          });
+        }
+
+        const loanAmount = loanDetails?.loanAmount ?? initialCosts?.loanAmount;
+        if (loanAmount) {
+          row1.push({
+            label: 'Loan Amount',
+            value: '$' + Number(loanAmount).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+            subtitle: 'At settlement',
+          });
+        }
+
+        // The rate the whole projection rests on. Every selectable template
+        // states it ("Interest rate assumed 6.50%") and the standard document
+        // stated it nowhere, so a reader could not tell what the cash-flow
+        // figures beside it had been modelled at.
+        if (loanDetails?.interestRate) {
+          row1.push({
+            label: 'Interest Rate',
+            value: Number(loanDetails.interestRate).toFixed(2) + '%',
+            subtitle: 'Assumed for modelling',
+          });
+        }
+
+        // The holding position. `keyMetrics.weeklyNet` is the figure an
+        // investor decides on, and every selectable template prints it while
+        // the standard document stated it nowhere at all.
+        if (keyMetrics?.weeklyNet) {
+          const weeklyNet = Number(keyMetrics.weeklyNet);
+          row1.push({
+            label: 'Weekly Net Cash Flow',
+            value: (weeklyNet < 0 ? '-$' : '$')
+              + Math.abs(weeklyNet).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+            subtitle: 'After costs and finance',
+          });
+        }
+
+        // What the purchase costs to complete.
+        if (initialCosts?.stampDuty) {
+          row1.push({
+            label: 'Stamp Duty',
+            value: '$' + Number(initialCosts.stampDuty).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+            subtitle: 'Transfer duty payable',
+          });
+        }
+
+        if (initialCosts?.totalUpfront) {
+          row1.push({
+            label: 'Total Upfront',
+            value: '$' + Number(initialCosts.totalUpfront).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+            subtitle: 'Cash required to settle',
+          });
+        }
+
+        // Capital growth is last because it describes the forecast rather
+        // than the property.
+        if (assumptions?.capitalGrowth) {
+          row1.push({
+            label: 'Capital Growth',
+            value: Number(assumptions.capitalGrowth).toFixed(1) + '%',
+            subtitle: 'Annual forecast',
+          });
+        }
+
+        if (row1.length < 2) return null;
+
+        // ─── Row 2: Demographic KPIs ───
+        const row2: Array<{ label: string; value: string; subtitle?: string }> = [];
+        
+        // Extract demographic data from absData
+        const demographics = absData?.demographics || absData?.populationData || absData;
+        
+        // Population
+        const population = demographics?.population || demographics?.totalPopulation || demographics?.total_population;
+        if (population) {
+          row2.push({
+            label: 'Population',
+            value: Number(population).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+            subtitle: 'Local area',
+          });
+        }
+        
+        // Median Age
+        const medianAge = demographics?.medianAge || demographics?.median_age;
+        if (medianAge) {
+          row2.push({
+            label: 'Median Age',
+            value: String(Math.round(Number(medianAge))),
+            subtitle: 'Years',
+          });
+        }
+        
+        // Median Income
+        const medianIncome = demographics?.medianIncome || demographics?.median_income || demographics?.medianHouseholdIncome || demographics?.median_household_income;
+        if (medianIncome) {
+          row2.push({
+            label: 'Median Income',
+            value: '$' + Number(medianIncome).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+            subtitle: 'Household p.a.',
+          });
+        }
+        
+        // Median House Price (bonus demographic)
+        const medianHousePrice = demographics?.medianHousePrice || demographics?.median_house_price;
+        if (medianHousePrice && row2.length < 4) {
+          row2.push({
+            label: 'Median House Price',
+            value: '$' + Number(medianHousePrice).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+            subtitle: 'Local market',
+          });
+        }
+        
+        return { row1: row1.slice(0, 12), row2: row2.length >= 2 ? row2.slice(0, 4) : undefined };
       };
 
 
@@ -2836,6 +2948,27 @@ export async function generateInvestmentPdfBlob(
 
 
       console.log('Found sections to include in PDF:', allSectionNames);
+
+      /*
+       * Where the KPI band goes when the report never names a financial
+       * section.
+       *
+       * The band has always attached to a section whose NAME invites it, and
+       * that is a fact about how the model happened to title its chapters:
+       * measured over the corpus, only 141 of 1,123 Compass reports carry such
+       * a heading — the rest run "Executive Verdict", "Property & Locality
+       * Snapshot", "Why This Location Matters", none of which match. Removing
+       * the tier suppression alone would therefore have left the basic
+       * investment facts off seven documents in eight while the selected
+       * templates kept showing them.
+       *
+       * So a report with no inviting section hosts the band on its FIRST
+       * section. Purely additive: every document that draws the band today
+       * draws it in the same place, and one that drew none now draws one.
+       */
+      const kpiBandFallbackHost = allSectionNames.some((n) => sectionInvitesKpiBand(n))
+        ? null
+        : allSectionNames[0] ?? null;
       
       // Track section page numbers as we render (used for TOC in compass tier)
       const sectionPageNumbers: Map<string, number> = new Map();
@@ -3118,15 +3251,31 @@ export async function generateInvestmentPdfBlob(
         yPosition = titleResult.lastY - 10;
 
         // ─── KPI Boxes: Render gold-bordered metric cards for qualifying sections ───
-        const kpiMetrics = extractKPIMetrics(cleanSectionName, content, report.enhanced_data);
+        const kpiMetrics = extractKPIMetrics(
+          cleanSectionName, content, report.enhanced_data,
+          kpiBandFallbackHost !== null && sectionName === kpiBandFallbackHost,
+        );
         if (kpiMetrics) {
-          // Row 1: Financial KPIs (need ~80px)
-          const totalKPIHeight = kpiMetrics.row2 ? 170 : 80;
+          // The band is drawn four to a row — `drawKPIBoxes` has always drawn
+          // at most four and returns `startY - 88`. What changed is that the
+          // financial set is no longer TRUNCATED to one row: the core facts the
+          // record holds are carried over as many rows as they need.
+          const financialRows: Array<Array<{ label: string; value: string; subtitle?: string }>> = [];
+          for (let i = 0; i < kpiMetrics.row1.length; i += 4) {
+            financialRows.push(kpiMetrics.row1.slice(i, i + 4));
+          }
+          const totalKPIHeight = financialRows.length * 88 + (kpiMetrics.row2 ? 90 : 0);
           if (yPosition - totalKPIHeight < bottomMargin + 40) {
             currentPage = await addContentPage();
             yPosition = pageHeight - topMargin - 20;
           }
-          yPosition = drawKPIBoxes(currentPage, yPosition, kpiMetrics.row1, pageWidth - 2 * margin);
+          for (const financialRow of financialRows) {
+            if (yPosition - 88 < bottomMargin + 40) {
+              currentPage = await addContentPage();
+              yPosition = pageHeight - topMargin - 20;
+            }
+            yPosition = drawKPIBoxes(currentPage, yPosition, financialRow, pageWidth - 2 * margin);
+          }
           console.log(`     ✓ Rendered ${kpiMetrics.row1.length} financial KPI boxes for "${cleanSectionName}"`);
           
           // Row 2: Demographic KPIs
