@@ -10,6 +10,7 @@ import {
   parseManualStats,
   readManualStats,
 } from '../../../supabase/functions/_shared/builderStock/manualStats.pure';
+import { STOCK_ITEM_SELECT } from '../../../supabase/functions/_shared/builderStock/projection.pure';
 import { describeManualStats, type BuilderStockItem } from '@/lib/builderStock';
 
 /**
@@ -187,11 +188,27 @@ describe('every read path applies the overlay', () => {
     'supabase/functions/builder-stock-marketplace/index.ts',
   ];
 
-  it('the projection publishes the column', () => {
-    const projection = readFileSync(
-      join(process.cwd(), 'supabase/functions/_shared/builderStock/projection.pure.ts'), 'utf8',
-    );
-    expect(projection).toContain('manual_stats');
+  it('the projection publishes the column, in a select list of NOTHING BUT columns', () => {
+    /*
+     * `toContain('manual_stats')` is what this asserted first, and it PASSED
+     * on a broken literal. The explanatory note had been written INSIDE the
+     * template, which breaks two ways at once: a `/* … *\/` in a template
+     * literal is TEXT that PostgREST receives as part of the select list, and
+     * the backticks around a symbol name inside it terminated the string and
+     * turned the rest into parsed code. Every stock read would have failed.
+     * `check-edge-functions.mjs` caught it on TS2304; this catches the half
+     * that is not a type error at all.
+     */
+    expect(STOCK_ITEM_SELECT).toContain('manual_stats');
+    for (const entry of STOCK_ITEM_SELECT.split(',').map((part) => part.trim())) {
+      expect(entry).not.toBe('');
+      // A column, or a PostgREST alias like `house_design:source_row->>x`.
+      expect(entry).toMatch(/^[a-z_]+(:[a-z_]+->>[a-z_]+)?$/);
+    }
+    // And the five the overlay needs are all still asked for.
+    for (const field of MANUAL_STAT_FIELDS) {
+      expect(STOCK_ITEM_SELECT.split(',').map((p) => p.trim())).toContain(field);
+    }
   });
 
   it.each(READ_PATHS)('%s selects the projection and applies the overlay', (path) => {
@@ -200,14 +217,7 @@ describe('every read path applies the overlay', () => {
     expect(source).toContain('applyManualStatsToAll(items)');
   });
 
-  it('finds every function that reads stock items', () => {
-    // The list above is hand-written, so this fails when a THIRD reader
-    // appears rather than letting it ship without the overlay.
-    const functions = readFileSync(
-      join(process.cwd(), 'supabase/functions/_shared/builderStock/projection.pure.ts'), 'utf8',
-    );
-    expect(functions).toContain('STOCK_ITEM_SELECT');
-  });
+
 });
 
 describe('what the plate says about the figures', () => {
