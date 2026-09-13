@@ -147,15 +147,34 @@ export interface MailPage<T> {
   readonly nextLink: string | null;
 }
 
+/**
+ * One page of a Graph collection, and the link to the next.
+ *
+ * The rest of this module is about mail, but THIS function is not: a Graph
+ * collection page is a `value` array plus an optional `@odata.nextLink`
+ * whatever the collection holds, and the opaque-nextLink rule above is the
+ * same rule for all of them. `outlook-calendar`'s `listEvents` reads
+ * `/calendarView` through it rather than growing a second paginator, because
+ * that function had exactly the defect this module was written for — one
+ * `$top=200` request, `@odata.nextLink` never read, ordered by start time, so
+ * a calendar with more than 200 events in the window silently lost the END of
+ * the period and the page drew a month that emptied partway through.
+ *
+ * `extraHeaders` exists for that caller: `/calendarView` needs
+ * `Prefer: outlook.timezone="UTC"` or Graph answers in the mailbox's own
+ * timezone, and every consumer here treats the times it returns as UTC.
+ */
 export async function fetchMailPage<T = unknown>(
   accessToken: string,
   url: string,
   label = "graph-mail",
+  extraHeaders: Record<string, string> = {},
 ): Promise<MailPage<T>> {
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
+      ...extraHeaders,
     },
   });
 

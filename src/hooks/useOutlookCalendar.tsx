@@ -61,6 +61,12 @@ export interface CreateOutlookEventPayload {
 
 export function useOutlookCalendar() {
   const [outlookEvents, setOutlookEvents] = useState<OutlookEvent[]>([]);
+  /**
+   * True when Graph still had pages for the requested window and the walk
+   * stopped. A calendar cut short reads exactly like a quiet one, so the
+   * difference has to be a fact the page can render rather than an absence.
+   */
+  const [outlookTruncated, setOutlookTruncated] = useState(false);
   const [teamAvailability, setTeamAvailability] = useState<OutlookTeamMember[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -87,11 +93,13 @@ export function useOutlookCalendar() {
         (e: OutlookEvent) => e.startTime && e.endTime,
       );
       setOutlookEvents(events);
+      setOutlookTruncated(data.truncated === true);
       setOutlookEnabled(true);
       return events;
     } catch (err: any) {
       console.error('[useOutlookCalendar] fetchOutlookEvents error:', err);
       setError(err.message);
+      setOutlookTruncated(false);
       if (!err.message?.includes('No Microsoft email')) {
         toast({
           title: 'Outlook sync failed',
@@ -297,6 +305,7 @@ export function useOutlookCalendar() {
 
   return {
     outlookEvents,
+    outlookTruncated,
     teamAvailability,
     isLoading,
     isCreating,

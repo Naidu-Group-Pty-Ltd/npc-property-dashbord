@@ -5,6 +5,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import { mapWithConcurrency } from '../_shared/boundedConcurrency.pure.ts';
+import { fetchMailPage, type MailPage } from '../_shared/graphMailPaging.ts';
 
 /** Independent per-colleague Graph reads, overlapped but bounded. */
 const USER_CONCURRENCY = 6;
@@ -100,38 +101,74 @@ function assertMailboxOwnership(
 
 // ── Action handlers ──────────────────────────────────────────────────
 
+/**
+ * A calendar window is READ TO THE END, and says so when it is not.
+ *
+ * This asked Graph for one page of 200 `$orderby: start/dateTime` and returned
+ * `data.value`. `@odata.nextLink` was never read, so a mailbox with more than
+ * 200 events in the requested window lost the events with the LATEST start
+ * times — the month view drew January correctly and emptied partway through,
+ * and a busy colleague read as free for the rest of it. Ordering by start time
+ * is what decided which half went missing; nothing about the symptom pointed
+ * at paging.
+ *
+ * `fetchMailPage` is the repo's one implementation of the nextLink contract
+ * (opaque, complete, followed verbatim or not at all) and is collection-
+ * agnostic despite living beside the mail helpers. `Prefer` travels with it
+ * because `/calendarView` answers in the mailbox's own timezone without it and
+ * every consumer here treats these times as UTC.
+ *
+ * The walk is bounded, and a bound that BINDS is reported rather than
+ * swallowed: `truncated` is true only when Graph still had pages and we
+ * stopped, which is the distinction `graphMailPaging`'s own header calls the
+ * failure it exists to end — a half-read window that reports itself complete
+ * is indistinguishable from a quiet calendar.
+ */
+const CALENDAR_PAGE_SIZE = 200;
+const CALENDAR_MAX_PAGES = 15; // 3,000 events in one window is already absurd
+
 async function listEvents(
   accessToken: string,
   email: string,
   startTime: string,
   endTime: string,
-) {
+): Promise<{ events: any[]; truncated: boolean; pages: number }> {
   const params = new URLSearchParams({
     startDateTime: startTime,
     endDateTime: endTime,
-    $top: '200',
+    $top: String(CALENDAR_PAGE_SIZE),
     $orderby: 'start/dateTime',
     $select: 'id,subject,start,end,location,bodyPreview,isAllDay,showAs,organizer,attendees,categories',
   });
 
-  const url = graphUrl(email, `/calendarView?${params.toString()}`);
+  let url: string | null = graphUrl(email, `/calendarView?${params.toString()}`);
   console.log(`[outlook-calendar] listEvents for ${email}, url: ${url.substring(0, 80)}...`);
 
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Prefer: 'outlook.timezone="UTC"',
-    },
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    console.error(`[outlook-calendar] Graph calendarView failed for ${email} (${res.status}):`, err);
-    throw new Error(`Graph calendarView failed (${res.status}): ${err}`);
+  const raw: any[] = [];
+  let pages = 0;
+  while (url && pages < CALENDAR_MAX_PAGES) {
+    // Annotated: `url` is assigned from `page.nextLink` inside the loop that
+    // produces `page`, and an inferred type there is circular (TS7022).
+    const page: MailPage<any> = await fetchMailPage<any>(
+      accessToken,
+      url,
+      `outlook-calendar:${email}`,
+      { Prefer: 'outlook.timezone="UTC"' },
+    );
+    pages += 1;
+    raw.push(...page.messages);
+    url = page.nextLink;
   }
 
-  const data = await res.json();
-  return (data.value || []).map((ev: any) => normalizeEvent(ev, email));
+  const truncated = url !== null;
+  if (truncated) {
+    console.warn(
+      `[outlook-calendar] window for ${email} truncated at ${CALENDAR_MAX_PAGES} pages ` +
+      `(${raw.length} events); more remain between ${startTime} and ${endTime}`,
+    );
+  }
+
+  return { events: raw.map((ev: any) => normalizeEvent(ev, email)), truncated, pages };
 }
 
 async function createEvent(
@@ -246,7 +283,7 @@ async function getFreeBusy(
     const results: any[] = [];
     for (const email of emails) {
       try {
-        const events = await listEvents(accessToken, email, startTime, endTime);
+        const { events } = await listEvents(accessToken, email, startTime, endTime);
         results.push({
           scheduleId: email,
           scheduleItems: events.map((ev: any) => ({
@@ -347,7 +384,11 @@ async function listTeamAvailability(
         outlookConnected: false,
       };
     }
-    const events = await listEvents(accessToken, msEmail, startTime, endTime);
+    // Only `events` here: an availability window is an appointment-sized slice,
+    // and 3,000 events inside one is not a state that happens. The walk's own
+    // console.warn is the signal if it ever does. A field nothing renders does
+    // not belong in a payload that was just narrowed to what is rendered.
+    const { events } = await listEvents(accessToken, msEmail, startTime, endTime);
     return {
       userId: user.id,
       username: user.username,
@@ -533,7 +574,7 @@ Deno.serve(async (req) => {
       try {
         const now = new Date();
         const weekLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-        const events = await listEvents(accessToken, testEmail, now.toISOString(), weekLater.toISOString());
+        const { events } = await listEvents(accessToken, testEmail, now.toISOString(), weekLater.toISOString());
         eventsTest = { success: true, error: '', count: events.length };
       } catch (e) {
         eventsTest = { success: false, error: (e as Error).message, count: 0 };
@@ -566,8 +607,13 @@ Deno.serve(async (req) => {
       if (!startTime || !endTime) {
         return jsonResponse({ error: 'startTime and endTime are required' }, corsHeaders, 400);
       }
-      const events = await listEvents(accessToken, userEmail, startTime, endTime);
-      return jsonResponse({ success: true, events }, corsHeaders);
+      const listed = await listEvents(accessToken, userEmail, startTime, endTime);
+      // `truncated` travels: a window Graph still had pages for is not the same
+      // answer as a quiet calendar, and the page must be able to say so.
+      return jsonResponse(
+        { success: true, events: listed.events, truncated: listed.truncated },
+        corsHeaders,
+      );
     }
 
     if (action === 'createEvent') {
