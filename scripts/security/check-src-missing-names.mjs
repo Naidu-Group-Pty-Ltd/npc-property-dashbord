@@ -154,17 +154,21 @@ for (const line of out.split('\n')) {
 
 if (fatal.length > 0) {
   console.error(
-    `\n${fatal.length} undefined identifier(s) in src/. These are never type debt and are never\n`
-    + 'baselined: the name does not exist, so the line throws a ReferenceError the moment it\n'
-    + 'renders — and a component that throws on render takes its whole page with it.\n',
+    `\n${fatal.length} unreadable identifier(s) in src/. These are never type debt and are\n`
+    + 'never baselined: the name cannot be read where it is used — it does not exist, or it is\n'
+    + 'not declared yet — so the line throws a ReferenceError the moment it renders, and a\n'
+    + 'component that throws on render takes its whole page with it.\n',
   );
   for (const item of fatal) {
     console.error(`  ${item.where}\n    ${item.code}: ${item.message}\n    ${FATAL.get(item.code)}`);
   }
   console.error(
-    '\nFix the name. If it is a real global this project\'s types do not know about, declare it\n'
-    + `in global.d.ts — adding it to ${relative(root, KNOWN_MISSING_PATH)} is for occurrences that\n`
-    + 'predate this gate, and there were none.\n',
+    '\nFor TS2304/TS2552, fix the name; if it is a real global this project\'s types do not know\n'
+    + 'about, declare it in global.d.ts. For TS2448, MOVE THE DECLARATION above its first\n'
+    + 'reader — note that a hook dependency array is an ordinary expression evaluated during\n'
+    + 'render, so naming a `const` there that is declared further down is exactly this fault.\n'
+    + `Adding it to ${relative(root, KNOWN_MISSING_PATH)} is for occurrences that predate\n`
+    + 'this gate, and there were none.\n',
   );
   process.exit(1);
 }
