@@ -690,6 +690,42 @@ portal. The order that keeps it up:
   tables wearing the prefix, zero FKs into the component — measured), the terms portal
   CHECK still admitting 'builder' (a valueless vocabulary entry, not a surface), and
   `_shared/auth.ts`'s builder cookie writer (caller-less; a later tidy).
+- **Wave 3 tail ✅ — applied and verified on the live prime (14 Sep 2026).** The first
+  dispatch REFUSED, and correctly: `2BP01 cannot drop table builder_allocations because
+  other objects depend on it — function builder_create_allocation(…) depends on type
+  builder_allocations`. **A function declared `RETURNS <table>` holds a hard pg_depend
+  edge on that table's composite ROW TYPE**, so §8's drop came too late for §7. The
+  census behind that order asked what each table HOLDS (triggers, CHECKs, foreign keys)
+  and never what holds the table, and no body-text scan can see the class at all —
+  measured on the live prime, **46 functions** carry a doomed row type and block **38 of
+  the 63** tables, including `claim_builder_stock_image_work` and
+  `complete_builder_document_processing`, which do not even wear the prefix. The
+  differential replay could not have caught it: the degraded harness never created those
+  functions. New **§6.5** releases exactly that set before §7 and is **derived from the
+  catalogue rather than listed** — a second copy of 46 identities is a list to drift
+  from, and the doomed set needs no second list either (builder-prefixed tables minus the
+  named survivors), a predicate checked against the live prime before being trusted:
+  it returns **63**, §7's hand-written list exactly, catching **0** survivors. The failed
+  run left nothing behind (one implicit transaction, full rollback), so the file was
+  EDITED rather than repaired by a second migration — it described an act that had not
+  happened anywhere yet. Applied on run #52; verified by effect, thirteen measures:
+  **0** portal tables, **0** portal functions, **0** builder terms rows, **0** residual
+  builder FKs on `builder_stock_selections` with **1** mirror FK, the org guard reading
+  the mirror, both views kept and the portal's own gone, `builder_archive` intact at 67
+  relations, the version recorded, and the marketplace's supply untouched (2
+  organisations, 1,014 items, 2 active, 2,931 images). The widened decommission workflow
+  then removed the 12 remaining deployments: of 419 edge functions, the builder family
+  is now exactly `builder-stock-marketplace` and `builder-network-inbound`.
+  A follow-up ([#2662](https://github.com/Naidu-Group-Pty-Ltd/npc-property-dashbord/pull/2662))
+  clears the CI-only surfaces the deletion could not see from `supabase/` and `src/`:
+  both Cloudflare workers (the PDF one imports the deleted shared election; the image
+  one's only dispatchers were the deleted settler and inpaint probe), their ci.yml job
+  and typecheck step, the two now-targetless secrets workflows, the deleted
+  builder-portal security checker still named in the security job's own step list, and a
+  vitest step whose four filter paths had all been deleted — **vitest exits 1 when every
+  filter matches nothing**, so the step kept for the portal would have failed for not
+  finding it. The two workers remain DEPLOYED on Cloudflare: deleting a directory does
+  not undeploy, so that removal is account-side and outstanding.
 - **Wave 4 (deferred, post-connection).** Delete the storage bytes once the network
   serves the mirror's imagery — dropping them earlier blanks every card.
 
@@ -738,6 +774,15 @@ added to the marketing site.
   `MIGRATION_VERSION_COLLISIONS.json` per deleted file.
 - **Drop inbound constraints before tables; never let CASCADE decide** — seven of nine
   inbound FKs cascade, five into Solicitor-shared tables.
+- **A dependency census must ask BOTH directions.** What a table holds (triggers,
+  CHECKs, foreign keys) is the easy half; what holds the table is the half that
+  refuses the drop. `RETURNS <table>` binds a function to the table's composite ROW
+  TYPE, invisible to any scan of function bodies and to a replay harness that never
+  created the function — 46 of them, blocking 38 of 63 tables, and the first apply
+  found every one of them at once. Ask `pg_depend` from `pg_proc` to `pg_type` before
+  ordering a teardown, and where the set can be DERIVED, derive it: a list of 46
+  identities beside an existing list of 168 is a second thing to drift from, and the
+  clone whose catalogue differs by one is the one it fails on.
 - **`__Host-` is structural** — the portal is a sibling subdomain of every tenant; the
   cookie factory lives in `_shared/auth.ts`, not where an auditor will look.
 - **A deterministic client ref is a correlation handle** — mint random per (connection,
