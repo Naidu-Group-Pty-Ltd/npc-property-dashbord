@@ -25,18 +25,39 @@
  *   secure-storage                  upload → remembered; download → served
  *   REST whitelabel_settings        the deployment's branding row
  *
+ * And, for the format journeys (RS-5c.5), any table a record's fixture
+ * directory carries under `tables/<table>.json`:
+ *
+ *   REST <table>                    PostgREST semantics: `eq.`/`in.` filters,
+ *                                   order, limit, and a single object for
+ *                                   `Accept: …vnd.pgrst.object+json`
+ *   authenticated-data/<table>      the cookie gateway, same rows, same rules
+ *   get-client-data (listMode)      `listOptions.table` + `filters`, answered
+ *                                   under the table's name and `records`
+ *   manage-ci-assessments           get → { assessment, latestRun }; list
+ *
  * Anything else answers an empty success and is LOGGED, so the manifest at
  * the end says exactly what the page asked for that nobody supplied.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 
-export function loadFixtures(root, reportId) {
+export function loadFixtures(root, reportId, { requireReport = true } = {}) {
   const reportFile = path.join(root, reportId, 'report.json');
-  if (!fs.existsSync(reportFile)) {
+  const tablesDir = path.join(root, reportId, 'tables');
+  if (!fs.existsSync(reportFile) && (requireReport || !fs.existsSync(tablesDir))) {
     throw new Error(`No fixture for report ${reportId} at ${reportFile}. See README.md to populate .verify/fixtures.`);
   }
-  const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+  const report = fs.existsSync(reportFile) ? JSON.parse(fs.readFileSync(reportFile, 'utf8')) : null;
+  // Rows for any other table the journey's page or adapter reads: one file per
+  // table, an array of rows read out of production (RS-5c.5).
+  const rows = {};
+  if (fs.existsSync(tablesDir)) {
+    for (const f of fs.readdirSync(tablesDir).filter((x) => x.endsWith('.json'))) {
+      const parsed = JSON.parse(fs.readFileSync(path.join(tablesDir, f), 'utf8'));
+      rows[f.replace(/\.json$/, '')] = Array.isArray(parsed) ? parsed : [parsed];
+    }
+  }
   const tplDir = path.join(root, 'templates');
   const templates = fs.readdirSync(tplDir)
     .filter((f) => f.endsWith('.json') && f !== 'index.json')
@@ -44,7 +65,7 @@ export function loadFixtures(root, reportId) {
   const settings = JSON.parse(fs.readFileSync(path.join(root, 'global_report_settings.json'), 'utf8'));
   const whitelabel = JSON.parse(fs.readFileSync(path.join(root, 'whitelabel_settings.json'), 'utf8'));
   const assetsDir = path.join(root, 'assets');
-  return { report, templates, settings, whitelabel, assetsDir };
+  return { report, rows, templates, settings, whitelabel, assetsDir };
 }
 
 const FIXTURE_USER = {
@@ -85,10 +106,21 @@ function projectTemplateForList(t) {
   };
 }
 
+/** `filters` are equality tests, the shape `get-client-data`'s list mode takes. */
+function selectRows(rows, { filters, limit, orderBy, orderAsc } = {}) {
+  let out = rows;
+  for (const [k, v] of Object.entries(filters ?? {})) out = out.filter((r) => String(r[k]) === String(v));
+  if (orderBy) {
+    out = [...out].sort((a, b) => (String(a[orderBy]) < String(b[orderBy]) ? -1 : 1) * (orderAsc ? 1 : -1));
+  }
+  if (limit) out = out.slice(0, Number(limit));
+  return out;
+}
+
 export function createSupabaseDouble(fixtures, opts = {}) {
   const log = [];
   const state = {
-    report: structuredClone(fixtures.report),
+    report: structuredClone(fixtures.report ?? null),
     selections: [],          // report_template_selections rows this run wrote
     uploads: new Map(),      // storage path → bytes
     renders: [],             // every render-template-pdf call, with its HTML
@@ -96,6 +128,10 @@ export function createSupabaseDouble(fixtures, opts = {}) {
     updates: [],             // every manage-investment-reports update payload
   };
   const renderHtml = opts.renderHtml; // async (html) => Uint8Array | null
+  // A journey's own answers for functions its page calls that are not what
+  // the journey is about (a marketing page's analytics panels, say). Answered
+  // here so they count as fulfilled rather than as something nobody supplied.
+  const extraEdge = opts.extraEdge ?? (() => null);
 
   const json = (body, status = 200) => ({
     status, contentType: 'application/json', body: JSON.stringify(body),
@@ -117,14 +153,14 @@ export function createSupabaseDouble(fixtures, opts = {}) {
       case 'mission-control-gate':
         return json({ status: 'open' });
       case 'get-investment-reports': {
-        if (body?.reportId && body.reportId === state.report.id) {
+        if (body?.reportId && body.reportId === state.report?.id) {
           return json({ success: true, report: state.report });
         }
         if (body?.familyOf) return json({ success: true, family: null });
         return json({ success: true, reports: [], count: 0 });
       }
       case 'manage-investment-reports': {
-        if (body?.action === 'update' && body.reportId === state.report.id) {
+        if (body?.action === 'update' && body.reportId === state.report?.id) {
           state.updates.push(body.data);
           state.report = {
             ...state.report, ...body.data,
@@ -208,8 +244,30 @@ export function createSupabaseDouble(fixtures, opts = {}) {
         return json({ success: true, records: [], count: 0 });
       case 'authenticated-data':
         return json({ success: true, data: [], records: [] });
-      case 'get-client-data':
-        return json({ success: true, clients: [FIXTURE_CLIENT] });
+      case 'get-client-data': {
+        // List mode names a table: a client-scoped row the adapters read
+        // through this broker (borrowing capacity, portfolio, the client's
+        // children). Without a table it is the send dialog's client list.
+        const table = body?.listMode ? body?.listOptions?.table : null;
+        if (table) {
+          const rows = selectRows(fixtures.rows?.[table] ?? [], body.listOptions ?? {});
+          return json({ success: true, [table]: rows, records: rows, count: rows.length });
+        }
+        return json({ success: true, clients: fixtures.rows?.clients ?? [FIXTURE_CLIENT] });
+      }
+      case 'manage-ci-assessments': {
+        const assessments = fixtures.rows?.commercial_industrial_assessments ?? [];
+        const runs = fixtures.rows?.commercial_industrial_calculation_runs ?? [];
+        if (body?.operation === 'get') {
+          const assessment = assessments.find((a) => a.id === body.assessmentId) ?? null;
+          if (!assessment) return json({ success: false, error: 'not found' }, 404);
+          const latestRun = runs.filter((r) => r.assessment_id === assessment.id)
+            .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] ?? null;
+          return json({ success: true, data: { assessment, latestRun } });
+        }
+        if (body?.operation === 'list') return json({ success: true, data: assessments });
+        return json({ success: true, data: null });
+      }
       case 'manage-client-data': {
         if (body?.operation === 'create' && body?.table === 'client_portal_reports') {
           const row = { id: `portal-${Date.now()}`, ...(body.data ?? {}) };
@@ -218,15 +276,47 @@ export function createSupabaseDouble(fixtures, opts = {}) {
         }
         return json({ success: true, data: null });
       }
-      default:
-        return null; // unfulfilled → logged
+      default: {
+        const extra = extraEdge(name, body);
+        return extra ? json(extra) : null; // unfulfilled → logged
+      }
     }
   }
 
-  async function rest(table, method) {
+  async function rest(table, method, url = null, headers = {}) {
     if (table === 'whitelabel_settings') return json([fixtures.whitelabel]);
     if (table === 'feature_flags') return json([]);
-    return null;
+    // The deployment's settings, as rows: `organisationProjection` reads the
+    // table through the gateway, where the Investment page asked the broker.
+    if (table === 'global_report_settings' && Array.isArray(fixtures.settings)) return json(fixtures.settings);
+    const rows = fixtures.rows?.[table];
+    if (!rows || method !== 'GET' || !url) return null;
+    // PostgREST, as far as a read of fixture rows needs it.
+    let out = rows;
+    for (const [k, v] of url.searchParams) {
+      if (['select', 'order', 'limit', 'offset'].includes(k)) continue;
+      const m = /^(eq|in)\.(.*)$/.exec(v);
+      if (!m) continue;
+      if (m[1] === 'eq') out = out.filter((r) => String(r[k]) === m[2]);
+      else {
+        const set = m[2].replace(/^\(|\)$/g, '').split(',').map((x) => x.replace(/^"|"$/g, ''));
+        out = out.filter((r) => set.includes(String(r[k])));
+      }
+    }
+    const order = url.searchParams.get('order');
+    if (order) {
+      const [col, dir] = order.split('.');
+      out = [...out].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : 1) * (dir === 'desc' ? -1 : 1));
+    }
+    const limit = Number(url.searchParams.get('limit'));
+    if (limit) out = out.slice(0, limit);
+    if (String(headers['accept'] ?? '').includes('vnd.pgrst.object')) {
+      // `.maybeSingle()` reads PGRST116 as "no row" rather than as an error.
+      return out.length === 1
+        ? json(out[0])
+        : json({ code: 'PGRST116', details: `${out.length} rows`, message: 'JSON object requested, multiple (or no) rows returned' }, 406);
+    }
+    return json(out);
   }
 
   /** Playwright route handler. */
@@ -254,8 +344,13 @@ export function createSupabaseDouble(fixtures, opts = {}) {
       const table = url.pathname.match(/\/rest\/v1\/([^/?]+)/)?.[1];
       let body = null;
       if (fn) { try { body = request.postDataJSON(); } catch { body = null; } }
-      if (fn) { kind = `fn:${fn}`; answer = await edge(fn, body); }
-      else if (table) { kind = `rest:${table}`; answer = await rest(table, method); }
+      if (fn === 'authenticated-data') {
+        // The cookie gateway is PostgREST with a different prefix.
+        const gwTable = (url.pathname.split('/functions/v1/authenticated-data/')[1] ?? '').split('/')[0];
+        kind = `gw:${gwTable}`; answer = await rest(gwTable, method, url, request.headers());
+      }
+      else if (fn) { kind = `fn:${fn}`; answer = await edge(fn, body); }
+      else if (table) { kind = `rest:${table}`; answer = await rest(table, method, url, request.headers()); }
       else if (url.pathname.includes('/storage/v1/object/')) {
         kind = 'storage';
         const p = decodeURIComponent(url.pathname.split('/object/')[1] ?? '');

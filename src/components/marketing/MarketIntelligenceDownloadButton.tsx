@@ -113,14 +113,19 @@ export function MarketIntelligenceDownloadButton({
 
   return (
     <div className="flex items-center gap-1">
+      {/* At `size="icon"` the label is not drawn, so it is declared: the History
+          modal's primary action was an unnamed button that a screen reader
+          announces as "button" (found by the RS-5c.5 format journey). */}
       <Button
         onClick={handleDownload}
         disabled={busy || disabled || !reportId}
         variant={variant}
         size={size}
         className={className}
+        aria-label={size === 'icon' ? (busy ? 'Typesetting…' : label) : undefined}
+        title={size === 'icon' ? label : undefined}
       >
-        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
         {size !== 'icon' && <span className="ml-2 text-xs">{busy ? 'Typesetting…' : label}</span>}
       </Button>
 

@@ -761,3 +761,96 @@ control is actually pressed, not against what it protects. And **an
 untouched column is said, never implied**: `persisted` stays the column's
 fact, `persistRequested` carries what was asked, and the difference reaches
 the person at the moment it happens.
+
+### RS-5c.5 — the other formats driven through a real browser, one at a time
+
+The Investment journey (`run.mjs`) drove one format. The other nine had
+never been through a browser, so the same harness now takes a format:
+`scripts/verify/report-journey/run-format.mjs --format <cashflow|market_intelligence>
+--record <id> [--template <id|name>]`, on the same `supabaseDouble.mjs`. The
+double grew what those pages read — `tables/<table>.json` fixture rows,
+PostgREST reads (`eq`/`in`/`order`/`limit`, the single-object 406 that
+`maybeSingle` reads as "no row"), `get-client-data` in list mode,
+`manage-ci-assessments`, the `authenticated-data/<table>` gateway, and
+`global_report_settings` from the fixtures — and each format declares
+`answers` for the vendor and model calls its page fires on mount (Meta
+insights, the agent model list, automation settings), so the page mounts with
+no network and no credential. What it does not recognise still fails the run.
+
+Results, 14 Sep 2026, against the pinned WeasyPrint 69.0, on non-client rows:
+
+| format | record | template | front end | render | document |
+| --- | --- | --- | --- | --- | --- |
+| Cash Flow | `09f8569e` | Private Banking — Chancery `4af70118` | 22/22 | 1 final, of the chosen template; Send re-used it (0 more); portal row = the render's path | 10 pages, 0 hard findings |
+| Cash Flow | `09f8569e` | Corporate Advisory — Board Pack Brief `ebb636c9` | 22/22 | as above | 10 pages, 0 hard findings |
+| Market Intelligence | `c4d22645` | Private Banking — Chancery `70d29782` | 18/18 | 1 final, of the chosen template, with `persist` at its default (on); the toast said the scheduled email's copy was untouched | 41 pages, 0 hard findings |
+
+The Cash Flow Chancery master sets one topic to a page, so six of its ten
+pages read SPARSE to the instrument; that is the catalogue's decision and is
+recorded, not changed.
+
+**What the Market Intelligence document found**, each fixed at the cause:
+
+1. **The contents ran under the running foot.** 41 entries in one column.
+   `blocks/tocFit.ts` fits a contents list to the room it has — one column,
+   then two, then the type shrunk to a floor of 0.8, then cut with a closing
+   "… and N more sections" — and `toc.html.ts`, `toc.ts` (the preview) and
+   `autoToc.html.ts` all read it, so the three cannot disagree about what fits.
+2. **A delimiter row of 123,913 dashes spent the whole budget.** `layer5_outlook`
+   is 124,671 characters in ten lines; the renderer's delimiter test is
+   length-agnostic, so the table was well-formed, the 65,536-character cap fell
+   inside that row, every body row after it was cut, and the header plus the
+   truncated separator printed raw. `markdown.pure.ts` now rewrites any
+   delimiter row longer than 96 characters to its canonical cells BEFORE the
+   cap (`notices.delimiterRowsNormalised`); the long row and the short one
+   render byte-identical, because alignment is the only thing a delimiter row
+   carries.
+3. **The sources table wrapped past its page.** Twelve rows were budgeted at
+   one line each and source names run long. `fitCitationRows` fits by LINES
+   (84 characters to a line on this measure) — the fixture shows six and says
+   "54 further sources" rather than overflowing.
+4. **A table the model started and never filled printed as pipes.** Header,
+   delimiter, end of text — the scanner fell through to the paragraph path and
+   `| Factor | Risk Level | … | :--- |` reached the page. An empty structure is
+   nothing to show: the two lines are consumed and counted in
+   `tablesRejected`, and the heading left standing over nothing goes with it
+   under the module's own empty-heading rule. `reportQa/__tests__/markdown.spec.ts`
+   was renegotiated on exactly that line — a malformed table WITH body rows
+   still keeps its words as a paragraph, because those words are the model's;
+   an empty one prints nothing.
+5. **Two icon-only controls had no accessible name** — the Report History button
+   on the Market Intelligence export and the typeset button at icon size. The
+   journey finds controls by role and name, as a screen reader does, and could
+   not find either; both carry an `aria-label` now.
+
+**What it found and did not fix here** (RS-5c.6): Market Intelligence has no
+narrative profile — `resolveNarrativeProfile` answers null for it — so its
+thirteen markdown runs pack with the legacy line estimate at
+`linesPerPage: 34` against a box that holds about 46 lines, and the estimate
+over-charges on top. Measured on the render: continuation pages 20–40% full
+(pages 23 and 24) while the layers under them are clipped by 6, 9, 14 and 9
+pages; page 24 ends on the heading "Subdivision Potential:" over nothing; and
+4 of 41 pages (10, 17, 21, 25) carry nothing but the "This section continues"
+callout, which the composer gives a page of its own. Ordered lists whose
+items carry nested bullets (`1.  **…**` over four-space `*` children, the
+source of layer 8) restart at "1." on every item. All of it is the
+renderer's to fix without touching a stored row or re-seeding a master, and
+it is the next step.
+
+Two things about the surfaces are recorded rather than changed. The Market
+Intelligence export door is gated on Meta insights — `MarketCorrelationPanel`
+mounts only when ads data exists — so a deployment with no Meta connection has
+no typeset export for this format. And four formats were not driven at all:
+borrowing capacity, portfolio, client details and commercial capacity have no
+non-client row in production (every row names a client; the demo clients hold
+none), and the harness renders no client's record locally. They stay verified
+by RS-5c.1 and RS-5c.3's specs and are the first to drive the day a non-client
+record exists. Comparison and Report Q&A follow in RS-5c.5b.
+
+Four rules. **A budget is spent on information**: a delimiter row carries
+alignment and nothing else, so its length is normalised away before anything
+is counted against a cap. **An empty structure is consumed, never printed as
+its own markup.** **A list of unknown length fits its box or says what it left
+out** — the contents and the sources now answer to the rule the layers already
+did. And **a control with no accessible name is a control a journey cannot
+find**, which is the same thing as a control a screen reader cannot find.

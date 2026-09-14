@@ -586,6 +586,15 @@ export interface MarkdownNotices {
   footnoteRefsDropped: number;
   /** Loose list runs (items separated by blank lines) merged into one list. */
   listRunsMerged: number;
+  /**
+   * Table delimiter rows rewritten to their canonical width before the
+   * character cap. A delimiter row carries alignment and nothing else, so its
+   * length is never information — and a stored Market Intelligence layer
+   * (14 Sep 2026) carried one cell of 123,913 dashes, which spent the whole
+   * budget: the cap fell inside that row, every row after it was cut, and the
+   * header printed raw.
+   */
+  delimiterRowsNormalised: number;
 }
 
 /**
@@ -686,6 +695,7 @@ const emptyNotices = (): MarkdownNotices => ({
   footnotesRendered: 0,
   footnoteRefsDropped: 0,
   listRunsMerged: 0,
+  delimiterRowsNormalised: 0,
 });
 
 // ── Inline ──────────────────────────────────────────────────────────────────
@@ -998,6 +1008,17 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
 
   // ── Pass 0 ────────────────────────────────────────────────────────────────
   let text = String(source ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  // Delimiter rows first, so the character cap is spent on words. Only a row
+  // longer than an ordinary hand-written one is touched, which keeps a clean
+  // document byte-identical. See `MarkdownNotices.delimiterRowsNormalised`.
+  if (text.includes('-|') || text.includes('|-') || text.includes('| :') || text.includes('|:')) {
+    text = text.split('\n').map((line) => {
+      if (line.length <= 96 || !line.includes('|') || !isDelimiterRow(line)) return line;
+      notices.delimiterRowsNormalised++;
+      const cells = splitRow(line).map((c) => `${c.startsWith(':') ? ':' : ''}---${c.endsWith(':') ? ':' : ''}`);
+      return `| ${cells.join(' | ')} |`;
+    }).join('\n');
+  }
   if (text.length > MAX_MARKDOWN_CHARS) {
     const cut = text.lastIndexOf('\n', MAX_MARKDOWN_CHARS);
     const at = cut > MAX_MARKDOWN_CHARS / 2 ? cut : MAX_MARKDOWN_CHARS;
@@ -1310,10 +1331,17 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
           i = j;
           continue;
         }
-        // Header and delimiter but no body. `renderDataTable` returns '' on an
-        // empty row set (`primitives.pure.ts:426`), so building one here would
-        // make the block silently vanish. Fall through to paragraphs instead.
+        // Header and delimiter but no body: a table the model started and
+        // never filled (a stored Market Intelligence layer ends exactly so —
+        // the generation ran out inside the delimiter row). This used to fall
+        // through to the paragraph path, which printed `| Factor | Risk Level |
+        // … | :--- | :--- |` raw on a client's page. A table with nothing in it
+        // is nothing to show; the two lines are consumed and the loss is
+        // counted where every other degradation is.
         notices.tablesRejected++;
+        if (!flushParagraph()) break scan;
+        i += 2;
+        continue;
       } else {
         notices.tablesRejected++;
       }
