@@ -1740,6 +1740,29 @@ five `:::` fences the generator's prompt asks for (pull quote, sidenote, stat,
 divider, quote page) are DRAWN by `renderMarkdown` now — they printed raw on
 every structure — with an unknown kind unwrapped rather than printed.
 
+**Market Intelligence and Report Q&A are on the geometry too, and their
+omission notes are folded, not paged.** Read §7 of the same doc before
+touching `geometryAwareFormat`, `planNarrative`'s pages-path reader,
+`NARRATIVE_NOTES_KEY` or `PackOptions.reserveLines`. Neither format had a
+profile, so their runs packed at 34 estimated lines against a ~46-line box:
+measured on the Chancery renders, MI continuation pages were 20–40% full
+while the same layers were clipped by up to 14 pages and 4 of 41 pages
+carried only the "This section continues" callout; the Q&A answer was cut at
+8 of an estimated 26 pages with half-empty pages before the cut. Four rules.
+**A format joins the geometry by being measured**, and only where the
+renderer files one — a block on its own packs as before and no projection
+estimate changes. **The pages path is read off the continuation conditional**
+(`marketIntel.layers[0].pages > n`, `qa.answerPages > n`), never assumed, and
+the copy that writes the true count keeps an array an array. **A note the
+master gave a page of its own is folded onto the last allowed page**, its
+counts rewritten to the renderer's truth, the room held back by the packer so
+nothing overflows. And **a numbered step keeps its bulleted sub-points and its
+number**: a nested run of the other kind belongs to the item above it (nesting
+by rank of indentation), and a resumed ordinal is written as
+`counter-reset: list-item` because WeasyPrint 69.0 ignores `<ol start>` —
+`styleTags` merges a tag's own style rather than writing a second attribute
+the parser drops.
+
 **A placeholder never reaches a client document — the owner's rule is "N/A or
 unavailable, never".** Read §8 of
 [`RUNTIME_CONSOLIDATION.md`](./docs/reports/RUNTIME_CONSOLIDATION.md) before

@@ -186,6 +186,10 @@ export const qaAdapter: ReportTemplateAdapter = {
       // answer asks the flowing route, which is addressed by message.
       messageId: subject === 'answer' ? (messages.find((m) => m.role === 'assistant')?.id ?? null) : null,
       preparedOn: new Date().toISOString(),
+      // The masters set the first answer (bounded by their answer pages) and
+      // LIST the further questions; the flowing route's line budget would cut
+      // the very turns that table exists for. See `BuildInput.keepAllTurns`.
+      keepAllTurns: true,
     });
     // A conversation with no assistant turn is not a document. Returning null
     // rather than an empty one is what makes the library card say so.

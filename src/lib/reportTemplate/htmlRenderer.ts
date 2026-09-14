@@ -18,7 +18,7 @@ import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgro
 import { shouldRenderBlock } from './renderVisibility';
 import { applyNarrativePlan, planNarrative } from './narrativePlan';
 import { closeDroppedBlocks } from './closeDroppedBlocks';
-import { NARRATIVE_GEOMETRY_KEY } from './blocks/markdownBlockContent';
+import { NARRATIVE_GEOMETRY_KEY, NARRATIVE_NOTES_KEY } from './blocks/markdownBlockContent';
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
 } from './rendering/regionRenderPlanApply';
@@ -1020,6 +1020,10 @@ export function renderTemplateToHtml(
     // or every markdown instance would pack on the profile's constants while
     // the page conditionals were evaluated on the geometry's count.
     (pageCtx as any)[NARRATIVE_GEOMETRY_KEY] = (ctxBase as any)[NARRATIVE_GEOMETRY_KEY];
+    // The folded continuation notes travel with the geometry they were
+    // planned against (RS-5c.6): a page context rebuilt without them draws
+    // the last allowed page of a run without its note.
+    (pageCtx as any)[NARRATIVE_NOTES_KEY] = (ctxBase as any)[NARRATIVE_NOTES_KEY];
     (pageCtx as any)._cascadeMetadata = !!options.cascadeMetadata;
     (pageCtx as any)._cascadeDebug = !!options.cascadeDebug;
     (pageCtx as any)._editorMode = !!options.editorMode;

@@ -372,8 +372,13 @@ export function createSupabaseDouble(fixtures, opts = {}) {
     // The deployment's settings, as rows: `organisationProjection` reads the
     // table through the gateway, where the Investment page asked the broker.
     if (table === 'global_report_settings' && Array.isArray(fixtures.settings)) return json(fixtures.settings);
-    const rows = fixtures.rows?.[table];
-    if (!rows || !['GET', 'HEAD'].includes(method) || !url) return null;
+    if (!['GET', 'HEAD'].includes(method) || !url) return null;
+    // A table with no fixture rows is a table with no rows: PostgREST answers
+    // an empty array, and so does this — the generic gateway answer it
+    // replaced (RS-5c.5) had always done the same. A page reading a table the
+    // fixture set does not carry (`report_structure_templates` on the
+    // Investment page) is not a page nothing answered.
+    const rows = fixtures.rows?.[table] ?? [];
     // PostgREST, as far as a read of fixture rows needs it.
     let out = rows;
     for (const [k, v] of url.searchParams) {

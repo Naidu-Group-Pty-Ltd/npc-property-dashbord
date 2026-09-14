@@ -923,3 +923,53 @@ outcomes, behind both the standard layout and an error. **A refusal is pinned
 to its cause**: the test that holds the refusal also watches the thing whose
 absence justifies it. And **a budget is stated in the units the page is
 measured in**, which is the rule RS-5c.6 has to make true.
+
+### RS-5c.6 — Market Intelligence and Report Q&A packed by the template's own geometry
+
+The fix the two previous steps measured their way to. Neither format had a
+narrative profile, so every one of their markdown runs packed with the
+legacy line estimate at 34 lines against a ~46-line box, and the estimate
+over-charges: MI continuation pages 20–40% full while the layers were
+clipped by 6/9/14/9 pages and 4 of 41 pages carried only the "continues"
+callout; Q&A answer pages 47–57% full, the answer cut at 8 of an estimated
+26 with the cut notice on its own page, and the transcript budget cutting a
+four-exchange conversation to one so the further-questions table never
+drew. `docs/reports/NARRATIVE_PACKING.md` §7 carries the design; this
+records the effect.
+
+| document | before | after |
+| --- | --- | --- |
+| Market Intelligence, Chancery `70d29782` | 41 pages; notes "6 / 9 / 14 / 9 further pages"; 4 stub pages (10, 17, 21, 25); every numbered step "1."; 30 SPARSE | **36 pages**; notes "2 / 4 / 6 / 3 further pages", each at the foot of its section's last page; 0 stub pages; steps numbered 2…9; 12 SPARSE (section openers and content-limited pages) |
+| Report Q&A transcript, Chancery `ae7734d5` | 13 pages; answer pages 47–57% full; cut note on its own page ("runs to 26 pages"); "carries 1 of 4 exchanges"; further-questions table absent | **13 pages**; answer pages full; cut note at the foot of answer page 8 ("runs to 17 pages"); "The first exchange is set in full; 3 further questions are listed without their answers"; the table lists them |
+| Cash Flow `09f8569e` ×2, Investment A Chancery | 22/22, 22/22, 30/30 | unchanged — 22/22, 22/22, 30/30 |
+
+All at the renderer. No stored `report_templates` row changed, no master
+re-seeded, no projection estimate altered: `geometryAwareFormat` names the two
+formats; `planNarrative` reads each run's pages path off its continuation
+conditional (`marketIntel.layers[0].pages > n`, `qa.answerPages > n`), writes
+the true count there with arrays kept as arrays, recognises the master's own
+note page, clears its key and folds the note — counts rewritten to the
+truth — onto the last allowed page through a `PageReserve` the packer holds
+back; ordered lists keep their bulleted sub-points nested and their number
+(nesting by rank of indentation; the resumed ordinal written as
+`counter-reset: list-item`, which WeasyPrint 69.0 reads where it ignores
+`<ol start>`; `styleTags` merging a tag's own style); and the templated Q&A
+transcript keeps every turn (`keepAllTurns`) with the note saying what the
+document sets.
+
+Two harness findings on the way. The Investment runner's send step looked
+for a button named "Send" after RS-5c.2 renamed it "Prepare & Send" — the
+journey aborted at the click, 22/22 before it; the locator accepts both. And
+the double's gateway read answered an unknown table with nothing, where the
+generic answer it replaced had said "no rows": a table with no fixture rows
+IS a table with no rows, and the Investment page's `report_structure_templates`
+read is not a page nothing answered. Both are `scripts/verify/report-journey`
+changes, not product changes.
+
+What stays open, recorded: the remaining SPARSE pages on MI (a section opener
+with one paragraph, two-page event calendars, the sources page) and on the
+comparison master (one axis to a page) are the composers' decisions and
+content-limited pages; a heading the pre-pass folds a note under could
+theoretically leave its own page short by the note's height, which
+`balanceTail` already smooths. The next step on this branch is the RS-5
+closing report.
