@@ -19,6 +19,7 @@
 import type { Block } from '../templateSchema';
 import type { BlockRenderContext } from './index';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
+import { boundValueResolved } from '../boundValuePresence';
 import { hex } from './_shared';
 
 interface DefinitionItem { term: string; definition: string }
@@ -47,6 +48,15 @@ function readItems(raw: unknown, ctx: BlockRenderContext): DefinitionItem[] {
   return raw
     .map((it) => {
       const o = (it ?? {}) as Record<string, unknown>;
+      // A term is a promise that a definition follows it, so an item whose
+      // definition is bound and received NOTHING is dropped whole rather than
+      // drawn as a label over its own punctuation — `Assessment grade   · out
+      // of 100` on a record that carries no grade. See `boundValuePresence`.
+      const definitionSource = [o.definition, o.value, o.description]
+        .find((c) => c !== undefined && c !== null);
+      if (definitionSource !== undefined && !boundValueResolved(definitionSource, ctx)) {
+        return { term: '', definition: '' };
+      }
       return {
         term: read(o.term, o.label, o.name),
         definition: read(o.definition, o.value, o.description),

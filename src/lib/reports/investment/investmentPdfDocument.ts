@@ -45,6 +45,7 @@ import {
 } from './investmentPdfFigures';
 import { VIZ_DIRECTIVE_KINDS, VIZ_DIRECTIVE_RE_G } from '@/lib/reports/vizDirectives.pure';
 import { rentIsEstablished } from '@/lib/reports/investment/rentalEvidence.pure';
+import { presenceOf } from '../../../../supabase/functions/_shared/reports/contract/visibilityPolicy.pure';
 import { fetchGlobalReportSettings, type GlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawPdfLibDisclaimerPage } from '@/utils/pdfDisclaimerPage';
 
@@ -2394,139 +2395,136 @@ export async function generateInvestmentPdfBlob(
         const absData = enhancedData?.absData || {};
         
         const row1: Array<{ label: string; value: string; subtitle?: string }> = [];
-        
-        // Purchase Price
-        if (initialCosts?.propertyValue) {
-          row1.push({
-            label: 'Purchase Price',
-            value: '$' + Number(initialCosts.propertyValue).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
-          });
+
+        /*
+         * Presence, never truthiness.
+         *
+         * `presenceOf` is this platform's authority on the three states —
+         * `absent` (null/undefined/''/NaN), `zero` (a measured 0) and `value`
+         * — and the whole reason it exists is that `if (v)` collapses the
+         * middle one into the first. Every tile below asked `if (v)`, so a
+         * genuine zero was indistinguishable from an unknown: a **breakeven**
+         * weekly cash flow, a **cash purchase** carrying no loan, a rate held
+         * at **0%** all vanished from the client's band as though the record
+         * did not know them.
+         *
+         * The two are opposite failures and both are forbidden here. A zero
+         * that is a finding must print as `$0` / `0.0%`; an absence must take
+         * its whole tile with it rather than printing `N/A`, a dash, or a
+         * fabricated `$0`.
+         */
+        const has = (v: unknown): boolean => presenceOf(v) !== 'absent';
+        const money = (v: unknown) => {
+          const n = Number(v);
+          return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-AU', { maximumFractionDigits: 0 });
+        };
+        const pct = (v: unknown, dp: number) => Number(v).toFixed(dp) + '%';
+
+        // Purchase Price. Absent is omitted rather than drawn as $0 — a
+        // fabricated price is worse than a shorter band, and a report missing
+        // one materially is the readiness layer's to stop, not this band's to
+        // paper over.
+        if (has(initialCosts?.propertyValue)) {
+          row1.push({ label: 'Purchase Price', value: money(initialCosts.propertyValue) });
         }
-        
-        // Weekly Rent — always include prominently
-        if (income?.weeklyRent) {
+
+        // Weekly Rent, through the rent authority rather than a local test.
+        if (rentIsEstablished(income) && has(income?.weeklyRent)) {
           row1.push({
             label: 'Weekly Rent',
-            value: '$' + Number(income.weeklyRent).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+            value: money(income.weeklyRent),
             subtitle: 'Current market rate',
           });
         }
-        
+
         // LVR. `metrics.lvr ?? loan.lvr` is the order
         // `reportBindingProjection.pure.ts` reads it in, and reading it in a
-        // different order is how one record comes to state two LVRs.
-        const lvr = keyMetrics?.lvr ?? loanDetails?.lvr;
-        if (lvr) {
-          row1.push({
-            label: 'LVR',
-            value: Number(lvr).toFixed(1) + '%',
-            subtitle: 'Loan-to-Value Ratio',
-          });
+        // different order is how one record comes to state two LVRs. An
+        // authoritative 0% is an unleveraged acquisition and is preserved:
+        // converting it to "missing" would describe a cash purchase as an
+        // unknown one.
+        const lvr = has(keyMetrics?.lvr) ? keyMetrics.lvr : loanDetails?.lvr;
+        if (has(lvr)) {
+          row1.push({ label: 'LVR', value: pct(lvr, 1), subtitle: 'Loan-to-Value Ratio' });
         }
 
-        // Gross Yield — see the note above `rentalYield`: the stored key is
-        // `grossRentalYield`, so this tile could never render.
-        //
-        // A yield rests on a rent, and `rentIsEstablished` is the one rule
-        // that decides whether this record has one. The template projection
-        // withholds both yields when it answers false, so asking it here is
-        // what keeps the two presentations from disagreeing in the OTHER
-        // direction — the standard document printing a figure the engine
-        // says is unfounded.
+        /*
+         * A yield rests on a rent, and `rentIsEstablished` is the one rule
+         * that decides whether this record has one — the same rule
+         * `reportBindingProjection.pure.ts` gates both yields with.
+         *
+         * Where no rent is established the tile is omitted ENTIRELY. It is
+         * never `0.00%`: 84 of 1,072 stored reports print exactly that because
+         * the rent was unknown, and that defect is the reason this rule
+         * exists. Where a rent IS established, a computed 0.00% is a finding
+         * and prints.
+         */
         const yieldIsFounded = rentIsEstablished(income);
-        const grossYield = yieldIsFounded
-          ? (keyMetrics?.grossRentalYield ?? keyMetrics?.grossYield)
-          : undefined;
-        if (grossYield) {
-          row1.push({
-            label: 'Gross Yield',
-            value: Number(grossYield).toFixed(2) + '%',
-            subtitle: 'Annual rental return',
-          });
-        }
-        
-        // Net Yield — a different measure of return, not a spare tile. It
-        // and the two below used to be gated on `row1.length < 4`, so on any
-        // record complete enough to fill the first four they were dropped:
-        // the more the record knew, the less the client was shown.
-        if (yieldIsFounded && keyMetrics?.netRentalYield) {
-          row1.push({
-            label: 'Net Yield',
-            value: Number(keyMetrics.netRentalYield).toFixed(2) + '%',
-            subtitle: 'After all costs',
-          });
+        const grossYield = has(keyMetrics?.grossRentalYield)
+          ? keyMetrics.grossRentalYield
+          : keyMetrics?.grossYield;
+        if (yieldIsFounded && has(grossYield)) {
+          row1.push({ label: 'Gross Yield', value: pct(grossYield, 2), subtitle: 'Annual rental return' });
         }
 
-        // Deposit and loan. "Where relevant" is the stored value itself — a
-        // cash purchase carries no loan, so the check omits that tile rather
-        // than printing a zero beside a price.
-        if (initialCosts?.deposit) {
-          row1.push({
-            label: 'Deposit',
-            value: '$' + Number(initialCosts.deposit).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
-            subtitle: 'Cash contribution',
-          });
+        if (yieldIsFounded && has(keyMetrics?.netRentalYield)) {
+          row1.push({ label: 'Net Yield', value: pct(keyMetrics.netRentalYield, 2), subtitle: 'After all costs' });
         }
 
-        const loanAmount = loanDetails?.loanAmount ?? initialCosts?.loanAmount;
-        if (loanAmount) {
-          row1.push({
-            label: 'Loan Amount',
-            value: '$' + Number(loanAmount).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
-            subtitle: 'At settlement',
-          });
+        // Deposit and loan. A $0 loan is a cash acquisition — a fact about the
+        // transaction, not a gap in the record — so it is stated.
+        if (has(initialCosts?.deposit)) {
+          row1.push({ label: 'Deposit', value: money(initialCosts.deposit), subtitle: 'Cash contribution' });
+        }
+
+        const loanAmount = has(loanDetails?.loanAmount) ? loanDetails.loanAmount : initialCosts?.loanAmount;
+        if (has(loanAmount)) {
+          row1.push({ label: 'Loan Amount', value: money(loanAmount), subtitle: 'At settlement' });
         }
 
         // The rate the whole projection rests on. Every selectable template
         // states it ("Interest rate assumed 6.50%") and the standard document
         // stated it nowhere, so a reader could not tell what the cash-flow
         // figures beside it had been modelled at.
-        if (loanDetails?.interestRate) {
-          row1.push({
-            label: 'Interest Rate',
-            value: Number(loanDetails.interestRate).toFixed(2) + '%',
-            subtitle: 'Assumed for modelling',
-          });
+        if (has(loanDetails?.interestRate)) {
+          row1.push({ label: 'Interest Rate', value: pct(loanDetails.interestRate, 2), subtitle: 'Assumed for modelling' });
         }
 
-        // The holding position. `keyMetrics.weeklyNet` is the figure an
-        // investor decides on, and every selectable template prints it while
-        // the standard document stated it nowhere at all.
-        if (keyMetrics?.weeklyNet) {
-          const weeklyNet = Number(keyMetrics.weeklyNet);
+        // The holding position. An authoritative $0 is a breakeven investment
+        // outcome and is one of the most consequential things this band can
+        // say, so it must survive.
+        if (has(keyMetrics?.weeklyNet)) {
           row1.push({
             label: 'Weekly Net Cash Flow',
-            value: (weeklyNet < 0 ? '-$' : '$')
-              + Math.abs(weeklyNet).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
+            value: money(keyMetrics.weeklyNet),
             subtitle: 'After costs and finance',
           });
         }
 
-        // What the purchase costs to complete.
-        if (initialCosts?.stampDuty) {
-          row1.push({
-            label: 'Stamp Duty',
-            value: '$' + Number(initialCosts.stampDuty).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
-            subtitle: 'Transfer duty payable',
-          });
+        /*
+         * Stamp duty, and the one tile where a zero needs a second question.
+         *
+         * `$0` duty is a real liability in some jurisdictions and concession
+         * cases, but a zero also arrives when the duty was simply never
+         * calculated. The canonical engine stamps every figure it produces
+         * with the schedule it used (`stampDutyScheduleYear` /
+         * `stampDutyScheduleSource`), so that stamp — not the number — is what
+         * says a calculation happened. Nothing is recomputed here.
+         */
+        const dutyWasCalculated = has(initialCosts?.stampDutyScheduleYear)
+          || has(initialCosts?.stampDutyScheduleSource);
+        if (has(initialCosts?.stampDuty) && (Number(initialCosts.stampDuty) !== 0 || dutyWasCalculated)) {
+          row1.push({ label: 'Stamp Duty', value: money(initialCosts.stampDuty), subtitle: 'Transfer duty payable' });
         }
 
-        if (initialCosts?.totalUpfront) {
-          row1.push({
-            label: 'Total Upfront',
-            value: '$' + Number(initialCosts.totalUpfront).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
-            subtitle: 'Cash required to settle',
-          });
+        if (has(initialCosts?.totalUpfront)) {
+          row1.push({ label: 'Total Upfront', value: money(initialCosts.totalUpfront), subtitle: 'Cash required to settle' });
         }
 
         // Capital growth is last because it describes the forecast rather
-        // than the property.
-        if (assumptions?.capitalGrowth) {
-          row1.push({
-            label: 'Capital Growth',
-            value: Number(assumptions.capitalGrowth).toFixed(1) + '%',
-            subtitle: 'Annual forecast',
-          });
+        // than the property. A stated 0% forecast is a position, not a gap.
+        if (has(assumptions?.capitalGrowth)) {
+          row1.push({ label: 'Capital Growth', value: pct(assumptions.capitalGrowth, 1), subtitle: 'Annual forecast' });
         }
 
         if (row1.length < 2) return null;
@@ -2537,9 +2535,18 @@ export async function generateInvestmentPdfBlob(
         // Extract demographic data from absData
         const demographics = absData?.demographics || absData?.populationData || absData;
         
+        // The same presence rule as the financial row. `||` chains are kept as
+        // ALIAS resolution — three spellings of one field — but each candidate
+        // is tested for presence rather than truthiness, so a measured zero
+        // resolves instead of falling through to the next spelling.
+        const firstPresent = (...candidates: unknown[]): unknown =>
+          candidates.find((c) => has(c));
+
         // Population
-        const population = demographics?.population || demographics?.totalPopulation || demographics?.total_population;
-        if (population) {
+        const population = firstPresent(
+          demographics?.population, demographics?.totalPopulation, demographics?.total_population,
+        );
+        if (has(population)) {
           row2.push({
             label: 'Population',
             value: Number(population).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
@@ -2548,8 +2555,8 @@ export async function generateInvestmentPdfBlob(
         }
         
         // Median Age
-        const medianAge = demographics?.medianAge || demographics?.median_age;
-        if (medianAge) {
+        const medianAge = firstPresent(demographics?.medianAge, demographics?.median_age);
+        if (has(medianAge)) {
           row2.push({
             label: 'Median Age',
             value: String(Math.round(Number(medianAge))),
@@ -2558,8 +2565,11 @@ export async function generateInvestmentPdfBlob(
         }
         
         // Median Income
-        const medianIncome = demographics?.medianIncome || demographics?.median_income || demographics?.medianHouseholdIncome || demographics?.median_household_income;
-        if (medianIncome) {
+        const medianIncome = firstPresent(
+          demographics?.medianIncome, demographics?.median_income,
+          demographics?.medianHouseholdIncome, demographics?.median_household_income,
+        );
+        if (has(medianIncome)) {
           row2.push({
             label: 'Median Income',
             value: '$' + Number(medianIncome).toLocaleString('en-AU', { maximumFractionDigits: 0 }),
@@ -2568,8 +2578,10 @@ export async function generateInvestmentPdfBlob(
         }
         
         // Median House Price (bonus demographic)
-        const medianHousePrice = demographics?.medianHousePrice || demographics?.median_house_price;
-        if (medianHousePrice && row2.length < 4) {
+        const medianHousePrice = firstPresent(
+          demographics?.medianHousePrice, demographics?.median_house_price,
+        );
+        if (has(medianHousePrice) && row2.length < 4) {
           row2.push({
             label: 'Median House Price',
             value: '$' + Number(medianHousePrice).toLocaleString('en-AU', { maximumFractionDigits: 0 }),

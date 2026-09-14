@@ -272,6 +272,99 @@ spellings):
 | Data / Analyst — Dictionary | `investment_compass` | 51 | 327 | 18 |
 | Luxury Editorial — Frontispiece · Midnight Editorial | `investment_compass` | 53 | 325 | 16 |
 
+## A genuine zero is a finding; an absence is not a word
+
+Two opposite failures, and the product had shipped both.
+
+**`if (value)` collapses a measured zero into "missing".** Every tile in
+`extractKPIMetrics` tested truthiness, so a **breakeven** weekly cash flow
+(`$0`), a **cash purchase** carrying no loan (`$0`, LVR `0%`) and a rate held
+at **0%** all vanished from the client's band as though the record did not know
+them. The more ordinary the transaction, the more likely it was to lose a fact.
+
+**And an absence must never be given a word.** `investment_score` on the
+certification record carries `grade: 'N/A'` beside `policy.gradeIssued: false`
+— a scorer's sentinel, not a grade. `reportBindingProjection` published it
+verbatim, every Investment master binds it as `'{{recommendation.grade}} ·
+{{recommendation.score | fixed:0}} out of 100'`, and all three selectable
+structures printed **"Assessment grade  N/A · out of 100"** on the client's
+method page.
+
+The rule:
+
+| the record holds | the client sees |
+| --- | --- |
+| an authoritative `0` | `$0` / `0.0%` — it is the answer |
+| nothing | no element at all — not `N/A`, not a dash, not a fabricated `$0` |
+
+Four things carry it.
+
+**One authority, not a new one.** `presenceOf` (`visibilityPolicy.pure.ts`) is
+this platform's three-state test — `absent` / `zero` / `value` — and the band
+asks it directly. Anything resting on rent asks `rentIsEstablished`, the same
+rule the template projection gates both yields with. Nothing in the renderer
+calculates, derives or substitutes so that a card can stay visible.
+
+**The sentinel is refused at the source, on the one field it belongs to.**
+`publishableGrade` states the whole rule once and the projection publishes
+through it; the score travels with the grade, because a number out of 100
+beside no grade is the same claim wearing one fewer word. `'N/A'` is refused
+*there* rather than in `presenceOf`, which deliberately treats `n/a` as
+possible real content — a zoning of "None" and a street called "Na" exist.
+
+**A bound field that received nothing is dropped, not drawn as its own
+punctuation.** `resolveBindable` resolves an absent binding to the empty
+string, which is right and is not enough: what reached the page was the
+author's boilerplate with nothing between it. `boundValueResolved` asks the
+resolver whether any binding contributed, and both definition-list renderers —
+jsPDF and HTML — ask the same function, so the two presentations cannot decide
+presence differently.
+
+**Stamp duty is the one tile where a zero needs a second question,** and the
+answer is the canonical engine's own schedule stamp (`stampDutyScheduleYear` /
+`stampDutyScheduleSource`), never a recomputation here. A `$0` liability that
+was calculated is stated; a `0` that means "never calculated" is omitted.
+
+### What is deliberately NOT done
+
+**No post-processing.** There is no `.replace(/N\/A/g, '')` anywhere. Such a
+filter would hide the defect, keep the empty frame the placeholder was sitting
+in, and delete the word from a client's prose the first time somebody
+legitimately wrote it. The source omits the field; the guard only proves it did.
+
+**Prose is not scanned.** `clientOutputSentinel.spec.ts` checks structured
+fields and the two template renderers, whole-token. Measured on the four
+certification documents afterwards: **zero** structured placeholders, and the
+three remaining whole-word matches are complete English sentences — *"A
+dimension the assessment had no data for is left unscored"*, *"Authoritative
+postcode-level demographic information was not available for this analysis"*.
+Those are the honest disclosure this platform wants, and a blunter rule would
+delete them.
+
+**A dash is not scanned for either.** §1 forbids a dash *used as a
+missing-value substitute* — a semantic condition no text scan can see.
+Searching for one finds `-webkit-print-color-adjust`, `var(--font-body)` and
+`SFMono-Regular` in every page's stylesheet (this test found exactly those on
+its first run). The rule is enforced structurally instead: no whole field may
+be nothing but a dash.
+
+**A material gap is the readiness layer's, not the band's.** Omitting an
+element is for an optional value. Where mandatory report content is absent, the
+existing client-readiness gate stops the report — presentation is never used to
+make an incomplete report look complete.
+
+### Measured after the correction
+
+| | before | after |
+| --- | ---: | ---: |
+| figures agreeing across A / B / C / D | 12 / 25 | **22 / 25** |
+
+**Score / grade now agrees across all four** — the templates stopped printing
+`N/A · out of 100`, matching the standard's correct omission. The three that
+still differ are annual rent and annual net cash flow (the same facts the
+standard publishes weekly) and net yield, which the standard publishes and the
+masters do not lay out.
+
 ## What is NOT settled
 
 These three are **deferred by decision**, not overlooked. The owner has stated
