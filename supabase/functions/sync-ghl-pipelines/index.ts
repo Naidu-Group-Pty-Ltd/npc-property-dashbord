@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { enforceRawBodyLimit, verifySignedInternal } from '../_shared/requestSecurity.ts';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 
@@ -127,7 +128,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    const body = await req.json().catch(() => ({}));
+    // The signature covers a hash of the raw bytes, so the body is read once
+    // as text and parsed from that — `req.json()` consumes the stream and
+    // leaves nothing for `verifySignedInternal` to hash.
+    const bounded = await enforceRawBodyLimit(req, 8192);
+    if (!bounded.ok) return bounded.error;
+    let body: any = {};
+    try { body = bounded.raw ? JSON.parse(bounded.raw) : {}; } catch { body = {}; }
 
     /*
      * Where a previous pass stopped, and when the RUN began.
@@ -146,12 +153,28 @@ Deno.serve(async (req) => {
         ? body.runStartedAt
         : syncRunStartedAt;
 
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
-    if (authError) {
-      console.log('[sync-ghl-pipelines] Auth failed:', authError);
-      return createUnauthorizedResponse(authError, corsHeaders);
+    /*
+     * A scheduled caller, because the resume above needs a driver.
+     *
+     * This function had no cron at all: it ran when somebody opened the Client
+     * Tracker, and a pass cut off by the platform was never picked back up. A
+     * budget with nothing to call it again is just a quieter truncation.
+     *
+     * `cron_invoke_signed_function` sends a signed internal envelope and the
+     * anon key for the gateway — no user JWT — so `verifyAuth` alone could
+     * never have admitted it. The human path is untouched.
+     */
+    const internal = await verifySignedInternal(supabase, req, bounded.raw, ['pg_cron']);
+    if (!internal.ok) {
+      const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+      if (authError) {
+        console.log('[sync-ghl-pipelines] Auth failed:', authError);
+        return createUnauthorizedResponse(authError, corsHeaders);
+      }
+      console.log(`[sync-ghl-pipelines] Authenticated user: ${userId}`);
+    } else {
+      console.log(`[sync-ghl-pipelines] Signed internal caller: ${internal.actorId}`);
     }
-    console.log(`[sync-ghl-pipelines] Authenticated user: ${userId}`);
 
     const headers = {
       'Authorization': `Bearer ${apiKey}`,
