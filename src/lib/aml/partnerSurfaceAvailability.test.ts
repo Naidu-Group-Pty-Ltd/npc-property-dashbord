@@ -178,9 +178,16 @@ describe("the nav entry still leads somewhere", () => {
     for (const route of [
       '<Route path="compliance" element={<FinancePortalComplianceWorkspace />} />',
       '<Route path="compliance" element={<SolicitorCompliance />} />',
-      '<Route path="compliance" element={<BuilderCompliance />} />',
     ]) {
       expect(app, route).toContain(route);
     }
+    /* Phase 6 of the network extraction: the Builder portal is unrouted
+       wholesale — the nav entry, the layout that drew it and the compliance
+       page all left with /builder/*, which resolves to the Builders Network
+       redirect. There is no builder entry left to lead anywhere, and the
+       portal handoff names the closed door `portal_moved` until E4's
+       network→clone surface ships. */
+    expect(app).toContain('<Route path="/builder/*" element={<BuilderPortalMoved />} />');
+    expect(app).not.toContain('element={<BuilderCompliance />}');
   });
 });

@@ -81,9 +81,17 @@ describe("routes and navigation", () => {
   it("each route sits inside the portal's existing protected layout tree", () => {
     expect(app).toMatch(/<Route path="compliance" element=\{<FinancePortalComplianceWorkspace \/>\} \/>/);
     expect(app).toMatch(/<Route path="compliance" element=\{<SolicitorCompliance \/>\} \/>/);
-    expect(app).toMatch(/<Route path="compliance" element=\{<BuilderCompliance \/>\} \/>/);
     // No new guard, no new provider, no bypass of the existing shells: the
-    // three additions are children of routes that already existed.
+    // additions are children of routes that already existed.
+    //
+    // Phase 6 of the network extraction unrouted the whole Builder portal:
+    // /builder/* is one redirect to the Builders Network, so the builder
+    // compliance route left App.tsx WITH the tree it lived in. The page and
+    // its adapter stay in the repository (asserted above) until Phase 7
+    // deletes them, and the portal handoff names the closed door
+    // `portal_moved` until E4's network→clone surface ships.
+    expect(app).not.toMatch(/<Route path="compliance" element=\{<BuilderCompliance \/>\} \/>/);
+    expect(app).toMatch(/<Route path="\/builder\/\*" element=\{<BuilderPortalMoved \/>\} \/>/);
   });
 
   it("no standalone Developer Portal route or app exists — that foundation is absent and fails closed", () => {

@@ -55,6 +55,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders, createForbiddenResponse, verifyAuth } from "../_shared/auth.ts";
 import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { builderAdminFreezeRefusal } from "../_shared/builderPortal/adminFreeze.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 
 const MODULE_KEY = 'builder_portal_admin';
@@ -313,7 +314,14 @@ Deno.serve(async (req) => {
     if (!csrf.ok) return csrfDenied(cors, csrf);
   }
 
-  // 3. Deny-by-default module permission. A missing module registration or a
+  // 3. Phase 6 (extraction plan §7): the builder records are a frozen
+  //    archive — record mutations are refused server-side, reads and the
+  //    containment acts stay. Rule and wording live in
+  //    _shared/builderPortal/adminFreeze.ts.
+  const frozen = builderAdminFreezeRefusal(operation, READ_OPERATIONS.has(operation));
+  if (frozen) return json(frozen, 403, cors);
+
+  // 4. Deny-by-default module permission. A missing module registration or a
   //    missing permission row denies. Authenticated-but-not-permitted is 403.
   const authz = await requireModulePermission(
     supabase, { userId: auth.userId, authMethod: auth.authMethod },

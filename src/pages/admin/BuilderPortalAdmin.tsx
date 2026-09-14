@@ -825,6 +825,31 @@ export default function BuilderPortalAdmin() {
 
   return (
     <div className="space-y-6 p-4 md:p-6">
+      {/*
+        Phase 6 of the network extraction: the portal itself now lives at the
+        Builders Network and this workspace's builder records are a read-only
+        archive — the server refuses record mutations
+        (_shared/builderPortal/adminFreeze.ts), and this banner is why an
+        operator learns that BEFORE a save fails rather than from the
+        refusal. Suspension, membership revocation and session revocation
+        still work: containment outlives the portal.
+      */}
+      <Alert>
+        <AlertDescription>
+          The Builder / Developer Portal has moved to the Builders Network at{' '}
+          <a
+            className="font-medium underline underline-offset-4"
+            href="https://builders.aurixasystems.com.au"
+            target="_blank"
+            rel="noreferrer"
+          >
+            builders.aurixasystems.com.au
+          </a>
+          . The builder records below are a read-only archive awaiting decommission — edits are
+          refused by the server. Suspending an organisation or user, revoking a membership and
+          revoking sessions still work.
+        </AlertDescription>
+      </Alert>
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight">
