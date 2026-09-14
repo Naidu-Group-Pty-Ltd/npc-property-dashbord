@@ -170,7 +170,10 @@ export function createSupabaseDouble(fixtures, opts = {}) {
         return json(fixtures.settings);
       case 'render-template-pdf': {
         const html = String(body?.html ?? '');
-        const entry = { mode: body?.mode, reportId: body?.reportId ?? null, templateId: body?.templateId ?? null, htmlBytes: html.length, at: Date.now() };
+        // The HTML is kept so a run can write it beside the PDF: a geometry
+        // defect is diagnosed on the document the engine was handed, and the
+        // journey is the only place that document exists.
+        const entry = { mode: body?.mode, reportId: body?.reportId ?? null, templateId: body?.templateId ?? null, htmlBytes: html.length, html, at: Date.now() };
         state.renders.push(entry);
         if (!renderHtml) return json({ error: 'no local renderer configured' }, 500);
         const pdf = await renderHtml(html);

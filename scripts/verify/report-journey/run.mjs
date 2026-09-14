@@ -50,7 +50,14 @@ const BASE = args.base ?? 'http://127.0.0.1:5173';
  *   browser    — the pre-cutover baseline: no server render at all.
  */
 const EXPECT_RENDERER = args['expect-renderer'] ?? 'weasyprint';
-const OUT = path.resolve(ROOT, args.out ?? `.verify/out/journey/${REPORT_ID.slice(0, 8)}`);
+/**
+ * Which template to choose in the picker: a `report_templates` id (matched on
+ * the radio's `value`) or a substring of its name (matched on `aria-label`).
+ * Omitted, the last non-automatic option is chosen so a change is observable.
+ */
+const TEMPLATE = args.template ? String(args.template) : null;
+const OUT = path.resolve(ROOT, args.out
+  ?? `.verify/out/journey/${REPORT_ID.slice(0, 8)}${TEMPLATE ? `-${TEMPLATE.replace(/[^a-z0-9]+/gi, '').slice(0, 8)}` : ''}`);
 const FIXTURES = path.resolve(ROOT, '.verify/fixtures');
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -158,14 +165,22 @@ const radios = picker.getByRole('radio');
 const radioCount = await radios.count();
 check('selectable templates appear', radioCount >= 2, `${radioCount} radio options`);
 await shot(page, '03-picker');
-// choose the last non-automatic option so a change is observable
+// choose the requested template, else the last non-automatic option so a
+// change is observable
 let chosenLabel = null;
 for (let i = radioCount - 1; i >= 0; i--) {
   const r = radios.nth(i);
   const label = (await r.getAttribute('aria-label')) ?? '';
+  const value = (await r.getAttribute('value')) ?? '';
   if (/automatic/i.test(label)) continue;
-  await r.click(); chosenLabel = label; break;
+  if (TEMPLATE && !(value === TEMPLATE || label.toLowerCase().includes(TEMPLATE.toLowerCase()))) continue;
+  // The picker lists a template under more than one heading (a design family's
+  // colourways, the individual designs, the other active rows), and a radio in
+  // a collapsed group is not clickable; take the one a person could reach.
+  if (!(await r.isVisible().catch(() => false))) continue;
+  await r.click(); chosenLabel = label || value; break;
 }
+check('the requested template was offered', !TEMPLATE || chosenLabel !== null, TEMPLATE ? `${TEMPLATE} → ${chosenLabel ?? 'not found among the radios'}` : 'no template requested');
 await page.waitForTimeout(600);
 const confirm = picker.getByRole('button', { name: /use this|choose|select|confirm|save|done/i }).first();
 if (await confirm.isVisible().catch(() => false)) await confirm.click();
@@ -291,6 +306,11 @@ const report = {
   requestLog: dbl.log,
   requestKinds: Object.entries(dbl.log.reduce((m, l) => { m[l.kind] = (m[l.kind] ?? 0) + 1; return m; }, {})),
 };
+// The HTML the engine was handed, beside the PDF it made of it: a geometry
+// defect is diagnosed on that document, and this is the only place it exists.
+const lastRender = dbl.state.renders[dbl.state.renders.length - 1];
+if (lastRender?.html) fs.writeFileSync(path.join(OUT, 'final.html'), lastRender.html);
+report.renders = dbl.state.renders.map(({ html: _html, ...rest }) => rest);
 fs.writeFileSync(path.join(OUT, 'journey.json'), JSON.stringify(report, null, 2));
 console.log(`\n${report.result}  (${findings.filter((f) => f.ok).length}/${findings.length} checks, ${(report.ms / 1000).toFixed(1)}s)  → ${path.relative(ROOT, OUT)}/journey.json\n`);
 process.exit(passed ? 0 : 1);

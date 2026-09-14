@@ -26,6 +26,18 @@ function readSeries(p: Record<string, unknown>, ctx: HtmlBlockContext): Series[]
   const items = toArray(raw);
   const labelKey = String(p.labelKey ?? 'label');
   const valueKey = String(p.valueKey ?? 'value');
+  // Absent is never zero. A series whose every value is missing is no series,
+  // and a chart drawn from it is an axis with nothing on it — measured on a
+  // record with no financials (RS-3, 14 Sep 2026): the ten-year equity chart
+  // drew a `$1 / $0 / $-1` scale around an empty plot. Every renderer below
+  // draws nothing for an empty series rather than a frame.
+  const carriesValue = (it: any): boolean => {
+    if (typeof it === 'number') return Number.isFinite(it);
+    if (it == null || typeof it !== 'object') return false;
+    const v = it[valueKey] ?? it.y ?? it.count;
+    return v !== null && v !== undefined && v !== '';
+  };
+  if (!items.some(carriesValue)) return [];
   return items.map((it: any, i: number): Series => {
     if (typeof it === 'number') return { label: String(i + 1), value: it };
     return {
@@ -60,6 +72,7 @@ function titleAndCaption(p: Record<string, unknown>, ctx: HtmlBlockContext): { t
 export function renderBarChartHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
   const series = readSeries(p, ctx);
+  if (!series.length) return '';
   const box = chartBox(p, ctx);
   const meta = titleAndCaption(p, ctx);
   const palette = (p.palette as string[]) ?? undefined;
@@ -221,6 +234,7 @@ const Y_TICKS = 4;
 function renderLineOrAreaHtml(block: Block, ctx: HtmlBlockContext, fill: boolean): string {
   const p = block.props as Record<string, unknown>;
   const series = readSeries(p, ctx);
+  if (!series.length) return '';
   const box = chartBox(p, ctx);
   const meta = titleAndCaption(p, ctx);
   const accent = resolveBindableColor(p.accent ?? 'token:primary', ctx, '#BF9B50');
@@ -314,6 +328,7 @@ export function renderDonutChartHtml(block: Block, ctx: HtmlBlockContext): strin
 function renderPieOrDonutHtml(block: Block, ctx: HtmlBlockContext, innerRatio: number): string {
   const p = block.props as Record<string, unknown>;
   const series = readSeries(p, ctx);
+  if (!series.length) return '';
   const box = chartBox(p, ctx);
   const meta = titleAndCaption(p, ctx);
   const palette = (p.palette as string[]) ?? undefined;
@@ -403,6 +418,7 @@ export function renderScatterChartHtml(block: Block, ctx: HtmlBlockContext): str
 export function renderRadarChartHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
   const series = readSeries(p, ctx);
+  if (!series.length) return '';
   const box = chartBox(p, ctx);
   const meta = titleAndCaption(p, ctx);
   const accent = resolveBindableColor(p.accent ?? 'token:primary', ctx, '#BF9B50');
@@ -455,6 +471,7 @@ export function renderHeatmapHtml(block: Block, ctx: HtmlBlockContext): string {
   let matrix: number[][] = [];
   if (Array.isArray(raw) && Array.isArray(raw[0])) matrix = raw as number[][];
   else if (Array.isArray(raw)) matrix = [raw.map((v: any) => toNumber(v))];
+  if (!matrix.length || !matrix.some((r) => r.length)) return '';
   const rowLabels = Array.isArray(p.rowLabels) ? (p.rowLabels as string[]) : matrix.map((_, i) => String(i + 1));
   const colLabels = Array.isArray(p.colLabels) ? (p.colLabels as string[]) : (matrix[0] ?? []).map((_, i) => String(i + 1));
   const box = chartBox(p, ctx);
@@ -531,6 +548,7 @@ export function renderStackedBarChartHtml(block: Block, ctx: HtmlBlockContext): 
   const p = block.props as Record<string, unknown>;
   const raw = p.dataPath ? resolveDataPath(p.dataPath, ctx) : p.data;
   const rows = toArray(raw);
+  if (!rows.length) return '';
   const stackKeys = Array.isArray(p.stackKeys) ? (p.stackKeys as string[]) : [];
   const labelKey = String(p.labelKey ?? 'label');
   const palette = (p.palette as string[]) ?? undefined;
