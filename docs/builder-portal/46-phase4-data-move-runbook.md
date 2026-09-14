@@ -65,3 +65,62 @@ Rules that carry from the rest of the programme:
 Rollback before step 7 is: nothing — the prime was never written to. After step 7 it is
 flipping the flag back off; the network rows stay, harmlessly, because nothing on the
 prime reads them.
+
+## Executed — steps 1–5 (2026-09-14)
+
+The data move (the additive, prime-read-only half) ran and reconciled clean. The
+prime (`dduzbchuswwbefdunfct`) was **read only**; every write landed on the network
+(`htfluofznhxeumblwbww`).
+
+**Mechanism (keys stayed server-side; bytes never crossed a tool payload).** A
+throwaway token-gated `mig-import` edge function on the network (its service-role key
+auto-injected, never seen) did the byte-faithful uploads and the row upserts. The prime
+minted short-lived storage **signed URLs** (via `pg_net` + a transient `http` extension,
+the vault service key read only *inside* the SQL) and `pg_net`-posted the projected row
+batches straight to `mig-import`. Only signed URLs — read-only, expiring capabilities —
+ever crossed the boundary. All scaffolding is gone: `mig-import` is neutralised (410,
+holds no credential; the MCP has no function-delete), and the prime's `mig` schema and
+the `http` extension were dropped, restoring its original extension set.
+
+**What moved, measured not assumed:**
+
+| Set | Moved | Left behind | Note |
+|---|---|---|---|
+| Organisations | 2 | — | ids preserved (same entity) |
+| Stock items | 1,014 | — | `created_by`, non-live upload refs nulled; `primary_image_id` restored after images (785) |
+| Stock image rows | 3,069 | — | 1,157 re-keyed to network paths, 456 external-URL kept, 1,456 empty slots kept for fidelity |
+| Image **objects** | **927 · 619,217,584 B** | 171 unreferenced + debris | manifest is row-derived, so unreferenced objects don't travel |
+| Stock-list uploads | 2 live · 17,059,917 B | 104 soft-deleted + 3 debris objects | "don't import the mess" |
+| Memberships / users | — (step 6) | — | re-invited, never hash-copied |
+
+**Gates that held.** Object copy: network bucket count **927 / 619,217,584 B** +
+**2 / 17,059,917 B**, byte-exact against the manifest, and `mig-import` refused to
+upload any object whose fetched length ≠ expected — so no wrong-sized object could
+exist. Rows: per-org counts equal the prime (Bob 200 items / 661 images; Kopi 814 /
+2,408), **0 dangling** storage paths, **0 dangling** `primary_image_id`, **0** rows
+still pointing at a prime path.
+
+**Re-key note.** The scheme is `org/<org>/item/<owning-item>/<uuid>.<ext>` for images and
+`org/<org>/upload/<upload_id>/<file>` for lists. 43 objects are shared across items; each
+is stored **once** under a deterministic owning item (min stock_item_id) and every
+referencing row points at that one object, so dedup is preserved and no object is
+duplicated per item.
+
+## Remaining — steps 6–8 (the cutover, config-gated)
+
+Not yet run; each depends on tenant configuration and step 7 is the first prime-side
+write, held for an explicit go:
+
+- **Step 6 — re-invite users.** Needs `RESEND_API_KEY` on the network project (invite
+  emails). Bootstrap: the first **owner** of each moved org cannot be peer-invited (no
+  existing owner to invite them), so it is seeded through `builder-network-admin`, then
+  the other members follow by the normal invite. Nothing is password-hash-copied.
+- **Step 7 — wire + flip (cutover).** Needs the MC console operational
+  (`BUILDERS_NETWORK_ADMIN_URL` on Mission Control + a minted NULL-clone
+  `builders:operate` key). Create the NPC clone's `workspace_connections` row +
+  transports, grant the E3 scopes, then flip `builder_network_enabled` on the prime.
+  This is the one prime write; rollback is flipping it back off.
+- **Step 8 — verify by effect.** Needs the network reachable at
+  `builders.aurixasystems.com.au` (DNS) with its Turnstile widget, and a signed-in
+  builder. Confirm the stock list renders pictures from **network** signed URLs and the
+  prime marketplace still renders through its own untouched tables.
