@@ -415,6 +415,71 @@ ALTER TABLE IF EXISTS public.builder_stock_items
   DROP CONSTRAINT IF EXISTS builder_stock_items_primary_image_fk;
 
 -- ===========================================================================
+-- §6.5 The functions whose SIGNATURE carries a doomed table's ROW TYPE.
+--
+-- WHY THIS EXISTS, AND WHY IT IS ABOVE §7. `CREATE FUNCTION … RETURNS
+-- builder_allocations` takes a hard pg_depend edge on that table's composite
+-- type, so the table cannot be dropped while the function exists — the
+-- function's own drop in §8 comes too late. The first run of this migration
+-- failed here, on exactly that:
+--
+--   ERROR 2BP01: cannot drop table builder_allocations because other objects
+--   depend on it
+--   DETAIL: function builder_create_allocation(…) depends on type
+--           builder_allocations
+--
+-- The census that built §7 and §8 read pg_depend for triggers, CHECKs and
+-- foreign keys — the dependents a table HOLDS — and never asked what holds
+-- the table. Forty-six functions do, measured on the live prime: every
+-- `_upsert_*` / `_create_*` RPC that returns the row it wrote, plus
+-- `claim_builder_stock_image_work` and `complete_builder_document_processing`,
+-- which do not even carry the prefix. A body-text scan cannot see this class
+-- at all; only pg_depend can.
+--
+-- DERIVED, NOT LISTED. Restating forty-six identities here would be a second
+-- copy of §8 to drift from, and a clone whose function set differs by one
+-- would fail exactly as production just did. So the set is computed from the
+-- catalogue: every function whose argument or return type is the row type of
+-- a builder table this migration drops. The doomed set needs no second list
+-- either — it is the builder-prefixed tables MINUS the named survivors, which
+-- is exact and was verified by count on the live prime (73 builder tables =
+-- 63 dropped + 8 builder_network_* + builder_stock_selections +
+-- builder_invoices).
+--
+-- It can only ever drop a function that names a table being dropped in this
+-- same statement batch — such a function cannot survive §7 in any case — and
+-- the survivor predicate is what keeps `builder_network_claim_outbox`
+-- (SETOF builder_network_outbox) and the mirror's own guards out of it.
+-- ===========================================================================
+DO $sig$
+DECLARE
+  v_fn    text;
+  v_count integer := 0;
+BEGIN
+  FOR v_fn IN
+    SELECT DISTINCT p.oid::regprocedure::text
+    FROM pg_depend d
+    JOIN pg_proc  p ON p.oid = d.objid    AND d.classid    = 'pg_proc'::regclass
+    JOIN pg_type  t ON t.oid = d.refobjid AND d.refclassid = 'pg_type'::regclass
+    JOIN pg_class c ON c.oid = t.typrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relkind = 'r'
+      AND c.relname LIKE 'builder\_%'
+      -- The survivors, named positively so a new builder table added later
+      -- is treated as doomed (the conservative side: this migration is the
+      -- portal's end, and anything it drops here it drops in §7 anyway).
+      AND c.relname NOT LIKE 'builder\_network\_%'
+      AND c.relname NOT IN ('builder_stock_selections', 'builder_invoices')
+  LOOP
+    EXECUTE format('DROP FUNCTION IF EXISTS %s', v_fn);
+    v_count := v_count + 1;
+  END LOOP;
+
+  RAISE NOTICE 'released % function(s) holding a doomed table row type', v_count;
+END $sig$;
+
+-- ===========================================================================
 -- §7 The 63 tables, children before parents (measured topological order over
 -- the live FK graph; the first five hold no builder-to-builder FK at all).
 -- builder_invoices and build_progress_payments are finance tables that merely
