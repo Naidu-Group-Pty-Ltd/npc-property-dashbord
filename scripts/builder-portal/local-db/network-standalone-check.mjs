@@ -18,16 +18,20 @@
  * then replays every builder migration, and finally audits the boundary from
  * pg_constraint rather than trusting the file list.
  *
- * ## Why replay is by fixpoint, not by version order
+ * ## Why replay is by fixpoint, and why more than one pass now FAILS
  *
- * The corpus is NOT replayable in version sort order: the stock settlement
+ * The corpus was not replayable in version sort order: the stock settlement
  * migrations carry August version strings (20260816140000_…) while the tables
- * they alter are created by 20260915000000_builder_stock_list_marketplace.
- * Production holds all of them because they were applied in MERGE order, which
- * is not recorded anywhere a fresh replay can read. So each pass applies what
- * it can, defers what fails, and stops when a pass makes no progress — and the
- * pass log is the real dependency order, which the Phase 2 squash needs and
- * the filenames cannot give it.
+ * they alter were created by 20260915000000_builder_stock_list_marketplace.
+ * Production held all of them because they were applied in MERGE order — and
+ * Mission Control's applyPrimeMigrations replays in VERSION order and halts a
+ * clone's whole replay on the first failure, which stopped every clone's sync
+ * at 20260816140000. 20260816130000_builder_stock_uploads_bootstrap hoists
+ * the one missing prerequisite, so the corpus now applies clean in strict
+ * version order. The fixpoint machinery is kept as a diagnostic, but a run
+ * that NEEDS a second pass means a new ordering inversion has been introduced
+ * — the exact defect that halted the fleet — so it fails the check and names
+ * the deferred files.
  *
  * ## What the boundary audit asserts
  *
@@ -139,10 +143,17 @@ while (pendingFiles.length > 0) {
   pendingFiles = failed.map((f) => f.name);
 }
 console.log(`\nAll ${corpusSize} builder migrations applied in ${pass} pass(es).`);
+const orderingFailures = [];
 if (pass > 1) {
   const deferredEver = passLog.filter((p) => p.pass > 1).flatMap((p) => p.applied);
   console.log(`Deferred by version-order inversion (${deferredEver.length}):`);
   for (const name of deferredEver) console.log(`  ${name}`);
+  orderingFailures.push(
+    `corpus needed ${pass} passes — a version-order inversion is back. ` +
+    `applyPrimeMigrations replays in version order and halts a clone's whole ` +
+    `replay at the first deferred file; hoist the missing prerequisite ` +
+    `(see 20260816130000_builder_stock_uploads_bootstrap.sql).`,
+  );
 }
 
 // --- 3. Boundary audit (pg_constraint, never the file list) ------------------
@@ -179,7 +190,7 @@ for (const edge of outbound) console.log(`  ${edge}`);
 console.log('Inbound FKs (shim -> builder):');
 for (const edge of inbound) console.log(`  ${edge}`);
 
-const failures = [];
+const failures = [...orderingFailures];
 
 // Rule 1 — outbound lands on clients and nowhere else.
 const outboundTargets = new Set(outbound.map((e) => e.split(' -> ')[1]));
