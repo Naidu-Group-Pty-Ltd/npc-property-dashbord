@@ -1692,6 +1692,32 @@ paragraph but **never a figure or a table**, and a report banked under a
 different section list is **regenerated rather than resumed**, because
 `last_completed_section` is an index into whichever list is current.
 
+**The report body is packed by the template's own geometry, and the renderer
+counts its pages.** Read
+[`NARRATIVE_PACKING.md`](./docs/reports/NARRATIVE_PACKING.md) before touching
+`_shared/reports/narrativeGeometry.pure.ts`, `markdownPaging.pure.ts`, the
+markdown block's styles or `narrativePlan.ts`. The charge model was
+calibrated once, on one family's face over one measure, and held back 16% to
+survive the pages it still got wrong — measured through the real journey on
+14 Sep 2026, the long reference report ran its narrative through the running
+foot on sixteen consecutive pages of a Midnight render: a gauge was charged
+at 62% of its printed height, compact figures had no stylesheet in the
+template path at all, and the budget packed to the foot rather than to the
+master's own `contentBottom`. Three rules carry the fix. **A block is charged
+what it will draw on the page it will print on** — `MARKDOWN_TYPE` is one
+declaration the block styles from and the charges read, every formula is
+checked against the pinned engine by `measureNarrativeMetrics.py`, and a
+face not in the measured table is charged WIDER so an unknown family packs
+sparser rather than overflowing. **One geometry per run, computed by the
+renderer** — no single instance can see both the first box and the
+continuation box, and a bucket boundary that differs between instances
+prints a line twice or loses it; the same pre-pass writes the true page count
+over the projection's template-blind estimate before any conditional is
+read. And **a page is filled, never merely not overflowed**: a paragraph is
+cut at a sentence, a table meets the boundary and repeats its head, a figure
+floats past the prose to the next page, a three-line tail is folded back —
+each off unless asked for, so the legacy packer is byte-identical.
+
 `INVESTMENT.md` is the one to read before touching anything the *model* draws. Its prose carries a chart vocabulary the generator's
 prompt demands and the renderer had never parsed: **3,753 `{{bars: ...}}`-style
 directives, about 107 a report**, every one of which set as body copy on a

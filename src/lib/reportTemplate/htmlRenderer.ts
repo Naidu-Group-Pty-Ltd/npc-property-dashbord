@@ -16,6 +16,8 @@ import {
 } from './templateSchema';
 import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage, shouldFallBackToNativeBlocks, pageContainedRegions } from './rendering/pdfImportPagePolicy';
 import { shouldRenderBlock } from './renderVisibility';
+import { applyNarrativePlan, planNarrative } from './narrativePlan';
+import { NARRATIVE_GEOMETRY_KEY } from './blocks/markdownBlockContent';
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
 } from './rendering/regionRenderPlanApply';
@@ -900,7 +902,12 @@ export function renderTemplateToHtml(
   const themes = (template as any).themes as Record<string, any> | undefined;
   const activeTheme = themes && (template as any).activeThemeId ? themes[(template as any).activeThemeId] : null;
   const baseTokens = mergeTokens(template.tokens, activeTheme?.tokens, options.tokenOverrides);
-  const ctxBase: ResolveContext = { data: options.data ?? {}, tokens: baseTokens };
+  // The narrative pre-pass runs before any page conditional is read: it files
+  // the geometry every markdown instance packs with and writes each run's
+  // true page count over the projection's template-blind estimate. See
+  // `narrativePlan.ts`.
+  const ctxSeed: ResolveContext = { data: options.data ?? {}, tokens: baseTokens };
+  const ctxBase = applyNarrativePlan(ctxSeed, planNarrative(template, ctxSeed));
   (ctxBase as ResolveContext & { _includeBookmarks?: boolean })._includeBookmarks = options.includeBookmarks !== false;
 
   const conditionalPages = template.pages.filter((p) => evalConditional(p.conditional, ctxBase));
@@ -993,6 +1000,11 @@ export function renderTemplateToHtml(
         __tocEntries: tocEntries,
       },
     };
+    // pageCtx is built fresh (see the note on `_includeBookmarks` below), so
+    // the narrative geometry the pre-pass filed has to be carried across too,
+    // or every markdown instance would pack on the profile's constants while
+    // the page conditionals were evaluated on the geometry's count.
+    (pageCtx as any)[NARRATIVE_GEOMETRY_KEY] = (ctxBase as any)[NARRATIVE_GEOMETRY_KEY];
     (pageCtx as any)._cascadeMetadata = !!options.cascadeMetadata;
     (pageCtx as any)._cascadeDebug = !!options.cascadeDebug;
     (pageCtx as any)._editorMode = !!options.editorMode;

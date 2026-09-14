@@ -34,7 +34,8 @@
  * value is honoured verbatim — a hand-tuned master keeps its tuning.
  */
 import type { MarkdownBlock } from './markdown.pure.ts';
-import { splitTableBlock } from './markdown.pure.ts';
+import { splitListBlock, splitParagraphBlock, splitTableBlock } from './markdown.pure.ts';
+import { listCharge, paragraphCharge, type NarrativeGeometry } from './narrativeGeometry.pure.ts';
 
 /**
  * The legacy bucket size, and the sentinel every pre-calibration master baked
@@ -69,6 +70,13 @@ export interface NarrativeProfile {
   keepWithNext: true;
   /** Split a taller-than-a-page table by rows, repeating its head. */
   splitTables: true;
+  /**
+   * Pack by the template's own geometry when the renderer can supply it —
+   * see `narrativeGeometry.pure.ts` and `packNarrativeGeometry`. The
+   * calibrated budgets above remain the arithmetic for a caller with no
+   * template in hand (the projection's template-blind page count).
+   */
+  geometryAware: boolean;
 }
 
 const INVESTMENT_PROFILE: NarrativeProfile = {
@@ -77,6 +85,7 @@ const INVESTMENT_PROFILE: NarrativeProfile = {
   firstPageLines: CALIBRATED_FIRST_LINES,
   keepWithNext: true,
   splitTables: true,
+  geometryAware: true,
 };
 
 /**
@@ -114,7 +123,57 @@ export interface PackOptions {
    * A table that fits a page whole still moves whole.
    */
   splitTables?: boolean;
+  /**
+   * Split a table at a page boundary when the room left on the page holds
+   * its head and a few rows, instead of pushing it whole and leaving that
+   * room white. Measured on the sparse reference report (14 Sep 2026): a
+   * risk table and a checklist pushed whole left 67% and 57% of two pages
+   * empty above them. Only a table long enough to survive the cut is split
+   * (`BOUNDARY_SPLIT_MIN_ROWS`), and only into room worth using
+   * (`BOUNDARY_SPLIT_MIN_LINES`).
+   */
+  splitAtBoundary?: boolean;
+  /**
+   * Let a figure that does not fit the room left float past the prose that
+   * follows it, up to the next heading, and open the next page instead — the
+   * convention every typeset book uses, and the difference between a page
+   * that ends where its text ends and one that ends where a chart would not
+   * fit. At most `MAX_FLOATED` figures are carried at once; a figure taller
+   * than a page is never floated.
+   */
+  floatFigures?: boolean;
+  /**
+   * Fold a final bucket of at most `TAIL_ABSORB_LINES` lines onto the page
+   * before it. A last page carrying three lines is a page that is 90% white,
+   * and the master's content bottom sits 76pt above the running foot on every
+   * family, so an overrun that small lands well inside the reserve.
+   */
+  absorbTail?: boolean;
+  /**
+   * Split a paragraph that does not fit at a sentence boundary, charging each
+   * part with this function (the geometry's paragraph charge), so the room
+   * left on a page is filled rather than left white. See
+   * `splitParagraphBlock` for what makes a cut honest.
+   */
+  splitParagraphs?: (chars: number) => number;
+  /**
+   * Split a list taller than the room it has by top-level item, charging
+   * each chunk with this function (the geometry's list charge). A list was
+   * never split before, and one taller than a page was clipped at the
+   * paper's edge with its tail lost — see `splitListBlock`.
+   */
+  splitLists?: (items: readonly { depth: number; text: string }[]) => number;
 }
+
+export const BOUNDARY_SPLIT_MIN_ROWS = 6;
+/** Room worth cutting a paragraph for, and the paragraph worth cutting. */
+export const PARAGRAPH_SPLIT_MIN_ROOM = 3;
+export const PARAGRAPH_SPLIT_MIN_LINES = 5;
+export const BOUNDARY_SPLIT_MIN_LINES = 8;
+export const MAX_FLOATED = 2;
+export const TAIL_ABSORB_LINES = 3;
+
+const sumLines = (blocks: readonly MarkdownBlock[]): number => blocks.reduce((n, b) => n + b.lines, 0);
 
 /**
  * Pack blocks into buckets of at most `linesPerPage` estimated lines.
@@ -133,16 +192,18 @@ export function packMarkdownPages(
   const pages: MarkdownBlock[][] = [];
   let current: MarkdownBlock[] = [];
   let used = 0;
+  // Figures carried past the prose that follows them; they open the next page.
+  let floated: MarkdownBlock[] = [];
 
   const budgetFor = (pageIndex: number) => (pageIndex === 0 ? firstBudget : contBudget);
 
   const breakPage = () => {
     if (!current.length) return;
+    let peeled: MarkdownBlock[] = [];
     if (options.keepWithNext) {
       // Peel a trailing heading / lead-in so it opens the next page instead of
       // closing this one. At most two blocks (a heading over a lead-in), and
       // never the whole page.
-      const peeled: MarkdownBlock[] = [];
       while (current.length > 1 && peeled.length < 2) {
         const last = current[current.length - 1];
         const isHeading = last.kind === 'heading';
@@ -150,36 +211,81 @@ export function packMarkdownPages(
         if (!isHeading && !isLeadIn) break;
         peeled.unshift(current.pop()!);
       }
-      pages.push(current);
-      current = peeled;
-      used = peeled.reduce((n, b) => n + b.lines, 0);
-      return;
     }
     pages.push(current);
-    current = [];
-    used = 0;
+    // A floated figure is earlier content than anything peeled, so it leads.
+    current = [...floated, ...peeled];
+    floated = [];
+    used = sumLines(current);
   };
 
   for (const block of blocks) {
     const budget = budgetFor(pages.length);
     let pieces: readonly MarkdownBlock[] = [block];
-    if (options.splitTables && block.kind === 'table' && block.table && block.lines > budget) {
-      // First chunk sizes to the space left on the current page when that is
-      // worth using (head + a few rows); otherwise every chunk is page-sized
-      // and the pack loop opens a fresh page for the first one naturally.
+    if (options.splitLists && block.kind === 'list' && block.list) {
       const remaining = budget - used;
-      const firstChunk = current.length && remaining >= 8 ? remaining : contBudget;
-      pieces = splitTableBlock(block, firstChunk, contBudget);
+      const room = current.length && remaining >= BOUNDARY_SPLIT_MIN_LINES ? remaining : contBudget;
+      if (block.lines > budget) {
+        pieces = splitListBlock(block, room, contBudget, options.splitLists);
+      } else if (
+        options.splitAtBoundary && current.length && block.lines > remaining
+        && remaining >= BOUNDARY_SPLIT_MIN_LINES && block.list.items.length >= BOUNDARY_SPLIT_MIN_ROWS
+      ) {
+        pieces = splitListBlock(block, remaining, contBudget, options.splitLists);
+      }
+    }
+    if (block.kind === 'table' && block.table) {
+      const remaining = budget - used;
+      if (options.splitTables && block.lines > budget) {
+        // First chunk sizes to the space left on the current page when that is
+        // worth using (head + a few rows); otherwise every chunk is page-sized
+        // and the pack loop opens a fresh page for the first one naturally.
+        const firstChunk = current.length && remaining >= BOUNDARY_SPLIT_MIN_LINES ? remaining : contBudget;
+        pieces = splitTableBlock(block, firstChunk, contBudget);
+      } else if (
+        options.splitAtBoundary && current.length && block.lines > remaining
+        && remaining >= BOUNDARY_SPLIT_MIN_LINES && block.table.rows.length >= BOUNDARY_SPLIT_MIN_ROWS
+      ) {
+        pieces = splitTableBlock(block, remaining, contBudget);
+      }
     }
 
-    for (const piece of pieces) {
+    const queue = [...pieces];
+    while (queue.length) {
+      const piece = queue.shift()!;
       const pageBudget = budgetFor(pages.length);
-      if (current.length && used + piece.lines > pageBudget) breakPage();
+      const remaining = pageBudget - used;
+      if (current.length && piece.lines > remaining) {
+        if (options.floatFigures && piece.kind === 'figure' && floated.length < MAX_FLOATED && piece.lines <= contBudget) {
+          floated.push(piece);
+          continue;
+        }
+        if (options.splitParagraphs && piece.kind === 'paragraph'
+          && remaining >= PARAGRAPH_SPLIT_MIN_ROOM && piece.lines >= PARAGRAPH_SPLIT_MIN_LINES) {
+          const parts = splitParagraphBlock(piece, remaining, options.splitParagraphs);
+          // The head fits the room by construction; the tail comes round again
+          // and opens the next page.
+          if (parts.length === 2) { queue.unshift(...parts); continue; }
+        }
+        breakPage();
+      } else if (floated.length && piece.kind === 'heading' && current.length) {
+        // A new section: the figure it follows must not drift into it.
+        breakPage();
+      }
       current.push(piece);
       used += piece.lines;
     }
   }
+  if (floated.length) {
+    // Nothing followed the figure on this page; it opens the last one.
+    if (current.length) breakPage();
+    else { current = floated; floated = []; }
+  }
   if (current.length) pages.push(current);
+  if (options.absorbTail && pages.length > 1 && sumLines(pages[pages.length - 1]) <= TAIL_ABSORB_LINES) {
+    const tail = pages.pop()!;
+    pages[pages.length - 1].push(...tail);
+  }
   return pages;
 }
 
@@ -205,5 +311,29 @@ export function packNarrativePages(
     firstPageLines: first,
     keepWithNext: profile.keepWithNext,
     splitTables: profile.splitTables,
+  });
+}
+
+/**
+ * Pack by one template's geometry: the first page's and the continuation
+ * pages' own line capacities, with the profile's packing behaviours. The
+ * blocks must have been charged with the SAME geometry (`renderMarkdown`'s
+ * `geometry` option), and every instance of the run must be packed with it,
+ * because each packs the whole source and a differing budget on one instance
+ * prints a line twice or not at all.
+ */
+export function packNarrativeGeometry(
+  blocks: readonly MarkdownBlock[],
+  geometry: NarrativeGeometry,
+): MarkdownBlock[][] {
+  return packMarkdownPages(blocks, geometry.contLines, {
+    firstPageLines: geometry.firstPageLines,
+    keepWithNext: true,
+    splitTables: true,
+    splitAtBoundary: true,
+    floatFigures: true,
+    absorbTail: true,
+    splitParagraphs: (chars) => paragraphCharge(geometry, chars),
+    splitLists: (items) => listCharge(geometry, items.map((it) => ({ chars: it.text.length, depth: it.depth }))),
   });
 }
