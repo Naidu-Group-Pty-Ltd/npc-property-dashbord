@@ -187,7 +187,8 @@
     "templates:compass:generate": "tsx scripts/template-library/investmentCompass/generate.ts",
     "test:e2e:report-template-picker": "vite build --config tests-e2e/report-template-picker/harness/vite.config.ts && playwright test tests-e2e/report-template-picker",
     "security:fabricated-data": "node scripts/security/check-fabricated-data.mjs",
-    "verify:journey": "node scripts/verify/report-journey/run.mjs"
+    "verify:journey": "node scripts/verify/report-journey/run.mjs",
+    "verify:pdf": "node scripts/verify/report-pdf/measure.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
