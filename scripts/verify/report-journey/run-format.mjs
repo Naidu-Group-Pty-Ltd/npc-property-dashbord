@@ -20,7 +20,7 @@
  * portal row names it; and nothing the page asked for went unanswered.
  *
  * Usage:
- *   node scripts/verify/report-journey/run-format.mjs --format cashflow --record <id> [--template <id|name>]
+ *   node scripts/verify/report-journey/run-format.mjs --format <cashflow|market_intelligence|comparison|report_qa> --record <id> [--template <id|name>] [--subject structured|transcript]
  *
  * Fixtures: `.verify/fixtures/<record>/report.json` where the format's record
  * IS an investment report (cashflow), or `.verify/fixtures/<record>/tables/
@@ -54,6 +54,9 @@ const args = Object.fromEntries(process.argv.slice(2).map((a, i, all) => {
  * the adapter registry's `reportType`.
  */
 const EXPORT = /^\s*export\s*$/i;
+const escapeRe = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Report Q&A only: which of its documents to typeset (`--subject structured|transcript`). */
+const SUBJECT = (process.argv.includes('--subject') ? process.argv[process.argv.indexOf('--subject') + 1] : null) ?? 'transcript';
 const FORMATS = {
   cashflow: {
     label: '10 Year Cash Flow',
@@ -155,6 +158,72 @@ const FORMATS = {
         await note.isVisible().catch(() => false));
     },
   },
+  comparison: {
+    label: 'Property Comparison Analysis',
+    selectionType: 'comparison',
+    requiresReport: false,
+    // The library's Comparisons tab: every saved comparison is a card with the
+    // download this format never had until RS-5c (a menu button, icon only,
+    // named for the screen reader).
+    url: () => '/generated-reports?tab=comparisons',
+    stays: (url) => url.includes('/generated-reports'),
+    ready: async (page) => {
+      await page.getByRole('button', { name: /download this comparison/i }).first().waitFor({ state: 'visible', timeout: 60_000 });
+    },
+    openPicker: async (page) => {
+      await page.getByRole('button', { name: /download this comparison/i }).first().click();
+      await page.getByRole('menuitem').filter({ hasText: /template/i }).first().click();
+    },
+    generate: async (page) => {
+      await page.getByRole('button', { name: /download this comparison/i }).first().click();
+      await page.getByRole('menuitem').filter({ hasText: /\(typeset\)/i }).first().click();
+    },
+  },
+  report_qa: {
+    label: `Report Q&A (${SUBJECT})`,
+    selectionType: 'qa',
+    requiresReport: false,
+    url: () => '/report-qa',
+    stays: (url) => url.includes('/report-qa'),
+    // The structured write-up is not a templated document (no master binds it;
+    // see `qaAdapter.resolveRoutingContext`), so its journey proves the OTHER
+    // decision: no template render, one call to the format's own route.
+    expectsRoute: SUBJECT === 'structured' ? 'render-report-qa-pdf' : null,
+    // The chat's model picker asks for the agent model list on mount.
+    answers: {
+      'agent-models-read': () => ({ success: true, models: [], data: [] }),
+    },
+    // The typeset control exists only once a conversation with messages is
+    // open, so "ready" is: open History, load the fixture conversation, and
+    // wait for the control — the path a person takes to reach it.
+    ready: async (page, fixtures) => {
+      const history = page.getByRole('button', { name: /history/i }).first();
+      await history.waitFor({ state: 'visible', timeout: 60_000 });
+      await history.click();
+      const conv = fixtures.rows?.report_qa_conversations?.[0];
+      if (!conv) throw new Error('no report_qa_conversations fixture row');
+      const row = page.getByRole('button', { name: new RegExp(`load conversation ${escapeRe(conv.title)}`, 'i') }).first();
+      await row.waitFor({ state: 'visible', timeout: 20_000 });
+      await row.click();
+      const typeset = page.getByRole('button', { name: /^\s*typeset pdf\s*$/i }).first();
+      await typeset.waitFor({ state: 'visible', timeout: 60_000 });
+      // Loading a conversation leaves the History dialog to its own close; if
+      // it is still up, the page behind it is not reachable.
+      if (await page.getByRole('dialog').first().isVisible().catch(() => false)) {
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(400);
+      }
+    },
+    openPicker: async (page) => {
+      await page.getByRole('button', { name: /^\s*typeset pdf\s*$/i }).first().click();
+      await page.getByRole('menuitem').filter({ hasText: /template/i }).first().click();
+    },
+    generate: async (page) => {
+      await page.getByRole('button', { name: /^\s*typeset pdf\s*$/i }).first().click();
+      const item = SUBJECT === 'structured' ? /structured report/i : /full transcript/i;
+      await page.getByRole('menuitem').filter({ hasText: item }).first().click();
+    },
+  },
 };
 
 const FORMAT = args.format;
@@ -167,7 +236,7 @@ if (!spec || !RECORD_ID) {
 const BASE = args.base ?? 'http://127.0.0.1:5173';
 const TEMPLATE = args.template ? String(args.template) : null;
 const OUT = path.resolve(ROOT, args.out
-  ?? `.verify/out/journey/${FORMAT}-${RECORD_ID.slice(0, 8)}${TEMPLATE ? `-${TEMPLATE.replace(/[^a-z0-9]+/gi, '').slice(0, 8)}` : ''}`);
+  ?? `.verify/out/journey/${FORMAT}${FORMAT === 'report_qa' ? `-${SUBJECT}` : ''}-${RECORD_ID.slice(0, 8)}${TEMPLATE ? `-${TEMPLATE.replace(/[^a-z0-9]+/gi, '').slice(0, 8)}` : ''}`);
 const FIXTURES = path.resolve(ROOT, '.verify/fixtures');
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -265,13 +334,19 @@ try {
   await page.waitForFunction(() => !document.querySelector('button:has(svg.animate-spin), [role="menuitem"]:has(svg.animate-spin)'), null, { timeout: 180_000 }).catch(() => {});
   await page.waitForTimeout(1500);
   const rendersAfter = dbl.state.renders.length - rendersBefore;
-  check('one finalisation → one render request', rendersAfter === 1, `${rendersAfter} render-template-pdf call(s)`);
-  finalRender = dbl.state.renders[dbl.state.renders.length - 1] ?? null;
-  check('render asked in final mode and named the record',
-    !!finalRender && finalRender.mode === 'final' && finalRender.reportId === RECORD_ID,
-    finalRender ? JSON.stringify({ mode: finalRender.mode, reportId: finalRender.reportId, templateId: finalRender.templateId, bytes: finalRender.bytes }) : 'no render');
-  check('the render drew the chosen template', !!finalRender && (!chosenValue || finalRender.templateId === chosenValue),
-    finalRender ? `rendered ${finalRender.templateId} · chosen ${chosenValue ?? '(none)'}` : 'no render');
+  if (spec.expectsRoute) {
+    const routeCalls = dbl.log.filter((l) => l.kind === `fn:${spec.expectsRoute}`).length;
+    check(`the subject is produced by its own route (${spec.expectsRoute}), never a template`,
+      rendersAfter === 0 && routeCalls === 1, `${rendersAfter} template render(s) · ${routeCalls} route call(s)`);
+  } else {
+    check('one finalisation → one render request', rendersAfter === 1, `${rendersAfter} render-template-pdf call(s)`);
+    finalRender = dbl.state.renders[dbl.state.renders.length - 1] ?? null;
+    check('render asked in final mode and named the record',
+      !!finalRender && finalRender.mode === 'final' && finalRender.reportId === RECORD_ID,
+      finalRender ? JSON.stringify({ mode: finalRender.mode, reportId: finalRender.reportId, templateId: finalRender.templateId, bytes: finalRender.bytes }) : 'no render');
+    check('the render drew the chosen template', !!finalRender && (!chosenValue || finalRender.templateId === chosenValue),
+      finalRender ? `rendered ${finalRender.templateId} · chosen ${chosenValue ?? '(none)'}` : 'no render');
+  }
   check('a PDF download arrived', downloads.length >= 1 && downloads[0].bytes > 10_000, downloads.map((d) => `${d.name} ${d.bytes}B`).join(', '));
   if (spec.afterGenerate) await spec.afterGenerate(page, check);
   await shot(page, '04-generated');
@@ -324,7 +399,10 @@ await browser.close();
 
 // ── 6. The document, measured as a document ────────────────────────────────
 let measure = null;
-if (downloads[0]) {
+// A route's document is the route's own to judge — the double answers it with
+// a stand-in so the front end's decision can be watched, and that stand-in is
+// not a document to measure.
+if (downloads[0] && !spec.expectsRoute) {
   const jsonOut = path.join(OUT, 'measure.json');
   const label = `${FORMAT}-${RECORD_ID.slice(0, 8)}`;
   try {

@@ -50,7 +50,7 @@ The reference set used for RS-1/RS-4 (all non-client, `client_property_id` null)
 
 ## The other formats: `run-format.mjs`
 
-`node scripts/verify/report-journey/run-format.mjs --format <cashflow|market_intelligence> --record <id> [--template <id|name>]`
+`node scripts/verify/report-journey/run-format.mjs --format <cashflow|market_intelligence|comparison|report_qa> --record <id> [--template <id|name>] [--subject transcript|structured]`
 
 The same double, the same engine, the same checks — for a format whose page is
 not the Investment report's. Each entry in `FORMATS` names the page to open,
@@ -70,9 +70,19 @@ and the double answers them wherever the page asks — PostgREST, the
 no `report.json` is fine for these formats; the Investment runner still needs
 one.
 
+A format may declare `expectsRoute`: a subject the format produces through its
+own edge function rather than a template (Report Q&A's structured write-up).
+The double answers that route with a stand-in PDF and the run checks the
+decision — no template render, one route call — rather than the document.
+
 Reference set (all non-client): Cash Flow on report `09f8569e-…` (templates
 `4af70118-…` Chancery, `ebb636c9-…` Board Pack Brief); Market Intelligence on
-`c4d22645-f46b-43b7-b540-56655d40cd23` (template `70d29782-…` Chancery).
+`c4d22645-f46b-43b7-b540-56655d40cd23` (template `70d29782-…` Chancery);
+Comparison `23cc7e34-310b-4dd5-8c13-777ed22e0993` (template `23b7e18b-…`
+Chancery, `tables/property_comparisons.json`); Report Q&A conversation
+`a2400de4-ae23-4795-beb6-abfc40ffbc9c` (templates `ae7734d5-…` Chancery and
+`233a95fe-…` Atelier; `tables/report_qa_conversations.json` and
+`tables/report_qa_messages.json`).
 
 ## What the double answers
 

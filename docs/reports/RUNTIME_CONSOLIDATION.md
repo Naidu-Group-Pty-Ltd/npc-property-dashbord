@@ -854,3 +854,72 @@ its own markup.** **A list of unknown length fits its box or says what it left
 out** — the contents and the sources now answer to the rule the layers already
 did. And **a control with no accessible name is a control a journey cannot
 find**, which is the same thing as a control a screen reader cannot find.
+
+### RS-5c.5b — the Comparison and Report Q&A journeys
+
+The runner grew two formats (`--format comparison`, `--format report_qa
+[--subject transcript|structured]`) and the double the reads their pages make:
+one comparison by id through `get-investment-reports`, the library's
+comparison list through `manage-templates`, the Q&A page's `get-conversations`
+/ `load-conversation`, the author-name lookup, a HEAD count with
+`Prefer: count=exact` answered in `Content-Range` (the Q&A adapter's
+`hasAnswer`), and module grants for the pages these controls sit behind.
+Fixtures are non-client rows: comparison `23cc7e34` (three NSW properties, no
+client) and conversation `a2400de4` (a strata by-law question, `client_id`
+null, four exchanges, the largest answer 94,256 characters).
+
+Results, 14 Sep 2026, WeasyPrint 69.0:
+
+| format | template | front end | render | document |
+| --- | --- | --- | --- | --- |
+| Comparison | Private Banking — Chancery `23b7e18b` | 17/17 | 1 final, of the chosen template, from the library card's menu | 14 pages, 0 hard findings, 0 placeholders |
+| Report Q&A — transcript | Private Banking — Chancery `ae7734d5` | 17/17 | 1 final, of the chosen template | 13 pages, 0 hard findings, 0 placeholders |
+| Report Q&A — structured | `ae7734d5` chosen | 14/14 | **0 template renders, 1 call to `render-report-qa-pdf`** | the route's own document |
+
+**The structured write-up was a finished-looking shell.** Before this step the
+templated path routed the structured subject whenever a write-up was stored
+and produced, for a conversation holding a 5,460-character `structured_report`,
+a cover, "The question" with the note *"This document carries 0 of 4
+exchanges; 4 are not shown"*, the sources page and the back cover — the
+write-up nowhere in it. The cause is two decisions that are each right on
+their own: the projection deliberately never publishes `structured_report`
+(two answers to one question on a page), and every content page of the Q&A
+masters binds `qa.answer`, the FIRST turn's reply. Neither side had a page for
+the write-up, so the document was real and empty. `qaAdapter.resolveRoutingContext`
+now declines the structured subject and the delivery falls through to the
+route that draws it; the button's note says the write-up comes out in the
+standard layout; `qaStructuredNotTemplated.spec.ts` pins the refusal AND
+watches the composer, so the day a master binds the write-up the test fails on
+purpose and the refusal is the line to remove. The runner learnt the shape
+too: a subject a format produces through its own route is checked for exactly
+that — no template render, one route call — and the route's document is not
+the double's to measure.
+
+**What the transcript document shows, carried to RS-5c.6.** The Q&A masters
+draw one answer over eight pages and a table of the further questions; the
+payload's transcript budget (`MAX_TRANSCRIPT_LINES` 950 in the legacy line
+estimate, `MAX_TRANSCRIPT_CHARS` 50,000) cut this conversation to ONE
+exchange, so the "rest of the conversation" table — the only place the other
+three questions appear — did not draw at all, and the first answer, estimated
+at 26 pages, was cut at 8 while every one of those pages was 47–57% empty and
+the "Not the whole answer" notice took a page of its own (page 11, 78% empty).
+It is the same fault as Market Intelligence's: the format has no narrative
+profile, so the block packs at 34 estimated lines against a box holding about
+46, and the budgets are stated in those same estimated lines. One fix serves
+both formats and is the next step.
+
+**What the comparison document shows, recorded for the catalogue.** 0 hard
+findings and no placeholder, and 10 of 14 pages SPARSE: the Chancery
+comparison master gives each analysis axis a page — return, catchment,
+amenity, exposure, reward — and this comparison holds one or two rows on each,
+so five consecutive pages carry a heading and a sentence or two (page 7 is 74%
+empty). Two of them share the heading "Who wins on location, and why". Nothing
+here is the renderer's; a master that let short axes share a page is a
+composer change for future seeds, noted rather than made.
+
+Rules. **A route that cannot draw the subject must decline it, not draw a
+shell** — an empty document that looks finished is the worst of the three
+outcomes, behind both the standard layout and an error. **A refusal is pinned
+to its cause**: the test that holds the refusal also watches the thing whose
+absence justifies it. And **a budget is stated in the units the page is
+measured in**, which is the rule RS-5c.6 has to make true.

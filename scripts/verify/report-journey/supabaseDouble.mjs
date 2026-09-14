@@ -123,7 +123,8 @@ export function createSupabaseDouble(fixtures, opts = {}) {
     report: structuredClone(fixtures.report ?? null),
     selections: [],          // report_template_selections rows this run wrote
     uploads: new Map(),      // storage path → bytes
-    renders: [],             // every render-template-pdf call, with its HTML
+    renders: [],
+    routeCalls: [],             // every render-template-pdf call, with its HTML
     portalReports: [],       // client_portal_reports rows the send flow wrote
     updates: [],             // every manage-investment-reports update payload
   };
@@ -136,6 +137,26 @@ export function createSupabaseDouble(fixtures, opts = {}) {
   const json = (body, status = 200) => ({
     status, contentType: 'application/json', body: JSON.stringify(body),
   });
+  /** A one-page PDF (over 10 KB, so a download check sees a document) carrying one line of text. */
+  const standInPdf = (text) => {
+    const safe = String(text).replace(/[()\\]/g, ' ');
+    const stream = `BT /F1 14 Tf 60 780 Td (${safe}) Tj ET`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    ];
+    let out = '%PDF-1.4\n%' + 'stand-in '.repeat(1400) + '\n';
+    const offsets = [];
+    objects.forEach((o, i) => { offsets.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+    const xref = out.length;
+    out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (const off of offsets) out += `${String(off).padStart(10, '0')} 00000 n \n`;
+    out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    return Buffer.from(out, 'latin1');
+  };
 
   async function edge(name, body) {
     switch (name) {
@@ -145,7 +166,8 @@ export function createSupabaseDouble(fixtures, opts = {}) {
         return json({ success: true });
       case 'admin-user-management':
         if (body?.action === 'get_my_permissions') {
-          return json({ success: true, permissions: [{ module_key: 'reports', can_view: true, can_edit: true, can_delete: true }] });
+          const grant = (module_key) => ({ module_key, can_view: true, can_edit: true, can_delete: true });
+          return json({ success: true, permissions: ['reports', 'generated_reports', 'report_qa', 'marketing', 'clients', 'dashboard'].map(grant) });
         }
         return json({ success: true });
       case 'mission-control-balance':
@@ -153,6 +175,16 @@ export function createSupabaseDouble(fixtures, opts = {}) {
       case 'mission-control-gate':
         return json({ status: 'open' });
       case 'get-investment-reports': {
+        if (body?.table === 'property_comparisons') {
+          // `loadPropertyComparisonRow` reads one comparison by id through this
+          // broker (the table's only SELECT policy is `user_id = auth.uid()`).
+          const rows = fixtures.rows?.property_comparisons ?? [];
+          if (body.reportId) {
+            const row = rows.find((r) => r.id === body.reportId);
+            return row ? json({ success: true, report: row }) : json({ success: false, error: 'not found' }, 404);
+          }
+          return json({ success: true, reports: rows, count: rows.length });
+        }
         if (body?.reportId && body.reportId === state.report?.id) {
           return json({ success: true, report: state.report });
         }
@@ -200,7 +232,41 @@ export function createSupabaseDouble(fixtures, opts = {}) {
           }
         }
         if (table === 'template_library_entries' && operation === 'list') return json({ success: true, records: [], count: 0 });
+        if (table === 'property_comparisons' && operation === 'list') {
+          const rows = selectRows(fixtures.rows?.property_comparisons ?? [], listOptions ?? {});
+          return json({ success: true, records: rows, count: rows.length });
+        }
         return json({ success: true, records: [], count: 0 });
+      }
+      case 'report-qa': {
+        // The Report Q&A page: its saved conversations and one conversation's
+        // messages, from `tables/report_qa_conversations.json` and
+        // `tables/report_qa_messages.json`. Shapes are the function's own
+        // (`get-conversations` → three lists; `load-conversation` → the row,
+        // a page of messages, the total and `hasMore`).
+        const convs = fixtures.rows?.report_qa_conversations ?? [];
+        const msgs = fixtures.rows?.report_qa_messages ?? [];
+        const action = body?.action;
+        if (action === 'get-conversations') {
+          const listed = convs.map((c) => ({
+            id: c.id, title: c.title, report_names: c.report_names, created_at: c.created_at, updated_at: c.updated_at,
+            structured_report: c.structured_report, client_id: c.client_id, agent_mode: c.agent_mode,
+            branched_from_conversation_id: c.branched_from_conversation_id, branched_from_message_id: c.branched_from_message_id,
+          }));
+          return json({ success: true, conversations: listed, shared_conversations: [], legacy_conversations: [] });
+        }
+        if (action === 'load-conversation') {
+          const conversation = convs.find((c) => c.id === body?.conversationId) ?? null;
+          if (!conversation) return json({ success: false, error: 'not found' }, 404);
+          const all = msgs.filter((m) => m.conversation_id === conversation.id)
+            .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+          const offset = Number(body?.offset ?? 0) || 0;
+          const limit = Number(body?.limit ?? 50) || 50;
+          const pageRows = all.slice(offset, offset + limit);
+          return json({ success: true, conversation, messages: pageRows, totalMessages: all.length, hasMore: offset + limit < all.length });
+        }
+        // Housekeeping the page does around a load (title touch, index refresh).
+        return json({ success: true });
       }
       case 'manage-global-report-settings':
         return json(fixtures.settings);
@@ -228,6 +294,23 @@ export function createSupabaseDouble(fixtures, opts = {}) {
         }
         return json({ success: true, data: { publicUrl: '' } });
       }
+      case 'render-report-qa-pdf': {
+        // The format's own route. Its document is drawn by the deployed
+        // function against the Cloud Run engine and is not reproducible here;
+        // the journey watches that the front end ASKED it (and not a template),
+        // so it is answered with a stand-in PDF the download path can save.
+        const stub = standInPdf(`Report Q&A — ${String(body?.subject ?? 'transcript')} — stand-in`);
+        state.routeCalls.push({ fn: name, subject: body?.subject ?? null, conversationId: body?.conversationId ?? null });
+        return json({
+          url: `data:application/pdf;base64,${stub.toString('base64')}`,
+          fileName: `Q_and_A-${String(body?.subject ?? 'transcript')}.pdf`,
+          pageCount: 1, brandGaps: [], sections: [], subject: body?.subject ?? 'transcript',
+          turnCount: 0, turnsShown: 0, truncated: false, generated: false, attachment: null,
+        });
+      }
+      case 'get-user-names':
+        // The library resolves author names for its cards; none is a fixture user.
+        return json({ success: true, users: [] });
       case 'log-activity':
       case 'activity-logger':
       case 'log-report-render-event':
@@ -290,7 +373,7 @@ export function createSupabaseDouble(fixtures, opts = {}) {
     // table through the gateway, where the Investment page asked the broker.
     if (table === 'global_report_settings' && Array.isArray(fixtures.settings)) return json(fixtures.settings);
     const rows = fixtures.rows?.[table];
-    if (!rows || method !== 'GET' || !url) return null;
+    if (!rows || !['GET', 'HEAD'].includes(method) || !url) return null;
     // PostgREST, as far as a read of fixture rows needs it.
     let out = rows;
     for (const [k, v] of url.searchParams) {
@@ -310,6 +393,11 @@ export function createSupabaseDouble(fixtures, opts = {}) {
     }
     const limit = Number(url.searchParams.get('limit'));
     if (limit) out = out.slice(0, limit);
+    // `.select('id', { count: 'exact', head: true })` is a HEAD with
+    // `Prefer: count=exact`; the answer is the count in Content-Range alone.
+    if (method === 'HEAD') {
+      return { status: 200, contentType: 'application/json', body: '', headers: { 'content-range': `0-${Math.max(0, out.length - 1)}/${out.length}` } };
+    }
     if (String(headers['accept'] ?? '').includes('vnd.pgrst.object')) {
       // `.maybeSingle()` reads PGRST116 as "no row" rather than as an error.
       return out.length === 1
@@ -372,7 +460,7 @@ export function createSupabaseDouble(fixtures, opts = {}) {
       // Unknown: answer an empty success so the page does not hang, and record it.
       return route.fulfill({ status: 200, contentType: 'application/json', body: '{}', headers: cors });
     }
-    return route.fulfill({ status: answer.status, contentType: answer.contentType, body: answer.body, headers: cors });
+    return route.fulfill({ status: answer.status, contentType: answer.contentType, body: answer.body, headers: { ...cors, ...(answer.headers ?? {}) } });
   }
 
   return { handle, state, log };
