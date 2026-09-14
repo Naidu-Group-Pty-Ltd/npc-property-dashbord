@@ -158,9 +158,9 @@ export function renderBarChartHtml(block: Block, ctx: HtmlBlockContext): string 
       const len = (Math.abs(s.value) / span) * (innerW - 60);
       const xStart = s.value < 0 ? zeroX - len : zeroX;
       return `<g>
-        <text x="0" y="${yPos + rowH / 2 + 3}" style="font-size:8pt;fill:${c.ink};">${esc(s.label)}</text>
+        <text x="0" y="${yPos + rowH / 2 + 3}" font-size="8" fill="${c.ink}">${esc(s.label)}</text>
         <rect x="${xStart.toFixed(1)}" y="${yPos}" width="${len.toFixed(1)}" height="${rowH - 8}" fill="${color}" rx="2"/>
-        <text x="${(xStart + len + 4).toFixed(1)}" y="${yPos + rowH / 2 + 3}" style="font-size:8pt;fill:${c.ink};font-variant-numeric:tabular-nums;">${label}</text>
+        <text x="${(xStart + len + 4).toFixed(1)}" y="${yPos + rowH / 2 + 3}" font-size="8" fill="${c.ink}">${label}</text>
       </g>`;
     }
     const xPos = barGap + i * (barW + barGap);
@@ -170,8 +170,8 @@ export function renderBarChartHtml(block: Block, ctx: HtmlBlockContext): string 
     const valueY = s.value < 0 ? yPos + height + 9 : yPos - 3;
     return `<g>
       <rect x="${xPos}" y="${yPos.toFixed(1)}" width="${barW}" height="${height.toFixed(1)}" fill="${color}" rx="2"/>
-      <text x="${xPos + barW / 2}" y="${innerH + 12}" style="font-size:7pt;fill:${c.muted};text-anchor:middle;">${esc(s.label)}</text>
-      <text x="${xPos + barW / 2}" y="${valueY.toFixed(1)}" style="font-size:7pt;fill:${c.ink};text-anchor:middle;font-variant-numeric:tabular-nums;">${label}</text>
+      <text x="${xPos + barW / 2}" y="${innerH + 12}" font-size="7" fill="${c.muted}" text-anchor="middle">${esc(s.label)}</text>
+      <text x="${xPos + barW / 2}" y="${valueY.toFixed(1)}" font-size="7" fill="${c.ink}" text-anchor="middle">${label}</text>
     </g>`;
   }).join('');
 
@@ -308,21 +308,21 @@ function renderLineOrAreaHtml(block: Block, ctx: HtmlBlockContext, fill: boolean
   const grid = ticks.map((v, t) => {
     const y = py(v);
     return `<line x1="${padL}" x2="${(padL + plotW).toFixed(1)}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${c.line}"${t === 0 ? '' : ' stroke-dasharray="2 3"'}/>`
-      + `<text x="${(padL - 4).toFixed(1)}" y="${(y + 2.5).toFixed(1)}" text-anchor="end" style="font-size:6.5pt;fill:${c.muted};font-variant-numeric:tabular-nums lining-nums;">${esc(tickText[t])}</text>`;
+      + `<text x="${(padL - 4).toFixed(1)}" y="${(y + 2.5).toFixed(1)}" text-anchor="end" font-size="6.5" fill="${c.muted}">${esc(tickText[t])}</text>`;
   }).join('');
 
   // The axis itself, so the labels read as a scale rather than as loose figures.
   const axisRule = `<line x1="${padL}" x2="${padL}" y1="${padT}" y2="${innerH}" stroke="${c.line}"/>`;
 
   const axisTitleSvg = axisTitle
-    ? `<text transform="translate(6,${(padT + plotH / 2).toFixed(1)}) rotate(-90)" text-anchor="middle" style="font-size:6.5pt;fill:${c.muted};letter-spacing:0.06em;text-transform:uppercase;">${esc(axisTitle)}</text>`
+    ? `<text transform="translate(6,${(padT + plotH / 2).toFixed(1)}) rotate(-90)" text-anchor="middle" font-size="6.5" fill="${c.muted}" letter-spacing="0.39">${esc(String(axisTitle).toUpperCase())}</text>`
     : '';
 
   // End labels anchor to the edge; only the interior ones centre. See the note
   // above — a centred label at either end of the plot is set half outside it.
   const labels = points.map((pt, i) => {
     const anchor = i === 0 ? 'start' : i === points.length - 1 ? 'end' : 'middle';
-    return `<text x="${pt.x.toFixed(1)}" y="${innerH + 12}" text-anchor="${anchor}" style="font-size:7pt;fill:${c.muted};">${esc(pt.s.label)}</text>`;
+    return `<text x="${pt.x.toFixed(1)}" y="${innerH + 12}" text-anchor="${anchor}" font-size="7" fill="${c.muted}">${esc(pt.s.label)}</text>`;
   }).join('');
   const dots = points.map((pt) => `<circle cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="2.5" fill="${accent}"/>`).join('');
 
@@ -477,7 +477,7 @@ export function renderRadarChartHtml(block: Block, ctx: HtmlBlockContext): strin
     const a = angleAt(i);
     const lx = cx + (r + 14) * Math.cos(a);
     const ly = cy + (r + 14) * Math.sin(a);
-    return `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" style="font-size:7pt;fill:${c.ink};">${esc(s.label)}</text>`;
+    return `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="7" fill="${c.ink}">${esc(s.label)}</text>`;
   }).join('');
 
   return `<div style="${box.style}">${meta.titleHtml}
@@ -516,11 +516,11 @@ export function renderHeatmapHtml(block: Block, ctx: HtmlBlockContext): string {
     row.forEach((v, ci) => {
       const t = (v - min) / (max - min || 1);
       cells.push(`<rect x="${40 + ci * cellW}" y="${14 + ri * cellH}" width="${cellW - 1}" height="${cellH - 1}" fill="${accent}" fill-opacity="${Math.max(0.05, t).toFixed(2)}"/>
-        <text x="${40 + ci * cellW + cellW / 2}" y="${14 + ri * cellH + cellH / 2 + 3}" text-anchor="middle" style="font-size:6pt;fill:${t > 0.55 ? c.onField : c.ink};">${esc(String(v))}</text>`);
+        <text x="${40 + ci * cellW + cellW / 2}" y="${14 + ri * cellH + cellH / 2 + 3}" text-anchor="middle" font-size="6" fill="${t > 0.55 ? c.onField : c.ink}">${esc(String(v))}</text>`);
     });
   });
-  const colHeads = colLabels.map((l, i) => `<text x="${40 + i * cellW + cellW / 2}" y="10" text-anchor="middle" style="font-size:7pt;fill:${c.muted};">${esc(l)}</text>`).join('');
-  const rowHeads = rowLabels.map((l, i) => `<text x="36" y="${14 + i * cellH + cellH / 2 + 3}" text-anchor="end" style="font-size:7pt;fill:${c.muted};">${esc(l)}</text>`).join('');
+  const colHeads = colLabels.map((l, i) => `<text x="${40 + i * cellW + cellW / 2}" y="10" text-anchor="middle" font-size="7" fill="${c.muted}">${esc(l)}</text>`).join('');
+  const rowHeads = rowLabels.map((l, i) => `<text x="36" y="${14 + i * cellH + cellH / 2 + 3}" text-anchor="end" font-size="7" fill="${c.muted}">${esc(l)}</text>`).join('');
 
   return `<div style="${box.style}">${meta.titleHtml}
     <svg viewBox="0 0 ${box.w} ${innerH}" style="width:100%;height:${innerH}pt;display:block;">
@@ -603,7 +603,7 @@ export function renderStackedBarChartHtml(block: Block, ctx: HtmlBlockContext): 
     }).join('');
     return `<g>
       ${segs}
-      <text x="${xPos + bw / 2}" y="${innerH + 12}" text-anchor="middle" style="font-size:7pt;fill:${c.muted};">${esc(String(row?.[labelKey] ?? ''))}</text>
+      <text x="${xPos + bw / 2}" y="${innerH + 12}" text-anchor="middle" font-size="7" fill="${c.muted}">${esc(String(row?.[labelKey] ?? ''))}</text>
     </g>`;
   }).join('');
   const legend = stackKeys.map((k, si) => `<div style="display:flex;align-items:center;gap:4pt;font-size:8pt;"><span style="width:8pt;height:8pt;background:${safeChartColor(colorFromPalette(si, palette), ctx)};border-radius:1pt;"></span>${esc(k)}</div>`).join('');

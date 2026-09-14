@@ -244,7 +244,10 @@ if (await sendBtn.isVisible().catch(() => false)) {
   // Pick the fixture client and send. The modal generates the document itself
   // when the page hands it no stored path — which is where a second render
   // would happen if the finalisation were not reused.
+  // The list is fetched when the dialog opens; give it time to arrive rather
+  // than reading the spinner as an empty list.
   const clientRow = sendDialog.getByText(/verify client/i).first();
+  await clientRow.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => {});
   if (await clientRow.isVisible().catch(() => false)) {
     await clientRow.click();
     const rendersBeforeSend = dbl.state.renders.length;

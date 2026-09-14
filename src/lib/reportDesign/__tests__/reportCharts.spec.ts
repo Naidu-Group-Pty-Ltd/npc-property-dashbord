@@ -456,6 +456,22 @@ describe('a label never runs past the drawing it belongs to', () => {
     expect(Math.max(...ys)).toBeLessThan(heightOf(svg) - 10);
   });
 
+  it('a heatmap value is set in whichever page colour reads against its cell', () => {
+    // A structure whose accent is its ink (Dictionary): a full cell is dark,
+    // so the value on it is set in the ground; an empty cell is the ground,
+    // so the value on it is set in the ink. Six "1"s on the medium reference
+    // report read as ILLEGIBLE before this (RS-4, 14 Sep 2026).
+    const dictionary = { ...ctx, palette: { ...ctx.palette, accent: '#312A21', ground: '#FFFDFA', ink: '#3D3429' } };
+    const svg = renderHeatmap(dictionary, [[0, 1]], { rowLabels: ['Planning'], colLabels: ['High', 'Limited'] });
+    const values = [...svg.matchAll(/<text[^>]*font-weight="600"[^>]*fill="([^"]+)"[^>]*>([^<]*)<\/text>/g)].map((m) => [m[2], m[1]]);
+    expect(values).toContainEqual(['0', '#3D3429']);
+    expect(values).toContainEqual(['1', '#FFFDFA']);
+    // The default (light accent on a light ground) keeps the ink on every cell.
+    const plain = renderHeatmap(ctx, [[0, 1]], { rowLabels: ['Planning'], colLabels: ['High', 'Limited'] });
+    const plainValues = [...plain.matchAll(/<text[^>]*font-weight="600"[^>]*fill="([^"]+)"[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]);
+    expect(new Set(plainValues).size).toBe(1);
+  });
+
   it('a pictograph title wraps clear of its count, and the array moves down for the second line', () => {
     // A pictograph is a compact figure: the router draws it for the compact
     // fraction of the measure, so its type is larger in viewBox units.

@@ -168,6 +168,26 @@ export function renderMarkdownBlockHtml(block: Block, ctx: HtmlBlockContext): st
     { tag: 'span', cls: 'callout-label', style: label },
     { tag: 'span', cls: 'decision-label', style: label },
     { tag: 'span', cls: 'sidenote-label', style: label },
+    // The generator's fenced blocks: a pull quote behind a rule at the quote
+    // scale, and a stat card — label, figure at display size, caption —
+    // between two hairlines. Every dimension is `MARKDOWN_TYPE`'s, as above.
+    { tag: 'blockquote', cls: 'pull-quote', style: `margin:${pt(T.pullquote.marginTopPt)} 0 ${pt(T.pullquote.marginBottomPt)};`
+      + `padding:0 0 0 ${pt(T.pullquote.paddingLeftPt)};border-left:${pt(T.pullquote.rulePt)} solid ${headingColor};`
+      + `${headingFont}font-size:${(bodySize * T.pullquote.scale).toFixed(1)}pt;line-height:${T.pullquote.lineHeight};`
+      + `font-style:italic;color:${headingColor};` },
+    { tag: 'cite', style: `display:block;margin-top:${pt(T.pullquote.attributionGapPt)};`
+      + `${bodyFont}font-size:${(bodySize * T.pullquote.attributionScale).toFixed(1)}pt;line-height:${lineHeight};`
+      + `font-style:normal;letter-spacing:0.06em;text-transform:uppercase;color:${mutedColor};` },
+    { tag: 'div', cls: 'stat-card', style: `margin:${pt(T.stat.marginTopPt)} 0 ${pt(T.stat.marginBottomPt)};`
+      + `padding:${pt(T.stat.paddingPt)} 0;border-top:${pt(T.stat.rulePt)} solid ${ruleColor};`
+      + `border-bottom:${pt(T.stat.rulePt)} solid ${ruleColor};` },
+    { tag: 'span', cls: 'stat-label', style: `${label}margin:0 0 ${pt(T.stat.gapPt)};` },
+    { tag: 'div', cls: 'stat-value', style: `${headingFont}font-size:${(bodySize * T.stat.valueScale).toFixed(1)}pt;`
+      + `line-height:${T.stat.valueLineHeight};font-weight:700;color:${headingColor};` },
+    { tag: 'span', cls: 'stat-unit', style: `font-size:${(bodySize * 1.1).toFixed(1)}pt;font-weight:600;margin-left:2pt;` },
+    { tag: 'span', cls: 'stat-sub', style: `display:block;margin-top:${pt(T.stat.gapPt)};`
+      + `font-size:${(bodySize * T.stat.subScale).toFixed(1)}pt;line-height:${lineHeight};color:${mutedColor};` },
+    { tag: 'p', cls: 'stat-headline', style: `margin:${pt(T.stat.gapPt)} 0 0;` },
   ]);
 
   const box = absBoxStyle(p, { x: 40, y: 120, w: 515 });

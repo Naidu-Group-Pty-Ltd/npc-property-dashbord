@@ -123,6 +123,18 @@ describe('a table meets a page boundary', () => {
     expect(pages[1][0].table!.rows.length).toBe(2);
   });
 
+  it('a TALL list of few items meets the boundary too', () => {
+    // Five paragraph-long bullets (five lines each) after twenty lines of prose
+    // on a forty-line page: four fit the room, the fifth continues.
+    const items = Array.from({ length: 5 }, (_, i) => ({ depth: 0, text: `Item ${i} ${'x'.repeat(400)}` }));
+    const charge = (its: readonly { depth: number; text: string }[]) => its.length * 5;
+    const block: MarkdownBlock = { kind: 'list', html: '<ul>…</ul>', lines: 25, list: { items, ordered: false, start: 1 } };
+    const pages = packMarkdownPages([para(20, 'a'), block], 40, { splitLists: charge, splitAtBoundary: true });
+    expect(pages[0].map((b) => b.kind)).toEqual(['paragraph', 'list']);
+    expect(pages[0][1].list!.items).toHaveLength(4);
+    expect(pages[1][0].list!.items).toHaveLength(1);
+  });
+
   it('a short two-row table is never split', () => {
     const t = table(2, 1.4, 2);
     const pages = packMarkdownPages([para(38, 'a'), t], 40, { splitAtBoundary: true });

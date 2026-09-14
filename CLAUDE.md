@@ -1728,6 +1728,15 @@ label into the units it may use and the drawing grows for the lines, because
 a gauge caption, a donut legend, a timeline stop and a pictograph title were
 each found set past their own drawing, and the template chart block draws
 its ink from the template's tokens rather than the flowing route's literals.
+The Chancery and Dictionary journeys then found four more: **a charge counts
+what prints** (`printedChars`), never the source's `**` or a link's URL; **a
+list is cut where the reader would not notice**, inside a group with two
+children on each side; **a chunk is cut for the page it lands on**; and **the
+engine reads attributes on SVG text, not `style`** — `font-size="6.5"` sets
+6.5pt where `style="font-size:6.5pt"` set the inherited body size. And the
+five `:::` fences the generator's prompt asks for (pull quote, sidenote, stat,
+divider, quote page) are DRAWN by `renderMarkdown` now — they printed raw on
+every structure — with an unknown kind unwrapped rather than printed.
 
 `INVESTMENT.md` is the one to read before touching anything the *model* draws. Its prose carries a chart vocabulary the generator's
 prompt demands and the renderer had never parsed: **3,753 `{{bars: ...}}`-style

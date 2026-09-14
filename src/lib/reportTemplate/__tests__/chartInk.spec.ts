@@ -24,10 +24,10 @@ describe('chart furniture takes the template ink', () => {
   it('a line chart on a dark structure draws its title, ticks, axis title and grid in the template tokens', () => {
     const html = renderLineChartHtml(block('chart-line', { dataPath: 'projection.equity', title: 'Projected equity position', axisTitle: 'Equity' }) as never, ctx(MIDNIGHT));
     expect(html).toContain('color:#F1EEE8');
-    expect(html).toContain('fill:#9C99A4');
+    expect(html).toContain('fill="#9C99A4"');
     expect(html).toContain('stroke="#2E2E38"');
     expect(html).not.toContain('#1A1A1A');
-    expect(html).not.toContain('fill:#666');
+    expect(html).not.toContain('fill="#666');
     expect(html).not.toContain('#EAE3CB');
   });
 
@@ -35,5 +35,24 @@ describe('chart furniture takes the template ink', () => {
     const html = renderBarChartHtml(block('chart-bar', { dataPath: 'projection.equity', title: 'Equity' }) as never, ctx({}));
     expect(html).toContain('#1A1A1A');
     expect(html).toContain('#666666');
+  });
+});
+
+describe('chart text is sized by presentation attribute, which is what the engine reads', () => {
+  // WeasyPrint ignores `style="font-size:…"` on SVG text: measured with the
+  // pinned engine (RS-4, 14 Sep 2026), a 6.5pt style set at the inherited
+  // 9.5pt while a `font-size="6.5"` attribute set at 6.5pt. Every tick label
+  // of every chart block was therefore a body-size figure crowding its axis.
+  it('every <text> carries font-size and fill as attributes and no style attribute', () => {
+    const html = renderLineChartHtml(block('chart-line', { dataPath: 'projection.equity', title: 'Projected equity position', yAxisLabel: 'Equity' }) as never, ctx(MIDNIGHT));
+    const texts = html.match(/<text[^>]*>/g) ?? [];
+    expect(texts.length).toBeGreaterThan(3);
+    for (const t of texts) {
+      expect(t).toMatch(/ font-size="[\d.]+"/);
+      expect(t).toMatch(/ fill="#[0-9A-Fa-f]{6}"/);
+      expect(t).not.toContain('style=');
+    }
+    // The axis title asked for uppercase through CSS the engine does not read; the string is uppercased.
+    expect(html).toContain('>EQUITY</text>');
   });
 });

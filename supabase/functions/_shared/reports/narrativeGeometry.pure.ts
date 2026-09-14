@@ -70,11 +70,24 @@ export const MARKDOWN_TYPE = {
   callout: { paddingPt: 6, marginBottomPt: 8, labelScale: 0.8, labelGapPt: 3, rulePt: 1.5 },
   blockquote: { marginBottomPt: 6, paddingLeftPt: 8, rulePt: 1.5 },
   code: { scale: 0.85, paddingPt: 5, marginBottomPt: 6 },
+  /** `::: pullquote` / `::: quote-page` — one sentence, set larger, behind a rule. */
+  pullquote: {
+    scale: 1.3, lineHeight: 1.35, paddingLeftPt: 10, rulePt: 2, marginTopPt: 8, marginBottomPt: 10,
+    attributionScale: 0.8, attributionGapPt: 4,
+  },
+  /** `::: stat` / `::: divider` — a label, one oversized figure, a caption, inside rules. */
+  stat: {
+    valueScale: 2.4, valueLineHeight: 1.1, labelScale: 0.8, subScale: 0.85,
+    paddingPt: 8, marginTopPt: 6, marginBottomPt: 10, gapPt: 3, rulePt: 0.75,
+  },
 } as const;
 
 /** Average advance per em of ordinary prose, per face. Measured; see the header. */
 export const FACE_ADVANCE_EM: Readonly<Record<string, number>> = {
-  'inter': 0.49,
+  // Re-measured on real report prose (Chancery, 14 Sep 2026): six full lines
+  // of a location list set at 0.462–0.484 em; 0.49 charged Inter three per
+  // cent tight.
+  'inter': 0.48,
   'noto serif': 0.50,
   'lato': 0.45,
   'roboto': 0.46,
@@ -191,6 +204,31 @@ export function narrativeGeometry(first: NarrativeBox, cont: NarrativeBox | null
 function textLines(g: NarrativeGeometry, chars: number, measureFraction = 1): number {
   const cpl = Math.max(8, g.charsPerLine * measureFraction);
   return Math.max(1, Math.ceil(Math.max(0, chars) / cpl));
+}
+
+/** A pull quote: its sentence at the quote scale behind a rule, and its attribution. */
+export function pullQuoteCharge(g: NarrativeGeometry, chars: number, attributionChars = 0): number {
+  const q = MARKDOWN_TYPE.pullquote;
+  const measure = Math.max(0.3, (g.widthPt - q.paddingLeftPt - q.rulePt) / g.widthPt);
+  const perLine = Math.max(8, (g.charsPerLine * measure) / q.scale);
+  const lines = Math.max(1, Math.ceil(Math.max(0, chars) / perLine));
+  let pt = lines * scaledPt(g.bodyPt, q.scale) * q.lineHeight + q.marginTopPt + q.marginBottomPt;
+  if (attributionChars > 0) pt += scaledPt(g.bodyPt, q.attributionScale) * g.lineHeight + q.attributionGapPt;
+  return linesOf(g, pt);
+}
+
+/** A stat card: label, the figure at display size, a caption, a divider's headline. */
+export function statCharge(g: NarrativeGeometry, parts: { label: boolean; sub: boolean; headlineChars?: number }): number {
+  const st = MARKDOWN_TYPE.stat;
+  let pt = st.marginTopPt + st.marginBottomPt + 2 * st.paddingPt + 2 * st.rulePt;
+  pt += scaledPt(g.bodyPt, st.valueScale) * st.valueLineHeight;
+  if (parts.label) pt += scaledPt(g.bodyPt, st.labelScale) * g.lineHeight + st.gapPt;
+  if (parts.sub) pt += scaledPt(g.bodyPt, st.subScale) * g.lineHeight + st.gapPt;
+  if (parts.headlineChars && parts.headlineChars > 0) {
+    const measure = Math.max(0.3, (g.widthPt - 2 * st.paddingPt) / g.widthPt);
+    pt += textLines(g, parts.headlineChars, measure) * pitchPt(g) + st.gapPt;
+  }
+  return linesOf(g, pt);
 }
 
 export function paragraphCharge(g: NarrativeGeometry, chars: number): number {

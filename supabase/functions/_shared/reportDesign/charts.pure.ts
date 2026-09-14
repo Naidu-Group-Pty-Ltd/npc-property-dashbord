@@ -28,7 +28,7 @@
  * Pure: sibling `.pure` imports only, no I/O, no clock, no randomness — so the
  * same data draws the same bytes, which is what makes a golden PDF meaningful.
  */
-import { hexToRgb01 } from './color.pure.ts';
+import { contrastRatio, hexToRgb01, mixHex } from './color.pure.ts';
 import type { ResolvedReportPalette } from './roles.pure.ts';
 import { PRINT_SCALE } from './tokens.pure.ts';
 import { PRINT_STACK } from './typography.pure.ts';
@@ -638,9 +638,19 @@ export function renderHeatmap(
       const v = grid[r][c];
       const x = padL + c * cellW, y = padT + r * cellH;
       const t = (v - lo) / span;
+      const alpha = 0.08 + t * 0.82;
+      // The value is set in whichever of the two page colours reads against
+      // the cell it sits on. The cell is the accent over the ground at this
+      // alpha; the ink was drawn unconditionally, and on a structure whose
+      // accent is its ink (Dictionary: #312A21 on #FFFDFA) a full cell is as
+      // dark as the figure printed on it — six "1"s on the medium reference
+      // report read as ILLEGIBLE (RS-4, 14 Sep 2026).
+      const cell = mixHex(ctx.palette.ground, ctx.palette.accent, alpha);
+      const valueInk = contrastRatio(cell, ctx.palette.ink) >= contrastRatio(cell, ctx.palette.ground)
+        ? ctx.palette.ink : ctx.palette.ground;
       cells += `<rect x="${x}" y="${y}" width="${cellW - 2}" height="${cellH - 2}" rx="1.5" `
-        + `fill="${withAlpha(ctx.palette.accent, 0.08 + t * 0.82)}" stroke="${ctx.palette.ground}" stroke-width="1"/>`
-        + text(ctx, w, { x: x + cellW / 2, y: y + cellH / 2 + 3.5, pt: 'micro', fill: ctx.palette.ink, anchor: 'middle', weight: 600, tabular: true },
+        + `fill="${withAlpha(ctx.palette.accent, alpha)}" stroke="${ctx.palette.ground}" stroke-width="1"/>`
+        + text(ctx, w, { x: x + cellW / 2, y: y + cellH / 2 + 3.5, pt: 'micro', fill: valueInk, anchor: 'middle', weight: 600, tabular: true },
           svgEscape(cellText(v)));
     }
   }

@@ -49,8 +49,10 @@ compute that, so they do:
   (to cost). The block cannot style a heading one way and charge it another.
 - `FACE_ADVANCE_EM` is each face's average advance over ordinary prose, in
   ems, measured with the pinned engine over eighty lines at three sizes
-  (Inter 0.49, Noto Serif 0.50, Lato 0.45, Roboto 0.46, Playfair 0.47, IBM
-  Plex Mono 0.62). A face not in the table is charged at 0.52 — wider than any
+  (Inter 0.48, Noto Serif 0.50, Lato 0.45, Roboto 0.46, Playfair 0.47, IBM
+  Plex Mono 0.62). Inter was re-read off real report prose on the Chancery
+  render — six full lines of a location list set at 0.462–0.484 em — and the
+  instrument's 0.49 charged it three per cent tight. A face not in the table is charged at 0.52 — wider than any
   measured one — so an unknown family packs sparser rather than overflowing.
 - `narrativeBottom` recovers the master's own content bottom from the block's
   right edge: `page.height − (page.width − x − width) − FOOTER_RESERVE`. The
@@ -133,6 +135,30 @@ byte-identical:
   master's bottom sits 76pt above the running foot on every family, so an
   overrun that small lands inside the reserve.
 
+### What the second structure found
+
+The same journeys on the Chancery and Dictionary structures (RS-4) found
+four more things, each invisible on Midnight.
+
+- **A charge counts what prints.** Every charge counted the SOURCE —
+  `**` around a lead-in, the URL inside `[text](url)` — and a location list
+  whose items cite their sources charged 29.9 lines for 24 set.
+  `printedChars` / `printedText` count what the inline renderer emits, tags
+  stripped; the table model is handed the printed words, because its floor
+  is the longest word in a cell.
+- **A list is cut where the reader would not notice.** Cutting only between
+  top-level items pushed a whole list when one group (a lead-in and four
+  three-line children) did not fit the room, leaving 45% of a page white.
+  A cut inside a group is allowed where `NESTED_CUT_MIN` children stay on
+  each side of it, so a lead-in never stands over nothing and a continuation
+  never opens with a lone child.
+- **A chunk is cut for the page it lands on.** The first chunk of a table or
+  a list is sized to the room left; when it still does not fit (a chunk
+  holds a whole row) it opens the next page, so the block is re-cut as if it
+  started there — a first row cut for nine lines had stood alone on a page
+  70% white while the page-sized chunk behind it could not follow.
+- **Inter's advance is 0.48**, re-read off six full lines of real prose.
+
 ## 4a. The hole a dropped block leaves
 
 A master lays a page out as a flow and the renderer positions every block
@@ -174,6 +200,37 @@ The template chart block also draws its axis, tick and legend ink from the
 template's tokens (`chartInk`) rather than the flowing route's literal
 `#1A1A1A` / `#666` / `#EAE3CB`, which on a dark family printed axis labels in
 near-black on a near-black ground.
+
+## 4c. The fenced blocks the generator writes
+
+The prompt asks the model for `::: pullquote`, `::: sidenote`, `::: stat`,
+`::: divider` and `::: quote-page`; the flowing route draws all five and this
+renderer drew none, so each printed raw — fences, attributes and all — in the
+client document on every structure. `renderMarkdown` now reads a fence as a
+block: a pull quote (and a quote page) is one sentence at the quote scale
+behind a rule with its attribution; a sidenote is the sidenote primitive; a
+stat card is its label, its figure at display size with the unit, and its
+caption between two hairlines; a divider is the same card stating its `stat`
+attribute over its headline. Two rules. **A card with nothing to state is
+not drawn** — `statCardHasValue` is the write-path hygiene's own predicate,
+imported, so the two ends cannot disagree about "empty". And **a kind with no
+drawing here is unwrapped**: the fence goes and the body is read as
+Markdown, so nothing a fence carries is lost and no fence is ever printed.
+Both are styled from `MARKDOWN_TYPE.pullquote` / `MARKDOWN_TYPE.stat` and
+charged by `pullQuoteCharge` / `statCharge`, the same declaration.
+
+## 4d. What the engine reads off an SVG
+
+WeasyPrint reads presentation attributes on SVG text and ignores a `style`
+attribute: measured with the pinned engine, `style="font-size:6.5pt"` set at
+the inherited 9.5pt while `font-size="6.5"` set at 6.5pt. Every tick label of
+every template chart block was therefore a body-size figure crowding its axis
+title (`$45k` against `EQUITY` on the Dictionary projection page). The block
+writes `font-size`, `fill`, `text-anchor`, `font-weight` and `letter-spacing`
+as attributes, and uppercases the axis title itself. And a heatmap value is
+set in whichever of the ink and the ground reads against its cell — on a
+structure whose accent is its ink, a full cell is as dark as the figure
+printed on it, and six "1"s read as illegible.
 
 ## 5. What the projection still owns
 

@@ -91,7 +91,14 @@ for (let n = 1; n <= doc.numPages; n++) {
   for (const it of tc.items) {
     const s = String(it.str ?? ''); if (!s.trim()) continue;
     const tr = it.transform; const h = Math.abs(it.height || tr[3] || 10); const w = it.width ?? 0;
-    items.push({ s, x: tr[4], yTop: vp.height - tr[5] - h, w, h });
+    // A rotated run (an axis title set along the y axis) reports its advance
+    // along the rotated baseline, so a horizontal box built from it covers
+    // the ground beside the glyphs, never the glyphs: sampled at 150 dpi the
+    // real box under "EQUITY" spans 21–155 while the horizontal box read as
+    // blank, and the same box paired it with a tick label it never touched.
+    // Its legibility and overlap are not measured; its presence still is.
+    const rotated = Math.abs(tr[1]) > 0.01 || Math.abs(tr[2]) > 0.01;
+    items.push({ s, x: tr[4], yTop: vp.height - tr[5] - h, w, h, rotated });
   }
   const text = items.map((i) => i.s).join(' ');
   const bodyItems = items.filter((i) => i.yTop > vp.height * 0.07 && i.yTop < vp.height * 0.93);
@@ -99,7 +106,7 @@ for (let n = 1; n <= doc.numPages; n++) {
   // legibility: raster range under each run
   let illegible = 0; const illegibleSamples = [];
   for (const t of items) {
-    if (t.w < 2 || t.h < 2) continue;
+    if (t.w < 2 || t.h < 2 || t.rotated) continue;
     const x0 = Math.max(0, Math.floor(t.x * SCALE)), x1 = Math.min(img.w - 1, Math.ceil((t.x + t.w) * SCALE));
     const y0 = Math.max(0, Math.floor(t.yTop * SCALE)), y1 = Math.min(img.h - 1, Math.ceil((t.yTop + t.h * 1.25) * SCALE));
     if (x1 <= x0 || y1 <= y0) continue;
@@ -112,6 +119,7 @@ for (let n = 1; n <= doc.numPages; n++) {
   let overlaps = 0; const overlapSamples = [];
   for (let a = 0; a < items.length; a++) for (let b = a + 1; b < items.length; b++) {
     const A = items[a], B = items[b];
+    if (A.rotated || B.rotated) continue;
     if (Math.abs(A.yTop - B.yTop) > Math.max(A.h, B.h) * 1.2) continue;
     const ox = Math.min(A.x + A.w, B.x + B.w) - Math.max(A.x, B.x);
     const oy = Math.min(A.yTop + A.h, B.yTop + B.h) - Math.max(A.yTop, B.yTop);

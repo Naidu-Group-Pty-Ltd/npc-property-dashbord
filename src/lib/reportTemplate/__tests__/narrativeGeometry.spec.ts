@@ -137,7 +137,7 @@ describe('geometry', () => {
 
   it('reads characters per line from the face\'s measured advance, and an unknown face packs sparser', () => {
     expect(faceAdvanceEm('Noto Serif, serif')).toBe(0.5);
-    expect(faceAdvanceEm("'Inter', sans-serif")).toBe(0.49);
+    expect(faceAdvanceEm("'Inter', sans-serif")).toBe(0.48);
     expect(faceAdvanceEm('Some Unmeasured Face')).toBe(UNKNOWN_FACE_ADVANCE_EM);
     expect(UNKNOWN_FACE_ADVANCE_EM).toBeGreaterThan(0.5);
     const g = geometryOf(CASES[0]);

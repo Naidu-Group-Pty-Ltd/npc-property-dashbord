@@ -162,7 +162,7 @@ export interface PackOptions {
    * never split before, and one taller than a page was clipped at the
    * paper's edge with its tail lost — see `splitListBlock`.
    */
-  splitLists?: (items: readonly { depth: number; text: string }[]) => number;
+  splitLists?: (items: readonly { depth: number; text: string; chars?: number }[]) => number;
 }
 
 export const BOUNDARY_SPLIT_MIN_ROWS = 6;
@@ -236,31 +236,48 @@ export function packMarkdownPages(
   for (const block of blocks) {
     const budget = budgetFor(pages.length);
     let pieces: readonly MarkdownBlock[] = [block];
+    // A chunked block is cut for the room it will land in. The first chunk is
+    // sized to the room left on this page; when it still does not fit there
+    // (a chunk must hold a whole row or a whole item group) it will open the
+    // next page, so the block is re-cut as if it started on a fresh page —
+    // otherwise a first chunk sized for nine lines lands alone on a page of
+    // forty and the page-sized chunk behind it cannot follow. Measured on the
+    // long reference report's Chancery render (RS-4, 14 Sep 2026): a risk
+    // register's first row stood alone on a page 70% white.
+    const landed = (cut: (first: number) => readonly MarkdownBlock[], room: number, remaining: number): readonly MarkdownBlock[] => {
+      const first = cut(room);
+      return first.length > 1 && first[0].lines > remaining ? cut(contBudget) : first;
+    };
     if (options.splitLists && block.kind === 'list' && block.list) {
       const remaining = budget - used;
       const room = current.length && remaining >= BOUNDARY_SPLIT_MIN_LINES ? remaining : contBudget;
+      const cutList = (first: number) => splitListBlock(block, first, contBudget, options.splitLists!);
       if (block.lines > budget) {
-        pieces = splitListBlock(block, room, contBudget, options.splitLists);
+        pieces = landed(cutList, room, remaining);
       } else if (
         options.splitAtBoundary && current.length && block.lines > remaining
-        && remaining >= BOUNDARY_SPLIT_MIN_LINES && block.list.items.length >= BOUNDARY_SPLIT_MIN_ROWS
+        && remaining >= BOUNDARY_SPLIT_MIN_LINES
+        // Six items, or a TALL list of fewer — five paragraph-long bullets
+        // pushed whole left half a page white on the long report (RS-4).
+        && (block.list.items.length >= BOUNDARY_SPLIT_MIN_ROWS || block.lines >= BOUNDARY_SPLIT_TALL_LINES)
       ) {
-        pieces = splitListBlock(block, remaining, contBudget, options.splitLists);
+        pieces = landed(cutList, remaining, remaining);
       }
     }
     if (block.kind === 'table' && block.table) {
       const remaining = budget - used;
+      const cutTable = (first: number) => splitTableBlock(block, first, contBudget);
       if (options.splitTables && block.lines > budget) {
         // First chunk sizes to the space left on the current page when that is
         // worth using (head + a few rows); otherwise every chunk is page-sized
         // and the pack loop opens a fresh page for the first one naturally.
         const firstChunk = current.length && remaining >= BOUNDARY_SPLIT_MIN_LINES ? remaining : contBudget;
-        pieces = splitTableBlock(block, firstChunk, contBudget);
+        pieces = landed(cutTable, firstChunk, remaining);
       } else if (
         options.splitAtBoundary && current.length && block.lines > remaining
         && remaining >= BOUNDARY_SPLIT_MIN_LINES && survivesTheCut(block.table, remaining)
       ) {
-        pieces = splitTableBlock(block, remaining, contBudget);
+        pieces = landed(cutTable, remaining, remaining);
       }
     }
 
@@ -348,6 +365,6 @@ export function packNarrativeGeometry(
     floatFigures: true,
     absorbTail: true,
     splitParagraphs: (chars) => paragraphCharge(geometry, chars),
-    splitLists: (items) => listCharge(geometry, items.map((it) => ({ chars: it.text.length, depth: it.depth }))),
+    splitLists: (items) => listCharge(geometry, items.map((it) => ({ chars: it.chars ?? it.text.length, depth: it.depth }))),
   });
 }
