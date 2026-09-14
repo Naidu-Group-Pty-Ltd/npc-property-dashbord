@@ -35,7 +35,7 @@
  *
  * It was written in `src/lib/__tests__/`, where CI never would have run it.
  * The only step naming that directory is `npx vitest run
- * src/lib/__tests__/builderStock src/lib/__tests__/builderPortal`, and vitest
+ * src/lib/__tests__/builderStock`, and vitest
  * matches those positionally as path substrings — so the guard above, the one
  * whose whole purpose is to stop somebody taking the authorisation layer down
  * by "finishing the audit", would have been green by never executing.
