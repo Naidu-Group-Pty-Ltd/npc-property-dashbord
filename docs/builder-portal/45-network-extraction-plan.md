@@ -611,6 +611,48 @@ route tree) — it is the record of a surface that left, and it retires at Phase
 - Drop, don't leave dormant: a 65-table schema nothing tests any more is pure attack
   surface.
 
+**Phase 7 execution record — in waves, because the deletion is not one act.** The client
+marketplace (`builder-stock-marketplace`) serves paying customers off five builder tables,
+so dropping the schema in one migration would have taken the marketplace down with the
+portal. The order that keeps it up:
+
+- **Wave 1 ✅ (PR #2659).** The archive precedes everything: `builder_archive` live on the
+  prime — 66 snapshots, 6,222 rows, counts verified against sources, no anon/authenticated
+  grants (the same SQL re-runs idempotently as the decommission migration's opening).
+  `decommission-builder-portal-functions.yml` deletes the sixteen retired portal-session
+  deployments on dispatch — allow-listed to exactly those names, absent-tolerant, project
+  ref resolved as the deploy workflow resolves it. Dispatched after merge; the sixteen
+  verified gone from the project while the admin family, pipeline workers, marketplace
+  read and network sync door still answer. And `PartnerOnboardingWizard` stops walking
+  the doomed step: builder partners get `portal_moved` (no provisioning call, no invite,
+  no enrolment), the emailed Passport link named as their way in.
+- **Wave 2 ✅ (this change).** The marketplace stops reading anything Phase 7 deletes:
+  `20261123000000_builder_network_stock_mirror.sql` creates `builder_network_stock_items`
+  / `_item_images` / `_organisations` — full column shape, PK-no-default ids (the
+  network's ids, per E3), service-role-only RLS — and seeds them from the source tables
+  in the same file (`to_regclass`-guarded, ON CONFLICT DO NOTHING, so a post-deletion
+  clone no-ops the seed and takes sync data later). Every read in
+  `builder-stock-marketplace` re-points at the mirrors; `supply_builder_image` /
+  `create_builder_image_upload` refuse 410 `builder_stock_images_moved` (they wrote the
+  dying pipeline); `select_for_client` resolves attribution from the item's own
+  `created_by_builder_user_id` (the uploads cross-read retires) and no longer writes
+  `builder_notifications` (a feed with no reader); the Command Centre card's "Add a
+  picture" control became a disclosure. Image BYTES stay in the prime's
+  `builder-stock-images` bucket and rows keep naming them — storage moves in wave 4,
+  after the network serves mirror imagery over the connection.
+- **Wave 3 (pending) — the one-way deletion.** The decommission migration (archive SQL
+  first; release `builder_stock_selections`' builder FKs by measured names, re-point
+  `stock_item_id` at the mirror and swap `builder_enforce_stock_selection_org` onto it —
+  selections stay, they are Command Centre data; drop the 63 portal tables reverse-FK
+  `IF EXISTS`, never CASCADE; delete builder rows from `portal_terms_acceptances`
+  keeping the column; unschedule the pg_cron jobs that invoke builder functions). Delete
+  the 59 builder migration files against `MIGRATION_VERSION_COLLISIONS.json`, the sixteen
+  function directories plus settler/document-processor with their `config.toml` blocks,
+  `src/pages/builder` + portal components with their spec fallout, and retire
+  `tests/builder-portal/` + `security:builder-portal` from the chain.
+- **Wave 4 (deferred, post-connection).** Delete the storage bytes once the network
+  serves the mirror's imagery — dropping them earlier blanks every card.
+
 **Phase 8 — marketing.** A "for builders" page in `aurixa-systems`, linking out. No auth is
 added to the marketing site.
 
