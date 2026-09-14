@@ -532,7 +532,7 @@ CI: `typecheck:builder-edge`, `test:builder-portal`, `security:builder-portal`,
 `_shared/builderNetwork.ts`; `builder-network-inbound`; outbox aggregate; all behind
 `feature_flags.builder_network_enabled`, default false, fails closed, **read server-side**.
 
-**Phase 4 — move the data.** Re-measure first (it grows while we work — stock testing is
+**Phase 4 — move the data.** Runbook with fresh measurements: [`46-phase4-data-move-runbook.md`](./46-phase4-data-move-runbook.md). Re-measure first (it grows while we work — stock testing is
 live). Two orgs, three users, the stock corpus (1,014+ items, 3,069+ image rows, 749 MB+
 objects across 3 buckets), the E3/E4/E5 rows. Re-issue invitations rather than porting
 password hashes. Strip `selected_by_user_id` / `internal_notes`. **Reconcile the soft-delete
