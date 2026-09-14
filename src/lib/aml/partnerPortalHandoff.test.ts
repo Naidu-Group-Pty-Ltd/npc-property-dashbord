@@ -145,19 +145,20 @@ describe("coming back after signing in", () => {
 describe("wired at the source", () => {
   const read = (p: string) => readFileSync(p, "utf8");
 
-  it("all three portals record the destination, and all three honour it", () => {
-    /* Two of them lost it: the Builder guard recorded the pathname alone and
-       its login ignored the record entirely; the Solicitor guard recorded
-       nothing at all. Finance was already correct and is the reference. */
-    const builderGuard = read("src/components/builder-portal/BuilderPortalProtectedRoute.tsx");
+  it("both surviving portals record the destination, and both honour it", () => {
+    /* Two of the original three lost it: the Builder guard recorded the
+       pathname alone and its login ignored the record entirely; the
+       Solicitor guard recorded nothing at all. Finance was already correct
+       and is the reference. The Builder portal then left this repository
+       with the portal (network extraction Phase 7) — its handoff surface
+       answers `portal_moved` and there is no builder login to honour a
+       destination — so the rule is pinned on the two that remain. */
     const solicitorGuard = read("src/components/solicitor-portal/SolicitorPortalProtectedRoute.tsx");
     const financeGuard = read("src/components/finance-portal/FinancePortalProtectedRoute.tsx");
-    expect(builderGuard).toContain("returnToPath(location.pathname, location.search)");
     expect(solicitorGuard).toContain("returnToPath(location.pathname, location.search)");
     expect(financeGuard).toContain("${location.pathname}${location.search}");
 
     for (const login of [
-      "src/pages/builder/BuilderLogin.tsx",
       "src/pages/solicitor/SolicitorLogin.tsx",
     ]) {
       const source = read(login);
@@ -176,7 +177,6 @@ describe("wired at the source", () => {
 
   it("every portal names the page the same thing the email does", () => {
     for (const layout of [
-      "src/components/builder-portal/BuilderPortalLayout.tsx",
       "src/components/finance-portal/FinancePortalLayout.tsx",
       "src/components/solicitor-portal/SolicitorPortalLayout.tsx",
     ]) {
