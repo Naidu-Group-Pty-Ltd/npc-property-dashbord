@@ -131,40 +131,34 @@ describe('withdrawn builder sections — every door asks the same list', () => {
     expect(tour).not.toMatch(/\bSTEPS\.map\(/);
   });
 
-  it('the routes stay declared and land on the notice', () => {
-    // Hiding is not deleting: a route that stops existing falls through to
-    // the catch-all and lands on the dashboard with no explanation, which
-    // reads as a broken link rather than a decision.
+  it('the whole portal resolves to the moved notice now — one route, no survivors', () => {
+    /* Phase 6 of the network extraction: the portal left this deployment for
+       the Builders Network, so the withdrawn-section regime is superseded by
+       the move — every /builder path, section pages and withdrawn notices
+       alike, lands on the redirect. The page components stay in the
+       repository until Phase 7 deletes them, but nothing routes them. */
     const app = read('src/App.tsx');
-    for (const path of [
-      'inventory', 'inventory/:unitId',
-      'transactions', 'transactions/:transactionId',
-      'pipeline',
-      'construction', 'construction/:constructionCaseId',
-      'construction/:constructionCaseId/delivery',
-      'documents',
+    expect(app).toContain('<Route path="/builder/*" element={<BuilderPortalMoved />} />');
+    // Builder ELEMENT names, not generic paths — other portals legitimately
+    // route their own "messages" and the like.
+    for (const survivor of [
+      'BuilderSectionWithdrawn', 'BuilderLogin', 'BuilderStockList',
+      'BuilderProjects', 'BuilderMessages', 'BuilderDashboard',
+      'BuilderPortalAuthProvider', 'BuilderPortalLayout',
     ]) {
-      expect(app).toContain(`<Route path="${path}" element={<BuilderSectionWithdrawn />} />`);
+      expect(app, `${survivor} must not appear in App.tsx after the move`).not.toContain(survivor);
     }
   });
 
-  it('leaves the offered sections routed to their own pages', () => {
-    const app = read('src/App.tsx');
-    expect(app).toContain('<Route path="stock" element={<BuilderStockList />} />');
-    expect(app).toContain('<Route path="projects" element={<BuilderProjects />} />');
-    expect(app).toContain('<Route path="messages" element={<BuilderMessages />} />');
-  });
-
-  it('keeps the page components, so re-offering a section is one edit', () => {
-    // The pages, their queries and their edge functions are untouched.
-    const app = read('src/App.tsx');
-    for (const page of [
-      'BuilderInventory', 'BuilderUnitDetail', 'BuilderTransactions',
-      'BuilderTransactionDetail', 'BuilderPipeline', 'BuilderConstruction',
-      'BuilderConstructionDetail', 'BuilderDeliveryDetail', 'BuilderDocuments',
-    ]) {
-      expect(app).toContain(`const ${page} = lazyWithRetry`);
-    }
+  it('the redirect names the network origin from the one module that owns it', () => {
+    const moved = read('src/pages/BuilderPortalMoved.tsx');
+    expect(moved).toContain("from \"@/lib/builderNetworkOrigin\"");
+    expect(moved).toContain('window.location.replace(destination)');
+    const origin = read('src/lib/builderNetworkOrigin.ts');
+    expect(origin).toContain('https://builders.aurixasystems.com.au');
+    // ?from= carries which workspace sent the visitor — the hostname, which
+    // is the workspace's public name; nothing else travels.
+    expect(origin).toContain('?from=${encodeURIComponent(from)}');
   });
 
   it('the notice says nothing about permissions', () => {

@@ -562,10 +562,32 @@ yet): `builder_stock_selections` (1 row) stays in the clone per §3 E3 but still
 seven FKs into builder tables — Phase 7's drop list must exclude it and release those
 first. Reversal valid only until Phase 7 — that window is a hard gate.
 
-**Phase 6 — turn `/builder/*` off in the clone.** 302 to the network with `?from=<slug>`.
-**Announce first** — the portal is in active use for stock testing; migrate the testers'
-accounts and stock before the redirect, not after. Remove portal functions from deploy and
-from `typecheck:builder-edge`; admin functions stay read-only one more phase.
+**Phase 6 — turn `/builder/*` off in the clone.** ✅ Executed. Every `/builder` path
+resolves to one redirect (`BuilderPortalMoved`, the SPA's 302: `location.replace` onto the
+network origin named once in `src/lib/builderNetworkOrigin.ts`) carrying `?from=<hostname>`
+— the hostname rather than the MC slug, because the slug has never been published into a
+clone's bundle and the hostname is the workspace's public name, resolvable by MC. The
+announce-first precondition was met in order: accounts and stock migrated in Phase 4, the
+three owners emailed before the redirect merged. The sixteen portal-session functions are
+retired from deploy (filtered out of every list branch of the workflow, explicit dispatch
+requests included — bringing one back is a reviewed edit, not a form field) and from
+`typecheck:builder-edge`; they stay in the repository and in `config.toml` until Phase 7
+deletes them, and their live deployments keep answering session cookies until then — which
+is why the admin plane's freeze exempts CONTAINMENT. The eight `builder-*-admin` functions
+are read-only by server-side refusal now (`_shared/builderPortal/adminFreeze.ts`, one rule
+classified by each function's own `READ_OPERATIONS`, drift-guarded by
+`src/lib/security/builderAdminFreeze.spec.ts`): record mutations answer 403 naming the
+network, reads stay, and suspension / membership revocation / session revocation survive
+because removing a ceremony must never remove a control. The E4 in-portal Passport door is
+closed structurally (`portalHandoff` → `portal_moved` for the builder surface, checked
+before enrolment and the flag) until E4's network → clone server-side call ships; the
+emailed `/passport/<token>` link — portal-independent — remains the builder partner's way
+in, and at execution exactly one live grant (one builder partner organisation) read
+through the portal. Portal pages are unrouted, never deleted — Phase 7 removes the files.
+The non-CI static suite `tests/builder-portal/` still documents the PRE-move portal (63
+failing assertions after the cut, 44 of them pre-existing; every added one pins the old
+route tree) — it is the record of a surface that left, and it retires at Phase 7 beside
+`security:builder-portal` and the schema, never gets “fixed” to describe the redirect.
 
 **Phase 7 — delete from the prime.** One-way; soak first.
 - Delete the 59 builder migration files. Before deleting, check each against

@@ -31,6 +31,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { createCorsHeaders, createForbiddenResponse, verifyAuth } from '../_shared/auth.ts';
 import { requireModulePermission, type ModulePerm } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { builderAdminFreezeRefusal } from '../_shared/builderPortal/adminFreeze.ts';
 import {
   BUILDER_TRANSACTION_COMMAND_CENTRE_SELECT,
   BUILDER_TRANSACTION_PARTY_SELECT,
@@ -85,6 +86,13 @@ Deno.serve(async (req) => {
     }
 
     // 2. Module permission, deny by default.
+    // Phase 6 (extraction plan §7): the builder records are a frozen
+    // archive — record mutations are refused server-side, reads and the
+    // containment acts stay. Rule and wording live in
+    // _shared/builderPortal/adminFreeze.ts.
+    const frozen = builderAdminFreezeRefusal(operation, READ_OPERATIONS.has(operation));
+    if (frozen) return json(frozen, 403, cors);
+
     const authz = await requireModulePermission(
       supabase, { userId: auth.userId, authMethod: auth.authMethod },
       MODULE_KEY, requiredPermFor(operation),

@@ -83,8 +83,28 @@ jobs:
           REQUESTED: ${{ inputs.functions }}
         run: |
           set -euo pipefail
+
+          # ── Phase 6 (extraction plan §7): the Builder Portal moved to the
+          # Builders Network, so the sixteen portal-session functions are
+          # RETIRED from deploy. They stay in the repository and in
+          # config.toml until Phase 7 deletes them, but nothing ships them
+          # again — not a source edit, not the shared-code full deploy, and
+          # not an explicit dispatch request (bringing one back is a reviewed
+          # edit to this list, not a form field). The admin family, the
+          # pipeline workers, the marketplace read and the network sync door
+          # all still deploy.
+          RETIRED='builder-portal-login builder-portal-logout builder-portal-verify builder-portal-accept-invite builder-portal-forgot-password builder-portal-reset-password builder-portal-change-password builder-portal-invite builder-portal-projects builder-portal-inventory builder-portal-transactions builder-portal-construction builder-portal-delivery builder-portal-collaboration builder-portal-workspace builder-portal-stock'
+          drop_retired() {
+            tr ' ' '\n' | sed '/^$/d' | while read -r fn; do
+              case " $RETIRED " in
+                *" $fn "*) echo "retired, not deploying: $fn" >&2 ;;
+                *) echo "$fn" ;;
+              esac
+            done | sort -u | tr '\n' ' '
+          }
+
           if [ -n "${REQUESTED:-}" ]; then
-            echo "list=${REQUESTED}" >> "$GITHUB_OUTPUT"
+            echo "list=$(printf '%s' "${REQUESTED}" | drop_retired)" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -161,7 +181,7 @@ jobs:
             list=$(printf '%s %s' "$list" "$config_changed" | tr ' ' '\n' \
               | sed '/^$/d' | sort -u | tr '\n' ' ')
           fi
-          echo "list=${list}" >> "$GITHUB_OUTPUT"
+          echo "list=$(printf '%s' "${list}" | drop_retired)" >> "$GITHUB_OUTPUT"
 
       # The `secrets` context is not dependable inside a step-level `if`, so the
       # presence of the token becomes an ordinary output first.

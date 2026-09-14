@@ -203,37 +203,13 @@ const SolicitorOnboarding = lazyWithRetry(() => import("@/pages/solicitor/Solici
 const SolicitorSecurity = lazyWithRetry(() => import("@/pages/solicitor/SolicitorSecurity"));
 const SolicitorSettings = lazyWithRetry(() => import("@/pages/solicitor/SolicitorSettings"));
 const SolicitorWorkspacePage = lazyWithRetry(() => import("@/pages/solicitor/SolicitorWorkspacePage"));
-import { BuilderPortalAuthProvider } from "@/hooks/useBuilderPortalAuth";
-import { BuilderPortalProtectedRoute } from "@/components/builder-portal/BuilderPortalProtectedRoute";
-import { BuilderPortalLayout } from "@/components/builder-portal/BuilderPortalLayout";
-const BuilderLogin = lazyWithRetry(() => import("@/pages/builder/BuilderLogin"));
-const BuilderAcceptInvite = lazyWithRetry(() => import("@/pages/builder/BuilderAcceptInvite"));
-const BuilderForgotPassword = lazyWithRetry(() => import("@/pages/builder/BuilderForgotPassword"));
-const BuilderResetPassword = lazyWithRetry(() => import("@/pages/builder/BuilderResetPassword"));
-const BuilderChangePassword = lazyWithRetry(() => import("@/pages/builder/BuilderChangePassword"));
-const BuilderSelectOrganisation = lazyWithRetry(() => import("@/pages/builder/BuilderSelectOrganisation"));
-const BuilderTerms = lazyWithRetry(() => import("@/pages/builder/BuilderTerms"));
-const BuilderOnboarding = lazyWithRetry(() => import("@/pages/builder/BuilderOnboarding"));
-const BuilderDashboard = lazyWithRetry(() => import("@/pages/builder/BuilderDashboard"));
-const BuilderCompliance = lazyWithRetry(() => import("@/pages/builder/BuilderCompliance"));
-const BuilderSettings = lazyWithRetry(() => import("@/pages/builder/BuilderSettings"));
-const BuilderProjects = lazyWithRetry(() => import("@/pages/builder/BuilderProjects"));
-const BuilderProjectDetail = lazyWithRetry(() => import("@/pages/builder/BuilderProjectDetail"));
-const BuilderInventory = lazyWithRetry(() => import("@/pages/builder/BuilderInventory"));
-const BuilderUnitDetail = lazyWithRetry(() => import("@/pages/builder/BuilderUnitDetail"));
-const BuilderStockList = lazyWithRetry(() => import("@/pages/builder/BuilderStockList"));
-const BuilderTransactions = lazyWithRetry(() => import("@/pages/builder/BuilderTransactions"));
-const BuilderTransactionDetail = lazyWithRetry(() => import("@/pages/builder/BuilderTransactionDetail"));
-const BuilderPipeline = lazyWithRetry(() => import("@/pages/builder/BuilderPipeline"));
-const BuilderConstruction = lazyWithRetry(() => import("@/pages/builder/BuilderConstruction"));
-const BuilderConstructionDetail = lazyWithRetry(() => import("@/pages/builder/BuilderConstructionDetail"));
-const BuilderDeliveryDetail = lazyWithRetry(() => import("@/pages/builder/BuilderDeliveryDetail"));
-const BuilderDocuments = lazyWithRetry(() => import("@/pages/builder/BuilderDocuments"));
-const BuilderMessages = lazyWithRetry(() => import("@/pages/builder/BuilderMessages"));
-const BuilderTasks = lazyWithRetry(() => import("@/pages/builder/BuilderTasks"));
-const BuilderNotifications = lazyWithRetry(() => import("@/pages/builder/BuilderNotifications"));
-const BuilderActivity = lazyWithRetry(() => import("@/pages/builder/BuilderActivity"));
-const BuilderSectionWithdrawn = lazyWithRetry(() => import("@/pages/builder/BuilderSectionWithdrawn"));
+/*
+ * The Builder / Developer Portal LEFT this deployment for the central
+ * Builders Network (extraction plan §7 Phase 6). Every `/builder/*` path
+ * resolves to the redirect below; the portal pages under `src/pages/builder/`
+ * stay in the repository until Phase 7 deletes them, but nothing routes them.
+ */
+const BuilderPortalMoved = lazyWithRetry(() => import("@/pages/BuilderPortalMoved"));
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
 const FinancePortalLogin = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalLogin"));
@@ -577,72 +553,19 @@ const App = () => (
                         } />
 
                         {/*
-                          Builder / Developer Portal Routes - single provider wrapping all
-                          /builder/*. Placed as a SIBLING of the internal Command Centre tree,
-                          matching the Solicitor Portal: it is never wrapped in ProtectedRoute or
-                          DashboardLayout, so the Builder Portal is an external portal and not an
-                          internal dashboard page.
+                          Builder / Developer Portal — MOVED (plan §7 Phase 6).
+
+                          The portal is served centrally at the Builders
+                          Network now; every path under /builder, bookmarks
+                          and deep links included, resolves to one element
+                          that replaces the location with the network origin,
+                          `?from=` naming this workspace. One route, not a
+                          per-page map: the clone no longer knows the
+                          portal's inner geography. The old subtree (auth
+                          provider, layout, withdrawn-section notices) is
+                          unrouted, not deleted — Phase 7 removes the files.
                         */}
-                        <Route path="/builder/*" element={
-                          <BuilderPortalAuthProvider>
-                            <Routes>
-                              <Route path="login" element={<BuilderLogin />} />
-                              <Route path="accept-invite" element={<BuilderAcceptInvite />} />
-                              <Route path="forgot-password" element={<BuilderForgotPassword />} />
-                              <Route path="reset-password" element={<BuilderResetPassword />} />
-                              <Route element={<BuilderPortalProtectedRoute />}>
-                                {/* Gate destinations render outside the portal chrome. */}
-                                <Route path="change-password" element={<BuilderChangePassword />} />
-                                <Route path="select-organisation" element={<BuilderSelectOrganisation />} />
-                                <Route path="terms" element={<BuilderTerms />} />
-                                <Route path="onboarding" element={<BuilderOnboarding />} />
-                                <Route element={<BuilderPortalLayout />}>
-                                  <Route index element={<BuilderDashboard />} />
-                                  <Route path="dashboard" element={<BuilderDashboard />} />
-                                  <Route path="projects" element={<BuilderProjects />} />
-                                  <Route path="projects/:projectId" element={<BuilderProjectDetail />} />
-                                  {/*
-                                    WITHDRAWN SECTIONS — declared, not deleted.
-
-                                    Inventory, Transactions, Pipeline,
-                                    Construction and Documents are not offered
-                                    in this portal. The set is named once in
-                                    `builderHiddenSections.pure.ts`; these
-                                    paths stay DECLARED so a bookmark or an old
-                                    link still resolves, inside the portal
-                                    chrome, to a notice that says the section
-                                    is not part of it — a route that stops
-                                    existing falls through to the catch-all and
-                                    lands on the dashboard with no explanation,
-                                    which reads as a broken link.
-
-                                    The page components are untouched and still
-                                    imported; swapping the element back is what
-                                    re-offers a section.
-                                  */}
-                                  <Route path="inventory" element={<BuilderSectionWithdrawn />} />
-                                  <Route path="inventory/:unitId" element={<BuilderSectionWithdrawn />} />
-                                  <Route path="stock" element={<BuilderStockList />} />
-                                  <Route path="transactions" element={<BuilderSectionWithdrawn />} />
-                                  <Route path="transactions/:transactionId" element={<BuilderSectionWithdrawn />} />
-                                  <Route path="pipeline" element={<BuilderSectionWithdrawn />} />
-                                  <Route path="construction" element={<BuilderSectionWithdrawn />} />
-                                  <Route path="construction/:constructionCaseId" element={<BuilderSectionWithdrawn />} />
-                                  <Route path="construction/:constructionCaseId/delivery" element={<BuilderSectionWithdrawn />} />
-                                  <Route path="documents" element={<BuilderSectionWithdrawn />} />
-                                  <Route path="messages" element={<BuilderMessages />} />
-                                  <Route path="tasks" element={<BuilderTasks />} />
-                                  <Route path="notifications" element={<BuilderNotifications />} />
-                                  <Route path="activity" element={<BuilderActivity />} />
-                                  <Route path="compliance" element={<BuilderCompliance />} />
-                                  <Route path="settings" element={<BuilderSettings />} />
-                                </Route>
-                              </Route>
-                              {/* Anything else under /builder returns to the portal entry. */}
-                              <Route path="*" element={<Navigate to="/builder" replace />} />
-                            </Routes>
-                          </BuilderPortalAuthProvider>
-                        } />
+                        <Route path="/builder/*" element={<BuilderPortalMoved />} />
 
                         {/* Internal Dashboard Routes */}
                         <Route path="/auth" element={<Auth />} />
