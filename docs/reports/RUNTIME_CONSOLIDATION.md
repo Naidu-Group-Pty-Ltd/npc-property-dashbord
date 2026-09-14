@@ -638,3 +638,46 @@ scans the source: every ask in a delivery module names the final renderer,
 and nothing outside a delivery module names it. `snapshotBlob` now returns
 the render's `storagePath` beside the bytes, for the portal publish to point
 at (RS-5c.3).
+
+### RS-5c.2 — Cash Flow "Send to Client" ships the final document
+
+The Cash Flow analysis had two documents behind two controls. "Generate PDF"
+asked the chosen template (final renderer) and then the format's own
+WeasyPrint route; "Send to Client" ran the in-browser jsPDF generator with
+three chart switches of its own and uploaded THAT to
+`investment-reports/cashflow-analysis/…`. So the file a client opened in the
+portal was never the document the adviser had generated and reviewed — and it
+was a jsPDF (no embedded fonts, no text on filled panels) while the download
+was typeset.
+
+One producer now, both exits (`produceFinalCashFlowDocument` in
+`CashFlowAnalysisModal`). `describeReviewedProjection` names what the document
+is drawn from — the ten years on screen with unsaved overrides, the stored
+scenario those years prove, and the template choice read ONCE — and folds them
+into a key (`cashFlowFinalKey`, `src/lib/reports/cashFlow/finalDocumentKey.ts`;
+a plain module rather than a `.pure.ts`, because the source-of-truth spec
+reserves that suffix for bridges onto `_shared`). Generate saves the document
+and remembers where the renderer stored it under that key; Send points the
+portal at that object while the key still matches, or produces the document
+once and points at it. `render-cash-flow-pdf` answers `path` beside the signed
+URL now (as do `render-borrowing-capacity-pdf` and
+`render-portfolio-review-pdf`, for RS-5c.3), and the client result types carry
+it as `storagePath`, null for the legacy generator. The portal resolver already
+tries `client-files` and then `investment-reports`, so a route render and a
+templated final are both reachable without a copy.
+
+Three rules. **A moved override is a different document** — the key changes on
+any cell of any year, on the scenario label and on the template choice, so a
+send never ships a document the screen has since left behind
+(`finalDocumentKey.spec.ts`). **Nothing is uploaded that the renderer already
+stored**: the send's upload survives only for the deployment-gap fallback (the
+route absent, jsPDF drawing) and keeps the `resourceId` binding that fixed
+audit item 14. **A switch the document cannot honour is removed, never left
+dead** — the send dialog's chart toggles reached only jsPDF, so they went
+(`CashFlowChartOptions` deleted); the export menu's own chart switches still
+govern the legacy download, which stays a named choice. The note "your chosen
+template was not used: a template prints the saved projection instead" went
+too: it described the world before the payload channel and had become untrue,
+and `tryTemplateDocument` already says so itself, naming the gate, whenever a
+selection is not honoured. `sendShipsFinalDocument.spec.ts` pins all of it at
+the source, because the modal is 6,000 lines of React no unit harness mounts.
