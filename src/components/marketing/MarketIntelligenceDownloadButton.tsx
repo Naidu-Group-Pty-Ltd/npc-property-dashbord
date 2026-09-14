@@ -92,6 +92,12 @@ export function MarketIntelligenceDownloadButton({
       if (delivered.dropped.length) notes.push(`not shown: ${delivered.dropped.join(', ')}`);
       if (delivered.brandGaps.length) notes.push(`brand gaps: ${delivered.brandGaps.join(', ')}`);
       if (delivered.persisted) notes.push('saved for the scheduled email');
+      // Said at the moment it happens, like every other fall-through in the
+      // programme: the person asked for the stored copy and got their chosen
+      // template instead, and the email attaches the standard layout (RS-5c.4).
+      else if (delivered.templated && delivered.persistRequested) {
+        notes.push('drawn from your chosen template; not saved for the scheduled email, which attaches the standard layout');
+      }
 
       toast.success('Report ready', {
         id: toastId,

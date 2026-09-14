@@ -722,3 +722,42 @@ not told will copy. **One object per finalisation**: the path the ledger
 carries is the path the portal serves, so a `*_renders` row and a
 `client_portal_reports` row describe the same file. And **a copy survives
 only for what nothing stored**, said in the outcome rather than assumed.
+
+### RS-5c.4 — Market Intelligence honours a chosen template on every call
+
+`deliverMarketIntelligencePdf` entered the template path only for
+`persist: false`, to protect `pdf_storage_path` — the column
+`dispatch-marketing-reports` attaches to a scheduled email, which the template
+route does not write. But `MarketIntelligenceDownloadButton` defaults
+`persist` ON. So on the one control that produces this document a chosen
+template was never drawn, silently, while the picker inside the same popover
+said the choice was kept.
+
+Measured on production before deciding how far to go (14 Sep 2026): 8
+market intelligence reports, none with a stored PDF, no
+`market_intelligence_renders` row ever, no `marketing_report_schedules` row
+ever, no dispatch ever logged; and of 60 succeeded `final` render jobs in
+`template_render_jobs`, none yet carries the `report_id` RS-2 started writing.
+Nothing downstream is fed by the column today. So the template is drawn for
+every call, and the stored copy is SAID rather than substituted: a templated
+document is stored by `render-template-pdf` (`templatePath`), the column is
+left untouched, `persisted` is false, and when the person had asked for the
+stored copy the button says "drawn from your chosen template; not saved for
+the scheduled email, which attaches the standard layout". The flowing route
+and its `persist` semantics are unchanged for a format with no template
+chosen, and the scheduled dispatch is untouched.
+
+The step deliberately not taken: making the dispatch attach the newest
+templated final for the report (read from `template_render_jobs` by
+`report_id`, compared by time against the flowing route's ledger row) would
+close the remaining gap — the emailed document and the downloaded one being
+the same — but it adds a second ledger read to a cron path that has never
+run, that the journey harness cannot drive, and that nobody has scheduled.
+It is the change to make the day a schedule exists, and it is a small one.
+
+Two rules. **A choice gated on a default is not a choice** — a knob whose
+default disables the person's selection has to be measured against how the
+control is actually pressed, not against what it protects. And **an
+untouched column is said, never implied**: `persisted` stays the column's
+fact, `persistRequested` carries what was asked, and the difference reaches
+the person at the moment it happens.

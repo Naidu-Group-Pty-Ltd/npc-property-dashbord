@@ -17,8 +17,11 @@
  *    they know, and a request with no `assessmentId` names no stored record.
  *  - Portfolio's `stored` variant is a request for one particular file, and
  *    `includeReview: false` asks for a document the adapter cannot make.
- *  - Market Intelligence's persisting call feeds a scheduled email through
- *    `pdf_storage_path`, which the template route does not write.
+ *  - Market Intelligence's `persist` used to gate the template, to protect
+ *    `pdf_storage_path` for the scheduled email — and the button defaults it
+ *    on, so the choice was inert on the control that matters. The template
+ *    is drawn for every call now and the untouched stored copy is SAID
+ *    (RS-5c.4); the column stays the flowing route's alone.
  *  - Commercial Capacity's `refreshAnalysis` is a request to re-run the model.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -281,12 +284,25 @@ describe('the exceptions, each a document somebody asked for by name', () => {
     expect(h.flowing).toEqual(['portfolio']);
   });
 
-  it('does not route the market intelligence call that feeds the scheduled email', async () => {
-    // `persist` writes `pdf_storage_path`, which `dispatch-marketing-reports`
-    // attaches. The template route does not write it, so the persisting call
-    // stays with the route that does.
+  it('routes the persisting market intelligence call too, and says the stored copy was not fed', async () => {
+    // The button defaults `persist` on, so gating the template on it left
+    // the choice inert on the one control that matters (RS-5c.4). The
+    // template is drawn; `pdf_storage_path` stays the flowing route's alone,
+    // and both facts are answered so the button can say them.
     const out = await deliverMarketIntelligencePdf('mi-1', { save: false });
-    expect(h.calls).toEqual([]);
+    expect(h.calls).toEqual([{ reportType: 'market_intelligence', reportId: 'mi-1', variant: null }]);
+    expect(h.flowing).toEqual([]);
+    expect(out.templated).toBe(true);
+    expect(out.persisted).toBe(false);
+    expect(out.persistRequested).toBe(true);
+    expect(out.storagePath).toBeNull();
+    expect(out.templatePath).toBe('template-builder/2026-09-14/abc-templated.pdf');
+  });
+
+  it('feeds the scheduled email through the flowing route when there is no template', async () => {
+    h.document = null;
+    const out = await deliverMarketIntelligencePdf('mi-1', { save: false });
+    expect(h.flowing).toEqual(['market_intelligence']);
     expect(out.persisted).toBe(true);
     expect(out.storagePath).toBe('marketing-reports/x.pdf');
   });
