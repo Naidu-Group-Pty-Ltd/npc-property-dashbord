@@ -1715,8 +1715,10 @@ prints a line twice or loses it; the same pre-pass writes the true page count
 over the projection's template-blind estimate before any conditional is
 read. And **a page is filled, never merely not overflowed**: a paragraph is
 cut at a sentence, a table meets the boundary and repeats its head, a figure
-floats past the prose to the next page, a three-line tail is folded back —
-each off unless asked for, so the legacy packer is byte-identical. Two more
+floats past the prose to the next page, a three-line tail is folded back, and a last page is never a stub (a cut
+that would leave one is made shorter, and a short last page draws whole
+blocks down from the page before it) — each off unless asked for, so the
+legacy packer is byte-identical. Two more
 from the same renders. **A dropped block leaves no hole**: the masters
 position every block absolutely at the `y` their flow assigned, so a register
 whose conditional is false left a third of a page white between a heading and

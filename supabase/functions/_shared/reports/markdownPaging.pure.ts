@@ -163,6 +163,23 @@ export interface PackOptions {
    * paper's edge with its tail lost — see `splitListBlock`.
    */
   splitLists?: (items: readonly { depth: number; text: string; chars?: number }[]) => number;
+  /**
+   * Keep the last page from being a stub. A final page carrying a few lines
+   * under a running foot is the one page a reader sees as unfinished, and
+   * the packer made it two ways: a boundary cut that filled the page before
+   * and left the remainder alone on the next (two bullets on a page 84%
+   * white, measured on the long reference report's Midnight render, RS-4),
+   * and a short run of blocks that missed the room by a line. So a cut that
+   * would leave less than `TAIL_MIN_FRACTION` of a page is made SHORTER —
+   * the first piece takes only what leaves the last page that much, and a
+   * list whose head would be a single item, or a paragraph with no honest
+   * cut left, opens the last page whole; and a short last page draws whole
+   * blocks down from the page before it until it holds that much — never a
+   * table (its chunks repeat their head) and never a piece cut from a larger
+   * block (it would sit beside its sibling as a gap in one list or one
+   * paragraph).
+   */
+  balanceTail?: boolean;
 }
 
 export const BOUNDARY_SPLIT_MIN_ROWS = 6;
@@ -186,6 +203,15 @@ function survivesTheCut(table: MarkdownTableMeta, remaining: number): boolean {
 }
 export const MAX_FLOATED = 2;
 export const TAIL_ABSORB_LINES = 3;
+/**
+ * The least a last page may hold, as a share of a continuation page — a fifth
+ * of a page reads as an ending, two bullets read as a page left unfinished.
+ */
+export const TAIL_MIN_FRACTION = 0.2;
+export const tailMinLines = (contBudget: number): number =>
+  Math.max(TAIL_ABSORB_LINES + 1, Math.round(contBudget * TAIL_MIN_FRACTION));
+
+const leadsIn = (b: MarkdownBlock): boolean => b.kind === 'paragraph' && /[:：]\s*<\/p>\s*$/.test(b.html);
 
 const sumLines = (blocks: readonly MarkdownBlock[]): number => blocks.reduce((n, b) => n + b.lines, 0);
 
@@ -211,6 +237,38 @@ export function packMarkdownPages(
 
   const budgetFor = (pageIndex: number) => (pageIndex === 0 ? firstBudget : contBudget);
 
+  // What is left to set from each block on, and the least a last page may hold.
+  const restFrom: number[] = new Array(blocks.length + 1).fill(0);
+  for (let i = blocks.length - 1; i >= 0; i -= 1) restFrom[i] = restFrom[i + 1] + blocks[i].lines;
+  const tailMin = tailMinLines(contBudget);
+  /** Pieces cut from a larger block; never moved away from their siblings. */
+  const cut = new WeakSet<MarkdownBlock>();
+  const cutInto = (pieces: readonly MarkdownBlock[]): readonly MarkdownBlock[] => {
+    if (pieces.length > 1) for (const piece of pieces) cut.add(piece);
+    return pieces;
+  };
+  /**
+   * For a block (or a piece of the block at `index`, `own` lines of it) cut
+   * at a page boundary with its first piece holding `fitted` lines: the room
+   * the first piece may take instead, so that the last page holds at least
+   * `tailMin` — or null when the cut leaves no stub and may stand (a tail
+   * small enough to fold back is left to `absorbTail`). Judged on the cut
+   * actually made, because a cut lands on whole items and rows and the lines
+   * the room could not take are the stub's.
+   */
+  const stubRoom = (own: number, index: number, fitted: number): number | null => {
+    if (!options.balanceTail) return null;
+    const rest = own + restFrom[index + 1] + sumLines(floated);
+    const stub = rest - fitted;
+    if (rest > contBudget || stub <= TAIL_ABSORB_LINES || stub >= tailMin) return null;
+    return rest - tailMin;
+  };
+  const topItems = (b: MarkdownBlock): number => {
+    const items = b.list?.items ?? [];
+    const top = Math.min(...items.map((it) => it.depth));
+    return items.filter((it) => it.depth === top).length;
+  };
+
   const breakPage = () => {
     if (!current.length) return;
     let peeled: MarkdownBlock[] = [];
@@ -220,9 +278,7 @@ export function packMarkdownPages(
       // never the whole page.
       while (current.length > 1 && peeled.length < 2) {
         const last = current[current.length - 1];
-        const isHeading = last.kind === 'heading';
-        const isLeadIn = last.kind === 'paragraph' && /[:：]\s*<\/p>\s*$/.test(last.html);
-        if (!isHeading && !isLeadIn) break;
+        if (last.kind !== 'heading' && !leadsIn(last)) break;
         peeled.unshift(current.pop()!);
       }
     }
@@ -233,7 +289,8 @@ export function packMarkdownPages(
     used = sumLines(current);
   };
 
-  for (const block of blocks) {
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
     const budget = budgetFor(pages.length);
     let pieces: readonly MarkdownBlock[] = [block];
     // A chunked block is cut for the room it will land in. The first chunk is
@@ -253,7 +310,7 @@ export function packMarkdownPages(
       const room = current.length && remaining >= BOUNDARY_SPLIT_MIN_LINES ? remaining : contBudget;
       const cutList = (first: number) => splitListBlock(block, first, contBudget, options.splitLists!);
       if (block.lines > budget) {
-        pieces = landed(cutList, room, remaining);
+        pieces = cutInto(landed(cutList, room, remaining));
       } else if (
         options.splitAtBoundary && current.length && block.lines > remaining
         && remaining >= BOUNDARY_SPLIT_MIN_LINES
@@ -261,7 +318,16 @@ export function packMarkdownPages(
         // pushed whole left half a page white on the long report (RS-4).
         && (block.list.items.length >= BOUNDARY_SPLIT_MIN_ROWS || block.lines >= BOUNDARY_SPLIT_TALL_LINES)
       ) {
-        pieces = landed(cutList, remaining, remaining);
+        let at = landed(cutList, remaining, remaining);
+        const room = stubRoom(block.lines, index, at[0].lines);
+        // A cut that would leave a stub is made shorter, so the last page
+        // holds an ending; a head of one item is not a head, so the list
+        // opens the last page whole instead.
+        if (room !== null) {
+          at = room > 0 ? landed(cutList, Math.min(remaining, room), remaining) : [block];
+          if (at.length > 1 && topItems(at[0]) < 2) at = [block];
+        }
+        pieces = cutInto(at);
       }
     }
     if (block.kind === 'table' && block.table) {
@@ -272,12 +338,15 @@ export function packMarkdownPages(
         // worth using (head + a few rows); otherwise every chunk is page-sized
         // and the pack loop opens a fresh page for the first one naturally.
         const firstChunk = current.length && remaining >= BOUNDARY_SPLIT_MIN_LINES ? remaining : contBudget;
-        pieces = landed(cutTable, firstChunk, remaining);
+        pieces = cutInto(landed(cutTable, firstChunk, remaining));
       } else if (
         options.splitAtBoundary && current.length && block.lines > remaining
         && remaining >= BOUNDARY_SPLIT_MIN_LINES && survivesTheCut(block.table, remaining)
       ) {
-        pieces = landed(cutTable, remaining, remaining);
+        let at = landed(cutTable, remaining, remaining);
+        const room = stubRoom(block.lines, index, at[0].lines);
+        if (room !== null) at = room > 0 ? landed(cutTable, Math.min(remaining, room), remaining) : [block];
+        pieces = cutInto(at);
       }
     }
 
@@ -293,10 +362,16 @@ export function packMarkdownPages(
         }
         if (options.splitParagraphs && piece.kind === 'paragraph'
           && remaining >= PARAGRAPH_SPLIT_MIN_ROOM && piece.lines >= PARAGRAPH_SPLIT_MIN_LINES) {
-          const parts = splitParagraphBlock(piece, remaining, options.splitParagraphs);
+          let parts = splitParagraphBlock(piece, remaining, options.splitParagraphs);
+          const room = parts.length === 2 ? stubRoom(piece.lines, index, parts[0].lines) : null;
+          // A cut that would leave a stub is made shorter; with too little
+          // room for an honest cut the paragraph opens the last page whole.
+          if (room !== null) {
+            parts = room >= PARAGRAPH_SPLIT_MIN_ROOM ? splitParagraphBlock(piece, Math.min(remaining, room), options.splitParagraphs) : [piece];
+          }
           // The head fits the room by construction; the tail comes round again
           // and opens the next page.
-          if (parts.length === 2) { queue.unshift(...parts); continue; }
+          if (parts.length === 2) { queue.unshift(...cutInto(parts)); continue; }
         }
         breakPage();
       } else if (floated.length && piece.kind === 'heading' && current.length) {
@@ -316,6 +391,28 @@ export function packMarkdownPages(
   if (options.absorbTail && pages.length > 1 && sumLines(pages[pages.length - 1]) <= TAIL_ABSORB_LINES) {
     const tail = pages.pop()!;
     pages[pages.length - 1].push(...tail);
+  }
+  if (options.balanceTail && pages.length > 1 && sumLines(pages[pages.length - 1]) < tailMin) {
+    const last = pages[pages.length - 1];
+    const prev = pages[pages.length - 2];
+    const prevBudget = budgetFor(pages.length - 2);
+    // Whole blocks come down until the last page holds enough — never a table
+    // (its chunks each repeat the head), never a piece cut from a larger block
+    // (it would sit beside its sibling as a gap), and never so many that the
+    // page before is left emptier than the stub it avoids: a short last page
+    // is an ending, a short penultimate page is a mistake.
+    while (prev.length > 1 && sumLines(last) < tailMin) {
+      const foot = prev[prev.length - 1];
+      if (foot.kind === 'table' || cut.has(foot)) break;
+      if (sumLines(last) + foot.lines > contBudget || sumLines(prev) - foot.lines < prevBudget / 2) break;
+      last.unshift(prev.pop()!);
+    }
+    // What came down is not left under a heading or a lead-in with nothing after it.
+    while (options.keepWithNext && prev.length > 1) {
+      const foot = prev[prev.length - 1];
+      if ((foot.kind !== 'heading' && !leadsIn(foot)) || sumLines(last) + foot.lines > contBudget) break;
+      last.unshift(prev.pop()!);
+    }
   }
   return pages;
 }
@@ -364,6 +461,7 @@ export function packNarrativeGeometry(
     splitAtBoundary: true,
     floatFigures: true,
     absorbTail: true,
+    balanceTail: true,
     splitParagraphs: (chars) => paragraphCharge(geometry, chars),
     splitLists: (items) => listCharge(geometry, items.map((it) => ({ chars: it.chars ?? it.text.length, depth: it.depth }))),
   });

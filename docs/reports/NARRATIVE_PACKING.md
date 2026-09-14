@@ -232,6 +232,39 @@ set in whichever of the ink and the ground reads against its cell — on a
 structure whose accent is its ink, a full cell is as dark as the figure
 printed on it, and six "1"s read as illegible.
 
+## 4e. The last page is never a stub
+
+Measured on the long reference report's Midnight render after §4–§4d
+(RS-4, 14 Sep 2026): the narrative's final page carried two bullets under
+the running foot, 84% of its body white, because a seven-item list met the
+boundary of the page before it with sixteen lines of room, was cut where the
+room ran out — five items on that page, two on the next — and nothing
+followed. `absorbTail` folds a tail of three lines back; this one was five
+and a half. A last page that thin is the one page a reader sees as
+unfinished, and the packer made it two ways: a boundary cut that filled the
+page before and left the remainder alone, and a short run of blocks that
+missed the room by a line.
+
+`balanceTail` (on for every geometry-packed run, off for the legacy packer)
+answers both. **A cut that would leave a stub is made shorter**: the first
+piece takes only what leaves the last page a fifth of a page
+(`TAIL_MIN_FRACTION`), so the page before still fills and the ending holds
+three bullets rather than two and a void — judged on the cut actually made,
+because a cut lands on whole items and rows and the lines the room could
+not take are the stub's. A list whose head would be a single item, or a
+paragraph with too little room for an honest cut, opens the last page
+whole instead. The first attempt refused the cut altogether and set the
+whole list on the last page, which put a heading and its callout at the top
+of one half-empty page and the list they introduce at the top of the next —
+two pages a reader sees as accidents in place of one. **A short last page
+draws whole blocks down** from the page before it until it holds that
+much: never a table, whose chunks each repeat their head; never a piece the
+packer cut from a larger block, which would sit beside its sibling as a gap
+inside one list or one paragraph; never so many that the page before is
+left emptier than the stub it avoids, because a short last page is an
+ending and a short penultimate page is a mistake; and whatever comes down
+brings its heading or lead-in with it.
+
 ## 5. What the projection still owns
 
 `projectReportNarrative` is unchanged: it publishes the source and a

@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  BOUNDARY_SPLIT_MIN_ROWS, BOUNDARY_SPLIT_TALL_LINES, MAX_FLOATED, TAIL_ABSORB_LINES, packMarkdownPages, packNarrativeGeometry,
+  BOUNDARY_SPLIT_MIN_ROWS, BOUNDARY_SPLIT_TALL_LINES, MAX_FLOATED, TAIL_ABSORB_LINES, packMarkdownPages, packNarrativeGeometry, tailMinLines,
 } from '../../../../supabase/functions/_shared/reports/markdownPaging.pure';
 import type { MarkdownBlock, MarkdownTableMeta } from '../../../../supabase/functions/_shared/reports/markdown.pure';
 import type { NarrativeGeometry } from '../../../../supabase/functions/_shared/reports/narrativeGeometry.pure';
@@ -240,6 +240,103 @@ describe('a list taller than the room it has is split by top-level item', () => 
   it('is off unless asked for', () => {
     const pages = packMarkdownPages([list(30)], 40);
     expect(pages).toHaveLength(1);
+  });
+});
+
+describe('the last page is never a stub', () => {
+  const listCharge = (items: readonly { depth: number; text: string }[]) => items.length * 3;
+  const list = (n: number, id = 'list'): MarkdownBlock => {
+    const items = Array.from({ length: n }, (_, i) => ({ depth: 0, text: `${id} ${i + 1}` }));
+    return { kind: 'list', html: `<ul>${id}</ul>`, lines: listCharge(items), list: { items, ordered: false, start: 1 } };
+  };
+  const byText = (its: readonly { depth: number; text: string }[]) => its.reduce((n, it) => n + it.text.length, 0);
+  const uneven = (lines: number[], id = 'uneven'): MarkdownBlock => {
+    const items = lines.map((n) => ({ depth: 0, text: 'x'.repeat(n) }));
+    return { kind: 'list', html: `<ul>${id}</ul>`, lines: byText(items), list: { items, ordered: false, start: 1 } };
+  };
+
+  it('a boundary cut that would leave a stub is made shorter, so the last page holds an ending', () => {
+    // Long report, Midnight (RS-4): a seven-item list met the boundary with
+    // sixteen lines of room; the cut left two bullets alone on a page 84% white.
+    const stub = packMarkdownPages([para(24, 'a'), list(7)], 40, { splitAtBoundary: true, splitLists: listCharge });
+    expect(stub).toHaveLength(2);
+    expect(lines(stub[1])).toBeLessThan(tailMinLines(40));
+    const ending = packMarkdownPages([para(24, 'a'), list(7)], 40, { splitAtBoundary: true, splitLists: listCharge, balanceTail: true });
+    expect(ending).toHaveLength(2);
+    expect(ending[0][1].list!.items).toHaveLength(4);
+    expect(ending[1][0].list!.items).toHaveLength(3);
+    expect(lines(ending[1])).toBeGreaterThanOrEqual(tailMinLines(40));
+  });
+
+  it('judges the stub on the cut that is made, not on the room — a cut lands on whole items', () => {
+    // Twenty lines of room for a 23-line list: three lines short on paper,
+    // but the cut lands on whole items and leaves five behind.
+    const cut = packMarkdownPages([para(20, 'a'), uneven([6, 6, 6, 5])], 40, { splitAtBoundary: true, splitLists: byText });
+    expect(lines(cut[1])).toBe(5);
+    const ending = packMarkdownPages([para(20, 'a'), uneven([6, 6, 6, 5])], 40, { splitAtBoundary: true, splitLists: byText, balanceTail: true });
+    expect(ending[0][1].list!.items).toHaveLength(2);
+    expect(lines(ending[1])).toBe(11);
+  });
+
+  it('a head of one item is not a head — the list opens the last page whole', () => {
+    const pages = packMarkdownPages([para(24, 'a'), uneven([7, 7, 7], 'tall')], 40, { splitAtBoundary: true, splitLists: byText, balanceTail: true });
+    expect(ids(pages[0])).toEqual(['a']);
+    expect(ids(pages[1])).toEqual(['tall']);
+  });
+
+  it('a paragraph is cut shorter for the same reason, or pushed whole when no honest cut is left', () => {
+    const charge = (chars: number) => Math.max(1, Math.ceil(chars / 50)) + 0.4;
+    const sentences = (n: number) => Array.from({ length: n }, (_, i) => `Sentence number ${i + 1} runs on for a while to fill the measure.`);
+    const prose = (n: number): MarkdownBlock => ({ kind: 'paragraph', html: `<p>${sentences(n).join(' ')}</p>`, lines: charge(sentences(n).join(' ').length) });
+    // Fifteen lines of room: the cut leaves six and a half behind.
+    const stub = packMarkdownPages([para(25, 'a'), prose(16)], 40, { splitParagraphs: charge });
+    expect(lines(stub[1])).toBeLessThan(tailMinLines(40));
+    const ending = packMarkdownPages([para(25, 'a'), prose(16)], 40, { splitParagraphs: charge, balanceTail: true });
+    expect(ending[0]).toHaveLength(2);
+    expect(lines(ending[1])).toBeGreaterThanOrEqual(tailMinLines(40));
+    const joined = `${ending[0][1].html.slice(3, -4)} ${ending[1][0].html.slice(3, -4)}`;
+    expect(joined).toBe(sentences(16).join(' '));
+    // Six lines of room for ten: shorter than an honest cut, so it goes whole.
+    const cut = packMarkdownPages([para(34, 'a'), prose(8)], 40, { splitParagraphs: charge });
+    expect(cut[0]).toHaveLength(2);
+    const whole = packMarkdownPages([para(34, 'a'), prose(8)], 40, { splitParagraphs: charge, balanceTail: true });
+    expect(whole[0]).toHaveLength(1);
+    expect(whole[1][0].html).toBe(prose(8).html);
+  });
+
+  it('the page before gives up only what the ending needs', () => {
+    // Twenty-eight lines of room for an eleven-item list: the cut is one item
+    // shorter, and the page before stays four-fifths full.
+    const pages = packMarkdownPages([para(12, 'a'), list(11)], 40, { splitAtBoundary: true, splitLists: listCharge, balanceTail: true });
+    expect(pages).toHaveLength(2);
+    expect(pages[0][1].list!.items).toHaveLength(8);
+    expect(pages[1][0].list!.items).toHaveLength(3);
+    expect(lines(pages[1])).toBe(9);
+  });
+
+  it('a short last page draws whole blocks down, and a heading comes with what it introduced', () => {
+    const blocks = () => [para(30, 'a'), heading('h'), para(8, 'b'), para(5, 'tail')];
+    const stub = packMarkdownPages(blocks(), 40, { keepWithNext: true });
+    expect(ids(stub[1])).toEqual(['tail']);
+    const pages = packMarkdownPages(blocks(), 40, { keepWithNext: true, balanceTail: true });
+    expect(ids(pages[0])).toEqual(['a']);
+    expect(ids(pages[1])).toEqual(['h', 'b', 'tail']);
+  });
+
+  it('never moves a table, a cut piece, or more than the page before can spare', () => {
+    const tabled = packMarkdownPages([para(20, 'a'), table(10), para(5, 'tail')], 40, { balanceTail: true });
+    expect(tabled[0].map((b) => b.kind)).toEqual(['paragraph', 'table']);
+    expect(ids(tabled[1])).toEqual(['tail']);
+    const spare = packMarkdownPages([para(12, 'a'), para(26, 'b'), para(5, 'c')], 40, { balanceTail: true });
+    expect(ids(spare[0])).toEqual(['a', 'b']);
+    expect(ids(spare[1])).toEqual(['c']);
+  });
+
+  it('is off unless asked for, and on for every geometry-packed run', () => {
+    expect(tailMinLines(GEOMETRY.contLines)).toBe(8);
+    const geometry = packNarrativeGeometry([para(24, 'a'), heading('h'), para(6, 'b'), para(5, 'tail')], GEOMETRY);
+    expect(ids(geometry[0])).toEqual(['a']);
+    expect(ids(geometry[1])).toEqual(['h', 'b', 'tail']);
   });
 });
 
