@@ -548,8 +548,19 @@ constraints released by their measured production names behind a per-edge orphan
 columns kept as opaque remote references (Phase 4 preserved organisation ids, so the AML
 partner links and consent records keep naming the same entities); every check and drop
 `to_regclass`-guarded so a clone provisioned after Phase 7 — where the builder tables never
-exist — replays it as a clean no-op. Reversal valid only until Phase 7 — that window is a
-hard gate.
+exist — replays it as a clean no-op. The same file carries the §3 E1 re-point in the
+original's ship-together discipline: `builder_network_transactions` created (PK IS the
+network's transaction id; connection set-once; service-role-only RLS),
+`transaction_case_links.builder_transaction_id` re-FK'd onto it `ON DELETE SET NULL`
+behind its own zero-orphan gate, and the guard's fourth branch reads the mirror with
+`NOT FOUND → BUILDER_TRANSACTION_NOT_MIRRORED` while `CROSS_CLIENT_CASE_LINK` stays
+byte-identical — without this half, the first post-cutover link would be refused against
+yesterday's copy and Phase 7 would leave the trigger reading a dropped relation. Verified
+by execution: `builder:db:verify:transactions` 113/113 on a live PostgreSQL, second apply
+included. Deferred BY NAME to Phase 6/7 (it needs the stock mirror, which does not exist
+yet): `builder_stock_selections` (1 row) stays in the clone per §3 E3 but still carries
+seven FKs into builder tables — Phase 7's drop list must exclude it and release those
+first. Reversal valid only until Phase 7 — that window is a hard gate.
 
 **Phase 6 — turn `/builder/*` off in the clone.** 302 to the network with `?from=<slug>`.
 **Announce first** — the portal is in active use for stock testing; migrate the testers'
