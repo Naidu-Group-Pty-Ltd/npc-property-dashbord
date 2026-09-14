@@ -432,3 +432,156 @@ with the pinned engine locally: on reports A, B and C (14 Sep 2026) each
 finalisation made exactly one render call in `final` mode naming the report,
 Send made none, the portal row's `storage_path` equalled the render's path, and
 the edit written in the same journey appeared in the final PDF.
+
+## §8 — RS-5a (14 Sep 2026): a placeholder never reaches a client document
+
+The owner's rule, verbatim: *"N/A or unavailable — this never should be
+included in reports."* Measured on production the same day, before any change:
+
+| stored reports | rows | carrying a table row whose first value cell is a placeholder | carrying "N/A", "not available" or "unavailable" anywhere |
+| --- | ---: | ---: | ---: |
+| Executive Briefing | 23 | **21** | 22 |
+| Snapshot | 26 | 3 | 3 |
+| Compass | 1,122 | **268** | 876 |
+| Financial / Due Diligence | 11 / 11 | 2 / 2 | 1 / 1 |
+
+Every Briefing produced in the preceding 120 days (seven rows) carries 36 to 97
+"N/A" cells; the newest Snapshot (4 Sep 2026, row `8c6edc56`) carries 19,
+including `Grade: N/A` and `Score: N/A/100` on a record whose own row holds
+score 62 and grade B. All of them predate the write-path scrub
+(`stripPlaceholderRows`, 4 Sep 2026 07:39Z; the newest Briefing was written at
+03:59Z the same morning), and **the write path is the only place that scrub
+ran** — so every reader printed the stored cells verbatim. Two further sources
+were our own: the projection published the ungraded verdict as the headline
+*"Not available — insufficient verified evidence"* (RS-3), and the governed
+narrative authority both instructed the model to *write "Not available"* and,
+on recovery, inserted *"…was not available for this analysis"* into the prose —
+on the four newest production reports (12 Sep 2026) that sentence and the
+model's echoes of it were the commonest "not available" a client saw. No
+`report_engine_config` override exists for any prompt, so the code defaults are
+what production runs.
+
+Six rules close it, each pinned by `neverAPlaceholder.spec.ts` or the spec
+beside the module:
+
+* **The placeholder scrub is applied where stored content is READ**, by one
+  implementation every reader imports — `presentStoredMarkdown`
+  (`derivedHygiene.pure.ts`) at the browser projection both presentations draw
+  from (`projectRowForPdf`), the template adapter, the legacy server renderer
+  and the on-screen document view. It is the write-path rule, not a second
+  one; a clean document is returned byte-identical, so a report that never
+  carried a placeholder packs, charges and renders exactly as before. This is
+  `healFinanceIdentity`'s asymmetry for the same reason: a repair that only
+  helps future documents leaves the ones already stored, and no stored byte
+  changes. Prose is untouched — the scrub's own contract — because a sentence
+  that mentions an absence is the author's, and rewriting prose by pattern is
+  how a true statement is deleted from a client's document.
+* **An ungraded record publishes no verdict.** Headline, action and the verdict
+  sentence are absent, the verdict block draws nothing (`textBlock.html.ts`),
+  the cover's Verdict cell is dropped, and the narrative's own recommendation
+  prose is what the reader gets. The operator's on-screen viewer still says the
+  grade was withheld and why; that surface is not the document.
+* **An unscored dimension draws no row.** It used to read "Not assessed" beside
+  a dash on every master. Its entry keeps its position (the risk register binds
+  `assessment.4.details` by index) and publishes nothing bindable; the verdict
+  sentence already names only the dimensions the score carries. The standard
+  presentation's score chart refuses the engine's placeholder 50 the same way
+  the templated scorecard always did.
+* **No prompt asks for a placeholder, an estimate or a confession.** The
+  governed authority's directive says leave the figure out together with the
+  sentence that would have carried it; its recovery sentences state what the
+  analysis RESTS ON ("This analysis does not rely on postcode-level demographic
+  statistics; …") rather than what it lacks; the generator's score block hands
+  the model only the dimensions that scored and no grade line at all on an
+  ungraded record (it used to interpolate `'N/A'` into the prompt, which is how
+  "N/A/100" reached prose); "state plainly that transport detail is not
+  available" and "use real data or realistic estimates" are gone from every
+  system prompt.
+* **A chip with nothing to state is not drawn.** `NotAvailable` drew a grey
+  "N/A" pill; `UNSTATED_CONFIDENCE` is one predicate for both presentations.
+* **The instrument exempts nothing.** `verify:pdf`'s sentinel scan used to admit
+  the designed ungraded reading; it now flags the placeholder family in any
+  case and spelling, so a document that says "not available" anywhere fails
+  the gate rather than passing with a note.
+
+What is deliberately NOT done: no regular expression is run over a client's
+prose, on read or on write. A stored Compass report whose model-authored
+paragraph says a figure "could not be established" keeps that sentence — 876
+of 1,122 carry one somewhere — because a filter blunt enough to remove it
+removes true statements too; the editor is where an operator changes prose,
+and the generator no longer writes it.
+
+### What the render then showed, and the three rules it added
+
+The first Snapshot rendered clean of placeholders was **seventeen pages** for
+a tier whose promise is four to six, and two of its prose headings — "Key
+Market Stats", "Score Breakdown" — stood over nothing, because the scrub had
+taken their tables. Three rules followed, each measured through the real
+journey on Midnight:
+
+* **A heading with nothing under it goes with its table** (`dropEmptySections`,
+  in `derivedHygiene.pure.ts`): a section is empty when the next non-blank
+  line is a heading of the same or a higher level, or the end of the document;
+  a heading over a deeper heading that holds prose is kept; run to a fixed
+  point so a parent emptied by its children goes with them. Applied by
+  `presentStoredMarkdown` on read and by `condense` and `fork` on write, after
+  the placeholder scrub.
+* **A derived tier draws only the typed pages the registry gives it**
+  (`tierPageSequence.pure.ts`). `sectionRegistry.pure.ts` places each section
+  per tier on a surface, and for the four derived tiers only the cover, the
+  key-figures strip and — on the Briefing alone — the property identity table
+  are `document`; the score breakdown, the financial position, the ten-year
+  projection, the risks, the recommendation and the provenance are all
+  `markdown`, composed from the same record the typed pages would draw, so on
+  those tiers the typed page was a second copy. The rule is read from the
+  registry rather than remembered: a typed page is kept where the registry
+  places its section on the document surface; the six Compass-depth pages go
+  on every derived tier, the property page follows `propertyIdentity`'s
+  surface (kept on the Briefing), and the contents page goes on the Snapshot
+  alone. Applied in both renderers so the preview and the final agree; the 500
+  seeded masters are untouched. Measured: Snapshot 17 → **11** pages, Executive
+  Briefing 16 → **11**, Financial Analysis 19, Due Diligence 25; the Compass
+  page sequence is not touched by the tier rule.
+* **A record that issued no grade draws no page about how the grade was
+  reached.** With unscored dimensions drawing no row, the long reference
+  report's assessment page — "How the grade was reached — Five dimensions,
+  weighted" — was that heading over one dimension's sentence, 70% of the page
+  empty under a promise the record cannot keep. `pagesForDocument` drops
+  `The assessment` where `recommendation.grade` is absent (the projection
+  publishes it only where the policy issued one); a graded record keeps it,
+  and data with no Investment tier keeps every page.
+
+And one latent fault the change exposed, in `closeDroppedBlocks`: **one hole
+is closed once.** Two dropped blocks with nothing drawn between them are one
+hole, from the first's top to the first drawn follower, and the first closes
+it; the second had been carried up with the followers to a position ABOVE the
+first's top and was then processed as a hole of its own, pulling the followers
+up a second time into the block above — the Yield definition landed at 137pt,
+inside the section opener at 114pt, instead of at the scorecard's 228pt. A
+dropped block whose own top lies inside a hole already closed is skipped, and
+`closeDroppedBlocks.spec.ts` pins the assessment page's exact geometry.
+
+What the journeys still flag is stored PROSE: the Executive Briefing's model
+note that "market activity metrics … were not provided numerically", the
+Due Diligence report's "not provided", the sparse reference report's own
+recovery sentence written before this change and the model's echoes of it.
+Those are the author's sentences in stored documents, left to the editor and
+to regeneration, exactly as the rule above says; the generator no longer
+writes them.
+
+**Measured through the real journey on Midnight, 14 Sep 2026** (front end
+30/30 on every run, one final render each, `verify:pdf` on the final PDF):
+
+| document | pages | placeholder tokens | remaining sparse pages |
+| --- | ---: | ---: | --- |
+| A, the long Compass (ungraded) | 39 → **37** | 0 | contents, dashboard |
+| B, the medium Compass (graded) | 37 | 0 | contents, risk |
+| C, the sparse Compass (ungraded) | 24 | 4, all stored prose | contents |
+| Snapshot `8c6edc56` | 17 → **11** | 19 → **0** | none |
+| Executive Briefing `89b451f6` | 16 → **11** | 87 → **1**, stored prose | contents |
+| Financial Analysis `c21ed1fa` | **19** | 0 | contents |
+| Due Diligence `2f1f7f6f` | **25** | 1, stored prose | contents |
+
+The two pages A lost are the assessment page (no grade was issued) and the
+last narrative page's fold; the verdict headline "Not available —
+insufficient verified evidence" is gone from A's and C's cover and dashboard.

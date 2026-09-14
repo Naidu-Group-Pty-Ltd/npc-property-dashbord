@@ -30,6 +30,7 @@ import {
 } from './bindingResolver';
 import { getHtmlBlockRenderer, renderUnsupportedHtml, type HtmlBlockContext } from './blocks/html';
 import { renderOverlay } from './blocks/_shared.html';
+import { pagesForDocument } from '../../../supabase/functions/_shared/reports/investment/tierPageSequence.pure';
 import { tokensToCssVariables, tokensToFontFaceCss, tokenCssDeclaration } from './cssTokens';
 import {
   substitutePrintFontFaces,
@@ -917,9 +918,17 @@ export function renderTemplateToHtml(
   (ctxBase as ResolveContext & { _includeBookmarks?: boolean })._includeBookmarks = options.includeBookmarks !== false;
 
   const conditionalPages = template.pages.filter((p) => evalConditional(p.conditional, ctxBase));
+  // A derived tier draws only the typed pages the registry gives it — the
+  // Snapshot printed seventeen pages of which six were Compass depth — and a
+  // record that issued no grade draws no page about how the grade was
+  // reached. See `tierPageSequence.pure.ts`; every other format is untouched,
+  // and the editor sees every page it is building.
+  const tierPages = options.editorMode
+    ? conditionalPages
+    : pagesForDocument(conditionalPages, ctxBase.data as Parameters<typeof pagesForDocument>[1]);
   // Then the pages that turned out to hold something — never in the editor,
   // where an author needs to see every page they are building.
-  const visiblePages = options.editorMode ? conditionalPages : pagesWithContent(conditionalPages, template, ctxBase);
+  const visiblePages = options.editorMode ? tierPages : pagesWithContent(tierPages, template, ctxBase);
   const healedParts = healedPartNumbers(visiblePages);
 
   // Part numbers, counted over the pages that actually render. A composer

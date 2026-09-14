@@ -1740,6 +1740,26 @@ five `:::` fences the generator's prompt asks for (pull quote, sidenote, stat,
 divider, quote page) are DRAWN by `renderMarkdown` now — they printed raw on
 every structure — with an unknown kind unwrapped rather than printed.
 
+**A placeholder never reaches a client document — the owner's rule is "N/A or
+unavailable, never".** Read §8 of
+[`RUNTIME_CONSOLIDATION.md`](./docs/reports/RUNTIME_CONSOLIDATION.md) before
+touching `presentStoredMarkdown`, the ungraded branch of
+`reportBindingProjection`, the scorecard rows, `UNSTATED_CONFIDENCE` or any
+generator prompt that mentions a missing figure. Every Executive Briefing in
+production carried 36–97 "N/A" cells and rendered them verbatim, because
+`stripPlaceholderRows` ran on the WRITE path alone and every stored row
+predated it — so the same scrub now runs where stored content is READ, at the
+four readers, by one imported implementation, byte-identical on a clean
+document. Three rules bite. **An absence is omitted, never worded**: an
+ungraded record publishes no verdict at all (the headline used to read "Not
+available — insufficient verified evidence"), an unscored dimension draws no
+row ("Not assessed" beside a dash), and a chip with nothing to state is not
+drawn. **A prompt never asks for a placeholder, an estimate or a confession** —
+the governed authority's recovery sentence says what the analysis rests on,
+never what it lacks, and the generator hands the model only the dimensions
+that scored. And **prose is never regex-scrubbed**, on read or on write:
+`neverAPlaceholder.spec.ts` scans structure and source, not sentences.
+
 `INVESTMENT.md` is the one to read before touching anything the *model* draws. Its prose carries a chart vocabulary the generator's
 prompt demands and the renderer had never parsed: **3,753 `{{bars: ...}}`-style
 directives, about 107 a report**, every one of which set as body copy on a
