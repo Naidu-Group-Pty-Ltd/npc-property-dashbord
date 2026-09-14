@@ -75,7 +75,11 @@ const embeddedCount = fonts.filter((f) => f.embedded).length;
 
 // Sentinel words are matched as whole tokens: "NA" must not match the "NA" in
 // "NAIDU", and "null" must not match "nullify".
-const SENTINELS = /(?<![A-Za-z])(N\/A|NA|Unavailable|Not available|Unknown|TBD|TBC|null|undefined|NaN|\[object Object\])(?![A-Za-z])|\{\{[^}]{1,80}\}\}/;
+// A sentinel is a bare value where a figure should be. The ungraded verdict
+// the projection publishes on purpose — "Not available — insufficient
+// verified evidence", a headline with its explanation — is a reading, not a
+// token, and is the one form exempted here.
+const SENTINELS = /(?<![A-Za-z])(N\/A|NA|Unavailable|Not available(?! — [a-z])|Unknown|TBD|TBC|null|undefined|NaN|\[object Object\])(?![A-Za-z])|\{\{[^}]{1,80}\}\}/;
 // U+FFFD, C0 control bytes other than tab/newline, and UTF-8 read as Latin-1
 // (a capital A-tilde followed by a Latin-1 supplement byte, or the a-circumflex
 // + euro pair that every UTF-8 punctuation mark becomes).
