@@ -640,16 +640,56 @@ portal. The order that keeps it up:
   picture" control became a disclosure. Image BYTES stay in the prime's
   `builder-stock-images` bucket and rows keep naming them — storage moves in wave 4,
   after the network serves mirror imagery over the connection.
-- **Wave 3 (pending) — the one-way deletion.** The decommission migration (archive SQL
-  first; release `builder_stock_selections`' builder FKs by measured names, re-point
-  `stock_item_id` at the mirror and swap `builder_enforce_stock_selection_org` onto it —
-  selections stay, they are Command Centre data; drop the 63 portal tables reverse-FK
-  `IF EXISTS`, never CASCADE; delete builder rows from `portal_terms_acceptances`
-  keeping the column; unschedule the pg_cron jobs that invoke builder functions). Delete
-  the 59 builder migration files against `MIGRATION_VERSION_COLLISIONS.json`, the sixteen
-  function directories plus settler/document-processor with their `config.toml` blocks,
-  `src/pages/builder` + portal components with their spec fallout, and retire
-  `tests/builder-portal/` + `security:builder-portal` from the chain.
+- **Wave 3 ✅ (this change) — the one-way deletion.** Every name below is measured, not
+  recalled. `20261124000000_builder_portal_decommission.sql`, ordered: quiet the two
+  dynamic settlement jobnames (guarded — the prime holds zero); re-run wave 1's archive
+  for clones (to_regclass-guarded, count-manifested; the prime no-ops on all 68
+  relations); delete the 3 builder rows of `portal_terms_acceptances` (archived slice
+  first, columns and CHECKs untouched); drop the portal's own view and redefine the two
+  SURVIVING views shape-identically without their builder legs, `security_invoker`
+  stated (`partner_agreement_records`, `cross_portal_rollout_reconciliation` — a view
+  blocks DROP TABLE, and nothing here may CASCADE); re-shape `builder_stock_selections`
+  (six FKs released by measured names, `stock_item_id` re-pointed at the mirror
+  SET NULL per E1's precedent with its NOT NULL dropped, the org guard swapped onto the
+  mirror byte-identical, and the whole table CREATE IF NOT EXISTS in final shape because
+  its creating migration is deleted and the table survives); break the one FK cycle
+  (`builder_stock_items_primary_image_fk` — note `_fk`); drop the 63 tables
+  children-before-parents (58 topo-sorted over the live FK graph + 5 isolated); then
+  drop 168 functions with identity args, AFTER the tables — every measured dependent was
+  a trigger or CHECK on a dropped table, and the survivors
+  (`builder_enforce_stock_selection_org`, `builder_stock_touch_updated_at`,
+  `guard_transaction_case_links`, `resolve_cross_portal_feature_mode_for` — full body
+  reads only surviving tables) are excluded by name. Repo side: **70** builder migration
+  files existed, not the plan's 59 — ten hide under UUID filenames, found by content —
+  and 69 are deleted while `20260810000000` is RECLASSIFIED (its shared release-plane
+  columns survive; its builder functions were dropped by the migration anyway), which
+  keeps its collision group intact; the collision JSON loses 10 groups and edits 1, and
+  `security:migration-versions` stays green both ways. 27 function directories deleted
+  with their `config.toml` blocks (409 declare `verify_jwt`, checker green); the deploy
+  workflow's RETIRED machinery removed with the dirs it guarded; the decommission
+  workflow WIDENED to the 12 further deployments (the reviewed edit its header
+  demanded), including `builder-stock-inpaint-probe`, which was deployed but never had
+  a directory. `aml-reliance` severed at both sites (`resolveBuilderSession` gone; the
+  workspace resolver and both enrolment ops answer 410 `portal_moved`), releasing the
+  three session modules; `_shared/builderStock` kept the marketplace's 11-module
+  closure + `builderStockAddress.pure` (imported from `src` — the sweep that found it
+  is why closures are verified against BOTH sides), and `primaryImage.ts` lost its
+  pipeline half, which wrote a dropped table. Frontend: both portal trees, the Command
+  Centre admin surface (its edge functions read dropped tables; the archive is the
+  operator's record), 16 orphan libs, `builder-drafting.css`, and
+  `addressWithoutLeadingDesignation` MOVED into the address module for the card titles
+  that survive. ~120 repo paths deleted (95 pipeline test files); 5 builder-stock specs
+  and 13 surviving-surface contract tests rewritten to the moved contract. **Fresh-clone
+  replay safety**: surviving migrations that referenced builder tables were edited —
+  the FK clauses Phase 5 released live are removed from 20260801000300/000400,
+  20260805100000 and its UUID twin (fresh = fleet), and both surviving views' creating
+  migrations carry the builder-less definitions (a view is validated at creation) —
+  then PROVEN by differential replay of the full surviving corpus against main's on a
+  local PostgreSQL 16.
+  Deliberately untouched: `builder_invoices` / `build_progress_payments` (finance
+  tables wearing the prefix, zero FKs into the component — measured), the terms portal
+  CHECK still admitting 'builder' (a valueless vocabulary entry, not a surface), and
+  `_shared/auth.ts`'s builder cookie writer (caller-less; a later tidy).
 - **Wave 4 (deferred, post-connection).** Delete the storage bytes once the network
   serves the mirror's imagery — dropping them earlier blanks every card.
 

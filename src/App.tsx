@@ -71,7 +71,6 @@ const UserManagement = lazyWithRetry(() => import("./pages/admin/UserManagement"
 const GhlMigration = lazyWithRetry(() => import("./pages/admin/GhlMigration"));
 const FinancePortalAdmin = lazyWithRetry(() => import("./pages/admin/FinancePortalAdmin"));
 const SolicitorPortalAdmin = lazyWithRetry(() => import("./pages/admin/SolicitorPortalAdmin"));
-const BuilderPortalAdmin = lazyWithRetry(() => import("./pages/admin/BuilderPortalAdmin"));
 const FinancePortalAnalytics = lazyWithRetry(() => import("./pages/admin/FinancePortalAnalytics"));
 const FinancePortalBulkImport = lazyWithRetry(() => import("./pages/admin/FinancePortalBulkImport"));
 const FinancePortalCompliance = lazyWithRetry(() => import("./pages/admin/FinancePortalCompliance"));
@@ -205,9 +204,9 @@ const SolicitorSettings = lazyWithRetry(() => import("@/pages/solicitor/Solicito
 const SolicitorWorkspacePage = lazyWithRetry(() => import("@/pages/solicitor/SolicitorWorkspacePage"));
 /*
  * The Builder / Developer Portal LEFT this deployment for the central
- * Builders Network (extraction plan §7 Phase 6). Every `/builder/*` path
- * resolves to the redirect below; the portal pages under `src/pages/builder/`
- * stay in the repository until Phase 7 deletes them, but nothing routes them.
+ * Builders Network (extraction plan §7; Phase 6 unrouted it, Phase 7 deleted
+ * it). Every `/builder/*` path resolves to the redirect below, which is all
+ * that remains of the portal here.
  */
 const BuilderPortalMoved = lazyWithRetry(() => import("@/pages/BuilderPortalMoved"));
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
@@ -625,7 +624,6 @@ const App = () => (
                 <Route path="admin/users" element={<ModuleGuard moduleKey="user_management"><UserManagement /></ModuleGuard>} />
                 <Route path="admin/finance-portal" element={<ModuleGuard moduleKey="finance_portal_admin"><FinancePortalAdmin /></ModuleGuard>} />
                 <Route path="admin/solicitor-portal" element={<ModuleGuard moduleKey="solicitor_portal_admin"><SolicitorPortalAdmin /></ModuleGuard>} />
-                <Route path="admin/builder-portal" element={<ModuleGuard moduleKey="builder_portal_admin"><BuilderPortalAdmin /></ModuleGuard>} />
                 <Route path="admin/finance-portal/analytics" element={<ModuleGuard moduleKey="finance_portal_admin"><FinancePortalAnalytics /></ModuleGuard>} />
                 <Route path="admin/finance-portal/bulk-import" element={<ModuleGuard moduleKey="finance_portal_admin"><FinancePortalBulkImport /></ModuleGuard>} />
                 <Route path="admin/finance-portal/compliance" element={<ModuleGuard moduleKey="finance_portal_admin"><FinancePortalCompliance /></ModuleGuard>} />

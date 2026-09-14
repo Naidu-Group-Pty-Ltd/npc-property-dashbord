@@ -2,32 +2,37 @@ name: Decommission builder portal functions
 
 # Phase 7 of the network extraction (docs/builder-portal/45-network-extraction-plan.md
 # §7): the Builder / Developer Portal moved to the Builders Network, /builder/*
-# redirects there, and Phase 6 retired the sixteen portal-session functions
-# from deploy. Their LIVE deployments kept answering session cookies against a
-# frozen archive — dormant surface, which is exactly what the plan's "drop,
-# don't leave dormant" is about. This workflow deletes those deployments from
-# the Supabase project, on demand, and nothing else:
+# redirects there, and this workflow deletes the portal's LIVE deployments from
+# the Supabase project — dormant surface is exactly what the plan's "drop,
+# don't leave dormant" is about. Wave 1 deleted the sixteen portal-session
+# functions; wave 3 dropped the builder schema, which turned the read-only
+# admin family and the image-pipeline workers into deployments that can only
+# error, so the list WIDENED to cover them (the reviewed edit the first
+# version of this file said such a widening must be). It deletes on demand,
+# and nothing else:
 #
 # - It is workflow_dispatch only. Deleting a deployed function is a deliberate
 #   act with a name in the Actions log, never a side effect of a push.
-# - It can delete ONLY the sixteen names in RETIRED below — the same list the
-#   deploy workflow refuses to ship. A deletion workflow that can delete
-#   arbitrary functions is a hazard this file must not be; widening it is a
-#   reviewed edit to the list.
+# - It can delete ONLY the names in RETIRED below. A deletion workflow that
+#   can delete arbitrary functions is a hazard this file must not be;
+#   widening it further is another reviewed edit to the list.
 # - A function already absent is a no-op, not a failure: re-running after a
 #   partial run must finish the job.
 # - The project ref resolves exactly as the deploy workflow's does (variable,
 #   then this repo's own config.toml preamble, never a literal) so a clone
 #   that inherits this file deletes from ITS OWN project and nobody else's.
 #
-# The admin family, the pipeline workers, the marketplace read and the network
-# sync door are not in the list and stay deployed.
+# builder-stock-marketplace (the Command Centre read, on the network mirror
+# since wave 2) and builder-network-inbound (the sync door) are NOT in the
+# list and stay deployed. builder-stock-inpaint-probe is listed although no
+# repository directory ever carried it — the deployment exists, and the
+# deployment is what this deletes.
 
 on:
   workflow_dispatch:
     inputs:
       functions:
-        description: 'Space-separated subset of the retired list. Empty = all sixteen.'
+        description: 'Space-separated subset of the retired list. Empty = the whole list.'
         required: false
         default: ''
 
@@ -79,14 +84,14 @@ jobs:
           PROJECT_REF: ${{ steps.project.outputs.ref }}
         run: |
           set -uo pipefail
-          RETIRED='builder-portal-login builder-portal-logout builder-portal-verify builder-portal-accept-invite builder-portal-forgot-password builder-portal-reset-password builder-portal-change-password builder-portal-invite builder-portal-projects builder-portal-inventory builder-portal-transactions builder-portal-construction builder-portal-delivery builder-portal-collaboration builder-portal-workspace builder-portal-stock'
+          RETIRED='builder-portal-login builder-portal-logout builder-portal-verify builder-portal-accept-invite builder-portal-forgot-password builder-portal-reset-password builder-portal-change-password builder-portal-invite builder-portal-projects builder-portal-inventory builder-portal-transactions builder-portal-construction builder-portal-delivery builder-portal-collaboration builder-portal-workspace builder-portal-stock builder-portal-admin builder-projects-admin builder-inventory-admin builder-transactions-admin builder-construction-admin builder-delivery-admin builder-collaboration-admin builder-workspace-admin builder-stock-image-settler builder-stock-inpaint-probe builder-document-processor builder-stock-link-callback'
           list="${REQUESTED:-$RETIRED}"
           failed=""
           for fn in $list; do
             case " $RETIRED " in
               *" $fn "*) ;;
               *)
-                echo "::error::'$fn' is not on the retired list — this workflow deletes only the sixteen portal-session functions."
+                echo "::error::'$fn' is not on the retired list — this workflow deletes only the retired builder portal functions."
                 exit 1
                 ;;
             esac
