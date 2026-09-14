@@ -729,8 +729,38 @@ portal. The order that keeps it up:
 - **Wave 4 (deferred, post-connection).** Delete the storage bytes once the network
   serves the mirror's imagery — dropping them earlier blanks every card.
 
-**Phase 8 — marketing.** A "for builders" page in `aurixa-systems`, linking out. No auth is
-added to the marketing site.
+**Phase 8 — marketing. ✅ (14 Sep 2026)** `/builders` on `aurixa-systems`
+([PR #204](https://github.com/Naidu-Group-Pty-Ltd/aurixa-systems/pull/204)) — what the
+network is, four steps to get listed, the Passport arriving already attested, and both
+primary actions leaving for `builders.aurixasystems.com.au`. No auth was added. Wired the
+way that repo requires rather than the way it looks: an **eager** import (a lazy route
+prerenders as an empty shell and fails the build), a `ROUTE_METADATA` entry (the suite
+fails a route with no entry and an entry with no route), the `llms.txt` Product section,
+regenerated `sitemap.xml`/`llms.txt`, a footer link and a cross-link from `/industries` —
+the supply side of the same market, so the two point at each other. Two decisions
+recorded there: the hero visual is LOCAL (the three `*HeroVisual` components are one per
+page, and one list reaching many firms is not among them) and it is deliberately **not in
+the navbar**, because that bar was already at its overflow limit at `lg` with seven items
+and needed resizing for the eighth. 276/276 including the prerender gates — one real
+`<h1>`, 35 KB of markup against a 5 KB floor.
+
+**And the network now wears the brand** ([aurixa-builders PR #3](https://github.com/Naidu-Group-Pty-Ltd/aurixa-builders/pull/3)),
+which was not in the plan and should have been: the portal was still in the prime's
+inherited cream-and-purple scheme, so a builder crossing from the marketing site met what
+looked like a different company. Every colour is now a conversion of a token in
+`aurixa-systems/src/index.css`'s `@theme` block, with Inter and Playfair Display
+self-hosted, and the portal opens dark because the site is dark and only dark. The rule
+that carries it: **that palette had three authorities** — the stylesheet paints the first
+frame, `BrandProvider` writes the same tokens INLINE (which win), and the white-label
+resolver used to derive four of them — so a disagreement is a page that changes colour on
+hydration. The CSS is generated from the maps, the provider applies the maps, and a spec
+fails on drift. Running the resolver over a fully declared palette was itself destructive
+(it replaced the focus ring and the hover fill with the primary, and the chart ramp with
+hue rotations of it); that derivation is for a tenant who picks ONE colour.
+**And rendering the page found a real bug no reading would have**:
+`getReadableForeground` chose its ink at a luminance threshold of 0.45 when the crossover
+is 0.1791, so the teal button drew white text at **2.93:1**. It measures both candidates
+now — the same button is **6.74:1**.
 
 ---
 
