@@ -88,6 +88,8 @@ export async function deliverMarketIntelligencePdf(
       // The audience edition is this format's variant: the same row is three
       // documents, and the adapter picks the closing panels from it.
       variant: options.audience ?? null,
+      // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+      renderer: 'weasyprint',
     });
     if (templated) {
       if (options.save !== false) saveToBrowser(templated.blob, templated.fileName);

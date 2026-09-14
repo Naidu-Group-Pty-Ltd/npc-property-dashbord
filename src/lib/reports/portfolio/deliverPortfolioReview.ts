@@ -119,7 +119,8 @@ export async function deliverPortfolioReview(
   // adapter always joins the client's newest completed review, exactly as this
   // route does by default, so it cannot produce the without-review document.
   if (input.request.includeReview !== false) {
-    const templated = await tryTemplateDocument('portfolio', input.request.reportId);
+    // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+    const templated = await tryTemplateDocument('portfolio', input.request.reportId, { renderer: 'weasyprint' });
     if (templated) {
       saveToBrowser(URL.createObjectURL(templated.blob), templated.fileName);
       return {
@@ -181,7 +182,8 @@ export async function portfolioReviewBlob(input: DeliverPortfolioInput): Promise
 
   // The same two guards as the download path above.
   if (input.request.includeReview !== false) {
-    const templated = await tryTemplateDocument('portfolio', input.request.reportId);
+    // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+    const templated = await tryTemplateDocument('portfolio', input.request.reportId, { renderer: 'weasyprint' });
     if (templated) {
       return {
         blob: templated.blob, fileName: templated.fileName, source: 'server', brandGaps: [],

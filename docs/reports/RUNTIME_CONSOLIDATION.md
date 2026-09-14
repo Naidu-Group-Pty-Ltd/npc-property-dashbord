@@ -585,3 +585,56 @@ writes them.
 The two pages A lost are the assessment page (no grade was issued) and the
 last narrative page's fold; the verdict headline "Not available —
 insufficient verified evidence" is gone from A's and C's cover and dashboard.
+
+## §9 — RS-5c (14 Sep 2026): the nine other formats onto the fixed pattern
+
+The inventory first (`RS-5b`, measured on the repository and the production
+ledgers). Every one of the nine formats — Borrowing Capacity, Portfolio,
+Property Comparison, 10 Year Cash Flow, Cash Flow Comparison, Client Details,
+Report Q&A, Commercial & Industrial Capacity, Market Intelligence — already
+draws its own document with the pinned WeasyPrint engine through its own
+`render-<format>-pdf` function (`weasyprintClient.renderPdf`), stores the PDF
+in `client-files` (Q&A in `qa_exports`, Market Intelligence in
+`marketing-reports`) and writes a `*_renders` ledger row. Four things were not
+on the pattern:
+
+1. **A chosen template was drawn by the browser's jsPDF on all nine.**
+   `routeReportThroughTemplate` defaults to `renderer: 'browser'` unless the
+   caller names the final renderer, and only the Investment delivery did — so
+   choosing a template on any other format DOWNGRADED the document (jsPDF
+   embeds no fonts and cannot draw text on a filled panel) relative to the
+   format's own route.
+2. **Every download re-renders.** No format reads its ledger back; Download,
+   Send and Publish each mint a new file (`crypto.randomUUID()`, `upsert:
+   false`). Market Intelligence is the one exception — a stable path, and the
+   scheduled email reuses it.
+3. **Cash Flow's "Send to Client" ships the legacy jsPDF** while its "Generate
+   PDF" ships the WeasyPrint document: two controls, two documents.
+4. **Borrowing Capacity and Portfolio portal publishes upload a second copy**
+   to `client-files/portal-reports/…` instead of pointing at the render the
+   route stored. Market Intelligence's template selection is unreachable by
+   default (`persist` defaults on, and the template path is entered only when
+   it is off).
+
+Volume, so the order is honest: in 90 days, 13 Borrowing Capacity renders,
+11 Cash Flow, 6 Client Details, 4 Commercial, 3 Cash Flow Comparison, 2
+Portfolio, 2 Q&A, 1 Comparison, 0 Market Intelligence — against 62 Investment
+finals.
+
+### RS-5c.1 — a chosen template is drawn by the final renderer on every format
+
+Every delivery path now names `renderer: 'weasyprint'` when it asks
+`tryTemplateDocument` for a templated document — `deliverSnapshot` (both
+paths), `deliverPortfolioReview` (both), `deliverComparisonPdf` (both),
+`deliverClientDetailsPdf`, `deliverReportQaPdf`,
+`deliverMarketIntelligencePdf`, `useCapacityReport` and the Cash Flow modal's
+`exportServerCashFlowPDF` — so the route compiles the template with
+`compileTemplateHtmlForPdf` and hands it to `render-template-pdf` in `final`
+mode, exactly as the Investment finalisation does; `render-template-pdf` is
+format-agnostic (an id that names no investment report is the ordinary case
+for the other nine, and is not an error). Every refusal is still a fallback
+to the format's own WeasyPrint route. `finalRendererOnEveryFormat.spec.ts`
+scans the source: every ask in a delivery module names the final renderer,
+and nothing outside a delivery module names it. `snapshotBlob` now returns
+the render's `storagePath` beside the bytes, for the portal publish to point
+at (RS-5c.3).

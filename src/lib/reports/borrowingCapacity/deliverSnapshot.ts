@@ -144,7 +144,9 @@ export async function deliverSnapshot(input: DeliverSnapshotInput): Promise<Deli
   // the row it is rendering, so resolve the same thing here rather than give up.
   const assessmentId = input.request.assessmentId
     ?? await latestAssessmentId(input.request.clientId);
-  const templated = await tryTemplateDocument('borrowing_capacity', assessmentId);
+  // The FINAL document: a chosen template is drawn by the pinned engine, the
+  // same one this format's own route uses, never by the browser's jsPDF (RS-5c).
+  const templated = await tryTemplateDocument('borrowing_capacity', assessmentId, { renderer: 'weasyprint' });
   if (templated) {
     saveToBrowser(URL.createObjectURL(templated.blob), templated.fileName, true);
     return { source: 'server', fileName: templated.fileName, brandGaps: [], templated: true };
@@ -189,6 +191,13 @@ export async function snapshotBlob(input: DeliverSnapshotInput): Promise<{
   fileName: string;
   source: 'server' | 'legacy';
   brandGaps: string[];
+  /**
+   * Where the final renderer stored these exact bytes, when a chosen template
+   * was drawn by it — so a portal publish can point at the object rather than
+   * upload a second copy. Null or absent for a document drawn in this tab or
+   * by the format's own route (which answers a signed URL, not a path).
+   */
+  storagePath?: string | null;
 }> {
   if (input.variant === 'legacy') {
     const produced = await input.legacy();
@@ -198,10 +207,11 @@ export async function snapshotBlob(input: DeliverSnapshotInput): Promise<{
 
   // The same rule as the download path: this is the file a broker portal
   // uploads, and it should be the document the tenant activated.
-  const templated = await tryTemplateDocument('borrowing_capacity', input.request.assessmentId);
+  const templated = await tryTemplateDocument('borrowing_capacity', input.request.assessmentId, { renderer: 'weasyprint' });
   if (templated) {
     return {
       blob: templated.blob, fileName: templated.fileName, source: 'server', brandGaps: [],
+      storagePath: templated.storagePath,
     };
   }
 

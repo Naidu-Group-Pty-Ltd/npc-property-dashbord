@@ -3563,6 +3563,8 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           propertyAddress: report.property_address ?? null,
           scenario: storedScenario,
         },
+        // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+        renderer: 'weasyprint',
       });
       if (templated) {
         saveTemplateDocument(templated);
