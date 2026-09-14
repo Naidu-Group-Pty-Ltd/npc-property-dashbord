@@ -17,6 +17,7 @@ import {
 import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage, shouldFallBackToNativeBlocks, pageContainedRegions } from './rendering/pdfImportPagePolicy';
 import { shouldRenderBlock } from './renderVisibility';
 import { applyNarrativePlan, planNarrative } from './narrativePlan';
+import { closeDroppedBlocks } from './closeDroppedBlocks';
 import { NARRATIVE_GEOMETRY_KEY } from './blocks/markdownBlockContent';
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
@@ -735,7 +736,12 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
     || shouldFallBackToNativeBlocks(pageRenderPlan, sourceRasterPainted);
   const healedPart = (ctxBase.data as { __healedPartNumber?: number | null } | undefined)?.__healedPartNumber ?? null;
   if (renderNativeBlocks) {
-    for (const authored of sortBlocksForPaint(page.blocks)) {
+    // A dropped block leaves no hole: the blocks under it in its column move
+    // up to where it began. Never in the editor. See `closeDroppedBlocks`.
+    const laid = editorMode
+      ? page.blocks
+      : closeDroppedBlocks(page.blocks, (b) => !blockDrawsContent(b, blockCtxBase, blockCtx), isFurniture);
+    for (const authored of sortBlocksForPaint(laid)) {
       const block = healPartMarker(authored, healedPart);
       if (!shouldRenderBlock(block, ctxBase)) continue;
       blocks.push(...renderBlockWithRepeat(block, blockCtxBase, blockCtx, pages, editorMode));

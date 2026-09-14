@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  BOUNDARY_SPLIT_MIN_ROWS, MAX_FLOATED, TAIL_ABSORB_LINES, packMarkdownPages, packNarrativeGeometry,
+  BOUNDARY_SPLIT_MIN_ROWS, BOUNDARY_SPLIT_TALL_LINES, MAX_FLOATED, TAIL_ABSORB_LINES, packMarkdownPages, packNarrativeGeometry,
 } from '../../../../supabase/functions/_shared/reports/markdownPaging.pure';
 import type { MarkdownBlock, MarkdownTableMeta } from '../../../../supabase/functions/_shared/reports/markdown.pure';
 import type { NarrativeGeometry } from '../../../../supabase/functions/_shared/reports/narrativeGeometry.pure';
@@ -98,6 +98,36 @@ describe('a table meets a page boundary', () => {
     const pages = packMarkdownPages([para(35, 'a'), t], 40, { splitAtBoundary: true });
     expect(ids(pages[0])).toEqual(['a']);
     expect(pages[1][0].table!.rows.length).toBe(10);
+  });
+
+  it('a TALL two-row table meets the boundary too — each row is a paragraph and stands under its own head', () => {
+    // The sparse reference report's risk register: two rows of 10.5 lines
+    // under a two-line head, after twenty lines of prose on a forty-line page.
+    // Pushed whole it left half a page white and stood alone on the next.
+    const t = table(2, 10.5, 2);
+    expect(t.lines).toBeGreaterThanOrEqual(BOUNDARY_SPLIT_TALL_LINES);
+    const pages = packMarkdownPages([para(20, 'a'), t], 40, { splitAtBoundary: true });
+    expect(pages[0].map((b) => b.kind)).toEqual(['paragraph', 'table']);
+    expect(pages[0][1].table!.rows.length).toBe(1);
+    expect(pages[1][0].table!.rows.length).toBe(1);
+    // The head repeats; the caption does not.
+    expect(pages[0][1].table!.headLines).toBe(2);
+    expect(pages[1][0].table!.headLines).toBe(2);
+  });
+
+  it('a tall two-row table whose first row does not fit the room is still pushed whole', () => {
+    const t = table(2, 10.5, 2);
+    // Ten lines of room: the head and the first row need 12.5 — a cut would only put two heads on the next page.
+    const pages = packMarkdownPages([para(30, 'a'), t], 40, { splitAtBoundary: true });
+    expect(ids(pages[0])).toEqual(['a']);
+    expect(pages[1][0].table!.rows.length).toBe(2);
+  });
+
+  it('a short two-row table is never split', () => {
+    const t = table(2, 1.4, 2);
+    const pages = packMarkdownPages([para(38, 'a'), t], 40, { splitAtBoundary: true });
+    expect(ids(pages[0])).toEqual(['a']);
+    expect(pages[1][0].table!.rows.length).toBe(2);
   });
 });
 

@@ -118,13 +118,62 @@ byte-identical:
   concatenate to the original.
 - **A table meets the boundary and splits there** when the room holds its
   head and some rows and the table has six or more — the head repeats, as a
-  paper ledger's does. A shorter table is pushed whole rather than orphaned.
+  paper ledger's does. A shorter table is pushed whole rather than orphaned,
+  unless it is TALL: a two-row register whose rows are paragraphs
+  (`TALL_ROW_LINES`, a fifth of a page in all, `BOUNDARY_SPLIT_TALL_LINES`)
+  splits with a head over each row, because a head over one ten-line row is a
+  page's worth of reading rather than an orphan. Measured on the sparse
+  report: pushed whole, that register left 47% of one page white and stood
+  alone on the next. The room must hold the head and the first row, or the
+  cut only puts two heads on the next page.
 - **A figure floats** past the prose that follows it, up to the next
   heading, and opens the next page. At most two are carried; a figure taller
   than a page is never floated.
 - **A tail of at most three lines is folded onto the page before it.** The
   master's bottom sits 76pt above the running foot on every family, so an
   overrun that small lands inside the reserve.
+
+## 4a. The hole a dropped block leaves
+
+A master lays a page out as a flow and the renderer positions every block
+absolutely at the `y` the flow assigned, so a block that is dropped at render
+time — its conditional false, or nothing to draw (`blockDrawsContent`) — used
+to leave a hole exactly its size. The long reference report's Risk page drew
+its heading at 103pt, nothing until 349pt, and the recommendation there: the
+register between them is conditional on a risk the record does not carry.
+
+`closeDroppedBlocks` (`src/lib/reportTemplate/closeDroppedBlocks.ts`) moves
+the blocks under a dropped block, in its column, up to where it began, so the
+gap before it becomes the gap before them. The masters carry no declared
+height on a flowed block, so the rule is made safe by what it refuses rather
+than by measurement: nothing moves when a drawn block sits in the band between
+the dropped block's top and the first follower (a tile beside a dropped tile
+keeps its row), only blocks contained in the dropped block's own column move
+(a rail beside the column is never crossed), furniture never moves and never
+counts, and in the editor nothing moves at all. A block above the dropped one
+cannot be crossed either: a flow places each block below the tallest of the
+row before it, so a block that ends inside the dropped block's band would
+already have overlapped it.
+
+## 4b. A chart label fits the drawing it belongs to
+
+The same renders found four chart labels set past their drawing: a gauge
+caption cut mid-word by the viewBox, a donut legend label printed into its
+own percentage, a timeline marker's label set straight through its
+neighbour's, and a pictograph title run under its count. There is no text
+measurement in a pure module, so `fitLines` (`reportDesign/charts.pure.ts`)
+wraps a label by word into the units it may use, from an average advance per
+character that was read off the engine's own output (0.55 em at these sizes,
+bold included; 0.72 em for tracked capitals), cuts what still does not fit
+with an ellipsis, and every drawing grows for the lines it adds. The timeline's
+stops sit where each gets the same measure — an end label anchored to the
+edge, an interior one centred — because with the stops at 44 units the end
+measures were 136 against the interior 208.
+
+The template chart block also draws its axis, tick and legend ink from the
+template's tokens (`chartInk`) rather than the flowing route's literal
+`#1A1A1A` / `#666` / `#EAE3CB`, which on a dark family printed axis labels in
+near-black on a near-black ground.
 
 ## 5. What the projection still owns
 
@@ -138,8 +187,13 @@ arithmetic they were measured under.
 
 - `narrativeGeometry.spec.ts` — every charge against the engine's measured
   heights, the bottom rule, the face table, the reserve pin.
-- `markdownPagingGeometry.spec.ts` — the four page-filling rules, and that
-  each is off unless asked for.
+- `markdownPagingGeometry.spec.ts` — the four page-filling rules, the tall
+  two-row table, and that each is off unless asked for.
+- `closeDroppedBlocks.spec.ts` — the column reflow at both the pure and the
+  renderer level: the hole closes, a row keeps its tiles, a rail is never
+  crossed, the editor is untouched.
+- `reportCharts.spec.ts` ("a label never runs past the drawing it belongs
+  to") and `chartInk.spec.ts` — the fitted labels and the token ink.
 - `narrativePlan.spec.ts` — one geometry per run, the count written over the
   estimate, every instance on the same buckets, the cut notice on the true
   count, and the compact figure at the compact width.

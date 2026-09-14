@@ -1767,15 +1767,26 @@ export function estimateLines(blocks: readonly MarkdownBlock[]): number {
  *
  * `firstBudget` is the room left on the page the table starts on; `contBudget`
  * sizes every later chunk. A chunk always carries at least two rows so a
- * lone orphan row never opens a page, except when only one row remains.
+ * lone orphan row never opens a page, except when only one row remains — or
+ * when the row is a paragraph in its own right. A row of `TALL_ROW_LINES` or
+ * more (a risk register's "why it matters" wraps to eleven) stands alone
+ * under a repeated head without reading as an orphan, and a two-row table of
+ * such rows is the one measured on the sparse reference report (RS-3c,
+ * 14 Sep 2026): pushed whole, it left 47% of one page white and stood alone
+ * on the next.
  */
+export const TALL_ROW_LINES = 4;
+
 export function splitTableBlock(
   block: MarkdownBlock,
   firstBudget: number,
   contBudget: number,
 ): MarkdownBlock[] {
   const t = block.table;
-  if (!t || t.rows.length <= 2) return [block];
+  if (!t || t.rows.length < 2) return [block];
+  const tall = (row: number) => (t.rowLines[row] ?? 1) >= TALL_ROW_LINES;
+  // A two-row table splits only when its rows are tall enough to stand alone.
+  if (t.rows.length === 2 && !(tall(0) && tall(1))) return [block];
 
   const out: MarkdownBlock[] = [];
   let index = 0;
@@ -1784,14 +1795,16 @@ export function splitTableBlock(
     const budget = Math.max(t.headLines + 2, (first ? firstBudget : contBudget));
     let charge = t.headLines;
     let take = 0;
+    // The chunk's first row decides how many it must hold: a tall row stands alone.
+    const minRows = tall(index) ? 1 : 2;
     while (index + take < t.rows.length) {
       const rowCost = t.rowLines[index + take] ?? 1;
-      if (take >= 2 && charge + rowCost > budget) break;
+      if (take >= minRows && charge + rowCost > budget) break;
       charge += rowCost;
       take++;
     }
-    // Never strand a single row in the final chunk: pull one back.
-    if (index + take === t.rows.length - 1 && take > 2) { take--; charge -= t.rowLines[index + take] ?? 1; }
+    // Never strand a single short row in the final chunk: pull one back.
+    if (index + take === t.rows.length - 1 && take > 2 && !tall(t.rows.length - 1)) { take--; charge -= t.rowLines[index + take] ?? 1; }
     const rows = t.rows.slice(index, index + take);
     const rowLines = t.rowLines.slice(index, index + take);
     const html = renderDataTable(t.cols, rows, {

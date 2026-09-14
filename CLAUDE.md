@@ -1716,7 +1716,18 @@ over the projection's template-blind estimate before any conditional is
 read. And **a page is filled, never merely not overflowed**: a paragraph is
 cut at a sentence, a table meets the boundary and repeats its head, a figure
 floats past the prose to the next page, a three-line tail is folded back —
-each off unless asked for, so the legacy packer is byte-identical.
+each off unless asked for, so the legacy packer is byte-identical. Two more
+from the same renders. **A dropped block leaves no hole**: the masters
+position every block absolutely at the `y` their flow assigned, so a register
+whose conditional is false left a third of a page white between a heading and
+the recommendation under it; `closeDroppedBlocks` moves the column under a
+dropped block up to where it began, refuses whenever anything drawn sits in
+that band or beside the column, and never moves furniture or an editor page.
+And **a chart label fits the drawing it belongs to** — `fitLines` wraps a
+label into the units it may use and the drawing grows for the lines, because
+a gauge caption, a donut legend, a timeline stop and a pictograph title were
+each found set past their own drawing, and the template chart block draws
+its ink from the template's tokens rather than the flowing route's literals.
 
 `INVESTMENT.md` is the one to read before touching anything the *model* draws. Its prose carries a chart vocabulary the generator's
 prompt demands and the renderer had never parsed: **3,753 `{{bars: ...}}`-style

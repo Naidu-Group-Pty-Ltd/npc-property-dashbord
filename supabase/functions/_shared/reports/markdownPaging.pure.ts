@@ -33,7 +33,7 @@
  * calibrated profile" by the formats that opt in, while any other explicit
  * value is honoured verbatim — a hand-tuned master keeps its tuning.
  */
-import type { MarkdownBlock } from './markdown.pure.ts';
+import type { MarkdownBlock, MarkdownTableMeta } from './markdown.pure.ts';
 import { splitListBlock, splitParagraphBlock, splitTableBlock } from './markdown.pure.ts';
 import { listCharge, paragraphCharge, type NarrativeGeometry } from './narrativeGeometry.pure.ts';
 
@@ -170,6 +170,20 @@ export const BOUNDARY_SPLIT_MIN_ROWS = 6;
 export const PARAGRAPH_SPLIT_MIN_ROOM = 3;
 export const PARAGRAPH_SPLIT_MIN_LINES = 5;
 export const BOUNDARY_SPLIT_MIN_LINES = 8;
+/**
+ * A table short of `BOUNDARY_SPLIT_MIN_ROWS` still meets the boundary when it
+ * is TALL — its rows are paragraphs, so a head over one row is a page's worth
+ * of reading rather than an orphan (`splitTableBlock` lets such a row stand
+ * alone). A fifth of a page is tall. The room must also hold the head and the
+ * first row, or the cut would only put two heads on the next page.
+ */
+export const BOUNDARY_SPLIT_TALL_LINES = 2 * BOUNDARY_SPLIT_MIN_LINES;
+function survivesTheCut(table: MarkdownTableMeta, remaining: number): boolean {
+  if (table.rows.length >= BOUNDARY_SPLIT_MIN_ROWS) return true;
+  const total = table.headLines + table.rowLines.reduce((n, l) => n + l, 0);
+  return table.rows.length >= 2 && total >= BOUNDARY_SPLIT_TALL_LINES
+    && remaining >= table.headLines + (table.rowLines[0] ?? 1) + 1;
+}
 export const MAX_FLOATED = 2;
 export const TAIL_ABSORB_LINES = 3;
 
@@ -244,7 +258,7 @@ export function packMarkdownPages(
         pieces = splitTableBlock(block, firstChunk, contBudget);
       } else if (
         options.splitAtBoundary && current.length && block.lines > remaining
-        && remaining >= BOUNDARY_SPLIT_MIN_LINES && block.table.rows.length >= BOUNDARY_SPLIT_MIN_ROWS
+        && remaining >= BOUNDARY_SPLIT_MIN_LINES && survivesTheCut(block.table, remaining)
       ) {
         pieces = splitTableBlock(block, remaining, contBudget);
       }
