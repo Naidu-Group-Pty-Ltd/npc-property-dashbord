@@ -25,7 +25,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const h = vi.hoisted(() => ({
   calls: [] as Array<{ reportType: string; reportId: string; variant?: string | null }>,
-  document: null as { blob: Blob; fileName: string; templateId: string } | null,
+  document: null as {
+    blob: Blob; fileName: string; templateId: string; renderer?: string; storagePath?: string | null;
+  } | null,
   flowing: [] as string[],
 }));
 
@@ -85,7 +87,7 @@ vi.mock('@/lib/reports/portfolio/requestPortfolioReview', () => ({
     h.flowing.push('portfolio');
     return {
       url: 'https://cdn/flowing.pdf', fileName: 'flowing.pdf', brandGaps: [],
-      reviewIncluded: true,
+      reviewIncluded: true, storagePath: 'portfolio-reports/c-1/typeset/2026-09-14/x-flowing.pdf',
     };
   },
 }));
@@ -94,7 +96,7 @@ vi.mock('@/lib/reports/borrowingCapacity/requestSnapshot', () => ({
     h.flowing.push('borrowing_capacity');
     return {
       url: 'https://cdn/flowing.pdf', fileName: 'flowing.pdf', bytes: 10, pageCount: 1,
-      brandGaps: [], source: 'server',
+      brandGaps: [], source: 'server', storagePath: 'borrowing-capacity/c-1/2026-09-14/x-flowing.pdf',
     };
   },
 }));
@@ -110,6 +112,9 @@ const TEMPLATED = () => ({
   blob: new Blob(['%PDF templated'], { type: 'application/pdf' }),
   fileName: 'templated.pdf',
   templateId: 'tpl-1',
+  renderer: 'weasyprint_final',
+  // Where `render-template-pdf` stored the final document.
+  storagePath: 'template-builder/2026-09-14/abc-templated.pdf',
 });
 
 /** The in-browser generator the Snapshot paths take as an argument. */
@@ -190,6 +195,16 @@ describe('each format asks for an activated template first', () => {
     expect(out.source).toBe('server');
     expect(h.flowing).toEqual([]);
   });
+
+  it('the blob paths say where the final renderer stored the bytes (RS-5c.3)', async () => {
+    // The portal publish points at this object rather than uploading a copy.
+    const pf = await portfolioReviewBlob({ variant: 'server', request: { reportId: 'pf-1' } });
+    const bc = await snapshotBlob({
+      variant: 'server', request: { clientId: 'c-1', clientName: 'Ada', assessmentId: 'bc-1' }, legacy,
+    });
+    expect(pf.storagePath).toBe('template-builder/2026-09-14/abc-templated.pdf');
+    expect(bc.storagePath).toBe('template-builder/2026-09-14/abc-templated.pdf');
+  });
 });
 
 describe('and falls through to its own route when there is no template', () => {
@@ -215,6 +230,15 @@ describe('and falls through to its own route when there is no template', () => {
     expect(out.templated).toBeUndefined();
     expect(out.recordComplete).toBe(false);
     expect(out.missingSections).toEqual(['Market timing']);
+  });
+
+  it('and the blob paths carry where the route stored the bytes (RS-5c.3)', async () => {
+    const pf = await portfolioReviewBlob({ variant: 'server', request: { reportId: 'pf-1' } });
+    const bc = await snapshotBlob({
+      variant: 'server', request: { clientId: 'c-1', clientName: 'Ada', assessmentId: 'bc-1' }, legacy,
+    });
+    expect(pf.storagePath).toBe('portfolio-reports/c-1/typeset/2026-09-14/x-flowing.pdf');
+    expect(bc.storagePath).toBe('borrowing-capacity/c-1/2026-09-14/x-flowing.pdf');
   });
 });
 

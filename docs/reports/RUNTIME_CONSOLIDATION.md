@@ -681,3 +681,44 @@ too: it described the world before the payload channel and had become untrue,
 and `tryTemplateDocument` already says so itself, naming the gate, whenever a
 selection is not honoured. `sendShipsFinalDocument.spec.ts` pins all of it at
 the source, because the modal is 6,000 lines of React no unit harness mounts.
+
+### RS-5c.3 — a portal publish points at the render the route stored
+
+`publishReportToPortal`'s own rule is "a generated report is pointed at,
+never copied", and its two on-publish renders — a borrowing capacity
+assessment, and a stored portfolio analysis whose file upload failed in the
+403 era — broke it from the inside. The render route stored and ledgered the
+document and answered a signed URL; the publisher fetched the bytes back,
+uploaded them a SECOND time to `client-files/portal-reports/…`, and wrote the
+portal row with the copy's path. The ledger named one object and the portal
+another, and every publish doubled the bytes. A second defect sat beside it:
+no Borrowing Capacity surface names an assessment (`{ clientId, clientName }`
+everywhere), and `snapshotBlob` handed that bare request to the template ask —
+which answers null with no id — so on every publish the chosen template was
+skipped and its own "not used" notice fired, while the download beside it
+resolved the most recent assessment and honoured the choice.
+
+Both blob helpers answer where the bytes already are now. `snapshotBlob`
+resolves the assessment exactly as `deliverSnapshot` does (one
+`resolveAssessmentId`) and returns `storagePath` — the templated final's
+object in `investment-reports/template-builder/…` or
+`render-borrowing-capacity-pdf`'s in `client-files/borrowing-capacity/…`;
+`portfolioReviewBlob` does the same for `render-portfolio-review-pdf`'s
+`client-files/portfolio-reports/…/typeset/…`, and answers null for the
+`stored` variant, which is a file somebody else placed. `publishReportToPortal`
+writes the row with that path and reports `uploaded: false`; the upload to
+`portal-reports/…` survives only for a document nothing stored — the
+in-browser generator on the deployment-gap fallback — and is reported as
+`uploaded: true`. The portal reader (`get-portal-client-data`) is unchanged:
+it signs `client-files` first and `investment-reports` second, so a route
+render and a templated final are both reachable, and `pdf_file_path` is still
+never written. `publishReportToPortal.spec.ts` (new) pins the four on-publish
+cases and the already-filed case; `templateRouteWiring.spec.ts` pins the path
+travelling through both helpers on both the templated and the flowing path.
+
+Three rules. **Where the bytes already are is part of the answer** — every
+helper that produces a client document says it, because a caller that is
+not told will copy. **One object per finalisation**: the path the ledger
+carries is the path the portal serves, so a `*_renders` row and a
+`client_portal_reports` row describe the same file. And **a copy survives
+only for what nothing stored**, said in the outcome rather than assumed.
