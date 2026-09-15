@@ -22,3 +22,10 @@ declare module 'https://esm.sh/unpdf@0.12.1' {
   export const extractText: any;
   export const getDocumentProxy: any;
 }
+
+// Two `_shared` modules that `src/` imports transitively reach Supabase through
+// the remote specifier. Map it onto the installed package's own types so the
+// call sites keep them.
+declare module 'https://esm.sh/@supabase/supabase-js@2.55.0' {
+  export * from '@supabase/supabase-js';
+}

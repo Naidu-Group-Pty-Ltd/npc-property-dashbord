@@ -557,7 +557,7 @@ export async function runStandaloneVerification(
    * spends money.
    */
   const holdResult = await holdVerificationTokens(check, checkId);
-  if (!holdResult.held) {
+  if (holdResult.held === null) {
     // Mission Control refused explicitly. Nothing was called, no attempt was
     // consumed and no customer outcome is written — see
     // `verificationTokenPrice.pure.ts` for why this is its own category and
