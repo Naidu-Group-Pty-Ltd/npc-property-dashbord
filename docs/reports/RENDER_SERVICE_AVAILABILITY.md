@@ -214,7 +214,8 @@ identical documents: same engine, same fonts, same PDF/UA output.
 
 `.github/workflows/deploy-render-fly.yml` is that move, made runnable with
 no terminal. It builds the Dockerfile on Fly's remote builder, runs **one**
-machine in Sydney (`weasyprint-service/fly.toml`: 2 shared CPUs, 2 GB,
+machine in Sydney (`weasyprint-service/fly.toml`: `performance-1x`, one
+dedicated CPU, 2 GB,
 stopped when idle and started by the first request), proves it — the front
 door, the pinned engine version, the capability reconciliation, a real
 report rendered whole and tagged — and only then writes the two secrets into
@@ -292,6 +293,16 @@ advisers rendering at once for nothing until it is needed. Dedicated CPU
 routinely over ~15 s or more than two in flight at once — read
 `api_usage_log.response_time_ms` for `weasyprint/render` before paying for
 it, not after.
+
+**Decided 15 September 2026.** The owner set the machine at the
+right-hand column's — `performance-1x`, 2 GB, a dedicated CPU — and
+`fly.toml` ships it. The count and the warm machine were not chosen with
+it: the workflow still deploys one machine, stopped when idle
+(`min_machines_running = 0`), and `machines: 2` at dispatch and
+`min_machines_running = 1` in `fly.toml` remain the way to add them. At
+that size the ceiling is one machine's monthly price (≈ $31 at the rates
+above) and a typical month is a few dollars, because a stopped machine
+costs only its rootfs.
 
 **Which Fly.io plan.** *Pay As You Go* (no monthly fee, community support)
 is the right one to start on: everything above is usage, and the support
