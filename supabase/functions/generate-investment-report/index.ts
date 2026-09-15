@@ -42,10 +42,13 @@ import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun a
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
 import {
+  financialWarningsForPrompt,
   interestOnlyMonthlyPaymentFor,
   projectionAssumptionLinesForPrompt,
   sensitivityRowsForPrompt,
 } from '../_shared/reports/investment/promptFinancials.pure.ts';
+import { recordedScoreValues } from '../_shared/reports/investment/scoreClaims.pure.ts';
+import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { reconcileNearestSchool, reconcileSchoolDistances } from '../_shared/reports/schoolDistance.pure.ts';
@@ -2359,6 +2362,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     const effectiveIsNewBuild = effectiveBuildType === 'new_build';
     const effectiveIsLandOnly = effectiveBuildType === 'land_only';
     const effectiveLandSizeSqm = mergedOverrides.landSizeSqm || propertyDetails?.landSizeSqm || null;
+    // QA-21: what the recorded area is an area OF travels with the figure —
+    // a strata townhouse's 1.25 ha is the scheme's site, not the lot — and an
+    // unresolved scope may not feed a land-content, redevelopment or
+    // valuation argument. `landAreaScope.pure.ts` is the one rule.
+    const landAreaReading = describeLandArea({
+      landSizeSqm: typeof effectiveLandSizeSqm === 'number' ? effectiveLandSizeSqm : Number(effectiveLandSizeSqm) || null,
+      lotAreaSqm: mergedOverrides.lotAreaSqm ?? propertyDetails?.lotAreaSqm ?? null,
+      propertyType: mergedOverrides.propertyType ?? propertyDetails?.propertyType ?? null,
+      isStrata: /\b(unit|apartment|townhouse|villa|strata|flat|terrace|duplex)\b/i.test(String(mergedOverrides.propertyType ?? propertyDetails?.propertyType ?? '')),
+    });
     const effectiveBuildSizeSqm = effectiveIsLandOnly ? null : (mergedOverrides.buildSizeSqm || propertyDetails?.buildSizeSqm || null);
     // A FACT and a MODELLING DEFAULT are different things. `effectiveBeds`
     // used to be `… || 3`, so a property whose bedroom count was never
@@ -4190,7 +4203,13 @@ Produce a comprehensive statewide investment analysis following the structure ab
     // when nothing authoritative is known; `propertyTypeLabel` is for prose the
     // model reads, where a readable phrase is wanted and no fact is asserted.
     const resolvedPropertyType: string | null = standardizedPropertyType;
-    const propertyTypeLabel = resolvedPropertyType ?? 'Residential Property';
+    // QA-22: "Residential Property" read as a fact and the later sections
+    // reverted to it ("Residential Property form aligned with local housing
+    // preferences") after earlier ones had named a strata townhouse from the
+    // listing. Where the record holds no type, the model is told that, and
+    // told to carry whatever type the documents state through every section.
+    const propertyTypeLabel = resolvedPropertyType
+      ?? 'Not stated in the record — if the property documents name the dwelling type, use that exact type in every section; never write "Residential Property"';
 
     console.log(`🏠 Property Type Standardization: "${rawPropertyType}" → "${resolvedPropertyType ?? '(unknown — stored as null)'}" (isStrata: ${isStrataProperty})`);
     
@@ -4362,7 +4381,7 @@ ${propertyDetails ? `**Property Details Provided:**
 - Property Type: ${propertyTypeLabel}
 - Bedrooms: ${propertyDetails.beds || 'Not specified'}
 - Bathrooms: ${propertyDetails.baths || 'Not specified'}
-${propertyDetails.landSizeSqm ? `- Land Size: ${propertyDetails.landSizeSqm}m²` : ''}
+${landAreaReading ? `- ${landAreaReading.label}: ${landAreaReading.value}${landAreaReading.note ? ` — ${landAreaReading.note}` : ''}` : ''}
 ${propertyDetails.buildSizeSqm ? `- Building Size: ${propertyDetails.buildSizeSqm}m²` : ''}
 ${propertyDetails.carSpaces ? `- Car Spaces: ${propertyDetails.carSpaces}` : ''}
 ${propertyDetails.isNewBuild ? `- New Build: Yes` : ''}
@@ -4500,6 +4519,8 @@ The combination of [employment factor], [income factor], and [unemployment facto
 | Total Schools in Postcode | ${enhancedData.schoolData?.summary?.totalSchools || 'XX'} | Google Places API |
 | Average School Rating | ${enhancedData.schoolData?.summary?.averageRating || 'X.X'}/5 stars | Google Places API |
 | Education Quality | ${enhancedData.schoolData?.summary?.qualityAssessment || 'Average'} (National Standard) | School Data Analysis |
+
+**Catchment evidence rule (QA-28):** a school catchment is an enrolment-area fact settled only by the department's address-based School Finder or written school/department confirmation, with its date. Where the sources available to you disagree (listing vs. portal vs. department), present EACH source's claim, name the source, and mark the catchment "unverified — sources conflict"; never select one. A travel claim ("short drive", "manageable commute") is written only with its mode, origin, distance and duration from a measured route; otherwise omit it.
 
 **Nearest School:**
 
@@ -4648,7 +4669,7 @@ ${[
   // Nothing here reaches a current document (the Compass-40 overlay does not
   // draw this section), but a dormant instruction to fabricate is one routing
   // change away from firing, which is why it goes rather than being left.
-  ['Land Size', effectiveLandSizeSqm ? `${effectiveLandSizeSqm} m²` : null],
+  [landAreaReading?.label ?? 'Land size', landAreaReading?.value ?? null],
   ['Bedrooms', effectiveBeds || null],
   ['Bathrooms', effectiveBaths || null],
   ['Parking', mergedOverrides.carSpaces ?? propertyDetails?.carSpaces ?? null],
@@ -4657,6 +4678,7 @@ ${[
 ].filter(([, v]) => v !== null && v !== undefined && v !== '')
  .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
 ${isStrataProperty ? `| Strata Type | ${propertyTypeLabel} within strata scheme |` : ''}
+${landAreaReading?.note ? `\n_${landAreaReading.note}_\n` : ''}
 
 The table above contains every physical attribute on record for this property.
 Do not add a row to it, and do not state a land size, floor area, bedroom or
@@ -4743,7 +4765,7 @@ These development options require detailed feasibility analysis and council pre-
 |-------------|------------|---------------------|
 | Rezoning Risk | Low/Medium/High | Monitor council strategic planning updates |
 | Heritage Overlay | [Confirm with council] | Obtain heritage impact assessment if required |
-| Bushfire Prone Land | [BAL rating if applicable] | Comply with AS3959 construction standards |
+| Bushfire Prone Land (mapping) | [Mapped: yes / no / not checked] — a bushfire-prone-land designation is NOT a BAL; a Bushfire Attack Level is a site-specific assessment and is stated only if one is held | Obtain a BAL assessment where the land is mapped; comply with AS3959 where a BAL applies |
 | Flood Affectation | [Check flood maps] | Obtain flood certificate, confirm habitable floor levels |
 
 **Recommendation:** Verify all zoning information with the [Council Name] planning portal before proceeding with any development applications. Obtain a Section 10.7 (formerly Section 149) Planning Certificate for comprehensive zoning confirmation.` : `**Zoning Information:**
@@ -5085,7 +5107,7 @@ The optimistic scenario (6% growth) projects Year 10 value of $[X,XXX,XXX], with
 - **Weak rental yield:** Gross yield [X.XX]%, net yield [X.XX]% insufficient to cover loan serviceability; requires investor capital support. This is typical for growth-focused suburbs but requires careful financial planning.
 - **Negative cashflow:** Year 1 cashflow negative $[XX,XXX] (P&I) or ($[XX,XXX]) (IO), with cumulative 10-year shortfalls of ($[XXX,XXX]) to ($[XXX,XXX]). Investors must have stable income to sustain this commitment.
 - **Interest rate sensitivity:** [X]% rate rise increases annual cashflow deficit by $[X,XXX]; vulnerable in tightening rate environment. Rising rates could strain investor cash reserves.
-- **Environmental risks:** [High/Moderate] bushfire risk rating requires verification; flood risk assessment pending property-specific analysis. Environmental risks may impact insurance costs.
+- **Environmental risks:** Bushfire exposure [Low/Moderate/High] on regional mapping — evidence status: UNVERIFIED at lot level (bushfire-prone-land mapping is not a Bushfire Attack Level; a BAL is a site-specific assessment). Flood exposure: unverified pending a parcel-level check. State the exposure, the evidence held and the check outstanding as three separate facts; never rate confidence High while a check is outstanding. Environmental risks may impact insurance costs.
 - **Market valuation:** Estimated $[X,XXX,XXX] price point reflects premium positioning relative to [comparison] suburbs; capitalizes growth expectations. Premium pricing reduces margin for error.
 - **Leverage structure:** 20% deposit requires $[X,XXX,XXX] loan financing; LVR declines [slowly/moderately] over 10-year period. High leverage amplifies both gains and losses.
 - **Rent growth constraints:** Rental income growing [X-X]% annually insufficient to improve cashflow economics; persistent shortfall across projections.
@@ -5159,13 +5181,15 @@ The property generates negative cashflow of ($[XX,XXX]) annually under base assu
 
 Loan repayments at current [X.X]% rate absorb [XX]% of gross rental income before accounting for property management, rates, insurance, and maintenance. A 1% rate increase (to [X.X]%) increases annual repayments by $[X,XXX], pushing negative cashflow to ($[XX,XXX])-a [XX]% increase in annual capital requirement. RBA maintains potential for further rate increases if inflation remains sticky; even modest tightening creates material cashflow deterioration. Investors with limited capital buffers face refinancing stress or forced sale risk if rates spike. Conversely, rate reductions provide primary cashflow improvement pathway; any base case reliance on rate cuts represents uncontrollable external dependency.
 
-### Environmental Risk: [High/Moderate] Bushfire Rating and Unverified Flood Risk
+### Environmental Risk: [Low/Moderate/High] Bushfire Exposure (Unverified at Lot Level) and Unverified Flood Risk
 
 [State] experiences regular bushfire seasons, and [Suburb] is rated [LEVEL] for bushfire risk. Specific property-level risk assessment requires verification with [State] Rural Fire Service (RFS); properties in extreme fire risk zones face insurance unavailability or extreme premium escalation. Flood risk is currently [verified/unverified] and requires property coordinates for accurate assessment; potential flooding exposure could impact insurability, lender appetite, or development constraints. Combined environmental risks create tail-risk exposure: (1) insurance premium spikes reducing net yields further, (2) uninsurable property becoming unmarketable, (3) damage events creating unexpected capital calls for repairs, or (4) regulatory evacuation requirements constraining usage or rental marketability. Hazard verification is essential precondition to purchase commitment.
 
 ---
 
 # Investment Recommendations
+
+${financialWarningsForPrompt(enhancedData.financials, enhancedData.investmentScore)}
 
 **Short-term Actions (Prior to Purchase):**
 
@@ -6663,7 +6687,11 @@ YOUR DEDICATED PROPERTY PARTNER
       const beforePost = reportContent.length;
       const { markdown, report: postReport } = postProcessReportMarkdown(reportContent, 'compass-40');
       reportContent = markdown;
-      compassQa = runQAValidation(reportContent, 'compass-40');
+      // The prose may print the recorded score and its scored dimensions,
+      // and no other (QA-18); a claim outside that set is reported here.
+      compassQa = runQAValidation(reportContent, 'compass-40', {
+        recordedScores: recordedScoreValues(enhancedData.investmentScore),
+      });
 
       console.log(
         `✓ Compass post-processor: ${beforePost} → ${reportContent.length} chars, ` +

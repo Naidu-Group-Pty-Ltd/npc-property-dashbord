@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ASSUMED_INTEREST_ONLY_YEARS,
   describeAssumedInputs,
+  evidenceBasisNotes,
   landBuildSplit,
   missingInputsOf,
   readBaseFinancials,
@@ -147,3 +148,19 @@ describe('readBaseFinancials — the record is read where the calculator writes 
     expect(o.provenance.weeklyRent).toBe('override');
   });
 });
+
+describe('evidenceBasisNotes (QA-12, QA-14, QA-15)', () => {
+  it('says what the tax, land-tax and cost lines rest on', () => {
+    const base = readBaseFinancials(STONE_MASON as never, 2026);
+    const notes = evidenceBasisNotes(base);
+    expect(notes.some((n) => /Tax effects assume deductions are utilised at a \d+% marginal rate/.test(n))).toBe(true);
+    expect(notes.some((n) => /land tax/i.test(n) && /aggregate taxable landholdings/.test(n))).toBe(true);
+    expect(notes.some((n) => /Operating costs are .*not quotes or bills/.test(n))).toBe(true);
+  });
+  it('never calls a missing land-tax figure a finding of none payable', () => {
+    const base = readBaseFinancials(STONE_MASON as never, 2026);
+    const notes = evidenceBasisNotes({ ...base, landTax: 0, provenance: { ...base.provenance, landTax: 'absent' } });
+    expect(notes.find((n) => /land tax/i.test(n))).toContain('not a finding that none is payable');
+  });
+});
+

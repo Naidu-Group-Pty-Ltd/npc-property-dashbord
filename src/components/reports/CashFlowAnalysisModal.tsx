@@ -24,6 +24,7 @@ import { requestCashFlowPdf } from '@/lib/reports/cashFlow/requestCashFlowPdf';
 import {
   assertProjectionComplete,
   describeAssumedInputs,
+  evidenceBasisNotes,
   INPUT_FIELD_LABELS,
   landBuildSplit,
   readBaseFinancials,
@@ -3537,9 +3538,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       projections,
       base: baseFinancialData,
       firstCalendarYear: new Date().getFullYear() + 1,
-      notes: baseFinancialData.includeDepreciationInCashFlow
-        ? []
-        : ['Depreciation is excluded from this projection at the adviser\'s direction.'],
+      // What the tax, land-tax and cost lines rest on is said on the page
+      // (QA-12, QA-14, QA-15) — `evidenceBasisNotes` is the one wording.
+      notes: [
+        ...(baseFinancialData.includeDepreciationInCashFlow
+          ? []
+          : ['Depreciation is excluded from this projection at the adviser\'s direction.']),
+        ...evidenceBasisNotes(baseFinancialData),
+      ],
     });
     // When the series on screen IS a stored scenario the document may honestly
     // say "Moderate"; otherwise it says "Adviser-reviewed" — never a scenario

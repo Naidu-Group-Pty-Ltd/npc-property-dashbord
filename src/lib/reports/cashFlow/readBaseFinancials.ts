@@ -428,3 +428,61 @@ export function describeAssumedInputs(base: BaseFinancials): string[] {
     .filter((f) => INPUT_FIELD_LABELS[f] && !['repaymentFrequency', 'extraRepaymentPerMonth', 'offsetBalance', 'constructionYear', 'constructionDurationMonths', 'marketValueNow', 'loanAmount', 'loanToValueRatio'].includes(f))
     .map((f) => `${INPUT_FIELD_LABELS[f]} ${value(f)}`);
 }
+
+/**
+ * What the projection's tax, land-tax and operating-cost lines REST ON —
+ * the three evidence gaps the audit of 291 Stone Mason Drive recorded
+ * (QA-12, QA-14, QA-15) and the document must now say out loud.
+ *
+ * A tax refund line assumes the investor can utilise the deductions at the
+ * stated marginal rate in the year they arise; the record holds no
+ * assessable income, no entity structure and no accountant's confirmation,
+ * so eligibility and utilisation are ASSUMED, never evidenced. A land-tax
+ * line is a figure for THIS property alone: land tax is assessed on the
+ * owner's aggregate taxable landholdings in the state, which the record
+ * does not hold, so a zero is "none recorded", not "none payable". And the
+ * operating-cost base is whatever the record carries — an operator's entry
+ * or a default — never a bill; the sentence says which, from `provenance`.
+ *
+ * Each note is written once, here, for the on-screen page, the jsPDF
+ * document and the server-rendered PDF alike.
+ */
+export function evidenceBasisNotes(base: BaseFinancials): string[] {
+  const notes: string[] = [];
+  const taxSource = base.provenance.taxRate;
+  if (base.taxRate > 0) {
+    notes.push(
+      `Tax effects assume deductions are utilised at a ${base.taxRate}% marginal rate in the year they arise `
+      + `(rate ${taxSource === 'override' ? 'entered by the adviser' : taxSource === 'default' ? 'assumed by default' : 'from the report record'}); `
+      + 'the investor\'s taxable income, ownership structure and eligibility are not held and must be confirmed with an accountant.',
+    );
+  }
+  const landTaxSource = base.provenance.landTax;
+  if (base.landTax > 0) {
+    notes.push(
+      `Land tax of $${Math.round(base.landTax).toLocaleString('en-AU')} a year is for this property alone; `
+      + 'the assessment depends on the owner\'s aggregate taxable landholdings in the state, which are not held.',
+    );
+  } else {
+    notes.push(
+      landTaxSource === 'absent' || landTaxSource === 'default'
+        ? 'No land tax is recorded for this property. That is not a finding that none is payable: land tax depends on the owner\'s aggregate taxable landholdings in the state, which are not held.'
+        : 'Land tax is recorded as nil for this property; the assessment depends on the owner\'s aggregate taxable landholdings in the state, which are not held.',
+    );
+  }
+  const costSources = new Set(
+    (['councilRates', 'waterRates', 'bodyCorporateFees', 'buildingLandlordInsurance', 'repairsMaintenance', 'lettingFees'] as const)
+      .map((f) => base.provenance[f])
+      .filter((v): v is InputProvenance => v !== undefined && v !== 'absent'),
+  );
+  if (costSources.size) {
+    const from = costSources.has('default') && costSources.size === 1
+      ? 'default allowances, not quotes or bills'
+      : costSources.has('default')
+        ? 'a mix of recorded entries and default allowances, not quotes or bills'
+        : 'the report record as entered, not quotes or bills';
+    notes.push(`Operating costs are ${from}; confirm rates notices, strata levies, insurance quotes and management terms before relying on them.`);
+  }
+  return notes;
+}
+

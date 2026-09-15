@@ -130,3 +130,66 @@ export function interestOnlyMonthlyPaymentFor(financials: unknown): number | und
   if (amount === undefined || rate === undefined || amount <= 0 || rate <= 0) return undefined;
   return Math.round((amount * rate / 100 / 12) * 100) / 100;
 }
+
+/**
+ * The financial warnings the recommendation must reconcile (QA-37).
+ *
+ * The audited documents recommended the purchase in prose that never
+ * mentioned the year-1 shortfall, the ten-year cumulative deficit, the rate
+ * shocks or the D grade that the same documents' own tables stated. The
+ * generator now hands the model those facts, from the record, at the point
+ * it writes the recommendation, with the rule that each must be reconciled.
+ * Empty when the record states none — nothing here is estimated.
+ */
+export function financialWarningsForPrompt(financials: unknown, score: unknown): string {
+  const fin = rec(financials);
+  const metrics = rec(fin.keyMetrics);
+  const loan = rec(fin.loanDetails);
+  const sens = rec(fin.sensitivityAnalysis);
+  const rates = rec(sens.interestRateChanges);
+  const projections = rec(fin.projections);
+  const moderate = Array.isArray(projections.moderate) ? projections.moderate.map(rec) : [];
+  const last = moderate.length ? moderate[moderate.length - 1] : {};
+  const published = Array.isArray(sens.scenarios) ? sens.scenarios.map(rec) : [];
+  const labelFor = (key: string, fallback: string): string => {
+    const hit = published.find((x) => x.key === key);
+    return (hit && typeof hit.label === 'string' && hit.label) || fallback;
+  };
+
+  const lines: string[] = [];
+  const annualNet = num(metrics.annualNet);
+  const weeklyNet = num(metrics.weeklyNet);
+  if (annualNet !== undefined && annualNet < 0) {
+    lines.push(`- Year-1 cash shortfall: ${cash(annualNet)} a year${weeklyNet !== undefined ? ` (${cash(weeklyNet)} a week)` : ''}, before tax, which the investor funds.`);
+  }
+  const cumulative = num(last.cumulativeCashFlow);
+  const year = num(last.year);
+  if (cumulative !== undefined && cumulative < 0) {
+    lines.push(`- Cumulative cash shortfall to year ${year ?? moderate.length}: ${cash(cumulative)} (base case).`);
+  }
+  const plus1 = num(rates.plus1Percent);
+  const plus2 = num(rates.plus2Percent);
+  if (plus1 !== undefined) lines.push(`- ${labelFor('plus1Percent', 'Interest rate +1%')}: annual cash position ${cash(plus1)}.`);
+  if (plus2 !== undefined) lines.push(`- ${labelFor('plus2Percent', 'Interest rate +2%')}: annual cash position ${cash(plus2)}.`);
+  const ioYears = num(loan.interestOnlyPeriod);
+  const ioPayment = num(loan.interestOnlyPayment);
+  const piPayment = num(loan.amortisingMonthlyPayment);
+  if (ioYears !== undefined && ioYears > 0 && ioPayment !== undefined && piPayment !== undefined && piPayment > ioPayment) {
+    lines.push(`- Repayment step-up: ${money(piPayment)} a month from year ${ioYears + 1}, up from ${money(ioPayment)} interest-only.`);
+  }
+  const sc = rec(score);
+  const grade = typeof sc.grade === 'string' && sc.grade.trim().toUpperCase() !== 'N/A' ? sc.grade.trim() : undefined;
+  const total = num(sc.totalScore);
+  const recommendation = typeof sc.recommendation === 'string' ? sc.recommendation.trim() : undefined;
+  if (grade && total !== undefined) {
+    lines.push(`- Recorded assessment: grade ${grade}, ${Math.round(total)}/100${recommendation ? `, recommendation "${recommendation}"` : ''}.`);
+  }
+  if (!lines.length) return '';
+  return [
+    '**FINANCIAL WARNINGS THIS RECOMMENDATION MUST RECONCILE (from the recorded calculation — quote each figure exactly):**',
+    ...lines,
+    '',
+    'Rule: the recommendation must state each warning above and say how it bears on the verdict. A recommendation that omits one, or that reads more favourably than the recorded grade without saying why, is incomplete. Do not soften a figure and do not restate it as a range.',
+  ].join('\n');
+}
+

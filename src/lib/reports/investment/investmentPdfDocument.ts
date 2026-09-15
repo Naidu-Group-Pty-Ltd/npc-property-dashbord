@@ -43,7 +43,7 @@ import {
   sparklineSeries,
   type FigurePalette,
 } from './investmentPdfFigures';
-import { VIZ_DIRECTIVE_KINDS, VIZ_DIRECTIVE_RE_G } from '@/lib/reports/vizDirectives.pure';
+import { tabulateVizDirectives } from '@/lib/reports/vizDirectiveTables.pure';
 import { rentIsEstablished } from '@/lib/reports/investment/rentalEvidence.pure';
 import { presenceOf } from '../../../../supabase/functions/_shared/reports/contract/visibilityPolicy.pure';
 import { documentTitleForTier } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
@@ -422,44 +422,34 @@ export async function generateInvestmentPdfBlob(
     filterSections(sections, presentation);
 
   /**
-   * A chart directive this presentation cannot draw is REMOVED, never printed.
+   * A chart directive this presentation cannot draw is TABULATED, never printed.
    *
    * The generator's prompt tells the model to write its figures as
    * `{{bars: …}}`, `{{gauge: …}}`, `{{glance: …}}` and nine more kinds, and
    * `markdown.pure.ts` states the rule for them: a directive is an instruction
    * to the renderer — it is drawn or it is dropped, and either way its source
-   * is never printed. The design-system presentation obeys that through
+   * is never printed. The design-system presentation draws them through
    * `vizFigures.pure.ts`. This one had never heard of them, so it set each one
    * as body copy: measured on report 783bb982, THIRTY-SIX raw directives on a
-   * client's pages, one of them repeated on four consecutive pages because the
-   * line was carried as a table header. 60 of the 1,195 completed reports
-   * carry directives — 4,652 of them, 77.5 a report — and they are the ones
-   * the current generator writes, so this is the shape of every new report.
+   * client's pages. It then DROPPED them, which was half right: the source no
+   * longer printed, but the prose that introduced the figure did — "The
+   * matrix below groups the main amenities by type" on two of the audited 291
+   * Stone Mason Drive documents, with nothing below it (QA-33) — and the data
+   * the model had gathered went out with the drawing.
    *
-   * Dropping loses nothing a reader could use: the figure was never drawn, and
-   * the prose around it and every number in that prose are untouched. The
-   * figures this presentation CAN draw are drawn from the record in the
-   * "AT A GLANCE" block below, which is where a chart in this document comes
-   * from — never from a directive, and never recomputed.
-   *
-   * The vocabulary is the shared one rather than a second regex here, so a
-   * kind added to the model's prompt cannot start leaking through this path.
+   * `tabulateVizDirectives` writes every parseable directive back as the
+   * table its data already is (labels and values, phases and milestones, a
+   * grid), in the directive's own numbers; the standard presentation sets a
+   * Markdown table natively. A directive the shared parser refuses is
+   * removed as before, because an unparseable payload holds no data to keep.
+   * The figures this presentation draws itself still come from the record
+   * ("AT A GLANCE"), never from a directive, and are never recomputed.
    */
   const stripUndrawableDirectives = (content: string): string => {
-    if (!content || !content.includes('{{')) return content;
-    let removed = 0;
-    const out = content.replace(VIZ_DIRECTIVE_RE_G, (whole, rawKind: string) => {
-      if (!(VIZ_DIRECTIVE_KINDS as readonly string[]).includes(String(rawKind).toLowerCase())) {
-        return whole;
-      }
-      removed += 1;
-      return '';
-    });
-    if (removed) console.log(`🧹 Removed ${removed} chart directive(s) this presentation cannot draw`);
-    // A directive that sat alone on its line leaves the line behind; collapse
-    // the run of blank lines so the prose does not gain a hole where a figure
-    // used to be named.
-    return removed ? out.replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n') : out;
+    const { markdown, tabulated, removed } = tabulateVizDirectives(content);
+    if (tabulated) console.log(`📋 Tabulated ${tabulated} chart directive(s) this presentation cannot draw`);
+    if (removed) console.log(`🧹 Removed ${removed} unparseable chart directive(s)`);
+    return markdown;
   };
 
   const injectOverridesIntoContent = (content: string, financialData: any): string => {

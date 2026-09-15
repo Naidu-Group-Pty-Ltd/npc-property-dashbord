@@ -95,3 +95,33 @@ describe('interestOnlyMonthlyPaymentFor', () => {
     expect(interestOnlyMonthlyPaymentFor({ loanDetails: { interestRate: 6.5 } })).toBeUndefined();
   });
 });
+
+describe('financialWarningsForPrompt (QA-37)', async () => {
+  const { financialWarningsForPrompt } = await import('@/lib/reports/investment/promptFinancials.pure');
+  const record = {
+    keyMetrics: { annualNet: -48_412, weeklyNet: -931 },
+    loanDetails: { interestOnlyPeriod: 5, interestOnlyPayment: 5_629, amortisingMonthlyPayment: 7_186 },
+    sensitivityAnalysis: {
+      interestRateChanges: { plus1Percent: -58_804, plus2Percent: -69_196 },
+      scenarios: [{ key: 'plus1Percent', label: 'Interest rate 7.5% (+1.0 pt)' }],
+    },
+    projections: { moderate: [{ year: 1, cumulativeCashFlow: -48_412 }, { year: 10, cumulativeCashFlow: -484_120 }] },
+  };
+  const score = { grade: 'D', totalScore: 39, recommendation: 'CAUTION' };
+
+  it('hands the model every warning the record states, exactly', () => {
+    const block = financialWarningsForPrompt(record, score);
+    expect(block).toContain('- Year-1 cash shortfall: ($48,412) a year (($931) a week), before tax, which the investor funds.');
+    expect(block).toContain('- Cumulative cash shortfall to year 10: ($484,120) (base case).');
+    expect(block).toContain('- Interest rate 7.5% (+1.0 pt): annual cash position ($58,804).');
+    expect(block).toContain('- Interest rate +2%: annual cash position ($69,196).');
+    expect(block).toContain('- Repayment step-up: $7,186 a month from year 6, up from $5,629 interest-only.');
+    expect(block).toContain('- Recorded assessment: grade D, 39/100, recommendation "CAUTION".');
+    expect(block).toContain('must state each warning above');
+  });
+
+  it('is empty when the record states nothing, and never estimates', () => {
+    expect(financialWarningsForPrompt({}, null)).toBe('');
+    expect(financialWarningsForPrompt({ keyMetrics: { annualNet: 1_200 } }, { grade: 'N/A', totalScore: 50 })).toBe('');
+  });
+});
