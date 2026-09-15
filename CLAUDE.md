@@ -1485,8 +1485,22 @@ never dropped behind the sentence that introduced it, and the word-cap cut
 works in whole blocks so a bullet cannot lose its explanation or a pair of
 lists its second half. And **one loan ledger** (`loanLedger.pure.ts`) drives
 projections, metrics and sensitivities, so "interest only" is never projected
-with P&I arithmetic. The render service's 503 is a separate matter:
+with P&I arithmetic. The render service's 503 — and the 500 it became that
+afternoon — is a separate matter:
 [`RENDER_SERVICE_AVAILABILITY.md`](./docs/reports/RENDER_SERVICE_AVAILABILITY.md).
+Two rules from that day. **The host's error page is not the engine's answer**:
+Cloud Run's front door serves the same HTML under 500 as under 503 and both
+mean no instance took the request — measured with a `GET /` that needs no
+token and no engine — so `classifyServiceAnswer` reads the SHAPE of the
+answer rather than its digit, and a chosen template the engine did not draw
+is drawn by the in-tab renderer instead (`browserStandInFor`), marked, said
+out loud, never remembered as the finalisation, and never on a refusal. And
+**a fork mints no grade** (`variantScorePolicy.pure.ts`): the Financial fork
+wrote D · 39 · CAUTION beside a Compass whose run had withheld the grade under
+the scoring policy, and the Generated Reports card showed that D as the
+property's grade — the child restates the parent's decision, a variant score
+never stands for the property while a composite exists, and the literal `N/A`
+the scoring service stores is a placeholder no surface draws.
 
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything

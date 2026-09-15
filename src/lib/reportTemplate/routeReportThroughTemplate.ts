@@ -139,6 +139,23 @@ export interface TemplateBuilderRouteResult {
    * publish reuses the bytes already on disk rather than uploading a copy.
    */
   storagePath: string | null;
+  /**
+   * Set when the caller asked for the FINAL renderer and got the preview one
+   * instead: the print engine did not answer (or answered with a 5xx of its
+   * own), the template's blocks are all ones the in-tab renderer draws in
+   * full, and the same template was drawn here with the same bound data.
+   *
+   * `renderer` on this result already says which engine drew the bytes; this
+   * says WHY it was not the one asked for, in the route's own refusal
+   * vocabulary and with the engine's words, so the person can be told that
+   * their template was honoured and their final document was not produced.
+   * Null whenever the renderer asked for is the renderer that drew.
+   */
+  degradedFrom: {
+    renderer: typeof WEASYPRINT_FINAL_RENDERER;
+    refusal: Extract<TemplateRouteRefusal, 'engine_unavailable' | 'render_failed'>;
+    detail: string;
+  } | null;
 }
 
 /**
@@ -159,6 +176,56 @@ export const BROWSER_PRESENTATION_RENDERER = 'browser_template_jspdf' as const;
  * chosen instead of.
  */
 export const WEASYPRINT_FINAL_RENDERER = 'weasyprint_final' as const;
+
+/**
+ * Whether the preview renderer may stand in for the final one, given how the
+ * final render failed.
+ *
+ * ## Why a stand-in exists at all
+ *
+ * On 15 Sep 2026 the render container answered every request with Cloud
+ * Run's own 500 page for more than five hours (`RENDER_SERVICE_AVAILABILITY.md`).
+ * Every chosen template fell back to the standard pdf-lib layout, and the one
+ * person who needed the templated document — to audit the content in the
+ * design it would be sent in — could not get it from the product at all,
+ * while the in-tab renderer that had drawn that exact template for a year
+ * (RV-1 retired it as the FINAL renderer, not as a renderer) sat idle.
+ *
+ * ## What may stand in, and what may not
+ *
+ * Only a failure OF THE ENGINE: it did not answer (`engine_unavailable`), or
+ * it answered with a 5xx of its own (`engine_failed`) — in both the document
+ * was never drawn. A refusal (`engine_refused`: credentials, a document it
+ * will not take) is not stood in for, because the browser would ship the
+ * same document the engine declined. And nothing but a `RenderServiceError`
+ * qualifies: the client-readiness gate answers 409 as a plain error, and a
+ * document the server refused as not client-ready must not come out of a
+ * different renderer. (The gate runs BEFORE the engine is called, so an
+ * engine failure means the gate had already passed for this document.)
+ *
+ * And only where every block is one the browser renderer draws in full —
+ * the same judgement `renderer: 'browser'` is subject to. A placeholder
+ * panel on a client's page is worse than the standard document.
+ *
+ * The result is still marked (`degradedFrom`, and `renderer` names the
+ * browser): a stand-in is a templated document, not the final one, and the
+ * caller says so.
+ */
+function browserStandInFor(
+  failure: unknown,
+  schema: Parameters<typeof judgeBrowserProductionExport>[0],
+): TemplateBuilderRouteResult['degradedFrom'] {
+  if (!(failure instanceof RenderServiceError)) return null;
+  const engineDidNotDraw = failure.kind === 'engine_unavailable'
+    || (failure.kind === 'engine_failed' && (failure.upstreamStatus ?? 500) >= 500);
+  if (!engineDidNotDraw) return null;
+  if (judgeBrowserProductionExport(schema).ok === false) return null;
+  return {
+    renderer: WEASYPRINT_FINAL_RENDERER,
+    refusal: failure.kind === 'engine_unavailable' ? 'engine_unavailable' : 'render_failed',
+    detail: failure.message,
+  };
+}
 
 function candidateAdapters(reportType?: string | null): ReportTemplateAdapter[] {
   const explicit = getAdapter(reportType);
@@ -404,6 +471,24 @@ export async function routeReportThroughTemplate(
 
       let blob: Blob;
       let storagePath: string | null = null;
+      let degradedFrom: TemplateBuilderRouteResult['degradedFrom'] = null;
+      /*
+       * The in-tab drawing. Assets are resolved through the same module the
+       * HTML path uses, in `inline` mode because this renderer cannot fetch:
+       * jsPDF draws from the bytes it is handed. The other half of that
+       * module's rule travels with it — an asset that cannot be brought inside
+       * is DROPPED and named rather than carried in, so one unreachable
+       * picture thins a page instead of failing the document.
+       */
+      const drawInBrowser = async (): Promise<Blob> => {
+        const { template: prepared } = await preloadImagesWithReport(schema, {
+          mode: 'inline',
+          data: bindingData,
+          tokens: undefined,
+          supabaseUrl: SUPABASE_URL,
+        });
+        return renderTemplateToBlob(prepared, { data: bindingData });
+      };
       try {
         if (renderer === 'weasyprint') {
           /*
@@ -414,35 +499,36 @@ export async function routeReportThroughTemplate(
            * stores the PDF and answers its path. Nothing is recalculated,
            * re-narrated or re-decided here: the payload is the one built above.
            */
-          const compiled = await compileTemplateHtmlForPdf(schema, { data: bindingData });
-          const rendered = await renderFinalHtmlToPdf({
-            html: compiled.html,
-            fileName,
-            mode: 'final',
-            reportId,
-            reportType: adapter.reportType,
-            templateId: tplRow.id,
-            templateName: tplRow.name ?? null,
-            pageCount: schema.pages.length,
-          });
-          blob = rendered.blob;
-          storagePath = rendered.path;
+          try {
+            const compiled = await compileTemplateHtmlForPdf(schema, { data: bindingData });
+            const rendered = await renderFinalHtmlToPdf({
+              html: compiled.html,
+              fileName,
+              mode: 'final',
+              reportId,
+              reportType: adapter.reportType,
+              templateId: tplRow.id,
+              templateName: tplRow.name ?? null,
+              pageCount: schema.pages.length,
+            });
+            blob = rendered.blob;
+            storagePath = rendered.path;
+          } catch (e) {
+            // The engine did not draw it. Where the in-tab renderer can draw
+            // this template in full, the chosen template is still honoured —
+            // marked as a stand-in, never as the final document. See
+            // `browserStandInFor` for what qualifies and why.
+            const standIn = browserStandInFor(e, schema);
+            if (!standIn) throw e;
+            console.warn(
+              `[routeReportThroughTemplate] ${standIn.refusal}: ${standIn.detail} — drawing `
+              + `${tplRow.name ?? tplRow.id} with the in-tab renderer instead`,
+            );
+            degradedFrom = standIn;
+            blob = await drawInBrowser();
+          }
         } else {
-          /*
-           * Assets are resolved through the same module the HTML path uses, in
-           * `inline` mode because this renderer cannot fetch: jsPDF draws from
-           * the bytes it is handed. The other half of that module's rule
-           * travels with it — an asset that cannot be brought inside is DROPPED
-           * and named rather than carried in, so one unreachable picture thins
-           * a page instead of failing the document.
-           */
-          const { template: prepared } = await preloadImagesWithReport(schema, {
-            mode: 'inline',
-            data: bindingData,
-            tokens: undefined,
-            supabaseUrl: SUPABASE_URL,
-          });
-          blob = renderTemplateToBlob(prepared, { data: bindingData });
+          blob = await drawInBrowser();
         }
       } catch (e) {
         // Guarded on its own rather than left to the outer catch: a failure
@@ -467,10 +553,15 @@ export async function routeReportThroughTemplate(
       return {
         blob,
         fileName,
-        renderer: renderer === 'weasyprint' ? WEASYPRINT_FINAL_RENDERER : BROWSER_PRESENTATION_RENDERER,
+        // The renderer that DREW these bytes — the one asked for, unless the
+        // preview renderer stood in for the final one.
+        renderer: renderer === 'weasyprint' && !degradedFrom
+          ? WEASYPRINT_FINAL_RENDERER
+          : BROWSER_PRESENTATION_RENDERER,
         templateId: tplRow.id,
         source: `${resolved.source}:${adapter.reportType}`,
         storagePath,
+        degradedFrom,
       };
     }
 

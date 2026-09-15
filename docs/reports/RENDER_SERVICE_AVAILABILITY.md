@@ -1,4 +1,4 @@
-# The render service, and what a 503 from it means
+# The render service, and what a 503 — or a 500 — from it means
 
 **Read this before touching `weasyprintClient.ts`, `render-template-pdf`,
 `render-cash-flow-pdf`, `routeReportThroughTemplate.ts`,
@@ -53,8 +53,13 @@ render functions and both browser clients read it:
 | Upstream | `code` | HTTP from the function | Retried |
 | --- | --- | --- | --- |
 | 502, 503, 504, network failure | `engine_unavailable` | 503 | once, after 5 s |
-| 4xx / other 5xx from the engine | `render_failed` | 502 | no |
+| **Any 5xx that is the host's own page** (HTML, `NNN Server Error`, no `X-WeasyPrint-Version`) | `engine_unavailable` | 503 | once, after 5 s |
+| 4xx / a 5xx the engine itself answered (JSON, under its version header) | `render_failed` | 502 | no |
 | Storage or signing after the render | `store_failed` | 502 | no |
+
+The second row is the afternoon of the same day (next section). `classifyServiceAnswer`
+reads the SHAPE of the answer, not the digit: the engine's own answers are JSON
+and carry `X-WeasyPrint-Version`; Cloud Run's page is HTML with neither.
 
 - `weasyprintClient.ts` retries an unavailable answer once and throws a
   `WeasyPrintServiceError` carrying the kind, the upstream status and a
@@ -73,7 +78,64 @@ render functions and both browser clients read it:
 None of that makes the service answer. It makes the product say what
 happened.
 
-## Runbook: the render service answers 503
+## The second episode: the 500 (15 Sep 2026, from 00:46 UTC)
+
+The service came back for nobody. Measured from the production ledger
+(`template_render_jobs`, `api_usage_log`) on the 15th:
+
+| When (UTC) | Call | Answer | Time to answer |
+| --- | --- | --- | --- |
+| 8 Sep 08:42 | last successful render (Private Banking — Chancery) | 200, 307 KB | 3.9 s |
+| 15 Sep 00:46 → 01:31 | six template renders, one cash-flow render | Cloud Run **500** page ×6, **503** page ×2 | 130–330 ms each |
+| 15 Sep 06:03 | template render after the fix of the morning deployed | Cloud Run **500** page, now reported as `engine_failed` | 284 ms |
+
+Two things distinguish this from the morning's 503:
+
+- **The answer is the host's, not the engine's.** The body is Cloud Run's own
+  page (`<title>500 Server Error</title>`, "The server encountered an error
+  and could not complete your request. Please try again in 30 seconds.",
+  `Server: Google Frontend`) with no `X-WeasyPrint-Version`. The engine's
+  own errors are JSON. A page from the host means **no container instance
+  took the request**.
+- **It answers in under 350 ms, to anything.** A cold start that fails takes
+  seconds; a render that crashes takes at least the parse. To rule out the
+  document, the service's root was asked from the one vantage point this
+  repository's tooling has into its network — the production database, via
+  `pg_net`, at 06:25 UTC:
+
+  ```sql
+  select net.http_get(url := 'https://<service>.a.run.app/', timeout_milliseconds := 20000);
+  select status_code, left(content, 200), headers->>'server' from net._http_response where id = <id>;
+  ```
+
+  `GET /` — which `app.py` answers with a JSON listing, no token and no
+  engine — came back **500, the same page, `Server: Google Frontend`**.
+  (`GET /healthz` came back Google's generic 404, which is the frontend's
+  own reserved-path answer rather than the container's; it says nothing
+  either way.) So the document is not at fault, the token is not at fault
+  (a bad token is a JSON 401 from the app), and it is not a cold start still
+  warming (five hours).
+
+  That probe wrote two transient rows to `net._http_response` and nothing
+  else. It is the only write this investigation made.
+
+What was NOT measurable from here — and therefore what the operator must
+read first — is **why** the revision cannot serve. Cloud Run answers this
+page for a handful of instance-level faults, and the revision's own logs
+name which:
+
+| Log line (`resource.type="cloud_run_revision"`, severity ≥ ERROR) | Meaning | Remedy |
+| --- | --- | --- |
+| *The request failed because the instance could not be started* | The container did not come up: an image that can no longer be pulled, a runtime service account that was deleted or disabled, or a crash at boot (the warm-up render runs under `--preload` before gunicorn listens; a fontconfig or WeasyPrint import failure lands here) | Roll back to the previous ready revision, or redeploy the image as a new revision (below) |
+| *Memory limit of 2048 MiB exceeded* | An instance was killed at boot or on the first request | Redeploy with `--memory 4Gi`; then find what grew |
+| *The request failed because either the HTTP response was malformed or connection to the instance had an error* | A worker crashed mid-request (a segfault in the render stack) | Redeploy; if it recurs on one document, that document |
+| No error lines at all, and no request lines either | The requests never reached the service's revision — traffic is routed to a revision that no longer exists, or the service itself is in a failed state | `gcloud run services describe` (step 1 below); redeploy |
+
+Nothing in this repository changed the container between the 8th and the
+15th (`weasyprint-service/` last changed on the 11th and has never been
+deployed by its workflow), so this is the platform's state, not this code.
+
+## Runbook: the render service answers 503 or 500
 
 Run from a machine with `gcloud` authenticated to the production project.
 
@@ -81,18 +143,39 @@ Run from a machine with `gcloud` authenticated to the production project.
 REGION=australia-southeast1
 SERVICE=weasyprint-service
 
+# 0. Is the front door answering for the container, or for itself?
+#    `/` needs no token and no engine: a JSON listing means the app is up; an
+#    HTML "Server Error" page in under half a second means no instance took it.
+URL=$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)')
+curl -sS -o /dev/null -w '%{http_code} %{time_total}s\n' "$URL/"
+
 # 1. Is there a serving revision, and is it ready?
 gcloud run services describe "$SERVICE" --region "$REGION" \
   --format='yaml(status.conditions,status.traffic,status.latestReadyRevisionName,status.latestCreatedRevisionName)'
+gcloud run revisions list --service "$SERVICE" --region "$REGION"
 
 # 2. Does the container boot? (unauthenticated on purpose — see app.py)
-URL=$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)')
 curl -sS -o /dev/null -w '%{http_code}\n' "$URL/healthz"
 
-# 3. What did the last requests see?
+# 3. What did the last requests see, and why? (the table above reads these)
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="'"$SERVICE"'" AND severity>=ERROR' \
+  --limit 50 --freshness 3d --format='value(timestamp,textPayload)'
 gcloud logging read \
   'resource.type="cloud_run_revision" AND resource.labels.service_name="'"$SERVICE"'" AND httpRequest.status>=500' \
   --limit 20 --format='value(timestamp,httpRequest.status,textPayload)'
+
+# 4. Redeploy the image the service already runs, as a new revision. This
+#    recreates instances and is the remedy for every row of the table above
+#    except the memory one (add --memory 4Gi there). The image digest is on
+#    the serving revision:
+IMAGE=$(gcloud run revisions describe "$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.latestReadyRevisionName)')" \
+  --region "$REGION" --format='value(spec.containers[0].image)')
+gcloud run deploy "$SERVICE" --image "$IMAGE" --region "$REGION" --platform managed \
+  --allow-unauthenticated --memory 2Gi --cpu 2 --concurrency 4 --timeout 600 \
+  --min-instances 0 --max-instances 10
+#    (CONTAINER_RELEASE.md carries the same command with --no-traffic and a
+#    tag, for staging a NEW image; for the same image, cutting over is the point.)
 ```
 
 Read the answers in this order:
@@ -113,6 +196,38 @@ Read the answers in this order:
 - **Only the first request after idle fails** — a cold start. The one retry
   in `weasyprintClient.ts` covers a boot that finishes within five seconds;
   a slower boot needs the change below.
+- **`GET /` answers the host's page in under half a second, for hours** —
+  the 15 Sep afternoon. No instance is taking requests; the revision's own
+  logs (step 3) say why, and step 4 is the remedy for all but the memory
+  case.
+
+## What the product does while the engine is down
+
+None of the above makes the service answer, and on the 15th nobody with
+`gcloud` was at hand, so the product now degrades in a way that still
+delivers the chosen template:
+
+- **The host's page is classified as the engine not answering**
+  (`classifyServiceAnswer`), under a 500 as under a 503: retried once,
+  answered 503 by the function, and reported as "The print engine did not
+  answer (HTTP 500 from the render service) … check the Cloud Run service".
+- **The chosen template is drawn by the in-tab renderer** when the engine
+  did not draw it (`browserStandInFor` in `routeReportThroughTemplate.ts`).
+  That renderer drew every template for a year before the print engine
+  became the final renderer; it draws the same schema with the same bound
+  data, and it is refused only where a block would render as a placeholder
+  (`judgeBrowserProductionExport`). The document is delivered marked
+  (`degradedFrom`, `renderer: browser_template_jspdf`), the person is told
+  in its own words ("Your chosen template was drawn in the browser …
+  typefaces are substituted and it is not the final PDF/UA document"), and
+  the delivery never remembers it as the finalisation — the next request
+  asks the engine again. A refusal (credentials, a 409 from the
+  client-readiness gate) is never stood in for: the browser would ship the
+  same document the engine declined.
+- The standard pdf-lib layout remains the fallback where no template can be
+  drawn at all, exactly as before.
+
+`routeBrowserStandIn.spec.ts` pins what may stand in and what may not.
 
 ## Two changes that need a decision
 
@@ -138,4 +253,7 @@ configuration.** A green deploy is not a rendered report. After any change:
    NOT appear and the download is the templated document (its Producer is
    the WeasyPrint engine, not "NPC Command Centre").
 3. Generate one 10 Year Cash Flow and confirm a PDF downloads.
-4. `api_usage` shows the three `weasyprint` rows with `success = true`.
+4. `api_usage_log` shows the `weasyprint/render` rows with `status = 'success'`
+   and `response_time_ms` in the seconds, not the hundreds of milliseconds.
+5. The toast *"Your chosen template was drawn in the browser"* stops
+   appearing: the stand-in is the sign the engine is still down.

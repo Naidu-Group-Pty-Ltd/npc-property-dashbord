@@ -32,7 +32,7 @@ marked resolved because code changed.
 
 | # | Symptom | Root cause found | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| S1 | "Reports are not being generated in the template forms"; toast *Your chosen template was not used … The renderer could not produce the document* | Every template route ends in the WeasyPrint render service on Cloud Run, which answered **503** (its own front door: no ready instance). The route fell back to the standard pdf-lib layout on all five documents and the notice dropped the status and the engine's words. The deploy workflow has never deployed (3 runs, gate variables unset). | Implemented · tested (the product now names the failure); **Not reproducible here** (the service itself) | `renderFailure.pure.ts`, `weasyprintClient.ts` (classified error, one retry), `render-template-pdf`, `routeReportThroughTemplate.ts` (`engine_unavailable`), `templateDocument.ts` (notice carries status + words); `renderFailure.spec.ts`, `templateRouteRefusal.spec.ts`. Runbook: `RENDER_SERVICE_AVAILABILITY.md`. |
+| S1 | "Reports are not being generated in the template forms"; toast *Your chosen template was not used … The renderer could not produce the document* | Every template route ends in the WeasyPrint render service on Cloud Run, which answered **503** (its own front door: no ready instance). The route fell back to the standard pdf-lib layout on all five documents and the notice dropped the status and the engine's words. The deploy workflow has never deployed (3 runs, gate variables unset). **Recurred the same afternoon as the host's 500 page, for five hours and counting** — see §6. | Implemented · tested (the product names the failure; the host's page is the engine not answering under either status; the chosen template is drawn by the in-tab renderer while the engine cannot); **Not reproducible here** (the service itself — an operator with `gcloud` must redeploy) | `renderFailure.pure.ts` (`classifyServiceAnswer`), `weasyprintClient.ts` (classified error, one retry), `render-template-pdf`, `routeReportThroughTemplate.ts` (`engine_unavailable`, `browserStandInFor`), `templateDocument.ts` (both notices), `deliverInvestmentPdf.ts` (a stand-in is never the remembered finalisation); `renderFailure.spec.ts`, `templateRouteRefusal.spec.ts`, `routeBrowserStandIn.spec.ts`, `deliverInvestmentPdf.spec.ts`. Runbook: `RENDER_SERVICE_AVAILABILITY.md`. |
 | S2 | Download names "random, not reflecting the report or the address" | `investmentPdfDocument.ts` named every file `<uuid-prefix>_<ADDRESS>_<epoch>.pdf`; the "Financial Download - " / "Steategic Download" prefixes were typed by hand on the operator's side. | Implemented · tested | `reportFileName.pure.ts` → `Due_Diligence_Report_291_Stone_Mason_Drive_Kellyville_NSW_2155_2026-09-15.pdf`; used by the renderer, the template route, the client download and the adapter. `reportFileName.spec.ts`. |
 | S3 | Cash-flow PDF: *WeasyPrint render failed (503): \<html\>…503 Server Error…* | Same engine failure as S1; the cash-flow route has no standard-layout fallback and printed the HTML body. | Implemented · tested (the toast prints the operator's sentence; the function answers 503 `engine_unavailable`); **Not reproducible here** (the service) | `render-cash-flow-pdf`, `requestCashFlowPdf.ts`; runbook as above. |
 
@@ -103,9 +103,22 @@ implementation agreed.
    Decide whether to license one; until then the prompt forbids uncited
    growth claims and the register calls its supply view "existing listings".
 5. **Render service (S1/S3).** Set the three deploy-workflow variables; add a
-   startup probe; decide on `--min-instances 1`. See the runbook.
+   startup probe; decide on `--min-instances 1`. See the runbook. **And, now:
+   the service is down and nothing in this repository can reach it.** An
+   operator with `gcloud` on the production project runs the runbook's steps
+   0–4 (read why the revision cannot serve; redeploy the image it already
+   runs). Until then every chosen template comes out of the in-tab renderer,
+   said so on each download.
 6. **Year-1 growth timing.** Both engines apply growth before year 1; kept,
    and now disclosed (`growthTiming`). Confirm or change once, in the engine.
+7. **Overall grades on new reports (S4).** Since 11 Sep 2026 no new report
+   carries an overall grade: `PRODUCTION_SCORING_AUTHORITY` is `unavailable`
+   (V1 not trusted to grade; Scoring V2 frozen and not activated — ME-8 in
+   `SCORING_V2_METHODOLOGY.md`). The D · 39 the Generated Reports card showed
+   for 291 Stone Mason Drive was the Financial fork minting a V1 grade past
+   that policy, which this branch stops; the page's "not issued" was correct.
+   Grades return only through the V2 activation decision, which is a review,
+   not a flag — nothing here flips it.
 
 ## 4. Verification record
 
@@ -182,9 +195,30 @@ exists.
 ## 5. What is not verified
 
 - The render service's state on Cloud Run, and therefore S1/S3 end to end.
+  The one measurement this repository's tooling could take — `GET /` from the
+  production database via `pg_net`, 15 Sep 06:25 UTC — answered Cloud Run's
+  own 500 page, which rules out the document and the token and leaves the
+  cause (instance start, memory, a crashing worker, routing) to the Cloud Run
+  logs the runbook names. The browser stand-in was verified by its spec and
+  the delivery spec, not by a production download.
 - The generator's and condense function's behaviour against a live model
   (prompt controls QA-20/22/28/29/37 and the Snapshot guide are instructions
   to a model; the validator findings and the score guard are the
   deterministic half).
 - The fork against a real composite row (`fork-investment-report` needs
   Deno + database); its pure contracts are tested.
+
+## 6. 15 Sep addendum — the recurrence, and the grade that showed on the list and not on the page
+
+Two reports on the afternoon of 15 Sep 2026, both on 291 Stone Mason Drive.
+
+| ID | Reported | Finding | Disposition | Where |
+| --- | --- | --- | --- | --- |
+| S1 (recurrence) | The template toast again, now *"The print engine failed to draw the document (HTTP 500 from the render service). It said: '500 Server Error — … Please try again in 30 seconds.'"*; the templated document cannot be produced to audit | Since 00:46 UTC every render (eight, across two formats) has met Cloud Run's own 500 page in 130–330 ms. `GET /` from the production database met the same page: no instance is taking any request. The morning's fix read the status alone, so the 500 was `engine_failed` — final and unretried — while the 503 beside it was `engine_unavailable`. The container tree has not changed since the 11th and has never been deployed by its workflow. | **The host's page is the engine not answering** under either digit (`classifyServiceAnswer` reads the shape of the answer: HTML `NNN Server Error` with no `X-WeasyPrint-Version`). **The chosen template is drawn by the in-tab renderer** when the engine did not draw it, on a template every block of which that renderer draws in full; marked `degradedFrom`, named as `browser_template_jspdf`, said in its own toast, never remembered as the finalisation, and never on a refusal. Standard layout stays the last resort. The service itself: decision 5. | `renderFailure.pure.ts`, `weasyprintClient.ts`, `routeReportThroughTemplate.ts`, `templateDocument.ts`, `deliverInvestmentPdf.ts`; `renderFailure.spec.ts`, `routeBrowserStandIn.spec.ts`, `templateRouteRefusal.spec.ts`, `deliverInvestmentPdf.spec.ts`; `RENDER_SERVICE_AVAILABILITY.md` |
+| S4 | "Scoring is occurring on the Generated Reports page but not populating when the report is clicked": the package card read *D · CAUTION · 39/100*, the report page read *Investment Grade N/A … Insufficient data — qualitative review only (1 of 5 dimensions)* | Two scoring paths, one policy. The Compass composite (00:35 and 05:49) was scored by `investment-scoring-service` under the forward-only policy: `authority: unavailable`, `gradeIssued: false`, one of five dimensions (yield) measured — correct, and the page's reading. The Financial fork (00:49) was scored by `fork-investment-report` through the legacy `investmentScoreEngine` with **no policy at all** and wrote D · 39 · CAUTION — 40% of it the buyer's LVR band and cash flow, which the policy admits to no dimension. Every reader then did what its rules said: an unstamped score reads as a legacy snapshot, and the card resolves the property's grade as the newest score with a number, so the fork's D stood above five chips while the page beside it showed the withholding. The page also drew the record's placeholder `N/A` as the grade. | **A fork mints no grade** (`variantScorePolicy.pure.ts`): the child restates the parent's decision — an issued grade whole, a withholding with the same stamp — and a legacy or absent parent gets a fresh stamp under the production authority; the variant's own dimensions stay on the row as non-authoritative measured analysis. **A variant score never stands for the property while a composite exists**, and **a withholding outranks an older calculated score** (`resolveInvestmentGrade`). **`N/A` is never drawn**: the page names the cause ("Withheld by the scoring policy: no scoring system is currently authorised … 1 of 5 dimensions measured (yield)") above the client-facing sentence, and the card says "Grade withheld" with the same words. Forward-only: the stored Financial row keeps its D until the tiers are regenerated; the card and page read the composite meanwhile. | `_shared/reports/market/variantScorePolicy.pure.ts` (+ bridge), `fork-investment-report/index.ts`, `report-view/utils.ts`, `InvestmentGradeSummary.tsx`, `InvestmentReportHero.tsx`; `variantScorePolicy.spec.ts`, `investmentGradeResolution.spec.ts`, `tierFrameworkPhase1.spec.ts` |
+
+What the person asking should know: **no new report has carried an overall
+grade since 11 Sep 2026, by design** (decision 7). The number on the list was
+the one surface that had escaped the policy, and it was the buyer's leverage
+being graded as the property. The measured analysis (gross yield, the loan
+ledger, the sensitivities) is unchanged and still printed.

@@ -18,7 +18,7 @@
  */
 import { meteredFetch } from './meteredFetch.ts';
 import {
-  classifyServiceStatus,
+  classifyServiceAnswer,
   describeRenderFailure,
   renderFailureIsRetriable,
   summariseServiceBody,
@@ -387,7 +387,13 @@ export async function renderPdfWithDiagnostics(
       if (res && res.ok) break;
       if (res) {
         const body = await res.text().catch(() => '');
-        const kind = classifyServiceStatus(res.status);
+        // The SHAPE of the answer decides, not the digit: Cloud Run's own
+        // error page under a 500 is the engine not answering (15 Sep 2026 —
+        // every request, including an unauthenticated GET /, met it), and
+        // the engine's own JSON under the same status is a render failure.
+        const kind = classifyServiceAnswer({
+          status: res.status, body, engineHeader: res.headers.get('X-WeasyPrint-Version'),
+        });
         failure = new WeasyPrintServiceError(kind, res.status, summariseServiceBody(body));
         res = null;
       }
