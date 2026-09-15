@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import { toast } from 'sonner';
 import {
   createProgressToastId,
   settleProgressToast,
