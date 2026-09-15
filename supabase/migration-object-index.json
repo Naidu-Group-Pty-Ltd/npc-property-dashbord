@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 980,
+  "migration_files": 981,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -1403,6 +1403,7 @@
     "index:market_intelligence_renders_report_idx",
     "index:market_qa_subscription_runs_sub_idx",
     "index:market_qa_subscriptions_user_idx",
+    "index:market_sales_medians_token_idx",
     "index:market_source_fetch_runs_correlation_idx",
     "index:market_source_fetch_runs_source_idx",
     "index:market_sources_one_active_canonical_key",
@@ -2016,6 +2017,8 @@
     "table:public.market_qa_quality_daily",
     "table:public.market_qa_subscription_runs",
     "table:public.market_qa_subscriptions",
+    "table:public.market_sales_medians",
+    "table:public.market_sales_sync",
     "table:public.market_source_fetch_runs",
     "table:public.market_source_reconciliation_audits",
     "table:public.market_sources",
