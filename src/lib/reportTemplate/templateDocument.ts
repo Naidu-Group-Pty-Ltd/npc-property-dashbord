@@ -135,10 +135,16 @@ export function saveTemplateDocument(
  * The document still downloads either way — the notice is a warning beside a
  * working file, never an error in place of one.
  */
-export function notifySelectionNotUsed(detail?: string): void {
+export function notifySelectionNotUsed(detail?: string, cause?: string): void {
+  // The gate that closed, and what the engine actually said. On 15 Sep 2026
+  // every template fell back because the render service answered 503, and
+  // the notice said only "The renderer could not produce the document" —
+  // the status and the service's own words had been dropped one call below.
+  const why = cause && cause !== detail ? ` ${cause.replace(/\.?$/, '.')}` : '';
   toast.warning('Your chosen template was not used for this document', {
-    description: `${detail ?? 'It could not be applied to this record'}. `
+    description: `${detail ?? 'It could not be applied to this record'}.${why} `
       + 'The document was produced with the standard layout instead.',
+    duration: 12_000,
   });
 }
 
@@ -196,10 +202,11 @@ export async function tryTemplateDocument(
   // Which gate closed, when one does — so the notice below names the cause
   // rather than saying the same thing for every one of them.
   let refusal: TemplateRouteRefusal | null = null;
+  let refusalDetail: string | undefined;
   try {
     const routed = await tryRouteThroughTemplateBuilderFor(reportType, reportId, {
       variant: opts?.variant ?? null,
-      onRefusal: (reason) => { refusal = reason; },
+      onRefusal: (reason, detail) => { refusal = reason; refusalDetail = detail; },
       // The person's own answer to "which template does this format come out
       // in", honoured here so that every surface gets it rather than only the
       // ones that remembered to ask. See `selectedTemplateFor`.
@@ -208,8 +215,11 @@ export async function tryTemplateDocument(
       renderer: opts?.renderer,
     });
     if (!routed?.blob) {
+      // Only an engine's or a render's own words are worth relaying; the
+      // other gates' details are ids and adapter names for the console.
+      const relay = refusal === 'engine_unavailable' || refusal === 'render_failed' || refusal === 'unexpected_error';
       if (selectedId) {
-        notifySelectionNotUsed(refusal ? TEMPLATE_ROUTE_REFUSAL_TEXT[refusal] : undefined);
+        notifySelectionNotUsed(refusal ? TEMPLATE_ROUTE_REFUSAL_TEXT[refusal] : undefined, relay ? refusalDetail : undefined);
       }
       return null;
     }
@@ -237,8 +247,9 @@ export async function tryTemplateDocument(
       blob: routed.blob, fileName: routed.fileName, templateId: routed.templateId,
       renderer: routed.renderer, storagePath: routed.storagePath ?? null,
     };
-  } catch {
-    if (selectedId) notifySelectionNotUsed();
+  } catch (e) {
+    // Never a bare catch: the error object is the only thing that says why.
+    if (selectedId) notifySelectionNotUsed(undefined, e instanceof Error ? e.message : String(e));
     return null;
   }
 }

@@ -21,7 +21,14 @@ import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import { requestCashFlowPdf } from '@/lib/reports/cashFlow/requestCashFlowPdf';
-import { readBaseFinancials } from '@/lib/reports/cashFlow/readBaseFinancials';
+import {
+  assertProjectionComplete,
+  describeAssumedInputs,
+  INPUT_FIELD_LABELS,
+  landBuildSplit,
+  readBaseFinancials,
+} from '@/lib/reports/cashFlow/readBaseFinancials';
+import { describeGrowth, describeYieldMovement } from '@/lib/cashFlow/yieldNarrative.pure';
 import {
   exportBackgroundFor,
   propertySeriesStyle,
@@ -946,8 +953,13 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   const constructionProgressSchedule = useMemo(() => {
     if (!baseFinancialData) return null;
 
-    const landPrice = baseFinancialData.landPrice || 0;
-    const buildPrice = baseFinancialData.buildPrice || (baseFinancialData.purchasePrice - landPrice);
+    // A build figure exists only where the record states one or a land price
+    // lets it be derived; a purchase price is not construction expenditure
+    // (QA-13), so a schedule cannot be staged over a figure nobody recorded.
+    const split = landBuildSplit(baseFinancialData);
+    if (split.buildPrice === null) return null;
+    const landPrice = split.landPrice ?? 0;
+    const buildPrice = split.buildPrice;
     const interestRate = baseFinancialData.interestRate / 100; // Annual rate
     const durationMonths = Math.min(baseFinancialData.constructionDurationMonths || 7, 24);
 
@@ -2246,6 +2258,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     if (!report || !baseFinancialData) return;
 
     try {
+      assertProjectionComplete(baseFinancialData);
       // Load active template configuration
       const templateConfig = await loadActiveCashFlowTemplate();
       console.log(`📋 Using Cash Flow template: ${templateConfig.name}`);
@@ -2481,15 +2494,25 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         const _purchaseYield = baseFinancialData.purchasePrice > 0
           ? `${((_annualRentNow / baseFinancialData.purchasePrice) * 100).toFixed(2)}%`
           : '-';
-        drawInputRow('Land Price:', formatCurrency(baseFinancialData.landPrice), 'Gross Rental Yield (on purchase):', _purchaseYield);
-        drawInputRow('Build Price:', formatCurrency(baseFinancialData.buildPrice || (baseFinancialData.purchasePrice - baseFinancialData.landPrice)), 'Council Rates (p.a.):', formatCurrency(baseFinancialData.councilRates));
+        // A figure nobody recorded is printed as assumed (QA-02); a land or
+        // build price the record does not hold is "not stated", never the
+        // purchase price (QA-13).
+        const _assumed = (field: string, text: string) =>
+          baseFinancialData.provenance[field] === 'default' ? `${text} (assumed)` : text;
+        const _split = landBuildSplit(baseFinancialData);
+        const _landPriceText = _split.landPrice === null ? 'Not stated' : formatCurrency(_split.landPrice);
+        const _buildPriceText = _split.buildPrice === null
+          ? 'Not stated'
+          : `${formatCurrency(_split.buildPrice)}${_split.derived ? ' (price less land)' : ''}`;
+        drawInputRow('Land Price:', _landPriceText, 'Gross Rental Yield (on purchase):', _purchaseYield);
+        drawInputRow('Build Price:', _buildPriceText, 'Council Rates (p.a.):', formatCurrency(baseFinancialData.councilRates));
         drawInputRow('Deposit Amount:', formatCurrency(baseFinancialData.depositValue), 'Water Rates (p.a.):', formatCurrency(baseFinancialData.waterRates));
-        drawInputRow('Loan Amount:', formatCurrency(baseFinancialData.loanAmount || (baseFinancialData.purchasePrice * (baseFinancialData.loanToValueRatio / 100))), 'Property Management:', `${baseFinancialData.propertyManagementFees}%`);
-        drawInputRow('Interest Rate:', `${baseFinancialData.interestRate.toFixed(2)}%`, 'Landlord Insurance:', formatCurrency(baseFinancialData.buildingLandlordInsurance));
-        drawInputRow('Capital Growth Rate:', `${baseFinancialData.capitalGrowth}%`, 'Letting Fees:', formatCurrency(baseFinancialData.lettingFees));
-        drawInputRow('CPI Growth Rate:', `${baseFinancialData.cpiGrowthRate}%`, 'Repairs & Maintenance:', formatCurrency(baseFinancialData.repairsMaintenance));
-        drawInputRow('Tax Rate (MTR):', `${baseFinancialData.taxRate}%`, 'Body Corporate:', formatCurrency(baseFinancialData.bodyCorporateFees));
-        drawInputRow('Depreciation (Yr 1):', formatCurrency(baseFinancialData.depreciation), 'Stamp Duty:', formatCurrency(baseFinancialData.stampDuty));
+        drawInputRow('Loan Amount:', formatCurrency(baseFinancialData.loanAmount || (baseFinancialData.purchasePrice * (baseFinancialData.loanToValueRatio / 100))), 'Property Management:', _assumed('propertyManagementFees', `${baseFinancialData.propertyManagementFees}%`));
+        drawInputRow('Interest Rate:', _assumed('interestRate', `${baseFinancialData.interestRate.toFixed(2)}%`), 'Landlord Insurance:', formatCurrency(baseFinancialData.buildingLandlordInsurance));
+        drawInputRow('Capital Growth Rate:', _assumed('capitalGrowth', `${baseFinancialData.capitalGrowth}%`), 'Letting Fees:', formatCurrency(baseFinancialData.lettingFees));
+        drawInputRow('CPI Growth Rate:', _assumed('cpiGrowthRate', `${baseFinancialData.cpiGrowthRate}%`), 'Repairs & Maintenance:', formatCurrency(baseFinancialData.repairsMaintenance));
+        drawInputRow('Tax Rate (MTR):', _assumed('taxRate', `${baseFinancialData.taxRate}%`), 'Body Corporate:', formatCurrency(baseFinancialData.bodyCorporateFees));
+        drawInputRow('Depreciation (Yr 1):', _assumed('depreciation', formatCurrency(baseFinancialData.depreciation)), 'Stamp Duty:', formatCurrency(baseFinancialData.stampDuty));
         // The rent basis and the loan structure were both absent, and both
         // explain a figure in the table. Rent is charged for `occupancyRate`
         // weeks, not 52; and an interest-only period is why cash flow steps
@@ -2501,15 +2524,22 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         drawInputRow(
           'Loan Structure:',
           _ioYears > 0
-            ? `Interest only ${_ioYears} yr${_ioYears === 1 ? '' : 's'}, then P&I (${baseFinancialData.loanTermYears} yr term)`
+            ? `Interest only ${_ioYears} yr${_ioYears === 1 ? '' : 's'}${baseFinancialData.provenance.interestOnlyPeriodYears === 'default' ? ' (assumed)' : ''}, then P&I (${baseFinancialData.loanTermYears} yr term)`
             : `Principal & interest (${baseFinancialData.loanTermYears} yr term)`,
           'Rent Basis:',
-          `${baseFinancialData.occupancyRate} weeks p.a.`,
+          _assumed('occupancyRate', `${baseFinancialData.occupancyRate} weeks p.a.`),
         );
         drawInputRow('', '', 'Conveyancing:', formatCurrency(baseFinancialData.solicitorFees));
+        if (baseFinancialData.inspectionFees > 0) {
+          drawInputRow('', '', 'Inspections:', formatCurrency(baseFinancialData.inspectionFees));
+        }
         if (baseFinancialData.lmiAmount > 0) {
           drawInputRow('', '', 'LMI:', formatCurrency(baseFinancialData.lmiAmount));
         }
+        // The case these inputs describe, so two documents can be told apart
+        // (QA-02): the same eight characters on every document built from the
+        // same recorded inputs, and different ones the moment an input moves.
+        drawInputRow('Case inputs:', `fingerprint ${baseFinancialData.caseFingerprint}`, '', '');
 
         // ===== Total Upfront Costs + Total Overall Expenditure to Completion =====
         yPos += 4;
@@ -2520,6 +2550,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         const _depositPct = _purchasePrice > 0 ? Math.round((_depositValue / _purchasePrice) * 100) : 0;
         const _stampDuty = baseFinancialData.stampDuty || 0;
         const _solicitorFees = baseFinancialData.solicitorFees || 0;
+        // Inspections belong to the same settlement-cost object as duty and
+        // legal fees; leaving them out is how the total came to $259,800
+        // against the sibling report's $314,832 (QA-03).
+        const _inspectionFees = baseFinancialData.inspectionFees || 0;
         const _agentFee = baseFinancialData.agentFee || 0;
         const _lmiAmount = baseFinancialData.lmiAmount || 0;
 
@@ -2555,10 +2589,11 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
             { label: `Deposit (${_depositPct}% — from your funds)`, value: _depositValue },
             { label: 'Stamp Duty', value: _stampDuty },
             { label: 'Solicitor / Conveyancer Cost', value: _solicitorFees },
+            ...(_inspectionFees > 0 ? [{ label: 'Building & Pest Inspections', value: _inspectionFees }] : []),
             { label: 'Agent Fee', value: _agentFee },
             ...(_lmiAmount > 0 ? [{ label: 'LMI (Lenders Mortgage Insurance)', value: _lmiAmount }] : []),
           ];
-          totalUpfront = _depositValue + _stampDuty + _solicitorFees + _agentFee + _lmiAmount;
+          totalUpfront = _depositValue + _stampDuty + _solicitorFees + _inspectionFees + _agentFee + _lmiAmount;
           overallExtraRows = [
             { label: 'Purchase Price', value: _purchasePrice },
             { label: 'Stamp Duty', value: _stampDuty },
@@ -3249,7 +3284,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         const yr1 = projections[1];
         const yr10Data = projections[10] || projections[projections.length - 1];
         const propertyGrowthPct = ((yr10Data.propertyMarketValue - baseFinancialData.purchasePrice) / baseFinancialData.purchasePrice * 100).toFixed(1);
-        const equityGrowthPct = yr1?.equityInProperty > 0 ? ((yr10Data.equityInProperty - yr1.equityInProperty) / yr1.equityInProperty * 100).toFixed(1) : 'N/A';
+        // Ten-year growth is measured from SETTLEMENT (year 0). It was measured
+        // from end-of-year-1 equity — a nine-year interval printed under a
+        // ten-year heading (QA-39). The sentence names its own endpoints.
+        const equityGrowth = describeGrowth({
+          label: 'Equity',
+          startValue: projections[0]?.equityInProperty,
+          endValue: yr10Data.equityInProperty,
+          startLabel: 'settlement',
+          endLabel: `Year ${yr10Data.year ?? 10}`,
+          formatValue: formatCurrency,
+        });
         const loanReductionPct = projections[0]?.loanAmount > 0 ? ((1 - yr10Data.loanAmount / projections[0].loanAmount) * 100).toFixed(1) : '0';
         
         // Cash Flow Trends Chart
@@ -3279,8 +3324,11 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           const crossoverYr = projections.filter(p => p.year >= 1).find(p => p.equityInProperty >= p.loanAmount);
           
           let trendInsight = `Property Value Growth: The property is projected to appreciate by ${propertyGrowthPct}% over the 10-year horizon, growing from ${formatCurrency(baseFinancialData.purchasePrice)} to ${formatCurrency(yr10Data.propertyMarketValue)}. This represents an average annual compound growth aligned with the configured capital growth assumptions.\n\n`;
-          trendInsight += `Equity Accumulation: Equity increases by ${equityGrowthPct}% (from ${formatCurrency(yr1?.equityInProperty || 0)} to ${formatCurrency(yr10Data.equityInProperty)}), driven by both capital appreciation and principal repayments reducing the outstanding loan balance by ${loanReductionPct}%.\n\n`;
-          trendInsight += `Cash Flow Trajectory: After-tax cash flow ${cashFlowImproved ? 'improves' : 'declines'} by ${cashFlowDelta} over the period (Year 1: ${formatCurrency(yr1CashFlow)} → Year 10: ${formatCurrency(yr10CashFlow)} p.a.).`;
+          trendInsight += `${equityGrowth.sentence} Equity here is the property's value less the loan balance — it includes the capital contributed at settlement and is not a cash return. The loan balance falls by ${loanReductionPct}% over the same period.\n\n`;
+          // "to", not "→": the arrow is outside the standard fonts' encoding,
+          // and jsPDF measured the line without it and drew it letter-spaced
+          // past the page edge (QA-40).
+          trendInsight += `Cash Flow Trajectory: After-tax cash flow ${cashFlowImproved ? 'improves' : 'declines'} by ${cashFlowDelta} over the period (Year 1: ${formatCurrency(yr1CashFlow)} to Year 10: ${formatCurrency(yr10CashFlow)} p.a.).`;
           if (breakEvenYr) trendInsight += ` The investment reaches cash-flow positive in Year ${breakEvenYr.year}, marking the transition from negatively-geared to self-sustaining.`;
           if (crossoverYr) trendInsight += ` Equity surpasses the remaining loan balance in Year ${crossoverYr.year}, a key wealth-building milestone indicating the investor holds majority ownership of the asset.`;
           
@@ -3302,7 +3350,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           
           drawChartTitle(
             'Yield Analysis',
-            'Compares gross and net rental yield percentages relative to current market value, illustrating yield compression as property values grow.'
+            'Gross and net rental yield against each year\'s projected value — how the yields move as rent and value change.'
           );
           
           if (yieldChartImage) {
@@ -3320,8 +3368,13 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           const netDelta = (parseFloat(yr10Net) - parseFloat(yr1Net)).toFixed(2);
           const avgSpread = projections.filter(p => p.year >= 1).reduce((s, p) => s + (p.grossYield - p.netYield), 0) / 10;
           
-          let yieldInsight = `Gross Yield: Moves from ${yr1Gross}% (Year 1) to ${yr10Gross}% (Year 10), a shift of ${grossDelta} percentage points. This compression occurs because property value appreciates faster than rental income, which is a hallmark of capital-growth-oriented investment properties.\n\n`;
-          yieldInsight += `Net Yield: Shifts from ${yr1Net}% to ${yr10Net}% (${netDelta}pp change). Net yield accounts for property expenses including council rates, insurance, maintenance, and management fees, providing a more accurate picture of actual return on asset value.\n\n`;
+          // Direction of change is computed from the endpoints, never asserted:
+          // a flat or absent-rent series said "compression" here (QA-38).
+          const rentEstablished = baseFinancialData.weeklyRent > 0 && !baseFinancialData.missingInputs.includes('weeklyRent');
+          const grossMovement = describeYieldMovement({ label: 'Gross Yield', yearOne: yr1?.grossYield, yearTen: yr10Data?.grossYield, rentEstablished });
+          const netMovement = describeYieldMovement({ label: 'Net Yield', yearOne: yr1?.netYield, yearTen: yr10Data?.netYield, rentEstablished });
+          let yieldInsight = `${grossMovement.sentence}\n\n`;
+          yieldInsight += `${netMovement.sentence} Net yield accounts for property expenses including council rates, insurance, maintenance, and management fees, before finance and tax.\n\n`;
           // The spread between the two yields is (rent - (rent - expenses)) / value,
           // which is simply expenses over value: rent cancels out entirely. So the
           // old sentence here — "a narrowing spread indicates improving operational
@@ -3475,6 +3528,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   const describeReviewedProjection = useCallback(async (): Promise<ReviewedProjection> => {
     if (!report) throw new Error('This report could not be resolved. Close the analysis and reopen it.');
     if (!baseFinancialData || !projections.length) throw new Error('This report has no financial figures to render.');
+    assertProjectionComplete(baseFinancialData);
 
     // The projection that crosses the wire is the one on screen, unsaved
     // overrides included, because that is the ten years the adviser just
@@ -3828,8 +3882,8 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
             <tbody>
               <tr><td style="font-weight: 500; width: 50%;">Purchase Price</td><td style="text-align: right;">${formatCurrency(baseFinancialData.purchasePrice)}</td></tr>
               ${isNewBuild ? `
-              <tr><td style="font-weight: 500;">Land Price</td><td style="text-align: right;">${formatCurrency(baseFinancialData.landPrice)}</td></tr>
-              <tr><td style="font-weight: 500;">Build Price</td><td style="text-align: right;">${formatCurrency(baseFinancialData.buildPrice || (baseFinancialData.purchasePrice - baseFinancialData.landPrice))}</td></tr>
+              <tr><td style="font-weight: 500;">Land Price</td><td style="text-align: right;">${landBuildSplit(baseFinancialData).landPrice === null ? 'Not stated' : formatCurrency(landBuildSplit(baseFinancialData).landPrice!)}</td></tr>
+              <tr><td style="font-weight: 500;">Build Price</td><td style="text-align: right;">${landBuildSplit(baseFinancialData).buildPrice === null ? 'Not stated' : formatCurrency(landBuildSplit(baseFinancialData).buildPrice!)}</td></tr>
               ` : `
               <tr><td style="font-weight: 500;">Deposit Value</td><td style="text-align: right;">${formatCurrency(baseFinancialData.depositValue || (baseFinancialData.purchasePrice * (1 - baseFinancialData.loanToValueRatio / 100)))}</td></tr>
               `}
@@ -3854,6 +3908,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
             const depositPct = baseFinancialData.purchasePrice > 0 ? Math.round((depositValue / baseFinancialData.purchasePrice) * 100) : 0;
             const stampDuty = baseFinancialData.stampDuty || 0;
             const solicitorFees = baseFinancialData.solicitorFees || 0;
+            const inspectionFees = baseFinancialData.inspectionFees || 0;
             const agentFee = baseFinancialData.agentFee || 0;
             const lmiAmount = baseFinancialData.lmiAmount || 0;
             let upfrontRows: { label: string; value: number }[] = [];
@@ -3887,10 +3942,11 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                 { label: `Deposit (${depositPct}% — from your funds)`, value: depositValue },
                 { label: 'Stamp Duty', value: stampDuty },
                 { label: 'Solicitor / Conveyancer Cost', value: solicitorFees },
+                ...(inspectionFees > 0 ? [{ label: 'Building & Pest Inspections', value: inspectionFees }] : []),
                 { label: 'Agent Fee', value: agentFee },
                 ...(lmiAmount > 0 ? [{ label: 'LMI (Lenders Mortgage Insurance)', value: lmiAmount }] : []),
               ];
-              totalUpfront = depositValue + stampDuty + solicitorFees + agentFee + lmiAmount;
+              totalUpfront = depositValue + stampDuty + solicitorFees + inspectionFees + agentFee + lmiAmount;
               overallExtraRows = [
                 { label: 'Purchase Price', value: baseFinancialData.purchasePrice },
                 { label: 'Stamp Duty', value: stampDuty },
@@ -4199,6 +4255,23 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         )}
       >
         <div className="space-y-6">
+          {baseFinancialData && baseFinancialData.missingInputs.length > 0 && (
+            <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-foreground">
+              <p className="font-medium">This projection is incomplete.</p>
+              <p className="text-muted-foreground">
+                Not recorded for this report: {baseFinancialData.missingInputs.map((f) => INPUT_FIELD_LABELS[f] ?? f).join(', ')}.
+                {' '}The figures below are arithmetic on missing inputs, and the cash flow cannot be generated until they are recorded.
+              </p>
+            </div>
+          )}
+          {baseFinancialData && baseFinancialData.missingInputs.length === 0 && describeAssumedInputs(baseFinancialData).length > 0 && (
+            <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
+              <p className="font-medium">Assumed, because the report does not record them</p>
+              <p className="text-muted-foreground">
+                {describeAssumedInputs(baseFinancialData).join(' · ')}. Case inputs fingerprint {baseFinancialData.caseFingerprint}.
+              </p>
+            </div>
+          )}
           <CashFlowKpiStrip
             baseFinancialData={baseFinancialData}
             projections={projections}
@@ -4405,11 +4478,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               />
                             )}
                             {/* Area fills */}
+                            {/* The fills share a dataKey with the lines below; without
+                                `legendType="none"` each series appeared twice in the
+                                legend (QA-40). */}
                             {chartMetrics.propertyValue && (
-                              <Area type="monotone" dataKey="Property Value" fill="url(#fillPropertyValue)" stroke="none" />
+                              <Area type="monotone" dataKey="Property Value" fill="url(#fillPropertyValue)" stroke="none" legendType="none" tooltipType="none" />
                             )}
                             {chartMetrics.equity && (
-                              <Area type="monotone" dataKey="Equity" fill="url(#fillEquity)" stroke="none" />
+                              <Area type="monotone" dataKey="Equity" fill="url(#fillEquity)" stroke="none" legendType="none" tooltipType="none" />
                             )}
                             {/* Lines */}
                             {chartMetrics.propertyValue && (
@@ -4815,9 +4891,15 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             <CollapsibleContent>
                               <div className="p-3 bg-info/10 dark:bg-info/30 border border-t-0 border-info/30 dark:border-info/40 rounded-b-lg -mt-[1px]">
                                 <div className="text-xs text-info/80 dark:text-info/70 space-y-2 leading-relaxed">
-                                  <p><strong>Gross Yield:</strong> Moves from {yr1y.grossYield.toFixed(2)}% (Year 1) to {yr10y.grossYield.toFixed(2)}% (Year 10), a shift of {grossDelta}pp. This compression occurs because property value appreciates faster than rental income — a hallmark of growth-oriented assets.</p>
-                                  <p><strong>Net Yield:</strong> Shifts from {yr1y.netYield.toFixed(2)}% to {yr10y.netYield.toFixed(2)}% ({netDelta}pp change). Net yield accounts for holding costs including council rates, insurance, maintenance, and management fees.</p>
-                                  <p><strong>Expense Drag:</strong> Average spread between gross and net yield is {avgSprd}pp, representing the proportion of rental income consumed by holding costs. A narrowing spread indicates improving operational efficiency.</p>
+                                  <p>{describeYieldMovement({
+                                    label: 'Gross yield', yearOne: yr1y.grossYield, yearTen: yr10y.grossYield,
+                                    rentEstablished: !!baseFinancialData && baseFinancialData.weeklyRent > 0 && !baseFinancialData.missingInputs.includes('weeklyRent'),
+                                  }).sentence}</p>
+                                  <p>{describeYieldMovement({
+                                    label: 'Net yield', yearOne: yr1y.netYield, yearTen: yr10y.netYield,
+                                    rentEstablished: !!baseFinancialData && baseFinancialData.weeklyRent > 0 && !baseFinancialData.missingInputs.includes('weeklyRent'),
+                                  }).sentence} Net yield accounts for holding costs including council rates, insurance, maintenance, and management fees, before finance and tax.</p>
+                                  <p><strong>Expense Drag:</strong> Average spread between gross and net yield is {avgSprd}pp. The spread is the year's holding costs measured against the property's value; it narrows as the value compounds faster than the costs, which says nothing about costs falling.</p>
                                 </div>
                               </div>
                             </CollapsibleContent>

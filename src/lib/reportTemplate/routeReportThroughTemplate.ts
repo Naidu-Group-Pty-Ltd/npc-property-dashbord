@@ -39,7 +39,7 @@ import { preloadImagesWithReport } from '@/lib/reportTemplate/imagePreloader';
 import { renderTemplateToBlob } from '@/lib/reportTemplate/pdfRenderer';
 import { judgeBrowserProductionExport } from '@/lib/reportTemplate/browserExportGuard';
 import { compileTemplateHtmlForPdf } from '@/lib/reportTemplate/compileTemplateForPdf';
-import { renderFinalHtmlToPdf } from '@/lib/reportTemplate/weasyRenderClient';
+import { renderFinalHtmlToPdf, RenderServiceError } from '@/lib/reportTemplate/weasyRenderClient';
 import { getBlockRendererCapabilities } from '@/lib/reportTemplate/blocks';
 import { parseTemplate } from '@/lib/reportTemplate/templateSchema';
 import { resolveReportTemplate, type ReportVariant } from '@/lib/reportTemplate/resolveTemplate';
@@ -88,7 +88,16 @@ export type TemplateRouteRefusal =
   | 'template_schema_invalid'
   /** A static copy of one client's report; see `productionTemplateGuard`. */
   | 'template_unbound_reconstruction'
-  /** WeasyPrint, storage or the signed URL failed. */
+  /**
+   * The print engine did not answer — the render service host answered
+   * 502/503/504 or nothing at all. Distinct from `render_failed` because the
+   * remedy is different (wait, or check the Cloud Run service) and because
+   * on 15 Sep 2026 every chosen template fell back to the standard layout
+   * for this reason while the operator was told only that "the renderer
+   * could not produce the document" (QA-291SM).
+   */
+  | 'engine_unavailable'
+  /** WeasyPrint refused or failed the document, or storage or the signed URL failed. */
   | 'render_failed'
   /** Anything unforeseen; the message is in the console. */
   | 'unexpected_error';
@@ -104,6 +113,7 @@ export const TEMPLATE_ROUTE_REFUSAL_TEXT: Readonly<Record<TemplateRouteRefusal, 
   adapter_published_no_data: 'This record published no data for the template to bind',
   template_schema_invalid: 'The template could not be read against the current schema',
   template_unbound_reconstruction: 'The template is a fixed copy of one report and cannot be reused',
+  engine_unavailable: 'The print engine did not answer',
   render_failed: 'The renderer could not produce the document',
   unexpected_error: 'Something went wrong preparing the document',
 };
@@ -233,7 +243,7 @@ export async function routeReportThroughTemplate(
      * every failure is a fallback and never an error — but the caller can now
      * say *why* instead of "it could not be applied".
      */
-    onRefusal?: (refusal: TemplateRouteRefusal) => void;
+    onRefusal?: (refusal: TemplateRouteRefusal, detail?: string) => void;
     /**
      * Which engine draws the document. `browser` (the default) is the preview
      * renderer in this tab; `weasyprint` is the FINAL client document, asked
@@ -247,8 +257,13 @@ export async function routeReportThroughTemplate(
   // The last gate reached, so a caller hears about the furthest the route got
   // rather than about the first adapter that was not asked.
   let refusedAt: TemplateRouteRefusal = 'no_adapter';
+  // The detail travels with the reason. It used to be written to the console
+  // and dropped, so the render service's own answer — its status and what it
+  // said — never reached the person who chose the template.
+  let refusedDetail: string | undefined;
   const refuse = (reason: TemplateRouteRefusal, detail: string): void => {
     refusedAt = reason;
+    refusedDetail = detail;
     console.warn(`[routeReportThroughTemplate] ${reason}: ${detail}`);
   };
   try {
@@ -433,9 +448,12 @@ export async function routeReportThroughTemplate(
         // Guarded on its own rather than left to the outer catch: a failure
         // drawing one template must fall through to the next candidate adapter
         // and be reported as the render gate it is. The route's contract is
-        // that every failure is a fallback.
-        refuse('render_failed',
-          `drawing ${tplRow.id}: ${e instanceof Error ? e.message : String(e)}`);
+        // that every failure is a fallback — but WHICH gate is said: an
+        // engine that did not answer is not a document that could not be
+        // drawn.
+        const unavailable = e instanceof RenderServiceError && e.kind === 'engine_unavailable';
+        refuse(unavailable ? 'engine_unavailable' : 'render_failed',
+          e instanceof Error ? e.message : String(e));
         continue;
       }
 
@@ -456,11 +474,11 @@ export async function routeReportThroughTemplate(
       };
     }
 
-    opts?.onRefusal?.(refusedAt);
+    opts?.onRefusal?.(refusedAt, refusedDetail);
     return null;
   } catch (e) {
     console.warn('[routeReportThroughTemplate] unexpected error, falling back', e);
-    opts?.onRefusal?.('unexpected_error');
+    opts?.onRefusal?.('unexpected_error', e instanceof Error ? e.message : String(e));
     return null;
   }
 }

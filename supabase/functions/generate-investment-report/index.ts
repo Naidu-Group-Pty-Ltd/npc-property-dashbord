@@ -41,6 +41,11 @@ import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
+import {
+  interestOnlyMonthlyPaymentFor,
+  projectionAssumptionLinesForPrompt,
+  sensitivityRowsForPrompt,
+} from '../_shared/reports/investment/promptFinancials.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { reconcileNearestSchool, reconcileSchoolDistances } from '../_shared/reports/schoolDistance.pure.ts';
@@ -2871,7 +2876,17 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               ...(toFiniteNumber(mergedOverrides.stampDuty) !== undefined
                 ? { stampDutyOverride: toFiniteNumber(mergedOverrides.stampDuty) } : {}),
               ...(toFiniteNumber(mergedOverrides.solicitorFees) !== undefined
-                ? { legalFeesOverride: toFiniteNumber(mergedOverrides.solicitorFees) } : {})
+                ? { legalFeesOverride: toFiniteNumber(mergedOverrides.solicitorFees) } : {}),
+              // The loan product and the occupancy go INTO the engine too, so
+              // the schedule, the lifetime interest, the year-1 position and
+              // the sensitivity all describe the case the report states —
+              // they used to be display overrides over P&I, 52-week arithmetic
+              // (QA-04, QA-06).
+              ...(mergedOverrides.loanType ? { loanType: mergedOverrides.loanType } : {}),
+              ...(toFiniteNumber(mergedOverrides.interestOnlyPeriodYears) !== undefined
+                ? { interestOnlyYears: toFiniteNumber(mergedOverrides.interestOnlyPeriodYears) } : {}),
+              ...(toFiniteNumber(mergedOverrides.occupancyRate) !== undefined
+                ? { occupancyWeeks: toFiniteNumber(mergedOverrides.occupancyRate) } : {}),
             })
           });
           
@@ -4212,7 +4227,17 @@ Produce a comprehensive statewide investment analysis following the structure ab
       const n = parseFloat(String(value));
       return Number.isFinite(n) ? n : fallback;
     };
-    
+
+    // The interest-only repayment the prompt's loan tables quote. The
+    // calculator writes `loanDetails.interestOnlyPayment` now; a record
+    // written before it did derives it from its own loan amount and rate —
+    // every interest-only row used to read `$0` because the key was never
+    // written anywhere (QA-04).
+    if (enhancedData?.financials?.loanDetails && toFiniteNumber(enhancedData.financials.loanDetails.interestOnlyPayment) === undefined) {
+      const ioMonthly = interestOnlyMonthlyPaymentFor(enhancedData.financials);
+      if (ioMonthly !== undefined) enhancedData.financials.loanDetails.interestOnlyPayment = ioMonthly;
+    }
+
     // A yield is a fact about rent. With no rent established there is no
     // yield, and `0.00%` is not that — it is the claim that the property earns
     // nothing, which then travelled into the prompt under an order to use it
@@ -4243,19 +4268,34 @@ Produce a comprehensive statewide investment analysis following the structure ab
     const effectiveLandlordInsurance = toNumberOr(mergedOverrides.buildingLandlordInsurance ?? enhancedData.financials?.annualCosts?.landlordInsurance, 1800);
     const effectiveMaintenance = toNumberOr(mergedOverrides.repairsMaintenance ?? enhancedData.financials?.annualCosts?.maintenance, 1500);
     const effectiveLandTax = toNumberOr(mergedOverrides.landTax ?? enhancedData.financials?.annualCosts?.landTax, 0);
-    const effectivePmPercent = toNumberOr(mergedOverrides.propertyManagementFees ?? enhancedData.financials?.annualCosts?.propertyManagementPercent, 8);
+    // The engine's default is 7%; this fallback used to say 8, so a record
+    // with no stated percentage was described with one fee in the engine and
+    // another in the prose.
+    const effectivePmPercent = toNumberOr(mergedOverrides.propertyManagementFees ?? enhancedData.financials?.annualCosts?.propertyManagementPercent, 7);
     const effectivePmDollar = Math.round(annualRentIncome * (effectivePmPercent / 100));
-    
-    // Total annual costs for net yield calculation (excluding land tax per standard practice)
-    const totalAnnualCostsForNetYield = effectiveCouncilRates + effectiveWaterRates + effectiveStrataFees + 
-      effectiveLandlordInsurance + effectiveMaintenance + effectivePmDollar;
-    
+    const effectiveLettingFees = toNumberOr(mergedOverrides.lettingFees ?? enhancedData.financials?.annualCosts?.lettingFees, 0);
+
+    // ONE cost base for the net yield: the engine's `totalAnnualExcludingLandTax`
+    // where the engine ran (reviewed figures go into it, so it already
+    // describes them), and the same line items — letting fees INCLUDED —
+    // where it did not. This sum used to omit letting fees while the KPI's
+    // did not, so one page printed a formula that resolved to 2.41% beside a
+    // KPI reading 2.34%, exactly the $900 letting fee apart (QA-07).
+    const engineNetYieldCosts = toFiniteNumber(enhancedData.financials?.annualCosts?.totalAnnualExcludingLandTax);
+    const totalAnnualCostsForNetYield = engineNetYieldCosts !== undefined
+      ? engineNetYieldCosts
+      : effectiveCouncilRates + effectiveWaterRates + effectiveStrataFees +
+        effectiveLandlordInsurance + effectiveMaintenance + effectivePmDollar + effectiveLettingFees;
+
     // Same rule, and it bites harder here: with no rent, rent-less-costs is
     // just the costs, so the old code printed a CONFIDENT NEGATIVE yield —
     // a number that looks like analysis and is an artefact of a missing input.
+    // The engine's own yield is preferred where it exists: the KPI, the
+    // formula table and the prose then quote one metric object.
+    const engineNetYield = recordedYield(enhancedData.financials?.keyMetrics?.netRentalYield);
     const preCalculatedNetYield = rentalEvidence.established && effectivePurchasePrice > 0
-      ? (((annualRentIncome - totalAnnualCostsForNetYield) / effectivePurchasePrice) * 100).toFixed(2)
-      : recordedYield(enhancedData.financials?.keyMetrics?.netRentalYield);
+      ? (engineNetYield ?? (((annualRentIncome - totalAnnualCostsForNetYield) / effectivePurchasePrice) * 100).toFixed(2))
+      : engineNetYield;
     
     console.log(`📊 Pre-calculated Yields: Gross=${statedYield(preCalculatedGrossYield)}, Net=${statedYield(preCalculatedNetYield)} (rent source: ${rentalEvidence.source})`);
     console.log(`📊 Net Yield Calculation: ($${annualRentIncome} rent - $${totalAnnualCostsForNetYield} costs) / $${effectivePurchasePrice} = ${preCalculatedNetYield}%`);
@@ -4291,7 +4331,7 @@ Produce a comprehensive statewide investment analysis following the structure ab
 Your role is to produce comprehensive, professional-grade investment reports following the EXACT structure, length, and format of our reference template.
 
 **CRITICAL CALCULATION RULES:**
-1. OCCUPANCY ASSUMPTION: Use 100% occupancy rate (52 weeks per year) for ALL rental income calculations unless explicitly overridden. This is industry standard for investment analysis.
+1. OCCUPANCY ASSUMPTION: The recorded occupancy is ${effectiveOccupancyRate} weeks per year. Every cash-flow figure uses rent collected over ${effectiveOccupancyRate} weeks; the yields are stated on the contractual rent (52 weeks) before finance and tax, and you must say so wherever you quote a yield. Never present the two rents as one figure.
 2. YIELD VALUES: Use the pre-calculated yield values provided below EXACTLY - do NOT recalculate or estimate yields.
 3. PROPERTY TYPE: Use the standardized property type "${propertyTypeLabel}" consistently throughout the report - never switch terminology.
 
@@ -4808,9 +4848,9 @@ The rental analysis below is based on suburb-level median rental data and the sp
 | Metric | Calculation | Value |
 |--------|-------------|-------|
 | Annual Income | ${rentalEvidence.established ? `$${quotedWeeklyRent} × ${effectiveOccupancyRate} weeks` : 'No rental evidence'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
-| Annual Expenses | Mgmt + Maintenance + Rates + Insurance${effectiveStrataFees ? ' + Strata' : ''} (excludes land tax — owner-specific) | $${totalAnnualCostsForNetYield.toLocaleString()} |
+| Annual Expenses | Mgmt + Maintenance + Rates + Water + Insurance${effectiveStrataFees ? ' + Strata' : ''}${effectiveLettingFees ? ' + Letting' : ''} (excludes land tax — owner-specific) | $${totalAnnualCostsForNetYield.toLocaleString()} |
 | Net Annual Return | Income - Expenses | ${rentalEvidence.established ? `$${(annualRentIncome - totalAnnualCostsForNetYield).toLocaleString()}` : 'Not established'} |
-| **Net Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${statedYield(preCalculatedNetYield)}** |
+| **Net Rental Yield** | **Net operating yield before finance and tax — pre-calculated (DO NOT recalculate)** | **${statedYield(preCalculatedNetYield)}** |
 
 **Yield Comparison to Benchmarks:**
 
@@ -4907,11 +4947,7 @@ The P&I scenario provides superior long-term economics as principal repayment bu
 
 **Impact of Interest Rate Variations on Annual Cashflow (P&I Scenario):**
 
-| Scenario | Interest Rate | Annual Loan Repayment | Annual Cashflow |
-|----------|---------------|----------------------|-----------------|
-| Stress Case | ${(enhancedData.financials?.loanDetails?.interestRate || 6.5) + 1}% (+1.0%) | $${(enhancedData.financials?.sensitivityAnalysis?.interestRateUp?.monthlyPayment ? enhancedData.financials.sensitivityAnalysis.interestRateUp.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'} | ($${Math.abs(enhancedData.financials?.sensitivityAnalysis?.interestRateUp?.annualNet || 0).toLocaleString() || 'XX,XXX'}) |
-| Base Case | ${enhancedData.financials?.loanDetails?.interestRate || 6.5}% | $${(enhancedData.financials?.loanDetails?.monthlyPayment ? enhancedData.financials.loanDetails.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'} | ($${Math.abs(enhancedData.financials?.keyMetrics?.annualNet || 0).toLocaleString() || 'XX,XXX'}) |
-| Improvement Case | ${(enhancedData.financials?.loanDetails?.interestRate || 6.5) - 1}% (-1.0%) | $${(enhancedData.financials?.sensitivityAnalysis?.interestRateDown?.monthlyPayment ? enhancedData.financials.sensitivityAnalysis.interestRateDown.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'} | ($${Math.abs(enhancedData.financials?.sensitivityAnalysis?.interestRateDown?.annualNet || 0).toLocaleString() || 'XX,XXX'}) |
+${sensitivityRowsForPrompt(enhancedData.financials)}
 
 **Sensitivity Commentary (150+ words required):**
 
@@ -4924,9 +4960,7 @@ This sensitivity analysis demonstrates that the property's cashflow profile is i
 # 10-Year Investment Projections
 
 **Projection Assumptions:**
-- Conservative Scenario: 2% annual price growth, 2% annual rent growth
-- Base Case Scenario: 4% annual price growth, 3% annual rent growth
-- Optimistic Scenario: 6% annual price growth, 4% annual rent growth
+${projectionAssumptionLinesForPrompt(enhancedData.financials)}
 
 **Annual Operating Costs Projections (AUD):**
 

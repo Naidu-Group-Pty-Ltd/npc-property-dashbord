@@ -200,17 +200,29 @@ function loanStructure(fin: Record<string, unknown>): ComposedChapter | null {
   const lvr = num(loan.lvr);
   const rateSource = str(loan.rateSource);
 
+  // The structure the arithmetic RAN, from the ledger's own description,
+  // beside the label the record carries: an interest-only label over P&I
+  // figures was the audit's QA-04, and the period is what makes the label a
+  // schedule rather than a word.
+  const structure = str(loan.structure);
+  const ioYears = num(loan.interestOnlyPeriod);
   const table = twoCol(['Item', 'Value'], [
     ['Loan amount', money(loan.loanAmount)],
     ['Loan-to-value ratio', lvr !== undefined ? pct(lvr) : undefined],
     ['Loan type', loanType],
+    ['Loan structure', structure],
+    [
+      'Interest-only period',
+      ioYears !== undefined && ioYears > 0 ? `${ioYears} year${ioYears === 1 ? '' : 's'}, then principal and interest` : undefined,
+    ],
+    ['Loan term', num(loan.loanTerm) !== undefined ? `${num(loan.loanTerm)} years` : undefined],
     [
       rateSource ? `Interest rate (${rateSource})` : 'Interest rate',
       pct(loan.interestRate),
     ],
-    ['Monthly repayment', money(monthly)],
+    ['Monthly repayment (first year)', money(monthly)],
     ['Weekly repayment', money(loan.weeklyPayment)],
-    ['Annual repayments', monthly !== undefined ? money(monthly * 12) : undefined],
+    ['Annual repayments (first year)', num(loan.annualPayment) !== undefined ? money(loan.annualPayment) : (monthly !== undefined ? money(monthly * 12) : undefined)],
     ['Total interest over the term', money(loan.totalInterest)],
   ]);
 
@@ -249,13 +261,21 @@ function sensitivity(fin: Record<string, unknown>): ComposedChapter | null {
     ['Cash-on-cash return', pct(metrics.cashOnCashReturn)],
   ]);
 
+  // A row is labelled with the parameter it tested. Where the engine
+  // published its scenarios the absolute rate is printed ("Interest rate
+  // 7.5% (+1.0 pt)"); the keyed deltas alone are labelled by their change.
+  const published = Array.isArray(sens.scenarios) ? sens.scenarios.map(obj) : [];
+  const publishedLabel = (key: string): string | undefined => {
+    const hit = published.find((s) => s.key === key);
+    return hit ? str(hit.label) : undefined;
+  };
   const scenarioRows = (
     source: Record<string, unknown>,
     labels: Readonly<Record<string, string>>,
   ): Array<[string, string | undefined]> =>
     Object.entries(labels)
       .filter(([key]) => key in source)
-      .map(([key, label]) => [label, money(source[key])]);
+      .map(([key, label]) => [publishedLabel(key) ?? label, money(source[key])]);
 
   const rateTable = twoCol(['Scenario', 'Annual cashflow'], scenarioRows(rates, RATE_LABELS));
   const rentTable = twoCol(['Scenario', 'Annual cashflow'], scenarioRows(rents, RENT_LABELS));
@@ -331,8 +351,22 @@ function projections(
   }
   if (!blocks.length) return null;
 
+  // Every scenario's own growth is stated beside the tables it produced, and
+  // the conventions the series rest on — occupancy, the fee basis, the growth
+  // timing — are said rather than left for a reader to reverse-engineer from
+  // a year-1 rent that does not equal the headline (QA-10, QA-11).
+  const scenarioGrowth = obj(assumptions.scenarioGrowth);
+  const growthRow = (key: string, label: string): [string, string | undefined] => {
+    const g = obj(scenarioGrowth[key]);
+    const capital = num(g.capitalGrowth);
+    const rent = num(g.rentGrowth);
+    return [label, capital !== undefined && rent !== undefined ? `${pct(capital)} value, ${pct(rent)} rent` : undefined];
+  };
   const assumptionTable = twoCol(['Modelling assumption', 'Value'], [
     ['Capital growth', pct(assumptions.capitalGrowth)],
+    growthRow('conservative', 'Conservative scenario growth'),
+    growthRow('moderate', 'Base case scenario growth'),
+    growthRow('optimistic', 'Optimistic scenario growth'),
     ['CPI growth', pct(assumptions.cpiGrowth)],
     [
       'Occupancy',
@@ -340,6 +374,9 @@ function projections(
         ? `${num(assumptions.occupancyWeeks)} weeks a year`
         : undefined,
     ],
+    ['Percentage fees charged on', assumptions.feeBasis === 'collected_rent' ? 'rent collected' : undefined],
+    ['Growth timing', str(assumptions.growthTiming)],
+    ['Cash-flow basis', 'pre-tax; each year is rent less operating costs less loan repayments'],
     ['Depreciation allowance', money(tax.depreciation)],
   ]);
 
