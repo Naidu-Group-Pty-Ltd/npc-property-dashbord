@@ -34,6 +34,7 @@ import { toast } from 'sonner';
 import { tryRouteThroughTemplateBuilderFor } from './compassRoute';
 import {
   TEMPLATE_ROUTE_REFUSAL_TEXT,
+  type TemplateBuilderRouteResult,
   type TemplateRenderer,
   type TemplateRouteRefusal,
 } from './routeReportThroughTemplate';
@@ -52,6 +53,15 @@ export interface TemplateDocument {
   renderer: string;
   /** Where a render service stored it, or null for a document drawn in this tab. */
   storagePath: string | null;
+  /**
+   * Set when the FINAL renderer was asked for and the in-tab renderer stood
+   * in because the print engine did not draw the document. The template was
+   * honoured; the document is not the final one, and the person has been
+   * told (`notifyTemplateDrawnInBrowser`). A caller that remembers a
+   * finalisation must not remember this one: the next attempt should ask the
+   * engine again.
+   */
+  degradedFrom: TemplateBuilderRouteResult['degradedFrom'];
 }
 
 /**
@@ -145,6 +155,27 @@ export function notifySelectionNotUsed(detail?: string, cause?: string): void {
     description: `${detail ?? 'It could not be applied to this record'}.${why} `
       + 'The document was produced with the standard layout instead.',
     duration: 12_000,
+  });
+}
+
+/**
+ * The person chose a template, the print engine did not draw it, and the
+ * in-tab renderer drew the same template instead.
+ *
+ * Said at the moment it happens, like `notifySelectionNotUsed`, and for the
+ * same reason: from the outside a stand-in and the final document are both
+ * "the template I chose", and the difference — substituted typefaces, no
+ * stored path, no PDF/UA conformance — is exactly what a person about to send
+ * the file needs to know. The engine's own status and words travel with it,
+ * because they are what an operator acts on.
+ */
+export function notifyTemplateDrawnInBrowser(detail: string, cause?: string): void {
+  const why = cause && cause !== detail ? ` ${cause.replace(/\.?$/, '.')}` : '';
+  toast.warning('Your chosen template was drawn in the browser', {
+    description: `${detail}.${why} This document uses your chosen template, drawn by the `
+      + 'in-app renderer instead of the print engine: typefaces are substituted and it is '
+      + 'not the final PDF/UA document. Generate it again once the print engine is back.',
+    duration: 15_000,
   });
 }
 
@@ -243,9 +274,20 @@ export async function tryTemplateDocument(
      * produced is the blob that is delivered, and the emptiness check lives
      * once, beside the render.
      */
+    // The preview renderer stood in for the final one. The template is the
+    // person's choice, so this is not `notifySelectionNotUsed`; it is a
+    // different fact, said in its own words, with the engine's.
+    if (routed.degradedFrom) {
+      notifyTemplateDrawnInBrowser(
+        TEMPLATE_ROUTE_REFUSAL_TEXT[routed.degradedFrom.refusal],
+        routed.degradedFrom.detail,
+      );
+    }
+
     return {
       blob: routed.blob, fileName: routed.fileName, templateId: routed.templateId,
       renderer: routed.renderer, storagePath: routed.storagePath ?? null,
+      degradedFrom: routed.degradedFrom ?? null,
     };
   } catch (e) {
     // Never a bare catch: the error object is the only thing that says why.

@@ -292,7 +292,12 @@ async function produceInvestmentDocumentOnce(
       templateId: templated.templateId,
       storagePath: templated.storagePath ?? null,
     };
-    rememberFinalised(reportId, { fingerprint, doc });
+    // A stand-in (the in-tab renderer drew the chosen template because the
+    // print engine did not) is delivered but never REMEMBERED as the
+    // finalisation: the next request for the same document must ask the
+    // engine again rather than hand back the stand-in for the rest of the
+    // session. One finalisation is one PDF, and this was not one.
+    if (!templated.degradedFrom) rememberFinalised(reportId, { fingerprint, doc });
     return doc;
   }
 

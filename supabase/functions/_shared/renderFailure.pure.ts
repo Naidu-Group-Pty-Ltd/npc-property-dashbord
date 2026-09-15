@@ -42,6 +42,58 @@ export function renderFailureIsRetriable(kind: RenderFailureKind): boolean {
 }
 
 /**
+ * Whether an answer is the HOST's own error page rather than anything the
+ * engine said.
+ *
+ * On 15 Sep 2026 the render container answered every request — including an
+ * unauthenticated `GET /`, which the service itself answers with a JSON
+ * listing and no engine at all — with Cloud Run's front-door page:
+ * `<title>500 Server Error</title>`, "The server encountered an error and
+ * could not complete your request. Please try again in 30 seconds.",
+ * `Server: Google Frontend`, and no `X-WeasyPrint-Version`. That page means
+ * NO instance served the request. It is the same fact as that morning's 503
+ * ("The service you requested is not available yet") under a different
+ * status, and `classifyServiceStatus` reads the status alone — so the 503
+ * was `engine_unavailable`, retried and reported as the engine not
+ * answering, while the 500 was `engine_failed`, final, and reported as the
+ * engine failing to draw a document it never received.
+ *
+ * The engine's own answers are JSON (`{"error": …}`) and every one carries
+ * `X-WeasyPrint-Version`; the host's page is HTML with neither. So the
+ * discriminator is the SHAPE of the answer, never its status.
+ */
+export function isPlatformErrorPage(body: string, engineHeader?: string | null): boolean {
+  if (engineHeader) return false;
+  const raw = String(body ?? '');
+  if (!/<\s*(html|head|body|title|h[1-6])\b/i.test(raw)) return false;
+  const title = (/<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw)?.[1] ?? '').replace(/\s+/g, ' ').trim();
+  return /^\d{3}\s+server error$/i.test(title)
+    || /Error:\s*Server Error/i.test(raw)
+    || /try again in 30 seconds/i.test(raw);
+}
+
+/**
+ * The kind of a service answer, read from everything the answer carries.
+ *
+ * A 5xx that is the host's page is the engine NOT ANSWERING, whatever the
+ * digit: retriable, and reported as such. Anything the engine itself said —
+ * JSON, or a body under its version header — is classified by status as
+ * before. A 4xx page from the host (Google's own 404, for a URL that names
+ * no service) stays `engine_refused`: it is configuration, and retrying it
+ * changes nothing.
+ */
+export function classifyServiceAnswer(answer: {
+  status: number;
+  body?: string | null;
+  engineHeader?: string | null;
+}): RenderFailureKind {
+  if (answer.status >= 500 && isPlatformErrorPage(answer.body ?? '', answer.engineHeader)) {
+    return 'engine_unavailable';
+  }
+  return classifyServiceStatus(answer.status);
+}
+
+/**
  * One plain sentence out of whatever the service sent. An HTML error page is
  * reduced to its title and its first headings; JSON to its `error` or
  * `message`; anything else is trimmed. Never longer than `max`.

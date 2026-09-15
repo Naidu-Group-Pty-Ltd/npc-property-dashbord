@@ -31,6 +31,7 @@ import {
   type SplitRoute,
 } from '../_shared/reportSplitRegistry.ts';
 import { scoreFinancial, scorePropertyFundamentals } from '../_shared/investmentScoreEngine.ts';
+import { variantScoreUnderPolicy } from '../_shared/reports/market/variantScorePolicy.pure.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import {
   composeFinancialChapters,
@@ -382,6 +383,11 @@ async function findExistingFork(supabase: any, parentId: string, variant: Persis
  * and the score are spine-mandatory in every tier, and writing null here is
  * what put "Graded  at  out of 100" on every Due Diligence report ever
  * produced. A refresh must never overwrite a good score with nothing.
+ *
+ * Under the forward-only scoring policy the grade itself is the PARENT's
+ * decision, never this function's: see `variantScoreUnderPolicy`. A withheld
+ * reading with its evidence statement is not "nothing" — every renderer
+ * composes from it — so the rule above still holds.
  */
 function resolveVariantScore(variant: ForkVariant, scoreInputRaw: any, parent: any) {
   const variantScore = variant === 'financial'
@@ -390,17 +396,16 @@ function resolveVariantScore(variant: ForkVariant, scoreInputRaw: any, parent: a
   const parentScore = parent.investment_score && typeof parent.investment_score === 'object'
     ? parent.investment_score
     : null;
-  if (!variantScore) return parentScore;
-  if (!parentScore) return variantScore;
-  const carry = (own: unknown, parents: unknown) =>
-    (Array.isArray(own) && own.length ? own : (Array.isArray(parents) ? parents : []));
-  return {
-    ...variantScore,
-    strengths: carry(variantScore.strengths, parentScore.strengths),
-    weaknesses: carry(variantScore.weaknesses, parentScore.weaknesses),
-    opportunities: carry(variantScore.opportunities, parentScore.opportunities),
-    risks: carry(variantScore.risks, parentScore.risks),
-  };
+  // A fork MINTS no grade. This used to return the V1 variant grade whenever
+  // the scorer could produce one, with no policy stamp — so on 15 Sep 2026
+  // the Financial fork of 291 Stone Mason Drive wrote D · CAUTION · 39/100
+  // seven minutes after the composite scorer had withheld the grade for the
+  // same parent under the forward-only policy, and the Generated Reports
+  // card showed that D as the property's grade. The property's grade is the
+  // parent's decision; the child restates it (issued or withheld), keeps its
+  // own dimensions as non-authoritative measured analysis, and carries the
+  // parent's SWOT where it has none. See `variantScorePolicy.pure.ts`.
+  return variantScoreUnderPolicy({ variantScore, parentScore, now: new Date() });
 }
 
 async function upsertFork(

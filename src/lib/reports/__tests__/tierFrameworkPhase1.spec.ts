@@ -304,6 +304,10 @@ describe('the engines stamp lineage and compose rather than slice', () => {
     expect(fork).toContain('stripPlaceholderRows');
     expect(fork).toContain('stripEditorialLabelsFromMarkdown');
     expect(fork).toContain('resolveVariantScore');
+    // A fork mints no grade: the variant scorer's output goes through the
+    // scoring policy, which restates the parent's decision (15 Sep 2026 —
+    // the Financial fork wrote D · 39 beside a withheld composite).
+    expect(fork).toContain('variantScoreUnderPolicy({ variantScore, parentScore, now: new Date() })');
     expect(fork).toContain("generation_engine: parent.generation_engine ?? 'legacy'");
     expect(fork).toContain('report_scope: parent.report_scope');
   });

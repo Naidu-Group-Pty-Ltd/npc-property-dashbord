@@ -91,6 +91,21 @@ describe('the route reports the gate it closed at', () => {
     expect(code).toMatch(/refuse\(unavailable \? 'engine_unavailable' : 'render_failed'/);
   });
 
+  it('lets the in-tab renderer stand in for the print engine only on the engine\'s own failure', () => {
+    // 15 Sep 2026, second episode: the engine answered Cloud Run's 500 page
+    // for five hours and every chosen template fell back to the standard
+    // layout. The preview renderer draws the same template; it stands in
+    // for a failure OF THE ENGINE, on a template it draws in full, and the
+    // result says so. A refusal or a plain error (the client-readiness gate
+    // answers as one) never reaches another renderer.
+    expect(code).toMatch(/function browserStandInFor\(/);
+    expect(code).toMatch(/if \(!\(failure instanceof RenderServiceError\)\) return null;/);
+    expect(code).toMatch(/judgeBrowserProductionExport\(schema\)\.ok === false\) return null;/);
+    expect(code).toMatch(/degradedFrom = standIn;/);
+    // The renderer named on the result is the one that DREW the bytes.
+    expect(code).toMatch(/renderer === 'weasyprint' && !degradedFrom/);
+  });
+
   it('parses the template inside its own guard, not past every other one', () => {
     // `parseTemplate` used to throw straight into the outer catch, where an
     // unreadable schema was indistinguishable from a network failure.
@@ -104,6 +119,13 @@ describe('the person is told which gate closed', () => {
   it('puts the reason in the notice, for every format at once', () => {
     expect(code).toContain('onRefusal');
     expect(code).toMatch(/TEMPLATE_ROUTE_REFUSAL_TEXT\[refusal\]/);
+  });
+
+  it('says when the chosen template was drawn in the browser, with the engine\'s words', () => {
+    // A stand-in is not "your template was not used" — it was. It is a
+    // different fact, and the person about to send the file is told it.
+    expect(code).toMatch(/if \(routed\.degradedFrom\) \{\s*notifyTemplateDrawnInBrowser\(/);
+    expect(code).toMatch(/degradedFrom: routed\.degradedFrom \?\? null/);
   });
 
   it('still only speaks when a template was actually chosen', () => {
