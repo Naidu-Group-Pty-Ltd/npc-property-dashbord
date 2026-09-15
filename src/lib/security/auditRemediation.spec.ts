@@ -91,11 +91,12 @@ describe('F-02 — the operator backfills require a JWT', () => {
   it('every function still declares verify_jwt explicitly', () => {
     const declared = [...CONFIG.matchAll(
       /\[functions\.([A-Za-z0-9_-]+)\][^[]*?verify_jwt\s*=\s*(true|false)/gs)];
-    // 409 since Phase 7 of the network extraction deleted the Builder
-    // Portal's 27 functions with their config blocks (436 before). The
-    // count is a ratchet against a function slipping in undeclared;
+    // 410 since market-sales-ingest (the open-data sales-register loader)
+    // was declared; 409 after Phase 7 of the network extraction deleted the
+    // Builder Portal's 27 functions with their config blocks (436 before).
+    // The count is a ratchet against a function slipping in undeclared;
     // check-verify-jwt-declared.mjs enforces the rule itself.
-    expect(declared.length).toBe(409);
+    expect(declared.length).toBe(410);
   });
 });
 

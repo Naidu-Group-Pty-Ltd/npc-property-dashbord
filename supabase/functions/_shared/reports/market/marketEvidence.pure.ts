@@ -112,7 +112,12 @@ export type EvidenceProvider =
   | 'nsw_valuer_general'
   | 'vic_property_sales'
   | 'qld_titles'
-  | 'sa_land_services';
+  | 'sa_land_services'
+  // The open-data sales registers (docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md):
+  // published medians, CC BY 4.0, loaded by `market-sales-ingest` and read by
+  // `openDataSalesEvidence.pure.ts`.
+  | 'qld_qgso_rlda'
+  | 'nsw_dcj_rent_sales';
 
 /** Whether the number was read from the source or computed from what was read. */
 export type EvidenceMethod = 'observed' | 'calculated';

@@ -93,6 +93,25 @@ provenance, exactly as §7 has always said.
 
 ---
 
+### Growth providers, 15 September 2026 (evening)
+
+Domain's suburb-performance series answers 403 on this key (the project has
+no API package attached), so the growth evidence the activation requires
+comes from the open-data sales registers loaded by `market-sales-ingest`
+and adapted by `openDataSalesEvidence.pure.ts`: the Queensland Government
+Statistician's dwelling-sales series by local government area (quarterly
+since June 2008) and the NSW DCJ Rent and Sales Report by postcode and LGA
+(one workbook a quarter since 2017), both CC BY 4.0, both measured
+reachable from the production egress. Every point carries the publisher's
+grain (`lga` or `postcode`), which the Growth confidence's geography factor
+prices at 55 and 80 against 100 for a suburb, `licensingStatus: 'open'`
+and `acquisition: 'open_public'`. Domain remains a provider: when its
+package is attached, `mergeEvidence` prefers its suburb-grain points per
+measure and the register becomes the second, corroborating source
+(`sourceIndependence` 55 → 85). Western Australia has no open series and
+withholds; Victoria's is walled to scripted clients. The measurements,
+licences and what remains are in `OPEN_DATA_GROWTH_EVIDENCE.md`.
+
 ## 1. The composite
 
 One composition function: `scoreInvestmentV2Shadow`
