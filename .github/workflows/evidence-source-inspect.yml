@@ -98,19 +98,23 @@ jobs:
             if hdr:
               nz = [v for v in hdr if v is not None]
               print('    header non-empty count:', len(nz), 'first:', [cell(v) for v in nz[:6]], 'last:', [cell(v) for v in nz[-6:]])
-            samples = find_rows(rows, r'^(Brisbane|Moreton Bay|Gold Coast|Isaac|Logan|Ipswich|Townsville|Queensland)\b', 0, 8)
+            samples = []
+            for col in (2, 1, 3):
+              samples = find_rows(rows, r'^(Brisbane|Moreton Bay|Gold Coast|Isaac|Logan|Ipswich|Townsville|Queensland)\b', col, 8)
+              if samples:
+                print('    labels found in column', col); break
             for r in samples:
               nz = [(i, v) for i, v in enumerate(r) if v is not None]
               print('    sample:', cell(r[0], 30), '| non-empty', len(nz), '| first', [(i, cell(v)) for i, v in nz[:5]], '| last', [(i, cell(v)) for i, v in nz[-5:]])
             # first column values (the region labels)
-            labels = [cell(r[0], 40) for r in rows if r and r[0] is not None]
-            print('    first-column labels (first 60):', labels[:60])
-            print('    first-column label count:', len(labels))
+            labels = [cell(r[2], 40) for r in rows if len(r) > 2 and r[2] is not None]
+            print('    label-column values (all):', labels)
+            print('    label count:', len(labels))
           # a compact JSON extract for a parser fixture: header rows + samples for the two price sheets and the detached number sheet
           fixture = {}
           for sn in ['SalesDetached_Price', 'SalesAttached_Price', 'SalesDetached_Number']:
             rows = rows_of(wb[sn])
-            keep = rows[:8] + find_rows(rows, r'^(Brisbane \(C\)|Moreton Bay|Isaac|Queensland)\b', 0, 4)
+            keep = rows[:8] + find_rows(rows, r'^(Brisbane \(C\)|Moreton Bay|Isaac|Gold Coast|Queensland)\b', 2, 6)
             fixture[sn] = [[('' if v is None else (v if isinstance(v, (int, float)) else str(v))) for v in r] for r in keep]
           print('\n  FIXTURE_JSON_QGSO_BEGIN')
           print(json.dumps(fixture, separators=(',', ':')))
@@ -155,6 +159,16 @@ jobs:
           print('\n  FIXTURE_JSON_DCJ_BEGIN')
           print(json.dumps(fixture, separators=(',', ':')))
           print('  FIXTURE_JSON_DCJ_END')
+
+          # ---- DCJ previous reports: the historical sales tables a series needs
+          st, hd, body = fetch('https://dcj.nsw.gov.au/content/dcj/dcj-website/dcj/about-us/families-and-communities-statistics/housing-rent-and-sales/previous-rent-and-sales-reports.html')
+          html = body.decode('utf-8', 'replace')
+          sales_links = sorted(set(re.findall(r'href="([^"]*sales[^"]*\.xlsx)"', html, re.I)))
+          print(f'\n=== DCJ previous reports status={st} sales-table links={len(sales_links)}')
+          for l in sales_links[:80]:
+            print('   ', l)
+          other = sorted(set(re.findall(r'href="([^"]*\.(?:xlsx|xls|zip|csv))"', html, re.I)) - set(sales_links))
+          print('  other file links:', other[:40])
 
           # ---- DCJ licence: follow the page's own copyright link
           status, headers, data = fetch(DCJ_PAGE)
