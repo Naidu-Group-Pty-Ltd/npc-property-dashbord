@@ -67,6 +67,39 @@ The manual `gcloud` path below remains correct and is the fallback — for a
 first deploy, for a repository without the variables set, and for the day the
 workflow itself is what is broken.
 
+### Without a terminal: a key from the console — once
+
+Federation (next section) is the designed sign-in and needs one gcloud
+session to set up. On 15 Sep 2026 nobody had one, the render service had
+stopped serving, and the workflow that exists to remove the by-hand deploy
+could not deploy at all. So the workflow also accepts a service-account key,
+which the Google Cloud console creates with clicks:
+
+1. **IAM & Admin → Service Accounts → Create service account.** Name it
+   `github-deployer`. Grant it these roles: *Cloud Run Admin*, *Service
+   Account User*, *Cloud Build Editor*, *Storage Admin*, *Logs Viewer*.
+   (The first two are enough for `mode: redeploy`; the others are for
+   building a new image.)
+2. Open the account → **Keys → Add key → Create new key → JSON.** A file
+   downloads.
+3. In GitHub: **Settings → Secrets and variables → Actions → New repository
+   secret**, name `GCP_SA_KEY`, value: the whole contents of that file.
+
+That is all. The workflow reads the project from the key, so no variable is
+needed. From then on **Actions → Deploy the render container → Run
+workflow** with `mode: redeploy` re-deploys the image the service already
+runs (the 15 Sep remedy), and `mode: release` builds, stages and — with
+`promote: cutover` — promotes a new one; both can be dispatched by a person
+or by an agent with repository access, and neither needs a terminal.
+
+Two caveats. A key does not expire, so rotate it by creating a new one and
+deleting the old (Keys tab). And a Google Cloud organisation created after
+May 2024 blocks key creation by default (`iam.disableServiceAccountKeyCreation`);
+if the console refuses to create one, an organisation administrator lifts
+that policy for the project, or the federated route below is used instead.
+When the three federation variables are set they win, and the key can be
+deleted.
+
 ### Setting up federated deploy — once
 
 No service account key is created, downloaded or stored. GitHub mints a

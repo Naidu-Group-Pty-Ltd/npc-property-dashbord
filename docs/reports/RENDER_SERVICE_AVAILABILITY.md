@@ -201,6 +201,26 @@ Read the answers in this order:
   logs (step 3) say why, and step 4 is the remedy for all but the memory
   case.
 
+## Redeploy without a terminal
+
+Two routes need neither gcloud nor Cloud Shell.
+
+**In the console, now (two clicks).** Open <https://console.cloud.google.com/run>,
+sign in to the account that owns the project, open `weasyprint-service`,
+click **Edit & deploy new revision**, change nothing, click **Deploy**. That
+is `gcloud run deploy` with the image and environment the service already
+has: a new revision, instances recreated, traffic sent to it. The **Logs**
+tab on the same page shows the error lines the table above reads. Then the
+proof by effect: `GET /` on the service URL answers a JSON listing.
+
+**From the deploy workflow, every time after (one secret, once).** Create a
+service-account key in the console and paste it into the repository secret
+`GCP_SA_KEY` — the steps are in `CONTAINER_RELEASE.md` under *Without a
+terminal*. From then on `Deploy the render container → Run workflow` with
+`mode: redeploy` does the redeploy, shows the front door before, the error
+lines, and the front door after, and fails loudly if the service still does
+not serve — and it can be dispatched by an agent with repository access.
+
 ## Redeploy from Cloud Shell — no local tooling
 
 Nothing in this repository can reach Cloud Run: the deploy workflows all
