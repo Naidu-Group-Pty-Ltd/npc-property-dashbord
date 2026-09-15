@@ -1,0 +1,122 @@
+# Manual inspection of candidate open-data sources for market evidence.
+#
+# The Supabase egress can fetch these files but `pg_net` stores a response
+# as text, so a workbook comes back as five bytes ("PK\x03\x04\x14" and a
+# NUL); the development container cannot reach the hosts at all. A GitHub
+# runner can do both, so this workflow downloads each candidate, records the
+# HTTP answer, and prints every workbook's sheet names, dimensions and first
+# rows into the job log. It writes nothing anywhere and holds no secret.
+name: Evidence source inspection (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: Why this inspection is being run
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet openpyxl
+      - name: Fetch and describe each candidate
+        shell: bash
+        run: |
+          mkdir -p out
+          python3 - <<'PY'
+          import io, json, re, sys, urllib.request, urllib.error
+          from openpyxl import load_workbook
+
+          UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36'
+          TARGETS = [
+            ('qgso_rlda_all_regions', 'https://www.qgso.qld.gov.au/issues/2856/residential-land-development-activity-spreadsheet-all-monitored-regions-20260910.xlsx'),
+            ('nsw_dcj_sales_tables', 'https://dcj.nsw.gov.au/content/dam/dcj/dcj-website/documents/about-us/families-and-communities-statistics/housing-and-rent-sales/sales-tables-march-2026-quarter.xlsx'),
+            ('nsw_dcj_rent_tables', 'https://dcj.nsw.gov.au/content/dam/dcj/dcj-website/documents/about-us/families-and-communities-statistics/housing-and-rent-sales/rent-tables-june-2026-quarter.xlsx'),
+            ('vic_houses_by_suburb_2014_2024', 'https://www.land.vic.gov.au/__data/assets/excel_doc/0032/756581/houses-by-suburb-2014-2024.xlsx'),
+            ('sa_metro_median_house_sales_package', 'https://data.sa.gov.au/data/api/3/action/package_show?id=metro-median-house-sales'),
+            ('melbourne_small_area_csv', 'https://data.melbourne.vic.gov.au/api/explore/v2.1/catalog/datasets/house-prices-by-small-area-sale-year/exports/csv?limit=5'),
+            ('nsw_vg_psi_portal', 'https://www.valuation.property.nsw.gov.au/embed/propertySalesInformation'),
+            ('qgso_copyright', 'https://www.qgso.qld.gov.au/copyright'),
+            ('nsw_dcj_rent_sales_page', 'https://dcj.nsw.gov.au/about-us/families-and-communities-statistics/housing-rent-and-sales/rent-and-sales-report.html'),
+          ]
+
+          def fetch(url):
+            req = urllib.request.Request(url, headers={'User-Agent': UA, 'Accept': '*/*'})
+            try:
+              with urllib.request.urlopen(req, timeout=60) as r:
+                return r.status, dict(r.headers), r.read()
+            except urllib.error.HTTPError as e:
+              return e.code, dict(e.headers), e.read()[:2000]
+            except Exception as e:
+              return None, {}, repr(e).encode()
+
+          def cell(v):
+            s = '' if v is None else str(v)
+            return s[:38]
+
+          def describe_xlsx(name, data):
+            wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            names = wb.sheetnames
+            print(f'  sheets ({len(names)}): {names[:80]}')
+            shown = 0
+            for sn in names:
+              ws = wb[sn]
+              interesting = re.search(r'sale|price|median|dwelling|house|unit', sn, re.I)
+              if shown >= 6 and not interesting:
+                continue
+              print(f'  --- sheet "{sn}" dims={ws.dimensions} max_row={ws.max_row} max_col={ws.max_column}')
+              for i, row in enumerate(ws.iter_rows(values_only=True)):
+                if i >= 16: break
+                print('   ', ' | '.join(cell(v) for v in row[:14]))
+              shown += 1
+
+          for name, url in TARGETS:
+            status, headers, data = fetch(url)
+            ctype = headers.get('Content-Type', headers.get('content-type', ''))
+            print(f'\n=== {name}\n  url={url}\n  status={status} type={ctype} bytes={len(data) if data else 0}')
+            if not status or status >= 400:
+              print('  body head:', (data or b'')[:300].decode('utf-8', 'replace').replace('\n', ' '))
+              continue
+            if data[:2] == b'PK' and ('sheet' in ctype or url.endswith('.xlsx')):
+              open(f'out/{name}.xlsx', 'wb').write(data)
+              try:
+                describe_xlsx(name, data)
+              except Exception as e:
+                print('  workbook could not be read:', repr(e))
+            elif 'json' in ctype:
+              try:
+                j = json.loads(data)
+                res = (j.get('result') or {}).get('resources') or []
+                print('  licence:', (j.get('result') or {}).get('license_title'))
+                for r in res[:40]:
+                  print('   res:', r.get('name'), '|', r.get('format'), '|', r.get('datastore_active'), '|', r.get('url'))
+              except Exception as e:
+                print('  json parse failed:', repr(e), data[:300])
+            else:
+              text = data.decode('utf-8', 'replace')
+              plain = re.sub(r'<[^>]+>', ' ', text)
+              hits = re.findall(r'.{0,200}(?:Creative Commons|creativecommons|CC BY|icence|icense).{0,200}', plain)
+              print('  licence/terms mentions:', len(hits))
+              for h in hits[:8]:
+                print('   >', re.sub(r'\s+', ' ', h).strip())
+              links = re.findall(r'href="([^"]+\.(?:xlsx|xls|csv|zip|dat))"', text, re.I)
+              print('  file links:', links[:40])
+              if name == 'melbourne_small_area_csv':
+                print('  csv head:', text[:600])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-source-files
+          path: out/
+          retention-days: 3
+          if-no-files-found: ignore
