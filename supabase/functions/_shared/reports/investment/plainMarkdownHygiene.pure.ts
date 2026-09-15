@@ -420,7 +420,9 @@ function normaliseSeparators(text: string, notices: PlainMarkdownNotices): strin
  */
 export function prepareMarkdownForPlainRenderer(source: string): PlainMarkdownResult {
   const notices = freshNotices();
-  let text = String(source ?? '').replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  // A byte-order mark is written escaped: a literal U+FEFF in a regex is
+  // invisible in an editor and is what ESLint's no-irregular-whitespace catches.
+  let text = String(source ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   const original = text;
   text = stripAuthoringNotes(text, notices);
   text = unwrapFences(text, notices);

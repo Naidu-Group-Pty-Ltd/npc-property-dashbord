@@ -116,6 +116,14 @@ See the handover for the exact commands. In summary, on this branch:
   `renderFailure`, `readBaseFinancials`, `yieldNarrative`, `scoreClaims`,
   `qa291Contracts`, `vizDirectiveTables`, `forkSectionContracts`,
   `financialRiskDashboard`, `landAreaScope`.
+- **Gates at the final commit:** `npx vitest run src/lib/reports
+  src/components/reports src/lib/cashFlow src/components/cash-flow
+  src/lib/reportTemplate` — 559 files, 9,220 tests passed; the whole suite
+  earlier in the session passed except the three pre-existing failures named
+  below (and one spec that was mid-edit when that run started and passes on
+  its own); `npm run build` — built in 2m 42s; `npm run audit:style` — under
+  baseline; `npm run lint` — 0 errors in any file this branch touched (the
+  repository's 46 pre-existing lint errors are in files it does not touch).
 - **Typechecks:** `tsc -p tsconfig.app.json` (48 pre-existing errors,
   baseline 61 at branch start, none new); `deno check` on every edited edge
   function and pure module (fork 0; condense 6 = baseline; generator 14 =
