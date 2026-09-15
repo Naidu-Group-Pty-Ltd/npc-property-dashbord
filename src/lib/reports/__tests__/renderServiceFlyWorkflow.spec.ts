@@ -39,6 +39,16 @@ describe('deploy-render-fly.yml', () => {
     expect((flyToml.match(/\[\[vm\]\]/g) ?? []).length).toBe(1);
   });
 
+  it('builds from the service directory, as CI and Cloud Build do', () => {
+    // flyctl uploads the directory it runs in. Run from the repository root,
+    // the first dispatch shipped the whole repository (541 MB, 8,342 files)
+    // and the Dockerfile's relative COPYs found nothing.
+    const step = /- name: Build and deploy\n([\s\S]*?)\n\s+- name:/.exec(workflow)![1];
+    expect(step).toMatch(/working-directory: weasyprint-service/);
+    expect(step).toMatch(/--config fly\.toml --dockerfile Dockerfile/);
+    expect(step).not.toMatch(/weasyprint-service\/(fly\.toml|Dockerfile)/);
+  });
+
   it('proves the container before pointing the edge functions at it, and writes both names in one call', () => {
     const proof = workflow.indexOf('The container renders that report whole');
     const repoint = workflow.indexOf('Point the edge functions at the container');
