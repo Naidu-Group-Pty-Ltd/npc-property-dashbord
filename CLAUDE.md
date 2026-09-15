@@ -1465,6 +1465,39 @@ contradict. Placement is load-bearing: **after** the series heal (the ROI
 denominator is the stored deposit) and **before** the upfront total (which is
 the deposit plus the acquisition lines).
 
+## The Investment Grade — Scoring V2 in production
+Read the *Activation* section of
+[`docs/reports/SCORING_V2_METHODOLOGY.md`](./docs/reports/SCORING_V2_METHODOLOGY.md)
+before touching `_shared/reports/market/scoringV2Production.pure.ts`,
+`investment-scoring-service`, `domain-data-service` or the market-evidence
+block in `generate-investment-report`. Every new report read *"Grade withheld
+— no scoring system is currently authorised"* from 11 to 15 Sep 2026 for two
+stacked reasons: no engine was authorised (V1 is not trusted to grade, V2 was
+frozen unwired), and there was nothing to measure — `domain-data-service`
+had requested a deprecated `/v1` route without the postcode segment and had
+**never once succeeded**, so Growth and Demand were absent on every report.
+`SCORING_V2_ACTIVATION` (ME-8, 15 Sep 2026) is the decision, a constant and
+never configuration; `scoreForProduction` projects the engine's canonical
+output onto the record every reader already understands, under a stamp whose
+`authority` is `v2`.
+
+Four rules bite. **The legacy service never imports the engine** — it reaches
+V2 through the activation module alone and still cannot spell `v2`
+(`LegacyScoringAuthority`), and the pin spec asserts exactly one entrypoint,
+one path. **Growth is required before a letter is printed**: three dimensions
+can be measured without it, and the delivered-points ceiling then caps the
+grade at a B that is a statement about missing data — so the grade is withheld
+and `gradeGaps` names each unmeasured dimension, the provider's refusal (the
+`X-Domain-Security-Reason` where Domain sent one) and the remedy, and the card
+and the page draw the same list. **Evidence is keyed on the trusted geography
+only** — the suburb, state and postal area resolved from the verified
+coordinate, never the typed suburb or the parsed four-digit token, the same
+rule the crime evidence answers to — so an unresolved geography seeks nothing
+and says so. And **Domain's licensing is `unverified` until the rights
+follow-up is answered**: the engine scores on the points and the client-facing
+evidence statement withholds their provenance; declaring it licensed is a
+decision with a document behind it, not a default.
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section

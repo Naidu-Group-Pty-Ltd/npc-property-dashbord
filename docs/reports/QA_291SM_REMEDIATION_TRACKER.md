@@ -121,7 +121,13 @@ implementation agreed.
    for 291 Stone Mason Drive was the Financial fork minting a V1 grade past
    that policy, which this branch stops; the page's "not issued" was correct.
    Grades return only through the V2 activation decision, which is a review,
-   not a flag — nothing here flips it.
+   not a flag — nothing here flips it. **Taken on 15 Sep 2026** by the owner's
+   instruction to rectify the grading: `SCORING_V2_ACTIVATION` in
+   `scoringV2Production.pure.ts` wires the frozen engine as the production
+   grade engine under one added condition — Growth must be measured before a
+   letter is printed (a grade without it is a statement about missing data)
+   — with every gap named on the record (`gradeGaps`). See the addendum row S5
+   and `SCORING_V2_METHODOLOGY.md` § Activation.
 
 ## 4. Verification record
 
@@ -225,3 +231,21 @@ grade since 11 Sep 2026, by design** (decision 7). The number on the list was
 the one surface that had escaped the policy, and it was the buyer's leverage
 being graded as the property. The measured analysis (gross yield, the loan
 ledger, the sensitivities) is unchanged and still printed.
+
+### S6 — templates and page flow (15 Sep, afternoon), measured on the real engine
+
+Reported with S5: *"the reports are not rendering into the chosen templates
+… spacing needs to be key where there are no large gaps between pages."* Two
+findings, each measured by rendering the production row for 291 Stone Mason
+Drive through WeasyPrint 69.0 in this sandbox rather than by reading the code.
+
+| ID | Finding | Disposition |
+| --- | --- | --- |
+| S6a | The chosen *First-Home Buyer Report* (a library voice template seeded against a sample preset) binds a vocabulary no adapter publishes, so it resolved five near-empty pages under a letterhead — and nothing measured coverage before drawing. | **Binding coverage is measured and a template that carries none of the report is composed, never shipped empty** (`templateBindingCoverage.pure.ts`, `templateComposition.pure.ts`): its cover, closing pages and tokens over a family master's body. Rendered: 5 pages → 30, one cover, the absent-client subtitle scrubbed. Recorded in `TEMPLATE_SELECTION.md`. |
+| S6b | Page flow on the composed document: the narrative pages are filled by the geometry path (`packNarrativeGeometry` — keep-with-next, table splits, floated figures, tail balancing), and no page in the body runs short. The gaps that remain are on **fixed-layout pages whose blocks the withheld grade drops**: the dashboard page drew at 36% of its height because its verdict, gauge and grade blocks were conditional on a grade that did not exist, the method page carried the same hole, and the last narrative page ran to ~40% because it is the last page. | **No packer change.** The dashboard and method holes are the grade's, not the packer's — S5 is the fix, and on a graded record those blocks draw. A last page that is the last page is not a stub the packer may fill. What stays measured rather than assumed: the composed document was rendered across two families (the FHB voice template over the Investment Compass master, and the Chancery master) and the narrative pages were counted full on both. |
+
+### S5 — the grade withheld on every report (15 Sep, afternoon)
+
+| ID | Reported | Finding | Disposition | Where |
+| --- | --- | --- | --- | --- |
+| S5 | The Generated Reports cards read *"Grade withheld — Withheld by the scoring policy: no scoring system is currently authorised…"* on the Compass, Financial, Strategic, Snapshot and Briefing reports alike | Two faults stacked. **No engine was authorised**: `PRODUCTION_SCORING_AUTHORITY` is `unavailable` and Scoring V2 was frozen unwired, so every new run withheld whatever it measured (decision 7). **And there was nothing to measure**: `domain-data-service` requested Domain's deprecated `/v1/…/{state}/{suburb}` route without the postcode segment the live route requires, answered 404 on every call since it was written (`lastSuccess: "Never"`), and would have read three fields the response does not carry; `location_intelligence` is refused by the input policy until repaired; nothing supplied population growth. So Growth and Demand were absent on every report, and V1 measured only Yield — 1 of 5. Separately, the base prompt told the model *"Investment Grade: B … Recommendation: HOLD"* whenever the record held no grade (`grade \|\| 'B'`), with a weights table (30/25/20/15/10) that was never the engine's. | **Scoring V2 activated as the production grade engine** (`SCORING_V2_ACTIVATION`, ME-8): `investment-scoring-service` runs it through `scoreForProduction`, which projects the canonical output onto the V1-shaped record under `authority: v2`; the legacy path is unreached for a property and still cannot spell `v2`. **Growth is required** before a letter is printed; otherwise the grade is withheld with `gradeGaps` naming each unmeasured dimension, the provider's refusal and the remedy, and the card and page draw them. **Domain fetched on the v2 route with the postcode**, keyed on the trusted geography only, extracted once (`domainEvidence.pure.ts`: horizons computed from the series), metered, its refusal named (`X-Domain-Security-Reason` quoted where sent). **Population growth** from the SA2 series the regional service already serves. **The prompt states what the record holds** (`scorePromptBlock.pure.ts`) and forbids a grade where none is issued. Forward-only; no stored row recomputed. What only production can show: whether Domain still answers 403 (8 Sep probe) — if it does, every grade stays withheld with that reason on the record, and the owner's action is the activation request. | `_shared/reports/market/scoringV2Production.pure.ts`, `domainEvidence.pure.ts`, `populationGrowthEvidence.pure.ts`, `shadowScorer.pure.ts` (alias + version), `marketEvidence.pure.ts` (`sa2`), `investment-scoring-service/index.ts`, `domain-data-service/index.ts`, `generate-investment-report/index.ts`, `_shared/reports/investment/scorePromptBlock.pure.ts`, `report-view/utils.ts`; `scoringV2Production.spec.ts`, `domainEvidence.spec.ts`, `populationGrowthEvidence.spec.ts`, `scoringMethodology.spec.ts` (guard inverted), `scoringInputPolicy.spec.ts` |

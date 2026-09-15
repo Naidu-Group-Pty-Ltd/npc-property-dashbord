@@ -31,6 +31,20 @@ conversation than the evidence supports, on a premise nobody had established.
 
 **Do not discuss pricing in this message.** It is a scope and rights request.
 
+**State of the code (15 Sep 2026).** `domain-data-service` now requests the
+v2 route with the postcode as a path segment (`domainSuburbPerformanceUrl`),
+keyed on the geography resolved from the verified coordinate, and extracts
+the series once (`domainEvidence.pure.ts`). Its refusal — status and
+`X-Domain-Security-Reason` where Domain sends one — travels onto the report's
+grade as a named gap, so while the 403 stands every new report reads *"grade
+withheld … growth: No suburb capital-growth series for … (domain: HTTP 403
+…)"* rather than a silent absence. When Domain lifts the restriction the
+grade appears on the next generation with no further code change. Every
+point is stamped `licensingStatus: 'unverified'`
+(`DOMAIN_SUBURB_PERFORMANCE_LICENSING`) until the rights follow-up below is
+answered; until then the score uses the figures and the client document does
+not print their provenance.
+
 ---
 
 ## The message — both-403 branch (the branch the 8 Sep 2026 run selected)

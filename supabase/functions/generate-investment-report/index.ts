@@ -48,6 +48,9 @@ import {
   sensitivityRowsForPrompt,
 } from '../_shared/reports/investment/promptFinancials.pure.ts';
 import { recordedScoreValues } from '../_shared/reports/investment/scoreClaims.pure.ts';
+import { investmentScorePromptBlock, overallRecommendationLine } from '../_shared/reports/investment/scorePromptBlock.pure.ts';
+import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/reports/market/domainEvidence.pure.ts';
+import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
@@ -2603,22 +2606,14 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
       // Define all Phase 1 fetch promises
       const phase1Promises = [
-        // 1. Domain market data
-        (suburb && state) ? fetchServiceWithFallback('domain-data-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/domain-data-service`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ 
-              suburb, state, postcode,
-              propertyCategory: propertyDetails?.propertyType?.toLowerCase() === 'unit' ? 'unit' : 'house'
-            })
-          }, 30000, 'domain-data-service');
-          if (response.ok) {
-            const data = await response.json();
-            return data.success ? data.data : null;
-          }
-          return null;
-        }) : Promise.resolve({ success: false, serviceName: 'domain-data-service', error: 'Missing suburb/state' }),
+        // 1. Domain market data is keyed on the TRUSTED geography — the suburb,
+        // state and postal area resolved from the verified coordinate — which
+        // does not exist yet in phase 1. It is fetched after geography
+        // resolution below, beside the scoring call it feeds; a free-text
+        // suburb and a parsed four-digit token may not select a market
+        // (`crimePostcodeAuthority.pure.ts` records why). This slot keeps the
+        // results array aligned with serviceNames.
+        Promise.resolve({ success: false, serviceName: 'domain-data-service', error: 'Missing trusted geography (fetched after geography resolution)' }),
 
         // 2. ABS demographic data
         postcode ? fetchServiceWithFallback('abs-data-service', async () => {
@@ -3432,6 +3427,83 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }
       }
 
+      // ======================================================================
+      // MARKET EVIDENCE FOR THE GRADE — keyed on the trusted geography only
+      // ======================================================================
+      // Scoring V2 (ME-8) grades on measured suburb evidence: Domain's suburb
+      // performance series (median sold price by year → the growth horizons,
+      // plus days on market, sales and listings) and the ABS resident
+      // population series the regional service already served for the
+      // property's SA2. Both are asked for the SUBJECT the boundary service
+      // resolved, never for the typed suburb or the parsed postcode — the
+      // same rule the crime evidence answers to — so where the geography did
+      // not resolve, no evidence is sought and the grade says why.
+      const marketPoints: Record<string, unknown> = {};
+      const providersConsulted: string[] = [];
+      const providersUnavailable: Array<{ provider: string; reason: string }> = [];
+      let evidenceWithheldReason: string | null = null;
+      const marketPostcode = subjectPostcodeOf(subjectGeography);
+      const marketSuburb = typeof subjectGeography?.suburb === 'string' && subjectGeography.suburb.trim()
+        ? subjectGeography.suburb.trim() : null;
+      const marketState = abbreviateState(typeof subjectGeography?.state === 'string' ? subjectGeography.state : null)
+        ?? abbreviateState(state);
+      if (!isAreaReport) {
+        if (marketPostcode && marketSuburb && marketState) {
+          providersConsulted.push('domain');
+          try {
+            const domainResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/domain-data-service`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                suburb: marketSuburb,
+                state: marketState,
+                postcode: marketPostcode,
+                propertyCategory: domainCategoryFor(effectivePropertyType),
+                propertyType: effectivePropertyType,
+              }),
+            }, 30000, 'domain-data-service');
+            const domainBody = domainResponse.ok ? await domainResponse.json() : null;
+            if (domainBody?.success && domainBody.data) {
+              enhancedData = { ...enhancedData, domainData: domainBody.data };
+              const points = domainBody.data.evidence?.points;
+              if (points && typeof points === 'object') Object.assign(marketPoints, points);
+              console.log(`✓ Domain suburb performance for ${marketSuburb} ${marketState} ${marketPostcode}: ${Object.keys(points ?? {}).length} evidence points`);
+            } else {
+              const reason = domainBody?.refusal?.summary
+                ?? domainBody?.error
+                ?? `HTTP ${domainResponse.status} from domain-data-service`;
+              providersUnavailable.push({ provider: 'domain', reason });
+              console.log(`⚠️ Domain suburb performance unavailable: ${reason}`);
+            }
+          } catch (error: any) {
+            providersUnavailable.push({ provider: 'domain', reason: error?.message || 'request failed' });
+            console.log('⚠️ Domain suburb performance skipped:', error?.message?.substring(0, 120));
+          }
+        } else {
+          evidenceWithheldReason = 'the property\'s geography did not resolve to a trusted suburb, state and postcode, so no suburb market evidence was sought';
+          console.log(`⛔ Market evidence not sought: ${evidenceWithheldReason}`);
+        }
+
+        // Population growth — a demand DRIVER — from the SA2 series the
+        // regional service served for the verified coordinate. Nothing new is
+        // fetched; the point is computed from the series already held.
+        const regionalPopulation = enhancedData.regionalTrends?.population;
+        const regionalSa2 = enhancedData.regionalTrends?.sa2;
+        const erpSeries = Array.isArray(regionalPopulation?.series) ? regionalPopulation.series : null;
+        if (erpSeries && typeof regionalSa2?.name === 'string' && regionalSa2.name) {
+          providersConsulted.push('abs_erp');
+          const populationPoint = populationGrowthPoint(erpSeries, { name: regionalSa2.name, level: 'sa2' });
+          if (populationPoint) {
+            marketPoints.populationGrowth = populationPoint;
+            console.log(`✓ Population growth point for SA2 ${regionalSa2.name}: ${populationPoint.value}% p.a.`);
+          } else {
+            providersUnavailable.push({ provider: 'abs_erp', reason: `the ABS series for SA2 ${regionalSa2.name} is too short to compute a growth rate` });
+          }
+        } else if (!isAreaReport) {
+          providersUnavailable.push({ provider: 'abs_erp', reason: 'no SA2 population series was served for the verified coordinate' });
+        }
+      }
+
       // Calculate investment score - property OR area scoring
       if (!isAreaReport && effectivePurchasePrice > 0) {
         // Property-specific scoring
@@ -3466,7 +3538,18 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               },
               demographics: enhancedData.demographics,
               locationIntelligence: enhancedData.locationIntelligence,
-              financials: enhancedData.financials
+              financials: enhancedData.financials,
+              // ME-8 — what Scoring V2 grades on: the subject the evidence was
+              // keyed to, and the evidence points the adapters extracted.
+              subject: {
+                suburb: marketSuburb,
+                postcode: marketPostcode,
+                state: marketState ?? state,
+                dwellingType: dwellingTypeFor(effectivePropertyType),
+                resolvedFrom: marketPostcode ? 'coordinate' : null,
+              },
+              marketEvidence: { points: marketPoints, providersConsulted, providersUnavailable },
+              evidenceWithheldReason,
             })
           });
           
@@ -3474,7 +3557,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             const scoreData = await scoreResponse.json();
             if (scoreData?.success && scoreData?.data) {
               enhancedData = { ...enhancedData, investmentScore: scoreData.data };
-              console.log('✓ Investment score calculated:', scoreData.data?.grade, scoreData.data?.totalScore);
+              console.log('✓ Investment score calculated:', scoreData.data?.grade ?? 'withheld', scoreData.data?.totalScore ?? '');
+              if (Array.isArray(scoreData.data?.gradeGaps) && scoreData.data.gradeGaps.length) {
+                console.log('  Grade gaps:', scoreData.data.gradeGaps.map((g: any) => `${g.dimension}: ${g.detail}`).join(' | '));
+              }
             } else if (scoreData) {
               enhancedData = { ...enhancedData, investmentScore: scoreData };
               console.log('✓ Investment score (direct):', scoreData?.grade, scoreData?.totalScore);
@@ -5069,21 +5155,7 @@ The optimistic scenario (6% growth) projects Year 10 value of $[X,XXX,XXX], with
 
 **CRITICAL NOTE:** ${documentContent ? 'Analysis based on provided property data and market research.' : 'Insufficient comparable market data and recent sales analysis specific to this property may prevent calculation of a precise investment score. The following analysis is based on suburb-level characteristics and general market positioning.'}
 
-**Investment Grade:** ${enhancedData.investmentScore?.grade || 'B'} (${documentContent ? 'Based on property analysis' : 'Based on suburb fundamentals - requires property-specific assessment'})
-
-**Total Score:** ${enhancedData.investmentScore?.totalScore || 'XX'}/100
-
-**Recommendation:** ${enhancedData.investmentScore?.recommendation || 'HOLD'} ${documentContent ? '' : 'with caution pending property-specific verification'}
-
-**Score Breakdown:**
-
-| Component | Weight (%) | Score (/100) |
-|-----------|------------|--------------|
-| Growth Score | 30% | ${enhancedData.investmentScore?.breakdown?.growthScore?.score || 'XX'} |
-| Location Score | 25% | ${enhancedData.investmentScore?.breakdown?.locationScore?.score || 'XX'} |
-| Yield Score | 20% | ${enhancedData.investmentScore?.breakdown?.yieldScore?.score || 'XX'} |
-| Demand Score | 15% | ${enhancedData.investmentScore?.breakdown?.demandScore?.score || 'XX'} |
-| Risk Score | 10% | ${enhancedData.investmentScore?.breakdown?.riskScore?.score || 'XX'} |
+${investmentScorePromptBlock(enhancedData.investmentScore, { hasDocument: !!documentContent })}
 
 ---
 
@@ -5264,7 +5336,7 @@ ${documentContent ? 'The listed' : 'Estimated'} property price of $[X,XXX,XXX] r
 
 **Overall Recommendation:**
 
-**QUALIFIED ${enhancedData.investmentScore?.recommendation || 'HOLD'} with Contingencies**
+${overallRecommendationLine(enhancedData.investmentScore)}
 
 This property warrants serious consideration for investors who (1) verify environmental hazards as acceptable, (2) confirm financial capacity to sustain negative cashflow, (3) achieve mortgage pre-approval at serviceability-acceptable terms, and (4) obtain professional valuation confirming price point aligns with current market conditions. The investment is suitable for disciplined, long-term capital accumulators with strong employment stability and confidence in [City] metropolitan property markets. Investors prioritizing immediate returns or requiring rental income should pursue alternative investments with superior yield profiles.
 

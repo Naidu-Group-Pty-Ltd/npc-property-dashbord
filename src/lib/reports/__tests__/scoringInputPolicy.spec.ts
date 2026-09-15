@@ -501,10 +501,11 @@ describe('legacy V1 can never be activated as V2', () => {
     expect(POLICY_SRC).toMatch(/not a label change/i);
   });
 
-  it('V2 remains unwired — the legacy service never imports the V2 engine', () => {
+  it('the legacy service never imports the V2 engine itself — it reaches V2 only through the activation module (ME-8)', () => {
     expect(SERVICE).not.toContain('shadowScorer');
     expect(SERVICE).not.toContain('scoreOutputContract');
     expect(SERVICE).not.toContain('scoreInvestmentV2');
+    expect(SERVICE).toContain("from '../_shared/reports/market/scoringV2Production.pure.ts'");
   });
 });
 
