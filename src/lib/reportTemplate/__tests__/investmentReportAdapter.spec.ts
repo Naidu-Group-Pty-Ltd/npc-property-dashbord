@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { invokeSecureFunction } = vi.hoisted(() => ({
   invokeSecureFunction: vi.fn(),
@@ -112,21 +112,41 @@ describe('investmentReportAdapter — the "Include scoring" switch reaches the b
     investment_score: { grade: 'B+', totalScore: 68, policy: { gradeIssued: true, authority: 'v2' } },
   };
 
+  const scoresOf = (ctx: Awaited<ReturnType<typeof investmentReportAdapter.buildBindingContext>>) =>
+    ((ctx?.data as { scores?: Record<string, unknown> })?.scores ?? {});
+
+  /*
+   * The first call through the adapter loads the projection graph — the
+   * financial reconciler, the narrative planner, the chart primitives —
+   * behind its lazy imports: 278 ms on a warm machine, and past the 5 s
+   * default on a CI runner transforming 326 spec files at once, which is
+   * where this describe first timed out (15 Sep 2026). The import is paid
+   * here, once, under a budget that says so; every test below then measures
+   * the switch and nothing else (12 ms each, warm).
+   */
+  beforeAll(async () => {
+    invokeSecureFunction.mockResolvedValue({ data: { report: row }, error: null });
+    await investmentReportAdapter.buildBindingContext({ reportId: 'report-9' });
+  }, 60_000);
+
   beforeEach(() => {
     vi.clearAllMocks();
     invokeSecureFunction.mockResolvedValue({ data: { report: row }, error: null });
   });
 
-  it('carries the score by default and when the switch is on', async () => {
-    const on = await investmentReportAdapter.buildBindingContext({ reportId: 'report-9', payload: { includeScoring: true } });
+  it('carries the score by default', async () => {
     const def = await investmentReportAdapter.buildBindingContext({ reportId: 'report-9' });
-    expect((on?.data as { scores?: Record<string, unknown> })?.scores?.grade).toBe('B+');
-    expect((def?.data as { scores?: Record<string, unknown> })?.scores?.grade).toBe('B+');
+    expect(scoresOf(def).grade).toBe('B+');
+  });
+
+  it('carries the score when the switch is on', async () => {
+    const on = await investmentReportAdapter.buildBindingContext({ reportId: 'report-9', payload: { includeScoring: true } });
+    expect(scoresOf(on).grade).toBe('B+');
   });
 
   it('draws no score anywhere when the switch is off — the same document the standard presentation prints', async () => {
     const off = await investmentReportAdapter.buildBindingContext({ reportId: 'report-9', payload: { includeScoring: false } });
-    const scores = (off?.data as { scores?: Record<string, unknown> })?.scores ?? {};
+    const scores = scoresOf(off);
     expect(scores.grade).toBeUndefined();
     expect(scores.totalScore).toBeUndefined();
     expect(Object.keys(scores)).toEqual([]);
