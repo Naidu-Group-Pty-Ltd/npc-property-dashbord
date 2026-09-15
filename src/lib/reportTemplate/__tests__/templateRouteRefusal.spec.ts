@@ -43,6 +43,7 @@ const REASONS: TemplateRouteRefusal[] = [
   'adapter_published_no_data',
   'template_schema_invalid',
   'template_unbound_reconstruction',
+  'engine_unavailable',
   'render_failed',
   'unexpected_error',
 ];
@@ -74,9 +75,20 @@ describe('the route reports the gate it closed at', () => {
 
   it('tells the caller once, on the way out — never throws instead', () => {
     // The contract every caller depends on: a refusal is a fallback, so the
-    // route returns null and the next line is the legacy generator.
-    expect(code).toMatch(/opts\?\.onRefusal\?\.\(refusedAt\)/);
-    expect(code).toMatch(/opts\?\.onRefusal\?\.\('unexpected_error'\)/);
+    // route returns null and the next line is the legacy generator. The
+    // second argument is the gate's own detail (the engine's status and
+    // words, for a render that failed) — carried, never thrown.
+    expect(code).toMatch(/opts\?\.onRefusal\?\.\(refusedAt, refusedDetail\)/);
+    expect(code).toMatch(/opts\?\.onRefusal\?\.\('unexpected_error', /);
+  });
+
+  it('tells an engine that did not answer apart from a document it could not draw', () => {
+    // On 15 Sep 2026 every template fell back behind one sentence, "The
+    // renderer could not produce the document", while the engine had in fact
+    // answered 503 to every request. The route reads the typed failure the
+    // render client throws and names the gate that actually closed.
+    expect(code).toMatch(/e instanceof RenderServiceError && e\.kind === 'engine_unavailable'/);
+    expect(code).toMatch(/refuse\(unavailable \? 'engine_unavailable' : 'render_failed'/);
   });
 
   it('parses the template inside its own guard, not past every other one', () => {

@@ -20,6 +20,7 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { reconcileStoredFinancials } from '@/lib/reports/investment/financialEngine.pure';
 import { overlayOverridesForHistoricRow } from '@/lib/reports/investment/overrides.pure';
 import { presentStoredMarkdown } from '@/lib/reports/investment/derivedHygiene.pure';
+import { normalizeReportType } from '@/lib/reports/reportVariants';
 import type {
   InvestmentReportData,
   ReportTier,
@@ -89,7 +90,11 @@ export function projectRowForPdf(row: StoredInvestmentReportRow): ProjectedInves
         investmentScore: row.investment_score,
       },
     },
-    reportTier: (row.report_variant || row.report_tier || 'compass') as ReportTier,
+    // Resolved through the canonical alias map rather than cast: `strategic`,
+    // `due_diligence` and `pldd` are one tier, and an unvalidated cast is how
+    // the strategic tier reached a four-branch title map and came out titled
+    // "Snapshot Report" (QA-32).
+    reportTier: (normalizeReportType(row.report_variant || row.report_tier) ?? 'compass') as ReportTier,
   };
 }
 

@@ -126,6 +126,7 @@ import { readAnnualRent } from './reports/investment/rentBasis.pure.ts';
 import { rentIsEstablished } from './reports/investment/rentalEvidence.pure.ts';
 import { gradedDetailLine, gradedLine, publishableGrade } from './reports/investment/scoreSections.pure.ts';
 import { OVERALL_GRADE_UNAVAILABLE } from './reports/market/scoringInputPolicy.pure.ts';
+import { DOCUMENT_IDENTITY, documentTitleForTier } from './reports/investment/tierIdentity.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
@@ -276,28 +277,12 @@ function specReader(
  * never spelled per family, because ten families times five layouts is how
  * one wording change becomes fifty edits.
  */
-export const DOCUMENT_IDENTITY: Record<string, { title: string; standfirst: string }> = {
-  compass: {
-    title: 'Investment Compass',
-    standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
-  },
-  financial: {
-    title: 'Financial Analysis',
-    standfirst: 'What it costs to buy and hold, what it returns, and how the position moves over ten years.',
-  },
-  snapshot: {
-    title: 'Snapshot Report',
-    standfirst: 'The numbers that matter and a short assessment.',
-  },
-  briefing: {
-    title: 'Executive Briefing',
-    standfirst: 'The assessment, condensed for a decision.',
-  },
-  strategic: {
-    title: 'Strategic Overview',
-    standfirst: 'The strategy this assessment supports, and what carries it.',
-  },
-};
+/**
+ * The tier vocabulary lives beside the investment modules (`tierIdentity.pure.ts`)
+ * so the file-name rule can import it as a sibling; it is re-exported here for
+ * every reader that already resolves it through the projection.
+ */
+export { DOCUMENT_IDENTITY, documentTitleForTier };
 
 export interface ProjectedNamespaces {
   property: Record<string, unknown>;

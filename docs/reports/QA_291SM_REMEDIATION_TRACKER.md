@@ -1,0 +1,190 @@
+# QA-291SM remediation tracker
+
+**Audit:** `291_Stone_Mason_Reporting_Engine_Error_Audit.pdf` (QA-291SM-20260915),
+forty findings QA-01–QA-40 over the six documents generated for 291 Stone
+Mason Drive, Kellyville NSW 2155 on 15 September 2026 (Compass = C,
+Financial = F, Strategic = S, Snapshot = N, Briefing = B, 10 Year Cash Flow =
+T), plus the three symptoms the operator reported with them.
+
+**Branch:** `claude/adoring-hopper-g02tdt`. Checkpoints: `297d8ee` (1),
+`e6dd0a9` (2), `b007a18` (3), and checkpoint 4 (this file, the regeneration
+findings and the fixes they forced).
+
+This file is the audit-ID-linked record the remediation was asked to keep.
+Every finding has a **disposition** (how the audit's classification held up
+against the implementation), a **status**, the **evidence** for the status
+and the **control** that now exists. Two statuses are deliberately distinct:
+*implemented* means the code changed and its tests pass; *verified on a
+render* means a document was regenerated and the page inspected. Nothing is
+marked resolved because code changed.
+
+## Status vocabulary
+
+| Status | Meaning |
+| --- | --- |
+| Implemented · tested | Code changed; unit/contract tests for the finding pass. |
+| Implemented · rendered | As above, and the fix is visible on a regenerated document from the synthetic fixture (see §4). |
+| Recorded · evidence gap | The audit's gap is real; the platform holds no data that could close it. The document now states the gap; the decision needed is named. |
+| Decision needed | A business or methodology choice the engineer may not make alone. Named in §3. |
+| Not reproducible here | Needs production access this session did not have. The next action is named. |
+
+## 1. The three reported symptoms
+
+| # | Symptom | Root cause found | Status | Evidence |
+| --- | --- | --- | --- | --- |
+| S1 | "Reports are not being generated in the template forms"; toast *Your chosen template was not used … The renderer could not produce the document* | Every template route ends in the WeasyPrint render service on Cloud Run, which answered **503** (its own front door: no ready instance). The route fell back to the standard pdf-lib layout on all five documents and the notice dropped the status and the engine's words. The deploy workflow has never deployed (3 runs, gate variables unset). | Implemented · tested (the product now names the failure); **Not reproducible here** (the service itself) | `renderFailure.pure.ts`, `weasyprintClient.ts` (classified error, one retry), `render-template-pdf`, `routeReportThroughTemplate.ts` (`engine_unavailable`), `templateDocument.ts` (notice carries status + words); `renderFailure.spec.ts`, `templateRouteRefusal.spec.ts`. Runbook: `RENDER_SERVICE_AVAILABILITY.md`. |
+| S2 | Download names "random, not reflecting the report or the address" | `investmentPdfDocument.ts` named every file `<uuid-prefix>_<ADDRESS>_<epoch>.pdf`; the "Financial Download - " / "Steategic Download" prefixes were typed by hand on the operator's side. | Implemented · tested | `reportFileName.pure.ts` → `Due_Diligence_Report_291_Stone_Mason_Drive_Kellyville_NSW_2155_2026-09-15.pdf`; used by the renderer, the template route, the client download and the adapter. `reportFileName.spec.ts`. |
+| S3 | Cash-flow PDF: *WeasyPrint render failed (503): \<html\>…503 Server Error…* | Same engine failure as S1; the cash-flow route has no standard-layout fallback and printed the HTML body. | Implemented · tested (the toast prints the operator's sentence; the function answers 503 `engine_unavailable`); **Not reproducible here** (the service) | `render-cash-flow-pdf`, `requestCashFlowPdf.ts`; runbook as above. |
+
+## 2. Findings QA-01–QA-40
+
+Severity and class are the audit's. "Disposition" records whether the
+implementation agreed.
+
+| ID | Sev | Audit class | Disposition | Status | Control / evidence |
+| --- | --- | --- | --- | --- | --- |
+| QA-01 | Critical | Confirmed | **Agreed.** `readBaseFinancials` read flat legacy keys the calculator stopped writing; the standalone model seeded no rent and no costs. | Implemented · rendered | Nested record paths (override → record → legacy → default) with `provenance`; `missingInputs` refuses a projection with no rent/price/costs (`assertProjectionComplete`). `readBaseFinancials.spec.ts`. |
+| QA-02 | High | Confirmed | **Agreed.** Nothing declared one scenario across the six outputs. | Implemented · rendered | `caseInputsFingerprint` (FNV-1a over the seeded inputs) printed on the cash-flow document; every tier reads the same `financial_calculations` row. `readBaseFinancials.spec.ts`. |
+| QA-03 | Critical | Confirmed | **Agreed.** Inspection fees were absent from the standalone acquisition total ($55,032 understated with LMI/legal/inspections). | Implemented · rendered | `inspectionFees` and `lmiAmount` seeded from `initialCosts`; `Inspection fees` line in the wire acquisition; `acquisitionCashFor` includes it. |
+| QA-04 | Critical | Confirmed | **Agreed.** "Interest only" label over 30-year P&I arithmetic. | Implemented · tested | `loanLedger.pure.ts` (monthly ledger, IO period honoured) drives projections, key metrics and sensitivities; `loanDetails.structure`/`interestOnlyPeriod`/`interestOnlyPayment` published; chapters print the structure. An IO loan with no stated period assumes 5 years and **says so** (`ASSUMED_INTEREST_ONLY_YEARS`; see §3). `loanLedger.spec.ts`, `financialEngine.spec.ts`. |
+| QA-05 | High | Confirmed by reconstruction | **Agreed.** Annual timing with a monthly formula. | Implemented · tested | Ledger balances replace the annual shortcut (year-10 balance moves by −$314 on the reference case; pinned). |
+| QA-06 | High | Confirmed | **Agreed.** Headline cash flow ignored the 50-week occupancy. | Implemented · tested | `occupancyWeeks` reaches the engine; rent is collected at occupancy in projections and key metrics; `effectiveAnnualRent` / `potentialAnnualRent` published. |
+| QA-07 | High | Confirmed | **Agreed.** Two net-yield numerators. | Implemented · tested | One `totalAnnualExcludingLandTax` basis in the generator; the formula label names it ("Net operating yield before finance and tax"); the engine's `preCalculatedNetYield` is preferred. |
+| QA-08 | High | Confirmed by reconstruction | **Agreed, with a SECOND cause found on the regenerated document:** the prompt read a key the engine never wrote, AND the standard renderer's override injection matched `Interest Rate.*?NN%` — the label, anything, then the next percentage — and rewrote every composed "Interest rate 7.5% (+1.0 pt)" row as "Interest Rate: 6.5% (+1.0 pt)" (the same rule family rewrote "Serviceability (LVR proxy) \| 22% \|" as "(LVR: 80%"). | Implemented · rendered | `sensitivityAnalysis.scenarios[]` with labels; `sensitivityRowsForPrompt` reads the record; chapters print the published labels; the three injection rules now match only an explicit `Label: NN%` (pinned by `qa291Contracts.spec.ts`); the WinAnsi strip maps U+2212 to a hyphen so "(−1.0 pt)" keeps its sign. |
+| QA-09 | High | Confirmed under the displayed fee rule | **Agreed.** Rent sensitivities froze a %-of-rent fee. | Implemented · tested | `rentLinkedFeeRate` recomputes the fee per scenario; `feeBasis: 'collected_rent'` disclosed. |
+| QA-10 | High | Confirmed disclosure defect | **Agreed.** Scenarios and "year 1" undefined; the prompt's growth block was a literal. | Implemented · tested | `assumptions.scenarioGrowth`, `growthTiming`, `occupancyWeeks`, `feeBasis`, `loanStructure` published and printed (chapters, prompt). |
+| QA-11 | High | Confirmed disclosure defect | **Agreed.** Series not reproducible from disclosed assumptions. | Implemented · tested | Projection rows carry `operatingCosts`, `interest`, `principal`, `loanPayments`; components reconcile to cash flow (pinned in `financialEngine.spec.ts`). |
+| QA-12 | High | Evidence gap | **Agreed.** No eligibility/utilisation basis is held. | Recorded · evidence gap | `evidenceBasisNotes`: the document states that deductions are assumed utilised at the stated marginal rate and that income, structure and eligibility are not held. Decision in §3. |
+| QA-13 | High | Confirmed / evidence gap | **Agreed.** Purchase price was assigned to build. | Implemented · rendered | `landBuildSplit` reads the record; a missing split renders "Not stated" and no depreciation is derived from a guess. |
+| QA-14 | High | Evidence gap | **Agreed.** Zero land tax not tied to the owner's holdings. | Recorded · evidence gap | `evidenceBasisNotes` distinguishes "none recorded" from "none payable" and names aggregate landholdings as the missing input. |
+| QA-15 | High | Evidence gap; double counting not established | **Agreed** (no double counting found either). | Recorded · evidence gap | `evidenceBasisNotes` states whether operating costs are recorded entries or default allowances, "not quotes or bills". |
+| QA-16 | Moderate | Confirmed disclosure gap | **Agreed.** Equity headline never bridged to cash committed. | Implemented · tested | Projections chapter's equity bridge (equity at year N, cash to settle, shortfalls funded, total committed, net position before selling costs and tax). `financialRiskDashboard.spec.ts`. |
+| QA-17 | High | Evidence gap | **Agreed.** The dimension is an LVR band; nothing about the borrower is an input. | Implemented · tested; **Decision needed** on suppression | Label "serviceability (LVR proxy)"; engine `details` names the proxy; `scoreBasisLine` prints every dimension's basis under the table. Whether to mark the dimension *not assessed* (changing the methodology and every stored score's weights) is in §3. `qa291Contracts.spec.ts`. |
+| QA-18 | High | Evidence gap / unreconciled signals | **Agreed, and located:** the Compass never carried 68/100 or "score of 82"; the condense model invented them. | Implemented · tested | `scoreClaims.pure.ts`: a score-shaped claim not in the record and not in the parent is removed at condense and logged (`unrecorded_score_claims`); the validator reports the class on the composite (`unrecorded-score`). `scoreClaims.spec.ts`. |
+| QA-19 | Moderate | Confirmed presentation defect | **Agreed.** Omitted dimensions drawn as measured. | Implemented · tested | `readScoreComponents` gated by `dimensionScoresMayBeShown` and `dimensionWasScored` (checkpoint 1). |
+| QA-20 | High | Evidence gap / unsupported certainty | **Agreed.** "Confidence: High" beside the check still to do. | Implemented · tested (prompt + validator) | Registry purpose defines the chip as evidence held (Verified / Unverified / Conflicting), separate from the exposure level; the generator exemplar separates exposure, evidence and check; `risk-confidence-overstated` finding. |
+| QA-21 | High | Confirmed ambiguity / title gap | **Agreed.** | Implemented · tested | `landAreaScope.pure.ts`: an area on a strata dwelling, or at site scale, is labelled "Recorded area (scope unresolved …)", barred from calculations, with the note in the table. `landAreaScope.spec.ts`. |
+| QA-22 | Moderate | Confirmed content regression | **Agreed.** "Residential Property" was a prose fallback that read as a fact. | Implemented · tested | The generator never fills a type; the renderer's replacement rule uses `meaningfulPropertyType` (checkpoint 1); the prompt tells the model to carry the documents' stated type through every section. |
+| QA-23 | High | Confirmed labelling / valuation gap | **Agreed.** | Implemented · tested | Snapshot guide: "Modelled purchase price" / "Asking price", never "Estimated Value"; KPI rent caption reads the rent's provenance (`rentProvenanceCaption`) instead of "Current market rate". |
+| QA-24 | High | Confirmed taxonomy defect | **Agreed.** | Implemented · tested | Snapshot guide splits observed statistics (with source) from a "Scenario assumptions (not market statistics)" sub-table; the shared KPI captions read "Scenario assumption" (capital growth) and "Assumed for modelling" (rate). |
+| QA-25 | High | Evidence gap | **Agreed.** No like-for-like comparison basis is held in the record. | Recorded · evidence gap | No engine control can supply comparables the record lacks. Decision in §3 (a comparables source). Existing prompt rule already forbids uncited growth percentages. |
+| QA-26 | High | Confirmed analytical gap | **Agreed.** Listings are not a pipeline. | Recorded · evidence gap | The platform holds no development-approval feed. Decision in §3. |
+| QA-27 | Moderate | Confirmed omission / evidence gap | **Agreed.** Heading promised an index the fork never checked for. | Implemented · tested | `socioeconomicContract`: heading loses "& SEIFA Interpretation" and the body opens with the index-not-held statement when no index with a figure is present. `forkSectionContracts.spec.ts`. |
+| QA-28 | High | Confirmed source conflict | **Agreed.** | Implemented (prompt control) | Catchment evidence rule in the schools prompt: conflicting sources are each named and marked unverified, never chosen; travel claims need mode, origin, distance and duration or are omitted. |
+| QA-29 | Moderate | Confirmed imprecision | **Agreed.** | Implemented (prompt control) | Prompt states that bushfire-prone-land mapping is not a BAL and that a BAL is a site-specific assessment stated only if held. |
+| QA-30 | High | Confirmed traceability defect | **Agreed.** `[^prop]`-style tokens printed raw; source lists did not resolve. | Implemented · rendered | `plainMarkdownHygiene`: footnotes numbered and listed under **Notes**; undefined references dropped. |
+| QA-31 | High | Confirmed content-routing defect | **Agreed.** The route's note described a filter that never existed. | Implemented · tested | `splitRiskRegister` (financial entries to FIN, property entries to PLDD, unclassifiable to both); the FIN dashboard is **composed from the record** (`financialRiskDashboard`, ordinal 11) with the routed money entries under it and a cross-reference to the Due Diligence register. |
+| QA-32 | High | Confirmed identity defect | **Agreed.** Strategic printed the Snapshot's identity; its dashboard was a checklist. | Implemented · tested | `DOCUMENT_IDENTITY` (strategic = "Due Diligence Report"), file name and PDF metadata bound to one tier (checkpoint 1); `riskDashboardContract` renames a checklist body "Property & Location Due Diligence Checklist" with its status line. |
+| QA-33 | Moderate | Confirmed completeness defect | **Agreed, and three mechanisms found:** the standard renderer *dropped* the `{{heatmap}}` the prose introduced; the word-cap cut kept a bullet's title and dropped its explanation and the whole "Limitations" half; and a chapter whose own body is blank because its prose lives in H3 children lost its heading (the early `continue` ran before the children rule). | Implemented · rendered | `vizDirectiveTables` writes undrawable directives back as tables (a titled heatmap carries its scale in the header so the anonymous-grid rule of QA-36 does not omit it); the cut works in whole blocks and shares the cap between sub-sections; validator rules `promised-table` and `unbalanced-pair`; a heading with children survives a blank body. |
+| QA-34 | Moderate | Confirmed publishing defect | **Agreed.** | Implemented · rendered | Fences unwrapped, "(Rendered Once Here)" removed, underscore emphasis converted, a 2-column table split from the 7-column one (`splitPipeRun`), header/column mismatch aligned (checkpoint 1). |
+| QA-35 | Critical | Confirmed structural failure | **Agreed.** A >96-char delimiter row and separator floods. | Implemented · rendered | Delimiter rows canonicalised; separator-only lines and punctuation runs tamed (`normaliseSeparators`). |
+| QA-36 | High | Confirmed unusable presentation | **Agreed.** | Implemented · rendered | Anonymous numeric grids get a notice; rows aligned to the header. |
+| QA-37 | High | Confirmed omission | **Agreed.** | Implemented · tested | `financialWarningsForPrompt` hands the model the record's shortfalls, shocks, step-up and grade at the recommendation, with the rule that each is reconciled. |
+| QA-38 | High | Confirmed contradiction | **Agreed.** "Compression" narrated over an unchanged yield. | Implemented · rendered | `describeYieldMovement` says "unchanged" when nothing changed; `not_assessable` when no rent is established. `yieldNarrative.spec.ts`. |
+| QA-39 | Moderate | Confirmed horizon inconsistency | **Agreed.** | Implemented · rendered | `describeGrowth` names the start and end years of the interval it quotes. |
+| QA-40 | Moderate | Confirmed visual defect | **Agreed.** | Implemented · rendered | Duplicate legend entry removed (`legendType="none"` on the area); callout clipping fixed by the paragraph guard (checkpoint 1). |
+
+## 3. Decisions the engineer may not take alone
+
+1. **Interest-only period when the record says "interest only" and no period.**
+   The ledger assumes 5 years and the document says so. Confirm the product
+   convention (5? the loan term? refuse to project?).
+2. **Serviceability dimension.** Relabelled as the LVR proxy it is, with its
+   basis printed. The audit's stronger ask — "not assessed" rather than
+   80/100 — changes the financial score's weights on every stored record
+   (`assemble` redistributes weight across available dimensions). A
+   methodology version bump is the right vehicle; not done here.
+3. **Tax utilisation, land tax, operating-cost evidence (QA-12/14/15).**
+   Stated as assumptions on the page. Closing them needs inputs the platform
+   does not collect: taxable income / entity, aggregate landholdings, rates
+   notices and levies. Decide whether the intake form should collect them.
+4. **Comparables and supply pipeline (QA-25/26).** No data source exists in
+   the platform for like-for-like sales or approved development pipeline.
+   Decide whether to license one; until then the prompt forbids uncited
+   growth claims and the register calls its supply view "existing listings".
+5. **Render service (S1/S3).** Set the three deploy-workflow variables; add a
+   startup probe; decide on `--min-instances 1`. See the runbook.
+6. **Year-1 growth timing.** Both engines apply growth before year 1; kept,
+   and now disclosed (`growthTiming`). Confirm or change once, in the engine.
+
+## 4. Verification record
+
+See the handover for the exact commands. In summary, on this branch:
+
+- **Unit and contract tests:** the whole vitest suite; the new specs are
+  `plainMarkdownHygiene`, `reportFileName`, `loanLedger`, `promptFinancials`,
+  `renderFailure`, `readBaseFinancials`, `yieldNarrative`, `scoreClaims`,
+  `qa291Contracts`, `vizDirectiveTables`, `forkSectionContracts`,
+  `financialRiskDashboard`, `landAreaScope`.
+- **Gates at the final commit:** `npx vitest run src/lib/reports
+  src/components/reports src/lib/cashFlow src/components/cash-flow
+  src/lib/reportTemplate` — 559 files, 9,220 tests passed; the whole suite
+  earlier in the session passed except the three pre-existing failures named
+  below (and one spec that was mid-edit when that run started and passes on
+  its own); `npm run build` — built in 2m 42s; `npm run audit:style` — under
+  baseline; `npm run lint` — 0 errors in any file this branch touched (the
+  repository's 46 pre-existing lint errors are in files it does not touch).
+- **Typechecks:** `tsc -p tsconfig.app.json` (48 pre-existing errors,
+  baseline 61 at branch start, none new); `deno check` on every edited edge
+  function and pure module (fork 0; condense 6 = baseline; generator 14 =
+  baseline; the four render/calculator functions 0 new). Deno was obtained
+  through the `deno-bin` npm package with `deno.land` and `esm.sh` imports
+  mapped onto local stubs and the npm registry, because the sandbox blocks
+  both hosts — the mapping is verification-only and not in the repo.
+- **CI gates run locally:** edge column names, error disclosure, fabricated
+  data, mass assignment, src missing names, internal legacy fallback,
+  verify_jwt declarations, baseline invariants — all pass. The Deno
+  post-processor tests pass (11).
+- **Pre-existing failures, not this branch's:** `sidebarNavigation.spec`,
+  `migrationObjectIndex.spec` and `googleMapsProxies.security.test` fail
+  identically on the base commit `06b077d` (run in a worktree); nothing on
+  the branch touches those areas.
+- **Regenerated documents:** the six documents cannot be regenerated from
+  the production rows here (no database access; the journey harness needs
+  `.verify/fixtures`). They were regenerated from a **synthetic fixture** —
+  the audited property's figures and a composite carrying each defect class
+  — through the same renderers the fallback used (pdf-lib for the five
+  tiers, local WeasyPrint 69.0 for the cash flow) and every page was
+  rendered and inspected. What that proved: every defect class in §2 marked
+  *rendered* is absent from the regenerated pages, and the regeneration found
+  three defects the code review had not (the injection rewrite, the dropped
+  minus sign, the lost heading), each fixed and pinned. What it does not
+  prove: the model's behaviour under the changed prompts, the fork against a
+  real composite, or the render service. One harness artefact to know about:
+  the harness fed the raw fixture to the renderer, so its KPI tiles and the
+  composed chapters showed different year-1 figures; the product path goes
+  through `investmentPdfSource.ts`, which reconciles the record once for
+  both, so the tiles and the chapters read the same healed figures there.
+
+### The regenerated set
+
+Rendered on 15 Sep 2026 from the synthetic fixture (the audited property's
+figures; a composite carrying every defect class), through the same code
+paths the operator's downloads take — `generateInvestmentPdfBlob` for the
+five tiers, `readBaseFinancials` → the projection engine → `toWireProjection`
+→ `buildProjection` → `renderCashFlowFromBrand` → WeasyPrint 69.0 for the
+cash flow. Every page was rasterised and the key pages inspected.
+
+| Document | Pages | What was checked on the page |
+| --- | --- | --- |
+| Investment Compass | 9 | No raw directive, fence, footnote token or authoring note; the promised amenity matrix drawn as a table with its scale; both halves of "Strengths and Limitations"; the risk register intact. |
+| Financial Analysis | 14 | Sensitivity rows labelled with their parameter and sign; the composed Financial Risk Dashboard (cash to fund, shocks, debt structure, step-up) with the analysis's money-risk entries under it and no crime/bushfire entry; the equity bridge; the scorecard heading kept with its band. |
+| Due Diligence Report | 5 | "Due Diligence Report" identity; "Socioeconomic Profile" with the index-not-held statement; the property-only register under its own heading and lead; the checklist named as one with its status. |
+| Executive Briefing | 10 | The invented 68/100 and "score of 82" sentences absent, the recorded D at 39/100 kept; composed tables placed. |
+| Snapshot Report | 7 | "Modelled purchase price", observed statistics apart from "Scenario assumptions (not market statistics)"; the dimension table with "Serviceability (LVR proxy)" and the basis line. |
+| 10 Year Cash Flow | 11 | "Interest only" loan type, inspection fees in the acquisition, occupancy 50 weeks and the marginal rate in the assumptions, the evidence-basis notes and the case fingerprint under "Worth knowing". |
+
+The artefacts are not committed (they are renders of a synthetic fixture,
+not client documents); the harness that produced them is described in the
+handover and can be re-run against a production row once database access
+exists.
+
+## 5. What is not verified
+
+- The render service's state on Cloud Run, and therefore S1/S3 end to end.
+- The generator's and condense function's behaviour against a live model
+  (prompt controls QA-20/22/28/29/37 and the Snapshot guide are instructions
+  to a model; the validator findings and the score guard are the
+  deterministic half).
+- The fork against a real composite row (`fork-investment-report` needs
+  Deno + database); its pure contracts are tested.

@@ -40,6 +40,11 @@ import { dropEmptySections, stripPlaceholderRows } from '../_shared/reports/inve
 import { readPropertyFacts } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { scrubBlocks } from '../_shared/reports/investment/blockHygiene.pure.ts';
 import { stripEditorialLabelsFromMarkdown } from '../_shared/compassPostProcessor.ts';
+import {
+  riskDashboardContract,
+  socioeconomicContract,
+  splitRiskRegister,
+} from '../_shared/reports/investment/forkSectionContracts.pure.ts';
 
 interface ParsedSection {
   rawHeading: string;
@@ -92,6 +97,22 @@ interface AssembledSection {
   body: string;
 }
 
+/** The heading a Due Diligence risk section takes when its body is a list of checks rather than assessed risks. */
+const PLDD_CHECKLIST_HEADING = 'Property & Location Due Diligence Checklist';
+
+/**
+ * The route that sends the composite's risk register to both variants. Read
+ * from the route's own headings and match list rather than a rule name, so a
+ * `split_routes` overlay in `report_engine_config` that still says
+ * `verbatim` (every stored copy does) gets the split too.
+ */
+function isRiskDashboardRoute(route: SplitRoute): boolean {
+  return route.target === 'both' && (
+    route.match.some((m) => /risk dashboard|risk summary|key risks/i.test(m))
+    || /risk dashboard/i.test(route.newHeadingFinancial ?? '')
+  );
+}
+
 function assembleForVariant(
   registry: LoadedSplitRegistry,
   variant: ForkVariant,
@@ -111,7 +132,7 @@ function assembleForVariant(
     if (!isTargeted) continue;
     if (route.rule === 'drop') continue;
 
-    const newHeading =
+    let newHeading =
       variant === 'financial'
         ? route.newHeadingFinancial || section.normalisedHeading
         : route.newHeadingDueDiligence || section.normalisedHeading;
@@ -126,9 +147,39 @@ function assembleForVariant(
     usedOrdinals.add(ordinal);
 
     const lensIntro = buildLensIntro(registry, variant, route.rule);
-    const body = route.rule === 'summarise_only'
+    let body = route.rule === 'summarise_only'
       ? summariseBody(section.body)
       : section.body;
+
+    // What a section may HOLD is decided from its body, not its heading —
+    // three contracts the audit of 291 Stone Mason Drive found the routing
+    // promising and not keeping (`forkSectionContracts.pure.ts`).
+    //
+    // The risk register goes to both variants, and the route's note has
+    // always said "FIN keeps financial rows, PLDD keeps property/location
+    // rows"; nothing filtered a row, so the Financial report's dashboard
+    // opened with "the main non-financial risks" (QA-31). Each entry is now
+    // classified by what it is about; one nobody can classify goes to both.
+    if (isRiskDashboardRoute(route)) {
+      const split = splitRiskRegister(body, variant);
+      if (split.recognised) body = split.body;
+      if (variant === 'due_diligence') {
+        // A body of things to do is a checklist and is named as one, with
+        // its status, rather than a dashboard of assessed risks (QA-32).
+        const contract = riskDashboardContract(body, newHeading, PLDD_CHECKLIST_HEADING);
+        newHeading = contract.heading;
+        if (contract.status) body = `${contract.status}\n\n${body.trim()}\n`;
+      }
+      // A variant left with nothing to print has no section to print.
+      if (!body.trim()) continue;
+    }
+    // A SEIFA heading needs a SEIFA index; where none is held the heading
+    // stops promising one and the body says so (QA-27).
+    if (variant === 'due_diligence' && /seifa/i.test(newHeading)) {
+      const contract = socioeconomicContract(body, newHeading);
+      newHeading = contract.heading;
+      if (contract.lead) body = `${contract.lead}\n\n${body.trim()}\n`;
+    }
 
     buckets.push({ ordinal, heading: newHeading, body: lensIntro + body.trim() + '\n' });
   }
@@ -144,6 +195,9 @@ function assembleForVariant(
 }
 
 const normHeading = (h: string): string => h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** FIN ordinal of the risk dashboard — the split registry's, restated for the merge below. */
+const FIN_RISK_DASHBOARD_ORDINAL = 11;
 
 /**
  * Fold the record-composed FIN chapters into the routed prose. A composed
@@ -161,20 +215,36 @@ function mergeComposedChapters(
   const composedHeadings = new Set(composed.map((c) => normHeading(c.heading)));
   const composedOrdinals = new Set(composed.map((c) => c.ordinal));
   const replaced: string[] = [];
+  // The one composed chapter that is not "the same money": the Financial
+  // Risk Dashboard (11) is typed from the record, while the routed section
+  // at that ordinal holds the analysis's own financial risk ENTRIES (the
+  // register, split to its money rows). Those are not prose about figures
+  // the record states better — they are the risks the analysis named — so
+  // they are kept under the composed dashboard rather than replaced by it.
+  const carriedUnder = new Map<number, AssembledSection>();
   const kept = routed.filter((s) => {
     if (composedHeadings.has(normHeading(s.heading)) || composedOrdinals.has(s.ordinal)) {
+      if (s.ordinal === FIN_RISK_DASHBOARD_ORDINAL && s.body.trim()) carriedUnder.set(s.ordinal, s);
       replaced.push(s.heading);
       return false;
     }
     return true;
   });
-  const composedAsSections: AssembledSection[] = composed.map((c) => ({
-    ordinal: c.ordinal,
-    heading: c.heading,
+  const composedAsSections: AssembledSection[] = composed.map((c) => {
+    const carried = carriedUnder.get(c.ordinal);
     // The chapter's markdown carries its own `## heading` line; the renderer
     // writes headings itself, so the body starts after it.
-    body: c.markdown.replace(/^##[^\n]*\n/, '').trim() + '\n',
-  }));
+    const body = c.markdown.replace(/^##[^\n]*\n/, '').trim();
+    // The register's own group heading ("### Consolidated Risk Register")
+    // survives the split when an entry under it is kept, so a body that
+    // opens with one is nested as it is — a second H3 over it would be a
+    // heading with nothing of its own, which the renderer drops.
+    const carriedBody = carried?.body.trim() ?? '';
+    const tail = carried
+      ? (carriedBody.startsWith('###') ? `\n\n${carriedBody}` : `\n\n### Risks noted in the analysis\n\n${carriedBody}`)
+      : '';
+    return { ordinal: c.ordinal, heading: c.heading, body: `${body}${tail}\n` };
+  });
   return {
     sections: [...kept, ...composedAsSections].sort((a, b) => a.ordinal - b.ordinal),
     replaced,
