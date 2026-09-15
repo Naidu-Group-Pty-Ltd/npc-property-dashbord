@@ -126,7 +126,7 @@ function dServiceability(i: ScoringInput): DimensionResult {
   // liabilities, rental shading or buffer rate is an input here, so this
   // dimension must never be read as a lender's serviceability assessment
   // (audit QA-17); the basis travels with the score and is printed under it.
-  return { score, weight: 0, details: `LVR proxy: ${i.lvr}% — no borrower serviceability assessment is part of this score`, available: true };
+  return { score, weight: 0, details: `LVR ${i.lvr}%; no borrower serviceability assessment is part of this score`, available: true };
 }
 
 function dGrowth(i: ScoringInput): DimensionResult {

@@ -11,7 +11,7 @@ describe('tabulateVizDirectives', () => {
     const { markdown, tabulated, removed } = tabulateVizDirectives(md);
     expect(tabulated).toBe(1);
     expect(removed).toBe(0);
-    expect(markdown).toContain('**Amenity access**');
+    expect(markdown).toContain('| Amenity access | Walk | Drive | Transit |');
     expect(markdown).toContain('| Schools | 1 | 2 | 3 |');
     expect(markdown).toContain('| Shops | 2 | 1 | 2 |');
     expect(markdown).not.toContain('{{');

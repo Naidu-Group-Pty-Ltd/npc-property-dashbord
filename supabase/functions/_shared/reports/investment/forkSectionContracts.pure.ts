@@ -151,7 +151,13 @@ export function splitRiskRegister(body: string, variant: RiskVariant): RiskRegis
     const keptBlocks = blocks.filter(admits);
     const keptRows = rows.filter(admits);
     for (const e of g.entries) if (!admits(e)) dropped.push(e.name);
-    if (!keptBlocks.length && !keptRows.length) continue;
+    if (!keptBlocks.length && !keptRows.length) {
+      // The section's own lead — prose before any sub-heading or entry — is
+      // the Due Diligence variant's to keep: it opens the register as the
+      // analysis wrote it. The Financial variant's lead is composed.
+      if (variant === 'due_diligence' && !g.heading && g.preamble.join('').trim()) out.push(...g.preamble);
+      continue;
+    }
     if (g.heading) { if (out.length) out.push(''); out.push(g.heading); }
     if (variant === 'due_diligence' && g.preamble.join('').trim()) out.push(...g.preamble);
     for (const e of keptBlocks) {

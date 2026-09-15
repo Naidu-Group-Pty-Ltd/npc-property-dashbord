@@ -1465,6 +1465,29 @@ contradict. Placement is load-bearing: **after** the series heal (the ROI
 denominator is the stored deposit) and **before** the upfront total (which is
 the deposit plus the acquisition lines).
 
+## The 291 Stone Mason Drive audit (QA-291SM)
+Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
+before touching the standard (pdf-lib) presentation, the fork's section
+routing, the condense guides, the financial engine's loan arithmetic or the
+cash-flow seeding: it records forty findings against six real documents and
+what each turned out to be. Four rules from it keep biting. **A figure a
+document prints is a figure the record holds** — the Briefing invented an
+"overall fit 68/100" nothing held (`scoreClaims.pure.ts` removes the sentence
+and the validator reports the class), and the renderer's override injection
+matched `Interest Rate.*?NN%` and rewrote every sensitivity label with the
+base rate, so every injection now matches an explicit `Label: NN%` and
+nothing else. **What a section may hold is read from its body, not its
+heading** (`forkSectionContracts.pure.ts`): the risk register is split by
+what each entry is about, a SEIFA heading needs an index, a checklist is
+named as one. **A promise of a figure is a figure** — a directive the
+standard presentation cannot draw is tabulated (`vizDirectiveTables.pure.ts`),
+never dropped behind the sentence that introduced it, and the word-cap cut
+works in whole blocks so a bullet cannot lose its explanation or a pair of
+lists its second half. And **one loan ledger** (`loanLedger.pure.ts`) drives
+projections, metrics and sensitivities, so "interest only" is never projected
+with P&I arithmetic. The render service's 503 is a separate matter:
+[`RENDER_SERVICE_AVAILABILITY.md`](./docs/reports/RENDER_SERVICE_AVAILABILITY.md).
+
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
 else here.** The design system renders **0.14%** of the documents this product

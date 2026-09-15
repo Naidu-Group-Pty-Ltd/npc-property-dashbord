@@ -51,6 +51,9 @@ describe('QA-31 — the risk register is split by what each entry is about', () 
     const dd = splitRiskRegister(REGISTER, 'due_diligence');
     expect(dd.kept).toEqual(['Crime Risk', 'Environmental Risk (Bushfire & Flood)', 'Estate Covenant Risk']);
     expect(dd.body).toContain('summarises the main non-financial risks');
+    // The section's own lead sentence opens the Due Diligence register.
+    expect(dd.body.startsWith('The overall investment risk for 291 Stone Mason Drive is best described as moderate.')).toBe(true);
+    expect(splitRiskRegister(REGISTER, 'financial').body).not.toContain('best described as moderate');
     expect(dd.body).not.toContain('Vacancy & Rent Risk');
   });
 

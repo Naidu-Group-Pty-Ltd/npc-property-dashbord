@@ -906,18 +906,27 @@ export async function generateInvestmentPdfBlob(
         },
         isFullLineReplacement: true
       },
+      // These three used to match `Label.*?NN%` — the label, ANYTHING, then
+      // the next percentage on the line — and rewrote the span with the
+      // record's base figure. Measured on the audited Financial report
+      // (QA-08): every sensitivity row, composed as "Interest rate 7.5%
+      // (+1.0 pt)", printed as "Interest Rate: 6.5% (+1.0 pt)"; and the
+      // scorecard's "Serviceability (LVR proxy) | 22% |" printed as
+      // "Serviceability (LVR: 80%". A rewrite that reaches past a label into
+      // somebody else's figure is a fabrication, so each now matches the
+      // explicit `Label: NN%` form and nothing else.
       {
-        pattern: /Interest Rate.*?[\d.]+%/gi,
+        pattern: /\bInterest Rate\s*:\s*[\d.]+%/gi,
         getValue: () => interestRate,
         format: (v) => 'Interest Rate: ' + (v || 0) + '%'
       },
       {
-        pattern: /Capital Growth.*?[\d.]+%/gi,
+        pattern: /\bCapital Growth\s*:\s*[\d.]+%/gi,
         getValue: () => financialData?.assumptions?.capitalGrowth,
         format: (v) => 'Capital Growth: ' + (v || 0) + '%'
       },
       {
-        pattern: /LVR.*?[\d.]+%/gi,
+        pattern: /\bLVR\s*:\s*[\d.]+%/gi,
         getValue: () => financialData?.keyMetrics?.lvr,
         format: (v) => 'LVR: ' + (v || 0) + '%'
       },
@@ -1517,6 +1526,13 @@ export async function generateInvestmentPdfBlob(
           // Replace special dashes and hyphens
           .replace(/[\u2013\u2014\u2015]/g, '-') // En-dash, em-dash, horizontal bar
           .replace(/[\u2010\u2011\u2012]/g, '-') // Various hyphens
+          // A minus sign is a SIGN: dropping it as "non-WinAnsi" turned the
+          // composed "Interest rate 5.5% (−1.0 pt)" into "(1.0 pt)" and
+          // "−$10,392 a year" into "$10,392 a year" on the regenerated
+          // Financial report — a wrong figure, not a missing glyph.
+          .replace(/\u2212/g, '-') // Minus sign
+          .replace(/\u2265/g, '>=').replace(/\u2264/g, '<=').replace(/\u2248/g, '~')
+          .replace(/\u00AD/g, '') // Soft hyphen
           // Replace ellipsis
           .replace(/\u2026/g, '...')
           // Replace bullet points
@@ -3109,8 +3125,15 @@ export async function generateInvestmentPdfBlob(
          * therefore see exactly what the record holds; only the painted text
          * loses the tokens.
          */
+        // A chapter whose own body is blank because its prose lives in its H3
+        // children is not empty — the guard below says so — but this early
+        // exit ran first and skipped the heading before the children rule
+        // could be asked (measured on the regenerated Due Diligence report:
+        // "Property & Location Risk Dashboard" opened straight on its
+        // "### Consolidated Risk Register" and lost its heading).
+        const sectionHasChildren = [...sectionMetadata.current.values()].some((m) => m.parentSection === sectionName);
         let content = stripUndrawableDirectives(sections[sectionName]);
-        if (!sections[sectionName]) continue;
+        if (!sections[sectionName] && !sectionHasChildren) continue;
 
         // Strip orphan "What This Means:" labels with no body before next heading/EOF.
         content = content.replace(
@@ -3142,8 +3165,7 @@ export async function generateInvestmentPdfBlob(
         // (that is the chapter-survival rule `standardPresentationDirectives`
         // pins), so only a heading with neither body nor children goes.
         if (!content.trim()) {
-          const hasChildren = [...sectionMetadata.current.values()].some((m) => m.parentSection === sectionName);
-          if (!hasChildren) {
+          if (!sectionHasChildren) {
             console.log(`↷ "${sectionName}" has nothing to paint after hygiene; heading not drawn`);
             continue;
           }
@@ -3204,6 +3226,23 @@ export async function generateInvestmentPdfBlob(
           }
         }
         
+        // The KPI band draws BEFORE the first paragraph, so its height is part
+        // of what must stay with the heading. Measured on the regenerated
+        // Financial report: "Financial Investment Scorecard" printed alone at
+        // the foot of a page while its band and table moved to the next,
+        // because the band's own page-break check ran after the heading.
+        const kpiMetricsForBand = extractKPIMetrics(
+          cleanSectionName, content, report.enhanced_data,
+          kpiBandFallbackHost !== null && sectionName === kpiBandFallbackHost,
+        );
+        const kpiBandHeight = kpiMetricsForBand
+          ? Math.ceil(kpiMetricsForBand.row1.length / 4) * 88 + (kpiMetricsForBand.row2 ? 90 : 0)
+          : 0;
+        if (kpiBandHeight) {
+          firstBlockHeight += kpiBandHeight;
+          totalContentHeight += kpiBandHeight;
+        }
+
         const totalSectionHeight = sectionTitleHeight + totalContentHeight + 15; // section spacing
         
         // IMPROVED PAGE BREAK LOGIC:
@@ -3323,10 +3362,7 @@ export async function generateInvestmentPdfBlob(
         yPosition = titleResult.lastY - 10;
 
         // ─── KPI Boxes: Render gold-bordered metric cards for qualifying sections ───
-        const kpiMetrics = extractKPIMetrics(
-          cleanSectionName, content, report.enhanced_data,
-          kpiBandFallbackHost !== null && sectionName === kpiBandFallbackHost,
-        );
+        const kpiMetrics = kpiMetricsForBand;
         if (kpiMetrics) {
           // The band is drawn four to a row — `drawKPIBoxes` has always drawn
           // at most four and returns `startY - 88`. What changed is that the

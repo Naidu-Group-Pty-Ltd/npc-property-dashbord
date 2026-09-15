@@ -155,7 +155,7 @@ describe('QA-17 — a score names what it rests on', () => {
     totalScore: 39, grade: 'D', recommendation: 'CAUTION',
     breakdown: {
       yieldScore: { score: 30, weight: 33, available: true, details: 'Gross yield: 3.60%' },
-      serviceabilityScore: { score: 80, weight: 22, available: true, details: 'LVR proxy: 80% — no borrower serviceability assessment is part of this score' },
+      serviceabilityScore: { score: 80, weight: 22, available: true, details: 'LVR 80%; no borrower serviceability assessment is part of this score' },
       cashflowScore: { score: 10, weight: 45, available: true, details: 'Weekly net: $-931' },
     },
   };
@@ -165,7 +165,36 @@ describe('QA-17 — a score names what it rests on', () => {
   it('prints the basis under the dimension table', () => {
     const md = composeScoreDimensionsSection(score, 'Score Breakdown')!;
     expect(md).toContain('| Serviceability (LVR proxy) | 22% | 80/100 |');
-    expect(md).toContain('_Scored from: yield — Gross yield: 3.60%; serviceability (LVR proxy) — LVR proxy: 80%');
+    expect(md).toContain('_Scored from: yield — Gross yield: 3.60%; serviceability (LVR proxy) — LVR 80%;');
     expect(scoreBasisLine({ totalScore: 50, breakdown: { yieldScore: { score: 50, weight: 100 } } })).toBeUndefined();
   });
 });
+
+describe('QA-08 — the standard renderer never rewrites a figure it did not label', () => {
+  it('injects the record\'s rate, growth and LVR only into an explicit "Label: NN%"', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { resolve } = require('node:path') as typeof import('node:path');
+    const src = readFileSync(resolve(__dirname, '../investment/investmentPdfDocument.ts'), 'utf8');
+    // The audited Financial report printed every sensitivity row as
+    // "Interest Rate: 6.5% (+1.0 pt)" because the pattern was `Interest Rate.*?NN%`.
+    expect(src).not.toMatch(/pattern:\s*\/Interest Rate\.\*\?/);
+    expect(src).not.toMatch(/pattern:\s*\/Capital Growth\.\*\?/);
+    expect(src).not.toMatch(/pattern:\s*\/LVR\.\*\?/);
+    expect(src).toContain('pattern: /\\bInterest Rate\\s*:\\s*[\\d.]+%/gi');
+    expect(src).toContain('pattern: /\\bLVR\\s*:\\s*[\\d.]+%/gi');
+  });
+});
+
+describe('the standard renderer keeps a minus sign', () => {
+  it('maps U+2212 to a hyphen-minus before the WinAnsi strip', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { resolve } = require('node:path') as typeof import('node:path');
+    const src = readFileSync(resolve(__dirname, '../investment/investmentPdfDocument.ts'), 'utf8');
+    const strip = src.indexOf('const stripEmojis = ');
+    const winAnsi = src.indexOf("[^\\x00-\\x7F\\xA0-\\xFF]", strip);
+    const minus = src.indexOf("\\u2212", strip);
+    expect(minus).toBeGreaterThan(strip);
+    expect(minus).toBeLessThan(winAnsi);
+  });
+});
+

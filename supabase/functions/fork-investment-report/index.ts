@@ -235,7 +235,14 @@ function mergeComposedChapters(
     // The chapter's markdown carries its own `## heading` line; the renderer
     // writes headings itself, so the body starts after it.
     const body = c.markdown.replace(/^##[^\n]*\n/, '').trim();
-    const tail = carried ? `\n\n### Risks noted in the analysis\n\n${carried.body.trim()}` : '';
+    // The register's own group heading ("### Consolidated Risk Register")
+    // survives the split when an entry under it is kept, so a body that
+    // opens with one is nested as it is — a second H3 over it would be a
+    // heading with nothing of its own, which the renderer drops.
+    const carriedBody = carried?.body.trim() ?? '';
+    const tail = carried
+      ? (carriedBody.startsWith('###') ? `\n\n${carriedBody}` : `\n\n### Risks noted in the analysis\n\n${carriedBody}`)
+      : '';
     return { ordinal: c.ordinal, heading: c.heading, body: `${body}${tail}\n` };
   });
   return {

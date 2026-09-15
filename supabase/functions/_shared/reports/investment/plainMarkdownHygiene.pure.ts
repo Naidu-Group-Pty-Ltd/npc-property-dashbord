@@ -145,7 +145,10 @@ export function splitPipeRun(lines: string[]): string[][] {
 }
 
 const NUMERIC_CELL = /^[-+]?\d{1,3}(?:[.,]\d+)?$/;
-const UNIT_HINT = /(\$|%|\bkm\b|\bm\b|\bmin(?:ute)?s?\b|\bhrs?\b|\bhours?\b|\bcount\b|\bnumber\b|\bno\.\b|\byears?\b|\bsqm\b|m²)/i;
+// A scale word (band, score, index, level, rating, rank) names what a bare
+// number means as surely as a unit does — a tabulated heatmap's header
+// carries its title ("Amenity access bands (1 = closest)").
+const UNIT_HINT = /(\$|%|\bkm\b|\bm\b|\bmin(?:ute)?s?\b|\bhrs?\b|\bhours?\b|\bcount\b|\bnumber\b|\bno\.\b|\byears?\b|\bsqm\b|m²|\bbands?\b|\bscores?\b|\bindex\b|\blevels?\b|\bratings?\b|\branks?\b|\bscale\b)/i;
 
 /**
  * Rows aligned under their header so a column count is a CONTRACT the header

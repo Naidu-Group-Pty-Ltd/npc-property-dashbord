@@ -62,7 +62,11 @@ export function directiveAsMarkdown(d: VizDirective): string | null {
     case 'heatmap': {
       const cols = d.colLabels.length ? d.colLabels : d.grid[0]?.map((_, i) => `Column ${i + 1}`) ?? [];
       const rows = d.grid.map((r, ri) => [d.rowLabels[ri] ?? `Row ${ri + 1}`, ...cols.map((_, ci) => (r[ci] === undefined ? '' : fmt(r[ci])))]);
-      lines = [...caption(d.title), ...table([d.title ? '' : 'Item', ...cols], rows)];
+      // The title is the header's first cell rather than a caption above it:
+      // a grid of bare bands is only readable with its scale beside it, and
+      // the standard presentation omits a numeric grid whose header carries no
+      // unit or scale (`looksAnonymousNumericGrid`).
+      lines = table([d.title ?? 'Item', ...cols], rows);
       break;
     }
     case 'margin': {
