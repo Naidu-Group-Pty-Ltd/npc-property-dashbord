@@ -207,6 +207,10 @@ export function useChunkedRegeneration() {
           description: tier === 'financial-analysis'
             ? 'Financial Analysis Report'
             : 'Compass-40 Report',
+          // Dismissing this notice only hides it — generation continues, and the
+          // floating progress widget remains the place to stop a run.
+          closeButton: true,
+          dismissible: true,
         });
 
         let sectionSuccess = false;
