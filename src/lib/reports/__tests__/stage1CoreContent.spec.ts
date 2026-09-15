@@ -88,7 +88,7 @@ describe('a yield whose rent is not established is absent — on every path', ()
   });
 
   it('the WeasyPrint normaliser publishes neither yield', () => {
-    const model = toFinancial(UNFOUNDED) as Record<string, unknown> | null;
+    const model = toFinancial(UNFOUNDED) as unknown as Record<string, unknown> | null;
     expect(model).not.toBeNull();
     expect(model!.grossYield).toBeNull();
     expect(model!.netYield).toBeNull();

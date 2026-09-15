@@ -138,7 +138,7 @@ describe('D — an incomplete acquisition may finish the missing work', () => {
     expect(d.verdict).not.toBe('reusable');
     expect(d.note).toContain('Still recorded as partial');
     // The stamp is untouched — nothing downstream can read it as complete.
-    expect((stored as Record<string, never>)[ENRICHMENT_STAMP].stages.places).toBe('partial');
+    expect((stored as unknown as Record<string, any>)[ENRICHMENT_STAMP].stages.places).toBe('partial');
   });
 
   it('eleven resumes of a persistently partial address cost 3 acquisitions, not 11', () => {
