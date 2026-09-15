@@ -42,6 +42,7 @@ import {
   DOMAIN_SUBURB_PERFORMANCE_LICENSING,
   describeDomainRefusal,
   domainCategoryFor,
+  readDomainProblem,
   domainEvidencePoints,
   domainSuburbPerformanceUrl,
   dwellingTypeFor,
@@ -172,10 +173,13 @@ Deno.serve(async (req) => {
     if (!response.ok) {
       consecutiveFailures++;
       const securityReason = response.headers.get('x-domain-security-reason');
-      const refusal = describeDomainRefusal(response.status, securityReason);
-      // The body is logged for the operator and never relayed: it is Domain's
-      // own error text, and the caller acts on the classified refusal.
+      // Domain's problem-details body names the restriction where its header
+      // does not ("Operation not permitted on project" — measured 15 Sep 2026
+      // on both products). Only `title` and `detail` are read from it, and
+      // only the classified refusal travels to the caller.
       const errorText = await response.text().catch(() => '');
+      const problem = readDomainProblem(errorText);
+      const refusal = describeDomainRefusal(response.status, securityReason, problem.detail);
       console.error(`❌ Domain API ${refusal.summary}`, JSON.stringify({
         status: response.status,
         statusText: response.statusText,
@@ -191,7 +195,7 @@ Deno.serve(async (req) => {
         success: false,
         error: `Domain API error: ${response.status} ${response.statusText}`,
         dataQuality: 'unavailable',
-        refusal: { ...refusal, status: response.status, securityReason: securityReason ?? null },
+        refusal: { ...refusal, status: response.status, securityReason: securityReason ?? null, detail: problem.detail },
         fallbackData: fallbackData(`${response.status} - ${refusal.summary}`),
       });
     }
@@ -296,12 +300,13 @@ async function performHealthCheck(apiKey: string, corsHeaders: HeadersInit) {
     }, { feature: 'reports/domain-health-check' });
 
     const securityReason = response.headers.get('x-domain-security-reason');
+    const problem = response.ok ? { title: null, detail: null } : readDomainProblem(await response.text().catch(() => ''));
     const healthStatus = {
       service: 'Domain Data Service',
       route: 'v2/suburbPerformanceStatistics',
       apiStatus: response.ok ? 'Operational' : 'Error',
       statusCode: response.status,
-      message: response.ok ? 'API operational - series retrieved' : describeDomainRefusal(response.status, securityReason).summary,
+      message: response.ok ? 'API operational - series retrieved' : describeDomainRefusal(response.status, securityReason, problem.detail).summary,
       securityReason: securityReason ?? null,
       lastSuccessfulCall: lastSuccessfulCall?.toISOString() || 'Never',
       consecutiveFailures,

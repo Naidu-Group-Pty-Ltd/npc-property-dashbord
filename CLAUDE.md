@@ -1498,6 +1498,18 @@ follow-up is answered**: the engine scores on the points and the client-facing
 evidence statement withholds their provenance; declaring it licensed is a
 decision with a document behind it, not a default.
 
+**The Domain 403 is a portal setting, not a mystery.** Re-measured from the
+production egress on 15 Sep 2026: the key is set and recognised, and both
+Domain products answer 403 with Domain's own body *"Operation not permitted on
+project"* — the project the key belongs to has **no API package attached**,
+which Domain's access conventions name as the one condition under which no
+endpoint answers. The remedy is the Domain Developer Portal (Projects → API
+Access → add **Properties & Locations** → Save), recorded step by step in
+`docs/integrations/DOMAIN_ACTIVATION_REQUEST.md`; nothing in this repository
+can attach it. `describeDomainRefusal` reads Domain's problem-details `detail`
+and names that finding on the grade gap, so a report withheld for it says
+where the fix is rather than "a restriction Domain must identify".
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section

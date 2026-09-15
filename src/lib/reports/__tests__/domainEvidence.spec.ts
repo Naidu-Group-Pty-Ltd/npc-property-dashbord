@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  DOMAIN_PACKAGE_NOT_ATTACHED_DETAIL,
   DOMAIN_SERIES_QUERY,
   DOMAIN_SUBURB_PERFORMANCE_BASE,
   DOMAIN_SUBURB_PERFORMANCE_LICENSING,
@@ -24,6 +25,7 @@ import {
   dwellingTypeFor,
   normaliseDomainSuburb,
   parseDomainSuburbPerformance,
+  readDomainProblem,
 } from '../market/domainEvidence.pure';
 import { mayEnterProductionEvidence, mayReachClientReport } from '../market/marketEvidence.pure';
 
@@ -191,8 +193,22 @@ describe('the request', () => {
     expect(normaliseDomainSuburb('surry-hills')).toBe('surry hills');
   });
 
+  it('names the project-without-a-package refusal Domain actually answers with, and where to fix it', () => {
+    // Measured from the production egress, 15 Sep 2026, on both products.
+    const r = describeDomainRefusal(403, null, DOMAIN_PACKAGE_NOT_ATTACHED_DETAIL);
+    expect(r.kind).toBe('package_not_attached');
+    expect(r.summary).toContain('Operation not permitted on project');
+    expect(r.summary).toMatch(/Properties & Locations/);
+    expect(r.summary).toMatch(/API Access/);
+    expect(readDomainProblem('{"type":"https://developer.domain.com.au/docs/latest/conventions/access","title":"Not Authorized","detail":"Operation not permitted on project"}'))
+      .toEqual({ title: 'Not Authorized', detail: 'Operation not permitted on project' });
+    expect(readDomainProblem('<html>Forbidden</html>')).toEqual({ title: null, detail: null });
+    expect(readDomainProblem(null)).toEqual({ title: null, detail: null });
+  });
+
   it('names Domain\'s refusal, quoting its own reason header where one was sent', () => {
     expect(describeDomainRefusal(403, null).summary).toMatch(/no X-Domain-Security-Reason header/);
+    expect(describeDomainRefusal(403, null, 'Some other restriction').summary).toContain('"Some other restriction"');
     expect(describeDomainRefusal(403, 'Package not enabled').summary).toContain('X-Domain-Security-Reason: Package not enabled');
     expect(describeDomainRefusal(401, null).kind).toBe('unauthenticated');
     expect(describeDomainRefusal(404, null).kind).toBe('not_found');

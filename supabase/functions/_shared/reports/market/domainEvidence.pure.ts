@@ -355,28 +355,71 @@ export function domainSuburbPerformanceUrl(parts: DomainRequestParts): DomainReq
 }
 
 export interface DomainRefusal {
-  kind: 'unauthenticated' | 'forbidden' | 'not_found' | 'rate_limited' | 'server_error' | 'other';
+  kind: 'unauthenticated' | 'package_not_attached' | 'forbidden' | 'not_found' | 'rate_limited' | 'server_error' | 'other';
   /** One sentence for the log and the evidence gap. Quotes Domain's own reason where it gave one. */
   summary: string;
 }
 
 /**
- * What a non-2xx answer means, read from the status and Domain's own
- * `X-Domain-Security-Reason` header where it was sent. A 403 with no reason
- * header is exactly the ambiguous case `DOMAIN_ACTIVATION_REQUEST.md` records
- * (8 Sep 2026): it is stated as ambiguous rather than guessed at.
+ * Domain's problem-details body, where the answer carried one. Only the two
+ * diagnostic fields are read (`title`, `detail`); nothing else in a body is
+ * relayed, and a body that is not JSON reads as none.
  */
-export function describeDomainRefusal(status: number, securityReason: string | null | undefined): DomainRefusal {
+export function readDomainProblem(bodyText: string | null | undefined): { title: string | null; detail: string | null } {
+  if (!bodyText) return { title: null, detail: null };
+  try {
+    const parsed = JSON.parse(bodyText) as { title?: unknown; detail?: unknown };
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 200) : null);
+    return { title: str(parsed?.title), detail: str(parsed?.detail) };
+  } catch {
+    return { title: null, detail: null };
+  }
+}
+
+/**
+ * The detail Domain answers with when the PROJECT the key belongs to has no
+ * API package attached. Measured from the production egress on 15 Sep 2026:
+ * both the Properties & Locations route and the Address Suggestion route
+ * answered 403 with exactly this body and no `X-Domain-Security-Reason`
+ * header — so the key is recognised (an unrecognised key answers 401), the
+ * project simply permits nothing. The remedy is the Domain Developer Portal
+ * (Projects → the project → API Access → add the package → Save), not a
+ * message asking Domain what the restriction is.
+ */
+export const DOMAIN_PACKAGE_NOT_ATTACHED_DETAIL = 'Operation not permitted on project';
+
+/**
+ * What a non-2xx answer means, read from the status, Domain's own
+ * `X-Domain-Security-Reason` header where it was sent, and the `detail` of
+ * its problem-details body where it carried one. A 403 with neither is the
+ * ambiguous case `DOMAIN_ACTIVATION_REQUEST.md` records (8 Sep 2026) and is
+ * stated as ambiguous rather than guessed at; a 403 whose body names the
+ * project is the package finding above, and is stated as that.
+ */
+export function describeDomainRefusal(
+  status: number,
+  securityReason: string | null | undefined,
+  bodyDetail: string | null | undefined = null,
+): DomainRefusal {
   const reason = securityReason && securityReason.trim() ? securityReason.trim() : null;
+  const detail = bodyDetail && bodyDetail.trim() ? bodyDetail.trim() : null;
   switch (status) {
     case 401:
       return { kind: 'unauthenticated', summary: 'HTTP 401 — the API key was not accepted (invalid or expired)' };
     case 403:
+      if (detail && detail.toLowerCase() === DOMAIN_PACKAGE_NOT_ATTACHED_DETAIL.toLowerCase()) {
+        return {
+          kind: 'package_not_attached',
+          summary: `HTTP 403 — Domain says "${detail}": the Properties & Locations API package is not attached to the project this key belongs to; attach it under API Access in the Domain Developer Portal`,
+        };
+      }
       return {
         kind: 'forbidden',
         summary: reason
           ? `HTTP 403 — Domain refused the request (X-Domain-Security-Reason: ${reason})`
-          : 'HTTP 403 with no X-Domain-Security-Reason header — a scope, plan, environment or key restriction that Domain must identify (docs/integrations/DOMAIN_ACTIVATION_REQUEST.md)',
+          : detail
+            ? `HTTP 403 — Domain refused the request ("${detail}", no X-Domain-Security-Reason header)`
+            : 'HTTP 403 with no X-Domain-Security-Reason header — a scope, plan, environment or key restriction that Domain must identify (docs/integrations/DOMAIN_ACTIVATION_REQUEST.md)',
       };
     case 404:
       return { kind: 'not_found', summary: 'HTTP 404 — no suburb-performance series for that state, suburb and postcode' };
