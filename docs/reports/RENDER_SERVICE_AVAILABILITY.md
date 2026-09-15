@@ -201,6 +201,55 @@ Read the answers in this order:
   logs (step 3) say why, and step 4 is the remedy for all but the memory
   case.
 
+## Leave Cloud Run: the same container on Fly.io
+
+On 15 Sep 2026 the owner declined to deploy on Cloud Run again — the last
+change there had cost over $1,200 — and asked for another way to full
+functionality. There is one, and it was always true: the container has
+never depended on Cloud Run. `weasyprint-service/README.md` has said from
+the start that any host that runs the Dockerfile works, and the edge
+functions locate the engine by exactly two secrets, `WEASYPRINT_SERVICE_URL`
+and `WEASYPRINT_SERVICE_TOKEN`. The same image on another host gives
+identical documents: same engine, same fonts, same PDF/UA output.
+
+`.github/workflows/deploy-render-fly.yml` is that move, made runnable with
+no terminal. It builds the Dockerfile on Fly's remote builder, runs **one**
+machine in Sydney (`weasyprint-service/fly.toml`: 2 shared CPUs, 2 GB,
+stopped when idle and started by the first request), proves it — the front
+door, the pinned engine version, the capability reconciliation, a real
+report rendered whole and tagged — and only then writes the two secrets into
+the Supabase project, so every render route uses it from its next cold
+start. The bearer token is minted on the runner, masked, written to both
+sides in the same run and never printed.
+
+What the owner does, once, with clicks:
+
+1. Create a Fly.io account and add a payment method.
+2. Fly dashboard → **Account → Access Tokens → Create** (an org-scoped
+   deploy token is enough). Copy it.
+3. GitHub → **Settings → Secrets and variables → Actions → New repository
+   secret** `FLY_API_TOKEN`, paste. (`SUPABASE_ACCESS_TOKEN` is already
+   present — the functions deploy uses it.)
+
+Then **Actions → Deploy the render container to Fly.io → Run workflow**,
+by a person or by an agent with repository access. The job summary names the
+URL; the proof by effect is a report generated with a chosen template
+(the browser-stand-in toast must not appear) and a `weasyprint/render` row
+in `api_usage_log` whose host is the Fly URL.
+
+**What it can cost, and why it cannot run away.** One machine: the ceiling
+is that machine's hourly price for a whole month — of the order of ten to
+fifteen dollars at Fly's published shared-CPU rates, check the current page
+— and near zero while stopped. There is no autoscaling to multiply it.
+For comparison, the two Cloud Run services' recorded work is small: the
+render ledger holds 128 calls on 8 Sep and 8 failed ones on the 15th, and
+`pdf_import_jobs` holds 0.3 hours of sidecar time across 70 days — whatever
+cost $1,200 there was not this traffic, which is one more reason to prefer
+a host whose bill is a machine rather than a meter.
+
+Afterwards the Cloud Run service is unused and can be deleted from its
+console; nothing in the product names it.
+
 ## Redeploy without a terminal
 
 Two routes need neither gcloud nor Cloud Shell.

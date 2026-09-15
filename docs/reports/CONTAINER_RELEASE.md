@@ -46,6 +46,14 @@ normally — `custom_metadata` defaults on and finds no `<meta>` tags to carry,
 
 ---
 
+## Off Google Cloud entirely: Fly.io
+
+The container is host-agnostic, and `.github/workflows/deploy-render-fly.yml`
+deploys it to Fly.io from one repository secret, proves it, and points the
+edge functions at it. `docs/reports/RENDER_SERVICE_AVAILABILITY.md` (*Leave
+Cloud Run*) has the steps. Everything below is the Cloud Run path, kept
+whole for a deployment that stays there.
+
 ## The short way: the deploy workflow
 
 `.github/workflows/deploy-weasyprint-service.yml` does Steps 0–2 for you, with

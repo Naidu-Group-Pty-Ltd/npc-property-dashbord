@@ -1,0 +1,42 @@
+# The render container on Fly.io — the same Dockerfile, off Google Cloud.
+#
+# Deployed by `.github/workflows/deploy-render-fly.yml`; nothing here is
+# specific to Fly beyond the machine shape. The edge functions only ever see
+# the URL and the bearer token, which that workflow writes into the Supabase
+# project's secrets after the container has proved itself.
+#
+# One machine, stopped when idle, started by the first request. The ceiling
+# on what this can cost is that one machine's hourly price — there is no
+# autoscaling here to run away.
+
+app = "npc-weasyprint-service"
+primary_region = "syd"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  WEASYPRINT_WARMUP = "1"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  # A stopped machine boots gunicorn under `--preload` and renders a warm-up
+  # page before it listens; the grace period covers that so a cold machine is
+  # not marked unhealthy while it warms.
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2048mb"
