@@ -1465,6 +1465,51 @@ contradict. Placement is load-bearing: **after** the series heal (the ROI
 denominator is the stored deposit) and **before** the upfront total (which is
 the deposit plus the acquisition lines).
 
+## The Investment Grade — Scoring V2 in production
+Read the *Activation* section of
+[`docs/reports/SCORING_V2_METHODOLOGY.md`](./docs/reports/SCORING_V2_METHODOLOGY.md)
+before touching `_shared/reports/market/scoringV2Production.pure.ts`,
+`investment-scoring-service`, `domain-data-service` or the market-evidence
+block in `generate-investment-report`. Every new report read *"Grade withheld
+— no scoring system is currently authorised"* from 11 to 15 Sep 2026 for two
+stacked reasons: no engine was authorised (V1 is not trusted to grade, V2 was
+frozen unwired), and there was nothing to measure — `domain-data-service`
+had requested a deprecated `/v1` route without the postcode segment and had
+**never once succeeded**, so Growth and Demand were absent on every report.
+`SCORING_V2_ACTIVATION` (ME-8, 15 Sep 2026) is the decision, a constant and
+never configuration; `scoreForProduction` projects the engine's canonical
+output onto the record every reader already understands, under a stamp whose
+`authority` is `v2`.
+
+Four rules bite. **The legacy service never imports the engine** — it reaches
+V2 through the activation module alone and still cannot spell `v2`
+(`LegacyScoringAuthority`), and the pin spec asserts exactly one entrypoint,
+one path. **Growth is required before a letter is printed**: three dimensions
+can be measured without it, and the delivered-points ceiling then caps the
+grade at a B that is a statement about missing data — so the grade is withheld
+and `gradeGaps` names each unmeasured dimension, the provider's refusal (the
+`X-Domain-Security-Reason` where Domain sent one) and the remedy, and the card
+and the page draw the same list. **Evidence is keyed on the trusted geography
+only** — the suburb, state and postal area resolved from the verified
+coordinate, never the typed suburb or the parsed four-digit token, the same
+rule the crime evidence answers to — so an unresolved geography seeks nothing
+and says so. And **Domain's licensing is `unverified` until the rights
+follow-up is answered**: the engine scores on the points and the client-facing
+evidence statement withholds their provenance; declaring it licensed is a
+decision with a document behind it, not a default.
+
+**The Domain 403 is a portal setting, not a mystery.** Re-measured from the
+production egress on 15 Sep 2026: the key is set and recognised, and both
+Domain products answer 403 with Domain's own body *"Operation not permitted on
+project"* — the project the key belongs to has **no API package attached**,
+which Domain's access conventions name as the one condition under which no
+endpoint answers. The remedy is the Domain Developer Portal (Projects → API
+Access → add **Properties & Locations** → Save), recorded step by step in
+`docs/integrations/DOMAIN_ACTIVATION_REQUEST.md`; nothing in this repository
+can attach it. `describeDomainRefusal` reads Domain's problem-details `detail`
+and names that finding on the grade gap, so a report withheld for it says
+where the fix is rather than "a restriction Domain must identify".
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section
@@ -1528,6 +1573,26 @@ would have picked and it produces the legacy document either way; and a
 selection that goes stale resolves to **`unavailable`**, never silently to a
 different template.
 
+**A chosen template that cannot carry the report is composed, never shipped
+empty.** Read the last section of
+[`docs/reports/TEMPLATE_SELECTION.md`](./docs/reports/TEMPLATE_SELECTION.md)
+before touching `templateBindingCoverage.pure.ts`, `templateComposition.pure.ts`
+or the composition step in `routeReportThroughTemplate`. The library's
+First-Home Buyer Report was chosen for an Investment report and drew five
+near-empty pages as a `succeeded` render: it binds a sample-preset vocabulary
+(`client.deposit`, `grants.fhog`, `steps.0`) no adapter publishes, and the two
+existing guards catch a static copy and an empty context, not the wrong
+vocabulary. Coverage is now measured **against the data the adapter built**,
+never a sample, and the rule is narrow on purpose: a template is composed only
+when it binds content and **none** of it resolves — its cover, closing and
+static pages kept, its blank pages left out, the body drawn from a donor that
+carries the report under the chosen template's tokens. A template that binds
+nothing is a brochure and one that resolves a single field is the author's
+document; both are drawn as designed. The ranking is not a safe donor on its
+own (`resolve_report_template` ranks a person's own templates first, so the
+template that cannot carry the report is often the ranking's pick), which is
+why the donor search reads the published set.
+
 **A document can be completely correct and still never reach the renderer.**
 Read [`docs/reports/RENDER_BOUNDARY.md`](./docs/reports/RENDER_BOUNDARY.md)
 before touching `renderResourcePolicy.pure.ts`, `printFontPolicy.pure.ts`,
@@ -1581,6 +1646,11 @@ against a ~150s edge ceiling. It survives by stopping at a wall-clock budget and
 being resumed — by the browser, the bulk worker, or a cron watchdog. Read
 [`docs/reports/INVESTMENT_REPORT_RESUME.md`](./docs/reports/INVESTMENT_REPORT_RESUME.md)
 before changing the section loop, its timeouts, or anything that claims a report.
+**A model call takes the window the run can spare, never a constant**: the
+closing section measured 40-110s against a fixed 60s timeout, so it timed out on
+every run and 43 invocations were killed with nothing written; every call now
+answers to the run's own deadline, and a section with no window left is
+deferred as a hand-off rather than written up as a failed section.
 
 Ten formats have been migrated onto it, and each carries its own contract:
 [`INVESTMENT.md`](./docs/reports/INVESTMENT.md),

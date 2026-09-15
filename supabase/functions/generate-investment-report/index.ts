@@ -48,6 +48,9 @@ import {
   sensitivityRowsForPrompt,
 } from '../_shared/reports/investment/promptFinancials.pure.ts';
 import { recordedScoreValues } from '../_shared/reports/investment/scoreClaims.pure.ts';
+import { investmentScorePromptBlock, overallRecommendationLine } from '../_shared/reports/investment/scorePromptBlock.pure.ts';
+import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/reports/market/domainEvidence.pure.ts';
+import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
@@ -79,12 +82,43 @@ const POST_PROCESSING_RESERVE_MS = 25_000;
 // Fallback estimate before we have measured a section in this run.
 const DEFAULT_SECTION_ESTIMATE_MS = 30_000;
 
-// Per-call ceilings for the model. These used to be 150s/120s — longer than the
-// entire edge invocation, so one hung call could still blow the whole run past
-// the platform ceiling before the between-sections budget guard could fire.
-// Observed section latency in production is 9-37s, so these leave ample room.
-const SECTION_REQUEST_TIMEOUT_MS = 60_000;
+// Per-call ceilings for the model, and the clock every call answers to.
+//
+// These used to be 150s/120s — longer than the entire edge invocation, so one
+// hung call could still blow the whole run past the platform ceiling before
+// the between-sections budget guard could fire. They were then cut to 60s/45s
+// on the reading that "observed section latency is 9-37s" — which was true of
+// the 2,500-token sections and false of the closing one. Measured on the
+// generation trace, 15 Sep 2026: "Risks & Recommendations" (three headings,
+// 4,000 tokens, a 68 KB prompt) took 40-110s whenever it completed, so the
+// full-prompt attempt timed out at 60s on every run, the compact retry then
+// ran with whatever was left, and 43 invocations for two reports were killed
+// by the platform with no status written — the report's widget read
+// "Section 12 of 12 · 10h 45m elapsed".
+//
+// The fix is not a bigger constant. Every call is given the window it can
+// actually have: the run's own deadline (`SECTION_CALL_HARD_STOP_MS`, inside
+// the watchdog's 130s inner timeout and the platform's ~150s kill), less the
+// post-processing reserve on the closing section, less a reserve for the
+// compact retry while a full-prompt attempt is still worth making. A
+// full-prompt attempt that cannot get its measured floor is skipped for the
+// compact prompt rather than spent on a timeout foretold, and a call with no
+// window left is DEFERRED to the next invocation — reported as a hand-off,
+// never as a failed section.
+const SECTION_REQUEST_TIMEOUT_MS = 90_000;
 const SECTION_CONTINUATION_TIMEOUT_MS = 45_000;
+/** The compact prompt completes in 15-46s measured; this bounds it. */
+const SECTION_EMERGENCY_TIMEOUT_MS = 60_000;
+/** Below this window the full prompt has never completed; go straight to the compact one. */
+const SECTION_FULL_PROMPT_MIN_WINDOW_MS = 60_000;
+/** Held back from a full-prompt attempt so a compact retry still fits after it. */
+const SECTION_SECOND_ATTEMPT_RESERVE_MS = 30_000;
+/** No model call is started with less than this. */
+const SECTION_MIN_CALL_WINDOW_MS = 20_000;
+/** From the run's start: the last moment a model call may still be in flight. */
+const SECTION_CALL_HARD_STOP_MS = 125_000;
+/** The error a section returns when it made no call for want of a window. */
+const SECTION_BUDGET_DEFERRED = 'SECTION_BUDGET_DEFERRED';
 
 // ============================================================================
 // REPORT SECTION DEFINITIONS - SYNCED WITH DATABASE TEMPLATE STRUCTURE
@@ -1648,7 +1682,9 @@ async function generateReportSection(
   previousSections: string,
   propertyAddress: string,
   enhancedData: any,
-  maxRetries: number = 2
+  maxRetries: number = 2,
+  /** Absolute time (ms) by which every model call for this section must be over; null = unbounded. */
+  deadlineAt: number | null = null,
 ): Promise<{ content: string; citations: any[]; error?: string }> {
   // For section10 (Projections & SWOT), inject explicit investment score data
   let investmentScoreContext = '';
@@ -1757,14 +1793,34 @@ Start now with the first heading.`;
 
   // Retry loop with improved backoff and jitter
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // The window THIS attempt may have, from the run's deadline. See the
+    // constants: a full-prompt attempt keeps a reserve for the compact retry,
+    // a window below the full prompt's measured floor goes straight to the
+    // compact prompt, and no window at all is a deferral, not a failure.
+    const remainingMs = deadlineAt === null ? Number.POSITIVE_INFINITY : deadlineAt - Date.now();
+    if (remainingMs < SECTION_MIN_CALL_WINDOW_MS) {
+      console.warn(
+        `⏱️ No window left for ${sectionDef.name} (attempt ${attempt}, `
+        + `${Number.isFinite(remainingMs) ? Math.round(remainingMs / 1000) : '∞'}s remaining) — deferring to the next invocation.`,
+      );
+      return { content: '', citations: [], error: SECTION_BUDGET_DEFERRED };
+    }
+    const fullPromptWindowMs = remainingMs - SECTION_SECOND_ATTEMPT_RESERVE_MS;
+    const useCompactPrompt = attempt > 1 || fullPromptWindowMs < SECTION_FULL_PROMPT_MIN_WINDOW_MS;
+    const attemptTimeoutMs = useCompactPrompt
+      ? Math.min(SECTION_EMERGENCY_TIMEOUT_MS, remainingMs)
+      : Math.min(SECTION_REQUEST_TIMEOUT_MS, fullPromptWindowMs);
     try {
-      console.log(`📝 Generating section: ${sectionDef.name}... (attempt ${attempt}/${maxRetries})`);
-      const userPromptForAttempt = attempt > 1 ? emergencySectionPrompt : sectionPrompt;
-      if (attempt > 1) {
+      console.log(
+        `📝 Generating section: ${sectionDef.name}... (attempt ${attempt}/${maxRetries}, `
+        + `window ${Math.round(attemptTimeoutMs / 1000)}s${useCompactPrompt ? ', compact prompt' : ''})`,
+      );
+      const userPromptForAttempt = useCompactPrompt ? emergencySectionPrompt : sectionPrompt;
+      if (useCompactPrompt) {
         console.log(`🧯 Using emergency compact prompt for ${sectionDef.name}: ${byteLength(userPromptForAttempt)} bytes`);
       }
       
-      const systemPromptForAttempt = attempt > 1
+      const systemPromptForAttempt = useCompactPrompt
         ? 'You are an Australian property investment analyst. Produce concise, sourced markdown and never invent exact figures.'
         : safeSystemMessage;
       const response = await fetchWithTimeout('https://api.perplexity.ai/chat/completions', {
@@ -1782,7 +1838,7 @@ Start now with the first heading.`;
             { role: 'user', content: userPromptForAttempt }
           ]
         }),
-      }, SECTION_REQUEST_TIMEOUT_MS, 'perplexity-api'); // bounded so the loop always regains control, with circuit breaker tracking
+      }, attemptTimeoutMs, 'perplexity-api'); // bounded to the window this attempt actually has, with circuit breaker tracking
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -1842,6 +1898,16 @@ Start now with the first heading.`;
         return false;
       };
       while ((finishReason === 'length' || endsMidThought(content)) && continuationRounds < 2) {
+        // A continuation answers to the same deadline: it is never started
+        // into a window it cannot finish in, because a truncated tail is a
+        // smaller defect than a run killed with nothing written.
+        const continuationWindowMs = deadlineAt === null
+          ? SECTION_CONTINUATION_TIMEOUT_MS
+          : Math.min(SECTION_CONTINUATION_TIMEOUT_MS, deadlineAt - Date.now() - 5_000);
+        if (continuationWindowMs < 15_000) {
+          console.log(`   continuation skipped for ${sectionDef.name}: no window left (${Math.round(continuationWindowMs / 1000)}s)`);
+          break;
+        }
         continuationRounds++;
         console.log(`↪️  Section ${sectionDef.name} appears truncated (finish=${finishReason}) — continuation round ${continuationRounds}`);
         const tail = content.slice(-1200);
@@ -1864,7 +1930,7 @@ Start now with the first heading.`;
                 { role: 'user', content: continuePrompt },
               ],
             }),
-          }, SECTION_CONTINUATION_TIMEOUT_MS, 'perplexity-api');
+          }, continuationWindowMs, 'perplexity-api');
           if (!contResp.ok) {
             console.warn(`   continuation HTTP ${contResp.status} — stopping continuation loop`);
             break;
@@ -2603,22 +2669,14 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
       // Define all Phase 1 fetch promises
       const phase1Promises = [
-        // 1. Domain market data
-        (suburb && state) ? fetchServiceWithFallback('domain-data-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/domain-data-service`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ 
-              suburb, state, postcode,
-              propertyCategory: propertyDetails?.propertyType?.toLowerCase() === 'unit' ? 'unit' : 'house'
-            })
-          }, 30000, 'domain-data-service');
-          if (response.ok) {
-            const data = await response.json();
-            return data.success ? data.data : null;
-          }
-          return null;
-        }) : Promise.resolve({ success: false, serviceName: 'domain-data-service', error: 'Missing suburb/state' }),
+        // 1. Domain market data is keyed on the TRUSTED geography — the suburb,
+        // state and postal area resolved from the verified coordinate — which
+        // does not exist yet in phase 1. It is fetched after geography
+        // resolution below, beside the scoring call it feeds; a free-text
+        // suburb and a parsed four-digit token may not select a market
+        // (`crimePostcodeAuthority.pure.ts` records why). This slot keeps the
+        // results array aligned with serviceNames.
+        Promise.resolve({ success: false, serviceName: 'domain-data-service', error: 'Missing trusted geography (fetched after geography resolution)' }),
 
         // 2. ABS demographic data
         postcode ? fetchServiceWithFallback('abs-data-service', async () => {
@@ -3432,6 +3490,83 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }
       }
 
+      // ======================================================================
+      // MARKET EVIDENCE FOR THE GRADE — keyed on the trusted geography only
+      // ======================================================================
+      // Scoring V2 (ME-8) grades on measured suburb evidence: Domain's suburb
+      // performance series (median sold price by year → the growth horizons,
+      // plus days on market, sales and listings) and the ABS resident
+      // population series the regional service already served for the
+      // property's SA2. Both are asked for the SUBJECT the boundary service
+      // resolved, never for the typed suburb or the parsed postcode — the
+      // same rule the crime evidence answers to — so where the geography did
+      // not resolve, no evidence is sought and the grade says why.
+      const marketPoints: Record<string, unknown> = {};
+      const providersConsulted: string[] = [];
+      const providersUnavailable: Array<{ provider: string; reason: string }> = [];
+      let evidenceWithheldReason: string | null = null;
+      const marketPostcode = subjectPostcodeOf(subjectGeography);
+      const marketSuburb = typeof subjectGeography?.suburb === 'string' && subjectGeography.suburb.trim()
+        ? subjectGeography.suburb.trim() : null;
+      const marketState = abbreviateState(typeof subjectGeography?.state === 'string' ? subjectGeography.state : null)
+        ?? abbreviateState(state);
+      if (!isAreaReport) {
+        if (marketPostcode && marketSuburb && marketState) {
+          providersConsulted.push('domain');
+          try {
+            const domainResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/domain-data-service`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                suburb: marketSuburb,
+                state: marketState,
+                postcode: marketPostcode,
+                propertyCategory: domainCategoryFor(effectivePropertyType),
+                propertyType: effectivePropertyType,
+              }),
+            }, 30000, 'domain-data-service');
+            const domainBody = domainResponse.ok ? await domainResponse.json() : null;
+            if (domainBody?.success && domainBody.data) {
+              enhancedData = { ...enhancedData, domainData: domainBody.data };
+              const points = domainBody.data.evidence?.points;
+              if (points && typeof points === 'object') Object.assign(marketPoints, points);
+              console.log(`✓ Domain suburb performance for ${marketSuburb} ${marketState} ${marketPostcode}: ${Object.keys(points ?? {}).length} evidence points`);
+            } else {
+              const reason = domainBody?.refusal?.summary
+                ?? domainBody?.error
+                ?? `HTTP ${domainResponse.status} from domain-data-service`;
+              providersUnavailable.push({ provider: 'domain', reason });
+              console.log(`⚠️ Domain suburb performance unavailable: ${reason}`);
+            }
+          } catch (error: any) {
+            providersUnavailable.push({ provider: 'domain', reason: error?.message || 'request failed' });
+            console.log('⚠️ Domain suburb performance skipped:', error?.message?.substring(0, 120));
+          }
+        } else {
+          evidenceWithheldReason = 'the property\'s geography did not resolve to a trusted suburb, state and postcode, so no suburb market evidence was sought';
+          console.log(`⛔ Market evidence not sought: ${evidenceWithheldReason}`);
+        }
+
+        // Population growth — a demand DRIVER — from the SA2 series the
+        // regional service served for the verified coordinate. Nothing new is
+        // fetched; the point is computed from the series already held.
+        const regionalPopulation = enhancedData.regionalTrends?.population;
+        const regionalSa2 = enhancedData.regionalTrends?.sa2;
+        const erpSeries = Array.isArray(regionalPopulation?.series) ? regionalPopulation.series : null;
+        if (erpSeries && typeof regionalSa2?.name === 'string' && regionalSa2.name) {
+          providersConsulted.push('abs_erp');
+          const populationPoint = populationGrowthPoint(erpSeries, { name: regionalSa2.name, level: 'sa2' });
+          if (populationPoint) {
+            marketPoints.populationGrowth = populationPoint;
+            console.log(`✓ Population growth point for SA2 ${regionalSa2.name}: ${populationPoint.value}% p.a.`);
+          } else {
+            providersUnavailable.push({ provider: 'abs_erp', reason: `the ABS series for SA2 ${regionalSa2.name} is too short to compute a growth rate` });
+          }
+        } else if (!isAreaReport) {
+          providersUnavailable.push({ provider: 'abs_erp', reason: 'no SA2 population series was served for the verified coordinate' });
+        }
+      }
+
       // Calculate investment score - property OR area scoring
       if (!isAreaReport && effectivePurchasePrice > 0) {
         // Property-specific scoring
@@ -3466,7 +3601,18 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               },
               demographics: enhancedData.demographics,
               locationIntelligence: enhancedData.locationIntelligence,
-              financials: enhancedData.financials
+              financials: enhancedData.financials,
+              // ME-8 — what Scoring V2 grades on: the subject the evidence was
+              // keyed to, and the evidence points the adapters extracted.
+              subject: {
+                suburb: marketSuburb,
+                postcode: marketPostcode,
+                state: marketState ?? state,
+                dwellingType: dwellingTypeFor(effectivePropertyType),
+                resolvedFrom: marketPostcode ? 'coordinate' : null,
+              },
+              marketEvidence: { points: marketPoints, providersConsulted, providersUnavailable },
+              evidenceWithheldReason,
             })
           });
           
@@ -3474,7 +3620,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             const scoreData = await scoreResponse.json();
             if (scoreData?.success && scoreData?.data) {
               enhancedData = { ...enhancedData, investmentScore: scoreData.data };
-              console.log('✓ Investment score calculated:', scoreData.data?.grade, scoreData.data?.totalScore);
+              console.log('✓ Investment score calculated:', scoreData.data?.grade ?? 'withheld', scoreData.data?.totalScore ?? '');
+              if (Array.isArray(scoreData.data?.gradeGaps) && scoreData.data.gradeGaps.length) {
+                console.log('  Grade gaps:', scoreData.data.gradeGaps.map((g: any) => `${g.dimension}: ${g.detail}`).join(' | '));
+              }
             } else if (scoreData) {
               enhancedData = { ...enhancedData, investmentScore: scoreData };
               console.log('✓ Investment score (direct):', scoreData?.grade, scoreData?.totalScore);
@@ -5069,21 +5218,7 @@ The optimistic scenario (6% growth) projects Year 10 value of $[X,XXX,XXX], with
 
 **CRITICAL NOTE:** ${documentContent ? 'Analysis based on provided property data and market research.' : 'Insufficient comparable market data and recent sales analysis specific to this property may prevent calculation of a precise investment score. The following analysis is based on suburb-level characteristics and general market positioning.'}
 
-**Investment Grade:** ${enhancedData.investmentScore?.grade || 'B'} (${documentContent ? 'Based on property analysis' : 'Based on suburb fundamentals - requires property-specific assessment'})
-
-**Total Score:** ${enhancedData.investmentScore?.totalScore || 'XX'}/100
-
-**Recommendation:** ${enhancedData.investmentScore?.recommendation || 'HOLD'} ${documentContent ? '' : 'with caution pending property-specific verification'}
-
-**Score Breakdown:**
-
-| Component | Weight (%) | Score (/100) |
-|-----------|------------|--------------|
-| Growth Score | 30% | ${enhancedData.investmentScore?.breakdown?.growthScore?.score || 'XX'} |
-| Location Score | 25% | ${enhancedData.investmentScore?.breakdown?.locationScore?.score || 'XX'} |
-| Yield Score | 20% | ${enhancedData.investmentScore?.breakdown?.yieldScore?.score || 'XX'} |
-| Demand Score | 15% | ${enhancedData.investmentScore?.breakdown?.demandScore?.score || 'XX'} |
-| Risk Score | 10% | ${enhancedData.investmentScore?.breakdown?.riskScore?.score || 'XX'} |
+${investmentScorePromptBlock(enhancedData.investmentScore, { hasDocument: !!documentContent })}
 
 ---
 
@@ -5264,7 +5399,7 @@ ${documentContent ? 'The listed' : 'Estimated'} property price of $[X,XXX,XXX] r
 
 **Overall Recommendation:**
 
-**QUALIFIED ${enhancedData.investmentScore?.recommendation || 'HOLD'} with Contingencies**
+${overallRecommendationLine(enhancedData.investmentScore)}
 
 This property warrants serious consideration for investors who (1) verify environmental hazards as acceptable, (2) confirm financial capacity to sustain negative cashflow, (3) achieve mortgage pre-approval at serviceability-acceptable terms, and (4) obtain professional valuation confirming price point aligns with current market conditions. The investment is suitable for disciplined, long-term capital accumulators with strong employment stability and confidence in [City] metropolitan property markets. Investors prioritizing immediate returns or requiring rental income should pursue alternative investments with superior yield profiles.
 
@@ -6181,10 +6316,20 @@ YOUR DEDICATED PROPERTY PARTNER
       let bestContent = '';
       let bestScore = 0;
       let sectionAttempts = 0;
+      let sectionDeferred = false;
       const maxSectionAttempts = 2; // Retry once if content is insufficient
+      // Every model call for this section answers to the run's clock: the
+      // hard stop, less the post-processing reserve when this is the closing
+      // section, because what follows the last section has to fit too.
+      const sectionDeadlineAt = runStartedAt + SECTION_CALL_HARD_STOP_MS
+        - (isLastSection ? POST_PROCESSING_RESERVE_MS : 0);
       
       for (let attempt = 1; attempt <= maxSectionAttempts; attempt++) {
         sectionAttempts = attempt;
+        if (attempt > 1 && Date.now() > sectionDeadlineAt - SECTION_MIN_CALL_WINDOW_MS) {
+          console.log(`⏱️ No window for a validation retry of ${sectionDef.name}; keeping the best attempt.`);
+          break;
+        }
         
         const result = await generateReportSection(
           sectionDef,
@@ -6193,9 +6338,17 @@ YOUR DEDICATED PROPERTY PARTNER
           perplexityApiKey,
           previousContext,
           formattedInput,
-          enhancedData
+          enhancedData,
+          2,
+          sectionDeadlineAt,
         );
         
+        if (result.error === SECTION_BUDGET_DEFERRED) {
+          // Not a failure: no call was made because no window was left. The
+          // section is handed to the next invocation untouched.
+          sectionDeferred = true;
+          break;
+        }
         if (result.error) {
           console.error(`⚠️ Section ${sectionDef.name} attempt ${attempt} failed:`, result.error);
           if (attempt === maxSectionAttempts) {
@@ -6398,6 +6551,35 @@ YOUR DEDICATED PROPERTY PARTNER
           }
         }
         // === END PROGRESSIVE SAVE ===
+      } else if (sectionDeferred && !bestContent) {
+        // A DEFERRAL — the section made no model call because the run had no
+        // window left for one. It is a budget hand-off exactly like the
+        // between-sections guard's, and is reported as one: progress stands
+        // where it was, no error is written over the row, and the caller
+        // (browser pump or watchdog) invokes again. Writing "failed after N
+        // attempts" here is what turned a full window into ten hours of
+        // retries that each ran out of the same window.
+        console.log(
+          `⏱️ Section ${sectionDef.name} deferred at ${Math.round((Date.now() - runStartedAt) / 1000)}s — `
+          + 'handing off to resume with no attempt spent.',
+        );
+        if (isSingleSectionMode) {
+          await traceFinishRun(_traceSb, _traceRunId, { status: 'completed' });
+          return new Response(JSON.stringify({
+            success: true,
+            isComplete: false,
+            resumeRequired: true,
+            deferred: true,
+            sectionCompleted: lastCompletedSectionIndex,
+            totalSections: filteredSections.length,
+            contentLength: combinedContent.length,
+          }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        budgetExhausted = true;
+        break;
       } else {
         // No content generated for this section at all - still save progress
         sectionResults.push({

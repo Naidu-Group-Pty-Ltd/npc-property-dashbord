@@ -201,6 +201,16 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
     const presentedContent = typeof payload?.reportContent === 'string'
       ? payload.reportContent
       : null;
+    // "Include scoring" OFF. The section filter above removed the scoring
+    // chapters from the Markdown, but a template binds the grade, the score
+    // and the breakdown DIRECTLY (`scores.*`, and the projection's own verdict
+    // blocks read the row), so a dashboard page still drew the grade the
+    // operator had switched off. The switch is read here, once, and the row
+    // the template and the projection both draw from carries no score — the
+    // same document the standard presentation prints with scoring off.
+    // Absent means "not included", never "not graded": nothing here rewrites
+    // the stored row, and the default (the switch not sent) includes it.
+    const includeScoring = payload?.includeScoring !== false;
     // Through the read-path placeholder scrub every renderer applies
     // (`presentStoredMarkdown`): a derived report stored before the write-path
     // hygiene carries its "N/A" cells verbatim, and the templated document is
@@ -209,6 +219,7 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
     const row = {
       ...loaded,
       report_content: presentStoredMarkdown(presentedContent === null ? loaded.report_content : presentedContent),
+      ...(includeScoring ? {} : { investment_score: null }),
     };
 
     const reportType = getReportType(row);

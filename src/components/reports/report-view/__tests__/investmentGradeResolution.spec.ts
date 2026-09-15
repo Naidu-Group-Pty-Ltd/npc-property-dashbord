@@ -84,12 +84,12 @@ describe('a grade the scoring policy withheld', () => {
 
   it('names insufficient verified evidence when that is what the stamp says', () => {
     const reading = readGradePolicy({ policy: { gradeIssued: false, eligibility: 'insufficient_verified_evidence', measuredDimensions: ['yield', 'growth'] } });
-    expect(reading).toEqual({ stamped: true, issued: false, reason: 'insufficient_verified_evidence', measured: ['yield', 'growth'] });
+    expect(reading).toEqual({ stamped: true, issued: false, reason: 'insufficient_verified_evidence', measured: ['yield', 'growth'], gaps: [] });
     expect(gradeWithheldStatement(reading)).toBe('Withheld by the scoring policy: insufficient verified property evidence. Measured: yield, growth.');
   });
 
   it('reads an unstamped score as issued — a historical grade renders as it always did', () => {
-    expect(readGradePolicy({ grade: 'B', totalScore: 68 })).toEqual({ stamped: false, issued: true, reason: null, measured: [] });
+    expect(readGradePolicy({ grade: 'B', totalScore: 68 })).toEqual({ stamped: false, issued: true, reason: null, measured: [], gaps: [] });
     const summary = getInvestmentScoreSummary({ investment_score: { grade: 'B', totalScore: 68 } } as any);
     expect(summary).toMatchObject({ grade: 'B', score: 68, withheld: null, insufficient: false });
   });

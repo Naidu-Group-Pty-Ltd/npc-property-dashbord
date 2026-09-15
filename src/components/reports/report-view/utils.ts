@@ -35,6 +35,13 @@ export interface GradePolicyReading {
   reason: GradeWithheldReason | null;
   /** The dimensions the run measured, in the stamp's own vocabulary. */
   measured: string[];
+  /**
+   * The named gaps that withheld the grade, as the run recorded them
+   * (`gradeGaps` — Scoring V2 runs, 15 Sep 2026 onward): "growth: No suburb
+   * capital-growth series for Kellyville NSW 2155 (domain: HTTP 403 …)".
+   * Empty on a legacy stamp, which recorded no gaps.
+   */
+  gaps: string[];
 }
 
 /**
@@ -48,12 +55,23 @@ export interface GradePolicyReading {
 export function readGradePolicy(investmentScore: unknown): GradePolicyReading {
   const policy = (investmentScore as { policy?: unknown } | null | undefined)?.policy;
   if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
-    return { stamped: false, issued: true, reason: null, measured: [] };
+    return { stamped: false, issued: true, reason: null, measured: [], gaps: [] };
   }
   const p = policy as Record<string, unknown>;
   const issued = p.gradeIssued !== false;
   const measured = Array.isArray(p.measuredDimensions)
     ? p.measuredDimensions.filter((d): d is string => typeof d === 'string')
+    : [];
+  const rawGaps = (investmentScore as { gradeGaps?: unknown }).gradeGaps;
+  const gaps = Array.isArray(rawGaps)
+    ? rawGaps.flatMap((g) => {
+        if (!g || typeof g !== 'object') return [];
+        const gap = g as Record<string, unknown>;
+        if (gap.withholdsGrade !== true) return [];
+        const dimension = typeof gap.dimension === 'string' ? gap.dimension : null;
+        const detail = typeof gap.detail === 'string' ? gap.detail.trim() : '';
+        return dimension && detail ? [`${dimension}: ${detail}`] : [];
+      })
     : [];
   return {
     stamped: true,
@@ -64,6 +82,7 @@ export function readGradePolicy(investmentScore: unknown): GradePolicyReading {
         ? 'insufficient_verified_evidence'
         : 'no_authorised_scoring_system',
     measured,
+    gaps,
   };
 }
 
@@ -89,7 +108,9 @@ export function gradeWithheldStatement(
   const measured = scored !== null && total !== null
     ? ` ${scored} of ${total} dimensions measured${reading.measured.length ? ` (${reading.measured.join(', ')})` : ''}.`
     : reading.measured.length ? ` Measured: ${reading.measured.join(', ')}.` : '';
-  return `Withheld by the scoring policy: ${cause}.${measured}`;
+  // The run's own named gaps, where it recorded them — what would change it.
+  const gaps = reading.gaps.length ? ` Not measured — ${reading.gaps.join(' ')}` : '';
+  return `Withheld by the scoring policy: ${cause}.${measured}${gaps}`;
 }
 
 export interface WithheldGrade {

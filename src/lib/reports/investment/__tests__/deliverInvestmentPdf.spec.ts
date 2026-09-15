@@ -129,7 +129,7 @@ describe('produceInvestmentDocument', () => {
     // module already read, so the memo below and the route agree on it.
     expect(tryTemplate).toHaveBeenCalledWith('investment', 'r-1', {
       variant: 'briefing',
-      payload: { reportContent: expect.stringContaining('$700,000') },
+      payload: { reportContent: expect.stringContaining('$700,000'), includeScoring: true, includeSources: true },
       renderer: 'weasyprint',
       selectedTemplateId: null,
     });

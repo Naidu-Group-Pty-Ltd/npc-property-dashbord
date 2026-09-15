@@ -62,6 +62,12 @@ export const GEOGRAPHIC_LEVELS = [
   'property',
   'suburb',
   'postcode',
+  // ABS Statistical Area Level 2 — the grain the resident-population series
+  // is published at (`abs_sa2_population`), and the grain `report_geography`
+  // resolves a verified coordinate to. Finer than an LGA, coarser than a
+  // postal area on the whole; added 15 Sep 2026 when the population driver
+  // began arriving from that series rather than being absent.
+  'sa2',
   'lga',
   'sa3',
   'gccsa',

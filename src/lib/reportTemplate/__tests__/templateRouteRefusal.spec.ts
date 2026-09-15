@@ -43,6 +43,7 @@ const REASONS: TemplateRouteRefusal[] = [
   'adapter_published_no_data',
   'template_schema_invalid',
   'template_unbound_reconstruction',
+  'template_carries_no_content',
   'engine_unavailable',
   'render_failed',
   'unexpected_error',
