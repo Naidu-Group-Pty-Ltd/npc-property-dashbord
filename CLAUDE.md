@@ -1528,6 +1528,26 @@ would have picked and it produces the legacy document either way; and a
 selection that goes stale resolves to **`unavailable`**, never silently to a
 different template.
 
+**A chosen template that cannot carry the report is composed, never shipped
+empty.** Read the last section of
+[`docs/reports/TEMPLATE_SELECTION.md`](./docs/reports/TEMPLATE_SELECTION.md)
+before touching `templateBindingCoverage.pure.ts`, `templateComposition.pure.ts`
+or the composition step in `routeReportThroughTemplate`. The library's
+First-Home Buyer Report was chosen for an Investment report and drew five
+near-empty pages as a `succeeded` render: it binds a sample-preset vocabulary
+(`client.deposit`, `grants.fhog`, `steps.0`) no adapter publishes, and the two
+existing guards catch a static copy and an empty context, not the wrong
+vocabulary. Coverage is now measured **against the data the adapter built**,
+never a sample, and the rule is narrow on purpose: a template is composed only
+when it binds content and **none** of it resolves — its cover, closing and
+static pages kept, its blank pages left out, the body drawn from a donor that
+carries the report under the chosen template's tokens. A template that binds
+nothing is a brochure and one that resolves a single field is the author's
+document; both are drawn as designed. The ranking is not a safe donor on its
+own (`resolve_report_template` ranks a person's own templates first, so the
+template that cannot carry the report is often the ranking's pick), which is
+why the donor search reads the published set.
+
 **A document can be completely correct and still never reach the renderer.**
 Read [`docs/reports/RENDER_BOUNDARY.md`](./docs/reports/RENDER_BOUNDARY.md)
 before touching `renderResourcePolicy.pure.ts`, `printFontPolicy.pure.ts`,

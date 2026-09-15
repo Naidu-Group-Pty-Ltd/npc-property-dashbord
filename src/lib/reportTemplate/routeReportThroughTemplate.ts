@@ -46,6 +46,8 @@ import { resolveReportTemplate, type ReportVariant } from '@/lib/reportTemplate/
 import { refuseUnboundReconstruction } from '@/lib/reportTemplate/rendering/productionTemplateGuard';
 import { getAdapter, listAdapters, type ReportTemplateAdapter } from '@/lib/reportTemplate/adapters';
 import { isSelectableTemplate } from '@/lib/reportTemplate/templateSelection';
+import { measureBindingCoverage } from '@/lib/reportTemplate/templateBindingCoverage.pure';
+import { composeTemplateWithDonor } from '@/lib/reportTemplate/templateComposition.pure';
 
 /**
  * Why the templated document was not produced.
@@ -89,6 +91,15 @@ export type TemplateRouteRefusal =
   /** A static copy of one client's report; see `productionTemplateGuard`. */
   | 'template_unbound_reconstruction'
   /**
+   * The template binds nothing of this report's body, and no published
+   * template for the format could lend it one. Measured, never inferred:
+   * every bound path was resolved against the data the adapter built, the
+   * way the renderer would resolve it (`templateBindingCoverage.pure.ts`).
+   * On 15 Sep 2026 a five-page library template shipped near-empty under the
+   * tenant's letterhead because nothing measured this.
+   */
+  | 'template_carries_no_content'
+  /**
    * The print engine did not answer — the render service host answered
    * 502/503/504 or nothing at all. Distinct from `render_failed` because the
    * remedy is different (wait, or check the Cloud Run service) and because
@@ -113,6 +124,7 @@ export const TEMPLATE_ROUTE_REFUSAL_TEXT: Readonly<Record<TemplateRouteRefusal, 
   adapter_published_no_data: 'This record published no data for the template to bind',
   template_schema_invalid: 'The template could not be read against the current schema',
   template_unbound_reconstruction: 'The template is a fixed copy of one report and cannot be reused',
+  template_carries_no_content: 'The chosen template binds none of this report\'s content, and no template that does is published for the format',
   engine_unavailable: 'The print engine did not answer',
   render_failed: 'The renderer could not produce the document',
   unexpected_error: 'Something went wrong preparing the document',
@@ -155,6 +167,22 @@ export interface TemplateBuilderRouteResult {
     renderer: typeof WEASYPRINT_FINAL_RENDERER;
     refusal: Extract<TemplateRouteRefusal, 'engine_unavailable' | 'render_failed'>;
     detail: string;
+  } | null;
+  /**
+   * Set when the chosen template could not carry the report and was composed
+   * over a donor: its cover and closing pages kept, its content pages that
+   * resolved nothing of this report left out, and the report body drawn from
+   * the donor's pages under the chosen template's tokens. Null when the
+   * template was drawn as designed. See `templateComposition.pure.ts`.
+   */
+  composed: {
+    donorTemplateId: string;
+    donorName: string | null;
+    /** Names of the chosen template's pages that were kept, in order. */
+    kept: string[];
+    /** Names of the chosen template's pages left out. */
+    dropped: string[];
+    bodyPages: number;
   } | null;
 }
 
@@ -272,6 +300,93 @@ async function loadSelectedTemplate(
     console.warn('[routeReportThroughTemplate] selected template lookup failed', e);
     return null;
   }
+}
+
+/** How many published templates the donor search will read the schema of. */
+const DONOR_SEARCH_LIMIT = 8;
+
+interface BodyDonor {
+  id: string;
+  name: string | null;
+  schema: ReturnType<typeof parseTemplate>;
+}
+
+/**
+ * A published template for this format that carries the report body, for a
+ * chosen template that does not.
+ *
+ * The ranking's own answer is asked first — it is what the document would
+ * have come out in had nobody chosen — but the ranking prefers a person's own
+ * templates over the global masters (`resolve_report_template`: user > agency
+ * > global), so the very template that cannot carry the report can also be
+ * the one the ranking picks. The published set is then read, defaults and
+ * global scope first, one schema at a time up to `DONOR_SEARCH_LIMIT`, until
+ * one measures as carrying the body against THIS report's data. A candidate
+ * that does not parse, or does not carry it, is passed over rather than
+ * reported: the caller names the refusal once, when none does.
+ */
+async function findBodyDonor(
+  reportType: string,
+  excludeId: string,
+  data: Record<string, unknown>,
+  ranking: { variant: ReportVariant | null; agencyId: string | null; userId: string | null },
+): Promise<BodyDonor | null> {
+  const tried = new Set<string>([excludeId]);
+  // A donor that carries the report's narrative is preferred; one that
+  // resolves any content at all is the fallback, for formats with no narrative.
+  let contentOnly: BodyDonor | null = null;
+  const consider = (row: any): BodyDonor | null => {
+    if (!row?.id || tried.has(row.id)) return null;
+    tried.add(row.id);
+    try {
+      const schema = parseTemplate(row.schema);
+      const cov = measureBindingCoverage(schema, data);
+      const donor = { id: row.id, name: row.name ?? null, schema };
+      if (cov.carriesBody) return donor;
+      if (cov.carriesContent && !contentOnly) contentOnly = donor;
+      return null;
+    } catch {
+      return null;
+    }
+  };
+  try {
+    const ranked = await resolveReportTemplate({ reportType, ...ranking });
+    const fromRanking = ranked ? consider(ranked.template) : null;
+    if (fromRanking) return fromRanking;
+    const listing = await invokeSecureFunction('manage-templates', {
+      operation: 'list',
+      table: 'report_templates',
+      listOptions: {
+        select: 'id,name,report_type,engine,is_active,is_default,is_draft,scope,priority,updated_at',
+        orderBy: 'priority',
+        orderAsc: false,
+        filters: { is_active: true },
+        limit: 200,
+      },
+    });
+    const records = (listing?.data as { records?: unknown } | null | undefined)?.records;
+    if (listing?.error || !Array.isArray(records)) return contentOnly;
+    const rank = (r: any): number =>
+      (r.is_default ? 0 : 1) * 10 + (r.scope === 'global' || !r.scope ? 0 : 1);
+    const candidates = (records as any[])
+      .filter((r) => !tried.has(r.id) && isSelectableTemplate(r, reportType))
+      .sort((a, b) => rank(a) - rank(b)
+        || (Number(b.priority ?? 0) - Number(a.priority ?? 0))
+        || String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')))
+      .slice(0, DONOR_SEARCH_LIMIT);
+    for (const candidate of candidates) {
+      const got = await invokeSecureFunction('manage-templates', {
+        operation: 'get',
+        table: 'report_templates',
+        recordId: candidate.id,
+      });
+      const hit = consider((got?.data as { record?: unknown } | null | undefined)?.record);
+      if (hit) return hit;
+    }
+  } catch (e) {
+    console.warn('[routeReportThroughTemplate] body donor search failed', e);
+  }
+  return contentOnly;
 }
 
 export async function routeReportThroughTemplate(
@@ -429,6 +544,61 @@ export async function routeReportThroughTemplate(
       }
 
       /*
+       * Does this template carry the report at all?
+       *
+       * The two guards above catch a static copy and an empty context. A
+       * template that binds the WRONG vocabulary passed both: the library's
+       * "First-Home Buyer Report" binds `client.deposit`, `grants.fhog` and
+       * `steps.0` — a sample preset no adapter publishes — and on 15 Sep 2026
+       * it drew five near-empty pages under the tenant's letterhead, as a
+       * success. Every bound path is now resolved against the data the
+       * adapter built, and a template that binds content of which NONE
+       * resolves is COMPOSED rather than drawn: its cover and closing pages
+       * kept, its blank pages left out, and the body drawn from a published
+       * template that does carry the report, under the chosen template's own
+       * tokens. The choice is honoured as a design; the report is never absent
+       * from its own document. A template that resolves even one content
+       * field, or binds nothing at all, is the author's document and is drawn
+       * exactly as designed. See `templateComposition.pure.ts`.
+       */
+      let composed: TemplateBuilderRouteResult['composed'] = null;
+      const coverage = measureBindingCoverage(schema, bindingData);
+      if (coverage.needsComposition) {
+        const donor = await findBodyDonor(routing.reportType, tplRow.id, bindingData, {
+          variant: routing.variant as ReportVariant | null,
+          agencyId: opts?.agencyId ?? null,
+          userId: opts?.userId ?? null,
+        });
+        const composition = donor ? composeTemplateWithDonor(schema, donor.schema, bindingData) : null;
+        if (!donor || !composition) {
+          refuse('template_carries_no_content',
+            `${tplRow.name ?? tplRow.id}: ${coverage.resolved.length} of ${coverage.bound.length} bound `
+            + `fields resolve on this report and none of them is its body; `
+            + (donor ? 'the donor could not be composed' : `no published ${routing.reportType} template carries the body`));
+          continue;
+        }
+        try {
+          schema = parseTemplate(composition.schema);
+        } catch (e) {
+          refuse('template_schema_invalid',
+            `composed ${tplRow.name ?? tplRow.id} over ${donor.name ?? donor.id}: ${e instanceof Error ? e.message : String(e)}`);
+          continue;
+        }
+        composed = {
+          donorTemplateId: donor.id,
+          donorName: donor.name,
+          kept: composition.kept.map((p) => p.name),
+          dropped: composition.dropped.map((p) => p.name),
+          bodyPages: composition.bodyPages,
+        };
+        console.info(
+          `[routeReportThroughTemplate] composed ${tplRow.name ?? tplRow.id} over ${donor.name ?? donor.id}: `
+          + `kept ${composed.kept.join(', ') || 'nothing'}; dropped ${composed.dropped.join(', ') || 'nothing'}; `
+          + `${composition.bodyPages} body pages`,
+        );
+      }
+
+      /*
        * Compatibility is asked of the RENDERER, not of a column.
        *
        * The gate here used to be `engine !== 'weasyprint'`, which is a record
@@ -562,6 +732,7 @@ export async function routeReportThroughTemplate(
         source: `${resolved.source}:${adapter.reportType}`,
         storagePath,
         degradedFrom,
+        composed,
       };
     }
 

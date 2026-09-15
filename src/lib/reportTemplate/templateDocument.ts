@@ -180,6 +180,32 @@ export function notifyTemplateDrawnInBrowser(detail: string, cause?: string): vo
 }
 
 /**
+ * The chosen template could not carry the report and was composed around it.
+ *
+ * Said at the moment it happens, like the two above, because from the outside
+ * the composed document and the template as designed are both "the template I
+ * chose" — and the difference is exactly what the person who designed or
+ * picked that template needs to hear: which of its pages were kept, that the
+ * rest bound nothing of this report, and whose pages carry the body.
+ */
+export function notifyTemplateComposed(composed: {
+  kept: string[]; dropped: string[]; bodyPages: number; donorName: string | null;
+}): void {
+  const kept = composed.kept.length
+    ? `its ${composed.kept.join(' and ')} ${composed.kept.length === 1 ? 'page was' : 'pages were'} kept`
+    : 'none of its pages could be kept';
+  const dropped = composed.dropped.length
+    ? `, ${composed.dropped.length === 1 ? 'one page' : `${composed.dropped.length} pages`} that bound nothing of this report `
+      + `${composed.dropped.length === 1 ? 'was' : 'were'} left out`
+    : '';
+  toast.info('Your chosen template was composed around this report', {
+    description: `Its pages bind none of this report's content, so ${kept}${dropped}, and the report body `
+      + `was drawn in its palette from ${composed.donorName ?? "the format's default template"}.`,
+    duration: 15_000,
+  });
+}
+
+/**
  * The templated document for this record, or null to carry on as before.
  *
  * `reportId` is nullable for the callers that may not have one — a Borrowing
@@ -283,6 +309,9 @@ export async function tryTemplateDocument(
         routed.degradedFrom.detail,
       );
     }
+    // The chosen template could not carry the report and the body was
+    // composed into it. The document is complete; the person is told how.
+    if (routed.composed) notifyTemplateComposed(routed.composed);
 
     return {
       blob: routed.blob, fileName: routed.fileName, templateId: routed.templateId,
