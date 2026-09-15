@@ -146,15 +146,22 @@ jobs:
 
       # Fly's remote builder builds the Dockerfile — the same image the Cloud
       # Run path built on Cloud Build, self-check and veraPDF layer included.
+      # The build context is the service directory, as `ci.yml`'s
+      # `docker build ./weasyprint-service` and the Cloud Build submit have it:
+      # flyctl uploads the directory it runs in, so run from the repository
+      # root it shipped the whole repository (541 MB, 8,342 files, `.git/`
+      # included) and the Dockerfile's relative `COPY fonts/`, `COPY
+      # requirements.txt` and `COPY app.py selfcheck.py` found nothing — the
+      # first dispatch failed there, before a machine existed.
       # `--ha=false`: one machine, not the two flyctl otherwise creates; the
       # machine's hourly price is the ceiling on what this costs.
       - name: Build and deploy
+        working-directory: weasyprint-service
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           set -euo pipefail
-          flyctl deploy --app "$APP" --config weasyprint-service/fly.toml \
-            --dockerfile weasyprint-service/Dockerfile \
+          flyctl deploy --app "$APP" --config fly.toml --dockerfile Dockerfile \
             --remote-only --ha=false --regions "$REGION" --yes
           echo "url=https://$APP.fly.dev" >> "$GITHUB_ENV"
 

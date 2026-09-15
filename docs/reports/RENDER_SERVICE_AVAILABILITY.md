@@ -223,6 +223,17 @@ the Supabase project, so every render route uses it from its next cold
 start. The bearer token is minted on the runner, masked, written to both
 sides in the same run and never printed.
 
+**The build context is the service directory.** The first dispatch (run 1,
+15 Sep 2026 09:52 UTC) failed in thirty seconds at the build, before a
+machine existed and before anything was repointed: `flyctl deploy` uploads
+the directory it runs in, and run from the repository root it shipped the
+whole repository — 541 MB across 8,342 files, `supabase/` and `.git/`
+included — so the Dockerfile's relative `COPY fonts/`, `COPY
+requirements.txt` and `COPY app.py selfcheck.py` found nothing. `ci.yml`
+builds `./weasyprint-service` and Cloud Build submits that directory; the
+step now runs there too (`working-directory: weasyprint-service`), and
+`renderServiceFlyWorkflow.spec.ts` pins it.
+
 What the owner does, once, with clicks:
 
 1. Create a Fly.io account and add a payment method.
