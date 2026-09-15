@@ -250,6 +250,65 @@ a host whose bill is a machine rather than a meter.
 Afterwards the Cloud Run service is unused and can be deleted from its
 console; nothing in the product names it.
 
+## Choosing the machine plan (commercial use)
+
+Prices below are Fly.io's published shared-CPU and performance rates as last
+read; the page at <https://fly.io/docs/about/pricing/> is the authority and
+should be re-read before deciding. What does not change with the page is
+the shape of the decision.
+
+**What a render costs the machine.** One render is one CPU-bound WeasyPrint
+run: a 53-page Investment Compass took 6–14 s on Cloud Run's 2 vCPU and
+peaked well under 2 GB; a Cash Flow document took 4–9 s. The container runs
+two gunicorn workers, so two renders proceed at once and a third queues
+behind them. Memory, not CPU, is what fails a render (an image-heavy report
+that exceeds the limit is killed); CPU only makes it slower.
+
+**Three configurations, and what each buys.**
+
+| | Leanest | Recommended for a sales team | Highest output |
+| --- | --- | --- | --- |
+| Machine | `shared-cpu-2x`, 2 GB | `shared-cpu-2x`, 2 GB | `performance-1x`, 2 GB (dedicated CPU) |
+| Machines | 1 | 2 (`machines: 2`) | 2 |
+| Always warm | none (`min_machines_running = 0`) | one (`min_machines_running = 1`) | one |
+| First render after a quiet spell | ~10 s boot, then normal | immediate | immediate |
+| Concurrent renders before queuing | 2 | 4 (the second machine starts itself) | 4, each ~1.5–2× faster |
+| Monthly ceiling (every machine running all month) | ≈ $11 | ≈ $23 | ≈ $31 + $11 |
+| Typical month (renders are seconds; idle machines stop) | ≈ $1–4 | ≈ $12–14 | ≈ $32–35 |
+
+The ceiling is real: Fly bills per machine-second while a machine runs, a
+stopped machine costs only its rootfs (cents), and there is no autoscaling
+beyond the count set here — so the worst month is the count times the
+machine's monthly price. Outbound data is a few cents (a report is ~300 KB;
+Sydney egress is priced per GB). A shared IPv4 and TLS certificates are
+included; a dedicated IPv4 is not needed. The remote builder runs only while
+building and stops.
+
+**Why the middle column.** A sales conversation waits on the document, so
+the cold boot is the cost that matters: one always-warm machine removes it
+for about eleven dollars a month, and a second, stopped machine absorbs two
+advisers rendering at once for nothing until it is needed. Dedicated CPU
+(`performance-1x`) is worth its price only once the ledger shows renders
+routinely over ~15 s or more than two in flight at once — read
+`api_usage_log.response_time_ms` for `weasyprint/render` before paying for
+it, not after.
+
+**Which Fly.io plan.** *Pay As You Go* (no monthly fee, community support)
+is the right one to start on: everything above is usage, and the support
+plans (*Launch*, *Scale*) sell response-time commitments rather than
+capacity. Move to *Launch* only when a client-facing commitment needs email
+support with a response target; whether its fee is credited against usage
+is stated on the plans page and should be checked at the time.
+
+**Guardrails.** Set `machines` to the ceiling you accept and leave it; buy
+prepaid credit if a fixed monthly outlay is preferred to a card on file;
+review the Fly usage page and the ledger monthly. Two limits to know:
+Fly's proxy closes an HTTP response idle for 60 s (a render is seconds, so
+this is far away, and the client's own 600 s budget is unchanged), and a
+machine at its memory limit is killed rather than slowed — if the revision
+logs ever say so, `memory = "4096mb"` in `fly.toml` is the fix, at roughly
+double the machine price.
+
 ## Redeploy without a terminal
 
 Two routes need neither gcloud nor Cloud Shell.

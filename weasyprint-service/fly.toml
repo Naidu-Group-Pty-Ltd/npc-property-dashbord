@@ -24,8 +24,23 @@ primary_region = "syd"
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
+  # 0 = the machine stops when idle and the first request after a quiet spell
+  # pays a ~10 s boot (gunicorn preload + warm-up render). 1 = one machine is
+  # always warm, at that machine's monthly price. See RENDER_SERVICE_AVAILABILITY.md,
+  # "Choosing the machine plan".
   min_machines_running = 0
   processes = ["app"]
+
+  # A render is CPU-bound and the container runs 2 gunicorn workers, so two
+  # renders run at once and a third queues. With these limits Fly's proxy
+  # prefers a machine with fewer than 2 renders in flight, starts a stopped
+  # second machine (where one exists) once every running one has 2, and
+  # never sends a machine more than 4 — the same ceiling the Cloud Run
+  # service ran with (`--concurrency 4`).
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 2
+    hard_limit = 4
 
   # A stopped machine boots gunicorn under `--preload` and renders a warm-up
   # page before it listens; the grace period covers that so a cold machine is

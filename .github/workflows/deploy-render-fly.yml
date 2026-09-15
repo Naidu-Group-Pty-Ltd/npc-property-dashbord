@@ -43,6 +43,12 @@ on:
         required: false
         default: true
         type: boolean
+      machines:
+        description: 'How many machines the app keeps: 1 (leanest) or 2 (a second one absorbs concurrent renders and stops when idle). The bill is bounded by this number.'
+        required: false
+        default: '1'
+        type: choice
+        options: ['1', '2']
 
 permissions:
   contents: read
@@ -152,6 +158,17 @@ jobs:
             --remote-only --ha=false --regions "$REGION" --yes
           echo "url=https://$APP.fly.dev" >> "$GITHUB_ENV"
 
+      # A second machine only when asked: it starts when the first has two
+      # renders in flight (fly.toml's soft_limit) and stops when idle. The
+      # count is the ceiling on what this app can cost.
+      - name: Keep two machines, when asked
+        if: ${{ inputs.machines == '2' }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          flyctl scale count 2 --app "$APP" --region "$REGION" --yes
+
       - name: The front door answers
         run: |
           set -euo pipefail
@@ -251,7 +268,7 @@ jobs:
             echo '### Render container on Fly.io'
             echo
             echo "- url: ${url:-<not deployed>}"
-            echo "- app: \`$APP\` in \`$REGION\`, one machine, stopped when idle"
+            echo "- app: \`$APP\` in \`$REGION\`, ${{ inputs.machines || '1' }} machine(s), stopped when idle"
             echo "- edge functions repointed: ${{ inputs.repoint != false && 'yes' || 'no' }}"
             echo
             echo 'Prove it by effect: generate one report with a chosen template. The toast'
