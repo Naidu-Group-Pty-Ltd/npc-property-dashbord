@@ -44,6 +44,16 @@
 > for instance if the package is attached and a 403 persists, when the
 > `X-Domain-Security-Reason` header, if one then appears, is what to quote.
 
+> **Since 15 September 2026 (evening) the grade no longer depends on this
+> package.** The open-data sales registers — Queensland's Statistician by
+> local government area and NSW's DCJ Rent and Sales Report by postcode —
+> supply the growth series at no cost under CC BY 4.0
+> (`docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md`). Domain stays first-class:
+> its suburb-grain series outranks a council or postcode one in the merge
+> the day the package is attached, with no code change. This request is
+> therefore an improvement to the grade's confidence, not its condition.
+
+
 One message, ready to send, plus the evidence behind it. Nothing here is
 speculative: every technical statement was measured, and the questions are the
 ones whose answers change what this platform may do with the data.

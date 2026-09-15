@@ -1510,6 +1510,30 @@ can attach it. `describeDomainRefusal` reads Domain's problem-details `detail`
 and names that finding on the grade gap, so a report withheld for it says
 where the fix is rather than "a restriction Domain must identify".
 
+**Growth no longer waits on Domain.** Read
+[`docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md`](./docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md)
+before touching `_shared/reports/market/openData/*`,
+`openDataSalesEvidence.pure.ts`, `salesRegisterRead.ts`, `market-sales-ingest`
+or the open-data block in the generator. Two publishers put a median sale
+price series on the open web under CC BY 4.0, reachable from the production
+egress (measured 15 Sep 2026): Queensland's Statistician (detached and
+attached dwelling sales by local government area, quarterly since 2008) and
+NSW's DCJ Rent and Sales Report (by postcode and LGA, one workbook a
+quarter). The 8 Sep inventory had recorded Queensland as publishing "none";
+it publishes it under a different product. Both load into
+`market_sales_medians` and the adapter turns a series into the points the
+Growth scorer reads. Four rules bite. **The grain is the publisher's and the
+scorer prices it** — an LGA point scores 55 on the geography factor, a
+postcode 80, a suburb 100, so a council median is a lower-confidence
+measurement, never a substitute claiming to be the suburb and never absent.
+**The register is asked only for the cadastre's council or the trusted
+postcode**, never a typed suburb or a parsed token. **The finer point wins
+the merge**, so Domain's suburb series outranks the register the day its
+package is attached, with no code change. And **a suppressed median is
+null, never zero** — DCJ prints `-` where thirty or fewer sold. Western
+Australia still has no open series and Victoria's is walled to every
+scripted client, so a WA report withholds its grade and says so.
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section
