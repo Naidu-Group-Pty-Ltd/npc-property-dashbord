@@ -108,7 +108,10 @@ implementation agreed.
    operator with `gcloud` on the production project runs the runbook's steps
    0–4 (read why the revision cannot serve; redeploy the image it already
    runs). Until then every chosen template comes out of the in-tab renderer,
-   said so on each download.
+   said so on each download. **Later the same day the owner declined any
+   further Cloud Run deploy on cost grounds** (the last change there cost
+   over $1,200); the route is now Fly.io — `deploy-render-fly.yml`, one
+   secret, one machine — see the runbook's *Leave Cloud Run*.
 6. **Year-1 growth timing.** Both engines apply growth before year 1; kept,
    and now disclosed (`growthTiming`). Confirm or change once, in the engine.
 7. **Overall grades on new reports (S4).** Since 11 Sep 2026 no new report

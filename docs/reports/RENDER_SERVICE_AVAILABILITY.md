@@ -201,6 +201,275 @@ Read the answers in this order:
   logs (step 3) say why, and step 4 is the remedy for all but the memory
   case.
 
+## Leave Cloud Run: the same container on Fly.io
+
+On 15 Sep 2026 the owner declined to deploy on Cloud Run again — the last
+change there had cost over $1,200 — and asked for another way to full
+functionality. There is one, and it was always true: the container has
+never depended on Cloud Run. `weasyprint-service/README.md` has said from
+the start that any host that runs the Dockerfile works, and the edge
+functions locate the engine by exactly two secrets, `WEASYPRINT_SERVICE_URL`
+and `WEASYPRINT_SERVICE_TOKEN`. The same image on another host gives
+identical documents: same engine, same fonts, same PDF/UA output.
+
+`.github/workflows/deploy-render-fly.yml` is that move, made runnable with
+no terminal. It builds the Dockerfile on Fly's remote builder, runs **one**
+machine in Sydney (`weasyprint-service/fly.toml`: `performance-1x`, one
+dedicated CPU, 2 GB,
+stopped when idle and started by the first request), proves it — the front
+door, the pinned engine version, the capability reconciliation, a real
+report rendered whole and tagged — and only then writes the two secrets into
+the Supabase project, so every render route uses it from its next cold
+start. The bearer token is minted on the runner, masked, written to both
+sides in the same run and never printed.
+
+What the owner does, once, with clicks:
+
+1. Create a Fly.io account and add a payment method.
+2. Fly dashboard → **Account → Access Tokens → Create** (an org-scoped
+   deploy token is enough). Copy it.
+3. GitHub → **Settings → Secrets and variables → Actions → New repository
+   secret** `FLY_API_TOKEN`, paste. (`SUPABASE_ACCESS_TOKEN` is already
+   present — the functions deploy uses it.)
+
+Then **Actions → Deploy the render container to Fly.io → Run workflow**,
+by a person or by an agent with repository access. The job summary names the
+URL; the proof by effect is a report generated with a chosen template
+(the browser-stand-in toast must not appear) and a `weasyprint/render` row
+in `api_usage_log` whose host is the Fly URL.
+
+**What it can cost, and why it cannot run away.** One machine: the ceiling
+is that machine's hourly price for a whole month — of the order of ten to
+fifteen dollars at Fly's published shared-CPU rates, check the current page
+— and near zero while stopped. There is no autoscaling to multiply it.
+For comparison, the two Cloud Run services' recorded work is small: the
+render ledger holds 128 calls on 8 Sep and 8 failed ones on the 15th, and
+`pdf_import_jobs` holds 0.3 hours of sidecar time across 70 days — whatever
+cost $1,200 there was not this traffic, which is one more reason to prefer
+a host whose bill is a machine rather than a meter.
+
+Afterwards the Cloud Run service is unused and can be deleted from its
+console; nothing in the product names it.
+
+## Choosing the machine plan (commercial use)
+
+Prices below are Fly.io's published shared-CPU and performance rates as last
+read; the page at <https://fly.io/docs/about/pricing/> is the authority and
+should be re-read before deciding. What does not change with the page is
+the shape of the decision.
+
+**What a render costs the machine.** One render is one CPU-bound WeasyPrint
+run: a 53-page Investment Compass took 6–14 s on Cloud Run's 2 vCPU and
+peaked well under 2 GB; a Cash Flow document took 4–9 s. The container runs
+two gunicorn workers, so two renders proceed at once and a third queues
+behind them. Memory, not CPU, is what fails a render (an image-heavy report
+that exceeds the limit is killed); CPU only makes it slower.
+
+**Three configurations, and what each buys.**
+
+| | Leanest | Recommended for a sales team | Highest output |
+| --- | --- | --- | --- |
+| Machine | `shared-cpu-2x`, 2 GB | `shared-cpu-2x`, 2 GB | `performance-1x`, 2 GB (dedicated CPU) |
+| Machines | 1 | 2 (`machines: 2`) | 2 |
+| Always warm | none (`min_machines_running = 0`) | one (`min_machines_running = 1`) | one |
+| First render after a quiet spell | ~10 s boot, then normal | immediate | immediate |
+| Concurrent renders before queuing | 2 | 4 (the second machine starts itself) | 4, each ~1.5–2× faster |
+| Monthly ceiling (every machine running all month) | ≈ $11 | ≈ $23 | ≈ $31 + $11 |
+| Typical month (renders are seconds; idle machines stop) | ≈ $1–4 | ≈ $12–14 | ≈ $32–35 |
+
+The ceiling is real: Fly bills per machine-second while a machine runs, a
+stopped machine costs only its rootfs (cents), and there is no autoscaling
+beyond the count set here — so the worst month is the count times the
+machine's monthly price. Outbound data is a few cents (a report is ~300 KB;
+Sydney egress is priced per GB). A shared IPv4 and TLS certificates are
+included; a dedicated IPv4 is not needed. The remote builder runs only while
+building and stops.
+
+**Why the middle column.** A sales conversation waits on the document, so
+the cold boot is the cost that matters: one always-warm machine removes it
+for about eleven dollars a month, and a second, stopped machine absorbs two
+advisers rendering at once for nothing until it is needed. Dedicated CPU
+(`performance-1x`) is worth its price only once the ledger shows renders
+routinely over ~15 s or more than two in flight at once — read
+`api_usage_log.response_time_ms` for `weasyprint/render` before paying for
+it, not after.
+
+**Decided 15 September 2026.** The owner set the machine at the
+right-hand column's — `performance-1x`, 2 GB, a dedicated CPU — and
+`fly.toml` ships it. The count and the warm machine were not chosen with
+it: the workflow still deploys one machine, stopped when idle
+(`min_machines_running = 0`), and `machines: 2` at dispatch and
+`min_machines_running = 1` in `fly.toml` remain the way to add them. At
+that size the ceiling is one machine's monthly price (≈ $31 at the rates
+above) and a typical month is a few dollars, because a stopped machine
+costs only its rootfs.
+
+**Which Fly.io plan.** *Pay As You Go* (no monthly fee, community support)
+is the right one to start on: everything above is usage, and the support
+plans (*Launch*, *Scale*) sell response-time commitments rather than
+capacity. Move to *Launch* only when a client-facing commitment needs email
+support with a response target; whether its fee is credited against usage
+is stated on the plans page and should be checked at the time.
+
+**Guardrails.** Set `machines` to the ceiling you accept and leave it; buy
+prepaid credit if a fixed monthly outlay is preferred to a card on file;
+review the Fly usage page and the ledger monthly. Two limits to know:
+Fly's proxy closes an HTTP response idle for 60 s (a render is seconds, so
+this is far away, and the client's own 600 s budget is unchanged), and a
+machine at its memory limit is killed rather than slowed — if the revision
+logs ever say so, `memory = "4096mb"` in `fly.toml` is the fix, at roughly
+double the machine price.
+
+## Redeploy without a terminal
+
+Two routes need neither gcloud nor Cloud Shell.
+
+**In the console, now (two clicks).** Open <https://console.cloud.google.com/run>,
+sign in to the account that owns the project, open `weasyprint-service`,
+click **Edit & deploy new revision**, change nothing, click **Deploy**. That
+is `gcloud run deploy` with the image and environment the service already
+has: a new revision, instances recreated, traffic sent to it. The **Logs**
+tab on the same page shows the error lines the table above reads. Then the
+proof by effect: `GET /` on the service URL answers a JSON listing.
+
+**From the deploy workflow, every time after (one secret, once).** Create a
+service-account key in the console and paste it into the repository secret
+`GCP_SA_KEY` — the steps are in `CONTAINER_RELEASE.md` under *Without a
+terminal*. From then on `Deploy the render container → Run workflow` with
+`mode: redeploy` does the redeploy, shows the front door before, the error
+lines, and the front door after, and fails loudly if the service still does
+not serve — and it can be dispatched by an agent with repository access.
+
+## Redeploy from Cloud Shell — no local tooling
+
+Nothing in this repository can reach Cloud Run: the deploy workflows all
+authenticate by Workload Identity Federation through three repository
+variables that have never been set, and a session of this product's tooling
+holds no Google credential. So the redeploy is a person's act, and the
+shortest path is the browser: open <https://console.cloud.google.com>, sign
+in to the account that owns the project, click **Activate Cloud Shell** (the
+terminal icon, top right), and paste the block below. It is
+`scripts/render-service/redeploy.sh` verbatim — `renderServiceRedeployScript.spec.ts`
+fails if the two ever differ — and it asks before it deploys.
+
+```bash
+cat > redeploy.sh <<'REDEPLOY'
+#!/usr/bin/env bash
+# Redeploy the render container (weasyprint-service) on Cloud Run — from Cloud
+# Shell, with nothing installed locally.
+#
+# What it does, in order: finds the project that holds the service, shows what
+# the front door answers RIGHT NOW (an HTML "Server Error" page in under half a
+# second means no instance is taking requests — 15 Sep 2026), lists the
+# revisions and the service's conditions, prints the last error lines from the
+# revision logs (docs/reports/RENDER_SERVICE_AVAILABILITY.md maps each line to
+# its remedy), then — after asking — deploys the image the service already runs
+# as a NEW revision and sends it traffic, and finally asks the front door again.
+#
+# `gcloud run deploy` keeps the service's existing environment variables
+# (WEASYPRINT_SERVICE_TOKEN among them) when none are named, so the token the
+# edge functions hold stays valid. Nothing here touches Supabase.
+#
+# Usage (Cloud Shell): bash redeploy.sh
+#   CONFIRM=1 bash redeploy.sh        # no question
+#   MEMORY=4Gi bash redeploy.sh       # when the logs say "Memory limit ... exceeded"
+#   PROJECT_ID=... bash redeploy.sh   # when more than one project you can see holds the service
+set -euo pipefail
+
+SERVICE="${SERVICE:-weasyprint-service}"
+REGION="${REGION:-australia-southeast1}"
+MEMORY="${MEMORY:-2Gi}"
+say() { printf '\n== %s\n' "$*"; }
+
+# 0. Which project holds the service? The configured one if it does, else search.
+PROJECT="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || true)}"
+if [ -z "$PROJECT" ] || ! gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format='value(metadata.name)' >/dev/null 2>&1; then
+  say "Looking for a project that holds $SERVICE in $REGION"
+  PROJECT=""
+  for p in $(gcloud projects list --format='value(projectId)'); do
+    if gcloud run services describe "$SERVICE" --project "$p" --region "$REGION" --format='value(metadata.name)' >/dev/null 2>&1; then
+      PROJECT="$p"; break
+    fi
+  done
+  if [ -z "$PROJECT" ]; then
+    echo "No project you can see holds $SERVICE in $REGION. Re-run with PROJECT_ID=<project>." >&2
+    exit 1
+  fi
+fi
+say "Project: $PROJECT"
+
+URL=$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format='value(status.url)')
+say "Service URL: $URL"
+echo "(WEASYPRINT_SERVICE_URL in the Supabase project's secrets must equal this.)"
+
+say "Front door, before — GET / needs no token and no engine"
+echo "JSON means the app is up; an HTML 'Server Error' page means no instance took the request."
+curl -sS -o /tmp/render-root-before.txt -w 'HTTP %{http_code} in %{time_total}s\n' "$URL/" || true
+head -c 300 /tmp/render-root-before.txt; echo
+
+say "Revisions"
+gcloud run revisions list --service "$SERVICE" --project "$PROJECT" --region "$REGION" \
+  --format='table(metadata.name,status.conditions[0].status:label=READY,spec.containers[0].image,metadata.creationTimestamp)'
+
+say "Service conditions and traffic"
+gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" \
+  --format='yaml(status.conditions,status.traffic,status.latestReadyRevisionName,status.latestCreatedRevisionName)'
+
+say "Last error lines from the revision logs — the runbook's table says what each means"
+gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE\" AND severity>=ERROR" \
+  --project "$PROJECT" --limit 30 --freshness 3d --format='value(timestamp,textPayload)' || true
+
+READY_REV=$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format='value(status.latestReadyRevisionName)')
+if [ -z "$READY_REV" ]; then
+  READY_REV=$(gcloud run revisions list --service "$SERVICE" --project "$PROJECT" --region "$REGION" --format='value(metadata.name)' --limit 1)
+fi
+IMAGE=$(gcloud run revisions describe "$READY_REV" --project "$PROJECT" --region "$REGION" --format='value(spec.containers[0].image)')
+say "Image on $READY_REV: $IMAGE"
+
+if [ "${CONFIRM:-}" != "1" ]; then
+  read -r -p "Deploy this image as a new revision (memory $MEMORY) and send it traffic? [y/N] " answer
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *) echo "Not deploying. Re-run with CONFIRM=1 to skip the question."; exit 0 ;;
+  esac
+fi
+
+say "Deploying"
+gcloud run deploy "$SERVICE" --project "$PROJECT" --image "$IMAGE" --region "$REGION" --platform managed \
+  --allow-unauthenticated --memory "$MEMORY" --cpu 2 --concurrency 4 --timeout 600 \
+  --min-instances 0 --max-instances 10
+
+say "Front door, after"
+code=000
+for i in 1 2 3 4 5 6; do
+  code=$(curl -sS -o /tmp/render-root-after.txt -w '%{http_code}' "$URL/" || echo 000)
+  if [ "$code" = "200" ]; then break; fi
+  echo "GET / answered $code; waiting 10s ($i/6)"; sleep 10
+done
+echo "GET /        -> HTTP $code"; head -c 300 /tmp/render-root-after.txt; echo
+echo "GET /healthz -> HTTP $(curl -sS -o /dev/null -w '%{http_code}' "$URL/healthz" || echo 000)"
+if [ "$code" = "200" ]; then
+  echo
+  echo "The service answers. Now generate one report with a chosen template:"
+  echo "the toast 'Your chosen template was drawn in the browser' must NOT appear, and"
+  echo "api_usage_log must show a weasyprint/render row with status = 'success'."
+else
+  echo
+  echo "Still not serving. Read the log lines above; the runbook's table maps each to its remedy"
+  echo "(for 'Memory limit ... exceeded', re-run with MEMORY=4Gi)."
+  exit 1
+fi
+REDEPLOY
+bash redeploy.sh
+```
+
+Read its output in this order: the **front door before** (the HTML page is
+the fault being fixed), the **error lines** (the table above says what each
+one means — `MEMORY=4Gi bash redeploy.sh` for the memory one), then the
+**front door after**: a JSON listing from `GET /` and `200` from `/healthz`
+mean the service is serving again, and the toast *"Your chosen template was
+drawn in the browser"* stops appearing on the next report.
+
 ## What the product does while the engine is down
 
 None of the above makes the service answer, and on the 15th nobody with
