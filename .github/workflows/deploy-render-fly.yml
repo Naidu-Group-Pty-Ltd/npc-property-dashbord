@@ -31,7 +31,7 @@ on:
       app:
         description: 'Fly app name (globally unique). Created if it does not exist.'
         required: false
-        default: npc-weasyprint-service
+        default: aurixa-weasyprint-service
         type: string
       region:
         description: 'Fly region for the machine.'
@@ -58,7 +58,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP: ${{ inputs.app || 'npc-weasyprint-service' }}
+  APP: ${{ inputs.app || 'aurixa-weasyprint-service' }}
   REGION: ${{ inputs.region || 'syd' }}
 
 jobs:

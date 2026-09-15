@@ -9,7 +9,7 @@
 # on what this can cost is that one machine's hourly price — there is no
 # autoscaling here to run away.
 
-app = "npc-weasyprint-service"
+app = "aurixa-weasyprint-service"
 primary_region = "syd"
 
 [build]
