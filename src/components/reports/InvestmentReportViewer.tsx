@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { MarkdownWithFigures } from '@/components/reports/report-view/InvestmentReportMarkdown';
 import remarkGfm from 'remark-gfm';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
@@ -679,9 +680,9 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
                         </div>
                       }
                     >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                        {reportContentWithBadges}
-                      </ReactMarkdown>
+                      {/* The chart directives drawn, not printed — the same
+                          split the report page uses (`viewerFigures.ts`). */}
+                      <MarkdownWithFigures content={reportContentWithBadges} components={markdownComponents} />
 
                       {/* Show sources if they exist */}
                       {report.sources_content && (

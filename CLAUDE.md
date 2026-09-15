@@ -1634,6 +1634,11 @@ against a ~150s edge ceiling. It survives by stopping at a wall-clock budget and
 being resumed — by the browser, the bulk worker, or a cron watchdog. Read
 [`docs/reports/INVESTMENT_REPORT_RESUME.md`](./docs/reports/INVESTMENT_REPORT_RESUME.md)
 before changing the section loop, its timeouts, or anything that claims a report.
+**A model call takes the window the run can spare, never a constant**: the
+closing section measured 40-110s against a fixed 60s timeout, so it timed out on
+every run and 43 invocations were killed with nothing written; every call now
+answers to the run's own deadline, and a section with no window left is
+deferred as a hand-off rather than written up as a failed section.
 
 Ten formats have been migrated onto it, and each carries its own contract:
 [`INVESTMENT.md`](./docs/reports/INVESTMENT.md),

@@ -82,12 +82,43 @@ const POST_PROCESSING_RESERVE_MS = 25_000;
 // Fallback estimate before we have measured a section in this run.
 const DEFAULT_SECTION_ESTIMATE_MS = 30_000;
 
-// Per-call ceilings for the model. These used to be 150s/120s — longer than the
-// entire edge invocation, so one hung call could still blow the whole run past
-// the platform ceiling before the between-sections budget guard could fire.
-// Observed section latency in production is 9-37s, so these leave ample room.
-const SECTION_REQUEST_TIMEOUT_MS = 60_000;
+// Per-call ceilings for the model, and the clock every call answers to.
+//
+// These used to be 150s/120s — longer than the entire edge invocation, so one
+// hung call could still blow the whole run past the platform ceiling before
+// the between-sections budget guard could fire. They were then cut to 60s/45s
+// on the reading that "observed section latency is 9-37s" — which was true of
+// the 2,500-token sections and false of the closing one. Measured on the
+// generation trace, 15 Sep 2026: "Risks & Recommendations" (three headings,
+// 4,000 tokens, a 68 KB prompt) took 40-110s whenever it completed, so the
+// full-prompt attempt timed out at 60s on every run, the compact retry then
+// ran with whatever was left, and 43 invocations for two reports were killed
+// by the platform with no status written — the report's widget read
+// "Section 12 of 12 · 10h 45m elapsed".
+//
+// The fix is not a bigger constant. Every call is given the window it can
+// actually have: the run's own deadline (`SECTION_CALL_HARD_STOP_MS`, inside
+// the watchdog's 130s inner timeout and the platform's ~150s kill), less the
+// post-processing reserve on the closing section, less a reserve for the
+// compact retry while a full-prompt attempt is still worth making. A
+// full-prompt attempt that cannot get its measured floor is skipped for the
+// compact prompt rather than spent on a timeout foretold, and a call with no
+// window left is DEFERRED to the next invocation — reported as a hand-off,
+// never as a failed section.
+const SECTION_REQUEST_TIMEOUT_MS = 90_000;
 const SECTION_CONTINUATION_TIMEOUT_MS = 45_000;
+/** The compact prompt completes in 15-46s measured; this bounds it. */
+const SECTION_EMERGENCY_TIMEOUT_MS = 60_000;
+/** Below this window the full prompt has never completed; go straight to the compact one. */
+const SECTION_FULL_PROMPT_MIN_WINDOW_MS = 60_000;
+/** Held back from a full-prompt attempt so a compact retry still fits after it. */
+const SECTION_SECOND_ATTEMPT_RESERVE_MS = 30_000;
+/** No model call is started with less than this. */
+const SECTION_MIN_CALL_WINDOW_MS = 20_000;
+/** From the run's start: the last moment a model call may still be in flight. */
+const SECTION_CALL_HARD_STOP_MS = 125_000;
+/** The error a section returns when it made no call for want of a window. */
+const SECTION_BUDGET_DEFERRED = 'SECTION_BUDGET_DEFERRED';
 
 // ============================================================================
 // REPORT SECTION DEFINITIONS - SYNCED WITH DATABASE TEMPLATE STRUCTURE
@@ -1651,7 +1682,9 @@ async function generateReportSection(
   previousSections: string,
   propertyAddress: string,
   enhancedData: any,
-  maxRetries: number = 2
+  maxRetries: number = 2,
+  /** Absolute time (ms) by which every model call for this section must be over; null = unbounded. */
+  deadlineAt: number | null = null,
 ): Promise<{ content: string; citations: any[]; error?: string }> {
   // For section10 (Projections & SWOT), inject explicit investment score data
   let investmentScoreContext = '';
@@ -1760,14 +1793,34 @@ Start now with the first heading.`;
 
   // Retry loop with improved backoff and jitter
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // The window THIS attempt may have, from the run's deadline. See the
+    // constants: a full-prompt attempt keeps a reserve for the compact retry,
+    // a window below the full prompt's measured floor goes straight to the
+    // compact prompt, and no window at all is a deferral, not a failure.
+    const remainingMs = deadlineAt === null ? Number.POSITIVE_INFINITY : deadlineAt - Date.now();
+    if (remainingMs < SECTION_MIN_CALL_WINDOW_MS) {
+      console.warn(
+        `⏱️ No window left for ${sectionDef.name} (attempt ${attempt}, `
+        + `${Number.isFinite(remainingMs) ? Math.round(remainingMs / 1000) : '∞'}s remaining) — deferring to the next invocation.`,
+      );
+      return { content: '', citations: [], error: SECTION_BUDGET_DEFERRED };
+    }
+    const fullPromptWindowMs = remainingMs - SECTION_SECOND_ATTEMPT_RESERVE_MS;
+    const useCompactPrompt = attempt > 1 || fullPromptWindowMs < SECTION_FULL_PROMPT_MIN_WINDOW_MS;
+    const attemptTimeoutMs = useCompactPrompt
+      ? Math.min(SECTION_EMERGENCY_TIMEOUT_MS, remainingMs)
+      : Math.min(SECTION_REQUEST_TIMEOUT_MS, fullPromptWindowMs);
     try {
-      console.log(`📝 Generating section: ${sectionDef.name}... (attempt ${attempt}/${maxRetries})`);
-      const userPromptForAttempt = attempt > 1 ? emergencySectionPrompt : sectionPrompt;
-      if (attempt > 1) {
+      console.log(
+        `📝 Generating section: ${sectionDef.name}... (attempt ${attempt}/${maxRetries}, `
+        + `window ${Math.round(attemptTimeoutMs / 1000)}s${useCompactPrompt ? ', compact prompt' : ''})`,
+      );
+      const userPromptForAttempt = useCompactPrompt ? emergencySectionPrompt : sectionPrompt;
+      if (useCompactPrompt) {
         console.log(`🧯 Using emergency compact prompt for ${sectionDef.name}: ${byteLength(userPromptForAttempt)} bytes`);
       }
       
-      const systemPromptForAttempt = attempt > 1
+      const systemPromptForAttempt = useCompactPrompt
         ? 'You are an Australian property investment analyst. Produce concise, sourced markdown and never invent exact figures.'
         : safeSystemMessage;
       const response = await fetchWithTimeout('https://api.perplexity.ai/chat/completions', {
@@ -1785,7 +1838,7 @@ Start now with the first heading.`;
             { role: 'user', content: userPromptForAttempt }
           ]
         }),
-      }, SECTION_REQUEST_TIMEOUT_MS, 'perplexity-api'); // bounded so the loop always regains control, with circuit breaker tracking
+      }, attemptTimeoutMs, 'perplexity-api'); // bounded to the window this attempt actually has, with circuit breaker tracking
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -1845,6 +1898,16 @@ Start now with the first heading.`;
         return false;
       };
       while ((finishReason === 'length' || endsMidThought(content)) && continuationRounds < 2) {
+        // A continuation answers to the same deadline: it is never started
+        // into a window it cannot finish in, because a truncated tail is a
+        // smaller defect than a run killed with nothing written.
+        const continuationWindowMs = deadlineAt === null
+          ? SECTION_CONTINUATION_TIMEOUT_MS
+          : Math.min(SECTION_CONTINUATION_TIMEOUT_MS, deadlineAt - Date.now() - 5_000);
+        if (continuationWindowMs < 15_000) {
+          console.log(`   continuation skipped for ${sectionDef.name}: no window left (${Math.round(continuationWindowMs / 1000)}s)`);
+          break;
+        }
         continuationRounds++;
         console.log(`↪️  Section ${sectionDef.name} appears truncated (finish=${finishReason}) — continuation round ${continuationRounds}`);
         const tail = content.slice(-1200);
@@ -1867,7 +1930,7 @@ Start now with the first heading.`;
                 { role: 'user', content: continuePrompt },
               ],
             }),
-          }, SECTION_CONTINUATION_TIMEOUT_MS, 'perplexity-api');
+          }, continuationWindowMs, 'perplexity-api');
           if (!contResp.ok) {
             console.warn(`   continuation HTTP ${contResp.status} — stopping continuation loop`);
             break;
@@ -6253,10 +6316,20 @@ YOUR DEDICATED PROPERTY PARTNER
       let bestContent = '';
       let bestScore = 0;
       let sectionAttempts = 0;
+      let sectionDeferred = false;
       const maxSectionAttempts = 2; // Retry once if content is insufficient
+      // Every model call for this section answers to the run's clock: the
+      // hard stop, less the post-processing reserve when this is the closing
+      // section, because what follows the last section has to fit too.
+      const sectionDeadlineAt = runStartedAt + SECTION_CALL_HARD_STOP_MS
+        - (isLastSection ? POST_PROCESSING_RESERVE_MS : 0);
       
       for (let attempt = 1; attempt <= maxSectionAttempts; attempt++) {
         sectionAttempts = attempt;
+        if (attempt > 1 && Date.now() > sectionDeadlineAt - SECTION_MIN_CALL_WINDOW_MS) {
+          console.log(`⏱️ No window for a validation retry of ${sectionDef.name}; keeping the best attempt.`);
+          break;
+        }
         
         const result = await generateReportSection(
           sectionDef,
@@ -6265,9 +6338,17 @@ YOUR DEDICATED PROPERTY PARTNER
           perplexityApiKey,
           previousContext,
           formattedInput,
-          enhancedData
+          enhancedData,
+          2,
+          sectionDeadlineAt,
         );
         
+        if (result.error === SECTION_BUDGET_DEFERRED) {
+          // Not a failure: no call was made because no window was left. The
+          // section is handed to the next invocation untouched.
+          sectionDeferred = true;
+          break;
+        }
         if (result.error) {
           console.error(`⚠️ Section ${sectionDef.name} attempt ${attempt} failed:`, result.error);
           if (attempt === maxSectionAttempts) {
@@ -6470,6 +6551,35 @@ YOUR DEDICATED PROPERTY PARTNER
           }
         }
         // === END PROGRESSIVE SAVE ===
+      } else if (sectionDeferred && !bestContent) {
+        // A DEFERRAL — the section made no model call because the run had no
+        // window left for one. It is a budget hand-off exactly like the
+        // between-sections guard's, and is reported as one: progress stands
+        // where it was, no error is written over the row, and the caller
+        // (browser pump or watchdog) invokes again. Writing "failed after N
+        // attempts" here is what turned a full window into ten hours of
+        // retries that each ran out of the same window.
+        console.log(
+          `⏱️ Section ${sectionDef.name} deferred at ${Math.round((Date.now() - runStartedAt) / 1000)}s — `
+          + 'handing off to resume with no attempt spent.',
+        );
+        if (isSingleSectionMode) {
+          await traceFinishRun(_traceSb, _traceRunId, { status: 'completed' });
+          return new Response(JSON.stringify({
+            success: true,
+            isComplete: false,
+            resumeRequired: true,
+            deferred: true,
+            sectionCompleted: lastCompletedSectionIndex,
+            totalSections: filteredSections.length,
+            contentLength: combinedContent.length,
+          }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        budgetExhausted = true;
+        break;
       } else {
         // No content generated for this section at all - still save progress
         sectionResults.push({

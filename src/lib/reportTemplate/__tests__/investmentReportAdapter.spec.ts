@@ -100,3 +100,35 @@ describe('investmentReportAdapter', () => {
       .resolves.toEqual(expect.objectContaining({ reportType: 'investment_compass' }));
   });
 });
+
+describe('investmentReportAdapter — the "Include scoring" switch reaches the bound values', () => {
+  const row = {
+    id: 'report-9',
+    report_scope: 'address',
+    report_tier: 'compass',
+    report_variant: 'compass',
+    property_address: '291 Stone Mason Drive, Kellyville NSW 2155',
+    report_content: '# 1. Summary\n\nProse.\n',
+    investment_score: { grade: 'B+', totalScore: 68, policy: { gradeIssued: true, authority: 'v2' } },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invokeSecureFunction.mockResolvedValue({ data: { report: row }, error: null });
+  });
+
+  it('carries the score by default and when the switch is on', async () => {
+    const on = await investmentReportAdapter.buildBindingContext({ reportId: 'report-9', payload: { includeScoring: true } });
+    const def = await investmentReportAdapter.buildBindingContext({ reportId: 'report-9' });
+    expect((on?.data as { scores?: Record<string, unknown> })?.scores?.grade).toBe('B+');
+    expect((def?.data as { scores?: Record<string, unknown> })?.scores?.grade).toBe('B+');
+  });
+
+  it('draws no score anywhere when the switch is off — the same document the standard presentation prints', async () => {
+    const off = await investmentReportAdapter.buildBindingContext({ reportId: 'report-9', payload: { includeScoring: false } });
+    const scores = (off?.data as { scores?: Record<string, unknown> })?.scores ?? {};
+    expect(scores.grade).toBeUndefined();
+    expect(scores.totalScore).toBeUndefined();
+    expect(Object.keys(scores)).toEqual([]);
+  });
+});
