@@ -15,12 +15,6 @@ on:
         description: Why this inspection is being run
         required: false
         default: ''
-  # GitHub registers a workflow for manual dispatch only once it exists on
-  # the default branch, so while this file lives on a feature branch it runs
-  # on every push that touches it.
-  push:
-    branches: [claude/adoring-hopper-g02tdt]
-    paths: ['.github/workflows/evidence-source-inspect.yml']
 
 permissions:
   contents: read
