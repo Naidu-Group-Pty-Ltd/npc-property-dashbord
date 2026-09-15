@@ -29,3 +29,12 @@ declare module 'https://esm.sh/unpdf@0.12.1' {
 declare module 'https://esm.sh/@supabase/supabase-js@2.55.0' {
   export * from '@supabase/supabase-js';
 }
+
+/*
+ * Build-time flags injected by Vite's `define`. Declared here as well as in
+ * `src/client-facing.d.ts` because the platform's own typecheck runs under a
+ * configuration that does not pick that file up, and an undeclared name there
+ * reports as four errors on every build.
+ */
+declare const __CLIENT_FACING__: boolean;
+declare const __CLIENT_FACING_ALLOW__: readonly string[];
