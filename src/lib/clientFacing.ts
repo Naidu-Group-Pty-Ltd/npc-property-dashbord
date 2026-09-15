@@ -28,6 +28,17 @@
  * is unlinked and what is unroutable cannot drift apart.
  */
 
+/*
+ * The Vite `define` constants, declared HERE as well as in `global.d.ts` and
+ * `src/client-facing.d.ts`. The platform's own typecheck runs over a file list
+ * that picks up neither ambient file, and an undeclared name reported as four
+ * errors on every build. A module-scope `declare const` shadows the ambient one
+ * harmlessly and cannot be missed by any configuration that compiles this file.
+ */
+declare const __CLIENT_FACING__: boolean;
+declare const __CLIENT_FACING_ALLOW__: readonly string[];
+
+
 /**
  * The truth table for the raw value: only an explicit opt-in enables the mode.
  *
