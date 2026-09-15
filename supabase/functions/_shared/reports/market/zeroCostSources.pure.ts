@@ -56,6 +56,30 @@
  * price series, and this module refuses to let them look as though they do:
  * every row states the `supplies` dimension it actually serves.
  *
+ * ## The second reading, 15 September 2026
+ *
+ * Finding 2 was wrong about Queensland, and the correction is the one that
+ * matters most: 50.8% of the Growth-ready corpus. QGSO's housing theme IS
+ * building approvals, but its residential land development activity
+ * spreadsheet — a different product — carries the median price and number
+ * of detached and attached dwelling sales for every monitored local
+ * government area, quarterly since June 2008, from the Queensland Valuation
+ * and Sales database, under CC BY 4.0, and www.qgso.qld.gov.au answers this
+ * project's egress. New South Wales, likewise: the DCJ Rent and Sales Report
+ * publishes the sale-price median and count by POSTCODE (and LGA) every
+ * quarter, CC BY 4.0, reachable, back to 2017. Neither is suburb grain — an
+ * LGA median and a postcode median are what they are — and the Growth
+ * scorer prices exactly that (`growthScoring.pure.ts`: postcode 80, LGA 55
+ * on the geography factor), so a figure at that grain is a lower-confidence
+ * measurement, never a substitute claiming to be the suburb. The grain rule
+ * in `zeroCostEvidence.spec.ts` was narrowed accordingly: a STATE or
+ * capital-city price is context; a council or postcode median is Growth at
+ * its own grain. Both registers are loaded by `market-sales-ingest`
+ * (`docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md`). Victoria was re-measured
+ * from a third egress (a GitHub-hosted runner) and is walled there too; South
+ * Australia's catalogue API answered 403 from the production egress this
+ * time while the same runner read it, so it stays `blocked_forbidden`.
+ *
  * ## The rule
  *
  * **A source is only in the zero-cost stack when licence AND reachability were
@@ -68,10 +92,10 @@
 
 import type { EvidenceAcquisition } from './marketEvidence.pure.ts';
 
-export const ZERO_COST_INVENTORY_VERSION = 'me6.zerocost.1';
+export const ZERO_COST_INVENTORY_VERSION = 'me6.zerocost.2';
 
-/** When every reachability reading in this module was taken. */
-export const INVENTORY_MEASURED_ON = '2026-09-08';
+/** When the newest reachability reading in this module was taken; each row's `measurement` dates its own. */
+export const INVENTORY_MEASURED_ON = '2026-09-15';
 
 /** Which scoring dimension a source can actually feed. */
 export type EvidenceDimension = 'growth' | 'demand' | 'context';
@@ -176,7 +200,10 @@ export const ZERO_COST_SOURCES: readonly ZeroCostSource[] = [
     measurement: 'land.vic.gov.au answered 403 with a Cloudflare "Just a moment..." '
       + 'interstitial to BOTH the development egress (curl, with and without an '
       + 'identifying User-Agent) and the production Supabase egress (pg_net, request '
-      + '126902/126922). Licence permits reuse; the host refuses non-browser clients.',
+      + '126902/126922), and again on 2026-09-15 to a GitHub-hosted runner with a browser '
+      + 'User-Agent. Licence permits reuse; the host refuses non-browser clients on three '
+      + 'networks. The DataVic and data.gov.au catalogue entries (both 200) point at the same '
+      + 'walled host, so no mirror carries the file.',
     scheduledIngestionRequired: true,
   },
   {
@@ -246,8 +273,11 @@ export const ZERO_COST_SOURCES: readonly ZeroCostSource[] = [
     delivery: 'file',
     reachability: 'blocked_forbidden',
     measurement: 'data.sa.gov.au file downloads answered a plain 403 from the production '
-      + 'egress (pg_net 126919/126920) while its CKAN search API answered 200. The '
-      + 'catalogue is open and the file host is not.',
+      + 'egress (pg_net 126919/126920) while its CKAN search API answered 200 on 2026-09-08; '
+      + 'on 2026-09-15 package_show and package_search BOTH answered 403 from the production '
+      + 'egress (pg_net 240128/240151) while a GitHub-hosted runner read the package: 43 '
+      + 'quarterly XLSX resources back to 2016, most datastore-active. The catalogue is open '
+      + 'and this project\'s egress is refused.',
     scheduledIngestionRequired: true,
   },
   {
@@ -267,6 +297,50 @@ export const ZERO_COST_SOURCES: readonly ZeroCostSource[] = [
       + '"sale_year;small_area;type;median_price;transaction_count" — exactly the Growth '
       + 'shape. Covers ONE local government area, so it reaches almost none of the corpus.',
     scheduledIngestionRequired: false,
+  },
+
+  // ---- QLD, second reading (2026-09-15): the Statistician's dwelling-sales series.
+  {
+    id: 'qld_qgso_rlda_dwelling_sales',
+    jurisdiction: 'QLD',
+    publisher: "Queensland Government Statistician's Office (Queensland Treasury)",
+    title: 'Residential land development activity — dwelling sales: median price and number, detached and attached, by LGA, quarterly',
+    supplies: 'growth',
+    grain: 'lga',
+    dwellingSegmented: true,
+    licence: 'Creative Commons Attribution 4.0 International (statistics.qgso.qld.gov.au/rlda-profiles)',
+    acquisition: 'open_public',
+    delivery: 'file',
+    reachability: 'reachable_production',
+    measurement: 'www.qgso.qld.gov.au answered 200 from the production egress (pg_net 240150): '
+      + 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, 617,018 bytes, PK '
+      + 'header. A GitHub-hosted runner read the workbook: 18 sheets, of which SalesDetached_Price, '
+      + 'SalesDetached_Number, SalesAttached_Price and SalesAttached_Number carry 72 quarters '
+      + '(Jun 2008 to Mar 2026) for every monitored local government area from the Queensland '
+      + 'Valuation and Sales database. Loaded by market-sales-ingest (stage qld).',
+    scheduledIngestionRequired: true,
+  },
+
+  // ---- NSW, second reading: the DCJ sales tables are medians already, by postcode.
+  {
+    id: 'nsw_dcj_rent_and_sales_report_sales',
+    jurisdiction: 'NSW',
+    publisher: 'NSW Department of Communities and Justice',
+    title: 'Rent and Sales Report — sales tables: sale price quartiles, median and count by postcode and LGA, quarterly',
+    supplies: 'growth',
+    grain: 'postcode',
+    dwellingSegmented: true,
+    licence: 'Creative Commons Attribution 4.0 International (dcj.nsw.gov.au copyright and disclaimer)',
+    acquisition: 'open_public',
+    delivery: 'file',
+    reachability: 'reachable_production',
+    measurement: 'dcj.nsw.gov.au answered 200 from the production egress for the March 2026 sales '
+      + 'tables (pg_net 240181, PK header; 780,693 bytes read by a GitHub-hosted runner: Postcode '
+      + 'sheet 1,455 rows, LGA sheet 2,850 rows, prices in thousands of dollars, "-" where thirty '
+      + 'or fewer sold) and for the previous-reports page listing 70 sales and rent workbooks back '
+      + 'to 2017 (pg_net 240256). One workbook per quarter, so a growth series is several '
+      + 'workbooks; loaded by market-sales-ingest (stage nsw).',
+    scheduledIngestionRequired: true,
   },
 
   // ---- National context. Real, open, reachable — and never suburb grain.
@@ -332,11 +406,19 @@ export function blockedByTransport(
   );
 }
 
-/** Zero-cost sources that can serve Growth at suburb grain, today. */
+/** The grains the Growth scorer prices on its geography factor (`growthScoring.pure.ts`). */
+export const GROWTH_GRAINS: readonly SourceGrain[] = ['suburb', 'small_area', 'postcode', 'sa2', 'lga'];
+
+/**
+ * Zero-cost sources that can serve Growth today, at a grain the scorer
+ * prices. Suburb grain scores 100 on the geography factor, postcode 80, SA2
+ * 70 and LGA 55 — a coarser reading is a lower-confidence one, never an
+ * absent one, and never a state mean dressed as a suburb.
+ */
 export function growthCapableToday(
   sources: readonly ZeroCostSource[] = ZERO_COST_SOURCES,
 ): readonly ZeroCostSource[] {
   return ingestableToday(sources).filter(
-    (s) => s.supplies === 'growth' && (s.grain === 'suburb' || s.grain === 'small_area'),
+    (s) => s.supplies === 'growth' && GROWTH_GRAINS.includes(s.grain),
   );
 }

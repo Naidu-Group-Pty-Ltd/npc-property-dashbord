@@ -2799,6 +2799,13 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
+    },
+    "market-sales-ingest": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "Open-data sales register ingest (QGSO residential land development activity spreadsheet for QLD by LGA; NSW DCJ Rent and Sales Report sales tables by postcode and LGA) \u2014 fetches the published workbooks itself (both hosts measured reachable from this project on 2026-09-15); parsing server-side with refusal-shaped bounds (header drift, vocabulary drift, a disagreeing reporting period, implausible medians). Gateway JWT on; inside, verifyAuth (internal edge secret or service role). Writes only market_sales_medians/market_sales_sync."
     }
   }
 }

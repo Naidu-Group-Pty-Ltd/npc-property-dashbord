@@ -51,6 +51,9 @@ import { recordedScoreValues } from '../_shared/reports/investment/scoreClaims.p
 import { investmentScorePromptBlock, overallRecommendationLine } from '../_shared/reports/investment/scorePromptBlock.pure.ts';
 import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/reports/market/domainEvidence.pure.ts';
 import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
+import { EVIDENCE_KEYS, emptyEvidence, mergeEvidence, type EvidenceSubject, type MarketEvidence } from '../_shared/reports/market/marketEvidence.pure.ts';
+import { openDataSalesPoints, salesRegisterSourceFor } from '../_shared/reports/market/openDataSalesEvidence.pure.ts';
+import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
@@ -3545,6 +3548,87 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         } else {
           evidenceWithheldReason = 'the property\'s geography did not resolve to a trusted suburb, state and postcode, so no suburb market evidence was sought';
           console.log(`⛔ Market evidence not sought: ${evidenceWithheldReason}`);
+        }
+
+        // Open-data sales registers — the zero-cost growth stack
+        // (docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md). Queensland's register
+        // is keyed by local government area, which the cadastre names for
+        // the verified coordinate; New South Wales's by postcode, which the
+        // boundary service resolved. Nothing is asked for a typed suburb or a
+        // parsed token — the rule Domain and the crime evidence answer to.
+        // Where Domain also answered, the finer point wins per measure
+        // (`mergeEvidence`), so a suburb series outranks a council one.
+        const registerSource = salesRegisterSourceFor(marketState);
+        if (registerSource) {
+          const cadastreLga = enhancedData.planningData?.parcel?.status === 'ok'
+            && typeof enhancedData.planningData?.parcel?.lga === 'string'
+            ? enhancedData.planningData.parcel.lga.trim() : '';
+          const registerAsks: Array<{ areaKind: 'lga' | 'postcode'; area: string }> = [];
+          if (registerSource.areaKind === 'postcode' && marketPostcode) registerAsks.push({ areaKind: 'postcode', area: marketPostcode });
+          if (cadastreLga) registerAsks.push({ areaKind: 'lga', area: cadastreLga });
+          providersConsulted.push(registerSource.provider);
+          if (!registerAsks.length) {
+            providersUnavailable.push({
+              provider: registerSource.provider,
+              reason: registerSource.areaKind === 'postcode'
+                ? 'the geography resolved to no postal area and the cadastre named no local government area'
+                : 'the cadastre named no local government area for the verified coordinate',
+            });
+          } else {
+            const registerSubject: EvidenceSubject = {
+              suburb: marketSuburb,
+              postcode: marketPostcode,
+              state: marketState,
+              dwellingType: dwellingTypeFor(effectivePropertyType),
+              resolvedFrom: marketPostcode ? 'coordinate' : null,
+            };
+            const registerNotes: string[] = [];
+            let registerAnswered = false;
+            for (const ask of registerAsks) {
+              try {
+                const register = await readSalesRegister(supabase, { state: marketState as 'QLD' | 'NSW', areaKind: ask.areaKind, area: ask.area });
+                if (!register.rows.length) {
+                  registerNotes.push(`the register holds no rows for ${ask.areaKind} ${ask.area} (load it with market-sales-ingest)`);
+                  continue;
+                }
+                const answer = openDataSalesPoints({
+                  subject: registerSubject,
+                  askedDwelling: dwellingTypeFor(effectivePropertyType),
+                  areaKind: ask.areaKind,
+                  area: register.areaLabel ?? ask.area,
+                  rows: register.rows,
+                  benchmarkRows: register.benchmarkRows,
+                  source: registerSource,
+                });
+                if (!Object.keys(answer.points).length) {
+                  registerNotes.push(...answer.notes);
+                  continue;
+                }
+                // Merge per measure: a finer, dwelling-matched point wins,
+                // whichever provider it came from.
+                const held = Object.assign(emptyEvidence(registerSubject), marketPoints) as MarketEvidence;
+                const offered = Object.assign(emptyEvidence(registerSubject), answer.points) as MarketEvidence;
+                const merged = mergeEvidence(registerSubject, [held, offered]) as unknown as Record<string, unknown>;
+                for (const key of EVIDENCE_KEYS) {
+                  if (merged[key] !== undefined) marketPoints[key] = merged[key];
+                }
+                evidenceWithheldReason = null;
+                registerAnswered = true;
+                console.log(
+                  `✓ Open-data sales register (${registerSource.provider}) for ${ask.areaKind} ${register.areaLabel ?? ask.area}: `
+                  + `${Object.keys(answer.points).length} evidence points to ${answer.latestPeriod}`
+                  + (answer.dwellingTypeMatched ? '' : ' (dwelling type not matched)'),
+                );
+                break;
+              } catch (error: any) {
+                registerNotes.push(`${ask.areaKind} ${ask.area}: ${error?.message || 'register read failed'}`);
+              }
+            }
+            if (!registerAnswered) {
+              providersUnavailable.push({ provider: registerSource.provider, reason: registerNotes.join('; ') || 'no register series answered' });
+              console.log(`⚠️ Open-data sales register unavailable: ${registerNotes.join('; ')}`);
+            }
+          }
         }
 
         // Population growth — a demand DRIVER — from the SA2 series the

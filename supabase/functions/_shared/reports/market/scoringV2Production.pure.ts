@@ -380,7 +380,7 @@ export function describeGaps(
     switch (key) {
       case 'growth':
         detail = `No suburb capital-growth series for ${subjectLabel(input.subject)} (${providerClause(input.market, input.evidenceWithheldReason)}).`;
-        remedy = 'A Domain suburb-performance series for the trusted suburb and postcode (docs/integrations/DOMAIN_ACTIVATION_REQUEST.md), or a licensed export ingested through evidenceIngestion.';
+        remedy = 'The open-data sales register for the property\'s local government area (QLD) or postcode (NSW), loaded by market-sales-ingest (docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md); a Domain suburb-performance series for the trusted suburb and postcode (docs/integrations/DOMAIN_ACTIVATION_REQUEST.md); or a licensed export ingested through evidenceIngestion.';
         break;
       case 'demand':
         detail = `No demand reading for ${subjectLabel(input.subject)} (${providerClause(input.market, input.evidenceWithheldReason)}).`;
