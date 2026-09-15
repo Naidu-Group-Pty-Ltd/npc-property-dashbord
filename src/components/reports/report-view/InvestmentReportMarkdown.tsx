@@ -2,7 +2,8 @@ import { useMemo, type ComponentProps, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Link } from 'lucide-react';
-import { splitMarkdownForViewer } from '@/lib/reports/viewerFigures';
+import DOMPurify, { type Config } from 'dompurify';
+import { splitMarkdownForViewer, type ViewerSegment } from '@/lib/reports/viewerFigures';
 
 interface InvestmentReportMarkdownProps {
   content: string;
@@ -72,6 +73,47 @@ const FIGURE_STYLES = [
   '[&_.sidenote-label]:mb-2 [&_.sidenote-label]:block [&_.sidenote-label]:text-xs [&_.sidenote-label]:font-semibold [&_.sidenote-label]:uppercase [&_.sidenote-label]:tracking-[0.14em] [&_.sidenote-label]:text-muted-foreground',
 ].join(' ');
 
+/**
+ * The sanitiser the figure HTML passes through before it is injected.
+ *
+ * The HTML is `renderVizDirective`'s own output over escaped directive
+ * values — never markup from the record — but the record is model-written
+ * and stored, and the component that injects HTML is where the rule is
+ * enforced rather than assumed (`check-baseline-invariants`, item 8). The
+ * profile admits exactly what the renderer emits: a `<figure>` carrying the
+ * SVG as a base64 data-URI `<img>` or inline, the at-a-glance callout and
+ * the margin sidenote with its inline spark. Nothing executable, nothing
+ * that navigates and nothing that fetches: `ALLOWED_URI_REGEXP` is
+ * DOMPurify's own with its scheme list reduced to the one data-URI form the
+ * renderer uses (the `[^a-z]` and bare-word alternatives are what let `d`,
+ * `viewBox` and `fill` values through — they are not URIs). A spec proves
+ * the sanitiser removes nothing from a drawn figure of every kind.
+ */
+export const FIGURE_SANITIZE: Config = {
+  USE_PROFILES: { html: true, svg: true, svgFilters: true },
+  FORBID_TAGS: [
+    'script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form',
+    'input', 'button', 'textarea', 'select', 'a', 'foreignObject', 'use', 'image',
+    'audio', 'video', 'source', 'track', 'canvas', 'template',
+  ],
+  FORBID_ATTR: ['srcset', 'href', 'xlink:href', 'tabindex'],
+  ALLOWED_URI_REGEXP: /^(?:data:image\/svg\+xml;base64,|[^a-z]|[a-z+.-]+(?:[^a-z+.:-]|$))/i,
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: true,
+  ALLOW_UNKNOWN_PROTOCOLS: false,
+};
+
+/** Sanitise one figure's HTML. Exported for the spec that measures it. */
+export function sanitizeFigureHtml(html: string): string {
+  return DOMPurify.sanitize(html, FIGURE_SANITIZE);
+}
+
+function sanitizedSegments(content: string): ViewerSegment[] {
+  return splitMarkdownForViewer(content).segments.map((segment) => (
+    segment.kind === 'figure' ? { ...segment, html: sanitizeFigureHtml(segment.html) } : segment
+  ));
+}
+
 interface MarkdownWithFiguresProps {
   content: string;
   components: ComponentProps<typeof ReactMarkdown>['components'];
@@ -85,13 +127,14 @@ interface MarkdownWithFiguresProps {
  * draw them. `splitMarkdownForViewer` uses the same parser, renderer and
  * tabulation fallback those routes use, so what the page shows is what the
  * document prints; the figure HTML is that renderer's own output over the
- * report's directives, never markup from the record.
+ * report's directives, never markup from the record — and it is sanitised
+ * here regardless, because injection is where the rule is enforced.
  */
 export function MarkdownWithFigures({ content, components }: MarkdownWithFiguresProps) {
-  const split = useMemo(() => splitMarkdownForViewer(content ?? ''), [content]);
+  const segments = useMemo(() => sanitizedSegments(content ?? ''), [content]);
   return (
     <div className={FIGURE_STYLES}>
-      {split.segments.map((segment, index) => (
+      {segments.map((segment, index) => (
         segment.kind === 'figure'
           ? (
             <div
