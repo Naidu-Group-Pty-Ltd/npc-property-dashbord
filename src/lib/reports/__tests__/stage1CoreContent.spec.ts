@@ -128,7 +128,7 @@ describe('adoption safety — a report WITH rental evidence is untouched', () =>
   });
 
   it('the normaliser and the binding projection both keep the figures', () => {
-    const model = toFinancial(FOUNDED) as Record<string, unknown>;
+    const model = toFinancial(FOUNDED) as unknown as Record<string, unknown>;
     expect(model.grossYield).toBe(5.67);
     expect(model.netYield).toBe(4.1);
 
