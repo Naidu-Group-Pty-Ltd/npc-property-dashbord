@@ -3,6 +3,7 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { extractStructureHeadings, selectStructureTemplate } from '@/lib/reportTemplate/cascadeMap';
 import { chunkReportContent } from '@/lib/reportTemplate/reportSections';
 import { presentStoredMarkdown } from '@/lib/reports/investment/derivedHygiene.pure';
+import { investmentReportFileName } from '@/lib/reports/investment/reportFileName.pure';
 import { applyInvestmentProjection } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import type { BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';
 import { applyOrganisationAndBrand } from './organisation';
@@ -165,6 +166,13 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
       tier: (row.report_tier ?? null) as string | null,
       title: row.property_address ?? null,
       fileLabel: row.property_address ?? reportType,
+      // Named the way the standard presentation names it, so the two
+      // presentations of one report download under one name.
+      fileName: investmentReportFileName({
+        tier: (row.report_variant ?? row.report_tier ?? null) as string | null,
+        address: row.property_address ?? null,
+        at: new Date(),
+      }),
       sourceTable: 'investment_reports',
       legacyFallback: investmentReportAdapter.legacyFallback,
     };

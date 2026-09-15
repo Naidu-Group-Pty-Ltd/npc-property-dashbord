@@ -111,7 +111,7 @@ function scorePolicy(score: Record<string, unknown>): Record<string, unknown> | 
   return isRecord(score.policy) ? score.policy : null;
 }
 
-function dimensionScoresMayBeShown(score: Record<string, unknown>): boolean {
+export function dimensionScoresMayBeShown(score: Record<string, unknown>): boolean {
   const policy = scorePolicy(score);
   return policy === null || policy.dimensionScoresAuthoritative !== false;
 }

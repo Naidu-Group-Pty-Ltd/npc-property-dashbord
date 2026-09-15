@@ -382,7 +382,10 @@ export async function routeReportThroughTemplate(
       const safeLabel = String(routing.fileLabel ?? routing.title ?? routing.reportType ?? 'report')
         .replace(/[^a-zA-Z0-9._-]/g, '_')
         .slice(0, 60);
-      const fileName = `${routing.reportType}-${safeLabel}-${reportId.slice(0, 8)}.pdf`;
+      // An adapter that names its own document (the Investment family names
+      // it by tier, address and date) is honoured; the generic shape stays
+      // for every adapter that does not.
+      const fileName = routing.fileName ?? `${routing.reportType}-${safeLabel}-${reportId.slice(0, 8)}.pdf`;
 
       let blob: Blob;
       let storagePath: string | null = null;

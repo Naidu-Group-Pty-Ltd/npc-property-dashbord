@@ -46,10 +46,27 @@ import {
 import { VIZ_DIRECTIVE_KINDS, VIZ_DIRECTIVE_RE_G } from '@/lib/reports/vizDirectives.pure';
 import { rentIsEstablished } from '@/lib/reports/investment/rentalEvidence.pure';
 import { presenceOf } from '../../../../supabase/functions/_shared/reports/contract/visibilityPolicy.pure';
+import { documentTitleForTier } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
+import { meaningfulPropertyType } from '@/lib/reports/investment/propertyRecord.pure';
+import {
+  ANONYMOUS_GRID_NOTICE,
+  alignTableRows,
+  looksAnonymousNumericGrid,
+  prepareMarkdownForPlainRenderer,
+  splitPipeRun,
+  splitTableRow,
+} from '@/lib/reports/investment/plainMarkdownHygiene.pure';
+import { investmentReportFileName } from '@/lib/reports/investment/reportFileName.pure';
 import { fetchGlobalReportSettings, type GlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawPdfLibDisclaimerPage } from '@/utils/pdfDisclaimerPage';
 
-export type ReportTier = 'compass' | 'briefing' | 'snapshot' | 'financial';
+/**
+ * The five tiers this presentation draws. `strategic` was missing, so the
+ * unvalidated cast in `investmentPdfSource` let it through to a four-branch
+ * title map whose `else` said "Snapshot Report" — the identity defect the
+ * audit of 291 Stone Mason Drive recorded as QA-32.
+ */
+export type ReportTier = 'compass' | 'briefing' | 'snapshot' | 'financial' | 'strategic';
 
 export interface InvestmentReportData {
   id: string;
@@ -70,6 +87,25 @@ export interface InvestmentReportData {
 
 /** Which machinery drew the bytes. Recorded so telemetry can prove the path. */
 export const BROWSER_PDF_RENDERER = 'browser_pdf_lib' as const;
+
+/**
+ * The caption under the weekly-rent tile: where the figure came from, never a
+ * certification of it. "Current market rate" was printed under an
+ * operator-supplied figure on every document of 291 Stone Mason Drive
+ * (QA-23) while the record held no dated lease, appraisal or comparison that
+ * would earn those words. The generator stamps `weeklyRentSource` when it
+ * resolves the rent; a record without one is captioned as supplied.
+ */
+export function rentProvenanceCaption(
+  income: { weeklyRentSource?: unknown; rentSource?: unknown; source?: unknown } | null | undefined,
+): string {
+  const source = String(income?.weeklyRentSource ?? income?.rentSource ?? income?.source ?? '').trim().toLowerCase();
+  if (source.startsWith('sqm')) return 'Market estimate (SQM Research)';
+  if (source === 'listing' || source === 'advertised') return 'Advertised rent';
+  if (source === 'appraisal' || source === 'agent_appraisal') return 'Agent appraisal';
+  if (source === 'lease' || source === 'achieved' || source === 'current_lease') return 'Current lease';
+  return 'Rent as supplied';
+}
 
 export interface InvestmentPdfBlob {
   blob: Blob;
@@ -336,6 +372,11 @@ export async function generateInvestmentPdfBlob(
 
   // Helper to break long words that exceed maxWidth
   const breakLongWord = (word: string, maxWidth: number, font: any, fontSize: number): string[] => {
+    // A "word" that is one punctuation character repeated is a separator run,
+    // not a word. Hyphenating it letter by letter is how one delimiter row of
+    // thousands of dashes became seven full pages of the Executive Briefing
+    // (QA-35); three of the character stand for the run.
+    if (word.length > 8 && /^([^\w\s])\1+$/.test(word)) return [word.slice(0, 3)];
     const wordWidth = font.widthOfTextAtSize(word, fontSize);
     if (wordWidth <= maxWidth) {
       return [word];
@@ -795,10 +836,18 @@ export async function generateInvestmentPdfBlob(
         },
         isFullLineReplacement: true
       },
-      // Fix malformed Property Type row
+      // A malformed Property Type row is repaired FROM THE RECORD, or left as
+      // the author wrote it. This rule used to substitute the literal
+      // "Residential Property" — the one rule in this table that read no
+      // figure — so a row the model correctly wrote as "Strata Townhouse" was
+      // rewritten to a placeholder classification, and the document became
+      // less specific as it went on (QA-22). `meaningfulPropertyType` refuses
+      // the placeholder family, and a null here means no replacement.
       {
         pattern: /\|\s*Property Type:\s*[^\|]+\|[^\n]*/gi,
-        getValue: () => 'Residential Property',
+        getValue: () => meaningfulPropertyType(
+          financialData?.propertyType ?? financialData?.propertyDetails?.propertyType ?? financialData?.property?.propertyType,
+        ),
         format: (v) => '| Property Type | ' + v + ' |',
         isFullLineReplacement: true
       },
@@ -1452,8 +1501,12 @@ export async function generateInvestmentPdfBlob(
               tableLines.push(lines[i]);
               i++;
             }
-            // Add the complete table as one block
-            blocks.push(tableLines.join('\n'));
+            // One run of pipe lines can hold more than one table: a second
+            // header+delimiter pair starts a second block, so a two-column
+            // assumptions table written directly under a seven-column
+            // projection is drawn as its own table rather than padded out to
+            // seven columns with its labels over its values (QA-34).
+            for (const table of splitPipeRun(tableLines)) blocks.push(table.join('\n'));
           } else {
             // Regular paragraph line
             blocks.push(line);
@@ -1540,38 +1593,23 @@ export async function generateInvestmentPdfBlob(
         const lines = tableText.trim().split('\n').map(l => l.trim()).filter(l => l);
         if (lines.length === 0) return 0;
 
-        // Parse table rows (same logic as drawTable)
+        // Parse table rows (same rules as drawTable: interior empty cells are
+        // kept, and the header decides the column count)
         const rows = lines
           .filter(line => {
             const withoutPipes = line.replace(/\|/g, '').trim();
             const isSeparator = /^[\s\-:]+$/.test(withoutPipes);
             return !isSeparator;
           })
-          .map((line, lineIndex) => {
-            const cells = line.split('|')
-              .map(cell => cell.trim())
-              .filter(cell => cell.length > 0);
-            return cells;
-          })
-          .filter(row => row.length > 0);
+          .map((line) => splitTableRow(line))
+          .filter(row => row.some((cell) => cell.length > 0));
 
         if (rows.length === 0) return 0;
 
-        // ===== ISSUE 6 FIX: Apply same column normalization as drawTable =====
-        const dataRowColumnCounts = rows.slice(1).map(r => r.length);
-        const mostCommonCount = dataRowColumnCounts.length > 0 
-          ? dataRowColumnCounts.sort((a, b) => 
-              dataRowColumnCounts.filter(v => v === b).length - dataRowColumnCounts.filter(v => v === a).length
-            )[0]
-          : rows[0]?.length || 0;
-        
-        const normalizedRows = rows.map((row) => {
-          if (row.length === mostCommonCount) return row;
-          if (row.length > mostCommonCount) return row.slice(0, mostCommonCount);
-          const padded = [...row];
-          while (padded.length < mostCommonCount) padded.push('');
-          return padded;
-        });
+        const alignedForHeight = alignTableRows(rows);
+        // An omitted grid costs one line of notice, not a table's height.
+        if (looksAnonymousNumericGrid(alignedForHeight.header, alignedForHeight.body)) return size + 12;
+        const normalizedRows = [alignedForHeight.header, ...alignedForHeight.body];
 
         const columnCount = Math.max(...normalizedRows.map(r => r.length));
         const cellPadding = 5;
@@ -1659,11 +1697,12 @@ export async function generateInvestmentPdfBlob(
             return !isSeparator;
           })
           .map((line, lineIndex) => {
-            // Split by | and clean up cells - don't strip emojis yet, we'll do it when drawing
-            const cells = line.split('|')
-              .map(cell => cell.trim())
-              .filter(cell => cell.length > 0);
-            
+            // Split by | into cells, KEEPING interior empty cells — a blank
+            // cell is a column, and dropping it is how a row came to report a
+            // different width from its header (QA-36). Emojis are stripped
+            // when drawing, not here.
+            const cells = splitTableRow(line);
+
             // Check if this is a total row (contains "Total" and has amount in the text)
             const lineText = line.toLowerCase();
             const isTotalRow = lineText.includes('total') && /\$[\d,]+\.?\d*/.test(line);
@@ -1713,40 +1752,33 @@ export async function generateInvestmentPdfBlob(
             
             return cells;
           })
-          .filter(row => row.length > 0);
+          .filter(row => row.some((cell) => cell.length > 0));
 
         console.log('Parsed table rows (before normalization):', rows);
 
         if (rows.length === 0) return { lastY: startY, needsNewPage: false };
 
-        // ===== ISSUE 6 FIX: Normalize column counts across all rows =====
-        // Find the most common column count among data rows (skip header for this calculation)
-        // This ensures headers and data rows have matching column counts
-        const dataRowColumnCounts = rows.slice(1).map(r => r.length);
-        const mostCommonCount = dataRowColumnCounts.length > 0 
-          ? dataRowColumnCounts.sort((a, b) => 
-              dataRowColumnCounts.filter(v => v === b).length - dataRowColumnCounts.filter(v => v === a).length
-            )[0]
-          : rows[0]?.length || 0;
-        
-        // Normalize all rows to the most common column count
-        const normalizedRows = rows.map((row, rowIndex) => {
-          if (row.length === mostCommonCount) return row;
-          
-          // If row has more columns than expected, trim from the end (removes Source/Methodology columns)
-          if (row.length > mostCommonCount) {
-            console.log(`  Trimming row ${rowIndex} from ${row.length} to ${mostCommonCount} columns`);
-            return row.slice(0, mostCommonCount);
-          }
-          
-          // If row has fewer columns, pad with empty strings
-          const padded = [...row];
-          while (padded.length < mostCommonCount) {
-            padded.push('');
-          }
-          return padded;
-        });
-        
+        // The header states the column count; rows are aligned under it. A
+        // header one cell short of every row is missing its label column and
+        // gains it on the left — the amenity matrix drew its category names
+        // under "Close" and a blank fifth header because the old rule let the
+        // data rows outvote the header (QA-36).
+        const aligned = alignTableRows(rows);
+        if (aligned.labelColumnAdded) console.log('  Header gained its label column');
+
+        // A grid of bare integers under headers naming no unit, destination or
+        // source cannot tell a reader what its numbers measure. It is omitted
+        // with a visible note rather than drawn as though it were distances or
+        // minutes (QA-36).
+        if (looksAnonymousNumericGrid(aligned.header, aligned.body)) {
+          console.warn('[investmentPdfDocument] table omitted: anonymous numeric grid', aligned.header);
+          const notice = drawTextWithWrap(
+            page, `*${ANONYMOUS_GRID_NOTICE}*`, x, startY, maxWidth, normalFont, boldFont, size, size + 5, 'left',
+          );
+          return { lastY: notice.lastY - 6, needsNewPage: false };
+        }
+
+        const normalizedRows = [aligned.header, ...aligned.body];
         console.log('Normalized table rows:', normalizedRows);
 
         const columnCount = Math.max(...normalizedRows.map(r => r.length));
@@ -2433,7 +2465,11 @@ export async function generateInvestmentPdfBlob(
           row1.push({
             label: 'Weekly Rent',
             value: money(income.weeklyRent),
-            subtitle: 'Current market rate',
+            // Named by its provenance, never certified by a fixed caption.
+            // "Current market rate" was printed under an operator-supplied
+            // figure on every document (QA-23); the record does not hold a
+            // dated lease, appraisal or comparison that would earn the words.
+            subtitle: rentProvenanceCaption(income),
           });
         }
 
@@ -2524,7 +2560,11 @@ export async function generateInvestmentPdfBlob(
         // Capital growth is last because it describes the forecast rather
         // than the property. A stated 0% forecast is a position, not a gap.
         if (has(assumptions?.capitalGrowth)) {
-          row1.push({ label: 'Capital Growth', value: pct(assumptions.capitalGrowth, 1), subtitle: 'Annual forecast' });
+          // An assumption is Recorded; a forecast is Computed from a method
+          // and a date. The value is read from `assumptions`, so it is
+          // captioned as one (QA-24 found it labelled "Annual forecast" here
+          // and "Assumed" in the Snapshot — one figure, two evidence types).
+          row1.push({ label: 'Capital Growth', value: pct(assumptions.capitalGrowth, 1), subtitle: 'Scenario assumption' });
         }
 
         if (row1.length < 2) return null;
@@ -2984,6 +3024,8 @@ export async function generateInvestmentPdfBlob(
       
       // Track section page numbers as we render (used for TOC in compass tier)
       const sectionPageNumbers: Map<string, number> = new Map();
+      /** Sections that drew something; the contents page lists only these. */
+      const paintedSections = new Set<string>();
       
       // ========== DYNAMIC TABLE OF CONTENTS - TWO-PASS APPROACH ==========
       // Only generate TOC for 'compass' tier (full Investor Compass reports)
@@ -3021,11 +3063,12 @@ export async function generateInvestmentPdfBlob(
       currentPage = await addContentPage();
       yPosition = pageHeight - topMargin - 20;
 
-      // Use the property address directly as the title (which admins can edit)
-      // For different tiers, use appropriate prefix
-      const tierPrefix = reportTier === 'compass' ? 'Investment Report' : 
-                         reportTier === 'briefing' ? 'Executive Brief' : 
-                         reportTier === 'financial' ? 'Financial Analysis' : 'Snapshot Report';
+      // Use the property address directly as the title (which admins can edit).
+      // The tier is translated into words in exactly one place —
+      // `DOCUMENT_IDENTITY` — so this document is called what the templated
+      // one, the cover and the file name call it. A four-branch ternary here
+      // titled the Due Diligence Report "Snapshot Report" (QA-32).
+      const tierPrefix = documentTitleForTier(reportTier);
       const titleText = stripEmojis(`${tierPrefix}: ${report.address}`);
       let titleResult = drawTextWithWrap(
         currentPage,
@@ -3089,6 +3132,33 @@ export async function generateInvestmentPdfBlob(
           .replace(/\[(citation(?:\s+needed)?|source(?:\s+needed)?|TBD|placeholder)\]/gi, '')
           .replace(/\((citation(?:\s+needed)?|source(?:\s+needed)?|TBD|placeholder)\)/gi, '')
           .replace(/\[\d+\](?:\[\d+\])*/g, '');
+
+        // The plain renderer's Markdown hygiene — fences unwrapped, footnotes
+        // numbered and listed, underscore emphasis converted, the echoed
+        // authoring note removed, delimiter rows and separator runs tamed —
+        // applied AFTER the citation scrub above so the numbered notes it
+        // writes survive. See `plainMarkdownHygiene.pure.ts`.
+        const prepared = prepareMarkdownForPlainRenderer(content);
+        content = prepared.markdown;
+        const hygieneNotes = Object.entries(prepared.notices).filter(([, n]) => n > 0);
+        if (hygieneNotes.length) {
+          console.log(`🧼 "${sectionName}": ${hygieneNotes.map(([k, n]) => `${k}=${n}`).join(', ')}`);
+        }
+        // A section left with nothing to paint draws no heading either: the
+        // guard used to test the UNSTRIPPED value, so a chapter whose whole
+        // body was directives this presentation cannot draw printed as a
+        // heading over nothing (QA-33). A chapter whose prose lives in its
+        // H3 children is not empty — its heading is their title and stays
+        // (that is the chapter-survival rule `standardPresentationDirectives`
+        // pins), so only a heading with neither body nor children goes.
+        if (!content.trim()) {
+          const hasChildren = [...sectionMetadata.current.values()].some((m) => m.parentSection === sectionName);
+          if (!hasChildren) {
+            console.log(`↷ "${sectionName}" has nothing to paint after hygiene; heading not drawn`);
+            continue;
+          }
+        }
+        paintedSections.add(sectionName);
 
 
         // Clean section name and strip emojis + dedupe repeated word/phrase artefacts
@@ -3523,9 +3593,18 @@ export async function generateInvestmentPdfBlob(
           const isSubsectionHeading = paragraph.trim().match(/^#{3,4}\s+/);
           const paragraphAlignment: 'left' | 'justify' = isSubsectionHeading ? 'left' : 'justify';
           
+          // A paragraph that keeps asking for pages is a defect, not a long
+          // paragraph: the table loop below guards its pages, and this loop
+          // did not — which is how one line spilled across seven pages.
+          let paragraphPages = 0;
           while (remainingParts.length > 0) {
             // Check if we need a new page before starting paragraph
             if (yPosition < bottomMargin + 60) {
+              paragraphPages += 1;
+              if (paragraphPages > 6) {
+                console.warn('[investmentPdfDocument] paragraph abandoned after six pages');
+                break;
+              }
               currentPage = await addContentPage();
               yPosition = pageHeight - topMargin - 20;
             }
@@ -3784,9 +3863,11 @@ export async function generateInvestmentPdfBlob(
               .trim()
           ));
 
-          
+
           if (!cleanName || cleanName.length < 3) continue;
-          
+          // A section that painted nothing has no page to point at.
+          if (!paintedSections.has(sectionName)) continue;
+
           // Use the sectionMetadata populated during parsing to get the correct level
           // The sectionName IS the key used in sectionMetadata (both come from sections object)
           const metadata = sectionMetadata.current.get(sectionName);
@@ -3940,12 +4021,13 @@ export async function generateInvestmentPdfBlob(
         const cleanSuburb = String(suburb || '').trim();
         const cleanState = String(state || '').trim();
         const locationLabel = [cleanSuburb, cleanState].filter(Boolean).join(', ');
+        const documentTitle = documentTitleForTier(reportTier);
         const pdfTitle = locationLabel
-          ? `Investment Report — ${locationLabel}`
-          : 'Investment Report';
+          ? `${documentTitle} — ${locationLabel}`
+          : documentTitle;
         pdfDoc.setTitle(pdfTitle);
         pdfDoc.setAuthor('NPC Services');
-        pdfDoc.setSubject('Property Investment Report');
+        pdfDoc.setSubject(`${documentTitle} — ${String(report.address || '').trim()}`);
         pdfDoc.setCreator('NPC Command Centre');
         pdfDoc.setProducer('NPC Command Centre');
         pdfDoc.setCreationDate(new Date());
@@ -3962,7 +4044,8 @@ export async function generateInvestmentPdfBlob(
       const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
       console.log('✓ Blob created');
       
-      const fileName = `${report.id}_${suburb}_${state}_${Date.now()}.pdf`;
+      // Named by what it is, whose it is and when — see `reportFileName.pure.ts`.
+      const fileName = investmentReportFileName({ tier: reportTier, address: report.address, at: new Date() });
       return { blob, fileName, suburb, state };
   };
 
