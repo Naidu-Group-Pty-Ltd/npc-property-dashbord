@@ -152,7 +152,7 @@ export function financialWarningsForPrompt(financials: unknown, score: unknown):
   const last = moderate.length ? moderate[moderate.length - 1] : {};
   const published = Array.isArray(sens.scenarios) ? sens.scenarios.map(rec) : [];
   const labelFor = (key: string, fallback: string): string => {
-    const hit = published.find((x) => x.key === key);
+    const hit = published.find((x) => x.id === key);
     return (hit && typeof hit.label === 'string' && hit.label) || fallback;
   };
 

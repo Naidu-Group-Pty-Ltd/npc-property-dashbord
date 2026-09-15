@@ -266,7 +266,7 @@ function sensitivity(fin: Record<string, unknown>): ComposedChapter | null {
   // 7.5% (+1.0 pt)"); the keyed deltas alone are labelled by their change.
   const published = Array.isArray(sens.scenarios) ? sens.scenarios.map(obj) : [];
   const publishedLabel = (key: string): string | undefined => {
-    const hit = published.find((s) => s.key === key);
+    const hit = published.find((s) => s.id === key);
     return hit ? str(hit.label) : undefined;
   };
   const scenarioRows = (
@@ -461,7 +461,7 @@ function financialRiskDashboard(fin: Record<string, unknown>): ComposedChapter |
 
   const published = Array.isArray(sens.scenarios) ? sens.scenarios.map(obj) : [];
   const labelFor = (key: string, fallback: string): string => {
-    const hit = published.find((x) => x.key === key);
+    const hit = published.find((x) => x.id === key);
     return (hit && str(hit.label)) ?? fallback;
   };
   const shockRow = (source: Record<string, unknown>, key: string, fallback: string): [string, string | undefined] => {

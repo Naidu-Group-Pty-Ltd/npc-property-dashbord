@@ -512,13 +512,13 @@ export function calculateSensitivityAnalysis(
   };
 
   const rateScenarios = [
-    { key: 'minus1Percent', delta: -1 },
-    { key: 'plus1Percent', delta: 1 },
-    { key: 'plus2Percent', delta: 2 },
-  ].map(({ key, delta }) => {
+    { id: 'minus1Percent', delta: -1 },
+    { id: 'plus1Percent', delta: 1 },
+    { id: 'plus2Percent', delta: 2 },
+  ].map(({ id, delta }) => {
     const rate = Math.round((baseRate + delta) * 100) / 100;
     return {
-      key, kind: 'rate' as const, rate, deltaPoints: delta,
+      id, kind: 'rate' as const, rate, deltaPoints: delta,
       // "7.5% (+1.0 pt)" — the actual rate tested and the change from the
       // base, because three rows all labelled with the base rate cannot be
       // read as a stress test (QA-08).
@@ -527,11 +527,11 @@ export function calculateSensitivityAnalysis(
     };
   });
   const rentScenarios = [
-    { key: 'minus10Percent', change: -0.1 },
-    { key: 'plus10Percent', change: 0.1 },
-    { key: 'plus20Percent', change: 0.2 },
-  ].map(({ key, change }) => ({
-    key, kind: 'rent' as const, rentChangePercent: change * 100,
+    { id: 'minus10Percent', change: -0.1 },
+    { id: 'plus10Percent', change: 0.1 },
+    { id: 'plus20Percent', change: 0.2 },
+  ].map(({ id, change }) => ({
+    id, kind: 'rent' as const, rentChangePercent: change * 100,
     label: `Rent ${change > 0 ? '+' : '−'}${Math.abs(change * 100).toFixed(0)}%`,
     annualNet: Math.round(rentScenario(change)),
   }));
@@ -549,7 +549,12 @@ export function calculateSensitivityAnalysis(
     },
     /** The base every scenario moves off — the headline year-1 position. */
     baseCase: { rate: baseRate, annualNet: Math.round(baseNetCashFlow) },
-    /** Every scenario with the parameter it actually tested, for a labelled row. */
+    /**
+     * Every scenario with the parameter it actually tested, for a labelled
+     * row. The field is `id`, not `key`: a field called key holding a
+     * ten-character token is exactly the shape the repository's secret
+     * scanner refuses, and a scenario name is not a credential.
+     */
     scenarios: [...rateScenarios, ...rentScenarios],
     feeBasis: 'collected_rent' as const,
   };

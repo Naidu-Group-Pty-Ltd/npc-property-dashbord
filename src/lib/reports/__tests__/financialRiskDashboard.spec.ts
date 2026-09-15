@@ -21,9 +21,9 @@ const STONE_MASON = {
     interestRateChanges: { plus1Percent: -58_804, plus2Percent: -69_196, minus1Percent: -38_020 },
     rentChanges: { minus10Percent: -52_768, plus10Percent: -44_056 },
     scenarios: [
-      { key: 'plus1Percent', label: 'Interest rate 7.5% (+1.0 pt)' },
-      { key: 'plus2Percent', label: 'Interest rate 8.5% (+2.0 pt)' },
-      { key: 'minus10Percent', label: 'Rent −10% ($810/week)' },
+      { id: 'plus1Percent', label: 'Interest rate 7.5% (+1.0 pt)' },
+      { id: 'plus2Percent', label: 'Interest rate 8.5% (+2.0 pt)' },
+      { id: 'minus10Percent', label: 'Rent −10% ($810/week)' },
     ],
   },
   projections: {

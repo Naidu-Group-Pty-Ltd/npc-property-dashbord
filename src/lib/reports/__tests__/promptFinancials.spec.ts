@@ -17,10 +17,10 @@ describe('sensitivityRowsForPrompt', () => {
       keyMetrics: { annualNet: -48_431 },
       sensitivityAnalysis: {
         scenarios: [
-          { key: 'minus1Percent', kind: 'rate', rate: 5.5, deltaPoints: -1, annualNet: -40_416 },
-          { key: 'plus1Percent', kind: 'rate', rate: 7.5, deltaPoints: 1, annualNet: -56_805 },
-          { key: 'plus2Percent', kind: 'rate', rate: 8.5, deltaPoints: 2, annualNet: -65_497 },
-          { key: 'plus10Percent', kind: 'rent', rentChangePercent: 10, annualNet: -44_102 },
+          { id: 'minus1Percent', kind: 'rate', rate: 5.5, deltaPoints: -1, annualNet: -40_416 },
+          { id: 'plus1Percent', kind: 'rate', rate: 7.5, deltaPoints: 1, annualNet: -56_805 },
+          { id: 'plus2Percent', kind: 'rate', rate: 8.5, deltaPoints: 2, annualNet: -65_497 },
+          { id: 'plus10Percent', kind: 'rent', rentChangePercent: 10, annualNet: -44_102 },
         ],
       },
     });
@@ -103,7 +103,7 @@ describe('financialWarningsForPrompt (QA-37)', async () => {
     loanDetails: { interestOnlyPeriod: 5, interestOnlyPayment: 5_629, amortisingMonthlyPayment: 7_186 },
     sensitivityAnalysis: {
       interestRateChanges: { plus1Percent: -58_804, plus2Percent: -69_196 },
-      scenarios: [{ key: 'plus1Percent', label: 'Interest rate 7.5% (+1.0 pt)' }],
+      scenarios: [{ id: 'plus1Percent', label: 'Interest rate 7.5% (+1.0 pt)' }],
     },
     projections: { moderate: [{ year: 1, cumulativeCashFlow: -48_412 }, { year: 10, cumulativeCashFlow: -484_120 }] },
   };

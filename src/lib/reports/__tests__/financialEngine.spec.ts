@@ -245,7 +245,7 @@ describe('sensitivity — same base as everything else', () => {
       'Interest rate 5.5% (−1.0 pt)', 'Interest rate 7.5% (+1.0 pt)', 'Interest rate 8.5% (+2.0 pt)',
       'Rent −10%', 'Rent +10%', 'Rent +20%',
     ]);
-    const plusOne = s.scenarios.find((x) => x.key === 'plus1Percent')!;
+    const plusOne = s.scenarios.find((x) => x.id === 'plus1Percent')!;
     expect(plusOne.kind === 'rate' && plusOne.rate).toBe(7.5);
     expect(plusOne.annualNet).toBe(s.interestRateChanges.plus1Percent);
     expect(plusOne.annualNet).toBeLessThan(s.baseCase.annualNet);
