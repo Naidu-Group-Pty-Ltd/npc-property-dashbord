@@ -135,3 +135,36 @@ describe('parseVicQuarterly', () => {
     expect(() => parseVicQuarterly(quarterlyGrid().slice(0, 30), 'house', CAPTURED)).toThrow(/fewer than 200/);
   });
 });
+
+describe('a price the sheet cannot mean', () => {
+  // The first production load (16 Sep 2026) refused the whole units time
+  // series — 444 localities over eleven years — because one cell,
+  // TAYLORS LAKES 2018, reads $7,000. A publisher's typo is nulled on its
+  // row and named; only a sheet with more than ten is refused.
+  it('nulls and names one implausible cell rather than refusing the file', () => {
+    const grid = timeSeriesGrid().map((r) => (r[0] === 'COBBLEBANK' ? r.map((v, c) => (c === 7 ? '7000' : v)) : r));
+    const parsed = parseVicTimeSeries(grid, 'house', CAPTURED);
+    expect(parsed.implausible).toEqual([{ area: 'COBBLEBANK', period: '2018-12', value: 7000 }]);
+    expect(parsed.rows.find((r) => r.area === 'COBBLEBANK' && r.period === '2018-12')?.medianPrice).toBeNull();
+    expect(parsed.rows.find((r) => r.area === 'COBBLEBANK' && r.period === '2019-12')?.medianPrice).toBe(480000);
+    expect(parsed.localities).toBe(263);
+  });
+
+  it('refuses a sheet with more than ten such cells, naming the count and the first', () => {
+    // 2019's column: 2018's carries the carried-forward flag on every seventh synthetic row, which empties the cell before it is judged.
+    const grid = timeSeriesGrid().map((r) => (typeof r[0] === 'string' && /^SUBURB 0(0\d|10)$/.test(r[0]) ? r.map((v, c) => (c === 9 ? '7000' : v)) : r));
+    expect(() => parseVicTimeSeries(grid, 'house', CAPTURED)).toThrow(/11 cells outside 50000–30000000 \(first: SUBURB 000 2019-12 at \$7000\), more than 10 — refused/);
+    const ten = timeSeriesGrid().map((r) => (typeof r[0] === 'string' && /^SUBURB 00\d$/.test(r[0]) ? r.map((v, c) => (c === 9 ? '7000' : v)) : r));
+    expect(parseVicTimeSeries(ten, 'house', CAPTURED).implausible).toHaveLength(10);
+  });
+
+  it('applies the same rule to the quarterly sheet, and a typo in the price is not a fact about the sales count', () => {
+    const grid = quarterlyGrid().map((r) => (r[0] === 'TRUGANINA' ? r.map((v, c) => (c === 9 ? '67200000000' : v)) : r));
+    const parsed = parseVicQuarterly(grid, 'house', CAPTURED);
+    expect(parsed.implausible).toEqual([{ area: 'TRUGANINA', period: '2025-12', value: 67200000000 }]);
+    const latest = parsed.rows.find((r) => r.area === 'TRUGANINA' && r.period === '2025-12');
+    expect(latest?.medianPrice).toBeNull();
+    expect(latest?.salesCount).toBe(257);
+    expect(parseVicQuarterly(quarterlyGrid(), 'house', CAPTURED).implausible).toEqual([]);
+  });
+});

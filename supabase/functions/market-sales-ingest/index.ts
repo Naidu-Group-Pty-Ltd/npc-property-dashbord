@@ -51,16 +51,7 @@ import {
   parseSaLsgStats,
   rankOfSaFileName,
 } from '../_shared/reports/market/openData/saLsgStats.pure.ts';
-import {
-  type WaybackCapture,
-  archivePageUrl,
-  capturedAtIso,
-  cdxUrl,
-  newestByRank,
-  originalBytesUrl,
-  parseCdxJson,
-  rankedCaptures,
-} from '../_shared/reports/market/openData/waybackMirror.pure.ts';
+import { type RankedFile, type WaybackCapture, archivePageUrl, capturedAtIso, cdxUrl, newestByRank, originalBytesUrl, parseCdxJson, rankedCaptures, rankedFiles } from '../_shared/reports/market/openData/waybackMirror.pure.ts';
 
 /**
  * Load the open-data sales registers into `market_sales_medians` — the
@@ -138,9 +129,20 @@ async function fetchWorkbook(url: string): Promise<{ workbook: XLSX.WorkBook; by
 /** The archive's index for a publisher's path: every 200 capture, newest first per file. */
 async function archiveIndex(urlPattern: string, from?: string): Promise<WaybackCapture[]> {
   const url = cdxUrl({ urlPattern, from, filters: ['mimetype:(application|text)/.*'] });
-  const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json,*/*' } });
-  if (!res.ok) throw new Error(`the Wayback CDX index answered ${res.status} for ${urlPattern}`);
-  return parseCdxJson(await res.text());
+  // The CDX index sheds load with a 503 or a 504 and answers the same
+  // question a moment later (measured 16 Sep 2026: three refusals and one
+  // 200 for one pattern inside ten minutes), so one refusal is retried
+  // once after a pause and a second one is reported.
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json,*/*' } });
+    if (res.ok) return parseCdxJson(await res.text());
+    await res.body?.cancel();
+    if (res.status >= 500 && attempt === 0) {
+      await new Promise((r) => setTimeout(r, 1500));
+      continue;
+    }
+    throw new Error(`the Wayback CDX index answered ${res.status} for ${urlPattern}${attempt ? ' (twice)' : ''}`);
+  }
 }
 
 function firstGrid(workbook: XLSX.WorkBook): Grid {
@@ -317,6 +319,9 @@ Deno.serve(async (req) => {
         source: VIC_VPSR_SOURCE_LABEL, licence: VIC_VPSR_LICENCE,
         ...('years' in parsed ? { years: parsed.years } : { periods: parsed.periods, latest_period: parsed.latestPeriod }),
         localities: parsed.localities, rows_written: written,
+        // A publisher's typo is nulled on its row and named here, never
+        // silently dropped and never a reason to refuse the file.
+        implausible_cells: parsed.implausible.length, implausible: parsed.implausible.slice(0, 10),
         remaining: all.filter((w) => w !== which),
       };
       await supabase.from('market_sales_sync').insert({ detail });
@@ -325,42 +330,63 @@ Deno.serve(async (req) => {
 
     if (stage === 'sa') {
       const index = await archiveIndex(SA_LSG_ARCHIVE_PATTERN);
-      const files = rankedCaptures(index, SA_LSG_FILE, (_m, c) => rankOfSaFileName(fileNameOf(c.original)));
+      const files = rankedFiles(index, SA_LSG_FILE, (_m, c) => rankOfSaFileName(fileNameOf(c.original)));
       if (!files.length) throw new Error("the archive's index of data.sa.gov.au lists no lsg_stats workbook — refused");
       const periodOfRank = (rank: number): string => `${Math.floor((rank - 1) / 4)}-${['03', '06', '09', '12'][(rank - 1) % 4]}`;
       const rankOfPeriod = (period: string): number => Number(period.slice(0, 4)) * 4 + ['03', '06', '09', '12'].indexOf(period.slice(5)) + 1;
-      let wanted: typeof files;
-      if (Array.isArray(body.periods)) {
-        const ranks = new Set((body.periods as unknown[]).map((p) => rankOfPeriod(String(p))));
-        wanted = files.filter((f) => ranks.has(f.rank));
-      } else {
-        // The newest quarter (which also carries the year-earlier quarter) and the
-        // files three, five and ten years before it — the growth horizons.
-        const latest = files[0];
-        const horizons = [3, 5, 10].map((y) => latest.rank - y * 4);
-        wanted = [latest, ...files.filter((f) => horizons.includes(f.rank))];
-      }
       const loaded: Array<Record<string, unknown>> = [];
       let written = 0;
-      for (const f of wanted) {
-        const capturedAt = capturedAtIso(f.capture.timestamp);
-        try {
-          console.log(`[market-sales-ingest] sa: ${fileNameOf(f.capture.original)} (${periodOfRank(f.rank)}) captured ${capturedAt}`);
-          const { workbook, bytes } = await fetchWorkbook(originalBytesUrl(f.capture));
-          const parsed = parseSaLsgStats(firstGrid(workbook), capturedAt);
-          const records = toRecords(parsed.rows, SA_LSG_SOURCE_LABEL, archivePageUrl(f.capture), SA_LSG_LICENCE, loadedAt);
-          const n = await upsertRecords(supabase, records);
-          written += n;
-          loaded.push({ file: f.capture.original, captured_at: capturedAt, bytes, periods: parsed.periods, suburbs: parsed.suburbs, rows_written: n });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.warn(`[market-sales-ingest] sa: ${fileNameOf(f.capture.original)} refused — ${message}`);
-          loaded.push({ file: f.capture.original, captured_at: capturedAt, refused: message });
+      // One file: its captures newest first, until one serves and parses. The
+      // index can list a capture the store answers 404 for (the newest
+      // workbook's only capture, 16 Sep 2026), and an older copy of the same
+      // file is the same publication.
+      const loadFile = async (f: RankedFile<number>): Promise<boolean> => {
+        const attempts: string[] = [];
+        for (const capture of f.captures) {
+          const capturedAt = capturedAtIso(capture.timestamp);
+          try {
+            console.log(`[market-sales-ingest] sa: ${fileNameOf(f.original)} (${periodOfRank(f.rank)}) captured ${capturedAt}`);
+            const { workbook, bytes } = await fetchWorkbook(originalBytesUrl(capture));
+            const parsed = parseSaLsgStats(firstGrid(workbook), capturedAt);
+            const records = toRecords(parsed.rows, SA_LSG_SOURCE_LABEL, archivePageUrl(capture), SA_LSG_LICENCE, loadedAt);
+            const n = await upsertRecords(supabase, records);
+            written += n;
+            loaded.push({
+              file: f.original, captured_at: capturedAt, bytes, periods: parsed.periods, suburbs: parsed.suburbs,
+              split_suburbs: parsed.splitSuburbs.length, rows_written: n,
+              ...(attempts.length ? { earlier_captures_refused: attempts } : {}),
+            });
+            return true;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`[market-sales-ingest] sa: ${fileNameOf(f.original)} capture ${capturedAt} refused — ${message}`);
+            attempts.push(`${capturedAt}: ${message}`);
+          }
+        }
+        loaded.push({ file: f.original, refused: attempts });
+        return false;
+      };
+      if (Array.isArray(body.periods)) {
+        const ranks = new Set((body.periods as unknown[]).map((p) => rankOfPeriod(String(p))));
+        for (const f of files.filter((x) => ranks.has(x.rank))) await loadFile(f);
+      } else {
+        // The newest quarter that LOADS (it also carries the year-earlier
+        // quarter), then the files three, five and ten years before it — the
+        // growth horizons. A newest file nothing can serve is recorded and the
+        // next newest anchors instead, so the register is as current as the
+        // archive can make it rather than as current as its index claims.
+        let anchor: RankedFile<number> | null = null;
+        for (const f of files.slice(0, 4)) {
+          if (await loadFile(f)) { anchor = f; break; }
+        }
+        if (anchor) {
+          const horizons = [3, 5, 10].map((y) => anchor!.rank - y * 4);
+          for (const f of files.filter((x) => horizons.includes(x.rank))) await loadFile(f);
         }
       }
       const detail = {
         stage, source: SA_LSG_SOURCE_LABEL, licence: SA_LSG_LICENCE, files_indexed: files.length,
-        newest_file: fileNameOf(files[0].capture.original), newest_period: periodOfRank(files[0].rank),
+        newest_file: fileNameOf(files[0].original), newest_period: periodOfRank(files[0].rank),
         files: loaded, rows_written: written,
       };
       await supabase.from('market_sales_sync').insert({ detail });

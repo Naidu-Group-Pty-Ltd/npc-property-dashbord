@@ -23,6 +23,7 @@ import {
   salesRegisterSourcesFor,
 } from '../_shared/reports/market/openDataSalesEvidence.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
+import { periodLabelFor } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import type { EvidenceDwellingType, EvidenceSubject } from '../_shared/reports/market/marketEvidence.pure.ts';
 
 /**
@@ -188,7 +189,12 @@ Deno.serve(async (req) => {
           dwellingType: answer.dwellingType,
           dwellingTypeMatched: answer.dwellingTypeMatched,
           latestPeriod: answer.latestPeriod,
+          latestPeriodLabel: answer.latestPeriod && answer.span ? periodLabelFor(answer.latestPeriod, answer.span) : answer.latestPeriod,
           capturedAt: register.capturedAt,
+          // The reading's currency: when the register last took this series
+          // from its source. The register refreshes itself daily, so this is
+          // the newest publication the source had released as of that day.
+          loadedAt: register.loadedAt,
         });
         if (!candidate) {
           consulted.push({ provider: source.provider, areaKind: source.areaKind, area: register.areaLabel ?? area, outcome: answer.notes.join('; ') || 'no growth horizon could be computed' });

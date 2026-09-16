@@ -95,3 +95,31 @@ describe('parseSaLsgStats', () => {
     expect(() => parseSaLsgStats(grid(HEADER_2024, REAL_2024).slice(0, 50), null)).toThrow(/fewer than 300/);
   });
 });
+
+describe('a suburb that straddles a council boundary', () => {
+  // The workbook lists such a suburb once per council. Both parts in one
+  // upsert made Postgres refuse every South Australian file on the first
+  // production load (16 Sep 2026): "ON CONFLICT DO UPDATE command cannot
+  // affect row a second time". One row per suburb, from the part with the
+  // most sales in the latest quarter, and the choice is named.
+  it('keeps the part with the most sales in the latest quarter and names the choice', () => {
+    const real = [
+      ...REAL_2024,
+      ['PORT ADELAIDE ENFIELD', 'GREENACRES', 6, 610000, 9, 655000, 0.07],
+      ['TEA TREE GULLY', 'GREENACRES', 2, 590000, 3, 601000, 0.02],
+    ];
+    const parsed = parseSaLsgStats(grid(HEADER_2024, real), CAPTURED);
+    const greenacres = parsed.rows.filter((r) => r.area === 'GREENACRES');
+    expect(greenacres).toHaveLength(2);
+    expect(greenacres.find((r) => r.period === '2024-03')).toMatchObject({ medianPrice: 655000, salesCount: 9 });
+    expect(parsed.splitSuburbs).toEqual([{ suburb: 'GREENACRES', councils: 2, kept: 'PORT ADELAIDE ENFIELD' }]);
+    // one row per (suburb, period): the register's key
+    const keys = parsed.rows.map((r) => `${r.area}|${r.period}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(parsed.suburbs).toBe(REAL_2024.length + 1 + 330);
+  });
+
+  it('names nothing when no suburb is split', () => {
+    expect(parseSaLsgStats(grid(HEADER_2024, REAL_2024), CAPTURED).splitSuburbs).toEqual([]);
+  });
+});

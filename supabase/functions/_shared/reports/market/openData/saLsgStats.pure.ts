@@ -26,7 +26,16 @@ export const SA_LSG_SOURCE_LABEL =
 export const SA_LSG_LICENCE = 'Creative Commons Attribution';
 export const SA_LSG_LICENCE_URL = 'https://data.sa.gov.au/data/dataset/metro-median-house-sales';
 /** The archive's index of the dataset's files; the dataset id is stable across its resource ids. */
-export const SA_LSG_ARCHIVE_PATTERN = 'data.sa.gov.au/data/dataset/0d447195-1158-4a3c-8cc7-0e333b87eb72/*';
+/**
+ * The dataset's FILES, not its page. The workbooks live under
+ * `/resource/<id>/download/lsg_stats_YYYY_qN.xlsx`; the dataset page itself
+ * has been captured hundreds of times since 2016 and every one of those rows
+ * was in the wide `dataset/<id>/*` answer. Measured from production on
+ * 16 Sep 2026: the wide question answered 503, 503 and 504 on three of four
+ * asks (the CDX index sheds load on a heavy prefix scan) and 72 KB when it
+ * answered at all; the `/resource/*` question answered 200 in 18 KB.
+ */
+export const SA_LSG_ARCHIVE_PATTERN = 'data.sa.gov.au/data/dataset/0d447195-1158-4a3c-8cc7-0e333b87eb72/resource/*';
 
 /**
  * `lsg_stats_2024_q4.xlsx`, `copy-of-lsg_stats_2020_q1.xlsx`, `lsgstats2016q4.xlsx`,
@@ -67,6 +76,14 @@ export interface SaLsgParse {
   latestPeriod: string;
   suburbs: number;
   councils: number;
+  /**
+   * Suburbs the workbook lists under more than one council, with the council
+   * whose part was kept. The register holds one row per suburb and quarter,
+   * so a suburb that straddles a boundary is filed from the part with the
+   * most sales in the latest quarter — the published figure describing most
+   * of its sales — never averaged, never summed.
+   */
+  splitSuburbs: Array<{ suburb: string; councils: number; kept: string }>;
 }
 
 /**
@@ -91,8 +108,13 @@ export function parseSaLsgStats(grid: Grid, capturedAt: string | null): SaLsgPar
   if (periods.length !== 2 || !cols.some((c) => c.kind === 'median')) {
     throw new Error(`the South Australian sheet names ${periods.length} quarters in its header (expected the quarter and its year-earlier comparison) — refused`);
   }
-  const rows: SalesMedianRow[] = [];
-  const suburbs = new Set<string>();
+  // The workbook is one row per (council, suburb): a suburb that straddles a
+  // council boundary appears once per council, each part with its own median
+  // and count. The first production load (16 Sep 2026) put both parts in one
+  // upsert and Postgres refused the batch — "ON CONFLICT DO UPDATE command
+  // cannot affect row a second time" — on every file. The register's key is
+  // the suburb, so the parts are gathered first and one is chosen.
+  const parts = new Map<string, Array<{ council: string; latestSales: number; rows: SalesMedianRow[] }>>();
   const councils = new Set<string>();
   for (let r = headerRow + 1; r < grid.length; r++) {
     const row = grid[r] ?? [];
@@ -100,8 +122,8 @@ export function parseSaLsgStats(grid: Grid, capturedAt: string | null): SaLsgPar
     const suburb = text(row[1]);
     if (!suburb || !council) continue;
     if (suburb.length > 60) continue;
-    suburbs.add(suburb);
     councils.add(council);
+    const part = { council, latestSales: -1, rows: [] as SalesMedianRow[] };
     for (const period of periods) {
       const medianCol = cols.find((c) => c.kind === 'median' && c.period === period);
       const salesCol = cols.find((c) => c.kind === 'sales' && c.period === period);
@@ -110,16 +132,29 @@ export function parseSaLsgStats(grid: Grid, capturedAt: string | null): SaLsgPar
       if (median !== null && (median < SA_PLAUSIBILITY.minPrice || median > SA_PLAUSIBILITY.maxPrice)) {
         throw new Error(`the South Australian sheet prices ${suburb} ${period} at $${median}, outside ${SA_PLAUSIBILITY.minPrice}–${SA_PLAUSIBILITY.maxPrice} — refused`);
       }
-      rows.push({
+      const salesCount = sales !== null && sales >= 0 ? Math.round(sales) : null;
+      if (period === periods[1] && salesCount !== null) part.latestSales = salesCount;
+      part.rows.push({
         state: 'SA', areaKind: 'suburb', area: suburb, dwellingType: 'house', period,
         medianPrice: median,
-        salesCount: sales !== null && sales >= 0 ? Math.round(sales) : null,
+        salesCount,
         priceMeasure: 'median', periodSpan: 'quarter', capturedAt,
       });
     }
+    const list = parts.get(suburb) ?? [];
+    list.push(part);
+    parts.set(suburb, list);
   }
-  if (suburbs.size < SA_PLAUSIBILITY.minSuburbs) {
-    throw new Error(`the South Australian sheet lists ${suburbs.size} suburbs, fewer than ${SA_PLAUSIBILITY.minSuburbs} — refused`);
+  const rows: SalesMedianRow[] = [];
+  const splitSuburbs: SaLsgParse['splitSuburbs'] = [];
+  for (const [suburb, list] of parts) {
+    // The part with the most sales in the latest quarter; the first listed on a tie.
+    const kept = list.reduce((best, p) => (p.latestSales > best.latestSales ? p : best), list[0]);
+    if (list.length > 1) splitSuburbs.push({ suburb, councils: list.length, kept: kept.council });
+    rows.push(...kept.rows);
   }
-  return { rows, periods, latestPeriod: periods[1], suburbs: suburbs.size, councils: councils.size };
+  if (parts.size < SA_PLAUSIBILITY.minSuburbs) {
+    throw new Error(`the South Australian sheet lists ${parts.size} suburbs, fewer than ${SA_PLAUSIBILITY.minSuburbs} — refused`);
+  }
+  return { rows, periods, latestPeriod: periods[1], suburbs: parts.size, councils: councils.size, splitSuburbs };
 }

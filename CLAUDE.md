@@ -1565,7 +1565,15 @@ call hit the edge worker's compute limit. And the Financials tab's
 **Estimate CGR** button reads the same register for the typed address —
 the finest area with a horizon of at least five years, every coarsening a
 caveat, nothing invented — and writes the same `capitalGrowth` the ten-year
-cash flow already reads.
+cash flow already reads. **The register refreshes itself daily** (one
+pg_cron job per stage, staggered — the archive's index sheds load under
+concurrent asks) and **every reading names its own currency**: the latest
+period in the publisher's words and the day the register last took the
+series. Two rules from the first production run: **a publisher's typo is
+nulled and named, never a reason to refuse a series** (one $7,000 cell
+refused 444 localities), and **a file is anchored on the newest capture
+that LOADS**, because the archive's index can list a capture its store
+answers 404 for.
 
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)

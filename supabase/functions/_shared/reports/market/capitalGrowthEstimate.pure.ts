@@ -50,7 +50,11 @@ export interface CgrCandidate {
   dwellingType: SalesDwellingType | null;
   dwellingTypeMatched: boolean;
   latestPeriod: string | null;
+  /** The latest period in the publisher's own words — `March 2026 quarter`, `calendar year 2025`. */
+  latestPeriodLabel: string | null;
   capturedAt: string | null;
+  /** When the register last took this series from its source. */
+  loadedAt: string | null;
   periodsAvailable: number;
   /** Longest first. */
   horizons: CgrHorizon[];
@@ -77,7 +81,11 @@ export interface CapitalGrowthEstimate {
   dwellingType: SalesDwellingType | null;
   dwellingTypeMatched: boolean;
   latestPeriod: string | null;
+  /** The latest period in the publisher's own words. */
+  latestPeriodLabel: string | null;
   capturedAt: string | null;
+  /** When the register last took the chosen series from its source — the reading's own currency. */
+  loadedAt: string | null;
   /** One sentence a reader can defend the number with. */
   basis: string;
   caveats: string[];
@@ -108,7 +116,9 @@ export interface CandidateMeta {
   dwellingType: SalesDwellingType | null;
   dwellingTypeMatched: boolean;
   latestPeriod: string | null;
+  latestPeriodLabel?: string | null;
   capturedAt: string | null;
+  loadedAt?: string | null;
 }
 
 /** The growth horizons an adapter answer carries, as a candidate; null where it carries none. */
@@ -132,7 +142,9 @@ export function candidateFromPoints(points: OpenDataSalesPoints, meta: Candidate
     dwellingType: meta.dwellingType,
     dwellingTypeMatched: meta.dwellingTypeMatched,
     latestPeriod: meta.latestPeriod,
+    latestPeriodLabel: meta.latestPeriodLabel ?? null,
     capturedAt: meta.capturedAt,
+    loadedAt: meta.loadedAt ?? null,
     periodsAvailable: first.periodsAvailable ?? 0,
     horizons,
   };
@@ -200,7 +212,9 @@ export function estimateCapitalGrowth(candidates: ReadonlyArray<CgrCandidate>): 
     dwellingType: c.dwellingType,
     dwellingTypeMatched: c.dwellingTypeMatched,
     latestPeriod: c.latestPeriod,
+    latestPeriodLabel: c.latestPeriodLabel,
     capturedAt: c.capturedAt,
+    loadedAt: c.loadedAt,
     basis: `${h.years}-year compound annual growth of the ${c.measure === 'mean' ? 'mean price of the dwelling stock' : `median sale price of ${c.dwellingType ? dwellingWords(c.dwellingType) : 'dwellings'}`}, ${c.areaName} (${c.sourceLabel}).`,
     caveats,
     alternatives,

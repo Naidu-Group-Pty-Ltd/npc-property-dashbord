@@ -660,6 +660,8 @@ export function PreGenerationOverrides({
           areaName: String(e.areaName ?? ''),
           level: String(e.level ?? ''),
           latestPeriod: e.latestPeriod ?? null,
+          latestPeriodLabel: typeof e.latestPeriodLabel === 'string' ? e.latestPeriodLabel : null,
+          loadedAt: typeof e.loadedAt === 'string' ? e.loadedAt : null,
           basis: String(e.basis ?? ''),
           caveats: Array.isArray(e.caveats) ? e.caveats.map(String) : [],
           alternatives: Array.isArray(e.alternatives)
