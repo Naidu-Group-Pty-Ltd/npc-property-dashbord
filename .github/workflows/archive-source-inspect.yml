@@ -16,9 +16,6 @@ on:
         description: Why this inspection is being run
         required: false
         default: ''
-  push:
-    branches: [claude/adoring-hopper-g02tdt]
-    paths: ['.github/workflows/archive-source-inspect.yml']
 
 permissions:
   contents: read
