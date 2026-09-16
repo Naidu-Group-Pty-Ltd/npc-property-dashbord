@@ -43,14 +43,7 @@ import {
   parseVicQuarterly,
   parseVicTimeSeries,
 } from '../_shared/reports/market/openData/vicVpsrSuburb.pure.ts';
-import {
-  SA_LSG_ARCHIVE_PATTERN,
-  SA_LSG_FILE,
-  SA_LSG_LICENCE,
-  SA_LSG_SOURCE_LABEL,
-  parseSaLsgStats,
-  rankOfSaFileName,
-} from '../_shared/reports/market/openData/saLsgStats.pure.ts';
+import { SA_LSG_ARCHIVE_FLOOR, SA_LSG_ARCHIVE_PATTERN, SA_LSG_FILE, SA_LSG_LICENCE, SA_LSG_SOURCE_LABEL, parseSaLsgStats, rankOfSaFileName } from '../_shared/reports/market/openData/saLsgStats.pure.ts';
 import { type RankedFile, type WaybackCapture, archivePageUrl, capturedAtIso, cdxUrl, newestByRank, originalBytesUrl, parseCdxJson, rankedCaptures, rankedFiles } from '../_shared/reports/market/openData/waybackMirror.pure.ts';
 
 /**
@@ -329,7 +322,16 @@ Deno.serve(async (req) => {
     }
 
     if (stage === 'sa') {
-      const index = await archiveIndex(SA_LSG_ARCHIVE_PATTERN);
+      // A date floor keeps the question light enough to be answered while the
+      // index is shedding load: measured 16 Sep 2026, the Victorian query
+      // (floor 2024) was served in the same minute this one, unfloored and
+      // four times the bytes, was refused twice. It loses nothing: every one
+      // of the 41 named workbooks was re-captured by the archive's crawl of
+      // 5 Apr 2023 or later (the oldest, lsgstats-2015q1.xlsx, on that day).
+      // The floor is FIXED at that crawl, never relative to today — a rolling
+      // floor would one day slide past 2023 and drop every file the publisher
+      // has not touched since.
+      const index = await archiveIndex(SA_LSG_ARCHIVE_PATTERN, SA_LSG_ARCHIVE_FLOOR);
       const files = rankedFiles(index, SA_LSG_FILE, (_m, c) => rankOfSaFileName(fileNameOf(c.original)));
       if (!files.length) throw new Error("the archive's index of data.sa.gov.au lists no lsg_stats workbook — refused");
       const periodOfRank = (rank: number): string => `${Math.floor((rank - 1) / 4)}-${['03', '06', '09', '12'][(rank - 1) % 4]}`;

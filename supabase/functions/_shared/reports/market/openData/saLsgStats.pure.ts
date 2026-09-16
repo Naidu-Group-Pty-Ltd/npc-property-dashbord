@@ -38,6 +38,15 @@ export const SA_LSG_LICENCE_URL = 'https://data.sa.gov.au/data/dataset/metro-med
 export const SA_LSG_ARCHIVE_PATTERN = 'data.sa.gov.au/data/dataset/0d447195-1158-4a3c-8cc7-0e333b87eb72/resource/*';
 
 /**
+ * The `from=` floor for the archive index query above. The crawl of
+ * 5 April 2023 re-captured every workbook in the dataset (measured 16 Sep
+ * 2026 from the one full index answer the archive gave that night: 41 named
+ * files, each with a capture on or after that day), so nothing is lost and
+ * the answer is a quarter of the bytes. Fixed, never relative to today.
+ */
+export const SA_LSG_ARCHIVE_FLOOR = '2023';
+
+/**
  * `lsg_stats_2024_q4.xlsx`, `copy-of-lsg_stats_2020_q1.xlsx`, `lsgstats2016q4.xlsx`,
  * `lsgstats-2015q1.xlsx`, `cdata.salsgstats-2015q4.xlsx`, `lsg_stats_2020_q4-.csv`
  * — every spelling the publisher has used, ranked by the quarter it names.

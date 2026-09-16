@@ -422,7 +422,14 @@ Victorian house time series 797 localities over 2015–2025 (8,767 rows).
   503, 503 and 504 on three of four asks while the Victorian ones passed.
   The wide `dataset/<id>/*` pattern swept every capture of the dataset's
   own page since 2016; the loader asks for `dataset/<id>/resource/*` (the
-  files alone, 18 KB against 72 KB) and retries one 5xx once.
+  files alone, 18 KB against 72 KB) and retries one 5xx once. Later that
+  night the archive went "Temporarily Offline" and came back shedding load:
+  the Victorian query (floored at 2024) was served in the same minute the
+  unfloored South Australian one was refused twice, so that query is
+  floored at **2023** — the crawl of 5 April 2023 re-captured all 41 named
+  workbooks, measured from the one full answer — and the floor is a fixed
+  year, because a rolling one would one day drop every file the publisher
+  has not touched since.
 - **An indexed capture the store cannot serve.** The newest SA workbook's
   only capture (`lsg_stats_2025_q1.xlsx`, 16 May 2025) answers 404 to its
   `id_` fetch. `rankedFiles` keeps every 200 capture of a file newest
