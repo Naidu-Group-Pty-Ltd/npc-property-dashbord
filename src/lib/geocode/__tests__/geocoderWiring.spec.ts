@@ -131,12 +131,25 @@ describe('what the free providers never do', () => {
 describe('the cache', () => {
   const migration = read('supabase', 'migrations', '20261128090000_geocode_cache.sql');
 
-  it('is service-role only: RLS on, no policy, the touch granted to service_role alone', () => {
+  it('is service-role only: RLS on, no policy, the touch closed to every client role', () => {
     expect(migration).toContain('alter table public.geocode_cache enable row level security;');
     expect(migration).not.toMatch(/create policy/i);
-    expect(migration).toContain('revoke all on function public.geocode_cache_touch(text) from public;');
     expect(migration).toContain('grant execute on function public.geocode_cache_touch(text) to service_role;');
     expect(migration).not.toMatch(/grant .* to (anon|authenticated)/i);
+
+    // The revoke this migration wrote — `from public` — SUCCEEDED and did not
+    // close the function: measured on the live catalogue minutes after it
+    // applied, the ACL read `anon=X | authenticated=X` with no PUBLIC entry,
+    // because this project's default privileges grant both roles EXECUTE on a
+    // new function directly. 20261129090000 is the revoke that closes it, and
+    // the rule asserted here is the EFFECTIVE one: somewhere in the corpus,
+    // all three roles are revoked.
+    const lock = read('supabase', 'migrations', '20261129090000_lock_secdef_functions_to_service_role.sql');
+    for (const role of ['public', 'anon', 'authenticated']) {
+      expect(lock, role).toMatch(
+        new RegExp(`revoke all on function public\\.geocode_cache_touch\\(text\\) from [^;]*\\b${role}\\b`, 'i'),
+      );
+    }
   });
 
   it('is read before any provider and written after the answer', () => {

@@ -278,16 +278,26 @@ every allowance assumes it.
 
 ## 9. Production proof
 
-Recorded here as each step is measured. Until a row is filled in, it is not
-done.
+Measured against production on 16 September 2026, after the merge of #2677
+deployed every function (deploy run 35051461790, completed 03:36:48Z) and
+`apply-migration.yml` run 35051482023 applied the cache migration. pg_net
+request ids in brackets.
 
 | Step | Evidence |
 |---|---|
-| Migration applied, `geocode_cache` present | _pending_ |
-| Autocomplete answers `10 Leakes Road Trug` from Photon | _pending_ |
-| A listing geocodes through Nominatim and is cached | _pending_ |
-| Estimate CGR geography carries a council from the ABS | _pending_ |
-| A second ask of the same address is a cache hit (`hit_count`) | _pending_ |
+| Migration applied, `geocode_cache` present | 18 columns, RLS on, **0 policies**, `geocode_cache_touch` present. Read from the catalogue, not from the workflow's word. |
+| Autocomplete answers from Photon | [247817] `200 {"success":true,"predictions":[{"placeId":"osm:W:1298039489","description":"10 Leakes Road, Truganina VIC 3029",…}]}` — an OpenStreetMap **way id**, so Photon answered; the same query returned `502 upstream_error` from Google Places on 16 Sep. The typed house number `10` is carried onto the street suggestion, as §5 requires. |
+| A geocode resolves through Nominatim | `provider: nominatim`, `precision: street`, `provider_precision: road` — the `addresstype` mapping of §4, on the real answer. |
+| The council comes from the ABS | `lga: Wyndham`, `lga_code: 27260` at `-37.83753, 144.72653`. Truganina straddles **Melton and Wyndham**, and the point-in-polygon query returns the one the coordinate is actually in — the case §6 exists for. |
+| The suburb, state and postcode travel | `Truganina` / `VIC` / `3029`, with `matched_address` `Leakes Road, Truganina, Melbourne, Victoria, 3029, Australia`. |
+| The licence travels with the coordinate | `attribution` reads `Data © OpenStreetMap contributors, ODbL 1.0. https://osm.org/copyright`. |
+| A second ask is a cache hit | [247828] `200`, `geocode_cache` still **1 row**, `hit_count` 0 → 1, `last_hit_at` 03:38:26Z against `resolved_at` 03:37:56Z. The second ask spent no Nominatim call, which is what every allowance in §3 assumes. |
+| Estimate CGR reads the chain's geography | [247819] `200 {"found":true,"ratePct":5.5,"level":"suburb","areaName":"Truganina, VIC"…}` — the Victorian register, reached through the geography the chain resolved. |
+
+Not proved here, and why: a listing pin through `resolve-listing-coordinates`
+is driven by the map's own sweep from a signed-in staff session, so it is
+proved by use rather than by a probe. The chain it calls is the one measured
+above, and `listing_geocodes.provider` records which provider placed each pin.
 
 ## 10. Scale, and the end state
 
