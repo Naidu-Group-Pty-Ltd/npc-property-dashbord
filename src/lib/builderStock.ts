@@ -359,7 +359,7 @@ export const STOCK_IMAGE_STAGE_BADGES: Record<StockImageStage, string> = {
 };
 
 export const STOCK_SELECTION_STATUS_LABELS: Record<StockSelectionStatus, string> = {
-  selected: 'Selected for a client',
+  selected: 'Builder activated',
   builder_acknowledged: 'Acknowledged by builder',
   progressed: 'Progressing',
   completed: 'Completed',

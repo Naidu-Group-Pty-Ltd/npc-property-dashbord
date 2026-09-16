@@ -40,9 +40,12 @@ import {
  *
  * Properties builders supplied through the Builders Network — served from the
  * `builder_network_stock_*` mirror since the portal moved off this deployment
- * (network extraction Phase 7) — and the place a Command Centre user selects
- * one for a client. Selecting writes the Command Centre's own record; telling
- * the builder is the network connection's job, not a feed on this side.
+ * (network extraction Phase 7), kept current by the network's stock sync —
+ * and the place a Command Centre user ACTIVATES a builder for a client.
+ * Activating writes the Command Centre's own selection record, and the
+ * producer announces it over the network connection: the builder's team sees
+ * the activation on their dashboard, in their tasks and in their
+ * notifications, with this agency's contact details attached.
  *
  * Every card names the builder it came from, because the whole point of this
  * tab is that the property has an owner on the other side of the link.
@@ -241,17 +244,17 @@ export function BuilderStockTab() {
         </>
       )}
 
-      <SelectForClientDialog
+      <ActivateBuilderDialog
         item={selecting}
         onClose={() => setSelecting(null)}
         onSelected={(alreadySelected) => {
           toast({
             title: alreadySelected
-              ? 'Already selected for this client'
-              : 'Property selected',
+              ? 'Already activated for this client'
+              : 'Builder activated',
             description: alreadySelected
-              ? 'This property was already linked to that client.'
-              : 'The selection is recorded against the client.',
+              ? 'This property was already activated for that client.'
+              : 'The activation is recorded against the client and the builder is being notified in their portal.',
           });
           setSelecting(null);
           void stockQuery.refetch();
@@ -350,11 +353,11 @@ function StockCard({
             onClick={onSelect}
           >
             <UserPlus className="mr-2 h-4 w-4" aria-hidden />
-            {selectable ? 'Select for a client' : 'Not available'}
+            {selectable ? 'Activate builder' : 'Not available'}
           </Button>
           {!canSelect ? (
             <p className="mt-1.5 text-center text-[11px] text-muted-foreground">
-              Client edit permission is required to select a property.
+              Client edit permission is required to activate a builder.
             </p>
           ) : null}
         </div>
@@ -441,7 +444,7 @@ function StockCardImage({ image }: {
   );
 }
 
-function SelectForClientDialog({
+function ActivateBuilderDialog({
   item, onClose, onSelected,
 }: {
   item: BuilderStockItem | null;
@@ -467,7 +470,7 @@ function SelectForClientDialog({
     <Dialog open={!!item} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Select for a client</DialogTitle>
+          <DialogTitle>Activate builder</DialogTitle>
           <DialogDescription>
             {item ? stockItemTitle(item) : ''}
             {item?.builder_organisation ? (
@@ -476,9 +479,10 @@ function SelectForClientDialog({
                 {item.builder_organisation.trading_name || item.builder_organisation.legal_name}.
               </>
             ) : null}
-            {' '}The selection is recorded here for your client. The builder is
-            not notified automatically — their workspace is on the Builders
-            Network now.
+            {' '}The activation is recorded for your client and the builder is
+            notified in their portal — their team sees it on their dashboard,
+            in their tasks and in their notifications, with your contact
+            details so they can respond.
           </DialogDescription>
         </DialogHeader>
 
@@ -552,7 +556,7 @@ function SelectForClientDialog({
             {selectMutation.isPending
               ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
               : <UserPlus className="mr-2 h-4 w-4" aria-hidden />}
-            Select property
+            Activate builder
           </Button>
         </DialogFooter>
       </DialogContent>
