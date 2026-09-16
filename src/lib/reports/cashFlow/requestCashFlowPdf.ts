@@ -26,6 +26,7 @@
  * the generator this format exists to replace, while telling nobody.
  */
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { describeRenderFailure, readRenderFailure } from '@/lib/reports/renderFailure.pure';
 import { looksUndeployed } from '../undeployedRoute';
 
 /** One projected year, exactly as `CashFlowAnalysisModal` computes it. */
@@ -168,5 +169,13 @@ export async function requestCashFlowPdf(
     if (legacy) return { ...legacy, pageCount: null, brandGaps: [], storagePath: null, source: 'legacy' };
   }
 
+  // A failure the render service answered arrives classified from the
+  // function (`code`, `upstreamStatus`); its message is already the operator's
+  // sentence — "The print engine did not answer (HTTP 503 …)" — never the
+  // service's HTML page, which is what this toast showed on 15 Sep 2026.
+  const classified = readRenderFailure(data);
+  if (classified) {
+    throw new Error(classified.error || describeRenderFailure({ kind: classified.code, upstreamStatus: classified.upstreamStatus }));
+  }
   throw new Error(error?.message || 'Could not generate the Cash Flow Analysis');
 }

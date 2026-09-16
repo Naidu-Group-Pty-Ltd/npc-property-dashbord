@@ -258,14 +258,19 @@ Nearby and Autocomplete are split because they were sharing one bucket, which
 meant a busy address field could spend the allowance a client's report needed.
 
 **Geocoding is the opposite case and the rule is the same: one SKU, one
-budget.** All four geocoding callers consume `google_geocoding`, so
+budget.** All four geocoding callers consumed `google_geocoding`, so
 `GOOGLE_GEOCODING_DAILY_LIMIT` has one honest meaning across Aurixa. The
 earlier "configure N/2 because two buckets exist" workaround is gone — the
-architecture was fixed rather than documented around.
+architecture was fixed rather than documented around. Since 16 Sep 2026 the
+four callers ask one geocoding chain (`_shared/geocode/geocoder.ts`, read
+[`GEOCODING_WITHOUT_GOOGLE.md`](../integrations/GEOCODING_WITHOUT_GOOGLE.md))
+whose Google provider is off by default; where an operator lists it, that one
+provider is the one consumer of the scope.
 
 Circuit-breaker scopes are a **different axis** and survive untouched:
-`resolve-listing-coordinates` keeps `google_listing_geocoding` for its breaker,
-because a breaker is about one caller's error rate while a budget is about the
+`resolve-listing-coordinates` keeps `listing_geocoding` for its breaker (it
+was `google_listing_geocoding` until the chain stopped naming Google), because
+a breaker is about one caller's error rate while a budget is about the
 account's spend.
 
 Street View metadata is free and is counted with the imagery — a deliberate

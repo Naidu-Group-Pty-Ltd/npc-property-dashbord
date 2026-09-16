@@ -104,6 +104,13 @@
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
     },
+    "amenity-register-ingest": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "OSM amenity register ingest (schools, healthcare, shopping, recreation, restaurants, rail transit per state) \u2014 fetches one Overpass CSV slice per category from a public mirror list (overpass-api.de excluded: 406s this egress), behind the shared one-request-a-second turn and the osm_amenities daily allowance, identified User-Agent, a [timeout:] in every query. Gateway JWT on; inside, verifyAuth (internal edge secret or service role). Writes only amenity_register/amenity_register_syncs, upsert-then-prune by sync id; a zero-row parse is refused so a bad answer never replaces a good load."
+    },
     "aml-access": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
@@ -716,6 +723,13 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
+    },
+    "estimate-capital-growth": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "Estimate CGR for the Financials tab: geocodes the typed address (Google, metered), reads the open sales register (market_sales_medians) finest grain first and answers a compound annual growth rate with its basis and caveats. Gateway JWT on; inside, verifyAuth (a signed-in user, the internal edge secret or a service-role token). Reads only; writes nothing."
     },
     "estimate-commercial-caprate": {
       "verify_jwt": true,
@@ -1822,6 +1836,13 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
+    },
+    "market-sales-ingest": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "Open-data sales register ingest (QGSO residential land development activity spreadsheet for QLD by LGA; NSW DCJ Rent and Sales Report sales tables by postcode and LGA) \u2014 fetches the published workbooks itself (both hosts measured reachable from this project on 2026-09-15); parsing server-side with refusal-shaped bounds (header drift, vocabulary drift, a disagreeing reporting period, implausible medians). Gateway JWT on; inside, verifyAuth (internal edge secret or service role). Writes only market_sales_medians/market_sales_sync."
     },
     "market-source-probe": {
       "verify_jwt": true,

@@ -23,7 +23,7 @@ const REPO_ROOT = join(__dirname, '..', '..', '..');
 const read = (p: string) => readFileSync(join(REPO_ROOT, p), 'utf8');
 const stripSql = (body: string) => body.replace(/--[^\n]*/g, ' ');
 
-const MIGRATION = 'supabase/migrations/20261130090000_builder_network_stock_consumer_and_agency_disclosure.sql';
+const MIGRATION = 'supabase/migrations/20261201090000_builder_network_stock_consumer_and_agency_disclosure.sql';
 const migration = read(MIGRATION);
 const migrationCode = stripSql(migration);
 

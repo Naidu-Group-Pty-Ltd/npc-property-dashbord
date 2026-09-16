@@ -3,6 +3,7 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { extractStructureHeadings, selectStructureTemplate } from '@/lib/reportTemplate/cascadeMap';
 import { chunkReportContent } from '@/lib/reportTemplate/reportSections';
 import { presentStoredMarkdown } from '@/lib/reports/investment/derivedHygiene.pure';
+import { investmentReportFileName } from '@/lib/reports/investment/reportFileName.pure';
 import { applyInvestmentProjection } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import type { BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';
 import { applyOrganisationAndBrand } from './organisation';
@@ -165,6 +166,13 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
       tier: (row.report_tier ?? null) as string | null,
       title: row.property_address ?? null,
       fileLabel: row.property_address ?? reportType,
+      // Named the way the standard presentation names it, so the two
+      // presentations of one report download under one name.
+      fileName: investmentReportFileName({
+        tier: (row.report_variant ?? row.report_tier ?? null) as string | null,
+        address: row.property_address ?? null,
+        at: new Date(),
+      }),
       sourceTable: 'investment_reports',
       legacyFallback: investmentReportAdapter.legacyFallback,
     };
@@ -193,6 +201,16 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
     const presentedContent = typeof payload?.reportContent === 'string'
       ? payload.reportContent
       : null;
+    // "Include scoring" OFF. The section filter above removed the scoring
+    // chapters from the Markdown, but a template binds the grade, the score
+    // and the breakdown DIRECTLY (`scores.*`, and the projection's own verdict
+    // blocks read the row), so a dashboard page still drew the grade the
+    // operator had switched off. The switch is read here, once, and the row
+    // the template and the projection both draw from carries no score — the
+    // same document the standard presentation prints with scoring off.
+    // Absent means "not included", never "not graded": nothing here rewrites
+    // the stored row, and the default (the switch not sent) includes it.
+    const includeScoring = payload?.includeScoring !== false;
     // Through the read-path placeholder scrub every renderer applies
     // (`presentStoredMarkdown`): a derived report stored before the write-path
     // hygiene carries its "N/A" cells verbatim, and the templated document is
@@ -201,6 +219,7 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
     const row = {
       ...loaded,
       report_content: presentStoredMarkdown(presentedContent === null ? loaded.report_content : presentedContent),
+      ...(includeScoring ? {} : { investment_score: null }),
     };
 
     const reportType = getReportType(row);

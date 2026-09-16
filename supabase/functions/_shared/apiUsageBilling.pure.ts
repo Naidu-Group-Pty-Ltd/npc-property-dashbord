@@ -203,6 +203,20 @@ const NEVER_METERED = [
   "purl.org",
   "data.gov.au",
   "abs.gov.au",
+  // The geocoding chain's free providers (`_shared/geocode/`): OpenStreetMap's
+  // Nominatim and komoot's Photon. Fetched plainly, never through
+  // `meteredFetch`; listed so a future call site cannot bill a tenant for them.
+  "openstreetmap.org",
+  "komoot.io",
+  // The open-location providers (`_shared/openLocation/`): the Overpass
+  // mirrors the amenity register ingests from, OSRM's public router, and
+  // Mapillary — whose token is the workspace's own free credential, so a
+  // call it authorises is charged at nothing (API_USAGE_METERING's rule for
+  // keys the workspace supplies itself).
+  "kumi.systems",
+  "maps.mail.ru",
+  "project-osrm.org",
+  "mapillary.com",
   "rba.gov.au",
   "bom.gov.au",
   "challenges.cloudflare.com",

@@ -301,6 +301,22 @@ verify_jwt = true
 [functions.abs-regional-ingest]
 verify_jwt = true
 
+# The open-data sales register loader (docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md):
+# fetches the QGSO and NSW DCJ workbooks itself (both hosts answer this
+# project's egress); verifyAuth inside (internal secret or service role), the
+# gateway JWT on in front.
+# Estimate CGR: the growth rate the ten-year cash flow assumes, read from the
+# open sales register for the typed address. Browser-called with the user's JWT;
+# verifyAuth inside, as estimate-property-expenses.
+[functions.estimate-capital-growth]
+verify_jwt = true
+
+[functions.amenity-register-ingest]
+verify_jwt = true
+
+[functions.market-sales-ingest]
+verify_jwt = true
+
 # The per-section index over stored reports: derives an addressable projection
 # of investment_reports.report_content and writes only the two derived tables.
 # Internal secret (bearer or X-Cron-Secret) or the per-report self-sealing
