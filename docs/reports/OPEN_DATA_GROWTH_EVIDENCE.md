@@ -341,7 +341,33 @@ short horizon; a figure outside the 0–8% most projections assume. The
 button writes the same `capitalGrowth` override the cash flow already
 reads, so the estimate flows into the projection unchanged; where no
 series reaches the address the field is left as it was and the toast says
-so. One geocode request a click, metered as `googlegeocoding`.
+so. One geocode request a click.
+
+**That one request is billed only when Google served it, and it draws on
+the product-wide allowance.** Google answers HTTP 200 for everything with
+the verdict in the body, and the first deployed version of the function
+passed no `judgeBody` — so its first refused geocode (00:43Z on the day it
+shipped) was logged `status: 'success'` with one billable request, the
+exact trap `meteredFetch` documents from 12 September. The judge is now
+one shared module, `_shared/googleMapsBody.pure.ts`, imported by this
+function and by `location-intelligence-service` rather than declared in
+each; and the call consumes `consumeGoogleDailyCap(…, 'geocoding')` first,
+because Google bills every geocode in this deployment together and a click
+that bypassed the ceiling would make it no ceiling at all.
+
+The same ledger shows **the geocoder has refused every server-side call
+since 12 September 2026** (`REQUEST_DENIED`: 25 that day after 15
+successes, 22 on the 14th, 139 on the 15th), which is a property of the
+Google Maps key rather than of any caller — the Geocoding API is
+disabled for it, or its application restriction (an HTTP-referrer
+restriction is browser-only) refuses a server. The button still resolves
+the address from its text — `291 Stone Mason Drive, Kellyville NSW 2155`
+read 6.2% from postcode 2155's series with the geocoder refused — because
+`parseAddressText` reads the suburb, state and postcode the form's address
+already carries; what the geocoder adds is the council (Queensland's
+series is by council) and a suburb the text does not name. The remedy is
+in the Google Cloud console for that key, and the reading says on its
+face when the text was used instead.
 
 ### 10.5 What remains
 

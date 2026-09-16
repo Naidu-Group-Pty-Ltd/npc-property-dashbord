@@ -7,6 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { judgeGoogleMapsBody } from '../../../../supabase/functions/_shared/googleMapsBody.pure';
 
 const ROOT = join(__dirname, '..', '..', '..', '..');
 const read = (...p: string[]) => readFileSync(join(ROOT, ...p), 'utf8');
@@ -16,6 +17,7 @@ const CONFIG = read('supabase', 'config.toml');
 const REGISTRY = JSON.parse(read('supabase', 'functions-registry', 'SECURITY_REGISTRY.json')) as { functions: Record<string, { verify_jwt: boolean; exposure_class: string }> };
 const FINANCIALS = read('src', 'components', 'reports', 'manual-inputs', 'FinancialsTab.tsx');
 const OVERRIDES = read('src', 'components', 'reports', 'PreGenerationOverrides.tsx');
+const LOCATION_SERVICE = read('supabase', 'functions', 'location-intelligence-service', 'index.ts');
 
 describe('the function', () => {
   it('is declared to the gateway and the registry as a human-authenticated function', () => {
@@ -63,5 +65,40 @@ describe('the button', () => {
     expect(FINANCIALS).toContain('cgrEstimate.caveats.map');
     expect(OVERRIDES).toContain('The Growth field is unchanged.');
     expect(OVERRIDES).not.toMatch(/setCapitalGrowth\(['"]5['"]\)/);
+  });
+});
+
+describe('the geocode is billed only when served, and drawn from the one daily allowance', () => {
+  // Google answers HTTP 200 with the verdict in the body. The first deployed
+  // version judged nothing, and its first refused geocode (REQUEST_DENIED,
+  // 16 Sep 2026 00:43Z) was logged `status: 'success'` with one billable
+  // request — the exact trap `meteredFetch.judgeBody` exists for.
+  it('judges the body with the one shared judge, and labels the call', () => {
+    expect(FUNCTION).toContain("import { judgeGoogleMapsBody } from '../_shared/googleMapsBody.pure.ts';");
+    expect(FUNCTION).toContain('judgeBody: judgeGoogleMapsBody,');
+    expect(FUNCTION).toContain("feature: 'estimate-capital-growth/geocode',");
+  });
+
+  it('consumes the product-wide geocoding allowance before the request, once', () => {
+    expect(FUNCTION).toContain("await consumeGoogleDailyCap(supabase, 'geocoding')");
+    expect(FUNCTION.split("consumeGoogleDailyCap(supabase, 'geocoding')").length - 1).toBe(1);
+    expect(FUNCTION).toContain('the geocoder was not asked (${cap.reason}); the typed address was parsed instead');
+  });
+
+  it('is the same judge the location service uses — one implementation, imported by both', () => {
+    expect(LOCATION_SERVICE).toContain('from "../_shared/googleMapsBody.pure.ts"');
+    expect(LOCATION_SERVICE).not.toMatch(/const judgeGoogleMapsBody\b/);
+    expect(LOCATION_SERVICE).not.toMatch(/const ADDRESS_IS_THE_ANSWER\b/);
+  });
+
+  it('counts a served request and refuses to count a refusal', () => {
+    expect(judgeGoogleMapsBody({ status: 'OK', results: [] })).toBe('success');
+    expect(judgeGoogleMapsBody({ status: 'ZERO_RESULTS', results: [] })).toBe('success');
+    for (const status of ['REQUEST_DENIED', 'OVER_QUERY_LIMIT', 'OVER_DAILY_LIMIT', 'INVALID_REQUEST', 'UNKNOWN_ERROR', 'SOMETHING_NEW']) {
+      expect(judgeGoogleMapsBody({ status })).toBe('error');
+    }
+    expect(judgeGoogleMapsBody({})).toBeNull();
+    expect(judgeGoogleMapsBody(null)).toBeNull();
+    expect(judgeGoogleMapsBody('OK')).toBeNull();
   });
 });
