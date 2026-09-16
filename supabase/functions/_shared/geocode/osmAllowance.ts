@@ -24,7 +24,7 @@
  */
 import { enforceGlobalDailyQuota, enforceKeyQuota } from '../publicAbuseControls.ts';
 
-export type OsmAllowanceKind = 'geocoding' | 'autocomplete';
+export type OsmAllowanceKind = 'geocoding' | 'autocomplete' | 'amenities' | 'routing';
 
 /** Two of the three Google refusal words; there is no kill switch of its own. */
 export type OsmAllowanceRefusal = 'daily_cap' | 'limiter_unavailable';
@@ -35,23 +35,32 @@ export type OsmAllowanceVerdict = { ok: true } | { ok: false; reason: OsmAllowan
 export const OSM_ALLOWANCE_SCOPES: Record<OsmAllowanceKind, string> = {
   geocoding: 'osm_geocoding',
   autocomplete: 'osm_autocomplete',
+  amenities: 'osm_amenities',
+  routing: 'osrm_routing',
 };
 
 /** The environment name an operator sets the ceiling under. */
 export const OSM_ALLOWANCE_ENV: Record<OsmAllowanceKind, string> = {
   geocoding: 'OSM_GEOCODING_DAILY_LIMIT',
   autocomplete: 'OSM_AUTOCOMPLETE_DAILY_LIMIT',
+  amenities: 'OSM_AMENITIES_DAILY_LIMIT',
+  routing: 'OSRM_ROUTING_DAILY_LIMIT',
 };
 
 /**
  * Defaults well inside what the public services tolerate from one
  * application: the listings sweep re-asks nothing the cache holds, a report
  * geocodes once, and an address field is throttled per IP and per session
- * before it reaches here.
+ * before it reaches here. `amenities` is the register ingest's Overpass
+ * budget — the daily refresh spends 48 slice queries plus retries, so 200
+ * is an order of magnitude of headroom, not an invitation. `routing` is
+ * one OSRM request per commute measurement.
  */
 export const OSM_ALLOWANCE_DEFAULTS: Record<OsmAllowanceKind, number> = {
   geocoding: 2000,
   autocomplete: 5000,
+  amenities: 200,
+  routing: 1500,
 };
 
 /** Nominatim's absolute maximum: one request a second from one application. */

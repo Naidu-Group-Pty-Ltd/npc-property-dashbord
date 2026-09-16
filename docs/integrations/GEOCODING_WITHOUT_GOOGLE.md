@@ -321,18 +321,31 @@ policies are per application. Two steps up, neither built here:
 
 ## 11. What still asks Google
 
-This programme moved the geocode and the address field. Three things still
-spend the Google key, and each has a free path measured or named:
+This programme moved the geocode and the address field, and §13 then moved
+the last three surfaces. Google is now the TAIL of every location chain
+rather than a dependency: amenities read the local OSM register first
+(`AMENITY_PROVIDERS`, default `register,google`), the commute asks OSRM
+first (`COMMUTE_PROVIDERS`, default `osrm,google`), and street imagery asks
+Mapillary first (`STREET_IMAGERY_PROVIDERS`, default `mapillary,google`).
+The Google key is spent only where the free provider could not answer —
+a register slice not yet loaded, a routing outage, a street Mapillary's
+crowd has not photographed — and an operator removes `google` from any of
+the three orders to stop that surface spending it at all.
 
-| Still Google | Where | Free path |
-|---|---|---|
-| Places Nearby (amenity counts, nearest school) | `location-intelligence-service`, `school-data-service` | OpenStreetMap's Overpass API. **Unresolved**: it answered `406` from the production egress on 16 Sep; the query shape and mirror need measuring before it is a provider. |
-| Distance Matrix (CBD commute) | `location-intelligence-service` | OSRM's public demo router for driving; the GTFS stops already loaded (`TRANSPORT_SOURCES.md`) for the transit reading. |
-| Street View imagery | `street-view` | Mapillary (CC BY-SA street-level imagery) where coverage exists; nothing otherwise, and the panel already says when Google has no imagery. |
+Why these three defaults still name Google where the geocoder's default
+does not: the geocoder's free chain answers at request time for every
+address, from day one. These three cannot promise that on day one — the
+amenity register answers only after its first ingest, OSRM is somebody
+else's live server, and Mapillary needs a token no deployment has minted
+yet — so shipping a Google-free default would have turned real readings
+into nulls on deploy day, which is a broken deployment, not a saving. The
+free provider takes over the moment it can answer, with no configuration
+change.
 
-Until those move, a report without the key measures its coordinate, its
-transport reading, its crime area and its geography, and records amenities and
-commute as unmeasured — never as zero (RF-7.2B.1B2's rule, unchanged).
+A deployment without the key measures its coordinate, its transport
+reading, its crime area, its geography, its amenities (once the register
+loads), and its driving commute — and records anything unmeasured as
+unmeasured, never as zero (RF-7.2B.1B2's rule, unchanged).
 
 ## 12. What stays unverified until the merge
 
@@ -343,3 +356,165 @@ commute as unmeasured — never as zero (RF-7.2B.1B2's rule, unchanged).
   holds it by construction; it has not been measured under load.
 - The ABS qualifier for every suburb name the register carries.
 - Everything in §9.
+
+## 13. Amenities, commute and street imagery without Google
+
+The three surfaces §11 used to list as "still Google" each have a free
+provider now, behind the same order-variable pattern as
+`GEOCODER_PROVIDERS`. `_shared/openLocation/` holds all of it.
+
+### 13.1 The amenity register (`amenity_register`, migration 20261130090000)
+
+Schools, healthcare, shopping, recreation, restaurants and rail transit,
+per state, loaded from a public Overpass instance **on a schedule** and
+read **locally** at enrichment time. It is a register and not a
+request-time call because the measurements said so (§14): the same
+hospital query answered in under two seconds and then queued past 25 s an
+hour later, and this project's egress is a shared NAT whose per-IP
+fairness slots other tenants spend. The platform's own doctrine (the PEP
+engine, GTFS stops, crime, sales medians) answers that shape one way:
+load on a schedule, read locally, and a queueing mirror delays a
+background retry rather than a report.
+
+- **Ingest** — `amenity-register-ingest`, one pg_cron job per state at
+  16:00 UTC (staggered 6 min), walking the six categories with the start
+  rotated by day so a budget-clipped tail is a different tail tomorrow.
+  Each slice is one Overpass CSV query (named columns, header verified)
+  carrying `[timeout:90]`, behind `awaitOsmTurn` and the `amenities`
+  allowance, identified by `GEOCODER_USER_AGENT`, tried against the
+  mirror list in order. Slices upsert under their sync id and prune other
+  sync ids only after every batch lands, so a run that dies leaves the
+  previous load standing. A parse of zero rows is refused (no Australian
+  state holds zero schools), and a slice whose newest successful load is
+  older than `AMENITY_REGISTER_MAX_AGE_DAYS` reads as **unavailable**,
+  never as quietly current — the daily refresh is what keeps the data
+  live, and the ceiling is what stops a broken refresh serving old data
+  silently.
+- **Read** — `location-intelligence-service` walks `AMENITY_PROVIDERS`
+  per category: the register answers every category whose
+  (category, state) slice is current, and Google Places is asked — in
+  parallel, through the untouched `fetchNearbyPlaces` — only for the
+  rest. The lookup shape, radii (Google parity, except transit at
+  2,000 m so `stationsWithin2km` is finally label-true and agrees with
+  the GTFS reading), distance rounding, `count` cap of ten, walk score,
+  amenity scores and the acquisition stamp are all byte-compatible;
+  `stages.amenitySources` records who answered what and
+  `stages.amenityRegisterLoadedAt` carries the register's currency into
+  the stored object. `school-data-service` reads the same slice between
+  the schools directory and Google, maps sector from the element's own
+  tags (never the old hardcoded `'Government'`), and still answers
+  `sourceUnavailable` rather than "0 schools" when nothing holds data.
+- **Zero rows for a state never loaded is not "no schools here"** — the
+  read consults the sync ledger before any rows, and a subject whose
+  state cannot be normalised gets `unavailable` and the next provider.
+
+### 13.2 The commute (OSRM)
+
+`COMMUTE_PROVIDERS` (default `osrm,google`). OSRM's public router
+(`router.project-osrm.org`) measures a **driving** route and the reading
+says `mode: 'driving'` — the demo graph has no timetables, and wearing
+the Google path's `public_transit` label over a different measurement
+would be a lie. The one numeric consumer (`commuteTimeCBD` in the legacy
+V1 score engine) reads minutes in ≤15/≤25/≤40/≤60 bands; the generator
+prompt has been forbidden from narrating a commute since RF-7.2B, and
+`safeGenerationInputs` strips the block. OSRM's own `NoRoute` is final —
+an answer about the geometry — while an unreachable router or a spent
+`routing` allowance hands the question to the next provider. Rounding is
+byte-identical to the Distance Matrix mapper's, pinned on the measured
+route in §14.
+
+### 13.3 Street imagery (Mapillary)
+
+`STREET_IMAGERY_PROVIDERS` (default `mapillary,google`). Mapillary
+serves crowd-photographed, CC BY-SA 4.0 street-level imagery through the
+Graph API under a free client token — `MAPILLARY_ACCESS_TOKEN`, a real
+credential and therefore a real Integrations card (unlike the chain
+settings below it). The `street-view` function walks the order: without
+a token the mapillary branch skips with no network call and Google
+serves exactly as before; with one, the nearest image within ~120 m is
+served in the same envelope (base64 preview, `panoramaDate` as
+`YYYY-MM`, the attribution in `copyright`), a Mapillary street nobody
+has photographed falls through to Google, and only when every provider
+has answered "nothing here" does the panel's `ZERO_RESULTS` reading
+appear. Each provider has its own circuit scope
+(`google_street_view`, `mapillary_imagery`); an open circuit on a
+non-final provider skips it rather than 503ing a chain that may still
+have an answer.
+
+### 13.4 The new settings
+
+Environment variables, like §8's (and for the same reason — free,
+keyless, on by default; `MAPILLARY_ACCESS_TOKEN` alone is a credential
+and lives on the Integrations page):
+
+| Name | Default | Meaning |
+|---|---|---|
+| `AMENITY_PROVIDERS` | `register,google` | Amenity order for the location service and the school service. Remove `google` to stop those surfaces spending the key. |
+| `COMMUTE_PROVIDERS` | `osrm,google` | Commute order. |
+| `STREET_IMAGERY_PROVIDERS` | `mapillary,google` | Street imagery order. |
+| `OSM_AMENITIES_DAILY_LIMIT` | `200` | The ingest's daily Overpass allowance (a full refresh spends 48 slice queries). |
+| `OSRM_ROUTING_DAILY_LIMIT` | `1500` | The day's OSRM allowance — one route per commute measurement. |
+| `AMENITY_REGISTER_MAX_AGE_DAYS` | `30` | How old a slice's newest successful load may be before the read declines in favour of the next provider. |
+| `MAPILLARY_KILL_SWITCH` | unset | Stops the Mapillary branch only; the chain continues. |
+
+## 14. The measurements behind §13 (16 Sep 2026, production egress)
+
+Every decision above is a measurement, each disclosed with its pg_net
+request id at the time it was made.
+
+- **The main Overpass instance is unusable from this egress.**
+  `overpass-api.de` answers 406 from Apache's front door before Overpass
+  sees the query [248210]. It is deliberately absent from the mirror
+  list.
+- **A mirror's latency is not ours to schedule.** kumi.systems served
+  ODbL-stamped JSON in under two seconds [248211, 248223, 248235] and
+  then queued the SAME hospital query past 25 s [248352], alongside a
+  25 s timeout on a single-category restaurants query [248347] and 30 s
+  on a six-set union [248254]. VK's mirror (`maps.mail.ru`) answered the
+  identical hospital query sub-second at the same moment [248394] — so
+  the ingest carries a mirror list, and the READ path never talks to a
+  mirror at all.
+- **Every query carries `[timeout:]`.** Probe 248254 carried none, so
+  the server ran its 180 s default long after pg_net hung up at 30 s —
+  an abandoned request that kept costing a free service.
+- **Exact tag values, never a value regex.** `shop~"^(mall|…)$"` forces
+  a scan of every `shop=*` in the country and 504'd [248416]; the same
+  ask as a union of exact values answered in about a second with 8,321
+  elements [248430]. The query builder cannot spell a regex.
+- **`nw`, never `node`; relations excluded.** A node-only schools query
+  found 0 where 13 exist (schools are ways) [248211 vs 248235], and the
+  one `nwr` probe drew the mirror's own 504 [248224]. `out center` fills
+  a way's coordinates.
+- **One request at a time.** Two of three concurrent probes were dropped
+  outright [248222, 248236, 248237]; the shared turn limiter holds the
+  line the same way it does for Nominatim.
+- **Register sizing** (AU-wide `out count`, mail.ru): schools 10,157
+  [248403], healthcare 5,824 [248407], shopping 8,321 [248430],
+  recreation 70,750 [248439], restaurants + cafés 32,238 [248450];
+  transit's four-way union count 504'd [248468] and is small by
+  construction (~4–6 k rail stations, halts and tram stops) — ~130 k
+  rows in all, inside the scale `transport_stops` already proves
+  (185,177 rows).
+- **The CSV contract, verbatim** [248491]: header row
+  `@type	@id	@lat	@lon	name	amenity	…` (builtins print `@`-prefixed,
+  plain names unquoted, tab-separated), way rows carry centre
+  coordinates, and the ACT schools slice pins the parser's fixtures —
+  including `Mackillop Catholic School` with EMPTY tag columns (sector
+  reads `Other`: a NAME is never evidence) beside `St Vincent's Primary
+  School` with `denomination=roman_catholic` (sector reads `Catholic`).
+- **OSRM answers this egress** [248212]: a Truganina → Melbourne CBD
+  route, `code: "Ok"`, duration 1411.9 s / distance 23441.3 m — the
+  parser's fixture, rounding to 24 min / 23.4 km exactly as the Distance
+  Matrix mapper would.
+- **Mapillary answers its own refusal** [248213]: HTTP 500 with
+  `MLYApiException` code 190 (`Invalid OAuth 2.0 Access Token`) — the
+  vendor was reached and named the problem, the refusal-is-the-pass
+  reading `verification_selftest` established. A real image cannot be
+  proven until an operator mints the free token; that is named in §12's
+  successor list below.
+
+Still unverified until after the merge: the first production ingest run
+(the ledger and row counts will assert it), a register-served enrichment
+and an OSRM commute in a stored acquisition stamp, and a Mapillary image
+end-to-end — the last needs `MAPILLARY_ACCESS_TOKEN` minted by the
+owner, which nothing in this repository can do.
