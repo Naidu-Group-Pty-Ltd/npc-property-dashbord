@@ -30,6 +30,10 @@ const migrationCode = stripSql(migration);
 describe('the producer now discloses the agency contact — and nothing else new', () => {
   it('reads the acting adviser from custom_users, key by key, active only', () => {
     expect(migrationCode).toMatch(/FROM public\.custom_users u\s+WHERE u\.id = NEW\.selected_by_user_id\s+AND u\.is_active = true AND u\.deleted_at IS NULL/);
+    // Production keeps the display name in `username`; the follow-on gives
+    // the contact block that fallback so an activation names a person.
+    const followOn = stripSql(read('supabase/migrations/20261201100000_agency_contact_name_falls_back_to_username.sql'));
+    expect(followOn).toContain("nullif(btrim(COALESCE(u.username, '')), '')) AS contact_name");
     expect(migrationCode).toContain("'contact_name', v_contact.contact_name");
     expect(migrationCode).toContain("'contact_email', v_contact.contact_email");
     expect(migrationCode).toContain("'contact_phone', v_contact.contact_phone");
