@@ -104,6 +104,13 @@
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
     },
+    "amenity-register-ingest": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "OSM amenity register ingest (schools, healthcare, shopping, recreation, restaurants, rail transit per state) \u2014 fetches one Overpass CSV slice per category from a public mirror list (overpass-api.de excluded: 406s this egress), behind the shared one-request-a-second turn and the osm_amenities daily allowance, identified User-Agent, a [timeout:] in every query. Gateway JWT on; inside, verifyAuth (internal edge secret or service role). Writes only amenity_register/amenity_register_syncs, upsert-then-prune by sync id; a zero-row parse is refused so a bad answer never replaces a good load."
+    },
     "aml-access": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
