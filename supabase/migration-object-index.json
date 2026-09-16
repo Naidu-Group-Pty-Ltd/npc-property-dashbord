@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 983,
+  "migration_files": 984,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -156,6 +156,7 @@
     "function:public.fp_threads_set_updated_at",
     "function:public.gc_pdf_import_jobs",
     "function:public.generate_commission_payout",
+    "function:public.geocode_cache_touch",
     "function:public.get_all_cache_stats",
     "function:public.get_aml_roles_for_user",
     "function:public.get_aml_roles_for_users",
@@ -496,6 +497,7 @@
     "index:finance_portal_users_session_token_hash_key",
     "index:for",
     "index:generated_reports_quant_weekly_unique",
+    "index:geocode_cache_resolved_at_idx",
     "index:idx_activity_logs_action_type",
     "index:idx_activity_logs_created_at",
     "index:idx_activity_logs_entity",
@@ -1934,6 +1936,7 @@
     "table:public.gamma_agreement_templates",
     "table:public.generated_documents",
     "table:public.generated_reports",
+    "table:public.geocode_cache",
     "table:public.ghl_account_config",
     "table:public.ghl_client_opportunities",
     "table:public.ghl_contact_workflow_enrollments",

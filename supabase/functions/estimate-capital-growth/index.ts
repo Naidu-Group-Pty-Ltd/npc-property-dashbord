@@ -2,13 +2,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
 import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { internalError } from '../_shared/errorResponse.ts';
-import { meteredFetch } from '../_shared/meteredFetch.ts';
-import { consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
-import { judgeGoogleMapsBody } from '../_shared/googleMapsBody.pure.ts';
-import { assessGeocodeGranularity } from '../_shared/geocodeGranularity.pure.ts';
+import { geocodeAddress } from '../_shared/geocode/geocoder.ts';
 import {
   type AddressGeography,
-  geographyFromGeocode,
   mergeGeography,
   parseAddressText,
 } from '../_shared/reports/market/addressGeography.pure.ts';
@@ -32,15 +28,13 @@ import type { EvidenceDwellingType, EvidenceSubject } from '../_shared/reports/m
  * the Generate Investment Analysis form.
  *
  * What it does, in order:
- *  1. Resolves the address to a geography. Google's geocoder (one request
- *     a click, drawn from the product-wide daily geocoding allowance and
- *     metered against the Google Maps key with the refusal judged from the
- *     body, never from the HTTP status) names the suburb, the
- *     postal area, the state and — as `administrative_area_level_2` — the
- *     council, for the point it matched; an answer no finer than a state
- *     or the centre of the continent is refused (`geocodeGranularity`).
- *     Where the key is not configured or the geocoder does not answer,
- *     the typed text is parsed instead and the reading says so.
+ *  1. Resolves the address to a geography through the one geocoding chain
+ *     (`_shared/geocode/geocoder.ts`): OpenStreetMap's Nominatim for the
+ *     street, the ABS boundary server for the suburb's own centroid where no
+ *     street was found, Google only where an operator lists it; the council
+ *     from the ABS point-in-polygon query. Every answer passes the same
+ *     granularity gate, and where nothing answers the typed text is parsed
+ *     instead and the reading says so.
  *  2. Asks the register every source the state has, finest grain first
  *     (`salesRegisterSourcesFor`): a suburb series in Victoria and South
  *     Australia, the council series in Queensland, the postcode series in
@@ -50,59 +44,46 @@ import type { EvidenceDwellingType, EvidenceSubject } from '../_shared/reports/m
  *     other areas' figures as context. Nothing is invented — an address
  *     no series reaches answers `found: false` and the field is left alone.
  *
- * It reads and writes nothing but the usage row the metered geocode logs.
+ * It writes nothing but the geocode cache row the chain keeps.
  *
  * Auth: the gateway JWT in front, and `verifyAuth` inside — a signed-in
  * user (the Financials tab), the internal edge secret or a service-role
  * token.
  */
 
-const GEOCODE_TIMEOUT_MS = 6000;
-
 interface GeocodeOutcome {
   geography: AddressGeography | null;
   note: string | null;
 }
 
-async function geocode(address: string, supabase: unknown): Promise<GeocodeOutcome> {
-  const apiKey = (Deno.env.get('GOOGLE_MAPS_API_KEY') || '').trim();
-  if (!apiKey) return { geography: null, note: 'the geocoder is not configured; the typed address was parsed instead' };
-  // ONE product-wide geocoding budget: Google bills every geocode in this
-  // deployment together, so this click draws on the same daily allowance as
-  // `resolve-listing-coordinates`, `location-intelligence-service` and
-  // `parse-property-pdf` — consumed before the request, once per request.
-  const cap = await consumeGoogleDailyCap(supabase, 'geocoding');
-  if (!cap.ok) return { geography: null, note: `the geocoder was not asked (${cap.reason}); the typed address was parsed instead` };
-  const params = new URLSearchParams({ address, components: 'country:AU', key: apiKey });
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS);
-  try {
-    const res = await meteredFetch(`https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`, { signal: controller.signal }, {
-      feature: 'estimate-capital-growth/geocode',
-      // Google answers HTTP 200 with the verdict in the body, so a refusal
-      // must be judged from the body or it is billed as a served request.
-      judgeBody: judgeGoogleMapsBody,
-    });
-    const data = await res.json().catch(() => ({}));
-    if (data?.status !== 'OK' || !Array.isArray(data.results) || !data.results[0]) {
-      return { geography: null, note: `the geocoder answered ${data?.status ?? res.status}; the typed address was parsed instead` };
-    }
-    const first = data.results[0];
-    const lat = Number(first?.geometry?.location?.lat);
-    const lng = Number(first?.geometry?.location?.lng);
-    const granularity = assessGeocodeGranularity(lat, lng, first?.types);
-    if (!granularity.ok) {
-      return { geography: null, note: `the geocoder's answer was refused: ${granularity.reason ?? granularity.verdict}; the typed address was parsed instead` };
-    }
-    const geography = geographyFromGeocode(first);
-    if (!geography) return { geography: null, note: 'the geocoder named no suburb, postcode or state; the typed address was parsed instead' };
-    return { geography, note: null };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { geography: null, note: `the geocoder did not answer (${message}); the typed address was parsed instead` };
-  } finally {
-    clearTimeout(timer);
-  }
+/**
+ * The address as a geography, through the one geocoding chain
+ * (`_shared/geocode/geocoder.ts`): OpenStreetMap, then the suburb's own
+ * centroid from the ABS, then Google only where an operator lists it. The
+ * council comes from the ABS point-in-polygon query, because Queensland's
+ * register is by council and Truganina alone straddles two.
+ */
+async function geocode(address: string, parsed: AddressGeography, supabase: unknown): Promise<GeocodeOutcome> {
+  const outcome = await geocodeAddress(
+    supabase,
+    { address, suburb: parsed.suburb, state: parsed.state, postcode: parsed.postcode },
+    { allowLocalityFallback: true, wantLga: true, feature: 'estimate-capital-growth/geocode' },
+  );
+  if (!outcome.ok) return { geography: null, note: `the geocoder did not place the address (${outcome.detail}); the typed address was parsed instead` };
+  const r = outcome.result;
+  return {
+    geography: {
+      suburb: r.suburb,
+      state: r.state,
+      postcode: r.postcode,
+      lga: r.lga,
+      formattedAddress: r.matchedAddress,
+      resolvedFrom: 'geocode',
+      locationType: `${r.provider}:${r.precision}`,
+      notes: [],
+    },
+    note: null,
+  };
 }
 
 function dwellingTypeFor(propertyType: unknown): EvidenceDwellingType {
@@ -138,7 +119,7 @@ Deno.serve(async (req) => {
 
     // 1. The geography.
     const parsed = parseAddressText(propertyAddress);
-    const geocoded = await geocode(propertyAddress, supabase);
+    const geocoded = await geocode(propertyAddress, parsed, supabase);
     const geography = mergeGeography(geocoded.geography, parsed);
     const notes: string[] = [...geography.notes];
     if (geocoded.note) notes.push(geocoded.note);

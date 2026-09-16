@@ -18,6 +18,7 @@ const REGISTRY = JSON.parse(read('supabase', 'functions-registry', 'SECURITY_REG
 const FINANCIALS = read('src', 'components', 'reports', 'manual-inputs', 'FinancialsTab.tsx');
 const OVERRIDES = read('src', 'components', 'reports', 'PreGenerationOverrides.tsx');
 const LOCATION_SERVICE = read('supabase', 'functions', 'location-intelligence-service', 'index.ts');
+const CHAIN = read('supabase', 'functions', '_shared', 'geocode', 'geocoder.ts');
 
 describe('the function', () => {
   it('is declared to the gateway and the registry as a human-authenticated function', () => {
@@ -25,15 +26,22 @@ describe('the function', () => {
     expect(REGISTRY.functions['estimate-capital-growth']).toMatchObject({ verify_jwt: true, exposure_class: 'human-authenticated' });
   });
 
-  it('authorises inside, guards CSRF, and meters the one vendor call it makes', () => {
+  it('authorises inside, guards CSRF, and asks the one geocoding chain rather than any vendor itself', () => {
     expect(FUNCTION).toContain('verifyAuth(supabase, req.headers, body)');
     expect(FUNCTION).toContain('enforceCsrf(req)');
-    expect(FUNCTION).toContain('meteredFetch(`https://maps.googleapis.com/maps/api/geocode/json?');
+    // Google refused every geocode from 12 Sep 2026. The function names no
+    // geocoding vendor at all now; the chain does, behind one contract, and
+    // its default order asks no Google.
+    expect(FUNCTION).toContain("import { geocodeAddress } from '../_shared/geocode/geocoder.ts';");
+    expect(FUNCTION).not.toMatch(/maps\.googleapis\.com/);
     expect(FUNCTION).not.toMatch(/\bfetch\(`https:\/\/maps/);
+    // The council comes from the ABS point-in-polygon query, because
+    // Queensland's register is by council and Truganina alone straddles two.
+    expect(FUNCTION).toContain('wantLga: true');
   });
 
-  it('refuses a geocode no finer than a state and falls back to the typed text, saying so', () => {
-    expect(FUNCTION).toContain('assessGeocodeGranularity(lat, lng, first?.types)');
+  it('refuses a geocode no finer than a state — in the chain, for every provider — and falls back to the typed text, saying so', () => {
+    expect(CHAIN).toContain('assessGeocodeGranularity(result.lat, result.lng, result.types)');
     expect(FUNCTION).toContain('parseAddressText(propertyAddress)');
     expect(FUNCTION).toContain('mergeGeography(geocoded.geography, parsed)');
     expect(FUNCTION).toContain('the typed address was parsed instead');
@@ -74,15 +82,22 @@ describe('the geocode is billed only when served, and drawn from the one daily a
   // 16 Sep 2026 00:43Z) was logged `status: 'success'` with one billable
   // request — the exact trap `meteredFetch.judgeBody` exists for.
   it('judges the body with the one shared judge, and labels the call', () => {
-    expect(FUNCTION).toContain("import { judgeGoogleMapsBody } from '../_shared/googleMapsBody.pure.ts';");
-    expect(FUNCTION).toContain('judgeBody: judgeGoogleMapsBody,');
-    expect(FUNCTION).toContain("feature: 'estimate-capital-growth/geocode',");
+    // The Google provider lives in the chain now, and so does the judge it
+    // passes; the function labels the call and the chain carries the label.
+    expect(CHAIN).toContain("import { ADDRESS_IS_THE_ANSWER, judgeGoogleMapsBody } from '../googleMapsBody.pure.ts';");
+    expect(CHAIN).toContain('judgeBody: judgeGoogleMapsBody,');
+    expect(CHAIN).toContain('feature: opts.feature,');
+    expect(FUNCTION).toContain("feature: 'estimate-capital-growth/geocode'");
   });
 
-  it('consumes the product-wide geocoding allowance before the request, once', () => {
-    expect(FUNCTION).toContain("await consumeGoogleDailyCap(supabase, 'geocoding')");
-    expect(FUNCTION.split("consumeGoogleDailyCap(supabase, 'geocoding')").length - 1).toBe(1);
-    expect(FUNCTION).toContain('the geocoder was not asked (${cap.reason}); the typed address was parsed instead');
+  it('consumes the product-wide geocoding allowance before the request, once — inside the Google provider alone', () => {
+    expect(CHAIN).toContain("await consumeGoogleDailyCap(supabase, 'geocoding')");
+    expect(CHAIN.split("consumeGoogleDailyCap(supabase, 'geocoding')").length - 1).toBe(1);
+    // The free providers spend no credential and consume no Google unit, and
+    // the function itself consumes nothing: it cannot know which provider the
+    // chain will reach.
+    expect(FUNCTION).not.toContain('consumeGoogleDailyCap');
+    expect(FUNCTION).toContain('the geocoder did not place the address (${outcome.detail}); the typed address was parsed instead');
   });
 
   it('is the same judge the location service uses — one implementation, imported by both', () => {

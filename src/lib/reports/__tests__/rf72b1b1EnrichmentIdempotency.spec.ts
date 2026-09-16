@@ -345,8 +345,14 @@ describe('the guard is wired where the cost is', () => {
     expect(service).toContain('return { resolved: true, data: stamped };');
   });
 
-  it('Google\'s matched address is captured for verification', () => {
-    expect(service).toContain('formatted_address');
-    expect(service).toContain('matchedAddress');
+  it("the provider's matched address is captured for verification", () => {
+    // What the provider MATCHED travels as `matchedAddress` — Google's
+    // `formatted_address`, Nominatim's `display_name` — so a verification can
+    // compare the answer against the question. Evidence, never an input.
+    expect(service).toContain('matchedAddress: outcome.result.matchedAddress');
+    const chain = readFileSync(resolve(REPO, 'supabase/functions/_shared/geocode/geocoder.ts'), 'utf8');
+    const osm = readFileSync(resolve(REPO, 'supabase/functions/_shared/geocode/osmGeocode.pure.ts'), 'utf8');
+    expect(chain).toContain('formatted_address');
+    expect(osm).toContain('matchedAddress: text(place.display_name)');
   });
 });

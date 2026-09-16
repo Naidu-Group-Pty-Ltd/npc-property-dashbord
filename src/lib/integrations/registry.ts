@@ -220,8 +220,6 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
       { key: 'GOOGLE_PLACES_DAILY_LIMIT', label: 'Places Daily Cap (legacy)', placeholder: '250', type: 'text', required: false },
     ],
   },
-
-  // ── CRM & Marketing ────────────────────────────────────────────────────
   {
     id: 'gohighlevel',
     name: 'GoHighLevel',

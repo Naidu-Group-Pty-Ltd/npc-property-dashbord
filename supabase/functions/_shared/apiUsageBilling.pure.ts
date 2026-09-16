@@ -203,6 +203,11 @@ const NEVER_METERED = [
   "purl.org",
   "data.gov.au",
   "abs.gov.au",
+  // The geocoding chain's free providers (`_shared/geocode/`): OpenStreetMap's
+  // Nominatim and komoot's Photon. Fetched plainly, never through
+  // `meteredFetch`; listed so a future call site cannot bill a tenant for them.
+  "openstreetmap.org",
+  "komoot.io",
   "rba.gov.au",
   "bom.gov.au",
   "challenges.cloudflare.com",
