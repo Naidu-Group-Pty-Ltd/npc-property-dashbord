@@ -92,10 +92,10 @@
 
 import type { EvidenceAcquisition } from './marketEvidence.pure.ts';
 
-export const ZERO_COST_INVENTORY_VERSION = 'me6.zerocost.2';
+export const ZERO_COST_INVENTORY_VERSION = 'me6.zerocost.3';
 
 /** When the newest reachability reading in this module was taken; each row's `measurement` dates its own. */
-export const INVENTORY_MEASURED_ON = '2026-09-15';
+export const INVENTORY_MEASURED_ON = '2026-09-16';
 
 /** Which scoring dimension a source can actually feed. */
 export type EvidenceDimension = 'growth' | 'demand' | 'context';
@@ -110,6 +110,8 @@ export type EvidenceDimension = 'growth' | 'demand' | 'context';
  * production reading decides whether ingestion is possible.
  */
 export type Reachability =
+  /** The publisher's host refuses this project, and the Internet Archive serves the file (`waybackMirror.pure.ts`). */
+  | 'reachable_archive'
   | 'reachable_production'      // measured 2xx/206 from the Supabase egress
   | 'blocked_bot_challenge'     // 403 interstitial; measured from BOTH egresses
   | 'blocked_forbidden'         // plain 403 from the production egress
@@ -139,6 +141,13 @@ export interface ZeroCostSource {
   measurement: string;
   /** Whether a scheduled ingestion job would be required to use it. */
   scheduledIngestionRequired: boolean;
+  /**
+   * A coarse series read for Growth only where nothing finer answers — the
+   * ABS state series. It supplies `context` in this inventory because its
+   * grain is one the scorer prices at the bottom of its ladder, and it is
+   * named here so the floor is a declared fact rather than an omission.
+   */
+  growthFloor?: boolean;
 }
 
 /**
@@ -196,14 +205,18 @@ export const ZERO_COST_SOURCES: readonly ZeroCostSource[] = [
     licence: 'Creative Commons Attribution 3.0 Australia',
     acquisition: 'open_public',
     delivery: 'file',
-    reachability: 'blocked_bot_challenge',
+    reachability: 'reachable_archive',
     measurement: 'land.vic.gov.au answered 403 with a Cloudflare "Just a moment..." '
       + 'interstitial to BOTH the development egress (curl, with and without an '
       + 'identifying User-Agent) and the production Supabase egress (pg_net, request '
-      + '126902/126922), and again on 2026-09-15 to a GitHub-hosted runner with a browser '
-      + 'User-Agent. Licence permits reuse; the host refuses non-browser clients on three '
-      + 'networks. The DataVic and data.gov.au catalogue entries (both 200) point at the same '
-      + 'walled host, so no mirror carries the file.',
+      + '126902/126922), again on 2026-09-15 to a GitHub-hosted runner, and again on '
+      + '2026-09-16 with a browser User-Agent from production (pg_net 245207). Licence '
+      + 'permits reuse; the host refuses non-browser clients on three networks. The '
+      + 'Internet Archive carries the files: its CDX index answered the production egress '
+      + '(pg_net 245236) with houses-by-suburb-2015-2025.xlsx, units-by-suburb-2015-2025.xlsx '
+      + 'and median-house-q4-2025.xls captured 2026-08-03, and the id_ fetch answered 200 '
+      + 'with the original workbook bytes (pg_net 245237). Loaded by market-sales-ingest '
+      + '(stage vic); rows carry the capture time.',
     scheduledIngestionRequired: true,
   },
   {
@@ -271,13 +284,16 @@ export const ZERO_COST_SOURCES: readonly ZeroCostSource[] = [
     licence: 'Creative Commons Attribution',
     acquisition: 'open_public',
     delivery: 'file',
-    reachability: 'blocked_forbidden',
+    reachability: 'reachable_archive',
     measurement: 'data.sa.gov.au file downloads answered a plain 403 from the production '
       + 'egress (pg_net 126919/126920) while its CKAN search API answered 200 on 2026-09-08; '
       + 'on 2026-09-15 package_show and package_search BOTH answered 403 from the production '
-      + 'egress (pg_net 240128/240151) while a GitHub-hosted runner read the package: 43 '
-      + 'quarterly XLSX resources back to 2016, most datastore-active. The catalogue is open '
-      + 'and this project\'s egress is refused.',
+      + 'egress (pg_net 240128/240151), and again with a browser User-Agent on 2026-09-16 '
+      + '(pg_net 245205). The Internet Archive carries the dataset\'s quarterly workbooks: '
+      + 'its CDX index answered the production egress (pg_net 245280) with forty-two '
+      + 'lsg_stats files from 2015 Q1 to 2025 Q1, the newest captured 2025-05-16, each '
+      + 'holding the quarter and its year-earlier comparison by suburb. Loaded by '
+      + 'market-sales-ingest (stage sa); rows carry the capture time.',
     scheduledIngestionRequired: true,
   },
   {
@@ -356,9 +372,16 @@ export const ZERO_COST_SOURCES: readonly ZeroCostSource[] = [
     acquisition: 'open_public',
     delivery: 'api',
     reachability: 'reachable_production',
-    measurement: 'data.api.abs.gov.au SDMX answered 200. State and territory grain only — '
-      + 'a benchmark, never a suburb signal.',
-    scheduledIngestionRequired: false,
+    measurement: 'data.api.abs.gov.au SDMX answered 200 (dataflow), and on 2026-09-16 the '
+      + 'RES_DWELL_ST data query answered the production egress with 658,289 bytes of '
+      + 'SDMX-CSV (pg_net 245217): the mean price of residential dwellings for all eight '
+      + 'jurisdictions and Australia, 60 quarters from 2011-Q3 to 2026-Q2 (the newest '
+      + 'preliminary). State and territory grain only — the national benchmark, and the '
+      + 'growth FLOOR beneath every state, read by the generator only where nothing finer '
+      + 'answered and priced by the scorer at the bottom of its geography ladder. Loaded by '
+      + 'market-sales-ingest (stage abs).',
+    growthFloor: true,
+    scheduledIngestionRequired: true,
   },
   {
     id: 'abs_rppi',
@@ -383,7 +406,8 @@ export function ingestableToday(
   sources: readonly ZeroCostSource[] = ZERO_COST_SOURCES,
 ): readonly ZeroCostSource[] {
   return sources.filter(
-    (s) => s.acquisition === 'open_public' && s.reachability === 'reachable_production',
+    (s) => s.acquisition === 'open_public'
+      && (s.reachability === 'reachable_production' || s.reachability === 'reachable_archive'),
   );
 }
 
