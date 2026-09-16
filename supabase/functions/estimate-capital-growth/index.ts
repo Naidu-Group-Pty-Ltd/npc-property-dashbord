@@ -3,6 +3,8 @@ import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_s
 import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { meteredFetch } from '../_shared/meteredFetch.ts';
+import { consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
+import { judgeGoogleMapsBody } from '../_shared/googleMapsBody.pure.ts';
 import { assessGeocodeGranularity } from '../_shared/geocodeGranularity.pure.ts';
 import {
   type AddressGeography,
@@ -21,6 +23,7 @@ import {
   salesRegisterSourcesFor,
 } from '../_shared/reports/market/openDataSalesEvidence.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
+import { periodLabelFor } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import type { EvidenceDwellingType, EvidenceSubject } from '../_shared/reports/market/marketEvidence.pure.ts';
 
 /**
@@ -29,8 +32,10 @@ import type { EvidenceDwellingType, EvidenceSubject } from '../_shared/reports/m
  * the Generate Investment Analysis form.
  *
  * What it does, in order:
- *  1. Resolves the address to a geography. Google's geocoder (metered as
- *     `googlegeocoding`; one request a click) names the suburb, the
+ *  1. Resolves the address to a geography. Google's geocoder (one request
+ *     a click, drawn from the product-wide daily geocoding allowance and
+ *     metered against the Google Maps key with the refusal judged from the
+ *     body, never from the HTTP status) names the suburb, the
  *     postal area, the state and — as `administrative_area_level_2` — the
  *     council, for the point it matched; an answer no finer than a state
  *     or the centre of the continent is refused (`geocodeGranularity`).
@@ -59,14 +64,25 @@ interface GeocodeOutcome {
   note: string | null;
 }
 
-async function geocode(address: string): Promise<GeocodeOutcome> {
+async function geocode(address: string, supabase: unknown): Promise<GeocodeOutcome> {
   const apiKey = (Deno.env.get('GOOGLE_MAPS_API_KEY') || '').trim();
   if (!apiKey) return { geography: null, note: 'the geocoder is not configured; the typed address was parsed instead' };
+  // ONE product-wide geocoding budget: Google bills every geocode in this
+  // deployment together, so this click draws on the same daily allowance as
+  // `resolve-listing-coordinates`, `location-intelligence-service` and
+  // `parse-property-pdf` — consumed before the request, once per request.
+  const cap = await consumeGoogleDailyCap(supabase, 'geocoding');
+  if (!cap.ok) return { geography: null, note: `the geocoder was not asked (${cap.reason}); the typed address was parsed instead` };
   const params = new URLSearchParams({ address, components: 'country:AU', key: apiKey });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS);
   try {
-    const res = await meteredFetch(`https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`, { signal: controller.signal });
+    const res = await meteredFetch(`https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`, { signal: controller.signal }, {
+      feature: 'estimate-capital-growth/geocode',
+      // Google answers HTTP 200 with the verdict in the body, so a refusal
+      // must be judged from the body or it is billed as a served request.
+      judgeBody: judgeGoogleMapsBody,
+    });
     const data = await res.json().catch(() => ({}));
     if (data?.status !== 'OK' || !Array.isArray(data.results) || !data.results[0]) {
       return { geography: null, note: `the geocoder answered ${data?.status ?? res.status}; the typed address was parsed instead` };
@@ -122,7 +138,7 @@ Deno.serve(async (req) => {
 
     // 1. The geography.
     const parsed = parseAddressText(propertyAddress);
-    const geocoded = await geocode(propertyAddress);
+    const geocoded = await geocode(propertyAddress, supabase);
     const geography = mergeGeography(geocoded.geography, parsed);
     const notes: string[] = [...geography.notes];
     if (geocoded.note) notes.push(geocoded.note);
@@ -173,7 +189,12 @@ Deno.serve(async (req) => {
           dwellingType: answer.dwellingType,
           dwellingTypeMatched: answer.dwellingTypeMatched,
           latestPeriod: answer.latestPeriod,
+          latestPeriodLabel: answer.latestPeriod && answer.span ? periodLabelFor(answer.latestPeriod, answer.span) : answer.latestPeriod,
           capturedAt: register.capturedAt,
+          // The reading's currency: when the register last took this series
+          // from its source. The register refreshes itself daily, so this is
+          // the newest publication the source had released as of that day.
+          loadedAt: register.loadedAt,
         });
         if (!candidate) {
           consulted.push({ provider: source.provider, areaKind: source.areaKind, area: register.areaLabel ?? area, outcome: answer.notes.join('; ') || 'no growth horizon could be computed' });

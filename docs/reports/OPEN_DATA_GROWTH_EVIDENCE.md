@@ -341,18 +341,111 @@ short horizon; a figure outside the 0–8% most projections assume. The
 button writes the same `capitalGrowth` override the cash flow already
 reads, so the estimate flows into the projection unchanged; where no
 series reaches the address the field is left as it was and the toast says
-so. One geocode request a click, metered as `googlegeocoding`.
+so. One geocode request a click.
 
-### 10.5 What remains
+**That one request is billed only when Google served it, and it draws on
+the product-wide allowance.** Google answers HTTP 200 for everything with
+the verdict in the body, and the first deployed version of the function
+passed no `judgeBody` — so its first refused geocode (00:43Z on the day it
+shipped) was logged `status: 'success'` with one billable request, the
+exact trap `meteredFetch` documents from 12 September. The judge is now
+one shared module, `_shared/googleMapsBody.pure.ts`, imported by this
+function and by `location-intelligence-service` rather than declared in
+each; and the call consumes `consumeGoogleDailyCap(…, 'geocoding')` first,
+because Google bills every geocode in this deployment together and a click
+that bypassed the ceiling would make it no ceiling at all.
+
+The same ledger shows **the geocoder has refused every server-side call
+since 12 September 2026** (`REQUEST_DENIED`: 25 that day after 15
+successes, 22 on the 14th, 139 on the 15th), which is a property of the
+Google Maps key rather than of any caller — the Geocoding API is
+disabled for it, or its application restriction (an HTTP-referrer
+restriction is browser-only) refuses a server. The button still resolves
+the address from its text — `291 Stone Mason Drive, Kellyville NSW 2155`
+read 6.2% from postcode 2155's series with the geocoder refused — because
+`parseAddressText` reads the suburb, state and postcode the form's address
+already carries; what the geocoder adds is the council (Queensland's
+series is by council) and a suburb the text does not name. The remedy is
+in the Google Cloud console for that key, and the reading says on its
+face when the text was used instead.
+
+### 10.5 Currency — the register refreshes itself every day
+
+The owner's requirement (16 Sep 2026) is that a reading is **the newest
+publication its source has released as of the day it is asked for**, and
+that the reading says so. Until then every stage ran by hand. Migration
+`20261127090000` schedules **one pg_cron job per stage** — ABS, QLD, NSW,
+the four Victorian files and SA — at staggered minutes from 17:00 UTC
+(03:00 AEST), through `public.market_sales_refresh(jsonb)`, a SECURITY
+DEFINER wrapper that reads the project URL from the vault and posts with
+`cron_service_role_headers()` so the job body carries no secret and no
+project literal. Three rules carry it. **Staggered, one workbook a call**:
+five index queries in one second made the Wayback CDX shed load (503, 503,
+504) and five workbooks in one call hit the edge worker's compute limit.
+**An upsert on a quiet day changes nothing**, so asking every source every
+day costs a few megabytes of egress and no data. And **it is asserted by
+effect**: `cron.job` holds the eight rows after the migration applies, and
+the day's `market_sales_sync` rows are the proof a run delivered — pg_cron
+reports on the SQL that queued the request, never on the request.
+
+The reading carries its own currency. `estimate-capital-growth` hands the
+estimate `latestPeriodLabel` (the publisher's own words for the latest
+period — `March 2026 quarter`, `calendar year 2025`) and `loadedAt` (when
+the register last took that series from its source), and the Financials
+tab prints both under the field: *Series to March 2026 quarter; register
+refreshed 16 September 2026*. For Victoria and South Australia the
+currency is bounded by the archive's capture, which the reading already
+names as a caveat; the daily job takes a newer capture the day the
+archive has one.
+
+Why the signed cron invoker is not used here: `market-sales-ingest`
+authorises through `verifyAuth`, which reads the internal edge secret and
+a service-role bearer and not the signed-internal headers
+(`verifySignedInternal`); moving the loader onto that scheme is a change to
+its auth, recorded as follow-up work rather than folded into a schedule.
+
+### 10.6 The first production run, 16 September 2026
+
+Everything below was found by running the loads against production, and
+each was invisible to every fixture. The ABS load wrote 540 rows (60
+quarters, nine jurisdictions, to 2026-Q2); the Victorian quarterly files
+772 and 444 localities (3,860 and 2,220 rows, captured 3 Aug 2026); the
+Victorian house time series 797 localities over 2015–2025 (8,767 rows).
+
+- **A publisher's typo refused a whole series.** The Victorian units time
+  series prices `TAYLORS LAKES 2018` at $7,000 and the parser refused the
+  file — 444 localities over eleven years — for one cell. An implausible
+  cell is now nulled on its row and named (`implausible` on the parse, the
+  loader's `implausible_cells`), and a sheet is refused only past **ten**
+  such cells, because ten typos is a file and eleven is a units problem.
+- **The archive's index sheds load.** The South Australian query answered
+  503, 503 and 504 on three of four asks while the Victorian ones passed.
+  The wide `dataset/<id>/*` pattern swept every capture of the dataset's
+  own page since 2016; the loader asks for `dataset/<id>/resource/*` (the
+  files alone, 18 KB against 72 KB) and retries one 5xx once.
+- **An indexed capture the store cannot serve.** The newest SA workbook's
+  only capture (`lsg_stats_2025_q1.xlsx`, 16 May 2025) answers 404 to its
+  `id_` fetch. `rankedFiles` keeps every 200 capture of a file newest
+  first; the stage falls back through a file's captures, and anchors its
+  three-, five- and ten-year horizons on the newest file that **loads**,
+  never on the newest the index claims.
+- **A suburb that straddles a council boundary is listed twice**, once per
+  council, and both parts in one upsert made Postgres refuse every SA file
+  ("ON CONFLICT DO UPDATE command cannot affect row a second time"). The
+  register's key is the suburb, so `parseSaLsgStats` keeps the part with
+  the most sales in the latest quarter — a published figure describing
+  most of the suburb's sales, never an average or a sum — and names the
+  choice in `splitSuburbs`.
+- **The first refused geocode was billed as a success** (§10.4).
+
+### 10.7 What remains
 
 - **Western Australia, Tasmania, the territories**: state grain only, and
   said so on every reading.
-- **Victoria's currency is the archive's**: the calendar-year series runs
-  to 2025 and the quarters to December 2025; the archive captures a new
-  file weeks after publication, and the loader takes the newest.
-- **South Australia's newest capture is March 2025**; the publisher's own
-  host is still refused, and the loader will take newer captures as they
-  appear.
-- **A scheduled refresh is not wired**; the stages run on demand.
-- **Every load and the first Estimate CGR reading are production events**
-  and are recorded in §11 as they happen.
+- **Victoria's and South Australia's currency is the archive's**: the
+  daily job takes a newer capture the day one exists, and the Wayback
+  Machine's Save Page Now could be asked for one — a follow-up to measure,
+  since the archive's own crawler is what the two publishers admit.
+- **The loader's move onto the signed cron invoker** (§10.5).
+- **Every load and reading is a production event**, recorded in §11 as it
+  happens.

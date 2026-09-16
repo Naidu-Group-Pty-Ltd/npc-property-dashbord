@@ -94,7 +94,13 @@ describe('RF-7.2B.1B0 — the geocoder says which kind of failure it was', () =>
   });
 
   it('treats ZERO_RESULTS as the ONLY statement about the address', () => {
-    expect(src).toContain("const ADDRESS_IS_THE_ANSWER = 'ZERO_RESULTS'");
+    // The constant and the judge live in `_shared/googleMapsBody.pure.ts` now,
+    // one implementation shared with `estimate-capital-growth`; the service
+    // imports both rather than declaring its own.
+    expect(src).toContain('import { ADDRESS_IS_THE_ANSWER, judgeGoogleMapsBody } from "../_shared/googleMapsBody.pure.ts"');
+    expect(src).not.toContain("const ADDRESS_IS_THE_ANSWER =");
+    const shared = readFileSync(resolve(SERVICE, '..', '..', '_shared', 'googleMapsBody.pure.ts'), 'utf8');
+    expect(shared).toContain("export const ADDRESS_IS_THE_ANSWER = 'ZERO_RESULTS'");
     // The test that matters: an unrecognised status must count as OURS.
     // `status !== ADDRESS_IS_THE_ANSWER` gives that for free; an allow-list of
     // "our" statuses would not, and would let a new Google status be blamed

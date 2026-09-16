@@ -13,6 +13,7 @@ import {
   originalBytesUrl,
   parseCdxJson,
   rankedCaptures,
+  rankedFiles,
 } from '@/lib/reports/market/openData/waybackMirror.pure';
 
 const CDX = JSON.stringify([
@@ -99,5 +100,30 @@ describe('the URLs', () => {
   it('reads the capture time as an ISO instant', () => {
     expect(capturedAtIso('20260803040929')).toBe('2026-08-03T04:09:29Z');
     expect(() => capturedAtIso('2026')).toThrow(/not a Wayback timestamp/);
+  });
+});
+
+describe('every capture of a file', () => {
+  const cap = (timestamp: string, original: string, statusCode = 200) => ({ timestamp, original, mimetype: 'application/octet-stream', statusCode, length: 1000 });
+  const captures = [
+    cap('20250516131629', 'https://x/lsg_stats_2025_q1.xlsx'),
+    cap('20230405195446', 'https://x/lsg_stats_2022_q1.xlsx'),
+    cap('20240101000000', 'https://x/lsg_stats_2022_q1.xlsx'),
+    cap('20220101000000', 'https://x/lsg_stats_2022_q1.xlsx', 404),
+    cap('20230405231858', 'https://x/lsgstats-2015q1.xlsx'),
+    cap('20230405231900', 'https://x/readme.txt'),
+  ];
+  const rank = (m: RegExpExecArray) => Number(m[1]) * 4 + Number(m[2]);
+
+  it('lists each matched file once, newest-described first, with its 200 captures newest first', () => {
+    const files = rankedFiles(captures, /lsg_?stats[-_]?(\d{4})[-_]?q(\d)\.xlsx$/i, rank);
+    expect(files.map((f) => f.original.slice(f.original.lastIndexOf('/') + 1))).toEqual(['lsg_stats_2025_q1.xlsx', 'lsg_stats_2022_q1.xlsx', 'lsgstats-2015q1.xlsx']);
+    // the 2022 file: two 200 captures, newest first; the 404 dropped
+    expect(files[1].captures.map((c) => c.timestamp)).toEqual(['20240101000000', '20230405195446']);
+    expect(files[0].captures).toHaveLength(1);
+  });
+
+  it('answers nothing for nothing', () => {
+    expect(rankedFiles([], /x/, () => 1)).toEqual([]);
   });
 });

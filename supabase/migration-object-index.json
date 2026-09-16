@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 982,
+  "migration_files": 983,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -224,6 +224,7 @@
     "function:public.mark_conversation_read",
     "function:public.mark_message_read",
     "function:public.market_evidence_snapshot_guard",
+    "function:public.market_sales_refresh",
     "function:public.market_sources_sync_ingest_mode",
     "function:public.market_updates_automation_status",
     "function:public.match_agent_memories",

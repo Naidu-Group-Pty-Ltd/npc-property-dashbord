@@ -27,6 +27,7 @@ import {
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { consumeGoogleDailyCap, type GoogleCapRefusal } from "../_shared/googleMapsDailyCaps.ts";
+import { ADDRESS_IS_THE_ANSWER, judgeGoogleMapsBody } from "../_shared/googleMapsBody.pure.ts";
 import { assessAuPoint } from "../_shared/auGeoSanity.pure.ts";
 import { buildAuGeocodeQuery } from "../_shared/auGeocodeQuery.pure.ts";
 import { sourceUnavailable, isSourceUnavailable } from "../_shared/sourceUnavailable.pure.ts";
@@ -552,30 +553,9 @@ type GeocodeOutcome =
   // though the client-facing reading deliberately is not that specific.
   | { ok: false; providerRefused: boolean; capped?: boolean; capReason?: GoogleCapRefusal };
 
-/**
- * The only Google geocoder status that is a statement about the ADDRESS.
- * Every other status — `REQUEST_DENIED`, `OVER_QUERY_LIMIT`,
- * `OVER_DAILY_LIMIT`, `INVALID_REQUEST`, `UNKNOWN_ERROR` — is a statement
- * about our request or their service, so an unrecognised status counts as
- * ours: attributing our outage to the customer's address is the error that
- * costs, and the conservative side is to own it.
- */
-const ADDRESS_IS_THE_ANSWER = 'ZERO_RESULTS';
-
-/**
- * RF-7.2B.1B0-F3 — what Google Maps counts as a served request.
- *
- * Google answers HTTP 200 for everything, so `response.ok` billed us for
- * refusals. `OK` and `ZERO_RESULTS` are both requests Google served and
- * charges for — a genuine no-match is a real answer. Everything else
- * (`REQUEST_DENIED`, `OVER_QUERY_LIMIT`, `INVALID_REQUEST`, `UNKNOWN_ERROR`)
- * is a request that returned nothing and must not be metered as spend.
- */
-const judgeGoogleMapsBody = (body: unknown): 'success' | 'error' | null => {
-  const status = (body as { status?: unknown } | null)?.status;
-  if (typeof status !== 'string') return null;
-  return status === 'OK' || status === ADDRESS_IS_THE_ANSWER ? 'success' : 'error';
-};
+// `ADDRESS_IS_THE_ANSWER` and `judgeGoogleMapsBody` — the one judge of a Google
+// Maps body — live in `_shared/googleMapsBody.pure.ts`, shared with
+// `estimate-capital-growth`.
 
 async function geocodeAddress(
   input: LocationIntelligenceInput,

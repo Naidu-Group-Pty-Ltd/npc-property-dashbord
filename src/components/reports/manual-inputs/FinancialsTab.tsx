@@ -39,9 +39,21 @@ export interface CgrEstimateReading {
   areaName: string;
   level: string;
   latestPeriod: string | null;
+  /** The latest period in the publisher's own words. */
+  latestPeriodLabel: string | null;
+  /** When the register last took the series from its source. */
+  loadedAt: string | null;
   basis: string;
   caveats: string[];
   alternatives: Array<{ areaName: string; horizonYears: number; ratePct: number }>;
+}
+
+/** `2026-09-16T00:43:00Z` → `16 September 2026`, in the locale the rest of the product uses. */
+function refreshedOn(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 interface FinancialsTabProps {
@@ -405,9 +417,16 @@ export function FinancialsTab({
                   <p>
                     <span className="font-medium text-foreground">{cgrEstimate.ratePct}% a year</span>
                     {' '}— {cgrEstimate.horizonYears}-year compound growth, {cgrEstimate.areaName}
-                    {cgrEstimate.latestPeriod ? ` (to ${cgrEstimate.latestPeriod})` : ''}
+                    {cgrEstimate.latestPeriodLabel ?? cgrEstimate.latestPeriod ? ` (to ${cgrEstimate.latestPeriodLabel ?? cgrEstimate.latestPeriod})` : ''}
                   </p>
                   <p className="leading-snug">{cgrEstimate.basis}</p>
+                  {(cgrEstimate.latestPeriodLabel ?? cgrEstimate.latestPeriod) && (
+                    <p className="leading-snug" data-testid="cgr-estimate-currency">
+                      Series to {cgrEstimate.latestPeriodLabel ?? cgrEstimate.latestPeriod}
+                      {refreshedOn(cgrEstimate.loadedAt) ? `; register refreshed ${refreshedOn(cgrEstimate.loadedAt)}` : ''}
+                      {' '}— the newest figures the publisher had released when the register was last refreshed.
+                    </p>
+                  )}
                   {cgrEstimate.caveats.map((c) => (
                     <p key={c} className="leading-snug">{c}</p>
                   ))}

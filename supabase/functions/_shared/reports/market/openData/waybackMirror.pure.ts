@@ -192,3 +192,45 @@ export function rankedCaptures<R extends number>(
   }
   return out.sort((a, b) => b.rank - a.rank || (a.capture.timestamp < b.capture.timestamp ? 1 : -1));
 }
+
+export interface RankedFile<R> {
+  original: string;
+  /** What the file name says it describes, as the caller's ranker read it. */
+  rank: R;
+  /** Every 200 capture of the file, newest first. */
+  captures: WaybackCapture[];
+}
+
+/**
+ * Every matched file with ALL of its 200 captures, newest first, ranked by
+ * what the name says. `rankedCaptures` keeps one capture per file, and the
+ * first production load (16 Sep 2026) found why that is not enough: the
+ * index listed the newest South Australian workbook's only capture, and the
+ * archive answered 404 for its bytes — a capture the index knows and the
+ * store cannot serve. A caller that holds every capture can fall back to an
+ * older copy of the same file, and to the next file only when none serves.
+ */
+export function rankedFiles<R extends number>(
+  captures: ReadonlyArray<WaybackCapture>,
+  pattern: RegExp,
+  rank: (match: RegExpExecArray, capture: WaybackCapture) => R | null,
+): RankedFile<R>[] {
+  const byOriginal = new Map<string, WaybackCapture[]>();
+  for (const c of captures) {
+    if (c.statusCode !== 200) continue;
+    const list = byOriginal.get(c.original) ?? [];
+    list.push(c);
+    byOriginal.set(c.original, list);
+  }
+  const out: RankedFile<R>[] = [];
+  for (const [original, list] of byOriginal) {
+    list.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+    const name = original.slice(original.lastIndexOf('/') + 1);
+    const m = pattern.exec(name);
+    if (!m) continue;
+    const r = rank(m, list[0]);
+    if (r === null) continue;
+    out.push({ original, rank: r, captures: list });
+  }
+  return out.sort((a, b) => b.rank - a.rank || (a.captures[0].timestamp < b.captures[0].timestamp ? 1 : -1));
+}

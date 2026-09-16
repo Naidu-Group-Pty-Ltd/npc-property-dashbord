@@ -56,7 +56,42 @@ export const VIC_PLAUSIBILITY = {
   minYears: 8,
   minPrice: 50_000,
   maxPrice: 30_000_000,
+  /**
+   * A cell outside the price band is the publisher's own typo — the first
+   * production load (16 Sep 2026) refused the whole units time series, 444
+   * localities over eleven years, because `TAYLORS LAKES 2018` reads $7,000 —
+   * so a cell is nulled and NAMED rather than the file refused. Past this
+   * many, the sheet itself is wrong (a column in thousands, a shifted
+   * layout) and the file is refused, because ten typos is a file and eleven
+   * is a units problem no cell-by-cell rule should paper over.
+   */
+  maxImplausibleCells: 10,
 } as const;
+
+/** A price the sheet stated and this parser refused to believe. */
+export interface VicImplausibleCell {
+  area: string;
+  period: string;
+  value: number;
+}
+
+function plausibleOrNamed(value: number | null, area: string, period: string, implausible: VicImplausibleCell[]): number | null {
+  if (value === null) return null;
+  if (value < VIC_PLAUSIBILITY.minPrice || value > VIC_PLAUSIBILITY.maxPrice) {
+    implausible.push({ area, period, value });
+    return null;
+  }
+  return value;
+}
+
+function refuseIfTooManyImplausible(sheet: string, implausible: VicImplausibleCell[]): void {
+  if (implausible.length <= VIC_PLAUSIBILITY.maxImplausibleCells) return;
+  const first = implausible[0];
+  throw new Error(
+    `the Victorian ${sheet} prices ${implausible.length} cells outside ${VIC_PLAUSIBILITY.minPrice}–${VIC_PLAUSIBILITY.maxPrice} ` +
+    `(first: ${first.area} ${first.period} at $${first.value}), more than ${VIC_PLAUSIBILITY.maxImplausibleCells} — refused`,
+  );
+}
 
 type Grid = ReadonlyArray<ReadonlyArray<unknown>>;
 
@@ -94,6 +129,8 @@ export interface VicTimeSeriesParse {
   years: number[];
   localities: number;
   dwellingType: SalesDwellingType;
+  /** Cells outside the price band, nulled on their rows and named here. */
+  implausible: VicImplausibleCell[];
 }
 
 /**
@@ -124,6 +161,7 @@ export function parseVicTimeSeries(grid: Grid, dwellingType: SalesDwellingType, 
   }
   const rows: SalesMedianRow[] = [];
   const localities = new Set<string>();
+  const implausible: VicImplausibleCell[] = [];
   for (let r = headerRow + 1; r < grid.length; r++) {
     const row = grid[r] ?? [];
     const label = text(row[0]);
@@ -132,22 +170,20 @@ export function parseVicTimeSeries(grid: Grid, dwellingType: SalesDwellingType, 
     if (/^\d/.test(label) || label.length > 60) continue;
     localities.add(label);
     for (const { col, year } of yearCols) {
-      const value = valueUnderFlag(row[col], row[col + 1]);
-      if (value !== null && (value < VIC_PLAUSIBILITY.minPrice || value > VIC_PLAUSIBILITY.maxPrice)) {
-        throw new Error(`the Victorian time series prices ${label} ${year} at $${value}, outside ${VIC_PLAUSIBILITY.minPrice}–${VIC_PLAUSIBILITY.maxPrice} — refused`);
-      }
       const period = annualPeriodOf(year);
       if (!period) continue;
+      const value = plausibleOrNamed(valueUnderFlag(row[col], row[col + 1]), label, period, implausible);
       rows.push({
         state: 'VIC', areaKind: 'suburb', area: label, dwellingType, period,
         medianPrice: value, salesCount: null, priceMeasure: 'median', periodSpan: 'year', capturedAt,
       });
     }
   }
+  refuseIfTooManyImplausible('time series', implausible);
   if (localities.size < VIC_PLAUSIBILITY.minLocalities) {
     throw new Error(`the Victorian time series lists ${localities.size} localities, fewer than ${VIC_PLAUSIBILITY.minLocalities} — refused`);
   }
-  return { rows, years: yearCols.map((y) => y.year), localities: localities.size, dwellingType };
+  return { rows, years: yearCols.map((y) => y.year), localities: localities.size, dwellingType, implausible };
 }
 
 const QUARTER_LABEL_END: Record<string, string> = { 'jan-mar': '03', 'apr-jun': '06', 'jul-sep': '09', 'oct-dec': '12' };
@@ -158,6 +194,8 @@ export interface VicQuarterlyParse {
   latestPeriod: string;
   localities: number;
   dwellingType: SalesDwellingType;
+  /** Cells outside the price band, nulled on their rows and named here. */
+  implausible: VicImplausibleCell[];
 }
 
 /**
@@ -195,6 +233,7 @@ export function parseVicQuarterly(grid: Grid, dwellingType: SalesDwellingType, c
   if (salesCol < 0) throw new Error('the Victorian quarterly sheet has no "No. of Sales" column for the latest quarter (layout drift) — refused');
   const rows: SalesMedianRow[] = [];
   const localities = new Set<string>();
+  const implausible: VicImplausibleCell[] = [];
   for (let r = labelRow + 2; r < grid.length; r++) {
     const row = grid[r] ?? [];
     const label = text(row[0]);
@@ -202,10 +241,7 @@ export function parseVicQuarterly(grid: Grid, dwellingType: SalesDwellingType, c
     localities.add(label);
     const sales = parseNumberCell(row[salesCol]);
     for (const { col, period } of quarterCols) {
-      const value = valueUnderFlag(row[col], row[col + 1]);
-      if (value !== null && (value < VIC_PLAUSIBILITY.minPrice || value > VIC_PLAUSIBILITY.maxPrice)) {
-        throw new Error(`the Victorian quarterly sheet prices ${label} ${period} at $${value}, outside ${VIC_PLAUSIBILITY.minPrice}–${VIC_PLAUSIBILITY.maxPrice} — refused`);
-      }
+      const value = plausibleOrNamed(valueUnderFlag(row[col], row[col + 1]), label, period, implausible);
       rows.push({
         state: 'VIC', areaKind: 'suburb', area: label, dwellingType, period,
         medianPrice: value,
@@ -214,8 +250,9 @@ export function parseVicQuarterly(grid: Grid, dwellingType: SalesDwellingType, c
       });
     }
   }
+  refuseIfTooManyImplausible('quarterly sheet', implausible);
   if (localities.size < VIC_PLAUSIBILITY.minLocalities) {
     throw new Error(`the Victorian quarterly sheet lists ${localities.size} localities, fewer than ${VIC_PLAUSIBILITY.minLocalities} — refused`);
   }
-  return { rows, periods, latestPeriod, localities: localities.size, dwellingType };
+  return { rows, periods, latestPeriod, localities: localities.size, dwellingType, implausible };
 }
