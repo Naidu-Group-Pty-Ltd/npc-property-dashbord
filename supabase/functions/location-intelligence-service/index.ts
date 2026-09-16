@@ -21,8 +21,16 @@ import {
   placesAreComplete,
   unavailableCategories,
   type PlacesCategory,
+  type PlacesLookup,
   type PlacesLookups,
 } from '../_shared/reports/location/placesAvailability.pure.ts';
+import { amenityProviderOrder, commuteProviderOrder } from '../_shared/openLocation/providers.pure.ts';
+import { readAmenityRegister } from '../_shared/openLocation/amenityRegisterStore.ts';
+import { buildOsrmRouteUrl, parseOsrmAnswer } from '../_shared/openLocation/osrmRoute.pure.ts';
+import { awaitOsmTurn, consumeOsmDailyAllowance } from '../_shared/geocode/osmAllowance.ts';
+import { GEOCODER_USER_AGENT } from '../_shared/geocode/geocoder.ts';
+import { fetchWithTimeout } from '../_shared/publicAbuseControls.ts';
+import { normaliseAuState } from '../_shared/auLocality.pure.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
@@ -341,29 +349,70 @@ async function fetchLocationIntelligence(
     }
   }
 
-  // Fetch all location intelligence data in parallel
-  const [
-    transitData,
-    schoolsData,
-    healthcareData,
-    shoppingData,
-    recreationData,
-    restaurantsData
-  ] = await Promise.all([
-    fetchNearbyPlaces(coordinates, 'transit_station', apiKey, db),
-    fetchNearbyPlaces(coordinates, 'school', apiKey, db),
-    fetchNearbyPlaces(coordinates, 'hospital', apiKey, db),
-    fetchNearbyPlaces(coordinates, 'shopping_mall', apiKey, db),
-    fetchNearbyPlaces(coordinates, 'park', apiKey, db),
-    fetchNearbyPlaces(coordinates, 'restaurant', apiKey, db)
-  ]);
+  // The six amenity lookups, through the provider order (AMENITY_PROVIDERS,
+  // default register,google): the local OSM amenity register answers every
+  // category whose (category, state) slice is loaded and current, and
+  // Google Places is asked — in parallel, exactly as before — only for the
+  // categories the register could not answer. On a deployment whose
+  // register has never loaded, every category falls through and this
+  // behaves exactly as it always has; `fetchNearbyPlaces` is untouched.
+  const amenityOrder = amenityProviderOrder(Deno.env.get);
+  const registerState = normaliseAuState(String(input.state ?? ''));
+  const GOOGLE_TYPE_FOR: Record<PlacesCategory, string> = {
+    transit: 'transit_station',
+    schools: 'school',
+    healthcare: 'hospital',
+    shopping: 'shopping_mall',
+    recreation: 'park',
+    restaurants: 'restaurant',
+  };
+  const AMENITY_CATEGORY_ORDER: PlacesCategory[] = ['transit', 'schools', 'healthcare', 'shopping', 'recreation', 'restaurants'];
+  const chained: Partial<Record<PlacesCategory, PlacesLookup>> = {};
+  const amenitySources: Partial<Record<PlacesCategory, 'register' | 'google'>> = {};
+  const amenityRegisterLoadedAt: Record<string, string> = {};
+  for (const provider of amenityOrder) {
+    const missing = AMENITY_CATEGORY_ORDER.filter((c) => chained[c]?.ok !== true);
+    if (missing.length === 0) break;
+    if (provider === 'register') {
+      const readings = await readAmenityRegister(db, coordinates, registerState, missing, Deno.env.get);
+      for (const c of missing) {
+        const reading = readings[c];
+        if (reading && reading.unavailableReason === null) {
+          chained[c] = reading.lookup;
+          amenitySources[c] = 'register';
+          if (reading.loadedAt) amenityRegisterLoadedAt[c] = reading.loadedAt;
+        } else if (reading) {
+          console.log(`[location-intelligence-service] register did not answer ${c} (${reading.unavailableReason}); next provider`);
+        }
+      }
+    } else if (provider === 'google') {
+      const answers = await Promise.all(
+        missing.map((c) => fetchNearbyPlaces(coordinates, GOOGLE_TYPE_FOR[c], apiKey, db)),
+      );
+      missing.forEach((c, i) => {
+        chained[c] = answers[i];
+        if (answers[i].ok) amenitySources[c] = 'google';
+      });
+    }
+  }
+  const UNMEASURED: PlacesLookup = { ok: false, count: 0, results: [] };
+  const transitData = chained.transit ?? UNMEASURED;
+  const schoolsData = chained.schools ?? UNMEASURED;
+  const healthcareData = chained.healthcare ?? UNMEASURED;
+  const shoppingData = chained.shopping ?? UNMEASURED;
+  const recreationData = chained.recreation ?? UNMEASURED;
+  const restaurantsData = chained.restaurants ?? UNMEASURED;
 
   // Calculate CBD commute time. No state means no known destination, and a
   // guessed destination is what put a Perth property 82 hours from "the CBD".
+  // The measurement follows COMMUTE_PROVIDERS (default osrm,google): OSRM's
+  // public router drives the route free, and the Distance Matrix stays
+  // selectable — `calculateCommuteTime` is untouched.
   const cbdCoordinates = resolveCbdDestination(input.state);
-  const commuteData = cbdCoordinates
-    ? await calculateCommuteTime(coordinates, cbdCoordinates, apiKey, db)
-    : COMMUTE_DESTINATION_UNKNOWN;
+  const measuredCommute = cbdCoordinates
+    ? await measureCommuteThroughChain(coordinates, cbdCoordinates, apiKey, db)
+    : { data: COMMUTE_DESTINATION_UNKNOWN, provider: null };
+  const commuteData = measuredCommute.data;
 
   // RF-7.2B.1B2 — the six lookups, named once so that every projection below
   // reads the SAME per-category outcome. `ok` used to be reduced to one
@@ -421,7 +470,7 @@ async function fetchLocationIntelligence(
     nearestStation: measuredName(transitData),
     distanceToStation: measuredDistance(transitData),
     stationsWithin2km: measuredCount(transitData),
-    source: 'google_places',
+    source: amenitySources.transit === 'register' ? 'osm_amenity_register' : 'google_places',
   };
 
   const data = {
@@ -484,6 +533,13 @@ async function fetchLocationIntelligence(
       commute: commuteData === COMMUTE_DESTINATION_UNKNOWN
         ? 'destination_unknown'
         : commuteData === COMMUTE_NO_ROUTE ? 'no_route' : 'measured',
+      // Which provider answered what — provenance for a record two
+      // providers can now produce. Advisory, like `placesUnavailable`.
+      amenitySources: Object.fromEntries(
+        AMENITY_CATEGORY_ORDER.map((c) => [c, amenitySources[c] ?? 'unmeasured']),
+      ),
+      ...(Object.keys(amenityRegisterLoadedAt).length > 0 ? { amenityRegisterLoadedAt } : {}),
+      ...(measuredCommute.provider ? { commuteProvider: measuredCommute.provider } : {}),
     },
     matchedAddress,
   });
@@ -758,6 +814,82 @@ async function calculateCommuteTime(
   // behind it is worse than none, because every reader downstream treats
   // `durationMinutes` as measured. Absent, not estimated.
   return COMMUTE_NO_ROUTE;
+}
+
+/**
+ * The commute, through the provider order. OSRM's public router measures a
+ * DRIVING route (its demo graph has no timetables) and the reading says so
+ * in `mode`; the Distance Matrix branch is `calculateCommuteTime`,
+ * untouched. A provider's own "no route between these points" is final —
+ * it is an answer about the geometry — while an unreachable or refused
+ * provider hands the question to the next one. When nothing could attempt
+ * the measurement the answer is CAP_REACHED, and when a provider was
+ * reached and failed it is NO_ROUTE, which is exactly how the Google-only
+ * path already divided the two.
+ */
+async function measureCommuteThroughChain(
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number },
+  apiKey: string,
+  db: unknown,
+): Promise<{ data: typeof COMMUTE_NO_ROUTE | typeof COMMUTE_CAP_REACHED | { durationMinutes: number; distanceKm: number; mode: string }; provider: 'osrm' | 'google' | null }> {
+  let reachedAndFailed = false;
+  for (const provider of commuteProviderOrder(Deno.env.get)) {
+    if (provider === 'osrm') {
+      const answer = await osrmCommute(origin, destination, db);
+      if (answer.kind === 'route') return { data: answer.commute, provider: 'osrm' };
+      if (answer.kind === 'no_route') return { data: COMMUTE_NO_ROUTE, provider: null };
+      if (answer.kind === 'unusable') reachedAndFailed = true;
+      // 'not_attempted' (allowance refused) falls through silently.
+    } else if (provider === 'google') {
+      const g = await calculateCommuteTime(origin, destination, apiKey, db);
+      if (g === COMMUTE_NO_ROUTE) return { data: g, provider: null };
+      if (g !== COMMUTE_CAP_REACHED) return { data: g, provider: 'google' };
+      // CAP_REACHED covers "no key" and "cap spent" — the next provider,
+      // when the operator listed one after google, may still answer.
+    }
+  }
+  return { data: reachedAndFailed ? COMMUTE_NO_ROUTE : COMMUTE_CAP_REACHED, provider: null };
+}
+
+async function osrmCommute(
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number },
+  db: unknown,
+): Promise<
+  | { kind: 'route'; commute: { durationMinutes: number; distanceKm: number; mode: string } }
+  | { kind: 'no_route' }
+  | { kind: 'unusable' }
+  | { kind: 'not_attempted' }
+> {
+  // Free, so never metered — but never unbounded either: the same daily
+  // allowance and one-a-second turn discipline every public OSM service
+  // gets, in the shared limiter, failing closed.
+  const allowance = await consumeOsmDailyAllowance(db, 'routing');
+  if (!allowance.ok) {
+    console.warn(`[location-intelligence-service] commute not attempted on OSRM (${allowance.reason})`);
+    return { kind: 'not_attempted' };
+  }
+  await awaitOsmTurn(db, 'osrm');
+  try {
+    const res = await fetchWithTimeout(
+      buildOsrmRouteUrl(origin, destination),
+      { headers: { 'User-Agent': GEOCODER_USER_AGENT, Accept: 'application/json' } },
+      8000,
+    );
+    if (!res.ok) {
+      console.warn(`[location-intelligence-service] OSRM answered ${res.status}`);
+      return { kind: 'unusable' };
+    }
+    const parsed = parseOsrmAnswer(await res.json());
+    if (parsed.kind === 'route') return { kind: 'route', commute: parsed.commute };
+    if (parsed.kind === 'no_route') return { kind: 'no_route' };
+    console.warn(`[location-intelligence-service] OSRM answer unusable (${parsed.code})`);
+    return { kind: 'unusable' };
+  } catch (error) {
+    console.warn('[location-intelligence-service] OSRM unreachable:', (error as Error).message);
+    return { kind: 'unusable' };
+  }
 }
 
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {

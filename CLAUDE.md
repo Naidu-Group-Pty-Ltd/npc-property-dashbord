@@ -162,8 +162,27 @@ it was**: `no_match` alone is a statement about the address; `unavailable`,
 `refused` and `budget` (with its `capReason`) are ours, and the location
 service maps them onto `geocoder_unavailable` / `geocoder_not_attempted`
 rather than blaming the customer's address for this deployment's provider.
-Places Nearby, Distance Matrix and Street View still spend the Google key and
-the doc names the free path for each.
+Places Nearby, Distance Matrix and Street View are now the TAIL of their own
+chains, not dependencies (§13–14 of the same doc, measured before built).
+**Amenities are a REGISTER, not a request**: a free Overpass mirror served a
+hospital query in under two seconds and queued the same query past 25 s an
+hour later, and this egress is a shared NAT — so `amenity_register` loads per
+(category, state) on a daily pg_cron schedule (`amenity-register-ingest`,
+exact tag values never a value regex, `nw` never `node`, a `[timeout:]` in
+every query, one request at a time, upsert-then-prune) and
+`location-intelligence-service` / `school-data-service` read it locally, with
+Google asked only for categories the register cannot answer. **A slice's
+currency gates its read**: zero rows for a state never loaded is
+`unavailable`, never "no schools here", and a slice older than
+`AMENITY_REGISTER_MAX_AGE_DAYS` declines in favour of the next provider. The
+commute asks OSRM first (`mode: 'driving'` — the demo graph has no
+timetables, and the reading never wears the transit label over a driving
+measurement), and `street-view` asks Mapillary first behind an Integrations
+card (`MAPILLARY_ACCESS_TOKEN`) whose absence skips the branch without a
+network call. The three orders (`AMENITY_PROVIDERS`, `COMMUTE_PROVIDERS`,
+`STREET_IMAGERY_PROVIDERS`) deliberately default with `google` LAST rather
+than absent — a register that has not had its first ingest, a token nobody
+has minted, must degrade to yesterday's behaviour, not to nulls.
 
 **The address a pin and a card are built from is COMPOSED, never inherited.**
 Read [`ADDRESS_COMPOSITION.md`](./docs/listings/ADDRESS_COMPOSITION.md) before

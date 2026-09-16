@@ -311,6 +311,9 @@ verify_jwt = true
 [functions.estimate-capital-growth]
 verify_jwt = true
 
+[functions.amenity-register-ingest]
+verify_jwt = true
+
 [functions.market-sales-ingest]
 verify_jwt = true
 
