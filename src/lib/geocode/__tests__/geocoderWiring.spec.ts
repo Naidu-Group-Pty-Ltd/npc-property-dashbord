@@ -198,17 +198,54 @@ describe('the address field', () => {
 });
 
 describe('the configuration is declared where an operator looks', () => {
-  it('every name the chain reads is a field on the Integrations page', () => {
-    // The same rule the Google caps answer to: configuration that exists only
-    // in code is configuration an operator cannot see.
-    const registry = read('src', 'lib', 'integrations', 'registry.ts');
-    for (const name of [
-      'GEOCODER_PROVIDERS', 'GEOCODER_OSM_URL', 'OSM_GEOCODING_DAILY_LIMIT',
-      'ADDRESS_AUTOCOMPLETE_PROVIDER', 'AUTOCOMPLETE_PHOTON_URL', 'OSM_AUTOCOMPLETE_DAILY_LIMIT',
-    ]) {
-      expect(registry, name).toContain(`key: '${name}'`);
+  /**
+   * The Integrations page is a register of CREDENTIALS — every card maps to a
+   * key an edge function or the browser reads, and the page derives a card's
+   * status from its required fields. The chain's settings are not credentials:
+   * the providers are free and keyless and on by default, so a card for them
+   * would carry no required field and read "Not configured" for ever
+   * (`allowedSecrets.test.ts` pins that rule). They are project environment
+   * variables, and the place an operator finds them is the doc.
+   */
+  const DOC = read('docs', 'integrations', 'GEOCODING_WITHOUT_GOOGLE.md');
+
+  it('documents every name the chain reads, with its default', () => {
+    for (const [name, fallback] of [
+      ['GEOCODER_PROVIDERS', 'nominatim,abs_locality'],
+      ['GEOCODER_OSM_URL', 'https://nominatim.openstreetmap.org'],
+      ['OSM_GEOCODING_DAILY_LIMIT', '2000'],
+      ['ADDRESS_AUTOCOMPLETE_PROVIDER', 'osm'],
+      ['AUTOCOMPLETE_PHOTON_URL', 'https://photon.komoot.io'],
+      ['OSM_AUTOCOMPLETE_DAILY_LIMIT', '5000'],
+    ] as const) {
+      // Named in the doc's settings table, beside the default the code uses...
+      expect(DOC, name).toMatch(new RegExp(`\\| \`${name}\` \\| \`${fallback}\``));
+      // ...and actually read by the runtime, so the table cannot describe a
+      // setting nothing consults.
       expect(CHAIN + ALLOWANCE + AUTOCOMPLETE, name).toContain(`'${name}'`);
     }
+  });
+
+  it('reads no setting the doc does not name', () => {
+    // The other direction: a name the code grew and the doc never learned is
+    // configuration an operator cannot find, which is the thing being avoided.
+    const read_ = /Deno\.env\.get\('([A-Z0-9_]+)'\)|env\('([A-Z0-9_]+)'\)|OSM_ALLOWANCE_ENV[\s\S]{0,200}?'([A-Z0-9_]+)'/g;
+    const names = new Set<string>();
+    for (const m of (CHAIN + ALLOWANCE).matchAll(read_)) {
+      const name = m[1] ?? m[2] ?? m[3];
+      if (name && name.startsWith('OSM_')) names.add(name);
+      if (name && name.startsWith('GEOCODER_')) names.add(name);
+    }
+    expect(names.size).toBeGreaterThan(0);
+    for (const name of names) expect(DOC, name).toContain(`\`${name}\``);
+  });
+
+  it('keeps them off the credential register, and says why there', () => {
+    const registry = read('src', 'lib', 'integrations', 'registry.ts');
+    for (const name of ['GEOCODER_PROVIDERS', 'ADDRESS_AUTOCOMPLETE_PROVIDER', 'OSM_GEOCODING_DAILY_LIMIT']) {
+      expect(registry, name).not.toContain(name);
+    }
+    expect(DOC).toMatch(/environment variable/i);
   });
 
   it('CI runs this directory', () => {

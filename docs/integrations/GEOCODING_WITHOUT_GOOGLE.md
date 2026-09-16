@@ -220,26 +220,61 @@ the chain's suffix form.
 
 ## 8. Configuration
 
-Declared on the Integrations page under **OpenStreetMap Geocoding**, because
-configuration that exists only in code is configuration an operator cannot see.
-None of these is a credential.
+Every setting below is a **project environment variable** — a Supabase secret
+on the deployment, set the way `OPENAI_API_KEY` is. None of them is required:
+the defaults are the shipped behaviour and a deployment that sets nothing
+geocodes correctly.
 
 | Name | Default | Meaning |
 |---|---|---|
-| `GEOCODER_PROVIDERS` | `nominatim,abs_locality` | The order. Add `google` to make Google a last resort. |
+| `GEOCODER_PROVIDERS` | `nominatim,abs_locality` | The order. Add `google` to make Google a last resort. A misspelt value falls back to the default, never to "no providers". |
 | `GEOCODER_OSM_URL` | `https://nominatim.openstreetmap.org` | A self-hosted Nominatim (§10). |
 | `OSM_GEOCODING_DAILY_LIMIT` | `2000` | The day's Nominatim allowance across the deployment. |
-| `ADDRESS_AUTOCOMPLETE_PROVIDER` | `osm` | `osm` or `google`. |
+| `ADDRESS_AUTOCOMPLETE_PROVIDER` | `osm` | `osm` or `google`. Any other spelling is `osm`. |
 | `AUTOCOMPLETE_PHOTON_URL` | `https://photon.komoot.io` | A self-hosted Photon (§10). |
 | `OSM_AUTOCOMPLETE_DAILY_LIMIT` | `5000` | The day's Photon allowance. |
-| `GEOCODING_KILL_SWITCH` | unset | Stops `resolve-listing-coordinates` geocoding at all (503, the client backs off). |
+| `GEOCODING_KILL_SWITCH` | unset | Stops `resolve-listing-coordinates` geocoding at all (503, and the client backs off). |
 | `GOOGLE_GEOCODING_KILL_SWITCH` | unset | Stops the Google PROVIDER only, through `consumeGoogleDailyCap`. |
 
-The migration is `20261128090000_geocode_cache.sql`: the table, RLS on with no
-policy (service-role only), and `geocode_cache_touch(text)` granted to
-`service_role` alone. Apply it through `apply-migration.yml` after the merge;
-the chain works without it (a failed cache read is a miss, a failed write is a
-warning), but every allowance assumes it.
+### Why these are not on the Integrations page
+
+They were, for one commit, and the card was wrong twice over.
+
+The Integrations page is a register of **credentials**: every card maps to a key
+an edge function or the browser reads, and the page derives a card's status from
+its **required** fields alone — `configuredFields.length === 0` is
+`not_configured`. These providers are free and keyless, so every field on such a
+card is optional, the required set is empty, and the card reads **"Not
+configured" for ever**, however the deployment is set, for a geocoder that is on
+by default and working. Measured across all 144 cards at the time, it was the
+only one with no required field. A register that prints a false status about
+itself is worse than a register that does not mention the thing.
+
+The second fault: a card on that page must have at least one workflow operation
+(`catalog.spec.ts` pins it — an app an operator can configure is an app they can
+use). The only honest operation would be "geocode an address", and a live
+workflow step calling Nominatim through the generic executor bypasses
+`osmAllowance.ts` — no daily ceiling, no one-request-a-second turn. A workflow
+looping five hundred rows through it would breach OpenStreetMap's usage policy
+under this product's own User-Agent and get it **blocked**, taking the listings
+map, the reports and the address field down together. A palette entry with no
+request descriptor would instead be a step that draws and does nothing.
+
+So the rule that put the Google caps on that page does not reach here, and
+reading it again says why: it is about a **spending** limit on a paid vendor,
+where a ceiling nobody can see is a ceiling nobody can raise before a bill
+arrives. Nothing is spent here. `allowedSecrets.test.ts` now fails on any card
+whose every field is optional, and `geocoderWiring.spec.ts` asserts this table
+names every setting the runtime reads, and that the runtime reads every setting
+this table names.
+
+### The migration
+
+`20261128090000_geocode_cache.sql`: the table, RLS on with no policy
+(service-role only), and `geocode_cache_touch(text)` granted to `service_role`
+alone. Apply it through `apply-migration.yml` after the merge; the chain works
+without it (a failed cache read is a miss, a failed write is a warning), but
+every allowance assumes it.
 
 ## 9. Production proof
 

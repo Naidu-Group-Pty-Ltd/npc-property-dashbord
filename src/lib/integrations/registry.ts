@@ -221,30 +221,6 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
     ],
   },
   {
-    id: 'openstreetmap',
-    name: 'OpenStreetMap Geocoding',
-    description: 'The default geocoder and address suggestions — OpenStreetMap\'s Nominatim and Photon with the ABS boundary server beneath. Free, keyless, on by default; these fields tune the chain and none of them is a credential.',
-    category: 'property_data',
-    tags: ['geocoding', 'nominatim', 'photon', 'autocomplete', 'osm', 'abs', 'free'],
-    docsUrl: 'https://operations.osmfoundation.org/policies/nominatim/',
-    fallbackIcon: 'map',
-    fields: [
-      // The chain and its allowances live in `_shared/geocode/`. Every name the
-      // runtime reads is declared here for the same reason the Google caps
-      // are: configuration that exists only in code is configuration an
-      // operator cannot see. Defaults are in `osmAllowance.ts` and
-      // `geocodeResult.pure.ts`; the placeholders show them.
-      { key: 'GEOCODER_PROVIDERS', label: 'Geocoder Order', placeholder: 'nominatim,abs_locality', type: 'text', required: false },
-      { key: 'OSM_GEOCODING_DAILY_LIMIT', label: 'Geocoding Daily Allowance', placeholder: '2000', type: 'text', required: false },
-      { key: 'GEOCODER_OSM_URL', label: 'Nominatim Base URL (self-hosted)', placeholder: 'https://nominatim.openstreetmap.org', type: 'text', required: false },
-      { key: 'ADDRESS_AUTOCOMPLETE_PROVIDER', label: 'Address Suggestions Provider', placeholder: 'osm', type: 'text', required: false },
-      { key: 'OSM_AUTOCOMPLETE_DAILY_LIMIT', label: 'Address Suggestions Daily Allowance', placeholder: '5000', type: 'text', required: false },
-      { key: 'AUTOCOMPLETE_PHOTON_URL', label: 'Photon Base URL (self-hosted)', placeholder: 'https://photon.komoot.io', type: 'text', required: false },
-    ],
-  },
-
-  // ── CRM & Marketing ────────────────────────────────────────────────────
-  {
     id: 'gohighlevel',
     name: 'GoHighLevel',
     description: 'CRM, pipelines and marketing automation — the primary contact system of record.',
