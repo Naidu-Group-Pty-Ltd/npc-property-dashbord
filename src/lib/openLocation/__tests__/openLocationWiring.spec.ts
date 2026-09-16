@@ -146,6 +146,27 @@ describe('the ingest owes the mirror its etiquette', () => {
     expect(INGEST).toContain("status: 'skipped'");
     expect(INGEST).toContain('run budget spent');
   });
+
+  it('never hangs up inside the server’s granted window', () => {
+    // Every query carries [timeout:90]; aborting the fetch before the
+    // server's own grant both loses the answer and wastes the mirror's
+    // compute — measured as "The signal has been aborted" on VIC
+    // recreation, three times, under the first 60 s ceiling.
+    const ceiling = Number(INGEST.match(/const FETCH_CEILING_MS = ([\d_]+);/)?.[1]?.replace(/_/g, ''));
+    const granted = Number(
+      read('supabase', 'functions', '_shared', 'openLocation', 'overpassAmenities.pure.ts')
+        .match(/OVERPASS_QUERY_TIMEOUT_SECONDS = (\d+);/)?.[1],
+    );
+    expect(granted).toBeGreaterThan(0);
+    expect(ceiling).toBeGreaterThan(granted * 1000);
+  });
+
+  it('falls back to the per-pair ladder, and every pair must succeed', () => {
+    expect(INGEST).toContain('retrying per tag pair');
+    // A category missing one pair's rows would undercount as confidently
+    // as a complete one, so a failed pair fails the slice.
+    expect(INGEST).toContain('per-pair retry failed');
+  });
 });
 
 describe('configuration is documented, and credentials are cards', () => {
