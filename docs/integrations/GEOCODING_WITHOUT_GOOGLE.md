@@ -564,6 +564,19 @@ the ODbL attribution and the slice's load date in the note, and the
 sector reads `Other` where the element's tags state none — never the
 old hardcoded Government.
 
+**And one bug the failures taught, fixed the same day**: the VIC
+recreation aborts were OUR client hanging up at a 60 s fetch ceiling
+under the query's own `[timeout:90]` server grant — losing answers the
+mirror was still lawfully computing, the very discourtesy the
+`[timeout:]` discipline exists to prevent. The ceiling now sits above
+the grant (100 s), the whole-union attempt gets a 50 s first window
+(the heaviest union that ever succeeded took ~40 s), and a union that
+outgrows it is re-asked per tag pair and merged — with every pair
+required to succeed, because a category missing one pair's rows would
+undercount as confidently as a complete one. A run scoped to named
+categories is a repair, not the nightly sweep, and gets budget for the
+ladder.
+
 Two observations for the record. One campus appeared twice in
 `topSchools` (an OSM node AND way both tagged for it) — the register
 deliberately does not merge same-name elements, because absent

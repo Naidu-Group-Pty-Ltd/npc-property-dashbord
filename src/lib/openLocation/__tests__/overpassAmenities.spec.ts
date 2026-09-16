@@ -65,6 +65,16 @@ describe('the slice query', () => {
     expect(buildCountQuery('schools')).toContain('[out:json]');
     expect(buildCountQuery('schools', 'ACT' as AmenityState)).toContain('AU-ACT');
   });
+
+  it('narrows to a filter subset for the per-pair ladder', () => {
+    // The ingest's fallback when a whole union outgrows the granted
+    // window (VIC recreation, measured 16 Sep 2026): each tag pair is
+    // asked alone and stored under the same category.
+    const q = buildSliceQuery('recreation', 'VIC', [['leisure', 'park']]);
+    expect(q).toContain('nw["leisure"="park"]');
+    expect(q).not.toContain('playground');
+    expect(q).toMatch(/\[timeout:\d+\]/);
+  });
 });
 
 describe('the mirror list', () => {

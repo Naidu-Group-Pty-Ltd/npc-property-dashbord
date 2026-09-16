@@ -138,20 +138,31 @@ export const OVERPASS_QUERY_TIMEOUT_SECONDS = 90;
 const csvHeader = (): string =>
   `[out:csv(${AMENITY_CSV_COLUMNS.map((c) => (c.startsWith('::') ? c : `"${c}"`)).join(',')};true)]`;
 
-const unionFor = (category: AmenityCategory, set: string): string =>
-  `(${AMENITY_FILTERS[category].map(([k, v]) => `nw["${k}"="${v}"](area.${set});`).join('')})`;
+const unionOf = (filters: ReadonlyArray<readonly [string, string]>, set: string): string =>
+  `(${filters.map(([k, v]) => `nw["${k}"="${v}"](area.${set});`).join('')})`;
 
 /**
  * One register slice: every element of one category in one state, as CSV.
  * `out center` fills ::lat/::lon with a way's centre point — without it a
  * way outputs empty coordinates, which is the `nw`-not-`node` lesson's
  * quieter sibling.
+ *
+ * `filters` narrows the query to a subset of the category's tag pairs —
+ * the ingest's fallback when the whole union runs past the granted
+ * window (measured 16 Sep 2026: VIC recreation's two-value union needed
+ * more than the first client ceiling allowed while each half is an
+ * ordinary query). A subset query is still classified and stored under
+ * the same category.
  */
-export function buildSliceQuery(category: AmenityCategory, state: AmenityState): string {
+export function buildSliceQuery(
+  category: AmenityCategory,
+  state: AmenityState,
+  filters: ReadonlyArray<readonly [string, string]> = AMENITY_FILTERS[category],
+): string {
   return (
     `${csvHeader()}[timeout:${OVERPASS_QUERY_TIMEOUT_SECONDS}];` +
     `area["ISO3166-2"="AU-${state}"][admin_level=4]->.s;` +
-    `${unionFor(category, 's')};` +
+    `${unionOf(filters, 's')};` +
     `out center;`
   );
 }
@@ -161,7 +172,7 @@ export function buildCountQuery(category: AmenityCategory, state?: AmenityState)
   const area = state
     ? `area["ISO3166-2"="AU-${state}"][admin_level=4]->.s;`
     : `area["ISO3166-1"="AU"][admin_level=2]->.s;`;
-  return `[out:json][timeout:${OVERPASS_QUERY_TIMEOUT_SECONDS}];${area}${unionFor(category, 's')};out count;`;
+  return `[out:json][timeout:${OVERPASS_QUERY_TIMEOUT_SECONDS}];${area}${unionOf(AMENITY_FILTERS[category], 's')};out count;`;
 }
 
 /** One parsed register row. `address` is assembled here, once, at ingest. */
