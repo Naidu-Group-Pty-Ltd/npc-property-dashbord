@@ -573,8 +573,15 @@ silently here. And the register's `count` fields cap at ten by
 contract (the Google path's own slice), so dense-area counts read 10
 exactly as they always have.
 
-Still unverified: a Mapillary image end-to-end — the deployed
-street-view panel keeps serving Google unchanged until
-`MAPILLARY_ACCESS_TOKEN` is minted (free, mapillary.com/developer)
-and saved on the Mapillary card, which nothing in this repository
-can do.
+**And the Mapillary image, end-to-end** (pg_net 249584, later the
+same day): the owner registered a READ-only application, saved the
+client token on the Mapillary card, and the deployed `street-view`
+answered the Harris Park coordinate `success: true, available: true`
+with a 137 KB base64 JPEG, `panoramaDate: "2019-01"` and
+`copyright: "© Mapillary, CC BY-SA 4.0"` — the free provider serving
+first in the same envelope the panel has always rendered, Google
+standing by for streets the crowd has not photographed. Nothing in
+the programme remains unverified. One operator note: Mapillary's
+capture dates vary by street (this one is 2019); the panel shows the
+date, and an operator who prefers Google's fresher imagery for a
+deployment simply reorders `STREET_IMAGERY_PROVIDERS`.
