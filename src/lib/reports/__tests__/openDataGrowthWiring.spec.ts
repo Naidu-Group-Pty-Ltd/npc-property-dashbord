@@ -21,33 +21,40 @@ const GENERATOR = read('supabase', 'functions', 'generate-investment-report', 'i
 const SCORING = read('supabase', 'functions', '_shared', 'reports', 'market', 'scoringV2Production.pure.ts');
 const LOADER = read('supabase', 'functions', 'market-sales-ingest', 'index.ts');
 const CONFIG = read('supabase', 'config.toml');
+const MIGRATION_2 = readFileSync(join(ROOT, 'supabase/migrations/20261126090000_market_sales_medians_national.sql'), 'utf8');
 const MIGRATION = read('supabase', 'migrations', '20261125090000_market_sales_medians.sql');
 const EVIDENCE = read('supabase', 'functions', '_shared', 'reports', 'market', 'marketEvidence.pure.ts');
 
 describe('the generator consults the register beside Domain', () => {
-  const block = GENERATOR.slice(GENERATOR.indexOf('const registerSource = salesRegisterSourceFor(marketState);'));
+  const block = GENERATOR.slice(GENERATOR.indexOf('const registerSources = salesRegisterSourcesFor(marketState);'));
   const registerBlock = block.slice(0, block.indexOf('// Population growth'));
 
   it('asks after Domain and before the population driver, inside the market-evidence block', () => {
     const domainAt = GENERATOR.indexOf("providersConsulted.push('domain');");
-    const registerAt = GENERATOR.indexOf('const registerSource = salesRegisterSourceFor(marketState);');
+    const registerAt = GENERATOR.indexOf('const registerSources = salesRegisterSourcesFor(marketState);');
     const populationAt = GENERATOR.indexOf('populationGrowthPoint(erpSeries');
     expect(domainAt).toBeGreaterThan(0);
     expect(registerAt).toBeGreaterThan(domainAt);
     expect(populationAt).toBeGreaterThan(registerAt);
   });
 
-  it('asks only for the cadastre\'s council or the trusted postcode — never a typed suburb or a parsed token', () => {
+  it('asks finest grain first — the trusted suburb, the cadastre\'s council, the trusted postcode, then the state floor — never a typed suburb or a parsed token', () => {
     expect(registerBlock).toContain("enhancedData.planningData?.parcel?.status === 'ok'");
-    expect(registerBlock).toContain("registerAsks.push({ areaKind: 'postcode', area: marketPostcode });");
-    expect(registerBlock).toContain("registerAsks.push({ areaKind: 'lga', area: cadastreLga });");
+    expect(registerBlock).toContain("registerSource.areaKind === 'suburb' ? marketSuburb");
+    expect(registerBlock).toContain("registerSource.areaKind === 'lga' ? cadastreLga");
+    expect(registerBlock).toContain("registerSource.areaKind === 'postcode' ? marketPostcode");
+    expect(registerBlock).toContain(': marketState;');
+    // the floor is read only where nothing finer answered
+    expect(registerBlock).toContain('if (registerAnswered) break;');
     expect(registerBlock).not.toMatch(/area:\s*suburb\b/);
     expect(registerBlock).not.toContain('propertyAddress.match');
+    expect(registerBlock).not.toContain('propertyDetails.suburb');
   });
 
   it('records the provider as consulted, and as unavailable with the reason when nothing answers', () => {
     expect(registerBlock).toContain('providersConsulted.push(registerSource.provider);');
     expect(registerBlock).toContain('providersUnavailable.push({ provider: registerSource.provider, reason: registerNotes.join');
+    expect(registerBlock).toContain("the geography resolved to no suburb");
     expect(registerBlock).toContain('load it with market-sales-ingest');
   });
 
@@ -59,7 +66,7 @@ describe('the generator consults the register beside Domain', () => {
 
   it('reads the register through the one read helper and the one adapter', () => {
     expect(GENERATOR).toContain("import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';");
-    expect(GENERATOR).toContain("import { openDataSalesPoints, salesRegisterSourceFor } from '../_shared/reports/market/openDataSalesEvidence.pure.ts';");
+    expect(GENERATOR).toContain("import { openDataSalesPoints, salesRegisterSourcesFor } from '../_shared/reports/market/openDataSalesEvidence.pure.ts';");
   });
 });
 
@@ -85,6 +92,15 @@ describe('the loader and its declarations', () => {
     expect(LOADER).toContain('dcjSalesLinks(current + previous)');
     expect(LOADER).not.toMatch(/all-monitored-regions-\d{8}\.xlsx/);
     expect(LOADER).not.toMatch(/sales-tables-[a-z]+-\d{4}/);
+    // the archived series are discovered from the archive's index, never a pinned capture
+    expect(LOADER).toContain('archiveIndex(VIC_VPSR_ARCHIVE_PATTERN');
+    expect(LOADER).toContain('archiveIndex(SA_LSG_ARCHIVE_PATTERN)');
+    expect(LOADER).not.toMatch(/web\.archive\.org\/web\/\d{14}/);
+    expect(LOADER).toContain("stage === 'abs'");
+    expect(LOADER).toContain("stage === 'vic'");
+    expect(LOADER).toContain("stage === 'sa'");
+    // one heavy workbook per invocation
+    expect(LOADER).toContain('choice.chosen.slice(0, 1)');
   });
 
   it('refuses rather than stores, and writes only the register and its log', () => {
@@ -97,6 +113,13 @@ describe('the loader and its declarations', () => {
 
   it('the register keeps a suppressed median as null and keys a quarter by its end month', () => {
     expect(MIGRATION).toContain('primary key (state, area_kind, area, dwelling_type, period)');
+    // me9.sales.2: the span joins the key, the measure and the capture travel on the row
+    expect(MIGRATION_2).toContain('add primary key (state, area_kind, area, dwelling_type, period, period_span)');
+    expect(MIGRATION_2).toContain("check (price_measure in ('median', 'mean'))");
+    expect(MIGRATION_2).toContain("check (period_span in ('quarter', 'year'))");
+    expect(MIGRATION_2).toContain("check (state in ('NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT', 'AU'))");
+    expect(MIGRATION_2).toContain('add column if not exists captured_at timestamptz');
+    expect(LOADER).toContain("onConflict: 'state,area_kind,area,dwelling_type,period,period_span'");
     expect(MIGRATION).toContain("check (period ~ '^[0-9]{4}-(03|06|09|12)$')");
     expect(MIGRATION).toContain('median_price numeric check (median_price is null or median_price > 0)');
     expect(MIGRATION).toContain('enable row level security');
@@ -105,5 +128,8 @@ describe('the loader and its declarations', () => {
   it('the two registers are providers the evidence vocabulary knows', () => {
     expect(EVIDENCE).toContain("| 'qld_qgso_rlda'");
     expect(EVIDENCE).toContain("| 'nsw_dcj_rent_sales'");
+    expect(EVIDENCE).toContain("| 'vic_vpsr_suburb'");
+    expect(EVIDENCE).toContain("| 'sa_lsg_suburb'");
+    expect(EVIDENCE).toContain("| 'abs_res_dwell'");
   });
 });

@@ -52,8 +52,9 @@ import { investmentScorePromptBlock, overallRecommendationLine } from '../_share
 import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/reports/market/domainEvidence.pure.ts';
 import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
 import { EVIDENCE_KEYS, emptyEvidence, mergeEvidence, type EvidenceSubject, type MarketEvidence } from '../_shared/reports/market/marketEvidence.pure.ts';
-import { openDataSalesPoints, salesRegisterSourceFor } from '../_shared/reports/market/openDataSalesEvidence.pure.ts';
+import { openDataSalesPoints, salesRegisterSourcesFor } from '../_shared/reports/market/openDataSalesEvidence.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
+import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
@@ -3558,75 +3559,87 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         // parsed token — the rule Domain and the crime evidence answer to.
         // Where Domain also answered, the finer point wins per measure
         // (`mergeEvidence`), so a suburb series outranks a council one.
-        const registerSource = salesRegisterSourceFor(marketState);
-        if (registerSource) {
+        // Every source the state has, finest grain first (`salesRegisterSourcesFor`):
+        // a suburb series for Victoria and South Australia, a council series
+        // for Queensland, a postcode series for New South Wales, and beneath
+        // all of them the ABS state series — read only where nothing finer
+        // answered, so the floor never displaces a real local reading and a
+        // Queensland or New South Wales report reads exactly as before.
+        const registerSources = salesRegisterSourcesFor(marketState);
+        if (registerSources.length) {
           const cadastreLga = enhancedData.planningData?.parcel?.status === 'ok'
             && typeof enhancedData.planningData?.parcel?.lga === 'string'
             ? enhancedData.planningData.parcel.lga.trim() : '';
-          const registerAsks: Array<{ areaKind: 'lga' | 'postcode'; area: string }> = [];
-          if (registerSource.areaKind === 'postcode' && marketPostcode) registerAsks.push({ areaKind: 'postcode', area: marketPostcode });
-          if (cadastreLga) registerAsks.push({ areaKind: 'lga', area: cadastreLga });
-          providersConsulted.push(registerSource.provider);
-          if (!registerAsks.length) {
-            providersUnavailable.push({
-              provider: registerSource.provider,
-              reason: registerSource.areaKind === 'postcode'
-                ? 'the geography resolved to no postal area and the cadastre named no local government area'
-                : 'the cadastre named no local government area for the verified coordinate',
-            });
-          } else {
-            const registerSubject: EvidenceSubject = {
-              suburb: marketSuburb,
-              postcode: marketPostcode,
-              state: marketState,
-              dwellingType: dwellingTypeFor(effectivePropertyType),
-              resolvedFrom: marketPostcode ? 'coordinate' : null,
-            };
+          const registerSubject: EvidenceSubject = {
+            suburb: marketSuburb,
+            postcode: marketPostcode,
+            state: marketState,
+            dwellingType: dwellingTypeFor(effectivePropertyType),
+            resolvedFrom: marketPostcode ? 'coordinate' : null,
+          };
+          let registerAnswered = false;
+          for (const registerSource of registerSources) {
+            if (registerAnswered) break;
+            // The area each grain is asked for comes from the trusted geography
+            // or the cadastre — never a typed suburb or a parsed token.
+            const area = registerSource.areaKind === 'suburb' ? marketSuburb
+              : registerSource.areaKind === 'lga' ? cadastreLga
+              : registerSource.areaKind === 'postcode' ? marketPostcode
+              : marketState;
+            providersConsulted.push(registerSource.provider);
+            if (!area) {
+              providersUnavailable.push({
+                provider: registerSource.provider,
+                reason: registerSource.areaKind === 'suburb' ? 'the geography resolved to no suburb'
+                  : registerSource.areaKind === 'lga' ? 'the cadastre named no local government area for the verified coordinate'
+                  : registerSource.areaKind === 'postcode' ? 'the geography resolved to no postal area'
+                  : 'the geography resolved to no state',
+              });
+              continue;
+            }
             const registerNotes: string[] = [];
-            let registerAnswered = false;
-            for (const ask of registerAsks) {
-              try {
-                const register = await readSalesRegister(supabase, { state: marketState as 'QLD' | 'NSW', areaKind: ask.areaKind, area: ask.area });
-                if (!register.rows.length) {
-                  registerNotes.push(`the register holds no rows for ${ask.areaKind} ${ask.area} (load it with market-sales-ingest)`);
-                  continue;
-                }
+            try {
+              const register = await readSalesRegister(supabase, { state: marketState as SalesRegisterState, areaKind: registerSource.areaKind, area });
+              if (!register.rows.length) {
+                registerNotes.push(`the register holds no rows for ${registerSource.areaKind} ${area} (load it with market-sales-ingest)`);
+              } else {
                 const answer = openDataSalesPoints({
                   subject: registerSubject,
                   askedDwelling: dwellingTypeFor(effectivePropertyType),
-                  areaKind: ask.areaKind,
-                  area: register.areaLabel ?? ask.area,
+                  areaKind: registerSource.areaKind,
+                  area: register.areaLabel ?? area,
                   rows: register.rows,
                   benchmarkRows: register.benchmarkRows,
+                  nationalRows: register.nationalRows,
                   source: registerSource,
                 });
                 if (!Object.keys(answer.points).length) {
                   registerNotes.push(...answer.notes);
-                  continue;
+                } else {
+                  // Merge per measure: a finer, dwelling-matched point wins,
+                  // whichever provider it came from.
+                  const held = Object.assign(emptyEvidence(registerSubject), marketPoints) as MarketEvidence;
+                  const offered = Object.assign(emptyEvidence(registerSubject), answer.points) as MarketEvidence;
+                  const merged = mergeEvidence(registerSubject, [held, offered]) as unknown as Record<string, unknown>;
+                  for (const key of EVIDENCE_KEYS) {
+                    if (merged[key] !== undefined) marketPoints[key] = merged[key];
+                  }
+                  evidenceWithheldReason = null;
+                  registerAnswered = true;
+                  console.log(
+                    `✓ Open-data sales register (${registerSource.provider}) for ${registerSource.areaKind} ${register.areaLabel ?? area}: `
+                    + `${Object.keys(answer.points).length} evidence points to ${answer.latestPeriod}`
+                    + (answer.dwellingTypeMatched ? '' : ' (dwelling type not matched)')
+                    + (register.capturedAt ? ` (archive capture ${register.capturedAt.slice(0, 10)})` : ''),
+                  );
                 }
-                // Merge per measure: a finer, dwelling-matched point wins,
-                // whichever provider it came from.
-                const held = Object.assign(emptyEvidence(registerSubject), marketPoints) as MarketEvidence;
-                const offered = Object.assign(emptyEvidence(registerSubject), answer.points) as MarketEvidence;
-                const merged = mergeEvidence(registerSubject, [held, offered]) as unknown as Record<string, unknown>;
-                for (const key of EVIDENCE_KEYS) {
-                  if (merged[key] !== undefined) marketPoints[key] = merged[key];
-                }
-                evidenceWithheldReason = null;
-                registerAnswered = true;
-                console.log(
-                  `✓ Open-data sales register (${registerSource.provider}) for ${ask.areaKind} ${register.areaLabel ?? ask.area}: `
-                  + `${Object.keys(answer.points).length} evidence points to ${answer.latestPeriod}`
-                  + (answer.dwellingTypeMatched ? '' : ' (dwelling type not matched)'),
-                );
-                break;
-              } catch (error: any) {
-                registerNotes.push(`${ask.areaKind} ${ask.area}: ${error?.message || 'register read failed'}`);
               }
+            } catch (error: any) {
+              registerNotes.push(`${registerSource.areaKind} ${area}: ${error?.message || 'register read failed'}`);
             }
             if (!registerAnswered) {
               providersUnavailable.push({ provider: registerSource.provider, reason: registerNotes.join('; ') || 'no register series answered' });
-              console.log(`⚠️ Open-data sales register unavailable: ${registerNotes.join('; ')}`);
+              console.log(`⚠️ Open-data sales register (${registerSource.provider}) unavailable: ${registerNotes.join('; ')}`);
             }
           }
         }

@@ -117,7 +117,12 @@ export type EvidenceProvider =
   // published medians, CC BY 4.0, loaded by `market-sales-ingest` and read by
   // `openDataSalesEvidence.pure.ts`.
   | 'qld_qgso_rlda'
-  | 'nsw_dcj_rent_sales';
+  | 'nsw_dcj_rent_sales'
+  // The archived suburb series (Victoria, South Australia) and the ABS state
+  // floor beneath every jurisdiction — me9.sales.2, 16 Sep 2026.
+  | 'vic_vpsr_suburb'
+  | 'sa_lsg_suburb'
+  | 'abs_res_dwell';
 
 /** Whether the number was read from the source or computed from what was read. */
 export type EvidenceMethod = 'observed' | 'calculated';

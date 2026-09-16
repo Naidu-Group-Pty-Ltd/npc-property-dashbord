@@ -123,7 +123,7 @@ describe('ME-6 — evidence acquisition footing', () => {
 
 describe('ME-6 — the measured zero-cost inventory', () => {
   it('is versioned and carries the date its readings were taken', () => {
-    expect(ZERO_COST_INVENTORY_VERSION).toBe('me6.zerocost.2');
+    expect(ZERO_COST_INVENTORY_VERSION).toBe('me6.zerocost.3');
     expect(INVENTORY_MEASURED_ON).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
@@ -154,22 +154,38 @@ describe('ME-6 — the measured zero-cost inventory', () => {
       expect(s.reachability, s.id).not.toBe('reachable_production');
     }
     for (const s of ingestableToday()) {
-      expect(s.reachability, s.id).toBe('reachable_production');
+      expect(['reachable_production', 'reachable_archive'], s.id).toContain(s.reachability);
       expect(s.acquisition, s.id).toBe('open_public');
     }
   });
 
-  it('records Victoria as openly licensed AND unreachable, not as absent', () => {
+  it('records Victoria as openly licensed, walled at the publisher, and reached through the archive', () => {
     const vic = ZERO_COST_SOURCES.find((s) => s.id === 'vic_property_sales_median_by_suburb');
     expect(vic).toBeDefined();
     expect(vic!.acquisition).toBe('open_public');
     expect(vic!.supplies).toBe('growth');
     expect(vic!.grain).toBe('suburb');
     expect(vic!.dwellingSegmented).toBe(true);
-    expect(vic!.reachability).toBe('blocked_bot_challenge');
-    // The measurement must name BOTH egresses, because one refusal proves nothing.
+    expect(vic!.reachability).toBe('reachable_archive');
+    // The measurement must name BOTH egresses (one refusal proves nothing) AND the route that answered.
     expect(vic!.measurement).toMatch(/production/i);
     expect(vic!.measurement).toMatch(/development/i);
+    expect(vic!.measurement).toMatch(/Internet Archive/);
+    expect(vic!.measurement).toMatch(/pg_net 245237/);
+    const sa = ZERO_COST_SOURCES.find((s) => s.id === 'sa_metro_median_house_sales')!;
+    expect(sa.reachability).toBe('reachable_archive');
+    expect(sa.measurement).toMatch(/Internet Archive/);
+    expect(sa.measurement).toMatch(/pg_net 245280/);
+  });
+
+  it('declares the ABS state series as the growth floor without letting it claim Growth', () => {
+    const abs = ZERO_COST_SOURCES.find((s) => s.id === 'abs_res_dwell_st')!;
+    expect(abs.growthFloor).toBe(true);
+    expect(abs.supplies).toBe('context');
+    expect(abs.grain).toBe('state');
+    expect(abs.measurement).toMatch(/pg_net 245217/);
+    expect(abs.measurement).toMatch(/only where nothing finer answered/);
+    expect(ZERO_COST_SOURCES.filter((s) => s.growthFloor)).toHaveLength(1);
   });
 
   it('records which of the corpus the zero-cost stack can now reach for Growth, and what it still cannot', () => {
@@ -180,10 +196,12 @@ describe('ME-6 — the measured zero-cost inventory', () => {
     const growth = growthCapableToday();
     expect(growth.map((s) => s.id)).toEqual(expect.arrayContaining([
       'qld_qgso_rlda_dwelling_sales', 'nsw_dcj_rent_and_sales_report_sales', 'melbourne_house_prices_small_area',
+      // 16 Sep 2026: Victoria and South Australia at suburb grain through the Internet Archive.
+      'vic_property_sales_median_by_suburb', 'sa_metro_median_house_sales',
     ]));
     for (const s of growth) {
       expect(s.jurisdiction, `${s.id} must not claim to cover WA Growth`).not.toBe('WA');
-      expect(s.reachability, s.id).toBe('reachable_production');
+      expect(['reachable_production', 'reachable_archive'], s.id).toContain(s.reachability);
       expect(s.acquisition, s.id).toBe('open_public');
     }
     const qld = growth.find((s) => s.id === 'qld_qgso_rlda_dwelling_sales')!;

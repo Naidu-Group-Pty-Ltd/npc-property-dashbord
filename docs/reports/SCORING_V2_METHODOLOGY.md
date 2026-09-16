@@ -337,3 +337,14 @@ production entrypoint through the activation module and by nothing else —
 asserted by the guard in the pin spec, not promised — and the activation
 record itself (`SCORING_V2_ACTIVATION`) is the one place the conditions under
 which a grade is issued may be changed.
+
+### Growth providers, 16 September 2026
+
+Two more register sources and a floor. Victoria (suburb, annual and
+quarterly) and South Australia (suburb, quarterly) load through the
+Internet Archive's captures of their walled publishers; the ABS state
+series (`abs_res_dwell`, the MEAN price of the dwelling stock, `state`
+grain) is read only where nothing finer answered and is priced at the
+bottom of the geography ladder. The state floor supplies growth and a
+series and never a median, so `medianPrice` and `salesCount` stay absent
+on a floor-only reading. `docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md` §10.

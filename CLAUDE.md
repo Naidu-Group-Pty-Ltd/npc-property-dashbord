@@ -1549,9 +1549,23 @@ measurement, never a substitute claiming to be the suburb and never absent.
 postcode**, never a typed suburb or a parsed token. **The finer point wins
 the merge**, so Domain's suburb series outranks the register the day its
 package is attached, with no code change. And **a suppressed median is
-null, never zero** — DCJ prints `-` where thirty or fewer sold. Western
-Australia still has no open series and Victoria's is walled to every
-scripted client, so a WA report withholds its grade and says so.
+null, never zero** — DCJ prints `-` where thirty or fewer sold.
+
+**Every state has a reading now, and two of them come through the
+archive** (§10 of the same doc). Victoria's suburb series and South
+Australia's quarterly suburb workbooks are walled at their publishers and
+served by the Internet Archive's Wayback Machine, whose CDX index and
+`id_` fetch answer the production egress; `waybackMirror.pure.ts` ranks
+files by what their names describe and takes the newest capture, and every
+row carries `captured_at`. Beneath every state sits the ABS `RES_DWELL_ST`
+mean price of residential dwellings — **filed as a mean, never a median**,
+read only where nothing finer answered, and Western Australia's only
+reading. **One heavy workbook per invocation**: five DCJ workbooks in one
+call hit the edge worker's compute limit. And the Financials tab's
+**Estimate CGR** button reads the same register for the typed address —
+the finest area with a horizon of at least five years, every coarsening a
+caveat, nothing invented — and writes the same `capitalGrowth` the ten-year
+cash flow already reads.
 
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)

@@ -234,3 +234,125 @@ read `market_sales_sync`; (4) invoke `investment-scoring-service` for a QLD
 subject with a register-backed `marketEvidence` (or regenerate a QLD
 report) and confirm `measuredDimensions` includes `growth` and the record
 carries a grade; (5) the same for a NSW postcode.
+
+## 10. The second reading, 16 September 2026: every state, and the archive
+
+§8 recorded what remained after the first stack: Victoria walled, South
+Australia refusing this project's egress, Western Australia with no open
+series at all. The owner asked for the same answer for those states "with
+the tools we currently have and at no extra cost". Three things closed it.
+
+### 10.1 The Internet Archive is a delivery route
+
+The Victorian Valuer-General publishes the finest open growth series in the
+country — median house and unit prices by SUBURB, calendar years since
+2015 and the latest five quarters — under CC BY 3.0 AU, and
+land.vic.gov.au answers every scripted client with a Cloudflare challenge.
+A browser User-Agent from production changed nothing (pg_net 245207,
+"Just a moment…"). But the Wayback Machine has crawled that host for
+years, its CDX index answers the production egress (pg_net 245236), and
+the `id_` flag returns the ORIGINAL bytes of a capture (pg_net 245237:
+200, `application/vnd.openxmlformats…`, PK header). The newest captures
+were three weeks after publication:
+
+| File | Captured | What it holds |
+|---|---|---|
+| `houses-by-suburb-2015-2025.xlsx` | 2026-08-03 | 796 localities × 11 calendar-year medians |
+| `units-by-suburb-2015-2025.xlsx` | 2026-08-03 | 462 localities × 11 calendar-year medians |
+| `median-house-q4-2025.xls` | 2026-08-03 | 772 localities × Dec 2024–Dec 2025 quarters, sales count |
+| `median-unit-q4-2025.xls` | 2026-08-03 | 444 localities × the same |
+
+South Australia's quarterly suburb workbooks (`lsg_stats_YYYY_qN.xlsx`,
+the Land Services Group's metro median house sales) are in the archive
+likewise: forty-two files from 2015 Q1 to 2025 Q1 (pg_net 245280), each
+holding the quarter and its year-earlier comparison for ~480 suburbs under
+their councils.
+
+The licence permits redistribution, the archive serves the publisher's
+own bytes, and every row loaded this way carries `captured_at` so a reader
+can see that the figure is as the archive held it on a stated day. The
+route is a fact about the archive, never a guess: `waybackMirror.pure.ts`
+reads the index, ranks files by what their NAMES say they describe
+(`houses-by-suburb-2015-2025` outranks `…2014-2024`; `lsg_stats_2025_q1`
+outranks `_2024_q4`), and takes the newest capture of the winner. A file
+the index does not list is not fetched by pattern.
+
+### 10.2 The ABS state series is the floor under every state
+
+`RES_DWELL_ST` — the mean price of residential dwellings by state and
+territory and for Australia, quarterly since 2011-Q3, CC BY 4.0 — answers
+the production egress as SDMX-CSV (pg_net 245217, 658,289 bytes, 60
+quarters to 2026-Q2). Western Australia publishes no open sub-state series
+(Landgate's residential attributes are `fees_apply`, SLIP subscription
+only — measured 16 Sep, pg_net 245239), so this is WA's reading, and it is
+the fallback for every other state where nothing finer answers. Two rules
+keep it honest. **A mean is filed as a mean** (`price_measure = 'mean'`):
+the adapter reads growth and a series from it and never offers it as a
+median sale price or a sales count. **It is read only where nothing finer
+answered**, and the scorer prices `state` at the bottom of its geography
+ladder (10 of 100), so a WA grade carries a low-confidence growth reading
+rather than none — the ceiling rules in `gradeEligibility` still withhold
+A and A+ from it.
+
+### 10.3 The register widened (me9.sales.2)
+
+`20261126090000_market_sales_medians_national.sql`: every jurisdiction
+plus `AU`; `area_kind` gains `suburb`, `state`, `national`; `price_measure`
+(median | mean), `period_span` (quarter | year — the Victorian series is
+annual, stored under the year's December quarter), `captured_at`; and the
+span joins the primary key, because a calendar-year median and the
+December quarter's median are different figures for the same `YYYY-12`.
+
+The loader gains three stages — `abs`, `vic` (one file a call: `which` =
+`houses_ts` | `units_ts` | `quarter_house` | `quarter_unit`) and `sa` (the
+newest quarter and the 3/5/10-year horizon files, or `periods`) — and the
+NSW stage loads ONE workbook a call, because five in one invocation
+exhausted the edge worker's compute allowance (546
+`WORKER_RESOURCE_LIMIT`, 15 Sep 23:39Z). The QLD and NSW loads ran that
+night: 7,056 QLD rows (41 LGAs, 72 quarters to March 2026) and four NSW
+quarters (March 2021/2023/2025/2026 — DCJ's archive begins 2017, so the
+ten-year horizon is unavailable there).
+
+The adapter (`openDataSalesEvidence.pure.ts` 2.0.0) reads suburb and state
+grains, chooses ONE span where a suburb carries both (the longest series
+that is as current as any; a horizon it cannot reach is taken from the
+other and labelled as such), and benchmarks a state-level reading against
+the nation. The generator asks every source the state has, finest first
+(`salesRegisterSourcesFor`), and stops at the first that answers — so a
+Queensland or New South Wales report reads exactly as it did.
+
+### 10.4 Estimate CGR
+
+The Financials tab's `Growth` field seeds every year of the ten-year cash
+flow and defaulted to 5, with a per-state table of round numbers as its
+"smart default". The button beside the label now asks
+`estimate-capital-growth` for the address typed at the top of the form:
+the geocoder names the suburb, postal area, state and council for the
+point it matched (an answer no finer than a state, or the centre of the
+continent, is refused — `geocodeGranularity` — and the typed text is
+parsed instead, said on the reading); the register is asked every source
+finest first; and `capitalGrowthEstimate.pure.ts` chooses the estimate:
+**the finest area that carries a horizon of at least five years**, else
+three, else one — because a ten-year projection wants a long-run rate and
+the swing of one cycle is not one. Every coarsening is a caveat under the
+field: a council-, postcode- or state-wide series; a mean rather than a
+median; a dwelling type that did not match; an archive capture date; a
+short horizon; a figure outside the 0–8% most projections assume. The
+button writes the same `capitalGrowth` override the cash flow already
+reads, so the estimate flows into the projection unchanged; where no
+series reaches the address the field is left as it was and the toast says
+so. One geocode request a click, metered as `googlegeocoding`.
+
+### 10.5 What remains
+
+- **Western Australia, Tasmania, the territories**: state grain only, and
+  said so on every reading.
+- **Victoria's currency is the archive's**: the calendar-year series runs
+  to 2025 and the quarters to December 2025; the archive captures a new
+  file weeks after publication, and the loader takes the newest.
+- **South Australia's newest capture is March 2025**; the publisher's own
+  host is still refused, and the loader will take newer captures as they
+  appear.
+- **A scheduled refresh is not wired**; the stages run on demand.
+- **Every load and the first Estimate CGR reading are production events**
+  and are recorded in §11 as they happen.
