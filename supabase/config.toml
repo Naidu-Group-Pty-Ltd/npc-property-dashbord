@@ -305,6 +305,12 @@ verify_jwt = true
 # fetches the QGSO and NSW DCJ workbooks itself (both hosts answer this
 # project's egress); verifyAuth inside (internal secret or service role), the
 # gateway JWT on in front.
+# Estimate CGR: the growth rate the ten-year cash flow assumes, read from the
+# open sales register for the typed address. Browser-called with the user's JWT;
+# verifyAuth inside, as estimate-property-expenses.
+[functions.estimate-capital-growth]
+verify_jwt = true
+
 [functions.market-sales-ingest]
 verify_jwt = true
 
