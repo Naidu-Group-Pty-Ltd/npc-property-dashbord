@@ -170,7 +170,7 @@ jobs:
       # critique rubric and the converter, all of which every format goes
       # through.
       - name: Unit tests (every report format)
-        run: npx vitest run src/lib/reports
+        run: npx vitest run src/lib/reports src/lib/geocode
 
       # The measurer owns the pixels the critique rubric judges, and two of its
       # three page-level judgements were wrong at once — a trim band derived

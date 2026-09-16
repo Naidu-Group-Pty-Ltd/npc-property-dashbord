@@ -139,6 +139,32 @@ one of the twenty-six listings sharing `104 Grubb Avenue, Traralgon`;
 `ListingStackPager` is what keeps the count badge's promise, and it is never
 drawn for a stack of one.
 
+**No server-side geocode asks Google any more, and the default order names
+no Google.** Read
+[`GEOCODING_WITHOUT_GOOGLE.md`](./docs/integrations/GEOCODING_WITHOUT_GOOGLE.md)
+before touching `_shared/geocode/*`, `google-places-autocomplete` or the
+geocode step in `resolve-listing-coordinates`, `location-intelligence-service`,
+`parse-property-pdf` or `estimate-capital-growth`. Google's key refused every
+geocode from 12 Sep 2026 and four surfaces went dark at once, so every geocode
+goes through ONE chain — `geocode_cache`, then OpenStreetMap's Nominatim, then
+the suburb's own centroid from the ABS boundary server, then Google only where
+an operator lists it in `GEOCODER_PROVIDERS` — and the address field suggests
+from OpenStreetMap's Photon behind the same function and the same projection
+the forms already read. Three rules bite. **Every provider is judged by the
+same gates**: results carry Google-shaped `types` so `assessGeocodeGranularity`
+refuses the centre of the continent and "matched the state" whoever answered.
+**The free providers are never metered and their allowance fails closed**:
+Nominatim, Photon and the ABS are fetched plainly (never `meteredFetch`), and
+`osmAllowance.ts` holds the daily ceiling and the one-request-a-second turn in
+the SHARED limiter — a counter nobody can read refuses, because a per-isolate
+count is no ceiling under horizontal scaling. And **a failure says which kind
+it was**: `no_match` alone is a statement about the address; `unavailable`,
+`refused` and `budget` (with its `capReason`) are ours, and the location
+service maps them onto `geocoder_unavailable` / `geocoder_not_attempted`
+rather than blaming the customer's address for this deployment's provider.
+Places Nearby, Distance Matrix and Street View still spend the Google key and
+the doc names the free path for each.
+
 **The address a pin and a card are built from is COMPOSED, never inherited.**
 Read [`ADDRESS_COMPOSITION.md`](./docs/listings/ADDRESS_COMPOSITION.md) before
 touching `_shared/listingAddress.pure.ts`,

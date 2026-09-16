@@ -27,7 +27,8 @@ import {
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { consumeGoogleDailyCap, type GoogleCapRefusal } from "../_shared/googleMapsDailyCaps.ts";
-import { ADDRESS_IS_THE_ANSWER, judgeGoogleMapsBody } from "../_shared/googleMapsBody.pure.ts";
+import { geocodeAddress as geocodeThroughChain } from "../_shared/geocode/geocoder.ts";
+import { judgeGoogleMapsBody } from "../_shared/googleMapsBody.pure.ts";
 import { assessAuPoint } from "../_shared/auGeoSanity.pure.ts";
 import { buildAuGeocodeQuery } from "../_shared/auGeocodeQuery.pure.ts";
 import { sourceUnavailable, isSourceUnavailable } from "../_shared/sourceUnavailable.pure.ts";
@@ -89,27 +90,22 @@ Deno.serve(async (req) => {
     console.log(`[location-intelligence-service] Authenticated user: ${userId}`);
     console.log('Analyzing location intelligence for:', input.address);
 
-    const googleMapsApiKey = Deno.env.get('GOOGLE_MAPS_API_KEY');
-    
+    // The geocode no longer needs Google: it goes through the one geocoding
+    // chain (`_shared/geocode/geocoder.ts`). The key is now only what the
+    // amenity lookups and the commute call spend, and without it those two
+    // are unmeasured — recorded as such, never invented. The old branch here
+    // refused the whole measurement for a missing key, back when the key was
+    // the geocoder too; a coordinate is a measurement in its own right (the
+    // transport reading, the crime area and the report geography all read
+    // it), so the run proceeds and says what it could not measure. (The
+    // branch before THAT one answered with `generateMockLocationData` —
+    // invented school names, a Math.random() walk score and Sydney's
+    // coordinates — as HTTP 200 `success: true`; it is gone and stays gone.)
+    const googleMapsApiKey = (Deno.env.get('GOOGLE_MAPS_API_KEY') || '').trim();
     if (!googleMapsApiKey) {
-      // No key means no measurement, and no measurement means no data. The
-      // old branch here answered with `generateMockLocationData` — invented
-      // school names, an invented station, a Math.random() walk score and
-      // Sydney's coordinates — as HTTP 200 `success: true`, which is how a
-      // deployment with a missing credential shipped fiction into client
-      // reports and reported itself healthy while doing it.
-      console.warn('⚠️ GOOGLE_MAPS_API_KEY not configured — location intelligence unavailable.');
-      return new Response(JSON.stringify(sourceUnavailable(
-        'location-intelligence',
-        'not_configured',
-        'GOOGLE_MAPS_API_KEY is not configured — location intelligence is unavailable for this deployment.',
-      )), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      console.warn('[location-intelligence-service] GOOGLE_MAPS_API_KEY not configured — amenities and commute are unmeasured; the geocode proceeds through the chain.');
     }
 
-    console.log('✓ Google Maps API key found, fetching real data...');
     
     try {
       const location = await fetchLocationIntelligence(input, googleMapsApiKey, supabase);
@@ -553,13 +549,17 @@ type GeocodeOutcome =
   // though the client-facing reading deliberately is not that specific.
   | { ok: false; providerRefused: boolean; capped?: boolean; capReason?: GoogleCapRefusal };
 
-// `ADDRESS_IS_THE_ANSWER` and `judgeGoogleMapsBody` — the one judge of a Google
-// Maps body — live in `_shared/googleMapsBody.pure.ts`, shared with
-// `estimate-capital-growth`.
+// `judgeGoogleMapsBody` — the one judge of a Google Maps body — lives in
+// `_shared/googleMapsBody.pure.ts` and is what the Places and Distance Matrix
+// calls below pass to `meteredFetch`. The geocode itself goes through
+// `_shared/geocode/geocoder.ts`, which is the one place a Google geocoder body
+// is read and where `ADDRESS_IS_THE_ANSWER` decides what is a statement about
+// the address; this function reads the chain's verdict and re-derives nothing
+// from the absence of a point.
 
 async function geocodeAddress(
   input: LocationIntelligenceInput,
-  apiKey: string,
+  _apiKey: string,
   db: unknown,
 ): Promise<GeocodeOutcome> {
   // The suburb, postcode and state were already in hand — used for the CBD
@@ -573,95 +573,62 @@ async function geocodeAddress(
     return { ok: false, providerRefused: false };
   }
 
-  // One unit, immediately before the one request it pays for. Consuming
-  // earlier would charge for a lookup that never happens; consuming after
-  // would let concurrent isolates pass the ceiling together.
-  const budget = await consumeGoogleDailyCap(db, 'geocoding');
-  if (!budget.ok) {
-    console.warn(`[location-intelligence-service] geocode not attempted (${budget.reason})`);
-    return { ok: false, providerRefused: false, capped: true, capReason: budget.reason };
-  }
-
-  try {
-    const params = new URLSearchParams({
-      address,
-      // A filter, not a bias. `region=au` alone would only have expressed a
-      // preference, and this had neither.
-      components: 'country:AU',
-      region: 'au',
-      key: apiKey,
-    });
-    const response = await meteredFetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`,
-      undefined,
-      { judgeBody: judgeGoogleMapsBody },
+  // The one geocoding chain: OpenStreetMap, then the suburb's own centroid
+  // from the ABS, then Google only where an operator lists it. Each provider
+  // budgets itself; every answer has passed the granularity gate; the
+  // status below is the chain's own, never re-derived from the absence of
+  // a point.
+  const outcome = await geocodeThroughChain(
+    db,
+    // The street line is derived from the composed address by the chain; the
+    // raw `input.address` is not passed as one because 768 stored rows carry a
+    // bare street name there and others carry the whole address.
+    { address, suburb: input.suburb, state: input.state, postcode: input.postcode },
+    { allowLocalityFallback: true, feature: 'location-intelligence-service/geocode' },
+  );
+  if (!outcome.ok) {
+    if (outcome.reason === 'budget') {
+      // Not attempted: an allowance refused it. The chain says WHICH of the
+      // three readings it was, in the caps module's own vocabulary, and the
+      // one it did not say is read as the counter being unreadable — the
+      // reading that sends nobody to wait for a reset that will not come.
+      const budget = { reason: outcome.capReason ?? 'limiter_unavailable' } as const;
+      console.warn(`[location-intelligence-service] geocode not attempted (${budget.reason}: ${outcome.detail})`);
+      return { ok: false, providerRefused: false, capped: true, capReason: budget.reason };
+    }
+    // Every reason but `no_match` is ours: the provider could not be reached,
+    // refused us, or answered nothing usable. Only a provider that looked
+    // and found no such address is a statement about the address.
+    const refused = outcome.reason !== 'no_match';
+    console.warn(
+      `[location-intelligence-service] geocode returned no point: ${outcome.reason} — ${outcome.detail}`
+      + (refused
+        ? ' — this is a fault in our map service access, not in the address'
+        : ' — no provider has a match for this address'),
     );
-
-    if (!response.ok) {
-      console.warn('[location-intelligence-service] geocode HTTP', response.status);
-      return { ok: false, providerRefused: true };
-    }
-
-    const data = await response.json();
-    const location = data?.results?.[0]?.geometry?.location;
-    const lat = Number(location?.lat);
-    const lng = Number(location?.lng);
-
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      const status = typeof data?.status === 'string' ? data.status : 'unknown';
-      // RF-7.2B.1B0-F1 — Google says WHY in `error_message`, and without it an
-      // operator cannot tell an unenabled API from a dead key from disabled
-      // billing. It is a fixed diagnostic sentence and never echoes the
-      // credential, but it is sanitised anyway: any long key-shaped token is
-      // redacted and the whole thing is capped, because a log line is the one
-      // place a secret must never reach by accident.
-      const detail = typeof data?.error_message === 'string'
-        ? data.error_message
-          .replace(/AIza[0-9A-Za-z_-]{10,}/g, '[redacted-key]')
-          .replace(/\b[0-9A-Za-z_-]{30,}\b/g, '[redacted]')
-          .slice(0, 300)
-        : null;
-      // Google answers HTTP 200 with the real verdict in the body — the same
-      // shape the ABS boundary server uses, and the same trap: `response.ok`
-      // says nothing about whether the call worked.
-      const refused = status !== ADDRESS_IS_THE_ANSWER;
-      console.warn(
-        `[location-intelligence-service] geocode returned no point: ${status}`
-        + (detail ? ` — provider says: ${detail}` : '')
-        + (refused
-          ? ' — this is a fault in our map service access, not in the address'
-          : ' — the provider has no match for this address'),
-      );
-      return { ok: false, providerRefused: refused };
-    }
-
-    const verdict = assessAuPoint(lat, lng, input.state);
-    if (!verdict.ok) {
-      // Named rather than swallowed: `outside_australia`, `offshore` and
-      // `wrong_state` are different faults with different remedies, and the
-      // log is the only place anybody will see which one happened.
-      console.warn(`[location-intelligence-service] geocode rejected (${verdict.reason}) for state ${input.state ?? 'unknown'}`);
-      // The provider answered about this address and we refused the answer.
-      // Ours to explain, but not a service fault.
-      return { ok: false, providerRefused: false };
-    }
-
-    // What Google says it MATCHED, kept so a verification can compare the
-    // answer against the question. It is evidence, never an input: nothing
-    // downstream keys on it, because a `formatted_address` describes what the
-    // provider matched rather than what the source said.
-    const matched = data?.results?.[0]?.formatted_address;
-    return {
-      ok: true,
-      lat,
-      lng,
-      matchedAddress: typeof matched === 'string' ? matched : null,
-    };
-  } catch (error) {
-    // Never reached the provider, or its body could not be read.
-    console.error('Geocoding error:', error);
-    return { ok: false, providerRefused: true };
+    return { ok: false, providerRefused: refused };
   }
+
+  const { lat, lng } = outcome.result;
+  const verdict = assessAuPoint(lat, lng, input.state);
+  if (!verdict.ok) {
+    // Named rather than swallowed: `outside_australia`, `offshore` and
+    // `wrong_state` are different faults with different remedies, and the
+    // log is the only place anybody will see which one happened.
+    console.warn(`[location-intelligence-service] geocode rejected (${verdict.reason}) for state ${input.state ?? 'unknown'}`);
+    // The provider answered about this address and we refused the answer.
+    // Ours to explain, but not a service fault.
+    return { ok: false, providerRefused: false };
+  }
+
+  // What the provider says it MATCHED, kept so a verification can compare
+  // the answer against the question. It is evidence, never an input.
+  return {
+    ok: true,
+    lat,
+    lng,
+    matchedAddress: outcome.result.matchedAddress,
+  };
 }
 
 async function fetchNearbyPlaces(
@@ -674,6 +641,10 @@ async function fetchNearbyPlaces(
   // with a zero count — so `unavailableCategories` records it as unmeasured
   // and every projection downstream omits the line rather than printing a
   // zero. That contract is RF-7.2B.1B2's and nothing here re-implements it.
+  if (!apiKey) {
+    console.warn(`[location-intelligence-service] ${type} lookup not attempted (no Google Maps key)`);
+    return { ok: false, count: 0, results: [] };
+  }
   const budget = await consumeGoogleDailyCap(db, 'placesNearby');
   if (!budget.ok) {
     console.warn(`[location-intelligence-service] ${type} lookup not attempted (${budget.reason})`);
@@ -736,6 +707,10 @@ async function calculateCommuteTime(
   // One origin and one destination, so one request is one billable ELEMENT
   // and one unit is honest here. A call site that ever sends more must consume
   // that many — see `googleMapsDailyCaps.ts`.
+  if (!apiKey) {
+    console.warn('[location-intelligence-service] commute not attempted (no Google Maps key)');
+    return COMMUTE_CAP_REACHED;
+  }
   const budget = await consumeGoogleDailyCap(db, 'distanceMatrix');
   if (!budget.ok) {
     console.warn(`[location-intelligence-service] commute not attempted (${budget.reason})`);
