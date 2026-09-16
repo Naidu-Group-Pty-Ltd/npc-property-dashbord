@@ -513,8 +513,75 @@ request id at the time it was made.
   proven until an operator mints the free token; that is named in §12's
   successor list below.
 
-Still unverified until after the merge: the first production ingest run
-(the ledger and row counts will assert it), a register-served enrichment
-and an OSRM commute in a stored acquisition stamp, and a Mapillary image
-end-to-end — the last needs `MAPILLARY_ACCESS_TOKEN` minted by the
-owner, which nothing in this repository can do.
+What §14 left unverified was obtained on merge day; §15 records it.
+
+## 15. Production proof (merged 16 Sep 2026, PR #2680)
+
+Migration 20261130090000 applied via `apply-migration.yml` (run
+35059719049) and verified by effect: both tables live, the eight
+refresh jobs in `cron.job` at 16:00–16:42 UTC, `amenity_register_refresh`'s
+live ACL `postgres=X, service_role=X` (no PUBLIC, no anon, no
+authenticated), RLS enabled. The merge's deploy run (35059693098)
+verified 341 functions against the production host.
+
+**The first loads, by their ledger** (fired through the cron's own
+wrapper, `public.amenity_register_refresh`):
+
+- NSW: all six slices — schools 3,304 · healthcare 1,521 ·
+  shopping 2,415 · recreation 18,522 · restaurants 10,232 ·
+  transit 716 = 36,710 rows. The first invocation loaded five in
+  101.5 s and HANDED OFF transit on the run budget exactly as designed;
+  a categories-scoped second invocation finished it in 29 s.
+- VIC: schools 2,554 · healthcare 1,744 · shopping 2,087 ·
+  restaurants 9,390 = 15,775 rows; recreation and transit failed on
+  both mirrors (fetch aborted at the ceiling) and are RECORDED failed —
+  the previous load (none) stands, the read declines those two slices
+  to the next provider, and the nightly refresh retries.
+- QLD: schools 1,836; then even light categories began failing —
+  after ~35 requests in 25 minutes the mirrors throttle this egress,
+  which is precisely why coverage is the STAGGERED nightly cron's job
+  (eight states, six minutes apart, category rotation) and not a
+  burst backfill's. The burst was for proof; the schedule is the
+  design.
+
+**A Google-free enrichment through the deployed service** (pg_net
+249308, Harris Park NSW): geocode `fetched` by the chain
+(-33.8208516, 151.0092054), every amenity category answered by the
+register — nearest school St Oliver's Primary 0.41 km, a `doctors`
+practice at 0.09 km, Rosella Park, a supermarket at 0.03 km — walk
+score 100, transit from GTFS as preferred, and the commute measured
+by OSRM: `mode: "driving"`, 22.5 km, 23 minutes to the Sydney CBD.
+The acquisition stamp reads `places: "complete"`,
+`placesUnavailable: []`, `commuteProvider: "osrm"`,
+`amenitySources` = `register` for all six, and
+`amenityRegisterLoadedAt` carrying that morning's per-slice load
+times — the currency promise, kept on the record itself. Not one
+Google call was spent.
+
+**The school service from the same slice** (pg_net 249318):
+`dataSource: "OpenStreetMap Amenity Register"`, twenty schools with
+the ODbL attribution and the slice's load date in the note, and the
+sector reads `Other` where the element's tags state none — never the
+old hardcoded Government.
+
+Two observations for the record. One campus appeared twice in
+`topSchools` (an OSM node AND way both tagged for it) — the register
+deliberately does not merge same-name elements, because absent
+evidence never merges; if it grates in documents, the fix is a
+distance-epsilon + name dedupe at the READ, decided then, not
+silently here. And the register's `count` fields cap at ten by
+contract (the Google path's own slice), so dense-area counts read 10
+exactly as they always have.
+
+**And the Mapillary image, end-to-end** (pg_net 249584, later the
+same day): the owner registered a READ-only application, saved the
+client token on the Mapillary card, and the deployed `street-view`
+answered the Harris Park coordinate `success: true, available: true`
+with a 137 KB base64 JPEG, `panoramaDate: "2019-01"` and
+`copyright: "© Mapillary, CC BY-SA 4.0"` — the free provider serving
+first in the same envelope the panel has always rendered, Google
+standing by for streets the crowd has not photographed. Nothing in
+the programme remains unverified. One operator note: Mapillary's
+capture dates vary by street (this one is 2019); the panel shows the
+date, and an operator who prefers Google's fresher imagery for a
+deployment simply reorders `STREET_IMAGERY_PROVIDERS`.
