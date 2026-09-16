@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  SA_LSG_ARCHIVE_FLOOR,
   SA_LSG_FILE,
   parseSaLsgStats,
   quarterOfHeading,
@@ -121,5 +122,11 @@ describe('a suburb that straddles a council boundary', () => {
 
   it('names nothing when no suburb is split', () => {
     expect(parseSaLsgStats(grid(HEADER_2024, REAL_2024), CAPTURED).splitSuburbs).toEqual([]);
+  });
+});
+
+describe('the archive question', () => {
+  it('is floored at the 2023 crawl that re-captured every workbook, and the floor is a fixed year', () => {
+    expect(SA_LSG_ARCHIVE_FLOOR).toBe('2023');
   });
 });

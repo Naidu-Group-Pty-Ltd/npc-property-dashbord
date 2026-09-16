@@ -94,7 +94,7 @@ describe('the loader and its declarations', () => {
     expect(LOADER).not.toMatch(/sales-tables-[a-z]+-\d{4}/);
     // the archived series are discovered from the archive's index, never a pinned capture
     expect(LOADER).toContain('archiveIndex(VIC_VPSR_ARCHIVE_PATTERN');
-    expect(LOADER).toContain('archiveIndex(SA_LSG_ARCHIVE_PATTERN)');
+    expect(LOADER).toContain('archiveIndex(SA_LSG_ARCHIVE_PATTERN, SA_LSG_ARCHIVE_FLOOR)');
     expect(LOADER).not.toMatch(/web\.archive\.org\/web\/\d{14}/);
     expect(LOADER).toContain("stage === 'abs'");
     expect(LOADER).toContain("stage === 'vic'");
