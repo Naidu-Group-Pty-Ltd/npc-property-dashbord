@@ -1556,6 +1556,77 @@ contradict. Placement is load-bearing: **after** the series heal (the ROI
 denominator is the stored deposit) and **before** the upfront total (which is
 the deposit plus the acquisition lines).
 
+## What a report may state about planning, and what it may not
+Read [`docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md`](./docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md)
+before touching `_shared/planning/planningFacts.pure.ts`,
+`_shared/planning/infrastructureEvidence.pure.ts`, the
+`# Zoning & Planning Analysis` or `# Infrastructure & Development Outlook`
+blocks in `generate-investment-report`, or `dataSources.planning`.
+`planning-data-service` has worked since 2026-09-06 and the generator has
+always stored its answer on `enhancedData.planningData` — **and the zoning
+section read none of it**. On 262 Pallas Street, Maryborough the row carries
+`spec_zoning` null, `spec_council` null and no `planning` source, while a live
+call at that report's own coordinate answers `QLD` / `Fraser Coast Regional` /
+`Maryborough` under CC BY 4.0 with an evidenced `none_at_point`. What the
+reader got was 101 lines of prompt template — `[XX]%` site coverage, `[X]m`
+setbacks, "Refer to LEP", "typically 450m²" — handed to a model with nothing
+to fill it from, so **the model filled it**: 450 m², 8.5 m and 0.5:1 reached a
+client's document, under New South Wales instrument names on a Queensland
+property. Three rules bite. **A control with no source is never a number** —
+every cell is a value with its provenance (publisher, licence, the
+instrument's own currency date, the retrieval stamp, adopted vs draft) or one
+of five named absences, and `not_served` / `not_integrated` /
+`licence_restricted` / `none_at_point` / `unavailable` are five different
+sentences. **An audited operator override outranks a layer and says so**,
+labelled `operator_stated` rather than dressed as a published control. And
+**a zone that admits a use is not approval for it**, so no development
+potential is quantified and no uplift is stated. The infrastructure half
+answers to the same shape: a project is named only where a register named it,
+a status is the publisher's own word (an approval is never read as funding,
+funding never as a start on site), a gazettal or determination is labelled as
+a date something HAPPENED rather than a completion, and the coverage
+limitation — council capital works, budget programmes, agency announcements —
+is stated on a full list as well as an empty one.
+
+## The cash flow table adds up
+Read §1 of the same doc's companion rule in
+`_shared/reportBindingProjection.pure.ts` before touching the annual-cost
+block, `reconcileStoredFinancials` or the Compass `cashflowRows`. The engine
+subtracts **eight** annual components; the projection published four and the
+masters bound those four, so on 262 Pallas Street the printed rows came to
+$10,780 against a "Net position" built on $12,880 — and the row that omitted
+the water rates was **labelled "Council and water rates"**. Water joins that
+row, letting fees join management, and land tax + strata are their own line,
+drawn only where they come to something. Three rules bite. **A repair must
+not change the BASIS while repairing the arithmetic**:
+`reconcileStoredFinancials` recomputed `annualNet` from `weeklyRent × 52`
+while `calculateKeyMetrics` builds it from `weeklyRent × occupancyWeeks`, so
+on the 62 of 153 reports assuming under 52 weeks it re-based them silently on
+read and stamped `metricsReconciled`. **The ledger's own year is the debt
+service**, never `monthlyPayment × 12`. And **`operatingExpensesFrom`'s
+fallback list is all eight components** — `lettingFees` was missing, so a row
+with no footed total was charged seven of its eight costs.
+
+## A template choice sticks, and a substitution is consented to
+Read `templateFormatFit.pure.ts` and the header of
+`src/components/reports/ReportTemplatePicker.tsx` before touching the picker's
+state machine or `buildWorkingCopyPayload`'s lineage block. **A family tile
+that looks like a choice must BE one** — it painted itself with `ChoiceTile`'s
+checked treatment and a "Current" badge while setting only `openFamilyKey`, so
+Save changed nothing and was disabled anyway. **The re-seed follows the server
+until the person touches something, and never afterwards**: gating on "seed
+once at open" opens the dialog on the wrong choice (the library query is
+`enabled: open`, so the stored value resolves after the dialog is
+interactive), and gating on "both queries have landed" still overwrites
+somebody who clicked while they were loading. **Lineage is written for every
+adopted entry**, family or not: four readers key identity on `entryId`, so the
+43 voice templates came back unrecognisable and minted another active
+`report_templates` row on every save. And **a design that cannot carry the
+format is named before the document is made** — the chosen template is
+otherwise composed around the report and announced by a toast after the PDF
+exists; every uncertain case answers `unknown` and is offered unchanged,
+because a false caveat teaches people to dismiss the warning.
+
 ## The Investment Grade — Scoring V2 in production
 Read the *Activation* section of
 [`docs/reports/SCORING_V2_METHODOLOGY.md`](./docs/reports/SCORING_V2_METHODOLOGY.md)
