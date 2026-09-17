@@ -25,10 +25,17 @@ holds no overlay for `split_routes`, `split_metadata`,
 
 | | composite | sections | characters | pages | PDF/UA-1 |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Kellyville · Financial | 15 | 13 | 23,838 | 24 | pass |
+| Kellyville · Financial | 15 | 13 | 23,838 | 21 | pass |
 | Kellyville · Due Diligence | 15 | 10 | 51,403 | 29 | pass |
-| Maryborough · Financial | 12 | 13 | 20,534 | 22 | pass |
+| Maryborough · Financial | 12 | 13 | 20,534 | 20 | pass |
 | Maryborough · Due Diligence | 12 | 8 | 30,679 | 19 | pass |
+
+The two Financial reports lost three and two pages respectively to the
+landscape-table charge fixed in
+[`S5_CONDENSED_DOCUMENTS.md`](./S5_CONDENSED_DOCUMENTS.md) §3 — they carry
+the same ten-year projection, so they had the same near-blank page and the
+same stranded heading. The content is unchanged; the pages it needed are
+not.
 
 Eight chapters composed from the record on each Financial report, with the
 routed `Financial Risk Dashboard` replaced by the composed one and the

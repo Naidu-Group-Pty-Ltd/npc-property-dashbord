@@ -9,11 +9,24 @@ approval gate.** The branch is `claude/adoring-hopper-g02tdt`.
 
 | | implemented | tested | visually verified | released |
 | --- | --- | --- | --- | --- |
-| **Investment Compass** | S1–S3 | 10,246 tests, PDF/UA-1 | 6 pages + 1 tier page + the 36-page Templates render | no |
-| **Financial Analysis** | S3 | binding + render specs, PDF/UA-1 | 1 tier page | no |
-| **Strategic** | S3 | binding + render specs, PDF/UA-1 | 1 tier page | no |
-| **Executive Briefing** | S3 | binding + render specs, PDF/UA-1 | 1 tier page | no |
-| **Snapshot** | S3 | binding + render specs, PDF/UA-1 | 1 tier page | no |
+| **Investment Compass** | S1–S3 | 9,389 report-suite tests, PDF/UA-1 | 6 pages + 1 tier page + the 36-page Templates render | no |
+| **Financial Analysis** | S3, S5 | as above, PDF/UA-1 on both subjects | both documents drawn whole (21 + 20 pages), every page measured | no |
+| **Strategic** | S3, S5 | as above, PDF/UA-1 on both subjects | both documents drawn whole (29 + 19 pages), every page measured | no |
+| **Executive Briefing** | S3, S5 | as above, PDF/UA-1 on both subjects | both documents drawn whole (20 + 18 pages), every page measured | no |
+| **Snapshot** | S3, S5 | as above, PDF/UA-1 on both subjects | both documents drawn whole (11 + 12 pages), every page measured | no |
+
+S5 produced all four non-Compass reports for both subjects through the
+supported fork and condense compositions and drew each on the production
+print contract —
+[`S5_FORK_DOCUMENTS.md`](./S5_FORK_DOCUMENTS.md),
+[`S5_CONDENSED_DOCUMENTS.md`](./S5_CONDENSED_DOCUMENTS.md). "Every page
+measured" means each page was rasterised and its body ink measured against
+the master's own content box; the two defects that found are in §3 of the
+second doc. **The Briefing and the Snapshot each carry one named stand-in for
+the model call** (`scripts/reports/_condenseStandIn.mts`), which copies the
+parent's own blocks and cannot invent a figure; the fork's two need no model
+call at all. Neither report has yet been produced by a run that made the real
+call, which is the gap S5 does not close.
 
 ## What each column means here
 
