@@ -153,6 +153,32 @@ unfixed code, seven of its eight assertions fail.
 
 ---
 
+## 3a · The suite, all ten
+
+`s5CompassReports.mts`, `s5ForkReports.mts` and `s5CondenseReports.mts` all
+draw through **one** step, `_s5Render.mts`. That matters for this stage in
+particular: ten documents are being compared with each other — page counts,
+body fill, PDF/UA-1, whether a defect in one is present in the others — and
+that comparison is only sound if every document reached the paper the same
+way. The Compass was drawn separately in S1; it is on the shared step now.
+
+| | Kellyville | Maryborough |
+| --- | ---: | ---: |
+| Investment Compass | 36 pages | 22 pages |
+| Financial Analysis | 21 | 20 |
+| Due Diligence (Strategic) | 29 | 19 |
+| Executive Briefing | 20 | 18 |
+| Snapshot | 11 | 12 |
+
+All ten validate as **PDF/UA-1** against veraPDF 1.30.2. All ten are clean of
+raw `{{directives}}`, "N/A", "TBD", "not assessed", bare Markdown table
+delimiters and stage labels. No body page in any of the ten falls below 40%
+fill. What remains under 72% is the archetype pages (cover, contents, the two
+dashboards, the opening), the closing page, tall risk-register rows that
+cannot split, and last-narrative-page tails.
+
+---
+
 ## 4 · Two findings NOT acted on, and why
 
 ### `runQAValidation` is called with the wrong tier

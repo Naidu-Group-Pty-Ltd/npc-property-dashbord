@@ -12,9 +12,9 @@
  *
  * This runs the real composition for both subjects, builds the row each fork
  * would persist (the parent's record with the variant's content and tier, as
- * `upsertFork` writes it), and draws each through the supported template path
- * — `compileTemplateHtmlForPdf` then WeasyPrint on the six options the route
- * sends.
+ * `upsertFork` writes it), and draws each through `_s5Render.mts` — the one
+ * render step all ten S5 documents share, so a defect found in one document
+ * cannot be an artefact of how that document alone reached the paper.
  *
  * The registry is the code default, which IS production's: `report_engine_config`
  * holds no overlay for `split_routes`, `split_metadata`,
@@ -23,49 +23,22 @@
  * `reports/fixtures/*-row.json` is read from production and `reports/` is
  * git-ignored, so a fresh checkout has to fetch them first.
  */
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-
-import { compileTemplateHtmlForPdf } from '../../src/lib/reportTemplate/compileTemplateForPdf';
 import { composeForkDocuments } from '../../supabase/functions/_shared/reports/investment/forkSplit.pure';
 import { loadSplitRegistry } from '../../supabase/functions/_shared/reportSplitRegistry';
-import { applyInvestmentProjection } from '../../supabase/functions/_shared/reportBindingProjection.pure';
-import { applyOrganisationProjection } from '../../supabase/functions/_shared/organisationProjection.pure';
-import { INVESTMENT_COMPASS_TEMPLATES } from '../template-library/investmentCompass/templates';
+import { drawReportRow, readFixture } from './_s5Render.mts';
 
-const REPO = resolve(import.meta.dirname, '../..');
-const read = (p: string) => {
-  try {
-    return JSON.parse(readFileSync(resolve(REPO, p), 'utf8'));
-  } catch (err) {
-    if ((err as { code?: string }).code !== 'ENOENT') throw err;
-    throw new Error(`${p} is not present. It is read from production and \`reports/\` is git-ignored.`);
-  }
-};
+const read = readFixture;
 
 /** A client that answers nothing, so the registry resolves to its code defaults. */
 const NO_OVERLAY = { from: () => ({ select: () => ({ in: async () => ({ data: null }) }) }) } as never;
 /** Fixed, so a document produced twice is the same document. */
 const GENERATED_ON = '2026-09-17';
 
-const MARK = readFileSync(resolve(REPO, 'reports/fixtures/mark-monogram.txt'), 'utf8').trim();
-const SETTINGS = read('reports/fixtures/report-settings.meta.json');
-const ORG = { company_name: 'Naidu Property Consulting Services' };
-const flat = (o: unknown) => (o && typeof o === 'object' ? { ...(o as object) } : {});
-
-const template = INVESTMENT_COMPASS_TEMPLATES.find(
-  (t) => String((t as never as { slug?: string }).slug ?? '').includes('-pb-01-'),
-)! as never as { name: string; slug?: string; schema: unknown };
-
-mkdirSync(resolve(REPO, 'reports/html'), { recursive: true });
-mkdirSync(resolve(REPO, 'reports/pdf'), { recursive: true });
-
 const registry = await loadSplitRegistry(NO_OVERLAY);
 console.log(`split registry: ${JSON.stringify(registry.source)}\n`);
 
-interface Drawn { key: string; tier: string; sections: number; chars: number; pages: string; }
-const drawn: Drawn[] = [];
+interface Row { key: string; tier: string; sections: number; chars: number; pages: string; }
+const produced: Row[] = [];
 
 for (const subject of ['annabelle', 'pallas']) {
   const parent = read(`reports/fixtures/${subject}-row.json`);
@@ -103,37 +76,18 @@ for (const subject of ['annabelle', 'pallas']) {
       derived_from_report_id: parent.id,
       parent_report_id: parent.id,
     };
-    const data: Record<string, any> = {
-      report: { id: row.id, type: 'investment', generated_at: row.updated_at },
-      property: flat(row.property_specs),
-      financials: flat(row.financial_calculations),
-      scores: flat(row.investment_score),
-      brand: { tokens: {}, logo: null },
-    };
-    applyInvestmentProjection(data, row);
-    applyOrganisationProjection(data, ORG as never, { mark: MARK, markMono: MARK }, SETTINGS as never);
-    data.narrative = { ...(data.narrative ?? {}), source: out.markdown };
-
     const name = `s5-${subject}-${key}`;
-    const compiled = await compileTemplateHtmlForPdf(template.schema as never, { data });
-    const htmlPath = resolve(REPO, `reports/html/${name}.html`);
-    const pdfPath = resolve(REPO, `reports/pdf/${name}.pdf`);
-    writeFileSync(htmlPath, compiled.html);
-    const render = execFileSync('python3', [resolve(REPO, 'scripts/reports/renderWeasy.py'), htmlPath, pdfPath], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const warnings = render.split('\n').filter((l) => l.startsWith('warning\t'));
-    const pages = execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' }).match(/^Pages:\s+(\d+)/m)?.[1] ?? '—';
+    const { pages, warnings } = await drawReportRow(row, name);
     console.log(
       `  ${key.padEnd(10)} ${String(out.sections).padStart(2)} sections  `
       + `${String(out.markdown.length).padStart(6)} chars  ${String(pages).padStart(3)} pages  `
       + `hygiene: ${out.editorialBlocksRemoved} editorial, ${out.placeholderRowsRemoved} placeholder rows, `
       + `${out.emptyStatCardsRemoved} empty cards, ${out.duplicateDirectivesRemoved} duplicate figures`
-      + (warnings.length > 2 ? `  · ${warnings.length} engine warnings` : ''),
+      + (warnings > 2 ? `  · ${warnings} engine warnings` : ''),
     );
-    drawn.push({ key: name, tier, sections: out.sections, chars: out.markdown.length, pages });
+    produced.push({ key: name, tier, sections: out.sections, chars: out.markdown.length, pages });
   }
   console.log('');
 }
 
-console.log(`${drawn.length} documents drawn · reports/pdf/s5-*.pdf`);
+console.log(`${produced.length} documents drawn · reports/pdf/s5-*.pdf`);

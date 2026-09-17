@@ -37,45 +37,16 @@
  * `reports/fixtures/*-row.json` is read from production and `reports/` is
  * git-ignored, so a fresh checkout has to fetch them first.
  */
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-
-import { compileTemplateHtmlForPdf } from '../../src/lib/reportTemplate/compileTemplateForPdf';
 import {
   composeCondensedDocument, type CondensedTier,
 } from '../../supabase/functions/_shared/reports/investment/condenseCompose.pure';
 import { runQAValidation } from '../../supabase/functions/_shared/compassQAValidator';
-import { applyInvestmentProjection } from '../../supabase/functions/_shared/reportBindingProjection.pure';
-import { applyOrganisationProjection } from '../../supabase/functions/_shared/organisationProjection.pure';
-import { INVESTMENT_COMPASS_TEMPLATES } from '../template-library/investmentCompass/templates';
 import { STAND_IN_NOTE, condenseStandIn } from './_condenseStandIn.mts';
+import { drawReportRow, headingsOf, readFixture } from './_s5Render.mts';
 
-const REPO = resolve(import.meta.dirname, '../..');
-const read = (p: string) => {
-  try {
-    return JSON.parse(readFileSync(resolve(REPO, p), 'utf8'));
-  } catch (err) {
-    if ((err as { code?: string }).code !== 'ENOENT') throw err;
-    throw new Error(`${p} is not present. It is read from production and \`reports/\` is git-ignored.`);
-  }
-};
-
-const MARK = readFileSync(resolve(REPO, 'reports/fixtures/mark-monogram.txt'), 'utf8').trim();
-const SETTINGS = read('reports/fixtures/report-settings.meta.json');
-const ORG = { company_name: 'Naidu Property Consulting Services' };
-const flat = (o: unknown) => (o && typeof o === 'object' ? { ...(o as object) } : {});
-
-const template = INVESTMENT_COMPASS_TEMPLATES.find(
-  (t) => String((t as never as { slug?: string }).slug ?? '').includes('-pb-01-'),
-)! as never as { name: string; slug?: string; schema: unknown };
-
-mkdirSync(resolve(REPO, 'reports/html'), { recursive: true });
-mkdirSync(resolve(REPO, 'reports/pdf'), { recursive: true });
+const read = readFixture;
 
 console.log(`STAND-IN: ${STAND_IN_NOTE}\n`);
-
-const headingsOf = (md: string) => [...md.matchAll(/^##\s+(.+?)\s*$/gm)].map((m) => m[1]);
 
 interface Drawn { key: string; tier: string; sections: number; chars: number; pages: string; }
 const drawn: Drawn[] = [];
@@ -107,28 +78,8 @@ for (const subject of ['annabelle', 'pallas']) {
       parent_report_id: parent.id,
       derived_from_report_id: parent.id,
     };
-    const data: Record<string, any> = {
-      report: { id: row.id, type: 'investment', generated_at: row.updated_at },
-      property: flat(row.property_specs),
-      financials: flat(row.financial_calculations),
-      scores: flat(row.investment_score),
-      brand: { tokens: {}, logo: null },
-    };
-    applyInvestmentProjection(data, row);
-    applyOrganisationProjection(data, ORG as never, { mark: MARK, markMono: MARK }, SETTINGS as never);
-    data.narrative = { ...(data.narrative ?? {}), source: composed.markdown };
-
     const name = `s5-${subject}-${tier}`;
-    const compiled = await compileTemplateHtmlForPdf(template.schema as never, { data });
-    const htmlPath = resolve(REPO, `reports/html/${name}.html`);
-    const pdfPath = resolve(REPO, `reports/pdf/${name}.pdf`);
-    writeFileSync(htmlPath, compiled.html);
-    writeFileSync(resolve(REPO, `reports/html/${name}.md`), composed.markdown);
-    const render = execFileSync('python3', [resolve(REPO, 'scripts/reports/renderWeasy.py'), htmlPath, pdfPath], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const warnings = render.split('\n').filter((l) => l.startsWith('warning\t'));
-    const pages = execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' }).match(/^Pages:\s+(\d+)/m)?.[1] ?? '—';
+    const { pages, warnings } = await drawReportRow(row, name);
     const sections = headingsOf(composed.markdown);
 
     console.log(`  ${tier}`);
@@ -144,7 +95,7 @@ for (const subject of ['annabelle', 'pallas']) {
     }
     console.log(`    QA         ${JSON.stringify(qa)}`);
     console.log(`    drawn      ${String(pages).padStart(3)} pages`
-      + (warnings.length > 2 ? `  · ${warnings.length} engine warnings` : ''));
+      + (warnings > 2 ? `  · ${warnings} engine warnings` : ''));
     drawn.push({ key: name, tier, sections: sections.length, chars: composed.markdown.length, pages });
   }
   console.log('');
