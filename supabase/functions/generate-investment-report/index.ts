@@ -8,6 +8,7 @@ import { publishableGrade } from '../_shared/reports/investment/scoreSections.pu
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
+import { compassDocumentContract } from '../_shared/reports/investment/compassDocumentContract.pure.ts';
 import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
 import { demographicsStatBlocks } from '../_shared/reports/censusPromptBlocks.pure.ts';
 import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure.ts';
@@ -4760,314 +4761,39 @@ Produce a comprehensive statewide investment analysis following the structure ab
 
     const _brandPp = await getBrandConfig();
     const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.
-Your role is to produce comprehensive, professional-grade investment reports following the EXACT structure, length, and format of our reference template.
 
-**CRITICAL CALCULATION RULES:**
-1. OCCUPANCY ASSUMPTION: The recorded occupancy is ${effectiveOccupancyRate} weeks per year. Every cash-flow figure uses rent collected over ${effectiveOccupancyRate} weeks; the yields are stated on the contractual rent (52 weeks) before finance and tax, and you must say so wherever you quote a yield. Never present the two rents as one figure.
-2. YIELD VALUES: Use the pre-calculated yield values provided below EXACTLY - do NOT recalculate or estimate yields.
+You write one section at a time. The section you are asked for, and its length,
+are set out at the end of this prompt; everything before that is the document's
+contract and the evidence you may draw on.
+
+**PROPERTY TO ANALYSE: ${formattedInput}**
+
 ${propertyTypeRule}
 
-**PRE-CALCULATED FINANCIAL VALUES (USE THESE EXACTLY - DO NOT RECALCULATE):**
-- Gross Rental Yield: ${statedYield(preCalculatedGrossYield)}
-- Net Rental Yield: ${statedYield(preCalculatedNetYield)}
-- Annual Rental Income: ${rentalEvidence.established
-  ? `$${annualRentIncome.toLocaleString()} (based on ${effectiveOccupancyRate} weeks @ $${quotedWeeklyRent}/week)`
-  : 'Not established — no rental evidence for this property'}
-- Occupancy Rate: ${effectiveOccupancyRate} weeks per year (${((effectiveOccupancyRate/52)*100).toFixed(0)}% occupancy)
-${absentRentDirective(rentalEvidence)}
+${compassDocumentContract(_brandPp.companyName)}
 
-**PRE-CALCULATED ANNUAL COSTS (USE THESE EXACTLY - DO NOT SUBSTITUTE WITH DEFAULTS):**
-- Council Rates: $${effectiveCouncilRates.toLocaleString()}/year
-- Water Rates: $${effectiveWaterRates.toLocaleString()}/year
-- Strata/Body Corporate: $${effectiveStrataFees.toLocaleString()}/year
-- Landlord Insurance: $${effectiveLandlordInsurance.toLocaleString()}/year
-- Repairs & Maintenance: $${effectiveMaintenance.toLocaleString()}/year
-- Property Management: $${effectivePmDollar.toLocaleString()}/year (${effectivePmPercent}% of rent)
-- Land Tax: $${effectiveLandTax.toLocaleString()}/year
-- Total Annual Costs (excl. Land Tax): $${totalAnnualCostsForNetYield.toLocaleString()}/year
+# ═══════════════════════════════════════════════════════════════════════
+# THE EVIDENCE PACK — everything this report is allowed to state
+# ═══════════════════════════════════════════════════════════════════════
 
-**PROPERTY ADDRESS TO ANALYZE: ${formattedInput}**
+This is the whole of the retrieved record for this property. A figure that is
+not below was not retrieved, and the rule above applies to it: omit the
+sentence rather than supply the figure.
 
-${propertyDetails ? `**Property Details Provided:**
-- Price: $${propertyDetails.price?.toLocaleString() || 'Not specified'}
-- Weekly Rent: $${propertyDetails.weeklyRent || 'Not specified'}
-${propertyTypeLabel ? `- Property Type: ${propertyTypeLabel}` : ''}
-- Bedrooms: ${propertyDetails.beds || 'Not specified'}
-- Bathrooms: ${propertyDetails.baths || 'Not specified'}
-${landAreaReading ? `- ${landAreaReading.label}: ${landAreaReading.value}${landAreaReading.note ? ` — ${landAreaReading.note}` : ''}` : ''}
-${propertyDetails.buildSizeSqm ? `- Building Size: ${propertyDetails.buildSizeSqm}m²` : ''}
-${propertyDetails.carSpaces ? `- Car Spaces: ${propertyDetails.carSpaces}` : ''}
-${propertyDetails.isNewBuild ? `- New Build: Yes` : ''}
-${isStrataProperty ? `- Strata Property: Yes (body corporate/strata fees apply)` : ''}` : ''}
+Where a block below says a reading is absent, unavailable or not served, that
+is the finding — report it as a fact about the check, never as a fact about
+the property.
 
 ---
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# MANDATORY REPORT STRUCTURE - 38-PAGE REFERENCE TEMPLATE
-# YOU MUST FOLLOW THIS EXACT STRUCTURE, LENGTH, AND FORMAT
-# ═══════════════════════════════════════════════════════════════════════════════
+## The property, as recorded
 
----
+**Address:** ${formattedInput}
 
-# Investment Report: [Property Address], [STATE] [POSTCODE]
-
----
-
-# Executive Summary
-
-**REQUIRED CONTENT (Minimum 400 words for this section):**
-
-This executive summary provides a high-level overview of the investment opportunity at ${formattedInput}.
-
-**Property Snapshot:**
-
-| Attribute | Value |
-|-----------|-------|
-| Property Address | ${formattedInput} |
-${propertyTypeLabel ? `| Property Type | ${propertyTypeLabel} |` : ''}
-| Purchase Price | $${effectivePurchasePrice?.toLocaleString() || 'X,XXX,XXX'} |
-| Estimated Weekly Rent | ${quotedWeeklyRent ? `$${quotedWeeklyRent}` : 'Not established'} |
-| Gross Rental Yield | ${statedYield(preCalculatedGrossYield)} |
-| Net Rental Yield | ${statedYield(preCalculatedNetYield)} |
-
-**Investment Highlights:**
-
-1. **Location Strength:** [Summarize key location advantages - proximity to CBD, transport, schools]
-2. **Market Position:** [Current market conditions and growth prospects]
-3. **Income Potential:** [Rental yield assessment and demand drivers]
-4. **Growth Outlook:** [Capital growth expectations based on market data]
-
-**Key Findings:**
-
-- **Strengths:** [List 2-3 key property/location strengths]
-- **Considerations:** [List 2-3 areas requiring investor attention]
-- **Overall Assessment:** [Brief investment suitability statement]
-
-**Investment Recommendation:**
-
-Based on our comprehensive analysis, this property is [suitable/moderately suitable/requires careful consideration] for investors seeking [capital growth/rental income/balanced returns]. The investment is best suited for [investor profile description].
-
----
-
-# Location Overview
-
-**REQUIRED OPENING LINE:** "This investment report analyzes: [FULL PROPERTY ADDRESS]"
-
-**CONTENT REQUIREMENTS (Minimum 500 words for this section):**
-
-[Suburb name] is a [description] community located [XX] kilometres [direction] of [City]'s CBD[citation], positioned within the [District] region of [Metro Area]. The suburb is distinguished by its [key characteristics][citation].
-
-**Geographic Classification:**
-- Local Government Area (LGA): [Name] Council
-- Statistical Areas: [Suburb] falls within the broader [Area] Statistical Area Level 2 (SA2)
-
-**Planning & Development (measured at this property's coordinate):**
-
-${planningStatBlocks(enhancedData)}
-
-**Suburb Character & Lifestyle:**
-
-[Suburb] presents [description of blend/character]. The suburb features [specific details about streets, properties, land parcels][citation]. A diversity level of [XX.X]% reflects the [description of composition][citation].
-
-The suburb's lifestyle is characterised by:
-- **Family-oriented infrastructure:** [Specific facility name] features [detailed list of amenities - courts, fields, parks with exact counts][citation]. [Playground name] offers [specific features including water play, trampolines, shade structures][citation]
-- **Parks and green spaces:** [Park 1], [Park 2], and [Park 3] provide [specific amenities][citation]
-- **Shopping and dining:** [Shopping centre] and [Secondary centre] host [stores, dining options]. Nearby dining precincts in [Area 1], [Area 2], and [Area 3] offer [cuisine types][citation]
-
-**Employment hubs:**
-[Business Park 1] and [Business Park 2] provide significant local job opportunities[citation].
-
-**Public Transport Access:**
-
-Write this from the named stations and counted stops in the transport reading above and from nothing else. Do NOT state that a station or line opened, name a connecting station or line, or describe station facilities: none of that is measured for this property, and an invented opening year reads exactly like a retrieved one.
-
-**Commute Performance:**
-
-Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above; where none is named, say nothing about transport detail — never write that it is not available, and never write "N/A".
-
-**Population & Development Trends:**
-
-${regionalTrendBlocks(enhancedData)}
-
-Write this from the population-trend table above, the Planning & Development block and the demographics tables only. Where the development-application figures are present, discuss what they show — volume, stated investment, dwellings proposed, the largest projects — attributed to the DA register and its period. Where they are absent, state the absence in one sentence. Do NOT name planned infrastructure, projects or developments that do not appear in the data above.
-
----
-
-# Current Market Performance
-
-Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above; where none is named, say nothing about transport detail — never write that it is not available, and never write "N/A".
-
-**Market Commentary (150+ words required):**
-
-Write about the suburb's accessibility from the named stations, counted stops and amenities measured above. Do NOT quote a walk score or a transport score — neither is measured — and do NOT characterise walkability or connectivity with a number of any kind.
-
-Current market conditions are influenced by the National House Price Growth Rate of [X.X]% (as of [Date]), with [Suburb] positioned to benefit from [demand drivers]. The suburb's inventory includes [property mix description][citation].
-
----
-
-# Current Economic Context
-
-${macroEconomicBlock(enhancedData)}
-
----
-
-# Demographics & Demand Drivers
-
-${demographicsStatBlocks(enhancedData)}
-
-Interpret the socioeconomic profile in one short paragraph: what the SEIFA deciles above indicate about the area's position across income, education and occupation, and what that implies for demand. Discuss only indexes that appear in the table.
-
-**Demand Drivers (150+ words required):**
-
-The combination of [employment factor], [income factor], and [unemployment factor] creates robust demand for both owner-occupied and rental properties. Population growth is being driven by [demographic groups] attracted to the suburb's [appeal factors]. The suburb attracts [target demographics description].
-
----
-
-# Schools & Education
-
-**Education Infrastructure Summary:**
-
-| Metric | Value | Data Source |
-|--------|-------|-------------|
-| Total Schools in Postcode | ${enhancedData.schoolData?.summary?.totalSchools || 'XX'} | Google Places API |
-| Average School Rating | ${enhancedData.schoolData?.summary?.averageRating || 'X.X'}/5 stars | Google Places API |
-| Education Quality | ${enhancedData.schoolData?.summary?.qualityAssessment || 'Average'} (National Standard) | School Data Analysis |
-
-**Catchment evidence rule (QA-28):** a school catchment is an enrolment-area fact settled only by the department's address-based School Finder or written school/department confirmation, with its date. Where the sources available to you disagree (listing vs. portal vs. department), present EACH source's claim, name the source, and mark the catchment "unverified — sources conflict"; never select one. A travel claim ("short drive", "manageable commute") is written only with its mode, origin, distance and duration from a measured route; otherwise omit it.
-
-**Nearest School:**
-
-| School Name | Distance | Type |
-|-------------|----------|------|
-| ${reconcileNearestSchool(enhancedData.schoolData?.nearestSchool, storedSchools)?.name || '[School Name]'} | ${reconcileNearestSchool(enhancedData.schoolData?.nearestSchool, storedSchools)?.distance || 'X.XX'} km | ${enhancedData.schoolData?.nearestSchool?.type || 'Early Learning'} |
-
-**Top-Rated Schools in Local Area:**
-
-| School Name | Distance | Type |
-|-------------|----------|------|
-${reconcileSchoolDistances(enhancedData.schoolData?.topSchools, storedSchools).slice(0, 5).map((s: any) => `| ${s.name} | ${s.distance} km | ${s.type} |`).join('\n') || '| [School 1] | Nearby | Government |'}
-
-**Education Facilities (Extended List):**
-
-| School Name | Distance | Type |
-|-------------|----------|------|
-${reconcileSchoolDistances(enhancedData.schoolData?.allSchools, storedSchools).slice(0, 7).map((s: any) => `| ${s.name} | ${s.distance} km | ${s.type} |`).join('\n') || '| [School 1] | X.XX km | Government |'}
-
-**Secondary Education:**
-
-[Secondary school name], the nearest secondary facility, is located [X.X] km distant and rated [X]/5 stars. [Additional schools] provide additional secondary options in the immediate vicinity.
-
-**Education Profile (100+ words required):**
-
-[Suburb] benefits from comprehensive educational coverage with [XX] schools across all levels within the postcode. A diverse range of government and private institutions serve the area, with early learning facilities rated highly (averaging [X.X]/5 stars), making the suburb particularly attractive to families with young children. The availability of quality schools directly supports property demand from families and contributes to capital growth expectations in family-oriented suburbs.
-
----
-
-# Healthcare & Shopping
-
-**Healthcare Facilities:**
-
-| Category | Facilities Count | Nearest Facility |
-|----------|-----------------|------------------|
-| Healthcare | ${enhancedData.locationIntelligence?.healthcare?.facilitiesWithin5km || 'XX'} | ${enhancedData.locationIntelligence?.healthcare?.nearestFacility || '[Medical Centre Name]'} |
-
-[Suburb]'s healthcare infrastructure includes [XX] facilities within 5 km, with [Primary facility] as the primary provider just [X.XX] km away. The area benefits from proximity to [hospital description][citation].
-
-**Shopping & Dining Facilities:**
-
-| Category | Facilities Count | Nearest Facility | Distance |
-|----------|-----------------|------------------|----------|
-| Supermarkets | ${enhancedData.locationIntelligence?.lifestyle?.supermarkets || 'X'} | ${enhancedData.locationIntelligence?.lifestyle?.nearestSupermarket || '[Supermarket Name]'} | X.X km |
-| Shopping Centres | ${enhancedData.locationIntelligence?.lifestyle?.shoppingCenters || 'X'} | ${enhancedData.locationIntelligence?.lifestyle?.nearestShopping || '[Shopping Centre]'} | X.X km |
-| Restaurants & Cafes | XX | Multiple Precincts | Within X km |
-
-[Shopping centre] serves as the central shopping hub, located [X.XX] km away, offering [stores - supermarkets, specialty stores, dining options][citation]. [Secondary shopping description]. Nearby dining precincts in [Area 1], [Area 2], and [Area 3] extend culinary choices[citation].
-
----
-
-# Recreational Amenities
-
-**Recreation & Parks:**
-
-| Category | Facilities Count | Nearest Facility | Distance |
-|----------|-----------------|------------------|----------|
-| Parks & Recreation | ${enhancedData.locationIntelligence?.lifestyle?.parks || 'XX'} | ${enhancedData.locationIntelligence?.lifestyle?.nearestPark || '[Reserve Name]'} | ${enhancedData.locationIntelligence?.lifestyle?.nearestParkDistance || 'X.X'} km |
-
-[Nearest park/reserve] is [location description] at just [X.X] km distance, providing immediate access to local parks and recreational facilities. This [proximity level] to green space enhances the property's appeal for families and health-conscious residents.
-
-**Major Recreational Complexes:**
-
-The [Sports Complex Name] is a premier recreational hub featuring:
-- [XX] indoor courts
-- [XX] outdoor fields (including [XX] all-weather synthetic fields)
-- [XX] netball courts
-- [XX] tennis courts
-- [XX] cricket pitches
-- Dog park
-- Walking tracks
-
-[Playground name] at [Complex] offers inclusive recreational amenities with water play areas, trampolines, slides, sandpit, balancing beams, swings, musical instruments, climbing ropes, covered shade areas, and barbecue facilities[citation].
-
-Additional parks include [Park 1] and [Park 2], both offering picnic areas, walking paths, and playgrounds. [Regional Park] provides expansive green spaces, bushwalking trails, and wildlife observation opportunities[citation].
-
-**Amenity Summary:**
-
-[Suburb] delivers exceptional recreational access with [XX] major parks and recreation facilities, including world-class sporting complexes and accessible playgrounds. The immediate proximity of [Reserve] ([X.X] km) to the subject property provides superior outdoor recreation without vehicle dependency.
-
----
-
-# Transport & Accessibility
-
-**Public Transport Network:**
-
-| Metric | Value | Details |
-|--------|-------|---------|
-| Nearest Station | ${enhancedData.locationIntelligence?.transport?.nearestStation || '[Station Name]'} | [Location details] |
-
-Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above; where none is named, say nothing about transport detail — never write that it is not available, and never write "N/A". Service frequency is not measured either — the stops file carries no timetable — so do NOT state services per hour, peak or off-peak.
-- Transport Types: ${enhancedData.locationIntelligence?.transport?.transportTypes?.join(', ') || 'Train, Bus, Light Rail'}
-- Primary Lines: [Line names]
-- Bus Connections: Services to [destinations list]
-
-**Accessibility Features:**
-- Wheelchair accessible facilities
-- Lift availability at major stations
-- Tactile paving for visually impaired users
-- Multiple stop locations within 1 km radius
-
-**Transport Advantages (100+ words required):**
-
-The opening of [Station] in [Year] fundamentally transformed the suburb's transport profile. Direct access to the [Line Name] provides express connectivity to [Major hub] and beyond, with frequent peak-hour services ensuring reliable commuting for professionals. Bus integration provides comprehensive coverage of surrounding business districts and educational centers. The walk score of [XX]/100 indicates residents can accomplish most daily tasks on foot, reducing transport dependency and vehicle ownership costs.
-
----
-
-# Environmental Risks & Climate
-
-${climateStatBlocks(enhancedData)}
-
----
-
-# Crime & Safety
-
-${crimeStatBlocks(enhancedData)}
-
----
-
-# Property-Level Information
-
-**Property Address:** ${formattedInput}
-
-**Property Characteristics:**
-
-Based on ${documentContent ? 'the provided property listing data' : 'location intelligence and comparable market evidence'} for [Street] properties in [Suburb], ${documentContent ? 'this property exhibits' : 'typical residential properties in this location exhibit'} the following profile:
-
-| Property Characteristic | ${documentContent ? 'Value' : 'Estimated Value'} |
+| Property Characteristic | Value |
 |------------------------|-------|
 ${propertyTypeLabel ? `| Property Type | ${propertyTypeLabel} |` : ''}
 ${[
-  // A specification table states facts. Where the record holds none, the row
-  // is OMITTED — it is not filled with an instruction to estimate one.
-  //
   // Each of these rows used to carry a placeholder the model was asked to
   // expand: `'Estimated XXX-XXX m² (typical for suburb)'`,
   // `'X (typical for property type)'`, `'X-X spaces'`, `'Estimated XXXX-XXXX'`
@@ -5078,10 +4804,6 @@ ${[
   // range is roughly DOUBLE the land size the operator had recorded, and the
   // council rates, land tax and rent comparables are then reasoned from it —
   // `38 Larcom Crescent` says ~500 m² throughout against a recorded 255.
-  //
-  // Nothing here reaches a current document (the Compass-40 overlay does not
-  // draw this section), but a dormant instruction to fabricate is one routing
-  // change away from firing, which is why it goes rather than being left.
   [landAreaReading?.label ?? 'Land size', landAreaReading?.value ?? null],
   ['Bedrooms', effectiveBeds || null],
   ['Bathrooms', effectiveBaths || null],
@@ -5099,507 +4821,146 @@ bathroom count, parking count, year built or condition that is not in it — not
 as an estimate, not as a range, and not as what is "typical for the suburb".
 Where an attribute is absent you may say it is not recorded, and you may
 discuss the suburb's housing stock in general terms provided you do not
-attribute any of it to this property.
-
-**${documentContent ? 'Property Price' : 'Estimated Property Value'}:** $${effectivePurchasePrice?.toLocaleString() || 'X,XXX,XXX'} AUD
-
-This valuation reflects typical [Suburb] [property type] prices for [configuration description] on [land description]. The ${documentContent ? 'price' : 'estimate'} is based on the suburb's positioning as [suburb characteristics], and [infrastructure/transport factors].
-
-**Property Position Relative to Market:**
-
-[Suburb] [property type] at this specification typically command [premium/discount] pricing relative to [comparison suburbs] due to [factors]. Properties on [Street] benefit from [specific advantages].
+attribute any of it to this property. Nobody has inspected this property, so
+no statement about its condition, its compliance or its maintenance history
+is available to you.
 
 ---
 
-<!-- The planning controls and the infrastructure register are NOT here. They
-     are pinned context, appended to every section prompt after this one is
-     trimmed to fit, because this prompt is trimmed in the middle and that is
-     where they used to sit. See pinnedPlanningContext in the handler. -->
+## Where it is
 
-# Purchase & Ongoing Costs (Annual)
+${planningStatBlocks(enhancedData)}
 
-**Assumptions:**
-- Property Price: $${effectivePurchasePrice?.toLocaleString() || (enhancedData.financials?.initialCosts?.propertyValue?.toLocaleString()) || 'X,XXX,XXX'} AUD
-- Deposit: ${100 - effectiveLvr}% = $${effectiveDepositValue?.toLocaleString() || enhancedData.financials?.initialCosts?.deposit?.toLocaleString() || 'XXX,XXX'}
-- Loan Amount: $${enhancedData.financials?.initialCosts?.loanAmount?.toLocaleString() || 'X,XXX,XXX'}
-- Loan Term: ${effectiveLoanTerm} years
-- Interest Rate: ${effectiveInterestRate}%
-
-**Purchase Costs:**
-
-| Cost Category | Amount (AUD) | Calculation Method |
-|---------------|--------------|-------------------|
-| Property Price | $${effectivePurchasePrice?.toLocaleString() || (enhancedData.financials?.initialCosts?.propertyValue?.toLocaleString()) || 'X,XXX,XXX'} | Reference value |
-| Stamp Duty | $${enhancedData.financials?.initialCosts?.stampDuty?.toLocaleString() || 'XX,XXX'} | [State]: [X.XX]% on $[X.XXm] (approximate marginal rate) |
-| Legal Fees | $${enhancedData.financials?.initialCosts?.legalFees?.toLocaleString() || '1,200'} | Typical conveyancing costs |
-| Building Inspection | $600 | Standard pre-purchase inspection |
-| Total Acquisition Cost | $${enhancedData.financials?.initialCosts?.totalUpfront?.toLocaleString() || 'X,XXX,XXX'} | Property + all purchase costs |
-
-**Annual Ongoing Costs:**
-
-| Cost Category | Amount (AUD) | Calculation Method |
-|---------------|--------------|-------------------|
-| Council Rates | $${effectiveCouncilRates?.toLocaleString() || '2,500'} | Local council rates notice |
-| Water Rates | $${effectiveWaterRates?.toLocaleString() || '1,000'} | Estimated based on local water authority |
-| Property Management Fee | $${effectivePmDollar?.toLocaleString() || '1,500'} | ${effectivePmPercent}% × annual rent |
-| Property Insurance | $${effectiveLandlordInsurance?.toLocaleString() || '1,200'} | Typical comprehensive home insurance |
-| Maintenance | $${effectiveMaintenance?.toLocaleString() || '0'} | User-specified maintenance cost |
-| Land Tax | $${effectiveLandTax?.toLocaleString() || '0'} | State land tax (pre-calculated) |
-| **Total Annual Costs** | **$${(totalAnnualCostsForNetYield + effectiveLandTax)?.toLocaleString() || '0'}** | Sum of ALL ongoing costs |
-
-**Land Tax Calculation (Information Only):**
-
-[State] Land Tax applies to investment properties with aggregated land value exceeding $[threshold]. For a property at $[price] with standard land value allocation (~[XX]% = $[value]), land tax would be approximately: [calculation]. However, for comparative purposes, if threshold exceeded: [X.X]% marginal rate applies to amount over threshold.
-
-Note: Land tax is highly property-specific and depends on aggregated landholding. Recommend consultation with [State] Revenue for accurate calculation.
+${regionalTrendBlocks(enhancedData)}
 
 ---
 
-# Rental Assessment & Yield Calculation
+## The economy around it
 
-**Rental Market Assessment:**
-
-The rental analysis below is based on suburb-level median rental data and the specific property configuration. For detailed comparable rental evidence with specific addresses and lease dates, consult a local property manager or licensed real estate agent.
-
-| Property Type | Estimated Weekly Rent | Annual Rental Income |
-|--------------|----------------------|---------------------|
-| ${[effectiveBeds ? `${effectiveBeds}-bed` : null, propertyTypeLabel || 'dwelling'].filter(Boolean).join(' ')} | ${quotedWeeklyRent ? `$${quotedWeeklyRent} - $${quotedWeeklyRent + 50}` : 'Not established'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()} - $${(annualRentIncome + (50 * effectiveOccupancyRate)).toLocaleString()}` : 'Not established'} |
-
-**Selected Rental Assumption:** ${rentalEvidence.established ? `$${quotedWeeklyRent}/week × ${effectiveOccupancyRate} weeks = $${annualRentIncome.toLocaleString()} annually (${effectiveOccupancyRate === 52 ? '100% occupancy' : `${((effectiveOccupancyRate/52)*100).toFixed(0)}% occupancy`})` : 'No rental evidence was available for this property, so no rental income is assumed and no yield is stated.'}
-
-**IMPORTANT: All calculations use ${effectiveOccupancyRate} weeks/year occupancy (${((effectiveOccupancyRate/52)*100).toFixed(0)}%). Do NOT interpret this as ${effectiveOccupancyRate}% occupancy - it is ${effectiveOccupancyRate} WEEKS per year.**
-
-**Gross Rental Yield Calculation (USE THESE EXACT VALUES):**
-
-| Metric | Calculation | Value |
-|--------|-------------|-------|
-| Annual Rental Income | ${rentalEvidence.established ? `$${quotedWeeklyRent} × ${effectiveOccupancyRate} weeks` : 'No rental evidence'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
-| Property Price | Reference value | $${effectivePurchasePrice?.toLocaleString() || (enhancedData.financials?.initialCosts?.propertyValue?.toLocaleString()) || 'X,XXX,XXX'} |
-| **Gross Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${statedYield(preCalculatedGrossYield)}** |
-
-**Net Rental Yield Calculation (USE THESE EXACT VALUES):**
-
-| Metric | Calculation | Value |
-|--------|-------------|-------|
-| Annual Income | ${rentalEvidence.established ? `$${quotedWeeklyRent} × ${effectiveOccupancyRate} weeks` : 'No rental evidence'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
-| Annual Expenses | Mgmt + Maintenance + Rates + Water + Insurance${effectiveStrataFees ? ' + Strata' : ''}${effectiveLettingFees ? ' + Letting' : ''} (excludes land tax — owner-specific) | $${totalAnnualCostsForNetYield.toLocaleString()} |
-| Net Annual Return | Income - Expenses | ${rentalEvidence.established ? `$${(annualRentIncome - totalAnnualCostsForNetYield).toLocaleString()}` : 'Not established'} |
-| **Net Rental Yield** | **Net operating yield before finance and tax — pre-calculated (DO NOT recalculate)** | **${statedYield(preCalculatedNetYield)}** |
-
-**Yield Comparison to Benchmarks:**
-
-| Benchmark | Gross Yield | Net Yield | Comparison |
-|-----------|-------------|-----------|------------|
-| This Property | ${statedYield(preCalculatedGrossYield)} | ${statedYield(preCalculatedNetYield)} | - |
-| ${suburb || 'Suburb'} Median | [X.XX]% | [X.XX]% | [Above/Below] |
-| LGA Average | [X.XX]% | [X.XX]% | [Above/Below] |
-| ${state || 'State'} Average | [X.XX]% | [X.XX]% | [Above/Below] |
-| National Average | 4.2% | 2.8% | [Above/Below] |
-
-**Yield Commentary:**
-
-${rentalEvidence.established
-  ? `The gross rental yield of ${statedYield(preCalculatedGrossYield)} and net yield of ${statedYield(preCalculatedNetYield)} reflect typical [Suburb] residential rental returns. These yields are [comparison to other areas]. The [modest/strong] rental yield positioning suggests this property is primarily suitable for investors prioritizing [capital growth/rental income], typical of [suburb characteristics].`
-  : 'No rental evidence was available for this property, so no gross or net yield can be stated. Describe the suburb\'s rental market qualitatively and state plainly that a yield for this property could not be established. Do NOT estimate one.'}
+${macroEconomicBlock(enhancedData)}
 
 ---
 
-# Loan Structure & Repayment Analysis
+## Who lives there
 
-**Loan Assumptions:**
-- Loan Amount: $${enhancedData.financials?.initialCosts?.loanAmount?.toLocaleString() || 'X,XXX,XXX'}
-- Interest Rate: ${enhancedData.financials?.loanDetails?.interestRate || 6.5}%
-- Loan Term: 30 years
-- Repayment: Annual calculations
-
-**Principal & Interest Loan (P&I):**
-
-Monthly repayment formula: M = P[r(1+r)^n]/[(1+r)^n-1]
-
-Where:
-- P = $${enhancedData.financials?.initialCosts?.loanAmount?.toLocaleString() || 'X,XXX,XXX'}
-- r = ${enhancedData.financials?.loanDetails?.interestRate || 6.5}%/12 = ${((enhancedData.financials?.loanDetails?.interestRate || 6.5) / 12 / 100).toFixed(6)} (monthly)
-- n = 360 months
-
-| Item | Amount (Annual) | Amount (Monthly) |
-|------|-----------------|------------------|
-| Principal & Interest Repayment | $${(enhancedData.financials?.loanDetails?.monthlyPayment ? enhancedData.financials.loanDetails.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'} | $${enhancedData.financials?.loanDetails?.monthlyPayment?.toLocaleString() || 'X,XXX'} |
-| Interest Paid (Year 1) | $${(enhancedData.financials?.loanDetails?.interestOnlyPayment ? enhancedData.financials.loanDetails.interestOnlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'} | $${enhancedData.financials?.loanDetails?.interestOnlyPayment?.toLocaleString() || 'X,XXX'} |
-| Principal Repaid (Year 1) | $${((enhancedData.financials?.loanDetails?.monthlyPayment || 0) * 12 - (enhancedData.financials?.loanDetails?.interestOnlyPayment || 0) * 12).toLocaleString() || 'X,XXX'} | $${((enhancedData.financials?.loanDetails?.monthlyPayment || 0) - (enhancedData.financials?.loanDetails?.interestOnlyPayment || 0)).toLocaleString() || 'XXX'} |
-
-Note: Blended calculation for annual presentation; actual P&I repayments decline monthly as principal portion increases.
-
-**Interest-Only Loan (First 5 Years):**
-
-| Item | Amount (Annual) | Amount (Monthly) |
-|------|-----------------|------------------|
-| Interest-Only Repayment | $${(enhancedData.financials?.loanDetails?.interestOnlyPayment ? enhancedData.financials.loanDetails.interestOnlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'} | $${enhancedData.financials?.loanDetails?.interestOnlyPayment?.toLocaleString() || 'X,XXX'} |
+${demographicsStatBlocks(enhancedData)}
 
 ---
 
-# Cashflow Analysis
+## Schools
 
-**Cashflow Analysis - Principal & Interest Scenario (Year 1):**
+**Catchment evidence rule:** a school catchment is an enrolment-area fact
+settled only by the department's address-based School Finder or written
+school/department confirmation, with its date. Where the sources available to
+you disagree (listing vs. portal vs. department), present EACH source's claim,
+name the source, and mark the catchment "unverified — sources conflict"; never
+select one. A travel claim ("short drive", "manageable commute") is written
+only with its mode, origin, distance and duration from a measured route;
+otherwise omit it.
 
-| Item | Amount (AUD) |
-|------|--------------|
-| Gross Rental Income ${rentalEvidence.established ? `(${effectiveOccupancyRate} weeks @ $${quotedWeeklyRent}/wk)` : '(no rental evidence)'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
-| Less: P&I Loan Repayment | ($${(enhancedData.financials?.loanDetails?.monthlyPayment ? enhancedData.financials.loanDetails.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'}) |
-| Less: Council Rates | ($${effectiveCouncilRates?.toLocaleString() || enhancedData.financials?.annualCosts?.councilRates?.toLocaleString() || 'X,XXX'}) |
-| Less: Water Rates | ($${effectiveWaterRates?.toLocaleString() || enhancedData.financials?.annualCosts?.waterRates?.toLocaleString() || 'XXX'}) |
-| Less: Property Management (${effectivePmPercent}%) | ($${effectivePmDollar?.toLocaleString() || enhancedData.financials?.annualCosts?.propertyManagement?.toLocaleString() || 'X,XXX'}) |
-| Less: Insurance | ($${effectiveLandlordInsurance?.toLocaleString() || enhancedData.financials?.annualCosts?.landlordInsurance?.toLocaleString() || '1,200'}) |
-| Less: Maintenance | ($${effectiveMaintenance?.toLocaleString() || '0'}) |
-${isStrataProperty ? `| Less: Body Corporate/Strata | ($${effectiveStrataFees?.toLocaleString() || enhancedData.financials?.annualCosts?.bodyCorporate?.toLocaleString() || mergedOverrides.bodyCorporateFees?.toLocaleString() || '3,000'}) |` : ''}
-| **Net Cashflow Before Tax** | **($${Math.abs(enhancedData.financials?.keyMetrics?.annualNet || 0).toLocaleString() || 'XX,XXX'})** |
-
-**Cashflow Analysis - Interest-Only Scenario (Year 1):**
-
-| Item | Amount (AUD) |
-|------|--------------|
-| Gross Rental Income ${rentalEvidence.established ? `(${effectiveOccupancyRate} weeks @ $${quotedWeeklyRent}/wk)` : '(no rental evidence)'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
-| Less: Interest-Only Repayment | ($${(enhancedData.financials?.loanDetails?.interestOnlyPayment ? enhancedData.financials.loanDetails.interestOnlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'}) |
-| Less: Council Rates | ($${effectiveCouncilRates?.toLocaleString() || enhancedData.financials?.annualCosts?.councilRates?.toLocaleString() || 'X,XXX'}) |
-| Less: Water Rates | ($${effectiveWaterRates?.toLocaleString() || enhancedData.financials?.annualCosts?.waterRates?.toLocaleString() || 'XXX'}) |
-| Less: Property Management (${effectivePmPercent}%) | ($${effectivePmDollar?.toLocaleString() || enhancedData.financials?.annualCosts?.propertyManagement?.toLocaleString() || 'X,XXX'}) |
-| Less: Insurance | ($${effectiveLandlordInsurance?.toLocaleString() || enhancedData.financials?.annualCosts?.landlordInsurance?.toLocaleString() || '1,200'}) |
-| Less: Maintenance | ($${effectiveMaintenance?.toLocaleString() || '0'}) |
-${isStrataProperty ? `| Less: Body Corporate/Strata | ($${effectiveStrataFees?.toLocaleString() || enhancedData.financials?.annualCosts?.bodyCorporate?.toLocaleString() || mergedOverrides.bodyCorporateFees?.toLocaleString() || '3,000'}) |` : ''}
-| **Net Cashflow Before Tax** | **($${Math.abs((enhancedData.financials?.keyMetrics?.annualNet || 0) - ((enhancedData.financials?.loanDetails?.monthlyPayment || 0) - (enhancedData.financials?.loanDetails?.interestOnlyPayment || 0)) * 12).toLocaleString() || 'XX,XXX'})** |
-
-**IMPORTANT NOTE:** Gross Rental Income assumes ${effectiveOccupancyRate} weeks per year occupancy (${((effectiveOccupancyRate/52)*100).toFixed(0)}%), which is industry standard for investment analysis.
-
-**Cashflow Commentary (150+ words required):**
-
-Both P&I and Interest-Only loan structures produce negative cash flow in Year 1, with the property requiring approximately $[XX,XXX] annually (P&I) or $[XX,XXX] annually (IO) in additional investor capital. This negative cashflow is typical for established suburbs where rental yields lag loan serviceability costs. The investor must be positioned to cover this annual shortfall, or alternatively, factor capital growth appreciation as the primary return driver.
-
-The P&I scenario provides superior long-term economics as principal repayment builds equity, while the Interest-Only scenario maximizes tax deductibility of interest expense during the IO period but offers no principal reduction.
+${(() => {
+  const summary = enhancedData.schoolData?.summary;
+  const nearest = reconcileNearestSchool(enhancedData.schoolData?.nearestSchool, storedSchools);
+  const top = reconcileSchoolDistances(enhancedData.schoolData?.topSchools, storedSchools).slice(0, 5);
+  const all = reconcileSchoolDistances(enhancedData.schoolData?.allSchools, storedSchools).slice(0, 10);
+  const rows = (list: any[]) => list.map((x: any) => `| ${x.name} | ${x.distance} km | ${x.type ?? '—'} |`).join('\n');
+  const parts: string[] = [];
+  if (typeof summary?.totalSchools === 'number') parts.push(`Schools found in the postcode: **${summary.totalSchools}**.`);
+  if (nearest?.name) {
+    parts.push(`Nearest: **${nearest.name}**${nearest.distance ? `, ${nearest.distance} km` : ''}`
+      + `${enhancedData.schoolData?.nearestSchool?.type ? ` (${enhancedData.schoolData.nearestSchool.type})` : ''}.`);
+  }
+  const list = top.length ? top : all;
+  if (list.length) parts.push(`\n| School | Distance | Type |\n|---|---|---|\n${rows(list)}`);
+  if (!parts.length) {
+    return 'No school register reading was retrieved for this property. Say that no school data '
+      + 'was retrieved; do NOT name a school, state a distance, a rating or a catchment, and do '
+      + 'NOT describe the area as well or poorly served by schools.';
+  }
+  return `${parts.join('\n')}\n\nEvery school named in the report must be one of these, at the distance stated here. `
+    + 'A school rating is not retrieved and must not be stated.';
+})()}
 
 ---
 
-# Sensitivity Analysis
+## Healthcare, shopping and recreation
 
-**Impact of Interest Rate Variations on Annual Cashflow (P&I Scenario):**
-
-${sensitivityRowsForPrompt(enhancedData.financials)}
-
-**Sensitivity Commentary (150+ words required):**
-
-A 1% increase in interest rate (to [X.X]%) would increase annual loan repayments by $[X,XXX], pushing negative cashflow to approximately ($[XX,XXX]), requiring significantly higher investor capital contributions. Conversely, a 1% decrease in rates (to [X.X]%) would reduce annual repayments to $[XX,XXX], improving the negative cashflow position to ($[XX,XXX]).
-
-This sensitivity analysis demonstrates that the property's cashflow profile is interest-rate sensitive. In a rising-rate environment, negative cashflow pressures intensify, requiring investors to have substantial capital reserves. The property is fundamentally a capital growth play, not a cashflow-positive investment, making it unsuitable for investors dependent on rental income to service debt.
-
----
-
-# 10-Year Investment Projections
-
-**Projection Assumptions:**
-${projectionAssumptionLinesForPrompt(enhancedData.financials)}
-
-**Annual Operating Costs Projections (AUD):**
-
-The following table shows year-by-year escalation of operating costs assuming CPI growth of 2.5% annually.
-
-| Year | Council Rates | Water Rates | Insurance | Land Tax | Maintenance | Property Mgmt | Total |
-|------|--------------|-------------|-----------|----------|-------------|---------------|-------|
-| 1 | $${effectiveCouncilRates?.toLocaleString() || '2,500'} | $${effectiveWaterRates?.toLocaleString() || '1,000'} | $${effectiveLandlordInsurance?.toLocaleString() || '1,800'} | $${effectiveLandTax?.toLocaleString() || '0'} | $${effectiveMaintenance?.toLocaleString() || '0'} | $${effectivePmDollar?.toLocaleString() || '1,500'} | $${((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveLandTax || 0) + (effectiveMaintenance || 0) + (effectivePmDollar || 0)).toLocaleString()} |
-| 2 | $${Math.round((effectiveCouncilRates || 2500) * 1.025).toLocaleString()} | $${Math.round((effectiveWaterRates || 1000) * 1.025).toLocaleString()} | $${Math.round((effectiveLandlordInsurance || 1800) * 1.025).toLocaleString()} | $${(effectiveLandTax || 0).toLocaleString()} | $${Math.round((effectiveMaintenance || 0) * 1.025).toLocaleString()} | $${Math.round((effectivePmDollar || 1500) * 1.02).toLocaleString()} | $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.025 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.02).toLocaleString()} |
-| 3 | $${Math.round((effectiveCouncilRates || 2500) * 1.051).toLocaleString()} | $${Math.round((effectiveWaterRates || 1000) * 1.051).toLocaleString()} | $${Math.round((effectiveLandlordInsurance || 1800) * 1.051).toLocaleString()} | $${(effectiveLandTax || 0).toLocaleString()} | $${Math.round((effectiveMaintenance || 0) * 1.051).toLocaleString()} | $${Math.round((effectivePmDollar || 1500) * 1.04).toLocaleString()} | $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.051 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.04).toLocaleString()} |
-| 4 | $${Math.round((effectiveCouncilRates || 2500) * 1.077).toLocaleString()} | $${Math.round((effectiveWaterRates || 1000) * 1.077).toLocaleString()} | $${Math.round((effectiveLandlordInsurance || 1800) * 1.077).toLocaleString()} | $${(effectiveLandTax || 0).toLocaleString()} | $${Math.round((effectiveMaintenance || 0) * 1.077).toLocaleString()} | $${Math.round((effectivePmDollar || 1500) * 1.06).toLocaleString()} | $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.077 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.06).toLocaleString()} |
-| 5 | $${Math.round((effectiveCouncilRates || 2500) * 1.104).toLocaleString()} | $${Math.round((effectiveWaterRates || 1000) * 1.104).toLocaleString()} | $${Math.round((effectiveLandlordInsurance || 1800) * 1.104).toLocaleString()} | $${(effectiveLandTax || 0).toLocaleString()} | $${Math.round((effectiveMaintenance || 0) * 1.104).toLocaleString()} | $${Math.round((effectivePmDollar || 1500) * 1.08).toLocaleString()} | $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.104 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.08).toLocaleString()} |
-| 6 | $${Math.round((effectiveCouncilRates || 2500) * 1.131).toLocaleString()} | $${Math.round((effectiveWaterRates || 1000) * 1.131).toLocaleString()} | $${Math.round((effectiveLandlordInsurance || 1800) * 1.131).toLocaleString()} | $${(effectiveLandTax || 0).toLocaleString()} | $${Math.round((effectiveMaintenance || 0) * 1.131).toLocaleString()} | $${Math.round((effectivePmDollar || 1500) * 1.10).toLocaleString()} | $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.131 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.10).toLocaleString()} |
-| 7 | $${Math.round((effectiveCouncilRates || 2500) * 1.159).toLocaleString()} | $${Math.round((effectiveWaterRates || 1000) * 1.159).toLocaleString()} | $${Math.round((effectiveLandlordInsurance || 1800) * 1.159).toLocaleString()} | $${(effectiveLandTax || 0).toLocaleString()} | $${Math.round((effectiveMaintenance || 0) * 1.159).toLocaleString()} | $${Math.round((effectivePmDollar || 1500) * 1.12).toLocaleString()} | $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.159 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.12).toLocaleString()} |
-| 8 | $${Math.round((effectiveCouncilRates || 2500) * 1.188).toLocaleString()} | $${Math.round((effectiveWaterRates || 1000) * 1.188).toLocaleString()} | $${Math.round((effectiveLandlordInsurance || 1800) * 1.188).toLocaleString()} | $${(effectiveLandTax || 0).toLocaleString()} | $${Math.round((effectiveMaintenance || 0) * 1.188).toLocaleString()} | $${Math.round((effectivePmDollar || 1500) * 1.14).toLocaleString()} | $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.188 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.14).toLocaleString()} |
-| 9 | $${Math.round((effectiveCouncilRates || 2500) * 1.218).toLocaleString()} | $${Math.round((effectiveWaterRates || 1000) * 1.218).toLocaleString()} | $${Math.round((effectiveLandlordInsurance || 1800) * 1.218).toLocaleString()} | $${(effectiveLandTax || 0).toLocaleString()} | $${Math.round((effectiveMaintenance || 0) * 1.218).toLocaleString()} | $${Math.round((effectivePmDollar || 1500) * 1.16).toLocaleString()} | $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.218 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.16).toLocaleString()} |
-| 10 | $${Math.round((effectiveCouncilRates || 2500) * 1.249).toLocaleString()} | $${Math.round((effectiveWaterRates || 1000) * 1.249).toLocaleString()} | $${Math.round((effectiveLandlordInsurance || 1800) * 1.249).toLocaleString()} | $${(effectiveLandTax || 0).toLocaleString()} | $${Math.round((effectiveMaintenance || 0) * 1.249).toLocaleString()} | $${Math.round((effectivePmDollar || 1500) * 1.18).toLocaleString()} | $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.249 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.18).toLocaleString()} |
-
-**Operating Costs Analysis:**
-
-Annual operating costs escalate from $${((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveLandTax || 0) + (effectiveMaintenance || 0) + (effectivePmDollar || 0)).toLocaleString()} in Year 1 to approximately $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.249 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.18).toLocaleString()} in Year 10, representing cumulative increase of approximately 21.4% over the period. This escalation is driven by CPI-linked increases in council rates, insurance premiums, and property management fees.
-
-**Property Value Projections (AUD):**
-
-| Year | Conservative (2%) | Base Case (4%) | Optimistic (6%) |
-|------|-------------------|----------------|-----------------|
-| 0 | $${effectivePurchasePrice?.toLocaleString() || (enhancedData.financials?.initialCosts?.propertyValue?.toLocaleString()) || 'X,XXX,XXX'} | $${effectivePurchasePrice?.toLocaleString() || (enhancedData.financials?.initialCosts?.propertyValue?.toLocaleString()) || 'X,XXX,XXX'} | $${effectivePurchasePrice?.toLocaleString() || (enhancedData.financials?.initialCosts?.propertyValue?.toLocaleString()) || 'X,XXX,XXX'} |
-${enhancedData.financials?.projections?.conservative ? enhancedData.financials.projections.conservative.slice(0, 10).map((p: any, i: number) => 
-`| ${i + 1} | $${p.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.moderate?.[i]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.optimistic?.[i]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} |`
-).join('\n') : '| 1-10 | [Calculate based on growth rates] | [Calculate based on growth rates] | [Calculate based on growth rates] |'}
-
-**Rental Income Projections (Annual - AUD):**
-
-| Year | Conservative (2%) | Base Case (3%) | Optimistic (4%) |
-|------|-------------------|----------------|-----------------|
-${enhancedData.financials?.projections?.conservative ? enhancedData.financials.projections.conservative.slice(0, 10).map((p: any, i: number) => 
-`| ${i + 1} | $${p.annualRent?.toLocaleString() || 'XX,XXX'} | $${enhancedData.financials?.projections?.moderate?.[i]?.annualRent?.toLocaleString() || 'XX,XXX'} | $${enhancedData.financials?.projections?.optimistic?.[i]?.annualRent?.toLocaleString() || 'XX,XXX'} |`
-).join('\n') : '| 1-10 | [Calculate based on rent growth] | [Calculate based on rent growth] | [Calculate based on rent growth] |'}
-
-**Cumulative Cashflow Projections (10 Years - AUD):**
-
-Cashflow = Annual Rental Income - Annual Operating Costs - Annual Loan Repayments
-
-**Annual Operating Costs (excluding loan repayments, including land tax where applicable):** $${opexYear1.toLocaleString()} in Year 1, escalating with CPI to approximately $${opexYear10.toLocaleString()} by Year 10
-
-**Annual P&I Repayment:** $${annualLoanPayments.toLocaleString()} (constant across the loan term — the interest portion falls and the principal portion rises as the loan amortises, but the repayment itself does not change)
-
-| Year | Conservative (2%) | Base Case (3%) | Optimistic (4%) |
-|------|-------------------|----------------|-----------------|
-${enhancedData.financials?.projections?.conservative ? enhancedData.financials.projections.conservative.slice(0, 10).map((p: any, i: number) =>
-`| ${i + 1} | ${fmtCashFlow(p.cashFlow)} | ${fmtCashFlow(enhancedData.financials?.projections?.moderate?.[i]?.cashFlow)} | ${fmtCashFlow(enhancedData.financials?.projections?.optimistic?.[i]?.cashFlow)} |`
-).join('\n') : '| 1-10 | [Calculate] | [Calculate] | [Calculate] |'}
-| **10-Year Total** | **${fmtCashFlow(cumConservative)}** | **${fmtCashFlow(cumModerate)}** | **${fmtCashFlow(cumOptimistic)}** |
-
-**Projected Loan-to-Value Ratio (LVR) - Year 10:**
-
-Loan Balance at Year 10: $${enhancedData.financials?.projections?.moderate?.[9]?.loanBalance?.toLocaleString() || '[XXX,XXX]'} (declining from initial $${enhancedData.financials?.initialCosts?.loanAmount?.toLocaleString() || 'X,XXX,XXX'})
-
-| Scenario | Year 10 Property Value | Loan Balance | LVR |
-|----------|------------------------|--------------|-----|
-| Conservative (2%) | $${enhancedData.financials?.projections?.conservative?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.conservative?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${seriesLvrPercent(enhancedData.financials?.projections?.conservative?.[9])}% |
-| Base Case (4%) | $${enhancedData.financials?.projections?.moderate?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.moderate?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${seriesLvrPercent(enhancedData.financials?.projections?.moderate?.[9])}% |
-| Optimistic (6%) | $${enhancedData.financials?.projections?.optimistic?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.optimistic?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${seriesLvrPercent(enhancedData.financials?.projections?.optimistic?.[9])}% |
-
-**10-Year Projection Commentary (200+ words required):**
-
-The conservative scenario (2% growth) produces a Year 10 Property Value of $[X,XXX,XXX] representing cumulative Capital Growth of [XX]%. The LVR declines to [XX]% through principal repayment, though the property remains [leverage assessment].
-
-The base case scenario (4% growth) delivers Year 10 value of $[X,XXX,XXX], producing substantial capital appreciation of $[XXX,XXX] ([XX.X]%). LVR declines to [XX]%, reflecting healthy equity accumulation through both property appreciation and loan reduction.
-
-The optimistic scenario (6% growth) projects Year 10 value of $[X,XXX,XXX], with capital gains of $[X,XXX,XXX] ([XX.X]%). LVR declines to [XX]%, indicating strong equity position and reduced leverage.
-
-**Cumulative Cashflow:** ${allScenariosCashNegative
-  ? `All scenarios produce negative cumulative cashflow over the 10-year period: Conservative ${fmtCashFlow(cumConservative)}, Base Case ${fmtCashFlow(cumModerate)}, Optimistic ${fmtCashFlow(cumOptimistic)}. This shortfall is weighed against capital appreciation — the investment suits buyers able to fund the annual gap while targeting long-term growth.`
-  : `The 10-year cumulative cashflow is Conservative ${fmtCashFlow(cumConservative)}, Base Case ${fmtCashFlow(cumModerate)}, Optimistic ${fmtCashFlow(cumOptimistic)}. Describe the actual position using these exact figures: state which scenarios are self-funding and which require the investor to contribute each year. Do not describe the cashflow as negative in a scenario where the figure above is positive.`}
-
-**Critical Insight:** ${(typeof moderateSeries[0]?.cashFlow === 'number' ? moderateSeries[0].cashFlow : -1) < 0
-  ? `This property is fundamentally structured as a Capital Growth investment, with rental income insufficient to cover debt servicing and holding costs in the early years.`
-  : `In the base case, rental income covers the property's debt servicing and holding costs, so returns combine income and capital growth. Characterise the balance between the two using the projections above — do not describe the rental income as insufficient.`}
+${(() => {
+  const li: any = enhancedData.locationIntelligence ?? {};
+  const rows: string[] = [];
+  const add = (label: string, count: unknown, nearest: unknown) => {
+    // `absent is never zero` — a failed Places category stores null and a
+    // reached-but-empty one stores 0, so a number is a measurement and
+    // anything else is a category nobody reached.
+    if (typeof count !== 'number') return;
+    rows.push(`| ${label} | ${count} within 5 km | ${typeof nearest === 'string' && nearest ? nearest : '—'} |`);
+  };
+  add('Healthcare facilities', li.healthcare?.facilitiesWithin5km, li.healthcare?.nearestHospital);
+  add('Supermarkets', li.lifestyle?.supermarkets, li.lifestyle?.nearestSupermarket);
+  add('Shopping centres', li.lifestyle?.shoppingCenters, li.lifestyle?.nearestShoppingCenter);
+  add('Parks and recreation', li.lifestyle?.parks, li.lifestyle?.nearestPark);
+  add('Restaurants and cafés', li.lifestyle?.restaurants, null);
+  if (!rows.length) {
+    return 'No amenity reading was retrieved for this property. Say that amenity data was not '
+      + 'retrieved; do NOT state a count, a distance or a named facility, and do NOT describe '
+      + 'the area as well or poorly served.';
+  }
+  return `| Category | Count | Nearest |\n|---|---|---|\n${rows.join('\n')}\n\n`
+    + 'A count of zero here is a measurement and may be reported as one — a rural address with no '
+    + 'hospital within five kilometres is a fact worth printing. A category absent from this table '
+    + 'was not measured and must not be described either way.';
+})()}
 
 ---
 
-# Investment Score Analysis
+## Getting about
 
-**CRITICAL NOTE:** ${documentContent ? 'Analysis based on provided property data and market research.' : 'Insufficient comparable market data and recent sales analysis specific to this property may prevent calculation of a precise investment score. The following analysis is based on suburb-level characteristics and general market positioning.'}
-
-${investmentScorePromptBlock(enhancedData.investmentScore, { hasDocument: !!documentContent })}
-
----
-
-# SWOT Analysis
-
-**Strengths (Minimum 10 bullet points required, each with 2-3 sentence explanation):**
-
-- **Exceptional location:** Walk score of [XX]/100 provides pedestrian accessibility without car dependency. This reduces transport costs and enhances lifestyle convenience for residents.
-- **Transport access:** [Only if the transport reading above names stops or stations — state what it names and how far. Do not name a line, an opening year or a commute time, and do not claim that transport access drives capital growth.]
-- **Education infrastructure:** [XX] schools within postcode, with multiple highly-rated early learning facilities ([X.X] stars), supporting family demand. Quality schools are a primary driver of family property purchases.
-- **Employment dynamics:** Strong job growth (+[X.X]% annually, +[XX.X]% over 5 years) across professional services, healthcare, and education sectors. Employment growth directly correlates with housing demand.
-- **Population growth drivers:** Family-friendly positioning, quality schools, modern recreational facilities, and improved transport creating sustained rental and owner-occupier demand.
-- **Demographic alignment:** Employment rate [XX.X]%, unemployment [X.X]%, median income $[XX,XXX], supporting strong renter and buyer demand.
-- **Safety trends:** Crime [declining/stable] [X.X]% over 3 years despite moderate overall crime rating. Improving safety metrics support capital appreciation.
-- **Proximity to green space:** [Reserve/Park] immediately adjacent ([X.X] km) to subject property. Green space proximity enhances property values and lifestyle appeal.
-- **Established suburb:** Mature residential area with well-maintained properties and established community infrastructure. Established suburbs typically offer more stable capital growth.
-- **[Additional strength based on property specifics]**
-
-**Weaknesses (Minimum 10 bullet points required, each with 2-3 sentence explanation):**
-
-- **Weak rental yield:** Gross yield [X.XX]%, net yield [X.XX]% insufficient to cover loan serviceability; requires investor capital support. This is typical for growth-focused suburbs but requires careful financial planning.
-- **Negative cashflow:** Year 1 cashflow negative $[XX,XXX] (P&I) or ($[XX,XXX]) (IO), with cumulative 10-year shortfalls of ($[XXX,XXX]) to ($[XXX,XXX]). Investors must have stable income to sustain this commitment.
-- **Interest rate sensitivity:** [X]% rate rise increases annual cashflow deficit by $[X,XXX]; vulnerable in tightening rate environment. Rising rates could strain investor cash reserves.
-- **Environmental risks:** Bushfire exposure [Low/Moderate/High] on regional mapping — evidence status: UNVERIFIED at lot level (bushfire-prone-land mapping is not a Bushfire Attack Level; a BAL is a site-specific assessment). Flood exposure: unverified pending a parcel-level check. State the exposure, the evidence held and the check outstanding as three separate facts; never rate confidence High while a check is outstanding. Environmental risks may impact insurance costs.
-- **Market valuation:** Estimated $[X,XXX,XXX] price point reflects premium positioning relative to [comparison] suburbs; capitalizes growth expectations. Premium pricing reduces margin for error.
-- **Leverage structure:** 20% deposit requires $[X,XXX,XXX] loan financing; LVR declines [slowly/moderately] over 10-year period. High leverage amplifies both gains and losses.
-- **Rent growth constraints:** Rental income growing [X-X]% annually insufficient to improve cashflow economics; persistent shortfall across projections.
-- **Premium pricing:** High purchase price relative to rental income suggests limited margin for economic downturns or rental market compression.
-- **Demand concentration:** Market appeal primarily to families; reduces buyer base diversity and increases exposure to family-formation demographic shifts.
-- **[Additional weakness based on property specifics]**
-
-**Opportunities (Minimum 10 bullet points required, each with 2-3 sentence explanation):**
-
-- **Capital appreciation:** Base case [X]% annual growth produces $[XXX,XXX] capital gains over 10 years; optimistic case delivers $[X,XXX,XXX] gains. Leverage amplifies returns on investor equity.
-- **Debt reduction:** Principal repayment over 30-year term builds equity; loan balance declining $[XXX,XXX] over 10 years creates wealth accumulation. This is forced savings discipline.
-- **Rental income growth:** Conservative [X-X]% annual rent increases provide inflation hedge; Year 10 rental income reaching $[XX,XXX]-$[XX,XXX] annually.
-- **Interest rate improvement:** Current [X.XX]% rate provides potential for downward movement; 1% decline improves cashflow by $[X,XXX] annually.
-- **Development in the area:** [Only from the Infrastructure & Development Outlook table in the planning context supplied with this section — name an item and the status the register gave it. Do not claim it supports population growth or appreciation, and do not name a project that is not in that table.]
-- **Employment expansion:** Continued job growth in healthcare (+[X.X]%), professional services (+[X.X]%), and education creates sustained demand for rental properties.
-- **Family lifecycle demand:** Strong family positioning attracts growing cohort of families seeking suburban education and lifestyle amenities.
-- **Leverage amplification:** Capital appreciation on $[X.XX]m asset magnified through 80% financing; [X]% price growth on fully-leveraged position produces enhanced returns relative to deposit.
-- **Tax deductibility:** Interest expense on investment property fully tax-deductible, improving after-tax cashflow position for investors in higher tax brackets.
-- **Equity release optionality:** Accumulated equity over 10 years ($[XXX]k-$[XXX]k depending on growth scenario) enables future capital access for portfolio expansion.
-
-**Threats (Minimum 10 bullet points required, each with 2-3 sentence explanation):**
-
-- **Interest rate increases:** [X]%+ rates creating ($[XX,XXX]) annual cashflow deficit. Rising rates reduce affordability and may suppress property values.
-- **Rental market softening:** Oversupply in [Suburb] rental market could compress yields below [X.XX]%; downward rent pressure prevents cashflow improvement.
-- **Economic recession:** Economic downturn could suppress both capital growth and rental demand; [X]% growth vulnerable if growth turns negative.
-- **Property price correction:** Outer suburbs exposed to correction risk if interest rates remain elevated; premium valuation relative to yield vulnerable to repricing.
-- **Bushfire risk:** High bushfire rating may increase insurance costs, trigger evacuation requirements, or result in property damage requiring major repairs.
-- **Flood risk:** Pending flood assessment could reveal constraints on insurability, lender appetite, or future development rights.
-- **Family demographic shift:** Aging population or migration patterns could reduce demand from family cohorts, decreasing rental pool and owner-occupier competition.
-- **Transport demand saturation:** Metro line usage may not meet projections; reduced commuter demand could moderate capital growth expectations.
-- **Regulatory changes:** Negative gearing restrictions, capital gains tax changes, or rental price controls could impact investment economics.
-- **Concentration risk:** Portfolio overly exposed to [region] family suburbs; lacks geographic diversification of capital.
-
-**SWOT Analysis Summary (200+ words required):**
-
-This is a summary of the Strengths, Weaknesses, Opportunities, and Threats analyzed above. Investors should consider these factors holistically when making their investment decision.
+${(() => {
+  const t: any = enhancedData.locationIntelligence?.transport ?? {};
+  const parts: string[] = [];
+  if (t.nearestStation) parts.push(`Nearest public transport stop on record: **${t.nearestStation}**${t.stationDistance ? `, ${t.stationDistance}` : ''}.`);
+  if (Array.isArray(t.transportTypes) && t.transportTypes.length) parts.push(`Modes recorded: ${t.transportTypes.join(', ')}.`);
+  if (t.commuteToCbd) parts.push(`Measured commute: ${t.commuteToCbd}.`);
+  if (!parts.length) {
+    return 'No public-transport reading was retrieved for this property. Say that transport data '
+      + 'was not retrieved; do NOT name a station, state a distance or a commute time, and do NOT '
+      + 'call the area well served or car-dependent. Car dependence is a finding that needs a '
+      + 'measurement like any other.';
+  }
+  return `${parts.join('\n\n')}\n\nA stop found is a fact about this area; no stop found is a fact about the `
+    + 'FEEDS that were loaded. Neither is a score, and no service frequency or mode quality was measured.';
+})()}
 
 ---
 
-**Note: The following Strategic Assessment, Investment Opportunities, and Investment Risks are detailed subsections of Property-Level Information above. They provide property-specific strategic analysis.**
+## Environment and climate
 
-### Strategic Assessment
-
-The [Property Address] investment presents a growth-focused opportunity suitable for investors with long-term capital, capacity to absorb negative cashflow, and confidence in [X-X]% annual [City] property appreciation. The property is structurally unsuitable for income-focused investors or those dependent on rental cashflow.
-
-Location fundamentals are [exceptional/strong/moderate] - the walk score of [XX]/100, proximity to [Transport line], comprehensive schools and recreational facilities, and strong employment growth create sustained demand drivers. Demographic tailwinds are supportive, with low unemployment ([X.X]%), strong wage growth (+[X.X]% annually), and [suburb type] positioning.
-
-Financial structure is inherently cashflow-negative, requiring approximately $[XX,XXX]-$[XX,XXX] annual investor capital support throughout the 10-year projection period. This structure only works if investors target $[XXX,XXX]-$[X,XXX,XXX]+ capital appreciation offsetting annual shortfalls. Risk profile is [elevated/moderate], particularly regarding interest rate sensitivity (1% increase adds $[X,XXX] annual cashflow pressure) and [unverified/verified] environmental hazards.
-
-**Investment suitability:**
-
-Best suited to investors who (1) have secure employment supporting annual $[XX]k+ cashflow contributions, (2) seek wealth accumulation through capital appreciation rather than income generation, (3) possess long-term 10+ year investment horizon, (4) can tolerate leverage and interest rate sensitivity, and (5) believe in [X]%+ annual appreciation through multiple economic cycles.
-
-### Capital Appreciation Potential - $${Math.round((enhancedData.financials?.projections?.moderate?.[9]?.propertyValue || 0) - (effectivePurchasePrice || enhancedData.financials?.initialCosts?.propertyValue || 0)).toLocaleString() || 'XXX,XXX'} to $${Math.round((enhancedData.financials?.projections?.optimistic?.[9]?.propertyValue || 0) - (effectivePurchasePrice || enhancedData.financials?.initialCosts?.propertyValue || 0)).toLocaleString() || 'X,XXX,XXX'} (10-Year Projection)
-
-Base case scenario projects Property Value of $[X,XXX,XXX] at Year 10, representing capital gains of $[XXX,XXX] ([XX.X]% total return). Optimistic scenario delivers $[X,XXX,XXX] value with gains of $[X,XXX,XXX] ([XX.X]% return). These projections assume [X-X]% annual appreciation, consistent with historical [City] metropolitan trends and supported by [Suburb]'s improving infrastructure, employment growth, and population inflows. Leverage amplifies returns: $[XXX,XXX] equity deployed generates $[XXX,XXX]+ appreciation, producing [X.X]x to [X.X]x return on equity invested. This capital appreciation fundamentally underwrites the investment case and offsets negative cashflow across projection period.
-
-### Leveraged Equity Accumulation Through Debt Reduction
-
-Over 10 years, principal repayment reduces loan balance from $[X,XXX,XXX] to approximately $[XXX,XXX], building equity of $[XXX,XXX] independent of property appreciation. Combined with capital appreciation, total wealth accumulation reaches $[XXX,XXX]-$[X,XXX,XXX] across projection scenarios. This debt reduction is automatic and inevitable, creating forced savings discipline. Accumulated equity provides optionality for future portfolio expansion, home renovation, or accessing capital during market stress periods.
-
-### Population and Employment Base Driving Rental Demand
-
-Write this from the measured population-trend table (the SA2's ERP levels and growth windows) and the Census demographics/employment tables above — the population change, the area's employment profile, incomes and rental serviceability. Use ONLY figures those tables carry, with their stated windows and sources. Do NOT assert an annual job-growth percentage, a current unemployment rate, or a participation rate — none is measured here — and do NOT extrapolate the population trend beyond its measured windows.
-
-### Structural Cashflow Deficit Requiring Ongoing Investor Capital Support
-
-The property generates negative cashflow of ($[XX,XXX]) annually under base assumptions, with cumulative 10-year shortfalls of ($[XXX,XXX]). This structure requires investors to contribute approximately $[X,XXX] monthly (P&I scenario) or $[X,XXX] monthly (IO scenario) in addition to deposit capital. Investors with insufficient liquid capital, unstable employment, or income constraints cannot sustain this commitment. Life events (job loss, income reduction, health crisis) that impact investor capital capacity create forced-sale risk or default risk. The property is unsuitable for self-funding through rental income and represents a capital commitment, not an income stream.
-
-### Interest Rate Sensitivity and Debt Serviceability Pressure
-
-Loan repayments at current [X.X]% rate absorb [XX]% of gross rental income before accounting for property management, rates, insurance, and maintenance. A 1% rate increase (to [X.X]%) increases annual repayments by $[X,XXX], pushing negative cashflow to ($[XX,XXX])-a [XX]% increase in annual capital requirement. RBA maintains potential for further rate increases if inflation remains sticky; even modest tightening creates material cashflow deterioration. Investors with limited capital buffers face refinancing stress or forced sale risk if rates spike. Conversely, rate reductions provide primary cashflow improvement pathway; any base case reliance on rate cuts represents uncontrollable external dependency.
-
-### Environmental Risk: [Low/Moderate/High] Bushfire Exposure (Unverified at Lot Level) and Unverified Flood Risk
-
-[State] experiences regular bushfire seasons, and [Suburb] is rated [LEVEL] for bushfire risk. Specific property-level risk assessment requires verification with [State] Rural Fire Service (RFS); properties in extreme fire risk zones face insurance unavailability or extreme premium escalation. Flood risk is currently [verified/unverified] and requires property coordinates for accurate assessment; potential flooding exposure could impact insurability, lender appetite, or development constraints. Combined environmental risks create tail-risk exposure: (1) insurance premium spikes reducing net yields further, (2) uninsurable property becoming unmarketable, (3) damage events creating unexpected capital calls for repairs, or (4) regulatory evacuation requirements constraining usage or rental marketability. Hazard verification is essential precondition to purchase commitment.
+${climateStatBlocks(enhancedData)}
 
 ---
 
-# Investment Recommendations
+## Crime and safety
 
-${financialWarningsForPrompt(enhancedData.financials, enhancedData.investmentScore)}
-
-**Short-term Actions (Prior to Purchase):**
-
-- Engage professional valuer to obtain formal property valuation for [Property Address]; assess whether ${documentContent ? 'the listed price' : 'estimated reference price'} of $[X,XXX,XXX] accurately reflects current market conditions and property-specific features
-- Conduct environmental hazard verification through [State] RFS for bushfire risk assessment and AFRIP for flood risk mapping; make fire/flood insurance availability and cost confirmation conditional to purchase commitment
-- Request local real estate agent market analysis for suburb price forecasts and trends from licensed agents familiar with [Street/Area]
-- NOTE: Specific comparable sales data should be obtained directly from agents or property data providers (CoreLogic, RP Data)
-- Verify financial serviceability with mortgage broker or bank; confirm loan approval capacity at current [X.X]% rate AND at stressed [X.X]% rate (RBA upside scenario)
-- Confirm liquid capital reserves capable of supporting ($[XX,XXX]) annual negative cashflow over minimum 10-year investment period; calculate capacity to sustain scenario with [X.X]%+ rates producing ($[XX,XXX]) annual shortfalls
-
-**Before proceeding with purchase commitment, conduct:**
-
-- Professional property appraisal to verify ${documentContent ? 'listed' : 'estimated'} $[X,XXX,XXX] valuation
-- [State] RFS property risk assessment to confirm bushfire risk rating and evacuation zone status
-- AFRIP flood mapping using property coordinates to assess flooding exposure
-- Local council rates search to verify exact annual council and water charges
-- Rental market assessment through local real estate agents to validate $[XXX]/week rental estimate
-- Request comparative sales analysis from licensed real estate agents or property data providers for recent transaction evidence
-- Pest and building inspection to assess structural condition and maintenance requirements
-- Lender pre-approval to confirm serviceability assessment and loan terms at current interest rates
-- Model personal tax position with accountant to quantify benefit of negative gearing deductions and capital gains tax treatment on projected appreciation
-
-**Long-term Strategy (Ownership & Wealth Maximization):**
-
-- Adopt minimum 10-year hold strategy to allow capital appreciation projections to materialize and debt reduction to accumulate meaningful equity; short-term trading exposes property to transaction costs and market timing risk
-- Refinance to interest-only loan after 5-7 years of principal repayment if equity position permits; interest-only structure optimizes tax deductibility and preserves capital for portfolio expansion or alternative investments
-- Target rental income optimization through property maintenance and positioning; monitor rent market annually and reset tenancy at market rates to capture upward rent growth ([X-X]% annually); under-market rents represent lost opportunity cost
-- Maintain comprehensive property insurance including home and landlord liability; given [LEVEL] bushfire risk rating, confirm policy includes fire damage coverage and evacuation expense reimbursement
-- Monitor local infrastructure developments including [Transport] extensions, school expansions, and commercial developments; infrastructure improvements provide capital appreciation catalysts
-- Build equity buffer through principal repayment; accumulated equity after 10 years ($[XXX,XXX]-$[XXX,XXX] range across growth scenarios) provides optionality for portfolio expansion or capital access without forced sales
+${crimeStatBlocks(enhancedData)}
 
 ---
 
-# Investment Suitability Screening
+## What is offered, and what it rents for
 
-**This investment is APPROPRIATE for investors who:**
+${effectivePurchasePrice ? `**Asking price:** $${effectivePurchasePrice.toLocaleString()}` : '**Asking price:** not recorded.'}
 
-- Possess 10+ year investment horizon and patience for long-term wealth accumulation
-- Have stable employment supporting minimum $[XX,XXX]+ annual cashflow contributions
-- Seek capital appreciation ([X-X]%) over rental income generation
-- Can absorb 1-2% annual portfolio volatility and extended flat-growth periods
-- Have confidence in [City] metropolitan property market sustainability
-- Maintain sufficient liquid reserves ($[XXX,XXX] deposit + $[XX,XXX]+ annual reserves minimum)
-- Are comfortable with 80% leverage and interest rate sensitivity
-- Accept environmental hazard exposure (bushfire, flood) pending verification
+${rentalEvidence.established && quotedWeeklyRent
+  ? `**Indicative weekly rent:** $${quotedWeeklyRent} a week (${rentalEvidence.source}).`
+  : '**Indicative weekly rent:** not established for this property.'}
+${absentRentDirective(rentalEvidence)}
 
-**This investment is NOT APPROPRIATE for investors who:**
-
-- Require immediate positive cashflow or rental income to service costs
-- Have unstable employment or insufficient capital reserves
-- Seek quick returns (3-5 year timeframes); capital appreciation requires minimum 10-year hold
-- Cannot afford $[XX,XXX]+ annual capital contributions
-- Are sensitive to interest rate increases or economic downturns
-- Require 100% equity financing or cannot access 80% LVR
-- Are risk-averse regarding leverage, environmental hazards, or market volatility
-
----
-
-# Final Conclusion
-
-**Investment Thesis Summary:**
-
-[Property Address] represents a structured capital growth opportunity for investors capable of sustaining negative cashflow and confident in [City] metropolitan property appreciation over a 10+ year investment horizon. The property offers [exceptional/strong/moderate] location fundamentals (walk score [XX]/100, metro accessibility, quality schools, strong employment growth) and demographic tailwinds supporting rental demand and capital appreciation.
-
-However, the investment exhibits significant financial constraints: Negative annual cashflow of ($[XX,XXX]) to ($[XX,XXX]), depending on loan structure, requires investor capital support throughout the projection period. The property is fundamentally unsuitable for income-focused investors or those dependent on rental income. Return generation depends entirely on achieving [X-X]% annual property appreciation; rental income ($[XX,XXX] annually) covers only [XX]% of debt serviceability costs.
-
-Risk profile is [elevated/moderate] due to interest rate sensitivity ([X]% rate change impacts annual cashflow by $[X,XXX]), [unverified/verified] environmental hazards ([level] bushfire risk, [level] flood risk), and leverage exposure (80% LVR). The investment requires investors to maintain strict financial discipline, verify environmental hazards prior to purchase, and commit to long-term ownership even through periods of market stagnation.
-
-**Valuation Assessment:**
-
-${documentContent ? 'The listed' : 'Estimated'} property price of $[X,XXX,XXX] reflects market [premium/standard] positioning for [suburb type] with [infrastructure/amenity factors]. Price appears [reasonable/premium/discounted] relative to [Suburb] benchmarks but provides [limited/adequate] margin for economic downturns or extended periods of below-trend property growth.
-
-**Overall Recommendation:**
-
-${overallRecommendationLine(enhancedData.investmentScore)}
-
-This property warrants serious consideration for investors who (1) verify environmental hazards as acceptable, (2) confirm financial capacity to sustain negative cashflow, (3) achieve mortgage pre-approval at serviceability-acceptable terms, and (4) obtain professional valuation confirming price point aligns with current market conditions. The investment is suitable for disciplined, long-term capital accumulators with strong employment stability and confidence in [City] metropolitan property markets. Investors prioritizing immediate returns or requiring rental income should pursue alternative investments with superior yield profiles.
-
-**Report Completion Date:** ${new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}
-
-**Data Currency:** ${new Date().toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })}
-
-**Analyst Disclaimer:**
-
-This report synthesizes publicly available data and ${documentContent ? 'provided property listing information' : 'generic suburb-level analysis'}. It does not constitute financial advice, property valuation, or legal guidance. Investors must conduct independent verification of all material facts, obtain professional appraisals, and consult with licensed real estate agents, valuers, accountants, and financial advisors prior to making investment commitments.
-
----
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ABSOLUTE FORMATTING REQUIREMENTS - FOLLOW EXACTLY
-# ═══════════════════════════════════════════════════════════════════════════════
-
-1. **38+ PAGE REPORT**: This MUST be a comprehensive report equivalent to 38+ printed pages (12,000-15,000 words minimum)
-2. **EVERY SECTION REQUIRED**: Include ALL sections exactly as specified above - do not skip any
-3. **SUBSTANTIAL CONTENT**: Each section must meet the minimum word counts specified in parentheses
-4. **TABLE FORMAT**: Use markdown tables EXACTLY as shown with proper column alignment
-5. **NO PLACEHOLDERS**: NEVER use "N/A", "TBD", "data unavailable", "not available" or "XX" placeholders, and never tell the reader that a figure is missing — where a figure is not supplied, leave it out together with the sentence, row or cell that would have carried it
-6. **ALL 10 YEARS**: Projection tables MUST include all 10 years of data
-7. **DOLLAR AMOUNTS**: All amounts in AUD with $ symbol and proper comma formatting
-8. **CITATIONS**: Include [citation] markers where data is sourced from external references
-9. **HORIZONTAL RULES**: Use --- between ALL major sections for visual separation
-10. **PROFESSIONAL LANGUAGE**: Data-driven, specific, actionable insights throughout
-11. **EXPENSE VALUES**: Use the EXACT expense values provided in PRE-CALCULATED ANNUAL COSTS section - do not substitute with defaults
-12. **COMPLETE SWOT**: Minimum 10 detailed bullet points per SWOT category with 2-3 sentence explanations each
-13. **TOP 3 SECTIONS**: Each of Top 3 Opportunities and Top 3 Risks must be 150+ words with specific dollar amounts
-14. **DATA CONSISTENCY**: Every data point (distances, SEIFA scores, risk ratings, labor force, population, cashflow deficit) MUST be stated identically across all sections. A single contradicting figure destroys report credibility.
-15. **BENCHMARK ACCURACY**: Double-check every "exceeds/outperforms/above average" claim — if 4.13% < 4.2%, it is BELOW, not above. Mathematical errors in comparisons are unacceptable.
-16. **SINGLE FINANCIAL SCENARIO**: Use ONE LVR/deposit combination (from PRE-CALCULATED values) throughout. Do not switch between 80% and 90% LVR or 10% and 20% deposit without an explicitly labelled scenario comparison.
-17. **NO FABRICATED PRECISION**: Do not invent specific percentages for infrastructure impact (e.g., "9.2% uplift") without a cited source. Use honest ranges or qualitative language.
-18. **HONEST CHARACTERIZATION**: If negative cashflow, say "growth-focused, negatively geared". If crime is average, say "average" — do not oversell as "low crime elite suburb". Credibility over salesmanship.
-19. **NO DUPLICATE CONTENT**: Each topic (e.g., environmental risks) gets ONE authoritative section. Do not repeat the same analysis in two places with slightly different values.
-20. **DATE-STAMP ECONOMICS**: All economic indicators must include "as at [Month Year]" to convey data currency.`;
+These two figures are facts about the property and may be stated ONCE, in the
+property snapshot. They may not be analysed: no yield, no LVR, no loan, no
+cash flow, no projection, no comparison against a modelled return. That
+analysis is the Financial Analysis Report for this property, and a reader who
+wants it is better served by being told where it is than by being given half
+of it here.
+`;
 
     // Select the appropriate prompt based on report scope
     let prompt = reportScope === 'suburb' ? suburbPrompt

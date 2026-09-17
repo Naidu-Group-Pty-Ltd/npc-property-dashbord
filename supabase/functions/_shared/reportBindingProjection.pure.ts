@@ -417,7 +417,26 @@ export function projectReportNarrative(
  *
  * Every namespace returned is partial by design; merge it over the raw ones.
  */
-export function projectInvestmentReport(row: InvestmentReportRowLike): ProjectedNamespaces {
+/**
+ * Options for a caller that is not rendering the row as its own document.
+ *
+ * `tier` overrides the row's. It exists for ONE caller and the reason matters:
+ * `condense-investment-report` projects the PARENT Compass to assemble the
+ * facts block for a Briefing or a Snapshot, and a Snapshot's whole purpose is
+ * the figures. Keying the withholding on the row being read would have handed
+ * the Snapshot's prompt a parent with no modelling in it and quietly emptied
+ * the one tier that exists to carry it. The document being PRODUCED decides
+ * what may be published, so the producer names its own tier.
+ */
+export interface ProjectionOptions {
+  /** The tier of the document being produced, when it is not the row's own. */
+  tier?: string | null;
+}
+
+export function projectInvestmentReport(
+  row: InvestmentReportRowLike,
+  options: ProjectionOptions = {},
+): ProjectedNamespaces {
   const specs = obj(row.property_specs);
   // Stored financials are reconciled before anything reads them: historic
   // rows carry the pre-fix fold's inflated series and totals that do not
@@ -807,7 +826,10 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   // default document has always been.
   const tier = String(row.report_tier ?? 'compass').trim().toLowerCase();
   const identity = DOCUMENT_IDENTITY[tier] ?? DOCUMENT_IDENTITY.compass;
-  const policy = contentPolicyFor(tier);
+  // The document being produced decides what may be published — which is the
+  // row's own tier for every caller but the condense fork. See
+  // `ProjectionOptions`.
+  const policy = contentPolicyFor(options.tier ?? tier);
   put(report, 'tier', tier);
   put(report, 'documentTitle', identity.title);
   // The standfirst comes from the CONTENT policy, not from the identity table,
@@ -886,8 +908,9 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
 export function applyInvestmentProjection(
   data: Record<string, any>,
   row: InvestmentReportRowLike,
+  options: ProjectionOptions = {},
 ): Record<string, any> {
-  const p = projectInvestmentReport(row);
+  const p = projectInvestmentReport(row, options);
   const merge = (key: string, extra: Record<string, unknown>) => {
     if (!Object.keys(extra).length) return;
     data[key] = { ...obj(data[key]), ...extra };
