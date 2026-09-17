@@ -37,6 +37,29 @@ import { applyInvestmentProjection } from '../../supabase/functions/_shared/repo
 import { applyOrganisationProjection } from '../../supabase/functions/_shared/organisationProjection.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from '../template-library/investmentCompass/templates';
 import { transportCountReading } from '../../supabase/functions/_shared/transportReading.pure';
+import {
+  NSW_HAZARD_LAYERS,
+  NSW_PROTECTION_LAYERS,
+} from '../../supabase/functions/_shared/planning/planningConstraints.pure.ts';
+
+/**
+ * What was actually asked at this point, in the register's OWN categories.
+ *
+ * The page said "Nineteen hazard layers". It is wrong twice: the count is
+ * wrong, and eleven of the layers are not hazards. `NSW_HAZARD_LAYERS` holds
+ * four (bushfire, flood twice, landslide) and `NSW_PROTECTION_LAYERS` twelve,
+ * of which only acid sulfate soils is `kind: 'hazard'` — the rest state a
+ * planning control or an environmental protection, which is a different thing
+ * to tell a buyer and a different thing to act on.
+ *
+ * Counted from the maps rather than typed, so the sentence cannot drift from
+ * the request the moment a layer is added.
+ */
+const LAYERS = { ...NSW_HAZARD_LAYERS, ...NSW_PROTECTION_LAYERS };
+const LAYER_TOTAL = Object.keys(LAYERS).length;
+const HAZARD_TOTAL = Object.values(LAYERS).filter((l) => l.kind === 'hazard').length;
+const OTHER_TOTAL = LAYER_TOTAL - HAZARD_TOTAL;
+
 
 const F = (p: string) => resolve(REPO, 'reports/fixtures', p);
 
@@ -540,10 +563,10 @@ const RISK: Sheet = {
         ] },
         { cells: ['Exposures, and whether their severity is established'] },
         { cells: [
-          'Flood, bushfire and related hazards',
+          'Mapped hazards, controls and protections',
           'Severity not established',
           'Desktop layers only',
-          'Nineteen hazard layers answered here and returned no mapped feature. A layer answers at its published scale, not for one lot, so this is an absence of mapping and NOT a finding that the property is unaffected — no severity can be set from it. Order the s.10.7(2) and (5) certificates and obtain AFRIP and RFS mapping.',
+          `${LAYER_TOTAL} layers answered here and none returned a mapped feature — ${HAZARD_TOTAL} are hazards, ${OTHER_TOTAL} are planning controls or protections. A layer answers at its published scale, not for one lot, so this is absent mapping and NOT a finding that the property is unaffected. Order the s.10.7(2) and (5) certificates and the AFRIP and RFS mapping.`,
         ] },
         { cells: [
           'Competing new dwellings',
@@ -564,7 +587,7 @@ const RISK: Sheet = {
     [12, eyebrow('WHERE EACH ROW CAME FROM', C.muted)],
     [10, para('Planning controls: NSW Planning Portal and Spatial Services layers, read at this property\u2019s verified coordinate on 17 Sep 2026, each at its own publisher\u2019s scale. Supply: NSW development application register, The Hills Shire, applications determined 18 Mar – 17 Sep 2026. Transport: Transport for NSW GTFS stops (CC BY 4.0), straight-line distance from the coordinate. No field survey, certificate or site inspection informs this page.', { bodySize: 8, color: C.muted })],
     [12, callout('How to read this page', 'Nothing here settles a site-specific question. Desktop registers say what has been PUBLISHED about an area; they do not inspect a lot, and where one returned nothing this page records that the severity is not established rather than choosing a comfortable word. Every row carries the step that would settle it, and those steps are yours and your adviser\u2019s before contract.')],
-    [12, provisional('S3 · S4', 'Rows are read from the stored planning and enrichment records; the projection does not yet publish a planning or exposure namespace. Drawn on the template\u2019s own ledger because the shared risk-register block\u2019s chips use a fixed palette that follows no colourway.')],
+    [12, provisional('S3 · S4', 'Rows are read from the stored planning and enrichment records; the projection does not yet publish a planning or exposure namespace. Drawn on the template\u2019s own ledger for this review\u2019s layout; the shared risk-register block\u2019s chips now resolve `token:chip*` and follow the colourway.')],
   ],
 };
 
