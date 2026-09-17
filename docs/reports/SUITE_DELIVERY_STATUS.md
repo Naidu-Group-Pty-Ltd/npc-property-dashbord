@@ -9,7 +9,7 @@ approval gate.** The branch is `claude/adoring-hopper-g02tdt`.
 
 | | implemented | tested | visually verified | released |
 | --- | --- | --- | --- | --- |
-| **Investment Compass** | S1–S3 | 9,389 report-suite tests, PDF/UA-1 | 6 pages + 1 tier page + the 36-page Templates render | no |
+| **Investment Compass** | S1–S3, S5 | 9,402 report-suite tests, PDF/UA-1 on both subjects | both documents drawn whole (36 + 22 pages), every page measured | no |
 | **Financial Analysis** | S3, S5 | as above, PDF/UA-1 on both subjects | both documents drawn whole (21 + 20 pages), every page measured | no |
 | **Strategic** | S3, S5 | as above, PDF/UA-1 on both subjects | both documents drawn whole (29 + 19 pages), every page measured | no |
 | **Executive Briefing** | S3, S5 | as above, PDF/UA-1 on both subjects | both documents drawn whole (20 + 18 pages), every page measured | no |
