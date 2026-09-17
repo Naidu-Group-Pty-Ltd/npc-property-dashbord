@@ -221,3 +221,65 @@ re-seed: **54 rows** carry it — 50 `template_library_entries` and 4 active
 `report_templates` (measured 17 Sep 2026). That is the third item riding on
 the pending master re-seed decision, after `Weekly rent` → indicative and the
 chip `radius`. Not acted on unilaterally.
+
+---
+
+## 5 · The frontend journey — what S5 verifies and what it cannot
+
+S5's second half is the journey a person actually takes: choose a template,
+generate, read, edit, save, reopen, preview, export, look at history, and be
+refused what they may not see. Three of those steps WRITE, and this session
+is not authorised to change live data. There is no local Supabase and no
+seeded copy, so the only database any UI here could reach is production's.
+Signing in to drive it is not something to do unasked either.
+
+So the journey is verified where it can be verified honestly, and the gap is
+named rather than papered over.
+
+### Verified
+
+**The export is one implementation and it names the pinned engine.** Every
+export in the product reaches `deliverInvestmentPdf`, which is keyed on a
+ROW ID — so a Compass row, a Financial row, a Due Diligence row, a Briefing
+row and a Snapshot row all take the same path. It calls
+`tryTemplateDocument('investment', reportId, { renderer: 'weasyprint', … })`:
+the chosen template drawn by the pinned engine, never the browser's jsPDF.
+`finalRendererOnEveryFormat.spec.ts` scans for that and forbids the omission
+on all nine other formats too, because leaving it out is what silently
+DOWNGRADED a chosen template to a font-less document on every one of them.
+
+**The ten documents came through that same step.** `_s5Render.mts` is the
+projection, the organisation stamp, `compileTemplateHtmlForPdf` and the
+WeasyPrint call on the production options — the compile-and-draw half of what
+the export does. So the pages read in §2–§3 are the pages the export
+produces, not a parallel rendering.
+
+**The steps that do not write are covered by tests that run:**
+
+| step | covered by | tests |
+| --- | --- | ---: |
+| export / delivery, all formats | `finalRendererOnEveryFormat`, `investmentDeliveryContract`, `investmentDeliveryUnified`, `templateRouteEnforcement`, `templateRouteWiring`, `subReportEngines` | 85 |
+| choose a template, and keep the choice | `reportTemplatePickerLibrary`, `reportTemplateSelection`, `investmentFinalRender` | 35 |
+
+All 120 pass on this branch, as does the whole report suite (9,389).
+
+### Not verified, and what it would take
+
+**No click-through of the running application.** Nothing here has opened the
+product in a browser, selected a template, edited a report, pressed Save,
+reopened it, or downloaded from the UI. What is verified is that the code
+those buttons run is one path that names the right renderer, and that the
+path produces the documents in §2–§3.
+
+**The three writing steps need authorisation before they can be exercised at
+all** — editing, saving and generating a sub-report each write to
+`investment_reports` in production, and generating also spends a forwarded
+vendor credential on a model call. A journey run therefore needs the owner to
+say so, and ideally a property whose reports may be written over.
+
+**The Briefing and the Snapshot have still never been produced by a run that
+made the real model call.** §1's stand-in is a fair substitute for testing the
+composition and the rendering — it is the composition that was untested, and
+it is now — but it is not the model, and the one thing it deliberately cannot
+do is the one thing a model might get wrong. That gap closes only by
+generating one of each for real.
