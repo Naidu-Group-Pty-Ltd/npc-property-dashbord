@@ -692,14 +692,34 @@ export function renderConstraintRegister(facts: PlanningFacts): string {
     lines.push('| Kind | What the register returned | Instrument | Current at |');
     lines.push('|---|---|---|---|');
     for (const c of readings) {
-      const found = [
-        c.label,
-        c.code && c.code !== c.label ? `(${c.code})` : null,
-        c.value,
-        c.detail,
-      ].filter(Boolean).join(' · ');
-      const instrument = [c.instrument, c.clause && c.clause !== c.code ? `cl. ${c.clause}` : null]
-        .filter(Boolean).join(', ') || '—';
+      /**
+       * A publisher's index is not a reading.
+       *
+       * `code` is the LEP map's own band letter — `K` on The Hills Height of
+       * Buildings map, `Q` on its Minimum Lot Size map. It identifies a BAND
+       * in the publisher's lookup table, and the metres or square metres that
+       * band stands for are already in `value`. Printed beside them it added
+       * nothing a reader could use and read as an artefact:
+       * `Height of Buildings Map · (K) · 10 m`, five times across one
+       * delivered Compass. The letter stays in the record — it is how the
+       * reading is checked against the map — and leaves the client's page.
+       *
+       * `detail` is kept, because it is the band's own RANGE (`700-749`) and
+       * that is a fact about what the control admits rather than an index
+       * into a table.
+       */
+      const found = [c.label, c.value, c.detail].filter(Boolean).join(' · ');
+      /**
+       * `cl. Clause 4.3` — the prefix was added to a value that already
+       * carried it. The guard compared `clause` against `code` (`4.3` against
+       * `K`), which is never equal and so never fired. Compare against what
+       * is actually being prefixed.
+       */
+      const clause = typeof c.clause === 'string' ? c.clause.trim() : '';
+      const citedClause = clause === '' || clause === c.code
+        ? null
+        : /^(cl\.?|clause|s\.?|section)\b/i.test(clause) ? clause : `cl. ${clause}`;
+      const instrument = [c.instrument, citedClause].filter(Boolean).join(', ') || '—';
       lines.push(`| ${KIND_LABEL[c.kind]} | ${found} | ${instrument} | ${auDate(c.currencyDate) ?? '—'} |`);
     }
     lines.push('');

@@ -179,10 +179,43 @@ describe('what the registers do answer', () => {
     expect(evidence.pipelineDwellings).toMatchObject({ total: 214, rowsStating: 31 });
     const rendered = renderInfrastructureOutlook(evidence);
     expect(rendered).toMatch(/214 new dwellings/);
-    expect(rendered).toMatch(/\$41,250,000 of stated development cost/);
+    expect(rendered).toMatch(/\$41,250,000 of development cost/);
     expect(rendered).toMatch(/competing supply/);
     // And never as a claim about this address.
     expect(rendered).toMatch(/not at this address/);
+  });
+
+  it('says what each application count COUNTS, because the two differ', () => {
+    /**
+     * This read "680 new dwellings across 171 applications … with
+     * $808,649,729 of stated development cost across 278 applications" on a
+     * delivered Compass — one window, one council, two different application
+     * counts, and nothing saying why. A reader cannot tell whether 171 or 278
+     * is the number of applications, and the document reads as though it
+     * cannot add up.
+     *
+     * It always could: `rowsStating` is the rows that STATED that figure, and
+     * an application need state neither. The arithmetic was never wrong; the
+     * sentence was. So this asserts the RULE — each count names what it
+     * counts — rather than the sentence, which is what the previous version
+     * pinned and what made it look like a fixture to refresh.
+     */
+    const rendered = renderInfrastructureOutlook(evidence);
+    expect(rendered).toMatch(/that gave a dwelling count/);
+    expect(rendered).toMatch(/that gave a cost/);
+    // And where they differ, the reader is told why rather than left to guess.
+    expect(evidence.pipelineDwellings!.rowsStating)
+      .not.toBe(evidence.pipelineInvestment!.rowsStating);
+    expect(rendered).toMatch(/need state neither figure/);
+  });
+
+  it('prints the window in the reader\u2019s dates, not the register\u2019s', () => {
+    // `2026-03-18 to 2026-09-17` printed in a sentence otherwise written in
+    // English, on a page already carrying `27 Feb 2026`. Two date formats in
+    // one document is a raw marker like any other.
+    const rendered = renderInfrastructureOutlook(evidence);
+    expect(rendered).not.toMatch(/\d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}/);
+    expect(rendered).toMatch(/\d{1,2} [A-Z][a-z]{2} \d{4} to \d{1,2} [A-Z][a-z]{2} \d{4}/);
   });
 
   it('never lets the prose beside it quantify an uplift', () => {

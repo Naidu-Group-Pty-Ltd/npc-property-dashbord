@@ -5097,13 +5097,24 @@ Instead, focus EXCLUSIVELY on area-level analysis:
       console.log(`   Content length: ${documentContent.length} characters`);
       
       // Build a summary of extracted property details
+      // The GOVERNED physical attributes — bedrooms, bathrooms, parking, land
+      // and floor area, year built, condition — are deliberately NOT listed
+      // here. The specification table further down already carries every one
+      // the record holds, and `effectiveBeds` and its siblings already fall
+      // back to this same extraction to build it. Repeating them here put the
+      // same attribute in front of the model twice, from two sources, with no
+      // statement of which governs — and where the record held none, this
+      // block was the only one that spoke.
+      //
+      // Measured on 18 Annabelle Crescent: `property_specs` holds
+      // `bedrooms: null, bathrooms: null, parking: 2`, so the specification
+      // table printed a Parking row and no Bedrooms or Bathrooms row — and
+      // the document still said "marketed as a 3-bedroom, 1-bathroom, 2-car
+      // house" twice, then said in its own Property Fit section that "the
+      // property record contains no bedroom or bathroom count". One document,
+      // both claims.
       const extractedDetailsSummary: string[] = [];
       if (propertyDetails?.price) extractedDetailsSummary.push(`Price: $${propertyDetails.price.toLocaleString()}`);
-      if (propertyDetails?.beds) extractedDetailsSummary.push(`Bedrooms: ${propertyDetails.beds}`);
-      if (propertyDetails?.baths) extractedDetailsSummary.push(`Bathrooms: ${propertyDetails.baths}`);
-      if (propertyDetails?.carSpaces) extractedDetailsSummary.push(`Car Spaces: ${propertyDetails.carSpaces}`);
-      if (propertyDetails?.landSizeSqm) extractedDetailsSummary.push(`Land Size: ${propertyDetails.landSizeSqm} sqm`);
-      if (propertyDetails?.buildSizeSqm) extractedDetailsSummary.push(`Building Size: ${propertyDetails.buildSizeSqm} sqm`);
       if (propertyDetails?.propertyType) extractedDetailsSummary.push(`Property Type: ${propertyDetails.propertyType}`);
       if (propertyDetails?.suburb) extractedDetailsSummary.push(`Suburb: ${propertyDetails.suburb}`);
       if (propertyDetails?.postcode) extractedDetailsSummary.push(`Postcode: ${propertyDetails.postcode}`);
@@ -5118,27 +5129,54 @@ Instead, focus EXCLUSIVELY on area-level analysis:
         : '';
       
       // Use different instructions based on content source
-      const sourceSpecificInstructions = fromPdfUpload 
-        ? `**CRITICAL INSTRUCTIONS FOR PDF-UPLOADED LISTINGS:**
-1. The above content was extracted from a property listing PDF document
-2. This is the PRIMARY source of truth for this property's specifications and features
-3. Extract and use the EXACT property specifications from the document (bedrooms, bathrooms, land size, price)
-4. Use the property address exactly as shown in the document
-5. Include all relevant property features, upgrades, and selling points mentioned in the document
-6. If a price is mentioned (guide, asking, or range), use it for financial calculations
-7. Note any specific renovations, improvements, or unique characteristics
-8. Consider the property description when assessing investment potential
-9. Verify the suburb/postcode from the document for accurate location analysis
-10. For new builds: Use the land + build package price for total property value`
-        : `**CRITICAL INSTRUCTIONS FOR URL-SCRAPED LISTINGS:**
-1. The above scraped content is the PRIMARY source of truth for this property
-2. Extract and use the EXACT property specifications from the listing (bedrooms, bathrooms, land size, price)
-3. Use the property address exactly as shown in the listing
-4. Include all relevant property features, upgrades, and selling points mentioned in the listing
+      /**
+       * ONE list, and it defers to the record on the attributes the record
+       * governs.
+       *
+       * There were two near-identical lists here, and both opened by naming
+       * the listing "the PRIMARY source of truth for this property's
+       * specifications" and instructing the model to "extract and use the
+       * EXACT property specifications from the listing (bedrooms, bathrooms,
+       * land size, price)". Further down, the specification table says the
+       * opposite in terms: "The table above contains every physical attribute
+       * on record for this property … do not state a land size, floor area,
+       * bedroom or bathroom count, parking count, year built or condition
+       * that is not in it."
+       *
+       * Two statements of one rule is how the two come to disagree, and this
+       * pair disagreed in the worst possible arrangement: `documentContextSection`
+       * is PREPENDED, so the listing's instruction sits at the head of the
+       * prompt where `limitPromptContext` never trims it, while the table's
+       * prohibition sits downstream in the part that can be trimmed away.
+       *
+       * A listing ADVERTISES; the record GOVERNS. The listing keeps everything
+       * only it can supply — the description, the features, the renovations,
+       * the selling points, the address as written, the suburb and postcode —
+       * and the price instruction is untouched, because what a price is used
+       * for is settled by the financial engine and not by this prompt.
+       */
+      const RECORD_GOVERNS_PHYSICAL_ATTRIBUTES = `
+**The physical attributes of this property do NOT come from this listing.**
+Bedroom and bathroom counts, parking, land area, floor area, year built and
+condition are taken from the "every physical attribute on record" table below
+and from nowhere else — not from this listing's specifications, not from a
+number written in its description, and not from anything above. Where that
+table carries no row for an attribute, the attribute is NOT RECORDED: say so
+if it matters, and never supply it from here. A listing's own figures are the
+agent's marketing copy, and this report does not repeat them as facts about
+the asset.`;
+      const sourceLabel = fromPdfUpload ? 'PDF-UPLOADED LISTING' : 'URL-SCRAPED LISTING';
+      const sourceNoun = fromPdfUpload ? 'document' : 'listing';
+      const sourceSpecificInstructions = `**CRITICAL INSTRUCTIONS FOR THIS ${sourceLabel}:**
+1. The above content came from the property ${sourceNoun}, and is the primary source for its DESCRIPTION, features and selling points
+2. ${RECORD_GOVERNS_PHYSICAL_ATTRIBUTES}
+3. Use the property address exactly as shown in the ${sourceNoun}
+4. Include all relevant property features, upgrades, and selling points mentioned in the ${sourceNoun}
 5. If a price is mentioned (guide, asking, or range), use it for financial calculations
 6. Note any specific renovations, improvements, or unique characteristics
 7. Consider the property description when assessing investment potential
-8. Verify the suburb/postcode from the listing for accurate location analysis`;
+8. Verify the suburb/postcode from the ${sourceNoun} for accurate location analysis${fromPdfUpload ? `
+9. For new builds: Use the land + build package price for total property value` : ''}`;
       
       const limitedDocumentContent = limitPromptContext(
         String(documentContent),
@@ -5150,7 +5188,7 @@ Instead, focus EXCLUSIVELY on area-level analysis:
 ---
 **PROPERTY LISTING DATA (SOURCE: ${contentSourceLabel})**
 
-The following is the available content ${fromPdfUpload ? 'extracted from the property listing PDF' : 'scraped from the property listing'}. Use this as PRIMARY context for property details, features, description, and specific information mentioned in the listing. If this block was truncated, use the extracted specifications below and fresh web research to fill gaps without inventing facts:
+The following is the available content ${fromPdfUpload ? 'extracted from the property listing PDF' : 'scraped from the property listing'}. Use it for the property's DESCRIPTION, features and the specific information the listing mentions — not for its physical attributes, which the specification table below governs. If this block was truncated, fill gaps from the record and fresh web research without inventing facts:
 
 ${limitedDocumentContent}
 ${extractedDetailsText}

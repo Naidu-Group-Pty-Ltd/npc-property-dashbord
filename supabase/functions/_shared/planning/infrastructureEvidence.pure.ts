@@ -346,7 +346,12 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     const source = str(act?.source) ?? 'the council development-application register';
     const licence = str(act?.licence);
     const council = str(summary.councilName) ?? 'the council';
-    const window = `${str(summary.periodFrom) ?? ''} to ${str(summary.periodTo) ?? ''}`.trim();
+    // The reader's date, not the register's. This printed the ISO pair
+    // verbatim — "2026-03-18 to 2026-09-17" — in a sentence otherwise written
+    // in English, on the same page as `27 Feb 2026` and `7 Aug 2026`. Two
+    // date formats in one document is a raw marker like any other.
+    const window = [auDate(str(summary.periodFrom)), auDate(str(summary.periodTo))]
+      .filter(Boolean).join(' to ');
     // NEW applications only. A modification restates the development it
     // modifies — the register carries the whole cost and the whole dwelling
     // count on the modification row, not the delta — so the two may never be
@@ -514,13 +519,33 @@ export function renderInfrastructureOutlook(evidence: InfrastructureEvidence): s
 
   if (evidence.pipelineDwellings) {
     const d = evidence.pipelineDwellings;
+    /**
+     * Two counts, and each says what it counts.
+     *
+     * This read "680 new dwellings across 171 applications … with
+     * $808,649,729 of stated development cost across 278 applications" — one
+     * window, one council, two different application counts, and nothing
+     * saying why they differ. A reader cannot tell whether 171 or 278 is the
+     * number of applications, and the document looked as though it could not
+     * add up.
+     *
+     * It always could. `rowsStating` is the rows that STATED that figure, and
+     * an application need state neither a dwelling count nor a cost of
+     * development — so the denominators are genuinely different and the
+     * arithmetic was never wrong. Only the sentence was. Saying what each
+     * count is makes both readings true of the same window.
+     */
+    const inv = evidence.pipelineInvestment;
+    const apps = (n: number) => `${n.toLocaleString('en-AU')} application${n === 1 ? '' : 's'}`;
     lines.push(
-      `**Dwellings in the register's pipeline.** ${d.total.toLocaleString('en-AU')} new dwellings were stated across `
-      + `${d.rowsStating} application${d.rowsStating === 1 ? '' : 's'} in ${d.council}${d.window ? `, ${d.window}` : ''}`
-      + `${evidence.pipelineInvestment
-        ? `, with ${money(evidence.pipelineInvestment.total)} of stated development cost across `
-          + `${evidence.pipelineInvestment.rowsStating} application${evidence.pipelineInvestment.rowsStating === 1 ? '' : 's'}`
+      `**Dwellings in the register's pipeline.** ${d.total.toLocaleString('en-AU')} new dwellings were stated on `
+      + `the ${apps(d.rowsStating)} that gave a dwelling count in ${d.council}${d.window ? `, ${d.window}` : ''}`
+      + `${inv
+        ? `, and ${money(inv.total)} of development cost on the ${apps(inv.rowsStating)} that gave a cost`
         : ''}. `
+      + `${inv && inv.rowsStating !== d.rowsStating
+        ? 'The two counts differ because an application need state neither figure, and many state only one. '
+        : ''}`
       + 'That is activity in the local government area, not at this address, and it reads both ways: it is a sign of '
       + 'confidence in the area and it is competing supply for a landlord letting a comparable dwelling.',
     );
