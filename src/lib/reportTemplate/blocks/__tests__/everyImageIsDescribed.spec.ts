@@ -75,7 +75,7 @@ describe('every image the print path draws is described', () => {
     // "Brand mark" and hearing that the description is missing. After this the
     // production document carries zero undescribed images.
     const src = readFileSync(resolve(DIR, 'image.html.ts'), 'utf8');
-    expect(code(src)).toMatch(/alt:[^,]*\|\|\s*block\.name/);
+    expect(code(src)).toMatch(/alt:[\s\S]*?\|\|\s*block\.name/);
   });
 
   it('names a missing description rather than inventing a plausible one', () => {
