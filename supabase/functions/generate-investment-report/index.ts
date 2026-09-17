@@ -4819,6 +4819,57 @@ Produce a comprehensive statewide investment analysis following the structure ab
      * Pinned context is budgeted for before the base prompt and concatenated
      * after the trim, so it reaches every section whole. It is ~5.6 KB.
      */
+    /**
+     * How to CITE this evidence — and it rides with the evidence.
+     *
+     * The two headings below are prompt scaffolding. A reader never sees
+     * them, so a reference to one is a pointer into nothing. Measured across
+     * the delivered suite: nine of ten documents carry at least one, and one
+     * Compass carries nine — `[Zoning & Planning notes]` ×5,
+     * `[Infrastructure section]` ×2, `[Zoning & Planning table]`,
+     * `[Infrastructure table]` — set mid-sentence in the client's prose:
+     * "…must factor into rental and resale expectations.[Infrastructure
+     * section] The recorded 680 new dwellings…". The second subject shows the
+     * other form, `[Property.com.au]` and `[View.com.au]`: a source named as a
+     * bracketed token rather than in the sentence.
+     *
+     * Both are the same fault — a citation written as a marker — and the
+     * remedy is not to delete the marker. The claims behind them are
+     * supported: the planning and infrastructure tables are appended VERBATIM
+     * to the finished document under `## Planning controls and development
+     * registers`, so there is a real section to point at and a real publisher
+     * to name. Stripping the brackets would leave the sentence unsourced,
+     * which is worse than an ugly one that is sourced.
+     *
+     * So the rule says what a reference must look like instead, and it sits
+     * INSIDE the pinned context: a rule about how to cite this evidence is
+     * worthless in the part of the prompt that gets trimmed away from it.
+     */
+    const planningCitationRule = [
+      '## How to refer to this evidence in the report',
+      '',
+      'The two headings in this block are part of your instructions. The reader',
+      'never sees them, so **never write a bracketed pointer** such as',
+      '`[Zoning & Planning table]`, `[Infrastructure section]`,',
+      '`[Zoning & Planning notes]` or `[Infrastructure table]`. A bracket like',
+      'that lands mid-sentence in a client document and refers to nothing they',
+      'can open.',
+      '',
+      'Refer to it in the sentence instead, in one of exactly two ways:',
+      '',
+      '1. **Name the publisher and its currency**, which the table beside you',
+      '   already carries — "the NSW Planning Portal\'s Principal Planning',
+      '   Layers, current at 7 August 2026" — or',
+      '2. **Name the report\'s own section**: these tables are reproduced in',
+      '   full at the end of this report under *Planning controls and',
+      '   development registers*.',
+      '',
+      'The same rule covers every other source. A source is named in the',
+      'sentence — "listed on realestate.com.au" — and never as a bracketed',
+      'token like `[Property.com.au]`. If a claim has no source you can name',
+      'in prose, it has no source, and it does not belong in the report.',
+    ].join('\n');
+
     const pinnedPlanningContext = [
       '# Zoning & Planning Analysis — the controls retrieved for this property',
       planningControlsTable,
@@ -4826,6 +4877,7 @@ Produce a comprehensive statewide investment analysis following the structure ab
       '# Infrastructure & Development Outlook — what the registers answered',
       infrastructureTable,
       infrastructureSectionRules,
+      planningCitationRule,
     ].join('\n\n');
     console.log(`📌 Pinned planning/infrastructure context: ${pinnedPlanningContext.length} chars`);
 
