@@ -513,3 +513,53 @@ development certificate" gets nowhere either.
 measurement of nothing — because the guard was `facts.parcelAreaSqm !== null`
 and `num()` admits zero as a finite number. A parcel area of zero is the layer
 declining to publish one.
+
+
+### 8.5 What rendering the real section caught
+
+The section above was written, tested against captured fixtures, and wrong — and
+the way it was found is the point. Rendering the actual Planning section for
+262 Pallas Street from LIVE production responses (pg_net 263994, 264598, 264599)
+produced this row:
+
+> | Strategic context | Lower Mary River | Queensland FloodCheck rapid hazard assessment | — |
+
+Queensland's FloodCheck Rapid Hazard Assessment answers at that coordinate with
+the value `Lower Mary River` — the sub-basin's own name. `familyFromLabel`
+scans the label for a keyword, finds no flood word in "Lower Mary River", and
+files it as `other` / `context`.
+
+**A flood hazard reading, on a Mary River property, presented as strategic
+context.** Four statements went wrong from that one classification:
+
+1. it was drawn as context rather than as a hazard;
+2. it lost the hazard-first ordering a reader triages by;
+3. it appeared in the **Infrastructure & Development Outlook**, which is for
+   what is planned nearby;
+4. the coverage line read *"Checked and not mapped at this coordinate: … flood
+   …"* — a clearance, on a property inside the mapping.
+
+The rule: **a single-purpose register states its own family.** A register that
+answers ONE question knows the answer's kind better than a keyword scan of what
+the feature happens to be called, so the caller declares it and
+`familyFromLabel` is used only where a register genuinely publishes many kinds
+under descriptive names (Queensland's 26 MSES layers, Tasmania's codes). On a
+single-purpose register the LAYER is also the finding and the feature is the
+place, so the label reads *"Rapid Hazard Assessment — Lower Mary River"* rather
+than a river's name on its own.
+
+With that fixed, the section leads with:
+
+> | Hazard | Rapid Hazard Assessment — Lower Mary River | Queensland FloodCheck rapid hazard assessment |
+>
+> **Flood.** Flood mapping or a flood planning control, made from modelled
+> flood behaviour rather than from whether the property has flooded before. It
+> typically sets a minimum floor level, restricts what can be built at ground
+> level, and can require flood-compatible materials. It materially affects
+> insurance: some insurers decline, and premiums can differ by a multiple.
+>
+> *Before you proceed:* Ask the council for the flood level and the flood
+> planning level for this lot — a designation without a level tells you nothing
+> about depth. Obtain an insurance quote in writing before exchange.
+
+None of which the report said before this work, on any property, anywhere.

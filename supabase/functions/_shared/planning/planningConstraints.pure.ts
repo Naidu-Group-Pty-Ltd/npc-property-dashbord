@@ -604,7 +604,31 @@ export const buildQldMsesIdentify = (lng: number, lat: number): string =>
  */
 export function parseNamedLayerConstraints(
   body: unknown,
-  opts: { asked: ConstraintFamily[]; source: string; licence: string; instrument?: string | null },
+  opts: {
+    asked: ConstraintFamily[];
+    source: string;
+    licence: string;
+    instrument?: string | null;
+    /**
+     * The family every reading from this register belongs to.
+     *
+     * Required for a SINGLE-PURPOSE register, and this is the defect that made
+     * it required. Queensland's FloodCheck Rapid Hazard Assessment answers at
+     * 262 Pallas Street with the value `Lower Mary River` — the sub-basin's
+     * own name — and classifying by that label finds no flood keyword in it,
+     * so a **flood hazard reading on a Mary River property was filed as
+     * "Strategic context"**, dropped out of the hazard ordering, appeared in
+     * the infrastructure outlook, and left the coverage line saying flood had
+     * been "checked and not mapped at this coordinate".
+     *
+     * Four wrong statements from one classification. A register that answers
+     * one question knows the answer's kind better than a keyword scan of what
+     * the feature happens to be called, so the caller states it and
+     * `familyFromLabel` is used only where a register genuinely publishes many
+     * kinds under descriptive names.
+     */
+    family?: { family: ConstraintFamily; kind: ConstraintKind };
+  },
 ): ConstraintProbeOutcome {
   const base = { asked: opts.asked, source: opts.source, licence: opts.licence };
   const out = identifyResults(body);
@@ -614,14 +638,23 @@ export function parseNamedLayerConstraints(
     const a = r.attributes ?? {};
     const layerName = attrStr(r.layerName) ?? 'Mapped area';
     const value = attrStr(r.value);
-    const cls = familyFromLabel(`${layerName} ${value ?? ''}`);
+    const cls = opts.family ?? familyFromLabel(`${layerName} ${value ?? ''}`);
     return {
       family: cls.family,
       kind: cls.kind,
-      // The feature's own name where it has one, else the layer's. At 262
-      // Pallas Street that is the difference between "Priority Living Area"
-      // and "Maryborough Priority Living Area".
-      label: value && value !== layerName ? value : layerName,
+      /*
+       * The feature's own name where it has one, else the layer's. At 262
+       * Pallas Street that is the difference between "Priority Living Area"
+       * and "Maryborough Priority Living Area".
+       *
+       * On a single-purpose register it is the other way round: the LAYER
+       * says what was found and the feature says where. "Lower Mary River" is
+       * not a finding a reader can act on; "Rapid Hazard Assessment — Lower
+       * Mary River" is.
+       */
+      label: opts.family
+        ? (value && value !== layerName ? `${layerName} — ${value}` : layerName)
+        : (value && value !== layerName ? value : layerName),
       code: null,
       value: null,
       instrument: attrStr(a['Plan Name']) ?? opts.instrument ?? layerName,

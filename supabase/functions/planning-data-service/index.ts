@@ -374,9 +374,17 @@ Deno.serve(async (req) => {
           ? parseNamedLayerConstraints(flood.body, {
             asked: ['flood'], source: QLD_FLOODCHECK_SOURCE, licence: QLD_LICENCE,
             instrument: 'Queensland FloodCheck rapid hazard assessment',
+            // A single-purpose register states its own family. This one
+            // answers with the sub-basin's NAME — `Lower Mary River` at
+            // 262 Pallas Street — which carries no flood keyword, so
+            // classifying by label filed a flood hazard as strategic context.
+            family: { family: 'flood', kind: 'hazard' },
           })
           : { asked: [], status: 'unavailable', readings: [], source: QLD_FLOODCHECK_SOURCE, licence: QLD_LICENCE, note: flood.message },
         mses.ok
+          // MSES publishes 26 layers under descriptive names — regulated
+          // vegetation, wildlife habitat, wetlands, watercourses — so this one
+          // classifies by label, which is what `familyFromLabel` is for.
           ? parseNamedLayerConstraints(mses.body, {
             asked: ['biodiversity', 'wetlands', 'riparian', 'vegetation'],
             source: QLD_MSES_SOURCE, licence: QLD_LICENCE,

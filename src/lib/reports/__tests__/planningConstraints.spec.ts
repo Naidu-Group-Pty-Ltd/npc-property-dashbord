@@ -442,3 +442,91 @@ describe('classification by the publisher’s own words', () => {
     expect(r.kind).toBe('context');
   });
 });
+
+describe('a single-purpose register states its own family', () => {
+  /*
+   * The defect this parameter exists for, caught by rendering the real
+   * section for 262 Pallas Street rather than by reading the code.
+   *
+   * Queensland's FloodCheck Rapid Hazard Assessment answers at that
+   * coordinate (pg_net request id 264598, 17 Sep 2026) with the value
+   * `Lower Mary River` — the sub-basin's own name. Classifying by label finds
+   * no flood keyword in it, so a FLOOD HAZARD READING ON A MARY RIVER
+   * PROPERTY was filed as "Strategic context", and four statements went wrong
+   * from that one classification:
+   *
+   *   1. it was drawn as strategic context rather than as a hazard;
+   *   2. it lost the hazard-first ordering a reader triages by;
+   *   3. it appeared in the Infrastructure & Development Outlook, which is
+   *      for what is PLANNED nearby;
+   *   4. the coverage line said flood had been "checked and not mapped at
+   *      this coordinate" — a clearance, on a property inside the mapping.
+   *
+   * A register that answers one question knows the answer's kind better than
+   * a keyword scan of what the feature happens to be called.
+   */
+  const FLOOD_AT_PALLAS = {
+    results: [{
+      layerId: 0, layerName: 'Rapid Hazard Assessment', displayFieldName: 'sub_name',
+      value: 'Lower Mary River',
+      attributes: { OBJECTID: '14', sub_name: 'Lower Mary River', Shape: 'Polygon' },
+    }],
+  };
+
+  it('files the reading under the register’s family, not the feature’s name', () => {
+    // What a keyword scan of the feature name alone produces.
+    expect(familyFromLabel('Lower Mary River').family).not.toBe('flood');
+
+    const out = parseNamedLayerConstraints(FLOOD_AT_PALLAS, {
+      asked: ['flood'], source: 'Queensland FloodCheck', licence: 'CC BY 4.0',
+      instrument: 'Queensland FloodCheck rapid hazard assessment',
+      family: { family: 'flood', kind: 'hazard' },
+    });
+    expect(out.readings[0].family).toBe('flood');
+    expect(out.readings[0].kind).toBe('hazard');
+  });
+
+  it('names what was found before where it was found', () => {
+    // "Lower Mary River" is not a finding a reader can act on;
+    // "Rapid Hazard Assessment — Lower Mary River" is.
+    const out = parseNamedLayerConstraints(FLOOD_AT_PALLAS, {
+      asked: ['flood'], source: 'Queensland FloodCheck', licence: 'CC BY 4.0',
+      family: { family: 'flood', kind: 'hazard' },
+    });
+    expect(out.readings[0].label).toBe('Rapid Hazard Assessment — Lower Mary River');
+  });
+
+  it('keeps the feature’s own name where the register publishes many kinds', () => {
+    // MSES publishes 26 layers under descriptive names, and Queensland's
+    // StatePlanning service answers several; there the FEATURE is the finding
+    // — "Maryborough Priority Living Area", not "Priority Living Area".
+    const out = parseNamedLayerConstraints({
+      results: [{
+        layerId: 10, layerName: 'Priority Living Area', value: 'Maryborough Priority Living Area',
+        attributes: { Name: 'Maryborough Priority Living Area', Region: 'Wide Bay Burnett' },
+      }],
+    }, { asked: ['growthArea'], source: 'Queensland StatePlanning', licence: 'CC BY 4.0' });
+    expect(out.readings[0].label).toBe('Maryborough Priority Living Area');
+    expect(out.readings[0].family).toBe('growthArea');
+  });
+
+  it('puts the hazard first and out of the strategic-context group', () => {
+    const merged = mergeConstraintOutcomes([
+      parseNamedLayerConstraints({
+        results: [
+          { layerId: 90, layerName: 'Regional planning boundaries', value: 'Wide Bay Burnett Regional Plan',
+            attributes: { 'Plan Name': 'Wide Bay Burnett Regional Plan', 'Legal status': 'Statutory', Version: 'December 2023' } },
+        ],
+      }, { asked: ['regionalPlan'], source: 'Queensland StatePlanning', licence: 'CC BY 4.0' }),
+      parseNamedLayerConstraints(FLOOD_AT_PALLAS, {
+        asked: ['flood'], source: 'Queensland FloodCheck', licence: 'CC BY 4.0',
+        family: { family: 'flood', kind: 'hazard' },
+      }),
+    ]);
+    expect(merged.readings.map((r) => r.kind)).toEqual(['hazard', 'context']);
+    // And the coverage line cannot then say flood was checked and clear.
+    const found = new Set(merged.readings.map((r) => r.family));
+    expect(found.has('flood')).toBe(true);
+    expect(merged.askedFamilies).toContain('flood');
+  });
+});
