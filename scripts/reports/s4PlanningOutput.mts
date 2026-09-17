@@ -24,8 +24,14 @@
  * this change touches them — so what is drawn for zoning, overlays and
  * controls is exactly what production answered.
  */
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+import { compileTemplateHtmlForPdf } from '../../src/lib/reportTemplate/compileTemplateForPdf';
+import { applyInvestmentProjection } from '../../supabase/functions/_shared/reportBindingProjection.pure';
+import { applyOrganisationProjection } from '../../supabase/functions/_shared/organisationProjection.pure';
+import { INVESTMENT_COMPASS_TEMPLATES } from '../template-library/investmentCompass/templates';
 
 import {
   buildPlanningFacts, renderPlanningControls,
@@ -111,6 +117,58 @@ for (const subject of SUBJECTS) {
 }
 
 mkdirSync(resolve(REPO, 'reports/html'), { recursive: true });
+mkdirSync(resolve(REPO, 'reports/pdf'), { recursive: true });
 const md = out.join('\n');
 writeFileSync(resolve(REPO, 'reports/s4-planning-output.md'), md);
 console.log(`\n${md.length} characters → reports/s4-planning-output.md`);
+
+/*
+ * …and drawn through the SUPPORTED template path.
+ *
+ * The same route a client's document takes: the stored row through
+ * `applyInvestmentProjection`, bound into a seeded Investment Compass master,
+ * compiled by `compileTemplateHtmlForPdf` (the resource boundary and
+ * `fontSource: 'container'`, which is what `render-template-pdf` does before
+ * it invokes the engine), and drawn by WeasyPrint on the six options the
+ * route sends. The master's `markdown-block` instances bind
+ * `{{narrative.source}}`, so the output above is set as the report's own
+ * narrative — nothing about the template, the geometry or the print contract
+ * is special-cased for this.
+ */
+const row = read('reports/fixtures/annabelle-row.json');
+const MARK = readFileSync(resolve(REPO, 'reports/fixtures/mark-monogram.txt'), 'utf8').trim();
+const flat = (o: unknown) => (o && typeof o === 'object' ? { ...(o as object) } : {});
+const data: Record<string, any> = {
+  report: { id: row.id, type: 'investment', generated_at: row.updated_at },
+  property: flat(row.property_specs),
+  financials: flat(row.financial_calculations),
+  scores: flat(row.investment_score),
+  brand: { tokens: {}, logo: null },
+};
+applyInvestmentProjection(data, row);
+applyOrganisationProjection(
+  data,
+  { company_name: 'Naidu Property Consulting Services' } as never,
+  { mark: MARK, markMono: MARK },
+  read('reports/fixtures/report-settings.meta.json') as never,
+);
+// The document being drawn is the planning and development output, so that is
+// what its narrative and its title say. Its page count is the renderer's own.
+data.narrative = { ...(data.narrative ?? {}), source: md };
+data.report.documentTitle = 'Planning & Development Evidence';
+data.report.standfirst = 'What the planning and development registers answered for each property, and what they did not.';
+
+const template = INVESTMENT_COMPASS_TEMPLATES.find(
+  (t) => String((t as never as { slug?: string }).slug ?? '').includes('-pb-01-'),
+)! as never as { name: string; slug?: string; schema: unknown };
+const compiled = await compileTemplateHtmlForPdf(template.schema as never, { data });
+const htmlPath = resolve(REPO, 'reports/html/s4-planning.html');
+const pdfPath = resolve(REPO, 'reports/pdf/s4-planning.pdf');
+writeFileSync(htmlPath, compiled.html);
+const render = execFileSync('python3', [resolve(REPO, 'scripts/reports/renderWeasy.py'), htmlPath, pdfPath], {
+  encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+});
+for (const line of render.split('\n')) if (line.startsWith('warning\t')) console.log(`  engine ${line.replace('\t', ': ')}`);
+const pages = execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' }).match(/^Pages:\s+(\d+)/m)?.[1] ?? '—';
+console.log(`\n${template.name}  slug=${template.slug ?? '—'}  pagesDrawn=${pages}`);
+console.log(`  ${htmlPath}\n  ${pdfPath}`);

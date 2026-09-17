@@ -36,6 +36,7 @@ import {
   councilNameCandidates, resolveCouncilName, summariseDaRows,
   type NswDaRow,
 } from '../_shared/planning/developmentActivity.pure.ts';
+import { planningCacheKey } from '../_shared/planning/planningAnswerVersion.pure.ts';
 
 /**
  * Property planning data — zoning, parcel and development intelligence from
@@ -138,7 +139,13 @@ Deno.serve(async (req) => {
     }
 
     // ── Cache ────────────────────────────────────────────────────────────
-    const cacheKey = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+    // The key carries the answer's SHAPE as well as the coordinate. A property
+    // does not move, but the answer widens when a register is added — and
+    // Maryborough's row was a complete, live, in-date answer from before the
+    // constraint register existed, so for seven days every report at that
+    // coordinate was served an answer with no overlay, hazard or
+    // strategic-designation reading in it. See `planningAnswerVersion.pure.ts`.
+    const cacheKey = planningCacheKey(lat, lng);
     const cutoff = new Date(Date.now() - CACHE_TTL_HOURS * 3600 * 1000).toISOString();
     const { data: cached } = await supabase
       .from('planning_data_cache')
