@@ -65,6 +65,9 @@ import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/
 import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
 import { EVIDENCE_KEYS, emptyEvidence, mergeEvidence, type EvidenceSubject, type MarketEvidence } from '../_shared/reports/market/marketEvidence.pure.ts';
 import { openDataSalesPoints, salesRegisterSourcesFor } from '../_shared/reports/market/openDataSalesEvidence.pure.ts';
+import {
+  buildMarketFacts, marketFactRules, renderMarketFacts,
+} from '../_shared/reports/market/marketFactBlocks.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
@@ -2688,6 +2691,15 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       schoolData?: any;
       planningData?: any;
       regionalTrends?: any;
+      /**
+       * The measured market points and who was asked, as
+       * `{ points, providersConsulted, providersUnavailable }`.
+       *
+       * Declared because it is now read twice — by the scoring call it was
+       * built for, and by `buildMarketFacts` for the prose, which is the whole
+       * point of recording it rather than passing it.
+       */
+      marketEvidence?: any;
     }
     
     let enhancedData: EnhancedData = {};
@@ -3770,6 +3782,24 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }
       }
 
+      /*
+       * The evidence is RECORDED before it is scored.
+       *
+       * `marketPoints` used to exist only as an argument to the scoring call,
+       * so it survived nowhere: not on the row, not for the resume worker, and
+       * not for the prose. Two consequences followed — the market discussion
+       * had no figures and supplied its own, and a report resumed after the
+       * enrichment block had run could not have got them even if it looked.
+       *
+       * Stored before the scoring fetch rather than after it, because a
+       * scoring failure must not take the evidence with it: what was measured
+       * was measured whether or not a grade came back.
+       */
+      enhancedData = {
+        ...enhancedData,
+        marketEvidence: { points: marketPoints, providersConsulted, providersUnavailable },
+      };
+
       // Calculate investment score - property OR area scoring
       if (!isAreaReport && effectivePurchasePrice > 0) {
         // Property-specific scoring
@@ -4787,6 +4817,34 @@ Produce a comprehensive statewide investment analysis following the structure ab
     const infrastructure = buildInfrastructureEvidence({ planningData: enhancedData.planningData });
     const infrastructureTable = renderInfrastructureOutlook(infrastructure);
     const infrastructureSectionRules = infrastructureRules(infrastructure);
+
+    /*
+     * And the market evidence, which reached the SCORING SERVICE and nothing
+     * else.
+     *
+     * `marketPoints` is posted to `investment-scoring-service` and the grade
+     * comes back; no prompt has ever been handed a median. So the prose
+     * supplied its own — 18 Annabelle Crescent stated a $1.96m suburb median,
+     * a "high-$1.8m to ~$2.0m" range, "high-$700k to low-$800k" unit medians,
+     * "$900" median weekly rent and "low single digits" growth, and
+     * `market_fact_snapshot` holds not one market price. The construction
+     * gives it away: *is consistently reported*, *data sets report*, *is
+     * called* — an agentless passive is what a sentence uses when it has no
+     * source to name.
+     *
+     * Exactly the shape of the planning defect: the service answered, the
+     * answer was stored, and the section that needed it read none of it.
+     */
+    const marketFacts = buildMarketFacts({ marketEvidence: enhancedData.marketEvidence });
+    const marketTable = renderMarketFacts(marketFacts);
+    const marketSectionRules = marketFactRules(marketFacts);
+    console.log('📈 Market evidence for the prose:', {
+      stated: marketFacts.rows.filter((r) => !r.benchmark).length,
+      benchmarks: marketFacts.rows.filter((r) => r.benchmark).length,
+      withheld: marketFacts.withheld.length,
+      unavailable: marketFacts.unavailable.length,
+      evidenceMissing: marketFacts.evidenceMissing,
+    });
     console.log('🏗️ Infrastructure evidence:', {
       items: infrastructure.items.length,
       dwellings: infrastructure.pipelineDwellings?.total ?? null,
@@ -4877,9 +4935,19 @@ Produce a comprehensive statewide investment analysis following the structure ab
       '# Infrastructure & Development Outlook — what the registers answered',
       infrastructureTable,
       infrastructureSectionRules,
+      // The market evidence rides the same pin, for the same reason: the base
+      // prompt measured 92,129 bytes on 262 Pallas Street and every section
+      // trimmed it to ~52,830, so anything that is the AUTHORITY for a figure
+      // must come off the budget before the base prompt is measured and be
+      // concatenated after the trim. A rule that survives while its evidence
+      // is cut is the §6 defect, and it produced a report that named no source
+      // because it had none to name.
+      '# Market Evidence — the figures retrieved for this market',
+      marketTable,
+      marketSectionRules,
       planningCitationRule,
     ].join('\n\n');
-    console.log(`📌 Pinned planning/infrastructure context: ${pinnedPlanningContext.length} chars`);
+    console.log(`📌 Pinned planning/infrastructure/market context: ${pinnedPlanningContext.length} chars`);
 
     const _brandPp = await getBrandConfig();
     const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.

@@ -1556,6 +1556,35 @@ contradict. Placement is load-bearing: **after** the series heal (the ROI
 denominator is the stored deposit) and **before** the upfront total (which is
 the deposit plus the acquisition lines).
 
+## What a report may state about the market
+Read [`MARKET_FIGURES_IN_THE_REPORT.md`](./docs/reports/MARKET_FIGURES_IN_THE_REPORT.md)
+before touching `_shared/reports/market/marketFactBlocks.pure.ts`,
+`enhancedData.marketEvidence` or the market block in `pinnedPlanningContext`.
+`MarketEvidence` reached the SCORING SERVICE and nothing else — the generator
+built `marketPoints`, posted it, took the grade back, and **no prompt was ever
+handed a median**. So the prose supplied its own: 18 Annabelle Crescent stated
+a $1.96m suburb median, a "high-$1.8m to ~$2.0m" range, "high-$700k to
+low-$800k" unit medians, "$900" median weekly rent and "low single digits"
+growth, while `market_fact_snapshot` holds 27 ABS and RBA facts and **not one
+market price**. Same shape as the planning defect: the service answered (growth
+scored 56 at confidence 81 from that very register), the answer was used for
+the grade, and the section that needed it read none of it. **The grammar is the
+tell** — *is consistently reported*, *data sets report*, *is called*: an
+agentless passive is what a sentence uses when it has no source to name, and
+the rule now names those constructions. Four more rules. **A licence decides
+what a client is shown**, applied at the producer because downstream is a model
+— a Domain point scores the grade and is named on the page as held and not
+published, a third state distinct from never measured. **A benchmark is drawn
+apart**, under a heading saying it describes a different geography, because a
+state figure beside a suburb one reads as the suburb's. **An absence says which
+kind**: asked-and-could-not-answer carries the provider's reason, never-held is
+a list. And **nothing there is a valuation** — "below the median" is forbidden
+by name, because that comparison was the Executive Verdict's central claim. Two
+things beyond the module: the evidence is assigned to `enhancedData` **before**
+the scoring call (a scoring failure must not take it with it, and the resume
+worker needs it), and it **rides the pin** so `limitPromptContext` cannot cut
+the authority while leaving the rule.
+
 ## Each report has one purpose, and one module decides it
 
 Read [`docs/reports/TIER_FRAMEWORK.md`](./docs/reports/TIER_FRAMEWORK.md)
