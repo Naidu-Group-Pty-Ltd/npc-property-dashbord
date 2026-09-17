@@ -297,6 +297,31 @@ describe('the Compass prompt states its structure exactly once', () => {
     expect(guide).toMatch(/Finish every sentence and every paragraph/);
   });
 
+  it('never puts the registry\u2019s own guide through the byte cap', () => {
+    /*
+     * `TEMPLATE_CONTEXT_MAX_BYTES` is 12,000 and exists for the OTHER source
+     * of that string — an uploaded `report_structure_templates.parsed_content`
+     * of no bounded size. The canonical guide is built from the section
+     * registry, so its size is a fact about this repository's own code, and
+     * v4.0's two new sections took it to 12,397 bytes.
+     *
+     * Measured 17 Sep 2026: at `mode: 'head'` the cap cut 665 bytes off the
+     * END of every Compass run's guide — the CONSISTENCY CHECKS block and the
+     * whole RECOMMENDATION FORMAT block — and replaced them with a notice
+     * telling the model to "request fresh web research for missing details".
+     * Two of those controls had just been carried over from the deleted
+     * overlay on the ground that removing a ceremony must not remove a
+     * control; they were being removed by arithmetic instead.
+     */
+    expect(generator).toMatch(/templateContextIsCanonical\s*\n?\s*\?\s*templateContext/);
+    // The flag is set exactly where the canonical guide is built, and nowhere
+    // else — an uploaded row must never be able to claim it.
+    const setters = generator.split('\n').filter((l) => /templateContextIsCanonical = true/.test(l));
+    expect(setters).toHaveLength(1);
+    const at = generator.indexOf('templateContextIsCanonical = true');
+    expect(generator.slice(at - 200, at)).toContain('buildCanonicalTemplateContext');
+  });
+
   it('excludes the modelling and permits the price, which the overlay had backwards', () => {
     /*
      * The overlay removed "Purchase Price" and "Weekly Rent" outright — "no

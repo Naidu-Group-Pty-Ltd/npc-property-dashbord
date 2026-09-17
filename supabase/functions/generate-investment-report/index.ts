@@ -5354,6 +5354,12 @@ DO NOT default to 0% or any arbitrary value. The capital growth rate is critical
     // ========== DIRECT TEMPLATE INJECTION (Hard Enforced) ==========
     // Fetch AI structure template directly from database - bypasses RAG similarity search
     let templateContext = '';
+    /**
+     * True when `templateContext` is the registry's own structure guide rather
+     * than an uploaded `report_structure_templates` row. It decides whether
+     * the byte cap applies — see the note at the injection site.
+     */
+    let templateContextIsCanonical = false;
     let compass40OverlayActive = false;
     try {
       console.log('🔍 Fetching AI structure template directly from database...');
@@ -5409,6 +5415,7 @@ DO NOT default to 0% or any arbitrary value. The capital growth rate is critical
       if (compass40OverlayActive) {
         REPORT_SECTIONS = getCanonicalSectionsForTier('compass-40');
         templateContext = buildCanonicalTemplateContext('compass-40');
+        templateContextIsCanonical = true;
         console.log(`✓ Compass-40: using canonical ${REPORT_SECTIONS.length}-section registry (legacy template bypassed)`);
       } else {
         // Always start from legacy default sections; legacy engine reuses this base.
@@ -5477,7 +5484,31 @@ DO NOT default to 0% or any arbitrary value. The capital growth rate is critical
 
     // Inject template context into prompt if available
     if (templateContext) {
-      const limitedTemplateContext = limitPromptContext(templateContext, TEMPLATE_CONTEXT_MAX_BYTES, 'Reference template structure', 'head');
+      /*
+       * The CANONICAL guide is never trimmed, and this cap was cutting it.
+       *
+       * `TEMPLATE_CONTEXT_MAX_BYTES` is 12,000 and exists for the OTHER source
+       * of this string: `report_structure_templates.parsed_content`, a row an
+       * operator uploaded, of no bounded size. The canonical guide is built
+       * here from the section registry, so its size is a fact about our own
+       * code — and v4.0's two new sections took it to 12,397 bytes.
+       *
+       * Measured 17 Sep 2026: at `mode: 'head'` that cut **665 bytes off the
+       * END** of every Compass run's guide — the CONSISTENCY CHECKS block
+       * (bed/bath/car/land size and property type must match everywhere) and
+       * the whole RECOMMENDATION FORMAT block — and put in their place a
+       * notice instructing the model to "request fresh web research for
+       * missing details". That is §6 of `PLANNING_CONTROLS_IN_THE_REPORT.md`
+       * happening again in a different place: a control lost to a byte
+       * boundary, and a licence to invent offered in its stead.
+       *
+       * Two of those controls had just been carried over from the deleted
+       * COMPASS-40 overlay on the ground that removing a ceremony must not
+       * remove a control. They were being removed by arithmetic.
+       */
+      const limitedTemplateContext = templateContextIsCanonical
+        ? templateContext
+        : limitPromptContext(templateContext, TEMPLATE_CONTEXT_MAX_BYTES, 'Reference template structure', 'head');
       const templateSection = `
 ---
 **REFERENCE TEMPLATE STRUCTURE (Follow this structure closely):**

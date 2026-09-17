@@ -409,3 +409,40 @@ market and cannot do it without naming the price. What is excluded is the
 the **KPI-row form**, which is the Financial Analysis's. The sanitiser needed
 no change: its patterns are anchored at a line start and at table cells, so it
 already caught `| Purchase Price | $681,000 |` and never a sentence.
+
+### And a byte cap was cutting the controls off the end of the guide
+
+Found immediately after, by measuring the guide rather than assuming it
+arrived. `TEMPLATE_CONTEXT_MAX_BYTES` is 12,000 and the canonical structure
+guide is **12,397 bytes** — v4.0's two new sections took it over. It was passed
+through `limitPromptContext(…, 'head')`, which keeps the head and drops the
+tail, so on **every Compass run** the last **665 bytes** were cut:
+
+```
+## CONSISTENCY CHECKS
+- Bed / bath / car / land size stated in the Property & Locality Snapshot MUST
+  match every later reference (Property Fit, Risk Dashboard, Final Recommendation).
+- Property type (house / townhouse / unit) MUST be identical everywhere it is mentioned.
+
+## RECOMMENDATION FORMAT
+The Final Recommendation opens with one of three labels on its own line …
+```
+
+and in their place the model was handed the truncation notice, which tells it
+to *"request fresh web research for missing details"*. That is §6 of
+[`PLANNING_CONTROLS_IN_THE_REPORT.md`](./PLANNING_CONTROLS_IN_THE_REPORT.md)
+happening again somewhere else: **a control lost to a byte boundary, and a
+licence to invent offered in its place.** Two of the four lost controls had
+been carried over from the overlay minutes earlier on the ground that removing
+a ceremony must not remove a control — and they were being removed by
+arithmetic.
+
+The cap is not wrong; it is aimed at the wrong string. It exists for the other
+source of `templateContext`: `report_structure_templates.parsed_content`, a row
+an operator uploaded, of no bounded size. The canonical guide is built here
+from the section registry, so its size is a fact about this repository's own
+code and trimming it is never the right answer.
+`templateContextIsCanonical` is set exactly where the guide is built, the cap
+applies only to the uploaded row, and a test asserts both — including that
+nothing else can set the flag, because an uploaded row claiming it would
+reopen the hole the cap is there to close.
