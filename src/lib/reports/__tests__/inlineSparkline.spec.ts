@@ -161,3 +161,34 @@ describe('the sources that carry the rest of it', () => {
     expect(page).toMatch(/statement about the record/);
   });
 });
+
+describe('a percentage cell is scaled by magnitude, never by sign', () => {
+  /*
+   * Both cell formatters decided whether a number was a ratio by comparing it
+   * against 1 — `n > 1 ? 1 : 100` in one and `n <= 1 ? 100 : 1` in the other.
+   * Every negative number fails that test, so a cash-on-cash return of -2.9%
+   * printed as **-290.0%**, and the bigger the loss the worse the misprint.
+   *
+   * Currently unreachable from the seeded library: none of the 543 masters
+   * declares a column `format` at all, so this only ever bit a hand-authored
+   * Template Builder column. It is fixed rather than left because nothing
+   * stops the next authored table from declaring one.
+   */
+  it('leaves a negative return at its own magnitude', async () => {
+    const { formatCell } = await import('../../reportTemplate/blocks/_data');
+    expect(formatCell(-2.9, 'percent')).toBe('-2.9%');
+    expect(formatCell(-16.92, 'percent')).toBe('-16.9%');
+    // A negative RATIO still scales, because its magnitude is below one.
+    expect(formatCell(-0.029, 'percent')).toBe('-2.9%');
+  });
+
+  it('changes nothing on the positive side', () => {
+    // 0.85 is genuinely ambiguous and this formatter was written for callers
+    // storing ratios; `bindingResolver`'s filter is the unscaled reading.
+    return import('../../reportTemplate/blocks/_data').then(({ formatCell }) => {
+      expect(formatCell(0.85, 'percent')).toBe('85.0%');
+      expect(formatCell(3.71, 'percent')).toBe('3.7%');
+      expect(formatCell(0, 'percent')).toBe('0.0%');
+    });
+  });
+});
