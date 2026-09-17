@@ -152,6 +152,14 @@ report — with `/ViewerPreferences /DisplayDocTitle true` asking the reader to
 show it. A client opening any report saw a window headed *Report*. The binding
 data already names the document and the property.
 
+**A picture can be described by the label its designer gave it.** The one
+image left undescribed on the 36-page render was the cover monogram, drawn as
+an `image` block with no `alt` and no caption — so page one of every report
+told a reader the description was missing. The master already names that block
+*Brand mark*, which is text a person wrote about it rather than a guess, so the
+block reads its own name after the author's `alt` and the caption the page
+prints. All three documents now carry **zero** undescribed images.
+
 **A link is only tagged when the anchor holds text alone.** One `<span>` inside
 it fails clause 7.18.5 — 32 checks on the 36-page render. So the contents row
 stays a flex box, the label alone is the link, and the folio beside it is not.
