@@ -18,10 +18,10 @@
  *
  *   npx tsx scripts/reports/s3FiveReports.mts
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { measureAndRender, REPO, type Sheet } from './_reviewKit.mts';
+import { measureAndRender, REPO, type Sheet, weasy } from './_reviewKit.mts';
 import { applyInvestmentProjection } from '../../supabase/functions/_shared/reportBindingProjection.pure';
 import { applyOrganisationProjection } from '../../supabase/functions/_shared/organisationProjection.pure';
 import { REPORT_TIERS, type ReportTier } from '../../supabase/functions/_shared/reports/investment/sectionRegistry.pure';
@@ -176,4 +176,37 @@ for (let i = 0; i < REPORT_TIERS.length; i += 1) {
 }
 
 console.log(`\n${overrunTotal === 0 && lostTotal === 0 ? 'ALL FIVE REPORTS DREW CLEAN' : `${overrunTotal} overrun(s), ${lostTotal} lost string(s)`}\n`);
+
+/**
+ * The five tiers as one document to hand over.
+ *
+ * Each tier is rendered in its own pass because the binding resolver takes one
+ * `data` and the five tiers resolve it differently. The first version of this
+ * handover file was the five PDFs concatenated — which **strips the structure
+ * tree**: the merged file carried no `/StructTreeRoot`, no `/MarkInfo`, no
+ * `/Lang` and no title, so the one document actually sent for review was the
+ * only one in the set that was not tagged.
+ *
+ * The pages are already resolved by the time they are HTML, so the five
+ * `<section>` elements are spliced into one shell and drawn in a single pass.
+ * One engine run, one structure tree, and the result goes through the same
+ * validator as everything else.
+ */
+const shell = readFileSync(resolve(REPO, 'reports/html/s3-compass.html'), 'utf8');
+const sectionsOf = (html: string) => {
+  const from = html.indexOf('<section');
+  const to = html.lastIndexOf('</section>');
+  if (from < 0 || to < 0) throw new Error('no page section in the rendered HTML');
+  return html.slice(from, to + '</section>'.length);
+};
+const bodyAt = shell.indexOf('<body>') + '<body>'.length;
+const merged = shell.slice(0, bodyAt)
+  + REPORT_TIERS.map((t) => sectionsOf(readFileSync(resolve(REPO, `reports/html/s3-${t}.html`), 'utf8'))).join('\n')
+  + shell.slice(shell.indexOf('</body>'));
+const mergedHtml = resolve(REPO, 'reports/html/s3-five-reports.html');
+const mergedPdf = resolve(REPO, 'reports/pdf/s3-five-reports.pdf');
+writeFileSync(mergedHtml, merged);
+weasy(mergedHtml, mergedPdf);
+console.log(`one document for review: ${mergedPdf}`);
+
 process.exitCode = overrunTotal === 0 && lostTotal === 0 ? 0 : 1;
