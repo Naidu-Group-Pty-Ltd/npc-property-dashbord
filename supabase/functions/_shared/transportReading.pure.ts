@@ -317,9 +317,24 @@ export function readTransport(
  */
 export interface StoredTransportBlock {
   readonly nearestStation: string;
-  /** Kilometres to the nearest boardable stop, or null when none was found. */
+  /**
+   * Straight-line kilometres to the nearest boardable stop, or null when none
+   * was found. Haversine from the verified coordinate — no walking or driving
+   * route is measured anywhere in this platform.
+   */
   readonly distanceToStation: number | null;
+  /**
+   * DEPRECATED NAME, KEPT FOR COMPATIBILITY. The value is the count within
+   * `radiusMetres`, which is 1,600 — not within one kilometre.
+   *
+   * ~1,100 stored rows carry this key, so it keeps being written and keeps
+   * meaning what it always meant. Nothing new should read it: ask
+   * `transportCountReading()`, which prefers `stopsWithinRadius` and falls
+   * back to this, and hands back the radius and a label that are true.
+   */
   readonly stopsWithin1km: number;
+  /** The same count under a name that does not contradict the radius. */
+  readonly stopsWithinRadius: number;
   readonly radiusMetres: number;
   readonly detailedStops: NearbyStop[];
   readonly verdict: TransportVerdict;
@@ -327,6 +342,47 @@ export interface StoredTransportBlock {
   readonly sources: string[];
   readonly notMeasured: string[];
   readonly source: 'gtfs';
+}
+
+/**
+ * The stop count, its radius and a label that is true of both.
+ *
+ * One reader for a field whose stored NAME disagrees with its stored VALUE.
+ * `stopsWithin1km` has always held the count within `radiusMetres` — 1,600 —
+ * so any surface that printed "N stops within 1 km" was overstating the
+ * density by the difference between a 1 km circle and a 1.6 km one. The count
+ * is of PLACES, not platforms: `readTransport` groups by the publisher's own
+ * `parent_station` before counting, so a station and its platforms are one.
+ *
+ * Total: an older row with no `stopsWithinRadius` and no `radiusMetres` reads
+ * as 1,000 m, which is what such a row was written to mean.
+ */
+export interface TransportCountReading {
+  /** Boarding places within `radiusMetres`, stations counted once. */
+  readonly count: number | null;
+  readonly radiusMetres: number;
+  /** Client-facing, e.g. "117 boarding places within 1.6 km". */
+  readonly label: string | null;
+  /** True when the radius had to be assumed from a legacy row. */
+  readonly radiusAssumed: boolean;
+}
+
+const LEGACY_RADIUS_M = 1_000;
+
+export function transportCountReading(block: unknown): TransportCountReading {
+  const b = (block && typeof block === 'object' ? block : {}) as Record<string, unknown>;
+  const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  const count = finite(b.stopsWithinRadius) ? b.stopsWithinRadius
+    : finite(b.stopsWithin1km) ? b.stopsWithin1km
+      : null;
+  const radiusAssumed = !finite(b.radiusMetres);
+  const radiusMetres = finite(b.radiusMetres) ? b.radiusMetres : LEGACY_RADIUS_M;
+  const km = radiusMetres / 1000;
+  const distance = Number.isInteger(km) ? `${km} km` : `${km.toFixed(1)} km`;
+  const label = count === null
+    ? null
+    : `${count.toLocaleString('en-AU')} boarding ${count === 1 ? 'place' : 'places'} within ${distance}`;
+  return { count, radiusMetres, label, radiusAssumed };
 }
 
 /** Field names the template wrote that no stops feed can support. */
@@ -344,7 +400,10 @@ export function projectTransportForLocationIntelligence(
     distanceToStation: typeof reading.nearest?.metres === 'number'
       ? Math.round(reading.nearest.metres / 100) / 10
       : null,
+    // Both names, same number. The old one because rows already hold it; the
+    // new one because "within 1 km" is false of a 1,600 m measurement.
     stopsWithin1km: reading.countWithinRadius,
+    stopsWithinRadius: reading.countWithinRadius,
     radiusMetres: reading.radiusMetres,
     detailedStops: reading.stops,
     verdict: reading.verdict,

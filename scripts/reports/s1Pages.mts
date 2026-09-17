@@ -37,6 +37,7 @@ import { compileTemplateHtmlForPdf } from '../../src/lib/reportTemplate/compileT
 import { applyInvestmentProjection } from '../../supabase/functions/_shared/reportBindingProjection.pure';
 import { applyOrganisationProjection } from '../../supabase/functions/_shared/organisationProjection.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from '../template-library/investmentCompass/templates';
+import { transportCountReading } from '../../supabase/functions/_shared/transportReading.pure';
 
 const REPO = resolve(import.meta.dirname, '../..');
 const F = (p: string) => resolve(REPO, 'reports/fixtures', p);
@@ -170,6 +171,13 @@ const grouped = (n: unknown) => (typeof n === 'number' ? n.toLocaleString('en-AU
 const schools: any[] = li.schools?.topSchools ?? [];
 const stops: any[] = li.transport?.detailedStops ?? [];
 const nearestStopMetres = Math.round(stops[0]?.metres ?? 0);
+/**
+ * The stop count under a name and radius that agree — `transportCountReading`.
+ * The stored key is called `stopsWithin1km` and holds the count within
+ * `radiusMetres`, which is 1,600, so the name has never described the value.
+ */
+const transportCount = transportCountReading(li.transport);
+const transportLabel = transportCount.label ?? 'No boarding place is recorded within the searched radius';
 
 const dims = [
   { key: 'growth', label: 'Capital growth' },
@@ -324,9 +332,9 @@ const ASSESSMENT: Sheet = {
   flow: [
     [0, eyebrow('HOW THE ASSESSMENT WAS REACHED', C.muted)],
     [16, title('Performance, and what it rests on')],
-    [20, rule()],
-    [12, para('Three things are kept apart here and never combined: how the property SCORED on what could be measured, how much of the method the evidence REACHED, and the GRADE issued once the second limits the first.')],
-    [14, eyebrow('PERFORMANCE ON MEASURED CRITERIA')],
+    [16, rule()],
+    [12, para('Three things are kept apart and never combined: how the property SCORED on what could be measured, how much of the method the evidence REACHED, and the GRADE issued once the second limits the first.', { bodySize: 9 })],
+    [12, eyebrow('PERFORMANCE ON MEASURED CRITERIA')],
     [12, B('data-table', {
       ...TABLE,
       headers: ['Criterion', 'Score', 'Weight applied', 'Measured on'],
@@ -341,8 +349,8 @@ const ASSESSMENT: Sheet = {
         ],
       })),
     })],
-    [8, para(`Weight applied is not the criterion\u2019s share of the whole method. Capital growth carries ${Math.round((dims.find((d) => d.key === 'growth')?.nominalWeight ?? 0) * 100)}% of the full method, rental return and market demand ${Math.round((dims.find((d) => d.key === 'yield')?.nominalWeight ?? 0) * 100)}% each; with location and property risk unmeasured, those three are re-weighted across what remains, so they sum to 100 here. Figures are rounded to the nearest whole point.`, { bodySize: 8.4, color: C.muted })],
-    [12, eyebrow('NOT MEASURED — AND WHY')],
+    [8, para(`Weight applied is not the criterion\u2019s share of the whole method: capital growth carries ${Math.round((dims.find((d) => d.key === 'growth')?.nominalWeight ?? 0) * 100)}% of it and the other two ${Math.round((dims.find((d) => d.key === 'yield')?.nominalWeight ?? 0) * 100)}% each, and with location and property risk unmeasured those three are re-weighted across what remains. The unrounded weights total exactly 100%; the whole numbers shown are rounded, so they may not.`, { bodySize: 8.4, color: C.muted })],
+    [10, eyebrow('NOT MEASURED — AND WHY')],
     // The record's own reason, and nothing else.
     //
     // Each gap also stores a `remedy`, and neither belongs on a client page:
@@ -352,13 +360,28 @@ const ASSESSMENT: Sheet = {
     // from the per-class schema" — so printed as a remedy it reads as though
     // the work had already been done. They are operator instructions and are
     // named in the chip below rather than set as the reader's next step.
+    // The record's own reason is printed for property risk, where it is
+    // accurate: no property-specific risk evidence was ever supplied.
+    //
+    // It is NOT printed for location. That row reads "the available location
+    // information does not meet the current verification standard", which
+    // describes the information; the traced cause is that the readings were
+    // acquired and then not retained when this assessment was saved
+    // (S2_LOCATION_EVIDENCE_TRACE.md). Printing the record's sentence would
+    // tell the reader their evidence was inadequate when the evidence was
+    // fine and this product dropped it.
     [8, B('definition-list', {
       title: '',
-      items: dims.filter((d) => !d.available).map((d) => ({ term: d.label, definition: d.reason })),
+      items: dims.filter((d) => !d.available).map((d) => ({
+        term: d.label,
+        definition: d.key === 'location'
+          ? 'The readings this criterion needs — walkability, the drive to the city and the school count — were obtained for this property and were not retained when this assessment was saved. Nothing about the property, or about the information available for it, caused that.'
+          : d.reason,
+      })),
     })],
-    [10, para('Neither absence is a finding about the property. Closing both is our work — the location readings re-acquire when this report is next produced, and the property-risk criterion needs its per-class questions answered on this file. The certificates and searches on the risk page are separate, and remain yours to obtain before contract.', { bodySize: 8.4 })],
-    [10, provisional('S2', 'Both absences and their reasons are read from the stored record; the projection publishes the three scored rows only.')],
-    [12, rule()],
+    [10, para('Neither absence is a finding about the property, and closing both is our work: the location readings re-acquire when this report is next produced, and the property-risk criterion needs its per-class questions answered on this file. The certificates and searches on the risk page are separate and remain yours, before contract.', { bodySize: 8.2 })],
+    [8, provisional('S2', 'Both absences and their reasons are read from the stored record; the projection publishes the three scored rows only.')],
+    [10, rule()],
     [8, eyebrow('EVIDENCE COVERAGE')],
     [4, B('progress-bars', {
       title: '',
@@ -369,9 +392,9 @@ const ASSESSMENT: Sheet = {
       ],
       accent: C.primary,
     })],
-    [14, eyebrow('WHY THE GRADE IS LOWER THAN THE SCORE')],
-    [8, para(`A separate measure sets the CEILING: across the full method the measured criteria deliver ${nominalPoints} of its 100 nominal points, and ${nominalPoints} supports at most ${capCeiling}. So the score is ${v2.score} (${v2.scoreGrade}) and the grade issued is ${v2.grade} — not a second opinion and not a penalty, but the rule that an unmeasured criterion never lifts a grade.`, { bodySize: 8.8 })],
-    [12, callout('What this means for this property', 'The largest gap is location, the second-heaviest criterion, on a property 90 m from a public school and 106 m from a bus stop in a straight line — so what is missing here is not obscure. Until it is measured this report gives you the score, the coverage and the grade, and stops short of an overall recommendation.')],
+    [12, eyebrow('WHY THE GRADE IS LOWER THAN THE SCORE')],
+    [8, para(`A separate measure sets the CEILING: across the full method the measured criteria deliver ${nominalPoints} of its 100 nominal points, and ${nominalPoints} supports at most ${capCeiling}. So the score is ${v2.score} (${v2.scoreGrade}) and the grade issued is ${v2.grade} — the rule that an unmeasured criterion never lifts a grade, not a second opinion.`, { bodySize: 8.6 })],
+    [10, callout('What this means for this property', 'The largest gap is location, the second-heaviest criterion, on a property 90 m from a public school and 106 m from a bus stop in a straight line — so what is missing is not obscure. Until it is measured this report gives you the score, the coverage and the grade, and stops short of an overall recommendation.')],
   ],
 };
 
@@ -384,8 +407,8 @@ const AMENITY: Sheet = {
     [0, eyebrow('PART 05 · AMENITY & ACCESS', C.muted)],
     [16, title('What is nearby, and how far')],
     [22, rule()],
-    [16, para('Two registers answer this page. The amenity register is an OpenStreetMap slice loaded on a schedule and read locally, so a count is what it holds rather than a live search; stops come from the Transport for NSW GTFS feed. EVERY DISTANCE HERE IS STRAIGHT-LINE from the verified coordinate — no walking or driving route is measured.')],
-    [12, eyebrow('NEAREST ON RECORD')],
+    [14, para('Two registers answer this page: an OpenStreetMap slice loaded on a schedule and read locally, so a count is what it holds rather than a live search, and the Transport for NSW GTFS stop feed. EVERY DISTANCE IS STRAIGHT-LINE from the verified coordinate — no route is measured.')],
+    [10, eyebrow('NEAREST ON RECORD')],
     [10, B('data-table', {
       ...TABLE,
       headers: ['Category', 'Nearest on record', 'Distance', 'What it means, and its limit'],
@@ -400,16 +423,16 @@ const AMENITY: Sheet = {
           'Transport',
           li.transport?.detailedStops?.[0]?.name ?? '—',
           `${Math.round((li.transport?.detailedStops?.[0]?.metres ?? 0))} m`,
-          `The nearest of the ${word(stops.length)} stops this record names. Mode and service frequency are not published per stop, so neither is stated.`,
+          `The closest of the ${word(stops.length)} nearest stops this record names individually. Mode and service frequency are not published per stop, so neither is stated.`,
         ] },
       ],
       fontSize: 8.2,
     })],
     [14, B('text-block', {
       bodySize: 8.2, bodyFont: 'token:body', bodyLineHeight: 1.5, color: C.caution,
-      body: `Two figures here look like they disagree and do not. The stop register holds ${grouped(li.transport?.stopsWithin1km)} boarding places within ${grouped(li.transport?.radiusMetres)} m of this property \u2014 a station and its platforms counted once \u2014 and the ${word(stops.length)} above are the nearest of them, which is all this record names. Separately, the amenity register reports no public transport at all, because its transit category is rail, metro and tram STATIONS within two kilometres and matches no bus stop: that nought is true about stations and says nothing about buses.`,
+      body: `Two figures here look like they disagree and do not. The stop register holds ${transportLabel.toLowerCase()} of this property, counting a station and its platforms once. The record names the ${word(stops.length)} nearest of them individually and the row above shows the closest of those ${word(stops.length)}; it is a sample, not the whole list. Separately, the amenity register reports no public transport at all, because its transit category is rail, metro and tram STATIONS within two kilometres and matches no bus stop: that nought is true about stations and says nothing about buses.`,
     })],
-    [12, eyebrow('THE FIVE NEAREST SCHOOLS')],
+    [10, eyebrow('THE FIVE NEAREST SCHOOLS')],
     [10, B('data-table', {
       ...TABLE,
       headers: ['School', 'Distance'],
@@ -418,7 +441,7 @@ const AMENITY: Sheet = {
       rows: schools.map((s: any) => ({ cells: [s.name, `${s.distance.toFixed(2)} km`] })),
       fontSize: 8.2,
     })],
-    [12, callout('What this means, and what to do before contract', 'The nearest of every category sits within a kilometre in a straight line, which suits the family tenant this dwelling is built for. Three limits matter: the register caps each category at ten, so a count of ten is a floor rather than a measurement; no rating, ranking or catchment is published here; and no walking or driving route is measured, so a short straight line is not a short walk. Before contract, confirm the catchment by address with the NSW School Finder and travel to the Windsor Road stop at the hour you would use it.')],
+    [12, callout('What this means, and what to do before contract', 'The nearest of every category sits within a kilometre in a straight line. Whether that suits the tenant a landlord would target depends on the dwelling — bedrooms, bathrooms, parking, condition — and this page establishes none of those, so it draws no conclusion about who would rent it. Three limits besides: the register caps each category at ten, so ten is a floor rather than a measurement; no rating, ranking or catchment is published here; and no route is measured, so a short straight line is not a short walk. Before contract, confirm the catchment with the NSW School Finder and travel to the Windsor Road stop at the hour you would use it.')],
     [16, provisional('S3 · S4', 'Named facilities and distances are read from the stored enrichment; the projection does not yet publish an amenity namespace.')],
   ],
 };
@@ -488,66 +511,62 @@ const RISK: Sheet = {
   pinned: foot('Page 24 of 36'),
   flow: [
     [0, eyebrow('PART 12 · RISK DASHBOARD', C.muted)],
-    [16, title('Exposure, and how well it is evidenced')],
+    [16, title('What is recorded, and what is exposed')],
     [18, rule()],
-    [12, para('EXPOSURE is how much this risk could matter; EVIDENCE names what was actually checked. Where a register published nothing here the exposure reads NOT ESTABLISHED, which is different from low, and a checklist of work still to do is never a clearance.')],
-    // A Chancery ledger table rather than the `risk-register` block.
-    //
-    // Two reasons, both the owner's corrections. The block draws its rating
-    // and confidence as pills from a fixed palette in `_chips.html.ts` that
-    // reads no template token and ignores `radius: '0'`, so it cannot wear
-    // this design (C6.3). And its column widths are fixed at 22/12/13/28/25%,
-    // which gives the two prose columns 135pt and 120pt — at five rows of
-    // properly qualified wording that is a page and a half. Merging what was
-    // checked with what to do into one 48% column halves the wrap.
-    //
-    // The exposure / evidence separation the owner asked to keep is kept: they
-    // are two columns, and the vocabularies stay distinct.
-    [12, B('data-table', {
+    // Two different kinds of thing were in one table. A planning control is
+    // something the scheme STATES about the land; a hazard exposure is
+    // something that could harm it, and a desktop layer returning nothing
+    // cannot set its severity. They are banded separately now.
+    [12, para('Two kinds of finding sit below and they are not read the same way. A PLANNING CONTROL is something the scheme states about this land: it is either published or it is not. An EXPOSURE is something that could affect value, and its severity has to be established — where no register settled it, this page says so rather than choosing a word.')],
+    [14, B('data-table', {
       ...TABLE,
-      headers: ['Risk', 'Exposure', 'Evidence', 'What was checked, and what to do before contract'],
-      columnWidths: [0.2, 0.14, 0.17, 0.49],
+      headers: ['Item', 'Status', 'On what basis', 'What it means, and what to do before contract'],
+      columnWidths: [0.17, 0.145, 0.135, 0.55],
       numericColumns: [],
       fontSize: 8.2,
+      sectionRows: [0, 3],
+      sectionBg: 'token:bg', sectionFg: 'token:accentOnField',
       rows: [
+        { cells: ['Planning controls the scheme publishes for this land'] },
         { cells: [
-          'Environmental — flood, bushfire, hazards',
-          'Not established',
-          'Desktop layers only',
-          'Nineteen hazard layers answered here and returned no mapped feature — but a layer answers at its published scale, not for the lot. An absence of mapping, not of hazard. Order the s.10.7(2) and (5) certificates and obtain AFRIP and RFS mapping.',
+          'Zone, height and minimum lot',
+          'Published',
+          'The Hills LEP 2019',
+          'R2 Low Density Residential; 10\u00A0m height (cl.\u00A04.3); 700\u00A0m² minimum lot, which this 765\u00A0m² recorded area exceeds by 65\u00A0m². A zone that admits a use is not approval for it: confirm the surveyed area and frontage before assuming a subdivision is feasible.',
         ] },
         { cells: [
-          'Planning — subdivision and densification',
-          'Moderate',
-          'Mapped control',
-          'R2 Low Density Residential, The Hills LEP 2019: 10\u00A0m height (cl.\u00A04.3), 700\u00A0m² minimum lot. This 765\u00A0m² lot is 65\u00A0m² above it. Confirm surveyed area and frontage against the minimum before assuming a split.',
-        ] },
-        { cells: [
-          'Planning — floor space ratio',
-          'Not established',
+          'Floor space ratio',
           'Not published',
-          'FSR caps TOTAL FLOOR AREA across all storeys against site area — not the footprint. The register answered here and published no figure, so permitted floor area is unknown. Read the FSR from the s.10.7(2) certificate and the DCP.',
+          'Register answered, no value',
+          'FSR caps TOTAL FLOOR AREA across all storeys against site area — not the building footprint. The register answered here and published no figure, so permitted floor area is not known from mapping. Read it from the s.10.7(2) certificate and the DCP.',
+        ] },
+        { cells: ['Exposures, and whether their severity is established'] },
+        { cells: [
+          'Flood, bushfire and related hazards',
+          'Severity not established',
+          'Desktop layers only',
+          'Nineteen hazard layers answered here and returned no mapped feature. A layer answers at its published scale, not for one lot, so this is an absence of mapping and NOT a finding that the property is unaffected — no severity can be set from it. Order the s.10.7(2) and (5) certificates and obtain AFRIP and RFS mapping.',
         ] },
         { cells: [
-          'Supply — competing new dwellings',
-          'Moderate',
-          'Council-wide count',
-          '680 new dwellings across 171 applications in The Hills Shire, six months to 17\u00A0Sep\u00A02026. Count how many are comparable detached houses before setting rent and resale assumptions.',
+          'Competing new dwellings',
+          'Measured, council-wide',
+          'NSW DA register',
+          '680 new dwellings across 171 applications in The Hills Shire, six months to 17\u00A0Sep\u00A02026 — a local government area count, not this street, and how much competes with this dwelling is not established. Count the comparable detached houses before setting rent and resale assumptions.',
         ] },
         { cells: [
-          'Transport — car reliance',
-          'Moderate',
-          'Stop register only',
-          `${grouped(li.transport?.stopsWithin1km)} boarding places within ${grouped(li.transport?.radiusMetres)}\u00A0m, nearest ${nearestStopMetres}\u00A0m straight-line; mode and frequency are not published per stop. Check Transport for NSW timetables for the routes on Windsor Road.`,
+          'Getting about without a car',
+          'Partly measured',
+          'GTFS stop register',
+          `${transportLabel}, nearest ${nearestStopMetres}\u00A0m straight-line. No walking route, mode or frequency is measured and no rail, metro or tram station is recorded within two kilometres, so how well the property is served is not established here. Check Transport for NSW timetables for the Windsor Road routes.`,
         ] },
       ],
     })],
     // C6.2 — a concise source, date and method line on the page; the full
     // provenance belongs in the appendix.
-    [16, eyebrow('WHERE EACH ROW CAME FROM', C.muted)],
-    [10, para('Hazard and planning controls: NSW Planning Portal and Spatial Services layers, read at this property\u2019s verified coordinate on 17 Sep 2026, each at its own publisher\u2019s scale. Supply: NSW development application register, The Hills Shire, applications determined 18 Mar – 17 Sep 2026. Transport: Transport for NSW GTFS stops (CC BY 4.0), straight-line distance from the coordinate. No field survey, certificate or site inspection informs this page.', { bodySize: 8, color: C.muted })],
-    [14, callout('How to read this page', 'Nothing here is rated High and nothing here is settled. All five rows carry an action, and two — environmental exposure and floor space ratio — read NOT ESTABLISHED rather than favourable, because the registers that would settle them published nothing here. This is a starting list for due diligence, not a clearance.')],
-    [12, provisional('S3 · S4', 'Rows are read from the stored planning and enrichment records; the projection does not yet publish a risk namespace with separate exposure and evidence fields. Drawn on the template\u2019s own ledger because the shared risk-register block\u2019s chips use a fixed palette that follows no colourway.')],
+    [12, eyebrow('WHERE EACH ROW CAME FROM', C.muted)],
+    [10, para('Planning controls: NSW Planning Portal and Spatial Services layers, read at this property\u2019s verified coordinate on 17 Sep 2026, each at its own publisher\u2019s scale. Supply: NSW development application register, The Hills Shire, applications determined 18 Mar – 17 Sep 2026. Transport: Transport for NSW GTFS stops (CC BY 4.0), straight-line distance from the coordinate. No field survey, certificate or site inspection informs this page.', { bodySize: 8, color: C.muted })],
+    [12, callout('How to read this page', 'Nothing here settles a site-specific question. Desktop registers say what has been PUBLISHED about an area; they do not inspect a lot, and where one returned nothing this page records that the severity is not established rather than choosing a comfortable word. Every row carries the step that would settle it, and those steps are yours and your adviser\u2019s before contract.')],
+    [12, provisional('S3 · S4', 'Rows are read from the stored planning and enrichment records; the projection does not yet publish a planning or exposure namespace. Drawn on the template\u2019s own ledger because the shared risk-register block\u2019s chips use a fixed palette that follows no colourway.')],
   ],
 };
 
