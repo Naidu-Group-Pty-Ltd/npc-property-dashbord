@@ -163,7 +163,15 @@ is an empty obsidian bar rather than no band. *(S3.)*
 **D5 — the rating and confidence chips ignore the colourway.**
 `RATING_PALETTE` and `CONFIDENCE_PALETTE` in `_chips.html.ts` are fixed
 literals, and `chip()` sets `border-radius` from the font size, so a family
-declaring `radius: '0'` still gets pills. Visible on page 6. *(S3.)*
+declaring `radius: '0'` still gets pills. Visible on page 6.
+*(**Colour: done in S3** — both palettes resolve `token:chip*Bg` / `token:chip*Fg`
+with today's value as each fallback, so a palette now has somewhere to say so
+and every existing document renders unchanged; see `S3_SHARED_PATH.md` § 7.
+**Radius: open, and it is a different question.** A colourway is tokens and
+nothing else — the catalogue's own rule — while `radius` is a FAMILY manifest
+property delivered to a block as a prop, so closing it means the master passing
+a radius to `risk-register` and `scorecard`, which is a re-seed of all 500
+masters rather than a change in this tree.)*
 
 **D6 — `decision-box` truncates at 60 words and prints an ellipsis.** The
 `maxWords` prop exists for exactly this reason and the catalogue passes 90; a
@@ -177,8 +185,13 @@ attribute and has no prop for one; the engine warns *"has no required alt
 description"*; the service only fails on warnings when `strict` is set, and it
 is not. So the letterhead mark on every page of every templated report breaks
 the accessibility variant the file claims. **Reproduced on this render** — the
-warning is in the script's output. *(S3 — an `alt` prop with a sensible default,
-plus `strict` in CI.)*
+warning is in the script's output.
+*(**Done in S3.** It was worse than this note knew: `alt=""` and no attribute at
+all produce a byte-identical PDF on WeasyPrint 69.0, so the two blocks that
+carried `alt=""` were failures rather than mitigations. One `imgTag` emitter
+now describes every image, and the claim is measured on the artefact by veraPDF
+1.30.2 rather than asserted from the export settings — three documents at zero
+failed rules. `S3_SHARED_PATH.md` § 5.)*
 
 **D8 — two CSS declarations the compiler emits are unknown to the pinned
 engine**: `print-color-adjust: exact` and `isolation: isolate` are both
