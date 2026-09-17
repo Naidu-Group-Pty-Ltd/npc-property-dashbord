@@ -22,14 +22,25 @@ describe("the committed index matches the migrations it describes", () => {
 });
 
 describe("it records what this repository created and what it dropped", () => {
-  it("finds the object that started this: created, then dropped", () => {
-    // `public.builder_design_images` is present on a tenant provisioned from
-    // this repository and in no schema here — created by
-    // 20261102000000_builder_design_images.sql and dropped by
-    // 20261104000000_builder_stock_withdraw_design_renders.sql. That pair is
-    // what makes it OUR leftover rather than the tenant's own table.
-    expect(committed.created).toContain("table:public.builder_design_images");
+  it("finds the object that started this, by the drop that disowns it", () => {
+    /*
+     * `public.builder_design_images` is present on a tenant provisioned from
+     * this repository and in no schema here. It used to be BOTH created and
+     * dropped in the tree — 20261102000000_builder_design_images.sql against
+     * 20261104000000_builder_stock_withdraw_design_renders.sql — and that
+     * pair was what named it ours.
+     *
+     * "Phase 7 wave 3 — the builder portal leaves the prime, one way"
+     * (d545665) took the creating migration out of the tree, so only the drop
+     * remains. That is still the reading the index exists to give: a consumer
+     * seeing this name on a tenant can tell it is this repository's leftover
+     * rather than the tenant's own table. The `created` half is asserted
+     * where it is still true — the corpus test below — because pinning a name
+     * whose migration has left is how this test came to describe a file that
+     * no longer exists.
+     */
     expect(committed.dropped).toContain("table:public.builder_design_images");
+    expect(committed.created).not.toContain("table:public.builder_design_images");
   });
 
   it("is a real corpus rather than a stub", () => {

@@ -556,13 +556,33 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     ['LVR at settlement', '{{financials.lvr | percent:0}}', 'Loan over price'],
     ['Total upfront cash', '{{financials.totalCost | currency}}', 'Cash required at settlement'],
   ];
-  const cashflowRows = [
+  /**
+   * The cash flow table foots, and every line it subtracts is on it.
+   *
+   * The engine holds EIGHT annual cost components and this table printed four
+   * of them, so on 262 Pallas Street the rows came to $10,780 against a net
+   * position built on $12,880 and the reader was $2,100 short with nowhere
+   * to look. The projection now folds water rates into the row whose label
+   * already claims them and letting fees into management, and publishes land
+   * tax and strata as `annualOtherCosts` — a row that draws only where they
+   * come to something, because both are nil on an ordinary house and a line
+   * of $0 is one the reader has to discount rather than read.
+   */
+  const cashflowRows: TableRowDef[] = [
     ['Rental income', '{{financials.weeklyRent | currency}}', '{{financials.annualRent | currency}}'],
+    {
+      cells: ['Vacancy allowance', '{{financials.weeklyVacancyAllowance | currency}}', '{{financials.annualVacancyAllowance | currency}}'],
+      when: 'financials && financials.annualVacancyAllowance',
+    },
     ['Loan repayments', '{{financials.weeklyRepayment | currency}}', '{{financials.annualRepayment | currency}}'],
     ['Council and water rates', '{{financials.weeklyRates | currency}}', '{{financials.annualRates | currency}}'],
     ['Insurance', '{{financials.weeklyInsurance | currency}}', '{{financials.annualInsurance | currency}}'],
     ['Management', '{{financials.weeklyManagement | currency}}', '{{financials.annualManagement | currency}}'],
     ['Maintenance', '{{financials.weeklyMaintenance | currency}}', '{{financials.annualMaintenance | currency}}'],
+    {
+      cells: ['Land tax and strata', '{{financials.weeklyOtherCosts | currency}}', '{{financials.annualOtherCosts | currency}}'],
+      when: 'financials && financials.annualOtherCosts',
+    },
     ['Net position', '{{financials.weeklyNet | currency}}', '{{financials.annualNet | currency}}'],
   ];
 
