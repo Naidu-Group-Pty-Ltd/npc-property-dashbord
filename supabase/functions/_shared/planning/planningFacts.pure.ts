@@ -921,5 +921,28 @@ export function planningFactBlocks(facts: PlanningFacts): string {
     '5. A zone that admits a use is not approval for it. Describe any development potential as conditional and subject '
     + 'to assessment, and never quantify an uplift.',
     '6. Say plainly that this is desktop research and that the verification instrument is what settles it.',
+    /*
+     * Rule 4 closes the STATEMENT; this closes the RATING.
+     *
+     * On 262 Pallas Street the model obeyed rule 4 exactly where it was
+     * written — the flood and bushfire rows read "Moderate", chipped
+     * "Unverified — no council flood overlay … was retrieved" — and then rated
+     * a row Low from the same kind of absence one line further down:
+     * "Environmental nuisance | **Low** | … | Unverified — no acoustic or
+     * industrial-use overlay was retrieved, streetscape character is INFERRED
+     * from Maryborough's low-density residential pattern." Nothing there is a
+     * statement that no overlay applies, so rule 4 admitted it; the exposure
+     * rating is still drawn from having looked and not found, which is the
+     * same error one level up.
+     */
+    '7. An absence may NOT be rated. Where a risk register, a scorecard, a SWOT table or any other rating has a '
+    + 'row whose evidence is something this report did not retrieve, the rating cell reads "Not assessed" and '
+    + 'the row says what has to be obtained to settle it. Never rate it Low, Minimal, Limited, Negligible or '
+    + 'Favourable, and never '
+    + 'file it as a strength: not retrieving a control is not evidence that the control is absent or benign. An '
+    + 'inference from the area\u2019s general character is not a retrieval either, and may not carry a rating.',
+    '8. An evidence, confidence or verification note describes the RETRIEVAL and never the conclusion beside it. '
+    + '"Verified" may be written of a table reading and may NOT be written of a rating, an outlook or a '
+    + 'recommendation drawn from it.',
   ].join('\n');
 }

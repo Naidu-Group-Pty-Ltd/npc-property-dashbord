@@ -614,3 +614,120 @@ overlay classifier (`(scheme && MAP[scheme]) ?? …`, where `??` does not catch
 the `''` that `&&` carries through) came from `deno check` over the pure
 planning modules: `tsc` covers `src` only, so these modules are type-checked
 by nothing in a local run and by the ratcheted edge gate in CI.
+
+---
+
+## 9. An absence may not be rated (17 Sep 2026)
+
+§8 closed the invented control. This closes the opposite failure, which the
+same document then committed: not a fact the record could not back, but a
+*conclusion* drawn from the record having nothing to say.
+
+### 9.1 The row
+
+From the Compass generated for **262 Pallas Street, Maryborough**, in
+`## Risk Dashboard` → `### Consolidated Risk Register`:
+
+| Risk Category | Level | Why It Matters | Required Check | Evidence Chip |
+|---|---|---|---|---|
+| Infrastructure timing and pipeline | **Low** | The absence of a named infrastructure pipeline in the registers searched means this property's performance is tied to broader Maryborough fundamentals rather than specific projects. | Note that no state development area or priority project was retrieved for this coordinate… | **Verified** — Queensland StatePlanning layers checked at the coordinate show no declared priority development area, state development area, coordinated project or infrastructure designation. |
+
+Every fact in it is true. The conclusion is unsupported three separate times.
+
+**The rating.** `Low` is a statement about this property's exposure, and the
+only thing behind it is a register having returned nothing. Three paragraphs
+higher on the same page, this report says those registers do **not** reach
+council capital works programmes, state and federal budget infrastructure
+programmes, or transport, water, energy and health agency announcements —
+which is where a regional centre's infrastructure is actually recorded. The
+search measured the search.
+
+It is an asymmetry this repository has already written down twice and had not
+applied here. `TRANSPORT_SOURCES.md`: *a stop found is a fact about the area;
+no stop found is a fact about the FEEDS.* `PEP_DETERMINATION_EVIDENCE.md`: a
+hit is surfaced as a signal while a miss says nothing. `planningFactBlocks`
+rule 4 says the same thing one level down — *an absence in the table is a
+statement about what was retrieved, never a finding about the land* — and the
+model **obeyed** it: the flood and bushfire rows read `Moderate`, chipped
+`Unverified — no council flood overlay … was retrieved`. Rule 4 closed the
+sentence and left the rating open, and one row below the model wrote
+`Environmental nuisance | **Low** | … | Unverified — no acoustic or
+industrial-use overlay was retrieved, streetscape character is **inferred**
+from Maryborough's low-density residential pattern.`
+
+**The chip.** `Verified` is true of the layer reading and was written against
+the *rating*, which the reading does not verify. A chip that vouches for a
+retrieval and a chip that vouches for a conclusion look identical in the cell.
+
+**"the registers searched".** Queensland's development-application register
+was never searched and cannot be: no state-wide feed is published for the
+jurisdiction, which is exactly what `developmentActivity` said
+(`status: not_served`). `buildInfrastructureEvidence` carried both absences as
+plain strings in one `absences: string[]`, and rendered both under one heading
+reading `**Not retrieved.**` — so nothing downstream could tell a register
+that answered *nothing here* from one nobody could ask.
+
+### 9.2 The rules
+
+1. **An absence may not be rated.** Where a risk register, a scorecard, a SWOT
+   table, a heat map or any other rating has a row whose evidence is something
+   the report did not retrieve, the rating cell reads **"Not assessed"** and
+   the row states which registers were asked and which publish nothing. Never
+   Low, Minimal, Limited, Negligible or Favourable; never filed as a strength
+   or an opportunity. An inference from the area's general character is not a
+   retrieval either.
+2. **An evidence note describes the retrieval, never the conclusion beside
+   it.** "Verified" may vouch for a layer reading — checked at this coordinate,
+   answered nothing — and may not vouch for the rating, outlook or
+   recommendation drawn from it.
+3. **The two absences are different sentences.** `none_at_point` is a register
+   asked here that holds nothing here; `not_served`, `not_integrated`,
+   `licence_restricted` and `unavailable` are four ways of never having asked.
+   `RegisterReading` carries the distinction and the page prints
+   **"Searched, nothing found."** or **"Not searched."** accordingly — and the
+   rules name the register in each sentence, so the model cannot describe an
+   unsearchable register as one it searched.
+
+### 9.3 Where it lives
+
+| File | What changed |
+|---|---|
+| `_shared/planning/infrastructureEvidence.pure.ts` | `RegisterReading` and `evidence.readings`; per-kind absence headings; rules 4–5 (empty branch) and 7–8 (evidenced branch), from one `NO_RATING_FROM_AN_ABSENCE` so the two branches cannot drift; `registerSentences()` names each register and which sentence is true of it. |
+| `_shared/planning/planningFacts.pure.ts` | Rules 7–8 on `planningFactBlocks`, closing the rating where rule 4 closed only the statement. |
+| `_shared/compassSectionRegistry.ts` + `src/lib/reports/compassSectionRegistry.ts` | The risk dashboard's level vocabulary gains `Not assessed`, with the reason, and the chip rule is stated as "never against the LEVEL". |
+| `src/lib/reports/__tests__/absenceIsNeverRated.spec.ts` | 22 assertions. |
+
+`evidence.absences` keeps the same strings in the same order — it is on the
+persisted location record and three readers take it — and `readings` is added
+beside it, derived from the same push so the two cannot disagree.
+
+### 9.4 The three things that had to be checked, not assumed
+
+A rule telling a model to write a word is worthless if something downstream
+deletes it, or if another prompt block forbids it. All three were verified by
+executing the module, not by reading it:
+
+1. **The section registry offered no such level.** It declared
+   *"A level (Low/Moderate/High) describes exposure"*. Shipping a rule that
+   says "write Not assessed" against a prompt block that offers three other
+   words is the two-contradicting-blocks defect this programme already traced
+   on the bedroom/bathroom counts. The registry now names it, in both mirrors
+   (`compassRegistryParity.spec.ts` compares them field by field).
+2. **`stripPlaceholderRows` deletes a table row whose first value cell is a
+   placeholder** — and the rule puts a new word in exactly that cell. Its
+   pattern is `n/a|tbd|to be determined|not available|not provided|unknown|—|-|–`,
+   so "Not assessed" survives; pinned by execution, because this scrub runs on
+   four read paths and a silent deletion looks exactly like a model that never
+   wrote the row.
+3. **`riskDashboardContract`'s `ASSESSED_ENTRY` does not match `| Not assessed |`**,
+   deliberately — it means "carries a rating", and this is the absence of one.
+   The classification is unaffected because it is reached only for a body of
+   bullets, and the spec pins that rather than leaving it to be rederived.
+
+### 9.5 What this does not do
+
+It governs what the report may **conclude** from an absence. It does not
+retrieve a council capital works programme, a state budget line or an agency
+announcement — those remain outside every register this platform reads, named
+on the page as such. A `Not assessed` row is an honest statement of the gap,
+not a closure of it.

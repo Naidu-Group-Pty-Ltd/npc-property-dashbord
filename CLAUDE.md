@@ -1712,6 +1712,34 @@ a date something HAPPENED rather than a completion, and the coverage
 limitation — council capital works, budget programmes, agency announcements —
 is stated on a full list as well as an empty one.
 
+**And an absence may not be RATED** (§9 of the same doc). The opposite of the
+invented control, committed by the same document: `Infrastructure timing and
+pipeline | **Low** | The absence of a named infrastructure pipeline in the
+registers searched …`, chipped **Verified**. Every fact in that row is true and
+the conclusion is unsupported three times — the `Low` is a statement about the
+area drawn from the coverage of a search, three paragraphs under a sentence
+naming council capital works and agency announcements as things the search does
+not reach; the `Verified` is true of the layer reading and was written against
+the rating; and Queensland's DA register was never "searched" and cannot be, so
+the sentence misdescribes the report's own evidence. Three rules. **An absence
+may not be rated** — `Not assessed` is the level, and never Low, Minimal,
+Limited, Negligible or Favourable, and never a strength (an inference from the
+area's general character is not a retrieval either). **An evidence note
+describes the RETRIEVAL, never the conclusion beside it.** And **the two
+absences are different sentences**: `none_at_point` is a register asked here
+that holds nothing here, the other four are ways of never having asked, so
+`RegisterReading` carries the distinction and the page prints "Searched,
+nothing found." or "Not searched." The same gap existed one level down —
+`planningFactBlocks` rule 4 closed the STATEMENT ("never write that no overlay
+applies") and the model obeyed it, then rated `Environmental nuisance | Low`
+from the same absence one row later. Three things had to be CHECKED rather than
+assumed, because a rule that names a word is worthless if something deletes it:
+the section registry offered only Low/Moderate/High (the two-contradicting-
+prompt-blocks defect again, so it names `Not assessed` now in both mirrors),
+`stripPlaceholderRows` deletes a row whose first value cell is a placeholder,
+and `riskDashboardContract`'s `ASSESSED_ENTRY` does not match it — all three
+pinned by execution.
+
 **The first regeneration then found that a rule can reach the model and its
 evidence not** (§6 of the same doc). Regenerated 17 Sep 2026 the placeholders
 were gone and the document still said *"low-density residential zoning"*,

@@ -51,6 +51,33 @@
  * 6. **Development nearby cuts both ways.** Dwellings in the pipeline are
  *    competing supply as well as a sign of confidence, and the reading says
  *    so rather than filing them under opportunity.
+ * 7. **An absence may not be rated.** A register that answered nothing has
+ *    measured the SEARCH, not the area, so nothing it returned can carry a
+ *    risk rating, a score or a favourable finding. 262 Pallas Street is what
+ *    this exists for: its risk register read *"Infrastructure timing and
+ *    pipeline | **Low** | The absence of a named infrastructure pipeline in
+ *    the registers searched means this property's performance is tied to
+ *    broader Maryborough fundamentals"*, chipped **Verified**. Two things go
+ *    wrong there and rules 7 and 8 close one each. The **Low** is a
+ *    conclusion about the area drawn from the coverage of a search — and the
+ *    coverage statement three paragraphs above it says these registers do not
+ *    reach council capital works, budget programmes or agency announcements,
+ *    which is where a regional centre's infrastructure actually lives. It is
+ *    the asymmetry this repository has already written down twice: *a stop
+ *    found is a fact about the area; no stop found is a fact about the
+ *    FEEDS*, and a sanctions hit is a signal while a miss says nothing.
+ * 8. **An evidence note describes the retrieval, never the conclusion beside
+ *    it.** "Verified" was true of the layer reading on that row — the four
+ *    Queensland layers were checked at the coordinate and matched nothing —
+ *    and it was written against the *rating*, lending a retrieval's
+ *    verification to an inference the retrieval does not support.
+ * 9. **The two absences are different sentences.** `none_at_point` is a
+ *    register that was asked here and holds nothing here; everything else is
+ *    a register that was never asked at all. That row called the Queensland
+ *    development-application register one of "the registers searched", and it
+ *    cannot be searched — no state-wide feed is published for the
+ *    jurisdiction. `absences` was a flat list of strings, so the prose had no
+ *    way to tell them apart.
  *
  * Pure: no fetch, no Deno, no clock.
  */
@@ -102,6 +129,32 @@ export function readDeliveryStanding(raw: string | null): DeliveryStanding | nul
   if (/^(deferred|delayed|on hold|paused)\b/.test(s)) return 'delayed';
   if (/^(withdrawn|refused|rejected|cancelled|lapsed|discontinued)\b/.test(s)) return 'cancelled';
   return null;
+}
+
+/**
+ * A register that returned no item, and whether it was actually asked.
+ *
+ * Rule 9. The planning service publishes five distinct absences
+ * (`none_at_point`, `not_served`, `not_integrated`, `licence_restricted`,
+ * `unavailable`) and this collapses them onto the ONE distinction a reader's
+ * conclusion turns on: was the question put, or not.
+ */
+export interface RegisterReading {
+  /** Which register, in words a reader can match to the sentence. */
+  register: 'development instruments' | 'development applications';
+  /**
+   * `searched_empty` — the register was asked at this location and answered
+   * that it holds nothing here. Within that register's own coverage, that is
+   * a fact about the AREA.
+   *
+   * `not_searched` — nothing was asked. The jurisdiction publishes no such
+   * register, the layer is not integrated, its licence forbids it, or the
+   * request failed. That is a fact about THIS PLATFORM, and no finding about
+   * the area follows from it at all.
+   */
+  reading: 'searched_empty' | 'not_searched';
+  /** The service's own note, verbatim. */
+  note: string;
 }
 
 export interface InfrastructureItem {
@@ -180,8 +233,17 @@ export interface InfrastructureEvidence {
   pipelineDwellings: { total: number; rowsStating: number; window: string; council: string } | null;
   /** Aggregate stated investment, with how many rows stated one. */
   pipelineInvestment: { total: number; rowsStating: number } | null;
-  /** Why an empty list is empty, per register. */
+  /**
+   * Why an empty list is empty, per register — as strings, for the persisted
+   * record and for every caller that already reads it.
+   */
   absences: string[];
+  /**
+   * The same absences, typed, so the prose can say which kind each one is
+   * (rule 9). Derived from `absences`' own readings rather than beside them,
+   * so the two can never disagree.
+   */
+  readings: RegisterReading[];
   /** What these registers do not reach at all (rule 5). */
   coverageLimits: string[];
   retrievedAt: string | null;
@@ -221,7 +283,28 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
   const data = isRecord(input.planningData) ? input.planningData : null;
   const retrievedAt = data ? str(data.fetchedAt) : null;
   const items: InfrastructureItem[] = [];
-  const absences: string[] = [];
+  const readings: RegisterReading[] = [];
+
+  /*
+   * A register that answered nothing, filed by whether it was asked (rule 9).
+   *
+   * `none_at_point` is the ONLY status that means the question was put and
+   * the answer was "nothing here". `not_served`, `not_integrated`,
+   * `licence_restricted` and `unavailable` all mean no question was put, for
+   * four different reasons — and a report that describes any of them as a
+   * register it searched has stated something false about its own evidence.
+   */
+  const note = (
+    register: RegisterReading['register'],
+    block: Record<string, unknown>,
+    fallback: string,
+  ): void => {
+    readings.push({
+      register,
+      reading: str(block.status) === 'none_at_point' ? 'searched_empty' : 'not_searched',
+      note: str(block.note) ?? fallback,
+    });
+  };
 
   // ── state development instruments, at the property's own coordinate ───────
   const inst = isRecord(data?.developmentInstruments) ? data!.developmentInstruments : null;
@@ -255,7 +338,7 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       });
     }
   } else if (inst) {
-    absences.push(str(inst.note) ?? 'No state development-instrument reading for this point.');
+    note('development instruments', inst, 'No state development-instrument reading for this point.');
   }
 
   /*
@@ -417,14 +500,17 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       });
     }
   } else if (act) {
-    absences.push(str(act.note) ?? 'No development-application register reading for this jurisdiction.');
+    note('development applications', act, 'No development-application register reading for this jurisdiction.');
   }
 
   return {
     items,
     pipelineDwellings,
     pipelineInvestment,
-    absences,
+    // The strings stay exactly what they were, in exactly the order they were
+    // pushed, so the persisted record and every existing reader are unchanged.
+    absences: readings.map((r) => r.note),
+    readings,
     coverageLimits: [...INFRASTRUCTURE_COVERAGE_LIMITS],
     retrievedAt,
     anyEvidenced: items.length > 0 || pipelineDwellings !== null,
@@ -552,8 +638,22 @@ export function renderInfrastructureOutlook(evidence: InfrastructureEvidence): s
     lines.push('');
   }
 
-  for (const note of evidence.absences) {
-    lines.push(`**Not retrieved.** ${note}`);
+  /*
+   * Each absence under the heading that is true of it (rule 9).
+   *
+   * Every one of these used to read "**Not retrieved.**", which is right for a
+   * register nobody could ask and wrong for one that was asked and answered
+   * "nothing here" — the Queensland layers were checked at this coordinate and
+   * matched none of the four. Printing one heading over both is what let the
+   * prose beside the table call an unsearchable register one of "the registers
+   * searched".
+   */
+  for (const r of evidence.readings) {
+    lines.push(r.reading === 'searched_empty'
+      ? `**Searched, nothing found.** ${r.note} That is what these layers hold at this point, within the `
+        + 'coverage stated below.'
+      : `**Not searched.** ${r.note} No question was put to this register, so nothing about this area follows `
+        + 'from it.');
     lines.push('');
   }
 
@@ -562,7 +662,12 @@ export function renderInfrastructureOutlook(evidence: InfrastructureEvidence): s
     '**What this covers, and what it does not.** These entries come from the planning registers this platform '
     + 'reads at the property\'s own coordinate and for its local government area. They do NOT cover '
     + `${evidence.coverageLimits.join(', ')}. A short list here is a statement about those registers rather than `
-    + 'a finding that nothing is planned nearby.',
+    + 'a finding that nothing is planned nearby, and it is not a basis for rating infrastructure risk as low: '
+    // "a regional centre's" was wrong here and right in the rule it mirrors.
+    // This paragraph draws on every property the platform reports on, and the
+    // first two it was measured against are Maryborough and Kellyville — one
+    // regional centre and one metropolitan Sydney suburb.
+    + 'what these registers do not reach is where much of an area\u2019s infrastructure is actually recorded.',
   );
   lines.push('');
   lines.push(
@@ -574,20 +679,66 @@ export function renderInfrastructureOutlook(evidence: InfrastructureEvidence): s
   return lines.join('\n');
 }
 
+/**
+ * The rating prohibition, in the words the model is handed.
+ *
+ * Rules 7 and 8 of this module's header. It is one string because the two
+ * branches below need the identical prohibition — a short list and an empty
+ * one are the same mistake waiting to be made — and two copies of a rule is
+ * how one screen comes to warn about something the other does not.
+ */
+const NO_RATING_FROM_AN_ABSENCE: readonly string[] = [
+  'An absence may NOT be rated. Where a risk register, a scorecard, a SWOT table, a heat map or any other '
+  + 'rating gives infrastructure a row, the rating cell reads "Not assessed" and the row states which registers '
+  + 'were asked and which publish nothing. Never rate it Low, Minimal, Limited, Negligible, Favourable or any '
+  + 'other reassuring value, and never file it as a strength or an opportunity. A register that returned '
+  + 'nothing has '
+  + 'measured the SEARCH, not the area — and the coverage sentence above names council capital works, budget '
+  + 'programmes and agency announcements as things it does not reach, which is where much of an area\u2019s '
+  + 'infrastructure is actually recorded.',
+  'An evidence, confidence or verification note describes the RETRIEVAL and never the conclusion beside it. '
+  + '"Verified" may be written of a register reading — that a layer was checked and answered nothing at this '
+  + 'coordinate — and may NOT be written of a rating, an outlook, a recommendation or any inference drawn from '
+  + 'it. Where the conclusion is yours rather than the register\u2019s, say so in those words.',
+];
+
+/**
+ * How each register that returned nothing must be described (rule 9).
+ *
+ * A register asked at this point and a register that publishes nothing at all
+ * are two different statements, and a report that calls the second one "a
+ * register searched" has misdescribed its own evidence. The sentences are
+ * generated per reading rather than written once, so a jurisdiction where both
+ * kinds occur gets both.
+ */
+function registerSentences(readings: readonly RegisterReading[]): string[] {
+  return readings.map((r, i) => r.reading === 'searched_empty'
+    ? `1${String.fromCharCode(97 + i)}. The ${r.register} register WAS asked at this property\u2019s coordinate `
+      + `and answered that it holds nothing here: "${r.note}" You may say it was checked and returned nothing. `
+      + 'That is true of those layers at this point and of nothing else.'
+    : `1${String.fromCharCode(97 + i)}. The ${r.register} register was NOT searched: "${r.note}" Do NOT write `
+      + 'that it was searched, that it returned nothing, or that nothing was found in it. No question was put, '
+      + 'so no finding about this area follows from it.');
+}
+
 /** The rules the prose beside the table must obey. */
 export function infrastructureRules(evidence: InfrastructureEvidence): string {
   if (evidence.enrichmentMissing || !evidence.anyEvidenced) {
     return [
       'INFRASTRUCTURE RULES FOR THE WHOLE REPORT — nothing was retrieved for this property. They apply in '
-      + 'every section and override anything a live web search returns.',
+      + 'every section, including risk registers, scorecards, SWOT tables, checklists, summaries and verdicts, '
+      + 'and they override anything a live web search returns.',
       '1. Say in one sentence that no infrastructure project or development instrument was retrieved for this '
-      + 'location, and that this is a statement about the registers searched rather than a finding that nothing '
-      + 'is planned.',
+      + 'location, and that this is a statement about the registers this platform reads rather than a finding '
+      + 'that nothing is planned.',
+      ...registerSentences(evidence.readings),
       '2. Do NOT name a project, a rail line, a station, a hospital, a road upgrade, a town-centre renewal or a '
       + 'delivery horizon — not from a budget page, a news article or an agency media release found by search. '
       + 'Do NOT draw a `{{timeline: …}}` pipeline. There is nothing to put in it.',
       '3. Do NOT say that infrastructure supports, drives or underwrites capital growth for this property. That is '
       + 'a causal claim, and there is no project here to hang it on.',
+      `4. ${NO_RATING_FROM_AN_ABSENCE[0]}`,
+      `5. ${NO_RATING_FROM_AN_ABSENCE[1]}`,
     ].join('\n');
   }
   return [
@@ -606,5 +757,8 @@ export function infrastructureRules(evidence: InfrastructureEvidence): string {
     + 'carries no dates, draw no timeline.',
     '6. Repeat the coverage limitation in your own words: these registers do not cover council capital works, '
     + 'budget programmes or agency announcements, so a short list is a short search.',
+    `7. ${NO_RATING_FROM_AN_ABSENCE[0]} A SHORT list is the same mistake as an empty one: rate what the table `
+    + 'states, never the length of it.',
+    `8. ${NO_RATING_FROM_AN_ABSENCE[1]}`,
   ].join('\n');
 }
