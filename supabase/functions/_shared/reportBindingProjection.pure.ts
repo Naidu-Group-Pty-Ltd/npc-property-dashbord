@@ -127,6 +127,7 @@ import { rentIsEstablished } from './reports/investment/rentalEvidence.pure.ts';
 import { gradedDetailLine, gradedLine, publishableGrade } from './reports/investment/scoreSections.pure.ts';
 import { OVERALL_GRADE_UNAVAILABLE } from './reports/market/scoringInputPolicy.pure.ts';
 import { DOCUMENT_IDENTITY, documentTitleForTier } from './reports/investment/tierIdentity.pure.ts';
+import { contentPolicyFor } from './reports/investment/tierContent.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
@@ -302,6 +303,7 @@ function specReader(
  * every reader that already resolves it through the projection.
  */
 export { DOCUMENT_IDENTITY, documentTitleForTier };
+export { contentPolicyFor };
 
 export interface ProjectedNamespaces {
   property: Record<string, unknown>;
@@ -415,7 +417,26 @@ export function projectReportNarrative(
  *
  * Every namespace returned is partial by design; merge it over the raw ones.
  */
-export function projectInvestmentReport(row: InvestmentReportRowLike): ProjectedNamespaces {
+/**
+ * Options for a caller that is not rendering the row as its own document.
+ *
+ * `tier` overrides the row's. It exists for ONE caller and the reason matters:
+ * `condense-investment-report` projects the PARENT Compass to assemble the
+ * facts block for a Briefing or a Snapshot, and a Snapshot's whole purpose is
+ * the figures. Keying the withholding on the row being read would have handed
+ * the Snapshot's prompt a parent with no modelling in it and quietly emptied
+ * the one tier that exists to carry it. The document being PRODUCED decides
+ * what may be published, so the producer names its own tier.
+ */
+export interface ProjectionOptions {
+  /** The tier of the document being produced, when it is not the row's own. */
+  tier?: string | null;
+}
+
+export function projectInvestmentReport(
+  row: InvestmentReportRowLike,
+  options: ProjectionOptions = {},
+): ProjectedNamespaces {
   const specs = obj(row.property_specs);
   // Stored financials are reconciled before anything reads them: historic
   // rows carry the pre-fix fold's inflated series and totals that do not
@@ -683,6 +704,28 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   // scorer had no data for — `demandScore` and `growthScore` on the sampled
   // rows — so each entry is only emitted where it says something.
   const breakdown = obj(score.breakdown);
+  /*
+   * Resolved here rather than beside the document identity below, because the
+   * scorecard needs it: a dimension's own explanation can be financial
+   * modelling. See `MODELLING_DETAIL_DIMENSIONS`.
+   *
+   * The document being produced decides what may be published — the row's own
+   * tier for every caller but the condense fork. See `ProjectionOptions`.
+   */
+  const tier = String(row.report_tier ?? 'compass').trim().toLowerCase();
+  const policy = contentPolicyFor(options.tier ?? tier);
+
+  /**
+   * Dimensions whose `details` sentence states financial modelling.
+   *
+   * Narrow by construction and keyed on the dimension rather than matched on
+   * the text, for the reason `MODELLING_KEYS` is a list: a regex over a
+   * model-adjacent sentence either misses a phrasing or eats a legitimate
+   * one, and both are silent. Growth, Location, Demand and Risk explain
+   * themselves in market and locality terms and are published on every tier.
+   */
+  const MODELLING_DETAIL_DIMENSIONS = new Set(['yieldScore']);
+
   const DIMENSIONS: Array<{ key: string; label: string }> = [
     { key: 'growthScore', label: 'Growth' },
     { key: 'locationScore', label: 'Location' },
@@ -751,7 +794,20 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
       put(entry, 'weight', weight);
       put(entry, 'scoreLabel', score !== undefined ? String(Math.round(score)) : undefined);
       put(entry, 'weightLabel', weight !== undefined ? `${Math.round(weight)}%` : undefined);
-      put(entry, 'details', humaniseScoreDetail(str(d.details)));
+      // A dimension's own explanation can BE the modelling. The Yield
+      // scorer's reads `4.52% gross yield on a $575,000 purchase price.` —
+      // a yield, computed against the price, in one sentence — and it was
+      // printed on page 4 of a Compass that publishes neither. Withholding
+      // `financials.grossYield` and leaving its rationale on the scorecard
+      // is the same figure through a second door.
+      //
+      // The dimension keeps its label, its score and its weight: it was
+      // measured and it carries weight in the grade, and saying so is not
+      // modelling. What goes is the arithmetic behind it, which belongs in
+      // the Financial Analysis with the rest.
+      if (policy.financialModelling || !MODELLING_DETAIL_DIMENSIONS.has(key)) {
+        put(entry, 'details', humaniseScoreDetail(str(d.details)));
+      }
     }
     return entry;
     // A dimension the record does not carry at all has no score AND no
@@ -803,15 +859,71 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   // now, and THIS is the one place the tier is translated into them; an
   // unrecognised or absent tier reads as compass, which is what the ranking's
   // default document has always been.
-  const tier = String(row.report_tier ?? 'compass').trim().toLowerCase();
   const identity = DOCUMENT_IDENTITY[tier] ?? DOCUMENT_IDENTITY.compass;
   put(report, 'tier', tier);
   put(report, 'documentTitle', identity.title);
-  put(report, 'standfirst', identity.standfirst);
+  // The standfirst comes from the CONTENT policy, not from the identity table,
+  // because it is a promise about what the document holds. The Compass's read
+  // "What the property is, what it costs to hold, and what the assessment
+  // concluded" — which promised the financial modelling the Compass does not
+  // carry, on the cover, above a page sequence that then drew it.
+  put(report, 'standfirst', policy.standfirst);
+  put(report, 'companionNote', policy.companionNote ?? undefined);
+  put(report, 'drawsFinancialModelling', policy.financialModelling);
+
+  /*
+   * What the tier may publish.
+   *
+   * This is the authority, and it is HERE rather than in a renderer because
+   * this projection is what every template is bound from: withholding a
+   * namespace once reaches all 500 seeded masters, every future one, and both
+   * render routes, while a fix inside one composer reaches one composer.
+   *
+   * `compassSectionRegistry.ts` has said since v2.0 that a Compass carries no
+   * financial modelling and the generator obeys it — the prose has no
+   * financial section in it. The MASTERS drew it anyway, from these bindings,
+   * so the Compass opened on purchase price, gross yield, LVR and a ten-year
+   * equity projection. One rule, one module, both ends.
+   *
+   * Withholding the modelling is not withholding the price: `identityFigures`
+   * keeps the asking price and the indicative rent on every tier, because they
+   * are facts about the asset in the way its land size is. What leaves is the
+   * analysis of a PURCHASE — yield, LVR, loan structure, cash flow, the
+   * ten-year series — and a block bound only to those draws nothing, which is
+   * how a conditional page drops cleanly rather than printing labelled holes.
+   */
+  const MODELLING_KEYS = [
+    'grossYield', 'netYield', 'cashOnCash', 'lvr', 'weeklyNet', 'annualNet',
+    'loanAmount', 'weeklyRepayment', 'annualRepayment', 'stampDuty', 'legalFees',
+    'inspectionFees', 'lmi', 'totalCost', 'deposit', 'totalInvestment',
+    'annualRates', 'weeklyRates', 'annualInsurance', 'weeklyInsurance',
+    'annualManagement', 'weeklyManagement', 'annualMaintenance', 'weeklyMaintenance',
+    'annualOtherCosts', 'weeklyOtherCosts', 'annualCosts',
+    'annualVacancyAllowance', 'weeklyVacancyAllowance',
+  ] as const;
+  const financialsOut = policy.financialModelling
+    ? financials
+    : Object.fromEntries(
+      Object.entries(financials).filter(([k]) => !(MODELLING_KEYS as readonly string[]).includes(k)),
+    );
+  // The modelled assumptions go with the modelling: a capital-growth rate and
+  // an interest rate on a location report are an analysis nobody asked for.
+  const assumptionsPublished = policy.financialModelling ? assumptionsOut : {};
 
   return {
-    property, financials, assumptions: assumptionsOut, recommendation,
-    summary, risks, assessment, opportunities, equitySeries, report,
+    property,
+    financials: financialsOut,
+    assumptions: assumptionsPublished,
+    recommendation,
+    summary,
+    risks,
+    assessment,
+    opportunities,
+    // The ten-year equity chart is modelling by definition. Absent rather than
+    // empty, so a master's conditional drops the page instead of drawing an
+    // axis with no series on it.
+    equitySeries: policy.financialModelling ? equitySeries : [],
+    report,
     narrative: projectReportNarrative(row.report_content),
   };
 }
@@ -826,8 +938,9 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
 export function applyInvestmentProjection(
   data: Record<string, any>,
   row: InvestmentReportRowLike,
+  options: ProjectionOptions = {},
 ): Record<string, any> {
-  const p = projectInvestmentReport(row);
+  const p = projectInvestmentReport(row, options);
   const merge = (key: string, extra: Record<string, unknown>) => {
     if (!Object.keys(extra).length) return;
     data[key] = { ...obj(data[key]), ...extra };

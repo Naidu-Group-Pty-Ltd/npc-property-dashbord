@@ -1556,12 +1556,136 @@ contradict. Placement is load-bearing: **after** the series heal (the ROI
 denominator is the stored deposit) and **before** the upfront total (which is
 the deposit plus the acquisition lines).
 
+## Each report has one purpose, and one module decides it
+
+Read [`docs/reports/TIER_FRAMEWORK.md`](./docs/reports/TIER_FRAMEWORK.md)
+§ Decision E before touching `_shared/reports/investment/tierContent.pure.ts`,
+the financial pages in `scripts/template-library/investmentCompass/templates.ts`,
+`extractKPIMetrics` or the `financials` block in `reportBindingProjection`.
+`compassSectionRegistry` has said since v2.0 that **ALL detailed financial
+modelling lives in the separate Financial Analysis Report and MUST NOT appear**
+in the Compass, and the generator obeys it — the prose a model writes for a
+Compass has no financial section in it. The document a client opens led with
+three pages of it, because the rule was enforced on the PROSE while THREE
+implementations decided what a document draws and none read the registry: the
+standard renderer read the tier for the document's LABEL alone, one master page
+sequence served all five tiers, and the frontend band had had its own
+tier test removed for a different defect. So the Compass opened on purchase
+price, gross yield, LVR and a ten-year equity projection while the Financial
+Analysis carried the location case — each report answering the other's
+question. The authority is in the PROJECTION, because that is what every
+template binds: withholding a namespace once reaches all 500 seeded masters,
+every future one and both routes, while a fix inside one composer reaches one
+composer. Three rules. **A tier is a PURPOSE, not a length** — the test of the
+split is whether a reader could name the document from its contents page.
+**Withholding the modelling is not withholding the price**: the asking price
+and the indicative rent are facts about the asset the way its land size is, and
+stay on every tier; what leaves is the analysis of a PURCHASE. And **the drop
+has to be clean** — the projection withholds the bindings AND the three master
+pages carry `conditional: report && report.drawsFinancialModelling`, because a
+page kept with nothing to bind prints labelled empty rows. `renderKpiGridHtml`
+and the `toc` block needed no change: one already drops a tile whose bound
+value resolved to nothing, the other reads the pages that actually rendered.
+The one escape is `projectInvestmentReport(row, { tier })`, for the condense
+fork alone: **the document being PRODUCED decides**, and keying it on the row
+being READ would hand a Snapshot's prompt a Compass parent with no modelling in
+it. Shipped as seed **v14** plus the active-master refresh.
+
+## The Compass prompt was 96% a different report
+
+Read the header of
+[`_shared/reports/investment/compassDocumentContract.pure.ts`](./supabase/functions/_shared/reports/investment/compassDocumentContract.pure.ts)
+before touching `propertyPrompt` or the evidence pack under it. Measured
+17 Sep 2026: `propertyPrompt` was 79,603 bytes and **76,415 of them (96%) were
+the legacy 38-page reference template**, carried verbatim under "MANDATORY
+REPORT STRUCTURE — 38-PAGE REFERENCE TEMPLATE / YOU MUST FOLLOW THIS EXACT
+STRUCTURE, LENGTH, AND FORMAT". The property's own facts were the other 3,188.
+That template declares 27 sections including *Purchase & Ongoing Costs*,
+*Rental Assessment & Yield Calculation*, *Loan Structure & Repayment Analysis*
+and *Sensitivity Analysis* — the modelling the Compass is defined by not
+carrying — demands "12,000-15,000 words minimum" against a registry capping the
+document at 5,010, is written as fill-in-the-blanks (`[Suburb name] is a
+[description] community located [XX] kilometres`), and its point 8 instructs
+the model to "Include [citation] markers" while another line of the same prompt
+forbids them and a regex downstream strips them. `generateReportSection` trims
+head-tail, so **both ends of every trim were legacy**: about 53 KB of the wrong
+contract on each of eleven section calls, which the model resolved by writing
+the requested section in the legacy template's habits. Two rules. **The
+contract is about METHOD, never structure** — the registry owns the structure,
+and two statements of one structure is how the two come to disagree. And **a
+prohibition with no demonstration of the permitted form is one a model routes
+around**, so the contract carries three worked examples (thin, substantial,
+invented) and says why the invented one is dangerous: the reader cannot tell it
+from the good one. The same lesson twice over — the `{{bars}}` primitive's own
+documentation called it "perfect for scorecards" over a worked example minting
+five ratings out of ten, which is exactly what the model produced once the
+narrower `{{gauge}}` rule pushed the invented scorecards out of the gauge. **A
+rating you invented may not be drawn in ANY primitive**; `bars`, `heatmap` and
+`radar` are judged where the directive declares `max=100`, measured at 383 of
+611 with no legitimate counter-example in the 25 most frequent titles.
+
+## The Compass has room for what it retrieves (v4.0)
+
+Zoning had **no section**. `Zoning` and `Planning` were sourceHeadings of the
+RISK DASHBOARD — a 500-word table whose own purpose says "the table IS the
+section — no prose restating rows" — so a retrieved planning control had
+nowhere to be explained and the reader got a row. That is most of what "the
+Zoning, Planning and Infrastructure sections are simply not good enough"
+describes. The legacy long-form report ran to **~110,000 characters across 27
+sections in one pass**; the 17 Sep Compass is 38,648 across 11. v4.0 is 8,150
+words across 15 sections against a 34-page budget, and three sections are split
+back out of merges that had put them where nothing could be said: Planning
+(900 words), Transport (450) and Environment, Climate & Safety (650). **The
+v3.0 merge was right for the reason it was made** — those sections repeated
+each other — and what changed is that there is now a register behind each: a
+constraint register with per-control explanation, 185,177 GTFS stops, four
+states of recorded crime. A section with nothing behind it should be merged; a
+section with a register behind it should not. Two rules bite. **A heading
+belongs to exactly ONE section** — listed in two it resolves to whichever comes
+first and the other silently loses it, and `fork-investment-report` drops an
+unmatched heading from both forks without saying so. And **`sectionRegistry`'s
+DECLARED GAP for planning is closed, with its reasoning kept**: it said "the
+record holds no planning data … the fix is upstream of the reporting engine",
+which was true when written and was then fixed upstream; the strategic tier
+keeps `producer: null` because a Due Diligence planning section also needs
+title and easements, which no register here reads.
+
 ## What a report may state about planning, and what it may not
 Read [`docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md`](./docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md)
 before touching `_shared/planning/planningFacts.pure.ts`,
 `_shared/planning/infrastructureEvidence.pure.ts`, the
 `pinnedPlanningContext` in `generate-investment-report`, or
 `dataSources.planning`.
+**And the overlay registers were answering the whole time.** Read §8 of that
+doc before touching `_shared/planning/planningConstraints.pure.ts` or
+`planningControlGuide.pure.ts`. The module said "overlay mapping (heritage,
+flood, bushfire, character, acoustic) is held in the council scheme and is not
+retrieved by this platform" on every property in the country, from a premise —
+*no integrated layer publishes overlays at a point yet* — that had never been
+measured and is wrong for four of the eight jurisdictions. Probed from the
+PRODUCTION egress on 17 Sep 2026, all HTTP 200, all open licence, no key: NSW
+answers the LEP, the zone, the maximum building height in metres, the floor
+space ratio, the minimum lot size, heritage, bushfire, flood, landslide, acid
+sulfate soils and nine more **each with the legislative clause that creates it
+and its own currency date**; Victoria's overlays sit on the SAME WFS endpoint
+as its zones, one word different in the typeName; Queensland answers its
+regional plan and priority living areas, flood hazard and 26 MSES layers;
+Tasmania answers both overlay registers. Four rules. **A constraint is named
+only where a layer named it.** **A layer that was never asked is evidence of
+nothing** — coverage travels with the answer and an unreachable register
+contributes none; measured, `layers=all` on the NSW Hazard service answers
+`{"results":[]}` because ArcGIS reads `all` as all VISIBLE and that group is
+hidden, an empty answer to a question nobody asked, which reads as a property
+with no bushfire and no flood. **A value carries its unit, its instrument and
+its clause** — `8.5` is not a fact. And **a retrieval is not information**:
+`planningControlGuide` explains what each control obliges and what to obtain,
+about the CONTROL and never the property, which is what lets it be written in
+advance and still be true; a spec rejects any currency amount, percentage,
+measurement or BAL rating in it. The legacy report is the benchmark for
+structure and the opposite of it for provenance — **three copies of its own
+zoning section, on one lot, in one document, disagree on every control**, and
+one cites a New South Wales council for a Victorian property.
+
 `planning-data-service` has worked since 2026-09-06 and the generator has
 always stored its answer on `enhancedData.planningData` — **and the zoning
 section read none of it**. On 262 Pallas Street, Maryborough the row carries

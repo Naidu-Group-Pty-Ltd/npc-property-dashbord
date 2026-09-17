@@ -66,6 +66,17 @@ import {
   VERIFICATION_INSTRUMENT,
   type PlanningJurisdiction,
 } from './planningSources.pure.ts';
+import {
+  CONSTRAINT_FAMILY_LABEL,
+  type ConstraintFamily,
+  type ConstraintKind,
+  type PlanningConstraintReading,
+} from './planningConstraints.pure.ts';
+import {
+  CONTROL_GUIDE,
+  NO_STATE_LAYER_NOTE,
+  VERIFICATION_DOCUMENT,
+} from './planningControlGuide.pure.ts';
 
 // ---------------------------------------------------------------------------
 // Vocabulary
@@ -130,6 +141,22 @@ export interface PlanningFacts {
   overlays: PlanningCell;
   /** Minimum lot size, height and floor space ratio, in that order. */
   controls: PlanningCell[];
+  /**
+   * Every control, overlay and hazard a register actually returned at this
+   * point, ordered hazard → control → protection → context.
+   */
+  constraints: PlanningConstraintReading[];
+  /**
+   * What the registers that ANSWERED are able to answer.
+   *
+   * It travels separately from the readings because an empty list means two
+   * opposite things: "we asked about bushfire and flood and neither applies"
+   * is a finding, and "nobody asked" is not. A reader can only tell them
+   * apart if the coverage is stated.
+   */
+  constraintsAsked: ConstraintFamily[];
+  /** The registers that answered, and the ones that could not be reached. */
+  constraintRegisters: { answered: string[]; unavailable: string[] };
   /** State development instruments the point sits inside. */
   instruments: PlanningCell;
   instrumentList: PlanningInstrumentFact[];
@@ -301,36 +328,154 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
       str(zoningRaw?.note) ?? 'No zone was returned for this point.');
   }
 
+  // ── the constraint register ───────────────────────────────────────────────
+  // Every control, overlay and hazard the state registers returned at this
+  // point. Until 17 Sep 2026 this module carried one sentence — "overlay
+  // mapping ... is not retrieved by this platform" — which was true of the
+  // code and false of the world: NSW answers height, floor space ratio,
+  // minimum lot size, heritage, bushfire, flood, landslide, acid sulfate
+  // soils and nine more in three calls; Victoria's overlays sit on the same
+  // WFS endpoint as its zones; Queensland answers its regional plan and
+  // priority living areas; Tasmania answers both overlay layers. All measured
+  // from the production egress, all open-licensed, none needing a key.
+  const rawConstraints = Array.isArray(data?.constraints) ? data!.constraints as unknown[] : [];
+  const constraints: PlanningConstraintReading[] = rawConstraints.flatMap((raw) => {
+    if (!isRecord(raw)) return [];
+    const label = str(raw.label);
+    const family = str(raw.family);
+    if (!label || !family) return [];
+    return [{
+      family: family as ConstraintFamily,
+      kind: (str(raw.kind) ?? 'context') as ConstraintKind,
+      label,
+      code: str(raw.code),
+      value: str(raw.value),
+      instrument: str(raw.instrument),
+      clause: str(raw.clause),
+      currencyDate: str(raw.currencyDate),
+      detail: str(raw.detail),
+      // Absent on every enrichment stored before these two fields existed, and
+      // that is the ordinary state rather than an error: the Infrastructure
+      // Outlook prints an em dash for each, which is what a designation with
+      // no published standing or region should read as anyway.
+      standingLabel: str(raw.standingLabel),
+      region: str(raw.region),
+      source: str(raw.source) ?? 'planning register',
+      licence: str(raw.licence) ?? 'unstated',
+    }];
+  });
+  const constraintsAsked = (Array.isArray(data?.constraintsAsked)
+    ? (data!.constraintsAsked as unknown[]).map(str).filter((v): v is string => !!v)
+    : []) as ConstraintFamily[];
+  const registersRaw = isRecord(data?.constraintRegisters) ? data!.constraintRegisters : null;
+  const strList = (v: unknown): string[] =>
+    Array.isArray(v) ? v.map(str).filter((x): x is string => !!x) : [];
+  const constraintRegisters = {
+    answered: strList(registersRaw?.answered),
+    unavailable: strList(registersRaw?.unavailable),
+  };
+
   // ── overlays ──────────────────────────────────────────────────────────────
-  // No integrated layer publishes overlays at a point yet, so the only
-  // overlay a report may state is one an operator recorded. Saying "no
-  // significant overlays identified" from an absence — which the old template
-  // did — asserts a search nobody performed.
+  // An operator's recorded overlay still outranks a layer (rule 2). Below
+  // that, the cell states what the registers found — and an EMPTY finding is
+  // only a finding where a register answered, which is what
+  // `constraintRegisters.answered` decides. With no register answered the
+  // cell reads exactly as it did before: nothing was looked up.
+  const overlayReadings = constraints.filter((c) => c.kind !== 'context');
+  /*
+   * The strategic designations are counted separately and NAMED in the same
+   * cell, because the table under this row lists them.
+   *
+   * Excluding them from the count is right — a regional plan does not control
+   * what is built on one lot, and counting it as a "mapped control" would say
+   * it does. But the first render of 262 Pallas Street read
+   * "1 mapped control applies at this point" directly above a three-row table,
+   * and a reader resolves that contradiction by distrusting one of them.
+   */
+  const contextReadings = constraints.filter((c) => c.kind === 'context');
+  const designationTail = contextReadings.length
+    ? `, plus ${contextReadings.length} strategic designation${contextReadings.length === 1 ? '' : 's'}`
+    : '';
   const overrideOverlays = overrideText(o.zoningOverlays);
   const overlays = overrideOverlays
     ? operatorCell('Overlays', overrideOverlays, retrievedAt)
-    : absent('Overlays', 'not_integrated',
-      'Overlay mapping (heritage, flood, bushfire, character, acoustic) is held in the council scheme and is not retrieved by this platform. '
-      + 'Nothing here states that the property carries no overlay — only that none was looked up.');
+    : overlayReadings.length
+      ? {
+        label: 'Overlays, controls and hazards',
+        value: `${overlayReadings.length} mapped ${overlayReadings.length === 1 ? 'control applies' : 'controls apply'} at this point${designationTail}`,
+        status: 'stated' as const,
+        note: null,
+        source: constraintRegisters.answered.join('; ') || null,
+        sourceUrl: portal,
+        licence: [...new Set(overlayReadings.map((c) => c.licence))].join(', ') || null,
+        effectiveDate: overlayReadings.map((c) => c.currencyDate).filter(Boolean).sort().at(-1) ?? null,
+        retrievedAt,
+        standing: 'adopted' as const,
+      }
+      : constraintRegisters.answered.length
+        ? absent('Overlays, controls and hazards', 'none_at_point',
+          `${constraintRegisters.answered.length} register${constraintRegisters.answered.length === 1 ? '' : 's'} `
+          + `answered at this coordinate and returned no mapped control`
+          + (contextReadings.length
+            ? `${designationTail}, listed below. `
+            : '. ')
+          + (constraintsAsked.length
+            ? `What was checked: ${constraintsAsked.map((f) => CONSTRAINT_FAMILY_LABEL[f] ?? f).join(', ')}. `
+            : '')
+          + 'Anything outside that list was not checked and is not stated either way.')
+        : absent('Overlays, controls and hazards', 'not_integrated',
+          (jurisdiction ? NO_STATE_LAYER_NOTE[jurisdiction] : null)
+          ?? 'No overlay register was reached for this point. '
+          + 'Nothing here states that the property carries no overlay — only that none was looked up.');
 
   // ── the numeric controls ──────────────────────────────────────────────────
   // Minimum lot size, height and floor space ratio: the three the old
-  // template printed as "Refer to LEP" beside a model free to invent them.
-  // No integrated layer publishes any of them, so unless an operator recorded
-  // one the cell states that and carries no figure (rule 1).
-  const controlSpecs: Array<{ label: string; value: unknown; suffix: string }> = [
-    { label: 'Minimum lot size', value: o.minimumLotSize, suffix: ' m²' },
-    { label: 'Maximum building height', value: o.maximumHeight, suffix: ' m' },
-    { label: 'Floor space ratio', value: o.floorSpaceRatio, suffix: ':1' },
+  // template printed as "Refer to LEP" beside a model free to invent them,
+  // and the three the legacy long-form report invented three different
+  // answers for on one lot.
+  //
+  // The order is an ORDER and not a fallback chain with a default: an audited
+  // operator figure outranks a layer (rule 2, and it says so on the page);
+  // below it a RETRIEVED figure now stands where NSW publishes one; below
+  // that the cell still states the absence and carries no number.
+  const controlSpecs: Array<{
+    label: string; value: unknown; suffix: string; family: ConstraintFamily;
+  }> = [
+    { label: 'Minimum lot size', value: o.minimumLotSize, suffix: ' m²', family: 'minimumLotSize' },
+    { label: 'Maximum building height', value: o.maximumHeight, suffix: ' m', family: 'height' },
+    { label: 'Floor space ratio', value: o.floorSpaceRatio, suffix: ':1', family: 'floorSpaceRatio' },
   ];
-  const controls = controlSpecs.map(({ label, value, suffix }) => {
+  const controls = controlSpecs.map(({ label, value, suffix, family }) => {
     const stated = num(value) ?? (str(value) ? Number(str(value)) : null);
     if (stated !== null && Number.isFinite(stated)) {
       return operatorCell(label, `${stated}${suffix}`, retrievedAt);
     }
+    const retrieved = constraints.find((c) => c.family === family && c.value);
+    if (retrieved) {
+      return {
+        label,
+        value: retrieved.value,
+        status: 'stated' as const,
+        note: retrieved.clause ? `${retrieved.instrument ?? 'Planning instrument'} ${retrieved.clause}` : null,
+        source: retrieved.source,
+        sourceUrl: portal,
+        licence: retrieved.licence,
+        effectiveDate: retrieved.currencyDate,
+        retrievedAt,
+        standing: 'adopted' as const,
+      };
+    }
+    // Asked and not answered is a different sentence from never asked, and a
+    // reader acts on them differently: the first sends them to the certificate
+    // for a figure the layer genuinely does not carry, the second tells them
+    // this platform does not read that jurisdiction at all.
+    const asked = constraintsAsked.includes(family);
     return absent(label, 'not_published',
-      `Set by the ${jurisdiction === 'QLD' ? 'council planning scheme' : 'planning instrument'} and not published on any layer this platform reads. `
-      + 'No figure is stated here; read it from the scheme or the certificate.');
+      asked
+        ? 'The register that carries this control answered for this point and published no figure. '
+        + 'Read it from the planning certificate.'
+        : `Set by the ${jurisdiction === 'QLD' ? 'council planning scheme' : 'planning instrument'} and not published on any layer this platform reads. `
+        + 'No figure is stated here; read it from the scheme or the certificate.');
   });
 
   // ── state development instruments ─────────────────────────────────────────
@@ -400,13 +545,20 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
     council,
     locality: parcelStated ? str(parcelRaw?.locality) : null,
     lotPlan: parcelStated ? str(parcelRaw?.lotPlan) : null,
-    parcelAreaSqm: parcelStated ? num(parcelRaw?.area) : null,
+    // A parcel area of zero is the layer declining to publish one, never a
+    // lot with no area: `Parcel area: 0 m² (surveyed)` printed on 262 Pallas
+    // Street, which is a surveyed measurement of nothing. `num()` admits it
+    // because zero is a finite number, so the guard is on the VALUE.
+    parcelAreaSqm: parcelStated ? (num(parcelRaw?.area) || null) : null,
     parcelAreaBasis: parcelStated
       ? (str(parcelRaw?.areaBasis) === 'surveyed' ? 'surveyed' : str(parcelRaw?.areaBasis) === 'computed' ? 'computed' : null)
       : null,
     zoning,
     zoneFamily: zoning.status === 'stated' ? str(zoningRaw?.zoneFamily) : null,
     overlays,
+    constraints,
+    constraintsAsked,
+    constraintRegisters,
     controls,
     instruments,
     instrumentList,
@@ -460,6 +612,112 @@ function absenceText(cell: PlanningCell): string {
 }
 
 /**
+ * The constraint register: what applies to this land, and what each one means.
+ *
+ * This is the part of the report the owner's review named — "the information
+ * being incorporated does not provide the client with sufficiently solid,
+ * meaningful or valuable information". A retrieval on its own does not: `HO544`
+ * is a fact and not information. Each family present is explained ONCE, from
+ * `CONTROL_GUIDE`, so two heritage rows share one explanation and a register of
+ * nine controls does not become nine essays.
+ *
+ * The explanation is about the CONTROL and never about the property, which is
+ * what lets it be written down in advance and still be true. Everything that is
+ * about the property — whether it applies, under which instrument, to what
+ * figure, current at what date — comes from the reading beside it.
+ */
+export function renderConstraintRegister(facts: PlanningFacts): string {
+  const lines: string[] = [];
+  const readings = facts.constraints;
+
+  if (readings.length) {
+    lines.push('**What is mapped over this land**', '');
+    lines.push('| Kind | What the register returned | Instrument | Current at |');
+    lines.push('|---|---|---|---|');
+    for (const c of readings) {
+      const found = [
+        c.label,
+        c.code && c.code !== c.label ? `(${c.code})` : null,
+        c.value,
+        c.detail,
+      ].filter(Boolean).join(' · ');
+      const instrument = [c.instrument, c.clause && c.clause !== c.code ? `cl. ${c.clause}` : null]
+        .filter(Boolean).join(', ') || '—';
+      lines.push(`| ${KIND_LABEL[c.kind]} | ${found} | ${instrument} | ${auDate(c.currencyDate) ?? '—'} |`);
+    }
+    lines.push('');
+
+    // One explanation per family present, in the order the table introduced
+    // them, so a reader meets each control where they first saw it.
+    const seen = new Set<ConstraintFamily>();
+    for (const c of readings) {
+      if (seen.has(c.family)) continue;
+      seen.add(c.family);
+      const guide = CONTROL_GUIDE[c.family] ?? CONTROL_GUIDE.other;
+      lines.push(`**${capitalise(CONSTRAINT_FAMILY_LABEL[c.family] ?? c.family)}.** ${guide.what} ${guide.effect}`);
+      lines.push('');
+      lines.push(`*Before you proceed:* ${guide.verify}`);
+      lines.push('');
+    }
+
+    const sources = [...new Set(readings.map((c) => `${c.source}${c.licence ? ` (${c.licence})` : ''}`))];
+    lines.push(`Retrieved from ${sources.join('; ')}${facts.retrievedAt ? ` on ${auDate(facts.retrievedAt)}` : ''}.`, '');
+  }
+
+  // Coverage. A short register is only readable beside what was searched —
+  // the rule the sanctions register and the PEP index both answer to, and the
+  // reason an empty answer here is never printed on its own.
+  if (facts.constraintsAsked.length) {
+    const found = new Set(readings.map((c) => c.family));
+    const clear = facts.constraintsAsked
+      .filter((f) => !found.has(f))
+      .map((f) => CONSTRAINT_FAMILY_LABEL[f] ?? f);
+    if (clear.length) {
+      lines.push(
+        `**Checked and not mapped at this coordinate:** ${clear.join(', ')}. `
+        + 'Each of these was asked of a register that answered, and no feature covers this point. '
+        + 'A mapped layer is indicative at the scale it is published; it is not a survey of the lot.',
+        '',
+      );
+    }
+  } else if (!readings.length) {
+    lines.push(
+      (facts.jurisdiction ? NO_STATE_LAYER_NOTE[facts.jurisdiction] : null)
+      ?? 'No overlay or hazard register was reached for this point, so nothing here says whether a control applies.',
+      '',
+    );
+  }
+
+  if (facts.constraintRegisters.unavailable.length) {
+    lines.push(
+      `**Not reached:** ${facts.constraintRegisters.unavailable.join('; ')}. `
+      + 'These registers could not be read for this report, so their subject matter is unchecked rather than clear.',
+      '',
+    );
+  }
+
+  if (facts.jurisdiction) {
+    lines.push(
+      `**What settles every line above:** ${VERIFICATION_DOCUMENT[facts.jurisdiction]} `
+      + 'A spatial layer is published at a scale; a certificate is issued for a lot.',
+      '',
+    );
+  }
+
+  return lines.join('\n').trimEnd();
+}
+
+/** How a reader triages the register before reading any of it. */
+const KIND_LABEL: Record<ConstraintKind, string> = {
+  hazard: 'Hazard',
+  control: 'Development control',
+  protection: 'Protected value',
+  context: 'Strategic context',
+};
+
+const capitalise = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+/**
  * The planning table a client reads, and the sentences that qualify it.
  *
  * Composed here rather than asked of a model, because every figure in it is
@@ -492,6 +750,13 @@ export function renderPlanningControls(facts: PlanningFacts): string {
     lines.push(`| ${cell.label} | ${reading} | ${standing} | ${evidenceRef(cell)} |`);
   }
   lines.push('');
+
+  // The constraint register, and what each control it found actually means.
+  // It sits directly under the summary table because a reader who has just
+  // been told a heritage overlay applies needs to know what one obliges
+  // before they read anything else — not in an appendix.
+  const register = renderConstraintRegister(facts);
+  if (register.trim()) lines.push(register, '');
 
   if (facts.instrumentList.length) {
     lines.push('**State development instruments covering this point:**', '');

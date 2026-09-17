@@ -199,3 +199,109 @@ describe('the rules claim the whole report, and name live search', () => {
     expect(rules).not.toMatch(/INFRASTRUCTURE RULES — these override/);
   });
 });
+
+describe('the strategic designation the point sits inside', () => {
+  /*
+   * Measured at 262 Pallas Street, Maryborough on 17 Sep 2026 (pg_net request
+   * id 263994). The instruments probe asks four NAMED Queensland layers —
+   * priority development areas, state development areas, coordinated projects,
+   * infrastructure designations — and none of them matched, so the report said
+   * "the property lies inside no declared priority development area, state
+   * development area, coordinated project or infrastructure designation" and
+   * stopped.
+   *
+   * True, and it left out what the SAME service returns at the SAME
+   * coordinate. This is the verbatim answer.
+   */
+  const WITH_CONTEXT = {
+    ...PALLAS,
+    constraints: [
+      {
+        family: 'growthArea', kind: 'context', label: 'Maryborough Priority Living Area',
+        code: null, value: null, instrument: 'Priority Living Area', clause: null,
+        currencyDate: null, detail: 'Wide Bay Burnett',
+        standingLabel: null, region: 'Wide Bay Burnett',
+        source: 'Queensland StatePlanning', licence: 'CC BY 4.0',
+      },
+      {
+        family: 'regionalPlan', kind: 'context', label: 'Wide Bay Burnett Regional Plan',
+        code: null, value: null, instrument: 'Wide Bay Burnett Regional Plan', clause: null,
+        currencyDate: null, detail: 'Statutory instrument · version December 2023',
+        standingLabel: 'Statutory instrument · version December 2023', region: null,
+        source: 'Queensland StatePlanning', licence: 'CC BY 4.0',
+      },
+      // A hazard belongs to the planning section, never to this one.
+      {
+        family: 'flood', kind: 'hazard', label: 'Rapid Hazard Assessment',
+        code: null, value: null, instrument: null, clause: null,
+        currencyDate: null, detail: null, standingLabel: null, region: null,
+        source: 'Queensland FloodCheck', licence: 'CC BY 4.0',
+      },
+    ],
+  };
+
+  const evidence = buildInfrastructureEvidence({ planningData: WITH_CONTEXT });
+
+  it('carries the designations and nothing else from the register', () => {
+    expect(evidence.items.map((i) => i.name)).toEqual([
+      'Maryborough Priority Living Area', 'Wide Bay Burnett Regional Plan',
+    ]);
+    expect(evidence.anyEvidenced).toBe(true);
+  });
+
+  it('gives a designation no delivery standing, because it is not a project', () => {
+    // Reading a plan as `approved` would put it in the same column as a road
+    // under construction. A regional plan says what an area is planned to
+    // BECOME; it does not control what is built on one lot.
+    expect(evidence.items.every((i) => i.standing === null)).toBe(true);
+    expect(evidence.items.map((i) => i.kind)).toEqual(['Growth / priority area', 'Regional plan']);
+  });
+
+  it('prints the publisher’s own standing and version', () => {
+    const rendered = renderInfrastructureOutlook(evidence);
+    expect(rendered).toContain('Wide Bay Burnett Regional Plan');
+    expect(rendered).toContain('Statutory instrument');
+    expect(rendered).toContain('version December 2023');
+    // And still no forecast of any kind.
+    expect(rendered).not.toMatch(/due (in|by)|expected (in|by)|completion (in|by)/i);
+  });
+
+  it('puts the register’s standing in Status and its region in Where', () => {
+    /*
+     * The first render of this table read
+     *
+     *   | Maryborough Priority Living Area | Growth / priority area |
+     *     Wide Bay Burnett | No date stated | Priority Living Area | — |
+     *
+     * so a REGION was printed as the project's status, and the layer's own
+     * name as a place. Both came from taking `detail` and `instrument`, which
+     * are a join of everything published and the instrument's name — neither
+     * of them a status or a location. The register's own `standingLabel` and
+     * `region` are what those columns mean.
+     */
+    const area = evidence.items.find((i) => i.name === 'Maryborough Priority Living Area');
+    expect(area?.statedStatus, 'a region is not a status').toBeNull();
+    expect(area?.where).toBe('Wide Bay Burnett');
+
+    const plan = evidence.items.find((i) => i.name === 'Wide Bay Burnett Regional Plan');
+    expect(plan?.statedStatus).toBe('Statutory instrument · version December 2023');
+    // The plan IS the region; repeating its own name under "Where" says
+    // nothing, and an absent place is a real state.
+    expect(plan?.where).toBeNull();
+
+    // Read off the drawn row rather than the object, because the defect was
+    // visible only in the table: the region must never appear in the Status
+    // column of the row whose name is the living area.
+    const row = renderInfrastructureOutlook(evidence)
+      .split('\n').find((l) => l.startsWith('| Maryborough Priority Living Area')) ?? '';
+    const cells = row.split('|').map((c) => c.trim());
+    expect(cells[3], 'the Status cell').not.toBe('Wide Bay Burnett');
+    expect(cells[5], 'the Where cell').toBe('Wide Bay Burnett');
+  });
+
+  it('still forbids quantifying an uplift from a designation', () => {
+    const rules = infrastructureRules(evidence);
+    expect(rules).toMatch(/Do NOT quantify an uplift/);
+    expect(rules).toMatch(/only from items in the table/);
+  });
+});

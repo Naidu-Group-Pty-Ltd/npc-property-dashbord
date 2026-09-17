@@ -393,3 +393,224 @@ absent rather than printed as zeros.
   earlier chunk is detectable — `partitionByRegistry` already knows the
   ordinals — but handing it forward rather than dropping it is the part that
   needs care, so it is named here rather than half-done.
+
+---
+
+## 8. The registers were answering the whole time (17 Sep 2026)
+
+Until this section, §3 of this document was true of the code and false of the
+world. `planningFacts.pure.ts` carried one honest sentence for overlays:
+
+> Overlay mapping (heritage, flood, bushfire, character, acoustic) is held in
+> the council scheme and is not retrieved by this platform. Nothing here
+> states that the property carries no overlay — only that none was looked up.
+
+The premise underneath it — *"No integrated layer publishes overlays at a
+point yet"* — had never been measured. It is wrong for four of the eight
+jurisdictions, including the two that carry most of the corpus.
+
+### 8.1 What was measured
+
+Probed from the **production egress** on 17 Sep 2026 (pg_net request ids
+263970–263976, 263992–263998, 264009–264016; the local sandbox's proxy refuses
+these hosts, which is why the measurement had to be taken from the deployment).
+Every one answered **HTTP 200** with a parseable body, under an open licence,
+with no key:
+
+| Jurisdiction | Service | What it answers at a point |
+|---|---|---|
+| NSW | `ePlanning/Planning_Portal_Principal_Planning` | The LEP and its amendment, the zone, **maximum building height in metres**, **floor space ratio**, **minimum lot size**, **heritage** (item number, type, significance), land reservation acquisition, foreshore building line, minimum dwelling density — each with the **legislative clause** that creates it and its **own currency date** |
+| NSW | `ePlanning/Planning_Portal_Hazard` | Bushfire Prone Land, Flood Planning Map, Landslide Risk Land |
+| NSW | `ePlanning/Planning_Portal_Protection` | Acid sulfate soils, airport noise, drinking-water catchment, groundwater vulnerability, riparian land, salinity, terrestrial biodiversity, wetlands, scenic protection, environmentally sensitive land |
+| VIC | Vicmap `plan_overlay` (WFS) | Every overlay at the point, with its schedule and gazettal date |
+| QLD | `PlanningCadastre/StatePlanning` | Regional plan (name, **legal status**, version), priority living areas, PDAs, SDAs, coordinated projects, infrastructure designations |
+| QLD | `FloodCheck/RapidHazardAssessment` | Flood hazard |
+| QLD | `Environment/MattersOfStateEnvironmentalSignificance` | 26 layers: regulated vegetation, wildlife habitat, wetlands, watercourses, koala habitat |
+| TAS | `Public/PlanningOnline` layers 14, 15 | The Code Overlay and the General Overlay, with the Local Provisions Schedule that carries them |
+
+Two real answers, verbatim:
+
+**Muswellbrook, NSW** — one `identify` call returned six controls:
+`Muswellbrook Local Environmental Plan 2009` (Amendment No 7), R1 General
+Residential, **8.5 m** maximum height under **cl. 4.3** current 18 Nov 2022,
+**0.5:1** floor space ratio under **cl. 4.4**, **600 m²** minimum lot size
+under **cl. 4.1** current 2 Jul 2021, and a **Residential Heritage
+Conservation Area (item C2, local significance)** under **cl. 5.10** current
+1 Mar 2024.
+
+**262 Pallas Street, Maryborough QLD** — `Maryborough Priority Living Area`,
+inside the `Wide Bay Burnett Regional Plan`, **Legal status: Statutory,
+Version: December 2023**.
+
+Every one of those is a fact this report had nothing to say about.
+
+### 8.2 The four rules
+
+**A constraint is named only where a layer named it.** Nothing infers a
+control from a zone code, a suburb or a neighbouring parcel.
+
+**A layer that was never asked is evidence of nothing.** `askedFamilies`
+travels with the answer, an unreachable register contributes no coverage at
+all, and "checked and not mapped at this coordinate" is a different sentence
+from "nobody looked". Measured: `layers=all` on the NSW Hazard service answers
+`{"results":[]}` at any point, because ArcGIS reads `all` as *all VISIBLE* and
+that service's group carries `defaultVisibility: false`. An empty answer to a
+question nobody asked is the worst shape this codebase knows — it reads as a
+property with no bushfire and no flood — so the explicit layer ids in
+`NSW_HAZARD_LAYERS` are required rather than a refinement.
+
+**A value carries its unit, its instrument and its clause.** `8.5` is not a
+fact. `8.5 m maximum building height, Muswellbrook LEP 2009 cl. 4.3, current
+18 Nov 2022` is one, and it is the difference between a number a client can
+take to a town planner and a number they cannot. Each layer publishes its own
+currency and the report keeps them apart, because the maps amend separately.
+
+**A retrieval is not information.** `planningControlGuide.pure.ts` explains
+what each control IS, what it obliges, and what to obtain — about the
+CONTROL, never about the property, which is what lets it be written in advance
+and still be true. `planningConstraints.spec.ts` rejects any currency amount,
+percentage, measurement or BAL rating in it, and any sentence that could read
+as a clearance.
+
+### 8.3 Why the legacy report is the wrong model for this section
+
+The owner's 17 Sep review asked for the legacy long-form report as a benchmark
+of substance. Its zoning section is fluent, specific and structured — a
+controls table with an Implications column, future rezoning potential,
+overlays and risks, investment implications, and a genuinely useful paragraph
+telling the reader to obtain a Section 32.
+
+It is also fabricated, and one file proves it. `df813535` carries **three
+copies of its own zoning section**, on **one lot**, in **one document**, and
+they disagree on every material control:
+
+| | Copy 1 | Copy 2 | Copy 3 |
+|---|---|---|---|
+| Flood overlay | Moderate, 1% AEP near Werribee River | **Minimal — outside the 1-in-100 floodplain** | Moderate, affects 5% of the lot |
+| Bushfire overlay | **High**, BAL-19 required | **Low risk** | BAL-12.5 to BAL-29 |
+| Contributions | $45,000+ per lot | $15,000–$20,000 | $52,000 per lot |
+| Height limit | 9 m | 9 m | 9.5 m |
+| PSP approved | 2018 | 2018 | 2022 |
+| Dwellings | 6,500 by 2036 | 13,000 by 2036 | 2,500 by 2031 |
+| Subdivision | **High upside** | **No subdivision potential** | Two 200 m² lots, +$250,000 |
+
+Copy 2 cites **Wyong Shire Council** flood mapping — a New South Wales
+council, 900 km away — for a Victorian property. It is the same class as the
+`450 m²` and the NSW instrument names on a Queensland property that §1 of this
+document records.
+
+So the legacy report is the benchmark for **structure, depth, educational
+scaffolding and register**, and the opposite of the benchmark for
+**provenance**. What it did well needed no retrieval at all: the paragraph
+naming the document to obtain. `VERIFICATION_DOCUMENT` now carries that for
+all eight jurisdictions, named precisely — asking a Queensland council for a
+"Section 32" gets nowhere, and asking a Victorian vendor for a "planning and
+development certificate" gets nowhere either.
+
+### 8.4 Also fixed here
+
+`Parcel area: 0 m² (surveyed)` printed on 262 Pallas Street — a surveyed
+measurement of nothing — because the guard was `facts.parcelAreaSqm !== null`
+and `num()` admits zero as a finite number. A parcel area of zero is the layer
+declining to publish one.
+
+
+### 8.5 What rendering the real section caught
+
+The section above was written, tested against captured fixtures, and wrong — and
+the way it was found is the point. Rendering the actual Planning section for
+262 Pallas Street from LIVE production responses (pg_net 263994, 264598, 264599)
+produced this row:
+
+> | Strategic context | Lower Mary River | Queensland FloodCheck rapid hazard assessment | — |
+
+Queensland's FloodCheck Rapid Hazard Assessment answers at that coordinate with
+the value `Lower Mary River` — the sub-basin's own name. `familyFromLabel`
+scans the label for a keyword, finds no flood word in "Lower Mary River", and
+files it as `other` / `context`.
+
+**A flood hazard reading, on a Mary River property, presented as strategic
+context.** Four statements went wrong from that one classification:
+
+1. it was drawn as context rather than as a hazard;
+2. it lost the hazard-first ordering a reader triages by;
+3. it appeared in the **Infrastructure & Development Outlook**, which is for
+   what is planned nearby;
+4. the coverage line read *"Checked and not mapped at this coordinate: … flood
+   …"* — a clearance, on a property inside the mapping.
+
+The rule: **a single-purpose register states its own family.** A register that
+answers ONE question knows the answer's kind better than a keyword scan of what
+the feature happens to be called, so the caller declares it and
+`familyFromLabel` is used only where a register genuinely publishes many kinds
+under descriptive names (Queensland's 26 MSES layers, Tasmania's codes). On a
+single-purpose register the LAYER is also the finding and the feature is the
+place, so the label reads *"Rapid Hazard Assessment — Lower Mary River"* rather
+than a river's name on its own.
+
+With that fixed, the section leads with:
+
+> | Hazard | Rapid Hazard Assessment — Lower Mary River | Queensland FloodCheck rapid hazard assessment |
+>
+> **Flood.** Flood mapping or a flood planning control, made from modelled
+> flood behaviour rather than from whether the property has flooded before. It
+> typically sets a minimum floor level, restricts what can be built at ground
+> level, and can require flood-compatible materials. It materially affects
+> insurance: some insurers decline, and premiums can differ by a multiple.
+>
+> *Before you proceed:* Ask the council for the flood level and the flood
+> planning level for this lot — a designation without a level tells you nothing
+> about depth. Obtain an insurance quote in writing before exchange.
+
+None of which the report said before this work, on any property, anywhere.
+
+### 8.6 Two more the same render caught, read as a document
+
+The flood fix was found by reading the rendered section rather than the code.
+Reading it again afterwards found two more, and both are the same mistake in
+different places: **a value taken from a field that means something else.**
+
+**A region printed as a project's status.** The Infrastructure Outlook drew
+
+> | Maryborough Priority Living Area | Growth / priority area | Wide Bay Burnett | No date stated | Priority Living Area | — |
+
+against the headers `Project or instrument · Type · Status · Date recorded ·
+Where · Stated cost`. So the **Status** cell said `Wide Bay Burnett` — a
+region — and the **Where** cell said `Priority Living Area`, which is the name
+of a spatial layer and not a place; on the regional-plan row the same cell
+simply repeated the project's own name.
+
+The cause is that `detail` on a constraint reading is a JOIN of everything the
+layer published — legal status, version, region, hazard class. That is correct
+for the planning register's *"What the register returned"* column, which is
+explicitly a summary of what came back, and it is not a status. A reading now
+carries `standingLabel` (the publisher's own word for the instrument's
+standing, `Statutory instrument · version December 2023`) and `region`
+separately, `detail` is composed from them so the register table is unchanged
+byte for byte, and the Outlook reads the two fields that mean what its columns
+mean. Where the register stated no standing the cell is empty and the renderer
+prints the em dash — a designation with no published standing is a real state,
+and filling that cell from the nearest available string is how the defect
+started.
+
+**A count that contradicted the table under it.** The Overlays row read
+
+> 1 mapped control applies at this point
+
+directly above a three-row table. Excluding the strategic designations from the
+count is right — a regional plan does not control what is built on one lot, and
+counting it as a mapped control would say it does — but a reader resolves a
+contradiction like that by distrusting one of the two, and cannot tell which.
+The cell names them instead: *"1 mapped control applies at this point, plus 2
+strategic designations"*, and the none-at-point wording gains the same tail
+(*"returned no mapped control, plus 1 strategic designation, listed below"*),
+because that is the form in which the contradiction is sharpest — nothing
+controls the lot, and the table still has rows in it.
+
+**The method, not just the findings.** All three came from rendering the
+section from verbatim production responses and reading it as a client would,
+which no unit test does. And the empty-string fallthrough in the Victorian
+overlay classifier (`(scheme && MAP[scheme]) ?? …`, where `??` does not catch
+the `''` that `&&` carries through) came from `deno check` over the pure
+planning modules: `tsc` covers `src` only, so these modules are type-checked
+by nothing in a local run and by the ratcheted edge gate in CI.

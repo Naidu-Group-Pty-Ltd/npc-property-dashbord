@@ -29,6 +29,7 @@ import { wrapInsightHeadingSections } from "./insightHeadingSections.ts";
 import { wrapInlineInsightParagraphs } from "./insightSections.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import { reconcileStoredFinancials } from '../_shared/reports/investment/financialEngine.pure.ts';
+import { contentPolicyFor } from '../_shared/reports/investment/tierContent.pure.ts';
 // The house cover artwork used to be inlined here as ~490 KB of base64
 // (`_shared/reportDesign/defaultAssets.generated.ts`). Every file under
 // `supabase/functions/` counts toward *every* function's deploy upload, so those
@@ -2996,6 +2997,20 @@ export async function buildHtml(
   );
   const reportVariant: "composite" | "compass" | "financial" | "strategic" | "briefing" | "snapshot" | "due_diligence" =
     (report.report_variant as any) || "composite";
+  /**
+   * What this tier's document contains.
+   *
+   * The section registry has always said a Compass carries NO financial
+   * modelling, and the generator obeys it: the prose a model writes for a
+   * Compass has no financial section in it. This renderer read the tier for
+   * the document's LABEL and then drew the KPI strip, the financial charts
+   * and the price-and-rent paragraphs from `financial_calculations` whatever
+   * the tier was — so the Compass opened on purchase price, gross yield, LVR
+   * and a ten-year equity projection, and the Financial Analysis carried the
+   * location case. One module decides it now, and the Investment Compass
+   * masters read the same one.
+   */
+  const contentPolicy = contentPolicyFor(reportVariant);
   const variantLabel = reportVariant === "financial"
     ? "Financial Analysis Report"
     : reportVariant === "strategic" || reportVariant === "due_diligence"
@@ -3071,17 +3086,27 @@ export async function buildHtml(
       { gfm: true },
     ) as string)
     : "";
-  const financialChartsHtml = includeCharts ? await buildFinancialChartsHtml(fin) : "";
+  const financialChartsHtml = includeCharts && contentPolicy.financialModelling
+    ? await buildFinancialChartsHtml(fin)
+    : "";
 
   // KPI tiles (with optional sparklines from projection series)
-  const series = includeSparklines ? findProjectionSeries(fin) : {};
+  //
+  // Withholding the modelling is not withholding the price: a location report
+  // that will not say what the property costs is coy rather than focused. So
+  // the asking price and the indicative rent stay on every tier — they are
+  // facts about the asset, like its land size — and what leaves the Compass
+  // is yield, LVR and cash flow, which are an analysis of a PURCHASE.
+  const series = includeSparklines && contentPolicy.financialModelling ? findProjectionSeries(fin) : {};
   const kpis: Array<{ label: string; value: string; spark?: string }> = [];
-  if (km.purchasePrice != null) kpis.push({ label: "Purchase Price", value: fmtMoney(km.purchasePrice), spark: series.valueSeries && series.valueSeries.length >= 3 ? await quickSparklineUrl(series.valueSeries) || undefined : undefined });
-  if (km.grossRentalYield != null) kpis.push({ label: "Gross Yield", value: fmtPct(km.grossRentalYield), spark: series.yieldSeries && series.yieldSeries.length >= 3 ? await quickSparklineUrl(series.yieldSeries, THEME.success) || undefined : undefined });
-  if (km.netRentalYield != null) kpis.push({ label: "Net Yield", value: fmtPct(km.netRentalYield) });
-  if (km.weeklyNet != null) kpis.push({ label: "Weekly Cash Flow", value: fmtMoney(km.weeklyNet), spark: series.cashflowSeries && series.cashflowSeries.length >= 3 ? await quickSparklineUrl(series.cashflowSeries, THEME.success) || undefined : undefined });
-  if (km.lvr != null) kpis.push({ label: "LVR", value: fmtPct(km.lvr, 1) });
-  if (km.weeklyRent != null) kpis.push({ label: "Weekly Rent", value: fmtMoney(km.weeklyRent), spark: series.rentSeries && series.rentSeries.length >= 3 ? await quickSparklineUrl(series.rentSeries) || undefined : undefined });
+  if (contentPolicy.identityFigures && km.purchasePrice != null) kpis.push({ label: "Purchase Price", value: fmtMoney(km.purchasePrice), spark: series.valueSeries && series.valueSeries.length >= 3 ? await quickSparklineUrl(series.valueSeries) || undefined : undefined });
+  if (contentPolicy.financialModelling) {
+    if (km.grossRentalYield != null) kpis.push({ label: "Gross Yield", value: fmtPct(km.grossRentalYield), spark: series.yieldSeries && series.yieldSeries.length >= 3 ? await quickSparklineUrl(series.yieldSeries, THEME.success) || undefined : undefined });
+    if (km.netRentalYield != null) kpis.push({ label: "Net Yield", value: fmtPct(km.netRentalYield) });
+    if (km.weeklyNet != null) kpis.push({ label: "Weekly Cash Flow", value: fmtMoney(km.weeklyNet), spark: series.cashflowSeries && series.cashflowSeries.length >= 3 ? await quickSparklineUrl(series.cashflowSeries, THEME.success) || undefined : undefined });
+    if (km.lvr != null) kpis.push({ label: "LVR", value: fmtPct(km.lvr, 1) });
+  }
+  if (contentPolicy.identityFigures && km.weeklyRent != null) kpis.push({ label: "Weekly Rent", value: fmtMoney(km.weeklyRent), spark: series.rentSeries && series.rentSeries.length >= 3 ? await quickSparklineUrl(series.rentSeries) || undefined : undefined });
 
   const scoreOverall =
     score?.overall_score ?? score?.overallScore ?? score?.score ?? null;
@@ -3112,10 +3137,10 @@ export async function buildHtml(
   };
 
   const summaryKpiHtml = renderKpiStripHtml([
-    km.purchasePrice != null ? { label: "Median / Price", value: fmtMoney(km.purchasePrice), delta: trendDelta(series.valueSeries, "money"), spark: series.valueSeries } : null,
-    km.grossRentalYield != null ? { label: "Yield", value: fmtPct(km.grossRentalYield), delta: trendDelta(series.yieldSeries, "percent"), spark: series.yieldSeries } : null,
-    km.weeklyRent != null ? { label: "Rent", value: `${fmtMoney(km.weeklyRent)}/wk`, delta: trendDelta(series.rentSeries, "money"), spark: series.rentSeries } : null,
-    km.weeklyNet != null ? { label: "Cash flow", value: fmtMoney(km.weeklyNet), delta: trendDelta(series.cashflowSeries, "money"), spark: series.cashflowSeries } : null,
+    contentPolicy.identityFigures && km.purchasePrice != null ? { label: "Median / Price", value: fmtMoney(km.purchasePrice), delta: trendDelta(series.valueSeries, "money"), spark: series.valueSeries } : null,
+    contentPolicy.financialModelling && km.grossRentalYield != null ? { label: "Yield", value: fmtPct(km.grossRentalYield), delta: trendDelta(series.yieldSeries, "percent"), spark: series.yieldSeries } : null,
+    contentPolicy.identityFigures && km.weeklyRent != null ? { label: "Rent", value: `${fmtMoney(km.weeklyRent)}/wk`, delta: trendDelta(series.rentSeries, "money"), spark: series.rentSeries } : null,
+    contentPolicy.financialModelling && km.weeklyNet != null ? { label: "Cash flow", value: fmtMoney(km.weeklyNet), delta: trendDelta(series.cashflowSeries, "money"), spark: series.cashflowSeries } : null,
   ].filter(Boolean) as Array<{ label: string; value: string; delta?: string; spark?: number[] }>);
 
   const scoreBreakdownItems = extractScoreBreakdownItems(score).slice(0, 6);
@@ -3148,16 +3173,27 @@ export async function buildHtml(
   const lvrTxt = km.lvr != null ? fmtPct(km.lvr, 1) : null;
   const scoreTxt = scoreOverall != null ? `${Math.round(Number(scoreOverall))}/100${scoreBand ? ` (${scoreBand})` : ""}` : null;
 
+  // Every sentence below promised something the document contains. On a
+  // Compass they promised the financial modelling this tier does not carry —
+  // "lending policy, and forward-looking cash-flow projections", "the
+  // comparative scenarios and sensitivity tables that follow", "calculations"
+  // — which is a contents page for a different report.
+  const modelled = contentPolicy.financialModelling;
   const para1Parts: string[] = [];
   const locFrag = suburbLabel && suburbLabel !== address ? `, located in <strong>${esc(suburbLabel)}</strong>` : "";
   para1Parts.push(`This report presents an independent investment analysis of <strong>${esc(address)}</strong>${locFrag}.`);
-  if (priceTxt) {
+  if (priceTxt && modelled) {
     const lvrFrag = lvrTxt ? ` at an LVR of <strong>${lvrTxt}</strong>` : "";
     const rentFrag = rentTxt ? `, with an assessed market rent of <strong>${rentTxt}/week</strong>` : "";
     const yieldFrag = yieldTxt ? ` (gross yield <strong>${yieldTxt}</strong>)` : "";
     para1Parts.push(`Modelled on a purchase price of <strong>${priceTxt}</strong>${lvrFrag}${rentFrag}${yieldFrag}.`);
+  } else if (priceTxt) {
+    const rentFrag = rentTxt ? `, with an assessed market rent of <strong>${rentTxt}/week</strong>` : "";
+    para1Parts.push(`The property is offered at <strong>${priceTxt}</strong>${rentFrag}.`);
   }
-  para1Parts.push(`Findings draw on local market conditions, demographics, infrastructure, lending policy, and forward-looking cash-flow projections to give a holistic view of suitability for a long-term investment strategy.`);
+  para1Parts.push(modelled
+    ? `Findings draw on local market conditions, demographics, infrastructure, lending policy, and forward-looking cash-flow projections to give a holistic view of suitability for a long-term investment strategy.`
+    : `Findings draw on local market conditions, demographics, the planning controls mapped over the land and the infrastructure serving it, to give a view of the property's suitability and of the risks attached to its location.`);
 
   const para2Parts: string[] = [];
   if (scoreTxt) {
@@ -3165,29 +3201,37 @@ export async function buildHtml(
   } else {
     para2Parts.push(`The chapters that follow examine the weighted balance of location quality, financial performance, growth drivers, and risk indicators that underpin our assessment.`);
   }
-  if (cashflowTxt) para2Parts.push(`Indicative weekly cash flow tracks at <strong>${cashflowTxt}</strong> after holding costs, providing a baseline for the comparative scenarios and sensitivity tables that follow.`);
-  para2Parts.push(`Use this summary as orientation: detailed evidence, calculations, charts, and source attributions for every claim are set out across the remaining sections of the report.`);
+  if (cashflowTxt && modelled) para2Parts.push(`Indicative weekly cash flow tracks at <strong>${cashflowTxt}</strong> after holding costs, providing a baseline for the comparative scenarios and sensitivity tables that follow.`);
+  para2Parts.push(modelled
+    ? `Use this summary as orientation: detailed evidence, calculations, charts, and source attributions for every claim are set out across the remaining sections of the report.`
+    : `Use this summary as orientation: the evidence, the retrieved planning and hazard readings, and the source attribution for every claim are set out across the remaining sections.`);
+  // A companion note rather than silence: a reader who expected the modelling
+  // needs to be told where it is, not left to conclude it was not done.
+  if (contentPolicy.companionNote) para2Parts.push(esc(contentPolicy.companionNote));
 
   // Editor's Note — auto-generated, one-paragraph foreword that lifts 2-3 real
   // figures from the report. Pure presentation, no AI call.
   const editorsNoteBits: string[] = [];
   if (priceTxt && rentTxt) editorsNoteBits.push(`at <strong>${priceTxt}</strong> with assessed rent of <strong>${rentTxt}/wk</strong>`);
   else if (priceTxt) editorsNoteBits.push(`at <strong>${priceTxt}</strong>`);
-  if (yieldTxt) editorsNoteBits.push(`gross yield <strong>${yieldTxt}</strong>`);
+  if (yieldTxt && modelled) editorsNoteBits.push(`gross yield <strong>${yieldTxt}</strong>`);
   if (scoreTxt) editorsNoteBits.push(`investment score <strong>${esc(scoreTxt)}</strong>`);
   const editorsNoteHtml = `
     <aside class="editors-note">
       <div class="en-eyebrow">Editor's Note</div>
       <p class="en-body">${esc(suburbLabel)} continues to sit inside our active research universe${
         editorsNoteBits.length ? ` — this dossier captures the subject ${editorsNoteBits.join(", ")}` : ""
-      }. The pages that follow set out the location case, the financials, and the residual risks in equal measure, so you can weigh the opportunity on its merits rather than its narrative.</p>
+      }. ${modelled
+        ? "The pages that follow set out the location case, the financials, and the residual risks in equal measure, so you can weigh the opportunity on its merits rather than its narrative."
+        : "The pages that follow set out the location case, what is mapped over the land, and the residual risks, so you can weigh the opportunity on its merits rather than its narrative."
+      }</p>
       <div class="en-sig">— ${esc(String(advisorLine))}, ${esc(generated)}</div>
     </aside>
   `;
 
   const execSignal = priceTxt && rentTxt ? `${priceTxt} · ${rentTxt}/wk` : (priceTxt || rentTxt || null);
   const execWatch = (para2Parts.join(" ").match(/[^.!?]*\b(risk|vacancy|caution|watch|exposure|concern|soft)\b[^.!?]*[.!?]/i)?.[0] || "").trim() || null;
-  const execTrend = yieldTxt ? `Yield ${yieldTxt}` : null;
+  const execTrend = yieldTxt && modelled ? `Yield ${yieldTxt}` : null;
   const execView = scoreTxt ? `Score ${scoreTxt}` : null;
   const execGlance = chapterGlanceHtmlFromValues("Executive Summary", [execSignal, execWatch ? execWatch.slice(0, 80) : null, execTrend, execView]);
 

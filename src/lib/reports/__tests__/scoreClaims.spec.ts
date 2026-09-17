@@ -183,7 +183,16 @@ describe('an instruction never occupies a value slot', () => {
     const guardedRow = /\$\{propertyTypeLabel \? `\| Property Type \| \$\{propertyTypeLabel\} \|` : ''\}/g;
     expect([...generator.matchAll(rawRow)]).toHaveLength([...generator.matchAll(guardedRow)].length);
     expect([...generator.matchAll(guardedRow)].length).toBeGreaterThan(0);
-    expect(generator).toContain("${propertyTypeLabel ? `- Property Type: ${propertyTypeLabel}` : ''}");
+    // The rule generalised past the two cells above, because the block that
+    // carried `- Property Type: …` has since been removed with the rest of the
+    // legacy template: EVERY interpolation of the label is inside a ternary
+    // that tests it. A bare `${propertyTypeLabel}` anywhere prints an empty
+    // value slot when nothing resolved, which is the defect this pins.
+    for (const line of generator.split('\n')) {
+      if (!line.includes('${propertyTypeLabel}')) continue;
+      expect(line, 'an unguarded interpolation would print an empty value slot')
+        .toMatch(/propertyTypeLabel \?/);
+    }
     expect(generator, 'an unguarded line would print an empty value slot')
       .not.toMatch(/^- Property Type: \$\{propertyTypeLabel\}$/m);
   });
@@ -214,5 +223,110 @@ describe('an instruction never occupies a value slot', () => {
     // produced `{{gauge: 85 | Land Appeal}}`.
     expect(generator).not.toMatch(/Investment Score, Affordability, Risk, Suitability, Confidence, and similar 0-100 ratings MUST use/);
     expect(generator).toMatch(/Do NOT mint a rating for appeal, suitability, confidence, affordability/);
+  });
+});
+
+describe('a rating you invented may not be drawn, in any primitive', () => {
+  /*
+   * The first version of this guard named `gauge` and `wheel`, because those
+   * were the two the prompt asked for. The model obeyed it and put the SAME
+   * invented ratings into `{{bars}}` and `{{heatmap}}` — pages 9, 15, 16 and 20
+   * of the 17 Sep 2026 regeneration of 262 Pallas Street. The rule had been
+   * written about a PRIMITIVE when it needed to be written about a CLAIM, and
+   * a rule about a primitive is one the next primitive walks around.
+   *
+   * The prompt contradicted itself too: "Do NOT mint a rating … the same holds
+   * for every number in a {{wheel}}" and, two lines later, "Any list of 3+
+   * ranked metrics MUST be rendered as {{bars: …}}". The model resolved the
+   * contradiction the way the MUST told it to.
+   *
+   * Every fixture below is a production directive, verbatim.
+   */
+  const recorded = [63, 70, 55];
+
+  it('removes the bars the Compass actually drew', () => {
+    const md = [
+      'Some prose about the property.',
+      '',
+      '{{bars: Character appeal 80, Land size and outdoor potential 85, Everyday amenity access 75, '
+        + 'Tenant demand depth 70, Planning / overlay certainty 55 | title=262 Pallas Street · Non‑financial positioning | max=100 | unit=%}}',
+      '',
+      'More prose.',
+    ].join('\n');
+    const r = suppressUnrecordedVerdictVisuals(md, { recorded });
+    expect(r.removed).toHaveLength(1);
+    expect(r.removed[0].kind).toBe('bars');
+    // 70 and 55 ARE recorded; 80, 85 and 75 are not, and one unrecorded value
+    // condemns the chart — a bar chart is read as one measurement.
+    expect(r.removed[0].values).toEqual([80, 85, 75]);
+    expect(r.markdown).not.toContain('Character appeal');
+    expect(r.markdown).toContain('Some prose about the property.');
+    expect(r.markdown).toContain('More prose.');
+  });
+
+  it('removes a locality ranking nothing scored', () => {
+    const md = '{{bars: 48 Redfern Street – commute-light town block 88, Central Cowra – core town blocks 92, '
+      + 'Rural fringe around Cowra – car-reliant holdings 55 | title=Relative appeal | max=100}}';
+    expect(suppressUnrecordedVerdictVisuals(md, { recorded }).removed).toHaveLength(1);
+  });
+
+  it('leaves a measured series alone, because it declares no rating scale', () => {
+    /*
+     * Measured over the 611 bars the generator produced in the 60 days to
+     * 17 Sep 2026: 383 declare `max=100` and 228 do not. Every one of the 25
+     * most frequent titles among the 383 is a minted rating — "Market depth &
+     * cycle risk", "Risk focus areas (higher = more attention needed)",
+     * "Planning certainty snapshot", "Property lifestyle fit (0–100)". A real
+     * measurement does not announce that it is scored out of a hundred.
+     */
+    const md = '{{bars: Subject $565,000, Suburb median $498,000, Regional median $451,000 | title=Price against the market}}';
+    const r = suppressUnrecordedVerdictVisuals(md, { recorded });
+    expect(r.removed).toEqual([]);
+    expect(r.markdown).toContain('Suburb median');
+  });
+
+  it('leaves a percentage series alone', () => {
+    const md = '{{bars: Owner-occupied 61, Renting 31, Other 8 | title=Tenure mix | unit=%}}';
+    expect(suppressUnrecordedVerdictVisuals(md, { recorded }).removed).toEqual([]);
+  });
+
+  it('reads a label that itself ends in a number', () => {
+    // "Stage 2" is a label, not a value. Scanning the item for digits would
+    // read the 2 and condemn a chart for a number nobody asserted.
+    const md = '{{bars: Stage 2 release 40, Stage 3 release 60 | title=X | max=100}}';
+    const r = suppressUnrecordedVerdictVisuals(md, { recorded });
+    expect(r.removed[0].values).toEqual([40, 60]);
+  });
+
+  it('removes a heatmap of scores and keeps one of measurements', () => {
+    const scored = '{{heatmap: 80,75 / 60,55 | rows=Appeal,Risk | cols=Subject,Suburb | title=X | max=100}}';
+    expect(suppressUnrecordedVerdictVisuals(scored, { recorded }).removed).toHaveLength(1);
+    const measured = '{{heatmap: 0.55,0.52,0.58 / 0.49,0.51,0.53 | rows=Income,Education '
+      + '| cols=Cooloola Cove,State avg,Nearby coastal | title=Relative socioeconomic positioning (0–1 scale)}}';
+    expect(suppressUnrecordedVerdictVisuals(measured, { recorded }).removed).toEqual([]);
+  });
+
+  it('still judges every number in a gauge and a wheel, declared scale or not', () => {
+    // These two are rating primitives by construction, so the `max=100`
+    // condition must not become a way around them.
+    expect(suppressUnrecordedVerdictVisuals('{{gauge: 82}}', { recorded }).removed).toHaveLength(1);
+    expect(suppressUnrecordedVerdictVisuals('{{wheel: 88, 74}}', { recorded }).removed).toHaveLength(1);
+    expect(suppressUnrecordedVerdictVisuals('{{gauge: 63/100 | label=Investment score}}', { recorded }).removed).toEqual([]);
+  });
+
+  it('the prompt no longer tells the model to draw the thing it just forbade', () => {
+    const gen = readFileSync('supabase/functions/generate-investment-report/index.ts', 'utf8');
+    const rules = gen.slice(gen.indexOf('VISUAL-FIRST RULES'), gen.indexOf('const textEncoder'));
+    expect(rules).toMatch(/A RATING YOU INVENTED MAY NOT BE DRAWN, IN ANY PRIMITIVE/);
+    // The rule lives inside a template literal, so its code markers arrive as
+    // an escaped backtick pair. Reading the text with the markers stripped is
+    // what keeps this assertion about the RULE rather than about escaping.
+    const plain = rules.replace(/\\`/g, '');
+    expect(plain).toContain('do NOT write max=100 on a chart whose numbers you chose');
+    // The bars instruction is what the model routed through. It must now
+    // exclude a ranking the model is making up.
+    const bars = rules.slice(rules.indexOf('Any list of 3+ ranked metrics'));
+    expect(bars.slice(0, 400)).toMatch(/MEASURED quantities/);
+    expect(bars.slice(0, 400)).toMatch(/not a set of metrics/);
   });
 });
