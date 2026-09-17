@@ -6,10 +6,12 @@
  * in the parent document. These pin the guard that removes such claims.
  */
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   findScoreClaims,
   recordedScoreValues,
   suppressUnrecordedScores,
+  suppressUnrecordedVerdictVisuals,
 } from '@/lib/reports/investment/scoreClaims.pure';
 
 const STONE_MASON_SCORE = {
@@ -90,5 +92,127 @@ describe('suppressUnrecordedScores', () => {
     const md = 'Intro.\n\n- Suburb fit score of 82 for commuter families.\n- Kept.\n';
     const { markdown } = suppressUnrecordedScores(md, { recorded });
     expect(markdown).toBe('Intro.\n\n- Kept.\n');
+  });
+});
+
+describe('a dial the record cannot back', () => {
+  /*
+   * 262 Pallas Street, regenerated 17 Sep 2026 on a record that issues no
+   * grade. The prose guard above skips any line beginning `{{`, because a
+   * directive was assumed to be composed from recorded numbers. Two of these
+   * primitives are written by the MODEL:
+   *
+   *   {{gauge: 85 | Land Appeal | Large block relative to typical suburban lots}}
+   *   {{gauge: 82 | Large-block lifestyle appeal | …}}
+   *   {{wheel: 25,45,30,40,35 | labels=Environmental,Crime,Planning & overlays,…}}
+   *
+   * A gauge over 100 draws a verdict band, so "85 · STRONG" reached the page
+   * as a measurement of somebody's property.
+   */
+  const doc = [
+    'The land is large for the street.',
+    '{{gauge: 85 | Land Appeal | Large block relative to typical suburban lots}}',
+    '',
+    '{{gauge: 78 | Investment Score | Weighted composite}}',
+    '{{wheel: 25,45,30,40,35 | labels=Environmental,Crime,Planning,Supply,Transport | max=100}}',
+    '{{bars: Health Care 18.3, Retail 10.4 | max=20 | unit=%}}',
+    '{{pictograph: 7/10 | label=Family-oriented appeal}}',
+    'Closing line.',
+  ].join('\n');
+
+  it('drops a gauge and a wheel the record does not hold, and keeps the one it does', () => {
+    const r = suppressUnrecordedVerdictVisuals(doc, { recorded: [78] });
+    expect(r.markdown).toContain('{{gauge: 78 | Investment Score | Weighted composite}}');
+    expect(r.markdown).not.toContain('Land Appeal');
+    expect(r.markdown).not.toContain('{{wheel:');
+    expect(r.removed.map((x) => x.kind)).toEqual(['gauge', 'wheel']);
+    expect(r.removed[1].values).toEqual([25, 45, 30, 40, 35]);
+  });
+
+  it('leaves the data primitives alone', () => {
+    // Dropping these on a number-match takes measured series off the page.
+    const r = suppressUnrecordedVerdictVisuals(doc, { recorded: [78] });
+    expect(r.markdown).toContain('{{bars: Health Care 18.3');
+    expect(r.markdown).toContain('{{pictograph: 7/10');
+  });
+
+  it('reads the value and never the label, the caption or an option', () => {
+    // `max=100` and "seven in ten" are not assertions about a score.
+    const kept = suppressUnrecordedVerdictVisuals(
+      '{{gauge: 61/100 | Confidence 85 | Around 100 households | max=100}}',
+      { recorded: [61] },
+    );
+    expect(kept.removed).toEqual([]);
+    const gone = suppressUnrecordedVerdictVisuals(
+      '{{gauge: 61/100 | Confidence | max=100}}',
+      { recorded: [85] },
+    );
+    expect(gone.removed).toHaveLength(1);
+    expect(gone.markdown.trim()).toBe('');
+  });
+
+  it('leaves a directive with no readable number to another control', () => {
+    const r = suppressUnrecordedVerdictVisuals('{{gauge: n/a | Something}}', { recorded: [] });
+    expect(r.removed).toEqual([]);
+    expect(r.markdown).toContain('{{gauge: n/a');
+  });
+});
+
+describe('an instruction never occupies a value slot', () => {
+  /*
+   * The same regeneration printed this, in its own prose, as the property's
+   * recorded attribute:
+   *
+   *   The property type is recorded as **"Not stated in the record — if the
+   *   property documents name the dwelling type, use that exact type in every
+   *   section, never write 'Residential Property'"**…
+   *
+   * `propertyTypeLabel` WAS that instruction when nothing resolved, and it was
+   * interpolated into `| Property Type | … |` cells and a `- Property Type: …`
+   * line. A model handed a value quotes it back.
+   */
+  const generator = readFileSync('supabase/functions/generate-investment-report/index.ts', 'utf8');
+
+  it('leaves the slot empty and puts the instruction in the rules', () => {
+    expect(generator).toMatch(/const propertyTypeLabel = resolvedPropertyType \?\? '';/);
+    expect(generator).toMatch(/const propertyTypeRule = resolvedPropertyType/);
+    // Every interpolation of the label into a cell or a line is guarded: the
+    // raw form and the guarded form occur the same number of times, so none is
+    // left bare.
+    const rawRow = /\| Property Type \| \$\{propertyTypeLabel\} \|/g;
+    const guardedRow = /\$\{propertyTypeLabel \? `\| Property Type \| \$\{propertyTypeLabel\} \|` : ''\}/g;
+    expect([...generator.matchAll(rawRow)]).toHaveLength([...generator.matchAll(guardedRow)].length);
+    expect([...generator.matchAll(guardedRow)].length).toBeGreaterThan(0);
+    expect(generator).toContain("${propertyTypeLabel ? `- Property Type: ${propertyTypeLabel}` : ''}");
+    expect(generator, 'an unguarded line would print an empty value slot')
+      .not.toMatch(/^- Property Type: \$\{propertyTypeLabel\}$/m);
+  });
+
+  it('tells the prompt the type the record holds', () => {
+    /*
+     * `rawPropertyType` read `propertyDetails?.propertyType` alone. Every
+     * Compass report is finished by the resume worker, which calls back with
+     * `{reportId, propertyAddress, continueFrom}` and no `propertyDetails` — so
+     * on the run that writes the document this was always ''. On 262 Pallas
+     * Street the operator had recorded `propertyType: 'house'`, page 3 of the
+     * PDF printed it from `property_specs`, and the model was told it was not
+     * stated. `sourcePropertyType` is the one answer this module resolves.
+     */
+    expect(generator).not.toMatch(/const rawPropertyType = propertyDetails\?\.propertyType\?\.toLowerCase\(\)/);
+    expect(generator).toMatch(/const rawPropertyType = \(typeof sourcePropertyType === 'string' \? sourcePropertyType : ''\)\.toLowerCase\(\);/);
+    // And it is resolved before it is read.
+    expect(generator.indexOf('const sourcePropertyType =')).toBeLessThan(generator.indexOf('const rawPropertyType ='));
+  });
+
+  it('stops the rent table printing an "X-Bed" placeholder', () => {
+    expect(generator, 'X-Bed reached the page beside an instruction-shaped type')
+      .not.toContain("${effectiveBeds || 'X'}-Bed");
+  });
+
+  it('stops the prompt asking for a rating nobody scored', () => {
+    // "Affordability, Suitability, Confidence … MUST use {{gauge}}" is what
+    // produced `{{gauge: 85 | Land Appeal}}`.
+    expect(generator).not.toMatch(/Investment Score, Affordability, Risk, Suitability, Confidence, and similar 0-100 ratings MUST use/);
+    expect(generator).toMatch(/Do NOT mint a rating for appeal, suitability, confidence, affordability/);
   });
 });

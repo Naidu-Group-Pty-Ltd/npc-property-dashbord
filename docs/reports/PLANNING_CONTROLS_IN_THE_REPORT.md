@@ -307,3 +307,74 @@ is written by the model: nothing yet derives it from whether the platform
 retrieved the underlying fact, so a desktop reading can still be labelled
 `Verified` by the writer. That is named here rather than left to be discovered,
 and it is the next piece of work in this area.
+
+---
+
+## 7. What the rendered pages showed
+
+The regenerated report (`4640d10a`) was drawn through the Investment Compass
+*Chancery* master with the pinned WeasyPrint 69.0 and every one of its 29 pages
+was looked at. Three things the record now gets right, and four the pages
+found.
+
+**Right.** Page 5's cash-flow table foots on the page — rental income $26,000,
+loan repayments $34,890, **council and water rates $5,000** (3,400 + 1,600, in
+the row that names both), insurance $2,800, **management $2,580** (2,080 + 500
+letting fees), maintenance $2,500, net position **−$21,770**, which is the
+figure the rest of the document quotes. The audit's $2,100 gap is closed. Page
+3 prints `Council — Fraser Coast Regional` where the 16 Sep report had null.
+Page 6 states the assumptions the audit asked about in the open: capital growth
+9.70%, **vacancy allowance 0.00%, occupancy 52 weeks a year** — the zero-vacancy
+assumption is now disclosed rather than buried. And page 4 draws three scored
+dimensions (Growth 77, Yield 53, Demand 35) with Location and Risk simply
+absent rather than printed as zeros.
+
+**Found.**
+
+1. **A dial the record cannot back, drawn large.** Page 9 is a gauge reading
+   **85 · /100 · STRONG** under the title *Land Appeal*; page 18 is a second
+   one, **82 · STRONG**, titled *Large-block lifestyle appeal*; page 20 is a
+   five-value risk `{{wheel}}` (25, 45, 30, 40, 35). Eight numbers, none in
+   `investment_score`, on a record that issues no grade. The prompt asked for
+   them in as many words — *"Investment Score, Affordability, Risk,
+   Suitability, Confidence, and similar 0-100 ratings MUST use `{{gauge}}`"* —
+   so the line is narrowed at the source and `suppressUnrecordedVerdictVisuals`
+   is the check that it was obeyed. It is deliberately narrow: `gauge` and
+   `wheel` are rating primitives, while `bars`, `tiles`, `heatmap`, `donut` and
+   `pictograph` carry measured series and dropping those on a number match
+   would take real data off the page.
+2. **A prompt directive printed as the property's attribute.** Page 9, in the
+   report's own prose: *"The property type is recorded as "Not stated in the
+   record — if the property documents name the dwelling type, use that exact
+   type in every section, never write 'Residential Property'"".* That string
+   WAS `propertyTypeLabel` when nothing resolved, and it was interpolated into
+   `| Property Type | … |` cells and a `- Property Type: …` line. **An
+   instruction must never occupy a value slot**: the slot now carries the fact
+   or nothing, and the instruction lives in the rules.
+3. **And the type was known all along.** `rawPropertyType` read
+   `propertyDetails?.propertyType` alone. Every Compass report is finished by
+   the resume worker, which calls back with `{reportId, propertyAddress,
+   continueFrom}` and no `propertyDetails` — so on the run that writes the
+   document it was always `''`. The operator had recorded `propertyType:
+   'house'`; `property_specs.property_type` stored it and page 3 printed it,
+   while the model was told it was not stated and wrote a paragraph about the
+   record not stating it. It reads `sourcePropertyType` now, which is the one
+   answer the module already resolves (request first, then the overrides).
+   The same read also stopped the rent-comparison row printing `X-Bed`.
+
+**Named, not fixed.** Four residuals, with where they show:
+
+- **Labels are clipped in three primitives.** A tile title on page 19
+  (`OUTER MARYBOROUGH POCKETS…`), the timeline's only labelled stop on page 13
+  (`Manufacturing Centre of Excellence – Maryborough…`), and a gauge caption on
+  page 18. `fitLines` wraps a label into the units a drawing may use; these
+  three call sites truncate instead.
+- **The timeline draws empty horizons.** Page 13 has stops at `3-5Y` and `5Y+`
+  with nothing at them, which reads as a pipeline at those horizons. A horizon
+  no item reaches should not be drawn.
+- **`Evidence Chip: Verified` is written by the model.** Pages 21–23 label
+  overlay readings sourced to a listing portal as `Verified`. Nothing derives
+  that column from whether the platform retrieved the fact.
+- **Two sections are drawn twice** (Due Diligence Checklist on pages 24–25 and
+  25–26, Final Recommendation on pages 25 and 26), and one checklist item is
+  cut mid-sentence — *"8. Ask a local property manager"* — on page 26.

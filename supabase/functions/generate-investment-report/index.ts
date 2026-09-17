@@ -57,7 +57,7 @@ import {
   projectionAssumptionLinesForPrompt,
   sensitivityRowsForPrompt,
 } from '../_shared/reports/investment/promptFinancials.pure.ts';
-import { recordedScoreValues, suppressUnrecordedScores } from '../_shared/reports/investment/scoreClaims.pure.ts';
+import { recordedScoreValues, suppressUnrecordedScores, suppressUnrecordedVerdictVisuals } from '../_shared/reports/investment/scoreClaims.pure.ts';
 import { investmentScorePromptBlock, overallRecommendationLine } from '../_shared/reports/investment/scorePromptBlock.pure.ts';
 import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/reports/market/domainEvidence.pure.ts';
 import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
@@ -1601,7 +1601,7 @@ VISUAL-FIRST RULES (CRITICAL):
   and never restates it afterwards.
 - Any "median grew from X to Y" / trend sentence MUST include either \`~~[…]~~\` inline or a \`::: stat\` callout nearby.
 - Any "subject vs suburb vs metro/state" comparison MUST use \`{{bars: Subject X, Suburb Y, Metro Z | title=…}}\`.
-- Investment Score, Affordability, Risk, Suitability, Confidence, and similar 0-100 ratings MUST use \`{{gauge: …}}\`.
+- A 0-100 rating is drawn with \`{{gauge: …}}\` — and ONLY where the score is one supplied to you above (the Investment Score and the dimensions the engine actually scored). Do NOT mint a rating for appeal, suitability, confidence, affordability, land quality or any other attribute: where no score was supplied, state the finding in words and draw no gauge. The same holds for every number in a \`{{wheel: …}}\`. An invented dial is drawn with a verdict band beside it and reads to a client exactly like a measurement.
 - Any list of 3+ ranked metrics MUST be rendered as \`{{bars: …}}\` instead of a table.
 - Any "X of Y households / dwellings / buyers" stat MUST use \`{{pictograph: …}}\`.
 - Any composition / share-of-total (tenure mix, age bands, expense split, capital
@@ -4465,7 +4465,21 @@ Produce a comprehensive statewide investment analysis following the structure ab
     // ============================================================================
     // STANDARDIZED PROPERTY TYPE - Consistent terminology throughout report
     // ============================================================================
-    const rawPropertyType = propertyDetails?.propertyType?.toLowerCase() || '';
+    /*
+     * The type the prompt is told, and the type the record holds, are one
+     * answer.
+     *
+     * This read `propertyDetails?.propertyType` alone. Every Compass report is
+     * finished by the resume worker, which calls back with `{reportId,
+     * propertyAddress, continueFrom}` and no `propertyDetails` at all — so on
+     * the run that writes the document, this was always `''`. On 262 Pallas
+     * Street the operator had recorded `propertyType: 'house'`, the spec column
+     * stored `"house"` and page 3 of the PDF printed it, while the model was
+     * told the type was not stated and wrote a paragraph about the record not
+     * stating it. `sourcePropertyType` is the one answer this module already
+     * resolved (request first, then the operator's overrides).
+     */
+    const rawPropertyType = (typeof sourcePropertyType === 'string' ? sourcePropertyType : '').toLowerCase();
     const isStrataProperty = rawPropertyType.includes('unit') || rawPropertyType.includes('apartment') || 
                             rawPropertyType.includes('flat') || rawPropertyType.includes('townhouse') ||
                             rawPropertyType.includes('villa') || rawPropertyType.includes('studio');
@@ -4496,8 +4510,32 @@ Produce a comprehensive statewide investment analysis following the structure ab
     // preferences") after earlier ones had named a strata townhouse from the
     // listing. Where the record holds no type, the model is told that, and
     // told to carry whatever type the documents state through every section.
-    const propertyTypeLabel = resolvedPropertyType
-      ?? 'Not stated in the record — if the property documents name the dwelling type, use that exact type in every section; never write "Residential Property"';
+    /*
+     * An instruction must never occupy a value slot.
+     *
+     * `propertyTypeLabel` used to BE the instruction when nothing resolved, and
+     * it was interpolated into `| Property Type | … |` table cells and a
+     * `- Property Type: …` line. On the 17 Sep 2026 regeneration of 262 Pallas
+     * Street the model did the only reasonable thing with a value it was handed
+     * and quoted it back:
+     *
+     *   The property type is recorded as **"Not stated in the record — if the
+     *   property documents name the dwelling type, use that exact type in every
+     *   section, never write 'Residential Property'"**, signalling that all
+     *   future references in this report will follow the formal dwelling
+     *   description…
+     *
+     * — a prompt directive printed as a fact about somebody's house. So the
+     * value slot now carries the fact or NOTHING (the row and the line are
+     * omitted, per the standing rule that an absence is omitted rather than
+     * worded), and the instruction lives in the rules where it always belonged.
+     */
+    const propertyTypeLabel = resolvedPropertyType ?? '';
+    const propertyTypeRule = resolvedPropertyType
+      ? `3. PROPERTY TYPE: Use the standardized property type "${resolvedPropertyType}" consistently throughout the report - never switch terminology.`
+      : '3. PROPERTY TYPE: the record does not state the dwelling type. Do NOT name one, do NOT write "Residential Property", '
+        + 'and do NOT print a property-type row, cell or bullet at all — leave it out with the sentence that would have carried '
+        + 'it. If the property documents name the dwelling type, use that exact type in every section.';
 
     console.log(`🏠 Property Type Standardization: "${rawPropertyType}" → "${resolvedPropertyType ?? '(unknown — stored as null)'}" (isStrata: ${isStrataProperty})`);
     
@@ -4724,7 +4762,7 @@ Your role is to produce comprehensive, professional-grade investment reports fol
 **CRITICAL CALCULATION RULES:**
 1. OCCUPANCY ASSUMPTION: The recorded occupancy is ${effectiveOccupancyRate} weeks per year. Every cash-flow figure uses rent collected over ${effectiveOccupancyRate} weeks; the yields are stated on the contractual rent (52 weeks) before finance and tax, and you must say so wherever you quote a yield. Never present the two rents as one figure.
 2. YIELD VALUES: Use the pre-calculated yield values provided below EXACTLY - do NOT recalculate or estimate yields.
-3. PROPERTY TYPE: Use the standardized property type "${propertyTypeLabel}" consistently throughout the report - never switch terminology.
+${propertyTypeRule}
 
 **PRE-CALCULATED FINANCIAL VALUES (USE THESE EXACTLY - DO NOT RECALCULATE):**
 - Gross Rental Yield: ${statedYield(preCalculatedGrossYield)}
@@ -4750,7 +4788,7 @@ ${absentRentDirective(rentalEvidence)}
 ${propertyDetails ? `**Property Details Provided:**
 - Price: $${propertyDetails.price?.toLocaleString() || 'Not specified'}
 - Weekly Rent: $${propertyDetails.weeklyRent || 'Not specified'}
-- Property Type: ${propertyTypeLabel}
+${propertyTypeLabel ? `- Property Type: ${propertyTypeLabel}` : ''}
 - Bedrooms: ${propertyDetails.beds || 'Not specified'}
 - Bathrooms: ${propertyDetails.baths || 'Not specified'}
 ${landAreaReading ? `- ${landAreaReading.label}: ${landAreaReading.value}${landAreaReading.note ? ` — ${landAreaReading.note}` : ''}` : ''}
@@ -4783,7 +4821,7 @@ This executive summary provides a high-level overview of the investment opportun
 | Attribute | Value |
 |-----------|-------|
 | Property Address | ${formattedInput} |
-| Property Type | ${propertyTypeLabel} |
+${propertyTypeLabel ? `| Property Type | ${propertyTypeLabel} |` : ''}
 | Purchase Price | $${effectivePurchasePrice?.toLocaleString() || 'X,XXX,XXX'} |
 | Estimated Weekly Rent | ${quotedWeeklyRent ? `$${quotedWeeklyRent}` : 'Not established'} |
 | Gross Rental Yield | ${statedYield(preCalculatedGrossYield)} |
@@ -5022,7 +5060,7 @@ Based on ${documentContent ? 'the provided property listing data' : 'location in
 
 | Property Characteristic | ${documentContent ? 'Value' : 'Estimated Value'} |
 |------------------------|-------|
-| Property Type | ${propertyTypeLabel} |
+${propertyTypeLabel ? `| Property Type | ${propertyTypeLabel} |` : ''}
 ${[
   // A specification table states facts. Where the record holds none, the row
   // is OMITTED — it is not filled with an instruction to estimate one.
@@ -5049,7 +5087,7 @@ ${[
   ['Condition', propertyDetails?.condition ?? null],
 ].filter(([, v]) => v !== null && v !== undefined && v !== '')
  .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
-${isStrataProperty ? `| Strata Type | ${propertyTypeLabel} within strata scheme |` : ''}
+${isStrataProperty && propertyTypeLabel ? `| Strata Type | ${propertyTypeLabel} within strata scheme |` : ''}
 ${landAreaReading?.note ? `\n_${landAreaReading.note}_\n` : ''}
 
 The table above contains every physical attribute on record for this property.
@@ -5122,7 +5160,7 @@ The rental analysis below is based on suburb-level median rental data and the sp
 
 | Property Type | Estimated Weekly Rent | Annual Rental Income |
 |--------------|----------------------|---------------------|
-| ${effectiveBeds || 'X'}-Bed ${propertyTypeLabel} | ${quotedWeeklyRent ? `$${quotedWeeklyRent} - $${quotedWeeklyRent + 50}` : 'Not established'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()} - $${(annualRentIncome + (50 * effectiveOccupancyRate)).toLocaleString()}` : 'Not established'} |
+| ${[effectiveBeds ? `${effectiveBeds}-bed` : null, propertyTypeLabel || 'dwelling'].filter(Boolean).join(' ')} | ${quotedWeeklyRent ? `$${quotedWeeklyRent} - $${quotedWeeklyRent + 50}` : 'Not established'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()} - $${(annualRentIncome + (50 * effectiveOccupancyRate)).toLocaleString()}` : 'Not established'} |
 
 **Selected Rental Assumption:** ${rentalEvidence.established ? `$${quotedWeeklyRent}/week × ${effectiveOccupancyRate} weeks = $${annualRentIncome.toLocaleString()} annually (${effectiveOccupancyRate === 52 ? '100% occupancy' : `${((effectiveOccupancyRate/52)*100).toFixed(0)}% occupancy`})` : 'No rental evidence was available for this property, so no rental income is assumed and no yield is stated.'}
 
@@ -7010,6 +7048,27 @@ YOUR DEDICATED PROPERTY PARTNER
       console.log(
         `✓ Score guard: ${scoreGuard.removed.length} unrecorded score claim(s) removed — `
         + scoreGuard.removed.map((r) => JSON.stringify(r.text)).join(', '),
+      );
+    }
+    /*
+     * The same rule, on the two primitives a model draws as a verdict.
+     *
+     * The sentence guard above skips any line beginning `{{`, on the reasoning
+     * that a directive is composed from recorded numbers. That is true of the
+     * ones the generator writes and false of the ones the MODEL writes: on 262
+     * Pallas Street it drew `{{gauge: 85 | Land Appeal}}`, `{{gauge: 82 |
+     * Large-block lifestyle appeal}}` and a five-value risk `{{wheel}}` on a
+     * record that issues no grade at all — and a gauge over 100 prints a
+     * verdict band, so "85 · STRONG" reached the page as a measurement.
+     */
+    const visualGuard = suppressUnrecordedVerdictVisuals(reportContent, {
+      recorded: recordedScoreValues(enhancedData.investmentScore),
+    });
+    if (visualGuard.removed.length) {
+      reportContent = visualGuard.markdown;
+      console.log(
+        `✓ Visual guard: ${visualGuard.removed.length} unrecorded verdict visual(s) removed — `
+        + visualGuard.removed.map((r) => `${r.kind}(${r.values.join(',')})`).join(', '),
       );
     }
 

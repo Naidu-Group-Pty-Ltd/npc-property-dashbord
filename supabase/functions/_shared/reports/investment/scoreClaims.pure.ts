@@ -21,9 +21,31 @@
  * Suppression removes the SENTENCE carrying the claim — the unit of the
  * assertion — and reports what went, so the hygiene log can say "the model
  * invented a score" rather than the document silently reading differently
- * from the model's draft. Tables and chart directives are never edited here:
- * a composed table prints only recorded figures, and a directive is drawn
- * from its own numbers.
+ * from the model's draft. A composed table is never edited here, because it
+ * prints only recorded figures.
+ *
+ * A chart directive was left alone for the same reason — "a directive is drawn
+ * from its own numbers" — and that reason was wrong for the two primitives a
+ * MODEL writes as a verdict. Measured on 262 Pallas Street, 17 Sep 2026, whose
+ * record issues no grade at all:
+ *
+ *   {{gauge: 85 | Land Appeal | Large block relative to typical suburban lots}}
+ *   {{gauge: 82 | Large-block lifestyle appeal | …}}
+ *   {{wheel: 25,45,30,40,35 | labels=Environmental,Crime,Planning & overlays,…}}
+ *
+ * Eight numbers, none of them in `investment_score`, three of them drawn as
+ * dials — and a gauge on a denominator of 100 prints a verdict band beside the
+ * figure, so "85 · STRONG" reaches a client as a measurement of their
+ * property. The prompt asked for it: "Investment Score, Affordability, Risk,
+ * Suitability, Confidence, and similar 0-100 ratings MUST use {{gauge}}". That
+ * line is narrowed at the source and `suppressUnrecordedVerdictVisuals` is the
+ * check that it was obeyed.
+ *
+ * It is deliberately NARROW. `gauge` and `wheel` are rating primitives and
+ * nothing else; `pictograph`, `bars`, `donut`, `heatmap` and `tiles` carry
+ * proportions and measured series, and dropping those on a number-match would
+ * take real data off the page. A pictograph asserting a proportion nobody
+ * measured is a residual, named rather than guessed at.
  *
  * Deno-compatible: no imports.
  */
@@ -140,4 +162,69 @@ export function suppressUnrecordedScores(
   // A paragraph that lost its only line leaves two blank lines behind.
   const markdownOut = out.join('\n').replace(/\n{3,}/g, '\n\n');
   return { markdown: markdownOut, removed };
+}
+
+/** A verdict visual that was removed, and the numbers it asserted. */
+export interface SuppressedVisual {
+  /** `gauge` or `wheel`. */
+  kind: string;
+  /** The whole directive, as removed. */
+  directive: string;
+  /** The values it asserted that the record does not hold. */
+  values: number[];
+}
+
+export interface VisualSuppressionResult {
+  markdown: string;
+  removed: SuppressedVisual[];
+}
+
+/** Every number a gauge or wheel asserts as a rating, rounded. */
+function ratingValues(kind: string, payload: string): number[] {
+  // The first field before `|` carries the value(s); everything after is
+  // labels, captions and options, which may legitimately contain numbers
+  // ("Around seven in ten…", "max=100").
+  const head = payload.split('|')[0] ?? '';
+  const out: number[] = [];
+  if (kind === 'wheel') {
+    for (const part of head.split(',')) {
+      const n = Number(part.trim());
+      if (Number.isFinite(n)) out.push(Math.round(n));
+    }
+    return out;
+  }
+  // gauge: `VALUE` or `VALUE/MAX` — the value is the assertion, the max is the
+  // scale.
+  const n = Number((head.split('/')[0] ?? '').trim());
+  if (Number.isFinite(n)) out.push(Math.round(n));
+  return out;
+}
+
+/**
+ * Remove every `{{gauge}}` and `{{wheel}}` whose numbers the record does not
+ * hold.
+ *
+ * A directive is a whole line in this vocabulary, so the line goes — leaving no
+ * hole, because the renderer draws nothing for a directive that is not there
+ * and the prose around it introduces the finding in words.
+ */
+export function suppressUnrecordedVerdictVisuals(
+  markdown: string,
+  opts: { recorded: number[] },
+): VisualSuppressionResult {
+  const supported = new Set(opts.recorded.map((n) => Math.round(n)));
+  const removed: SuppressedVisual[] = [];
+  const out: string[] = [];
+  for (const line of markdown.split('\n')) {
+    const m = line.trim().match(/^\{\{(gauge|wheel)\s*:\s*([\s\S]*)\}\}$/);
+    if (!m) { out.push(line); continue; }
+    const kind = m[1];
+    const values = ratingValues(kind, m[2]);
+    const unsupported = values.filter((v) => !supported.has(v));
+    // A directive with no readable number is left alone: it is malformed
+    // rather than untrue, and that is a different control's business.
+    if (!values.length || !unsupported.length) { out.push(line); continue; }
+    removed.push({ kind, directive: line.trim(), values: unsupported });
+  }
+  return { markdown: out.join('\n').replace(/\n{3,}/g, '\n\n'), removed };
 }

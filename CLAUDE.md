@@ -1614,6 +1614,29 @@ tables are also appended to the document verbatim after the post-processor
 (property reports only), because asking a model to reproduce a table is how a
 table comes back paraphrased.
 
+**The pages then found three more** (§7 of the same doc, from all 29 pages of
+the regenerated report drawn through the Chancery master). **A dial the record
+cannot back**: page 9 drew a gauge reading `85 · /100 · STRONG` titled *Land
+Appeal*, page 18 a second at 82, page 20 a five-value risk `{{wheel}}` — eight
+numbers, none in `investment_score`, on a record that issues no grade — because
+the prompt said "Investment Score, Affordability, Risk, Suitability, Confidence,
+and similar 0-100 ratings MUST use `{{gauge}}`". That line is narrowed and
+`suppressUnrecordedVerdictVisuals` checks it was obeyed, on `gauge` and `wheel`
+alone: `bars`, `tiles`, `heatmap`, `donut` and `pictograph` carry measured
+series and dropping those on a number match takes real data off the page.
+**An instruction must never occupy a value slot** — `propertyTypeLabel` WAS the
+sentence "Not stated in the record — … never write 'Residential Property'" when
+nothing resolved, interpolated into `| Property Type | … |` cells, and the model
+quoted it back as the property's recorded attribute; the slot carries the fact
+or nothing now. And **the type was known all along**: `rawPropertyType` read
+`propertyDetails?.propertyType` alone, while every Compass report is finished by
+the resume worker, which calls back with `{reportId, propertyAddress,
+continueFrom}` and no `propertyDetails` — so it was `''` on the run that writes
+the document, on every report. It reads `sourcePropertyType` now. Four residuals
+are named in the doc rather than guessed at: clipped labels in three primitives,
+a timeline drawing horizons no item reaches, a model-written `Verified` evidence
+chip, and two sections drawn twice.
+
 **An interest-only loan whose term nobody recorded.** Read the note on
 `ASSUMED_INTEREST_ONLY_YEARS` in `_shared/reports/investment/loanLedger.pure.ts`
 before touching `buildLoanLedger` or `describeLoanStructure`. The same
