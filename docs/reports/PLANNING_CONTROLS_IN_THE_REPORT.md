@@ -372,9 +372,24 @@ absent rather than printed as zeros.
 - **The timeline draws empty horizons.** Page 13 has stops at `3-5Y` and `5Y+`
   with nothing at them, which reads as a pipeline at those horizons. A horizon
   no item reaches should not be drawn.
-- **`Evidence Chip: Verified` is written by the model.** Pages 21–23 label
-  overlay readings sourced to a listing portal as `Verified`. Nothing derives
-  that column from whether the platform retrieved the fact.
+- **`Evidence Chip: Verified` is written by the model, and the rule it breaks
+  is already written down.** `compass.riskDashboard`'s own `purpose` says
+  *"'Verified' only where a dated, parcel-level source is cited; 'Unverified'
+  while the required check is still to be done"* — and pages 21–23 stamp
+  `Verified` on overlay readings whose cited source is a listing portal's
+  "flood risk — not detected". The instruction exists; what does not is
+  anything that checks it, because "a dated, parcel-level source" is a
+  judgement handed to the writer. The chip is a candidate for the same
+  treatment the gauges got: derive it from what the platform retrieved rather
+  than from what the prose cites.
 - **Two sections are drawn twice** (Due Diligence Checklist on pages 24–25 and
   25–26, Final Recommendation on pages 25 and 26), and one checklist item is
-  cut mid-sentence — *"8. Ask a local property manager"* — on page 26.
+  cut mid-sentence — *"8. Ask a local property manager"* — on page 26. The
+  registry is **not** the cause: `compass.riskDashboard` (ordinal 9),
+  `compass.dueDiligenceChecklist` (10) and `compass.finalRecommendation` (11)
+  are three distinct entries with no shared `sourceHeadings`. The model wrote
+  the latter two inside the Risk Dashboard's own chunk and again as their own
+  sections. A heading belonging to a LATER registry entry appearing inside an
+  earlier chunk is detectable — `partitionByRegistry` already knows the
+  ordinals — but handing it forward rather than dropping it is the part that
+  needs care, so it is named here rather than half-done.
