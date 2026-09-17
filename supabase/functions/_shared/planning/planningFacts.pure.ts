@@ -354,6 +354,12 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
       clause: str(raw.clause),
       currencyDate: str(raw.currencyDate),
       detail: str(raw.detail),
+      // Absent on every enrichment stored before these two fields existed, and
+      // that is the ordinary state rather than an error: the Infrastructure
+      // Outlook prints an em dash for each, which is what a designation with
+      // no published standing or region should read as anyway.
+      standingLabel: str(raw.standingLabel),
+      region: str(raw.region),
       source: str(raw.source) ?? 'planning register',
       licence: str(raw.licence) ?? 'unstated',
     }];
@@ -376,13 +382,27 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
   // `constraintRegisters.answered` decides. With no register answered the
   // cell reads exactly as it did before: nothing was looked up.
   const overlayReadings = constraints.filter((c) => c.kind !== 'context');
+  /*
+   * The strategic designations are counted separately and NAMED in the same
+   * cell, because the table under this row lists them.
+   *
+   * Excluding them from the count is right — a regional plan does not control
+   * what is built on one lot, and counting it as a "mapped control" would say
+   * it does. But the first render of 262 Pallas Street read
+   * "1 mapped control applies at this point" directly above a three-row table,
+   * and a reader resolves that contradiction by distrusting one of them.
+   */
+  const contextReadings = constraints.filter((c) => c.kind === 'context');
+  const designationTail = contextReadings.length
+    ? `, plus ${contextReadings.length} strategic designation${contextReadings.length === 1 ? '' : 's'}`
+    : '';
   const overrideOverlays = overrideText(o.zoningOverlays);
   const overlays = overrideOverlays
     ? operatorCell('Overlays', overrideOverlays, retrievedAt)
     : overlayReadings.length
       ? {
         label: 'Overlays, controls and hazards',
-        value: `${overlayReadings.length} mapped ${overlayReadings.length === 1 ? 'control applies' : 'controls apply'} at this point`,
+        value: `${overlayReadings.length} mapped ${overlayReadings.length === 1 ? 'control applies' : 'controls apply'} at this point${designationTail}`,
         status: 'stated' as const,
         note: null,
         source: constraintRegisters.answered.join('; ') || null,
@@ -395,7 +415,10 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
       : constraintRegisters.answered.length
         ? absent('Overlays, controls and hazards', 'none_at_point',
           `${constraintRegisters.answered.length} register${constraintRegisters.answered.length === 1 ? '' : 's'} `
-          + `answered at this coordinate and returned no mapped control. `
+          + `answered at this coordinate and returned no mapped control`
+          + (contextReadings.length
+            ? `${designationTail}, listed below. `
+            : '. ')
           + (constraintsAsked.length
             ? `What was checked: ${constraintsAsked.map((f) => CONSTRAINT_FAMILY_LABEL[f] ?? f).join(', ')}. `
             : '')

@@ -287,6 +287,30 @@ describe('Queensland answers where the land sits in the state plan', () => {
     expect(plan?.detail).toContain('version December 2023');
   });
 
+  it('separates the standing from the region, and keeps the join in detail', () => {
+    /*
+     * `detail` is a JOIN — legal status, version, region, hazard class — and
+     * it reads correctly in the register table's "What the register returned"
+     * column, which is explicitly a summary of what came back. A consumer that
+     * needs one of those facts cannot take the join, and one did: the
+     * Infrastructure Outlook put `detail` in its **Status** column, so
+     * `Maryborough Priority Living Area` was given the status
+     * `Wide Bay Burnett` — the region.
+     */
+    const area = out.readings.find((r) => r.family === 'growthArea');
+    expect(area?.region).toBe('Wide Bay Burnett');
+    // The register stated no legal status for the living area, and an absent
+    // standing is a real state.
+    expect(area?.standingLabel).toBeNull();
+    expect(area?.detail).toBe('Wide Bay Burnett');
+
+    const plan = out.readings.find((r) => r.family === 'regionalPlan');
+    expect(plan?.standingLabel).toBe('Statutory instrument · version December 2023');
+    // The plan's answer carries no Region attribute; the plan IS the region.
+    expect(plan?.region).toBeNull();
+    expect(plan?.detail).toBe('Statutory instrument · version December 2023');
+  });
+
   it('files both as context, never as a control on the lot', () => {
     // A regional plan says what the REGION is for; it does not limit what may
     // be built on one lot, and printing it as a development control would

@@ -563,3 +563,54 @@ With that fixed, the section leads with:
 > about depth. Obtain an insurance quote in writing before exchange.
 
 None of which the report said before this work, on any property, anywhere.
+
+### 8.6 Two more the same render caught, read as a document
+
+The flood fix was found by reading the rendered section rather than the code.
+Reading it again afterwards found two more, and both are the same mistake in
+different places: **a value taken from a field that means something else.**
+
+**A region printed as a project's status.** The Infrastructure Outlook drew
+
+> | Maryborough Priority Living Area | Growth / priority area | Wide Bay Burnett | No date stated | Priority Living Area | — |
+
+against the headers `Project or instrument · Type · Status · Date recorded ·
+Where · Stated cost`. So the **Status** cell said `Wide Bay Burnett` — a
+region — and the **Where** cell said `Priority Living Area`, which is the name
+of a spatial layer and not a place; on the regional-plan row the same cell
+simply repeated the project's own name.
+
+The cause is that `detail` on a constraint reading is a JOIN of everything the
+layer published — legal status, version, region, hazard class. That is correct
+for the planning register's *"What the register returned"* column, which is
+explicitly a summary of what came back, and it is not a status. A reading now
+carries `standingLabel` (the publisher's own word for the instrument's
+standing, `Statutory instrument · version December 2023`) and `region`
+separately, `detail` is composed from them so the register table is unchanged
+byte for byte, and the Outlook reads the two fields that mean what its columns
+mean. Where the register stated no standing the cell is empty and the renderer
+prints the em dash — a designation with no published standing is a real state,
+and filling that cell from the nearest available string is how the defect
+started.
+
+**A count that contradicted the table under it.** The Overlays row read
+
+> 1 mapped control applies at this point
+
+directly above a three-row table. Excluding the strategic designations from the
+count is right — a regional plan does not control what is built on one lot, and
+counting it as a mapped control would say it does — but a reader resolves a
+contradiction like that by distrusting one of the two, and cannot tell which.
+The cell names them instead: *"1 mapped control applies at this point, plus 2
+strategic designations"*, and the none-at-point wording gains the same tail
+(*"returned no mapped control, plus 1 strategic designation, listed below"*),
+because that is the form in which the contradiction is sharpest — nothing
+controls the lot, and the table still has rows in it.
+
+**The method, not just the findings.** All three came from rendering the
+section from verbatim production responses and reading it as a client would,
+which no unit test does. And the empty-string fallthrough in the Victorian
+overlay classifier (`(scheme && MAP[scheme]) ?? …`, where `??` does not catch
+the `''` that `&&` carries through) came from `deno check` over the pure
+planning modules: `tsc` covers `src` only, so these modules are type-checked
+by nothing in a local run and by the ratcheted edge gate in CI.

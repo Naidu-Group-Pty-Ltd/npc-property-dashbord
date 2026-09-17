@@ -144,6 +144,67 @@ describe('what the report may state about planning', () => {
     expect(rendered).toMatch(/not a survey of the lot/);
   });
 
+  it('names the strategic designations the count excludes', () => {
+    /*
+     * The count is of CONTROLS, and a regional plan is not one — counting it
+     * would say a plan limits what may be built on one lot. But the table
+     * directly under this row lists the designations too, so on 262 Pallas
+     * Street the first render read "1 mapped control applies at this point"
+     * above a three-row table, and a reader resolves that by distrusting one
+     * of them.
+     */
+    const reading = (constraints: unknown[]) => buildPlanningFacts({
+      planningData: {
+        ...(PALLAS as Record<string, unknown>),
+        constraints,
+        constraintsAsked: ['flood', 'regionalPlan', 'growthArea'],
+        constraintRegisters: { answered: ['Queensland StatePlanning'], unavailable: [] },
+      },
+    }).overlays.value;
+
+    const ctx = (family: string, label: string) => ({
+      family, kind: 'context', label, code: null, value: null, instrument: null,
+      clause: null, currencyDate: null, detail: null, standingLabel: null, region: null,
+      source: 'Queensland StatePlanning', licence: 'CC BY 4.0',
+    });
+    const hazard = {
+      family: 'flood', kind: 'hazard', label: 'Rapid Hazard Assessment — Lower Mary River',
+      code: null, value: null, instrument: null, clause: null, currencyDate: null,
+      detail: null, standingLabel: null, region: null,
+      source: 'Queensland FloodCheck', licence: 'CC BY 4.0',
+    };
+
+    expect(reading([hazard, ctx('growthArea', 'Maryborough Priority Living Area'),
+      ctx('regionalPlan', 'Wide Bay Burnett Regional Plan')]))
+      .toBe('1 mapped control applies at this point, plus 2 strategic designations');
+    // One designation is singular, and a control with none reads as it always
+    // did — no tail at all.
+    expect(reading([hazard, ctx('regionalPlan', 'Wide Bay Burnett Regional Plan')]))
+      .toBe('1 mapped control applies at this point, plus 1 strategic designation');
+    expect(reading([hazard])).toBe('1 mapped control applies at this point');
+  });
+
+  it('says designations are listed below even where no control was mapped', () => {
+    // The same contradiction in its other form: nothing controls the lot, and
+    // the table under the row still has two rows in it.
+    const facts = buildPlanningFacts({
+      planningData: {
+        ...(PALLAS as Record<string, unknown>),
+        constraints: [{
+          family: 'regionalPlan', kind: 'context', label: 'Wide Bay Burnett Regional Plan',
+          code: null, value: null, instrument: null, clause: null, currencyDate: null,
+          detail: null, standingLabel: null, region: null,
+          source: 'Queensland StatePlanning', licence: 'CC BY 4.0',
+        }],
+        constraintsAsked: ['flood'],
+        constraintRegisters: { answered: ['Queensland StatePlanning'], unavailable: [] },
+      },
+    });
+    expect(facts.overlays.status).toBe('none_at_point');
+    expect(facts.overlays.note).toContain('plus 1 strategic designation, listed below');
+    expect(facts.overlays.note).toContain('returned no mapped control');
+  });
+
   it('keeps the five absences apart', () => {
     // Zoning is not_served (Queensland has no state layer) while the state
     // instruments are none_at_point (the layers answered and nothing covers

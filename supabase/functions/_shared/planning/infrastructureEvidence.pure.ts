@@ -243,14 +243,33 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       kind: family === 'regionalPlan' ? 'Regional plan'
         : family === 'growthArea' ? 'Growth / priority area'
           : 'Strategic designation',
-      statedStatus: str(raw.detail),
+      /*
+       * The publisher's own word for the instrument's standing, and NOT
+       * `detail`.
+       *
+       * `detail` is a join of everything the layer published — legal status,
+       * version, region, hazard class — which reads correctly in the planning
+       * register's "What the register returned" column and is wrong in a
+       * column called **Status**. On 262 Pallas Street the Priority Living
+       * Area's `detail` is `Wide Bay Burnett`, so the first render of this
+       * table gave a project the status "Wide Bay Burnett", which is a region.
+       *
+       * Where the register stated no standing the cell is empty, and the
+       * renderer prints an em dash: a designation with no published standing
+       * is a real state, and inventing one is the defect above in the other
+       * direction.
+       */
+      statedStatus: str(raw.standingLabel),
       // A designation is not a project and has no delivery standing. Reading
       // one as `approved` would put a plan in the same column as a road under
       // construction.
       standing: null,
       dateLabel: str(raw.currencyDate) ? 'Current at' : null,
       date: str(raw.currencyDate),
-      where: str(raw.instrument),
+      // The region the register named — a place. It used to be `instrument`,
+      // which is a layer or plan name: "Priority Living Area" is not a WHERE,
+      // and on the regional-plan row it repeated the project's own name.
+      where: str(raw.region),
       statedCost: null,
       source: str(raw.source) ?? 'state planning layers',
       licence: str(raw.licence),

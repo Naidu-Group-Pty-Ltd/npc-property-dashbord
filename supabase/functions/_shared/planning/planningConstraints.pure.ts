@@ -140,6 +140,21 @@ export interface PlanningConstraintReading {
   currencyDate: string | null;
   /** Anything else the layer published that a reader would want. */
   detail: string | null;
+  /**
+   * The publisher's own word for an instrument's STANDING, where it gives one
+   * — `Statutory instrument`, and the version beside it when the version is
+   * not a date.
+   *
+   * Separate from `detail` because `detail` is a join of everything the layer
+   * published that a reader would want, and a consumer that needs one of those
+   * facts cannot take the join. The Infrastructure Outlook did exactly that:
+   * it put `detail` in its **Status** column, and on 262 Pallas Street the
+   * Priority Living Area's `detail` is `Wide Bay Burnett` — the REGION — so
+   * the table stated a region as a project's status.
+   */
+  standingLabel: string | null;
+  /** The administrative or planning region the register named, where it did. */
+  region: string | null;
   source: string;
   licence: string;
 }
@@ -422,6 +437,11 @@ function nswReading(
     clause: attrStr(a['Legislative Clause']),
     currencyDate: identifyDateToIso(a['Currency Date']) ?? identifyDateToIso(a['Commenced Date']),
     detail,
+    // NSW's spatial viewer publishes neither an instrument standing nor a
+    // region on these layers; the LEP's own name and commencement come from
+    // `parseNswInstrument`, which reads layer 8.
+    standingLabel: null,
+    region: null,
     source,
     licence: NSW_LICENCE,
   };
@@ -571,6 +591,10 @@ export function parseVicOverlays(body: unknown): ConstraintProbeOutcome {
       // `g` is gazetted; anything else is an interim or proposed control, and
       // the difference decides whether it binds today.
       detail: attrStr(p['zone_status']) === 'g' ? 'Gazetted' : attrStr(p['zone_status']),
+      // Gazettal IS the standing in Victoria — it is the difference between a
+      // control that binds today and an interim or proposed one.
+      standingLabel: attrStr(p['zone_status']) === 'g' ? 'Gazetted' : attrStr(p['zone_status']),
+      region: null,
       source: VIC_OVERLAY_SOURCE,
       licence: VIC_OVERLAY_LICENCE,
     };
@@ -644,6 +668,15 @@ export function parseNamedLayerConstraints(
     const layerName = attrStr(r.layerName) ?? 'Mapped area';
     const value = attrStr(r.value);
     const cls = opts.family ?? familyFromLabel(`${layerName} ${value ?? ''}`);
+    // The publisher's own word for the instrument's standing. The version
+    // rides with it when it is not parseable as a date: `December 2023` is a
+    // real statement of which version is in force, and turning it into
+    // `1 December 2023` would print a day the publisher never stated.
+    const standing = [
+      attrStr(a['Legal status']) ? `${attrStr(a['Legal status'])} instrument` : null,
+      attrStr(a['Version']) && !identifyDateToIso(a['Version']) ? `version ${attrStr(a['Version'])}` : null,
+    ].filter(Boolean).join(' · ') || null;
+    const hazardClass = attrStr(a['Hazard']) ?? attrStr(a['Class']) ?? attrStr(a['Category']);
     return {
       family: cls.family,
       kind: cls.kind,
@@ -665,12 +698,14 @@ export function parseNamedLayerConstraints(
       instrument: attrStr(a['Plan Name']) ?? opts.instrument ?? layerName,
       clause: null,
       currencyDate: identifyDateToIso(a['Version']) ?? identifyDateToIso(a['Currency Date']),
-      detail: [
-        attrStr(a['Legal status']) ? `${attrStr(a['Legal status'])} instrument` : null,
-        attrStr(a['Version']) && !identifyDateToIso(a['Version']) ? `version ${attrStr(a['Version'])}` : null,
-        attrStr(a['Region']),
-        attrStr(a['Hazard']) ?? attrStr(a['Class']) ?? attrStr(a['Category']),
-      ].filter(Boolean).join(' · ') || null,
+      // `detail` is still the whole join — it is what the register table's
+      // "What the register returned" column prints, and it reads correctly
+      // there because that column is explicitly a summary of what came back.
+      // `standingLabel` and `region` carry the two parts a consumer needs to
+      // put in a column of their own.
+      detail: [standing, attrStr(a['Region']), hazardClass].filter(Boolean).join(' · ') || null,
+      standingLabel: standing,
+      region: attrStr(a['Region']),
       source: opts.source,
       licence: opts.licence,
     };
@@ -732,6 +767,10 @@ export function parseTasOverlays(body: unknown): ConstraintProbeOutcome {
       clause: attrStr(a['LPS_REF']) ?? code,
       currencyDate: identifyDateToIso(a['LPSDATE']),
       detail: attrStr(a['DESCRIPT']) ?? (code && code !== name ? code : null),
+      // theLIST publishes the overlay's description, not a standing or a
+      // region, on either overlay layer.
+      standingLabel: null,
+      region: null,
       source: TAS_OVERLAY_SOURCE,
       licence: TAS_OVERLAY_LICENCE,
     };
