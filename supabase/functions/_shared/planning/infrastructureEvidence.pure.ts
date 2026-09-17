@@ -601,6 +601,45 @@ export function renderInfrastructureOutlook(evidence: InfrastructureEvidence): s
     const sources = [...new Set(evidence.items.map((i) => `${i.source}${i.licence ? ` (${i.licence})` : ''}`))];
     lines.push(`Sources: ${sources.join('; ')}. Retrieved ${auDate(evidence.retrievedAt) ?? 'this run'}.`);
     lines.push('');
+
+    /*
+     * How to count this table, said on the page.
+     *
+     * `summariseDaRows` already resolves an amendment to the development it
+     * amends, so the table is right — and the RENDERED Kellyville report still
+     * read "**Three separate data centre and high-technology industry projects
+     * in Norwest**, each with stated costs of **$93.18 million**", drew a
+     * timeline stop saying "three approvals at $93.18m", and put "three
+     * determined Norwest applications each at $93,180,778" in its risk
+     * register. There is ONE data centre: PAN-619414, PAN-643600 and PAN-638082
+     * carry the same coordinate (150.968022088, -33.73252699), the same lot
+     * (2021/DP831173), the same address and the same $93,180,778, and the
+     * council numbers are 1382/2025/JP/A, /B and /C.
+     *
+     * The fix that resolved them into one row is also what invites the error
+     * now: a cell reading "amended 3 times in this window" is a reasonable
+     * thing to read as three approvals. Saying what the count IS costs one
+     * sentence and reaches the reader as well as the model — the prose above
+     * was wrong by about $186 million, and a reader had nothing on the page to
+     * check it against.
+     */
+    const withApps = evidence.items.filter((i) => i.applications);
+    if (withApps.length) {
+      const rowsBehind = withApps.reduce((n, i) => n + (i.applications?.inWindow ?? 1), 0);
+      const amended = withApps.filter((i) => (i.applications?.amendments ?? 0) > 0).length;
+      const plural = (n: number, one: string) => `${n.toLocaleString('en-AU')} ${one}${n === 1 ? '' : 's'}`;
+      lines.push(
+        `**How to count these.** ${plural(withApps.length, 'development')} from the application register `
+        + `${withApps.length === 1 ? 'is' : 'are'} listed above, resolved from ${plural(rowsBehind, 'register row')}.`
+        + (amended
+          ? ' An amendment restates the development it amends — the register carries the WHOLE cost and the whole'
+            + ' dwelling count on the amendment row rather than the change — so a development amended three times'
+            + ' is one development, its stated cost is counted once, and the amendment count is not a number of'
+            + ' projects.'
+          : ''),
+      );
+      lines.push('');
+    }
   }
 
   if (evidence.pipelineDwellings) {
@@ -753,8 +792,17 @@ export function infrastructureRules(evidence: InfrastructureEvidence): string {
     '3. Do NOT quantify an uplift, a percentage or a dollar effect on value from any project, and do not assert '
     + 'that a project will raise prices or rents. Describe what is proposed or approved and let the reader weigh it.',
     '4. Dwellings in the pipeline are competing supply as well as a sign of confidence. Say both.',
-    '5. Draw a `{{timeline: …}}` only from items in the table, using the dates the table carries. If the table '
-    + 'carries no dates, draw no timeline.',
+    '5. Draw a `{{timeline: …}}` only from items in the table, and label each stop with what the table\u2019s '
+    + 'date IS — "Determined Jul 2026", "Lodged Sep 2026", "Gazetted 2023". A timeline BUCKET is a delivery '
+    + 'horizon and this table carries none, so never place an item in "0-2y", "3-5y", "5y+" or any other future '
+    + 'bucket: that states a completion the register did not publish. Where every date in the table is a decision '
+    + 'date, draw no horizon timeline at all, and if the table carries no dates, draw no timeline.',
+    '5a. An amendment is NOT another project. A row reading "amended 3 times in this window" is ONE development '
+    + 'the register was asked about again; the applications behind it share an address, a lot and a cost, and the '
+    + 'register carries the WHOLE cost on each row rather than the change. Never turn an amendment count into a '
+    + 'number of projects, never multiply a stated cost by it, and never total the table by counting a '
+    + 'development\u2019s cost once per amendment. The number of developments is the number of ROWS above, which '
+    + 'the paragraph under the table states.',
     '6. Repeat the coverage limitation in your own words: these registers do not cover council capital works, '
     + 'budget programmes or agency announcements, so a short list is a short search.',
     `7. ${NO_RATING_FROM_AN_ABSENCE[0]} A SHORT list is the same mistake as an empty one: rate what the table `

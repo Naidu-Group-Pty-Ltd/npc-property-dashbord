@@ -450,6 +450,54 @@ export function runQAValidation(
     });
   }
 
+  /*
+   * Rule 12 — a timeline bucket is a delivery horizon, and no register here
+   * publishes one.
+   *
+   * The Kellyville Compass drew
+   * `{{timeline: 0-2y "Major mixed-use redevelopment Castle Hill ($181.9m)",
+   * 0-2y "High-tech data centres Norwest (three approvals at $93.18m)",
+   * 0-2y "Terrace housing project Gables ($29.75m)"}}`. Every date behind
+   * those three is a DETERMINATION — a date a decision was recorded — and the
+   * evidence table prints "Not published by this register" in its Delivery
+   * timing column on every row, because neither the NSW DA register nor the
+   * Queensland instrument layers publish a delivery date for anything. "0-2y"
+   * is a completion this report has no source for.
+   *
+   * Judged on the prose, not on the evidence: the evidence table is appended
+   * AFTER this validator runs (so a word cap can never trim a row of
+   * evidence), which means the only thing here to read is what the model
+   * wrote. That is the right thing to read anyway — the claim is the model's.
+   *
+   * Deliberately narrow. It matches a horizon bucket spelled as a duration or
+   * as a relative term, and leaves alone a stop labelled by what a date IS
+   * ("Determined Jul 2026"), by a calendar year, or by "Existing" — all three
+   * of which a register can support.
+   */
+  {
+    // `y` on its own is the spelling the report actually used ("0-2y", "5y+"),
+    // so the year suffix is wholly optional: y / yr / yrs / year / years.
+    const HORIZON = /\b(?:\d{1,2}\s*[-–—]\s*\d{1,2}\s*y(?:(?:ea)?rs?)?\b|\d{1,2}\s*y(?:(?:ea)?rs?)?\s*\+|(?:short|medium|near|long)[\s-]*term\b|next\s+\d{1,2}\s+y(?:(?:ea)?rs?)?\b)/i;
+    for (const m of markdown.matchAll(/\{\{timeline:([^}]*)\}\}/gi)) {
+      const body = m[1] ?? '';
+      // The bucket is what precedes each quoted label.
+      const buckets = [...body.matchAll(/(^|,)\s*([^,"]*?)\s*"/g)]
+        .map((b) => (b[2] ?? '').trim())
+        .filter(Boolean);
+      const horizons = buckets.filter((b) => HORIZON.test(b));
+      if (horizons.length === 0) continue;
+      findings.push({
+        rule: 'unpublished-delivery-horizon',
+        severity: 'error',
+        message: `A {{timeline:}} places ${horizons.length} item${horizons.length === 1 ? '' : 's'} in a future `
+          + `delivery horizon (${[...new Set(horizons)].join(', ')}). The planning and development registers this `
+          + 'report reads publish no delivery date for anything — every date they carry is a decision or a '
+          + 'declaration — so label each stop with what its date IS ("Determined Jul 2026", "Gazetted 2023") or '
+          + 'draw no horizon timeline.',
+      });
+    }
+  }
+
   const passed = findings.every((f) => f.severity !== 'error');
   return { tier, estimatedPages, wordCount, passed, findings };
 }

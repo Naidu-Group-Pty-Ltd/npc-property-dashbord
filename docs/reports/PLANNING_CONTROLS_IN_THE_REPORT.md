@@ -731,3 +731,103 @@ retrieve a council capital works programme, a state budget line or an agency
 announcement — those remain outside every register this platform reads, named
 on the page as such. A `Not assessed` row is an honest statement of the gap,
 not a closure of it.
+
+---
+
+## 10. An amendment is not a project, and a determination is not a horizon (17 Sep 2026)
+
+§9 closed a conclusion drawn from nothing. This closes two claims drawn from
+something real and read wrongly — the "superseded Norwest project claims".
+
+### 10.1 One data centre, counted three times, in three sections
+
+The Kellyville Compass said, in its Infrastructure and Development Pipeline
+section:
+
+> Three separate **data centre and high‑technology industry projects in
+> Norwest**, each with stated costs of **$93.18 million**, point to continuing
+> investment in employment‑rich, technology and services infrastructure…
+
+and drew
+
+> `{{timeline: 0-2y "Major mixed-use redevelopment Castle Hill ($181.9m)",
+> 0-2y "High‑tech data centres Norwest (three approvals at $93.18m)",
+> 0-2y "Terrace housing project Gables ($29.75m)"}}`
+
+and, in the risk register,
+
+> …three determined Norwest applications each at $93,180,778…
+
+There is **one** data centre. Measured against the register fixture:
+PAN-619414, PAN-643600 and PAN-638082 carry the same coordinate
+(150.968022088, −33.73252699), the same lot (2021/DP831173), the same address
+(3 Brookhollow Avenue, Norwest 2153), the same $93,180,778 and the same three
+development types; their council numbers are 1382/2025/JP/**A**, /**B** and
+/**C**. The document overstated that one development by about **$186 million**,
+three times over.
+
+`summariseDaRows` already resolves an amendment to the development it amends —
+that was the S4-1 fix, and the table is correct: one row, `Approved development
+· amended 3 times in this window`, `$93,180,778`. **The correction is what now
+invites the error**: a cell reading "amended 3 times in this window" is a
+reasonable thing to read as three approvals, and nothing on the page or in the
+rules said otherwise.
+
+So the count is stated **on the page**, where a reader can check it:
+
+> **How to count these.** 5 developments from the application register are
+> listed above, resolved from 8 register rows. An amendment restates the
+> development it amends — the register carries the WHOLE cost and the whole
+> dwelling count on the amendment row rather than the change — so a development
+> amended three times is one development, its stated cost is counted once, and
+> the amendment count is not a number of projects.
+
+The amendment clause is drawn only where something was amended; the count is
+always drawn. The prose above was wrong by $186 million and a reader had
+nothing on the page to check it against — which is why this is a rendered
+sentence and not only a rule.
+
+### 10.2 "0-2y" is a completion nobody published
+
+Every date in that table is a determination or a lodgement, and the Delivery
+timing column prints **"Not published by this register"** on every row, because
+neither register publishes a delivery date for anything. `0-2y` is a horizon
+the report has no source for.
+
+Rule 5 said "draw a timeline only from items in the table, using the dates the
+table carries", which the model obeyed — it used the table's items — while
+putting them in buckets the table does not carry. Rule 5 now says what a
+bucket IS and what a stop may be labelled with (`"Determined Jul 2026"`,
+`"Gazetted 2023"`), and rule 5a says an amendment is not a project. One
+timeline rule, not two: a spec asserts exactly one rule line mentions
+`{{timeline`.
+
+### 10.3 And it is caught on the produced document
+
+A prompt rule cannot be proven without a model run. **Rule 12** of
+`compassQAValidator` — `unpublished-delivery-horizon` — reads the finished
+markdown and reports a `{{timeline:}}` stop in a future horizon bucket. Run
+against the two stored reports as they were generated on 17 Sep 2026:
+
+| Report | Findings |
+|---|---|
+| 18 Annabelle Crescent | **2 errors** — 3 items at `0-2y` in the infrastructure timeline, and 1 more at `0-2y` in a transport timeline (`"Local bus-reliant commuting remains dominant"`, a horizon applied to a commuting pattern) |
+| 262 Pallas Street | 0 — nothing was retrieved, so rule 2 forbade a timeline and none was drawn |
+
+It judges the prose, because the evidence table is appended *after* the
+validator runs (so no word cap can trim a row of evidence) — and the prose is
+the right thing to judge, since the claim is the model's. It is deliberately
+narrow: it matches a duration range (`0-2y`, `3-5y`, `5y+`, with or without the
+`r`/`ear`/`ears` suffix) or a relative term (`short/medium/near/long term`,
+`next N years`), and leaves alone a stop labelled `Existing`, a calendar year,
+or what its date IS. It looks only inside the directive, so ordinary prose
+about a three-to-five-year hold is untouched.
+
+### 10.4 Where it lives
+
+| File | What changed |
+|---|---|
+| `_shared/planning/infrastructureEvidence.pure.ts` | The "How to count these" paragraph under the table; rule 5 rewritten to define a bucket; rule 5a on amendments. |
+| `_shared/compassQAValidator.ts` + `src/lib/reports/compassQAValidator.ts` | Rule 12, `unpublished-delivery-horizon`. |
+| `src/lib/reports/__tests__/amendmentIsNotAProject.spec.ts` | 8 assertions. |
+| `src/lib/reports/__tests__/unpublishedDeliveryHorizon.spec.ts` | 9, including the two copies' byte-identity but for imports. |
