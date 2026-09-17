@@ -92,6 +92,7 @@ import { applyEligibility } from './gradeEligibility.pure.ts';
 import {
   admissibleInputs,
   claimPermits,
+  LOCATION_PRESENTED_UNVERIFIED,
   NOT_ASSESSED_REASON,
   OVERALL_GRADE_UNAVAILABLE,
   SCORING_INPUT_POLICY_VERSION,
@@ -381,6 +382,8 @@ export function describeGaps(
     const dimension = key as ScoredDimension;
     let detail: string;
     let remedy: string;
+    /** Set where the client sentence differs by cause. See `NOT_ASSESSED_REASON.location`. */
+    let reasonOverride: string | undefined;
     switch (key) {
       case 'growth':
         detail = `No suburb capital-growth series for ${subjectLabel(input.subject)} (${providerClause(input.market, input.evidenceWithheldReason)}).`;
@@ -399,6 +402,9 @@ export function describeGaps(
       case 'location': {
         const presentedLoc = presentedFor('location', input);
         const verifiedLoc = input.verifiedInputs ?? [];
+        // Two causes, two client sentences. Nothing presented says nothing
+        // about the standard of the information — see the policy constant.
+        if (presentedLoc.length > 0) reasonOverride = LOCATION_PRESENTED_UNVERIFIED;
         detail = presentedLoc.length === 0
           ? 'No location readings (walk score, commute, schools) were presented for this run.'
           : `Location readings were presented (${presentedLoc.join(', ')}) but not verified: the `
@@ -419,7 +425,7 @@ export function describeGaps(
     }
     gaps.push({
       dimension,
-      reason: NOT_ASSESSED_REASON[dimension],
+      reason: reasonOverride ?? NOT_ASSESSED_REASON[dimension],
       detail,
       remedy,
       withholdsGrade: withheldBy === 'required_dimension' ? required.has(key) : withheldBy === 'engine_floor',

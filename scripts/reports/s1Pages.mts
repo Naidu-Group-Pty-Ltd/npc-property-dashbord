@@ -29,20 +29,16 @@
  *
  *   npx tsx scripts/reports/s1Pages.mts
  */
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { compileTemplateHtmlForPdf } from '../../src/lib/reportTemplate/compileTemplateForPdf';
+import { measureAndRender, REPO, type Sheet } from './_reviewKit.mts';
 import { applyInvestmentProjection } from '../../supabase/functions/_shared/reportBindingProjection.pure';
 import { applyOrganisationProjection } from '../../supabase/functions/_shared/organisationProjection.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from '../template-library/investmentCompass/templates';
 import { transportCountReading } from '../../supabase/functions/_shared/transportReading.pure';
 
-const REPO = resolve(import.meta.dirname, '../..');
 const F = (p: string) => resolve(REPO, 'reports/fixtures', p);
-mkdirSync(resolve(REPO, 'reports/html'), { recursive: true });
-mkdirSync(resolve(REPO, 'reports/pdf'), { recursive: true });
 
 const row = JSON.parse(readFileSync(F('annabelle-row.json'), 'utf8'));
 const MARK = readFileSync(F('mark-monogram.txt'), 'utf8').trim();
@@ -212,7 +208,6 @@ const total = (v2.dimensions ?? []).length;
 
 // ── the layout model ────────────────────────────────────────────────────────
 type Entry = [gap: number, block: any];
-interface Sheet { name: string; background?: unknown; top: number; flow: Entry[]; pinned: any[]; }
 
 // ═══ 1 · COVER ══════════════════════════════════════════════════════════════
 // One governed conclusion, with evidence coverage disclosed beside it and never
@@ -572,135 +567,11 @@ const RISK: Sheet = {
 
 const SHEETS = [COVER, CONTENTS, ASSESSMENT, AMENITY, INFRA, RISK];
 
-// ── pass one: measure every flowed block on the engine that will draw it ─────
-const PROBE_TOP = 40;
-const probes = SHEETS.flatMap((s, si) => s.flow.map(([, b], bi) => ({ si, bi, sheet: s, block: b })));
-
-const probeSchema = {
-  name: 'S1 probe',
-  tokens: TOKENS,
-  pages: probes.map((p, i) => ({
-    id: `probe-${i}`,
-    name: `probe-${i}`,
-    size: { width: 595, height: 842 },
-    ...(p.sheet.background ? { background: p.sheet.background } : {}),
-    blocks: [{ ...p.block, props: { ...p.block.props, y: PROBE_TOP } }],
-  })),
-};
-
-/**
- * Render on the production print contract, not the CLI's defaults.
- *
- * `render-template-pdf` asks for `pdf/ua-1`, tagged, `optimize_images`,
- * `output_intent: 'srgb'` and `custom_metadata`; a bare `weasyprint in out`
- * asks for none of them and produces an untagged file with no output intent —
- * a different document from the one the product would deliver.
- * `renderWeasy.py` mirrors `weasyprint-service/app.py`'s call, and reports the
- * engine's warnings, each of which is a declaration it dropped.
- */
-const weasy = (html: string, pdf: string) => {
-  const out = execFileSync('python3', [resolve(REPO, 'scripts/reports/renderWeasy.py'), html, pdf], {
-    encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
-  });
-  return out.trim().split('\n').filter((l) => l.startsWith('warning\t')).map((l) => l.slice(8));
-};
-
-const probeHtml = resolve(REPO, 'reports/html/s1-probe.html');
-const probePdf = resolve(REPO, 'reports/pdf/s1-probe.pdf');
-writeFileSync(probeHtml, (await compileTemplateHtmlForPdf(probeSchema as never, { data })).html);
-weasy(probeHtml, probePdf);
-
-const ink = execFileSync('python3', [resolve(REPO, 'scripts/reports/measureInk.py'), probePdf], { encoding: 'utf8' })
-  .trim().split('\n').map((l) => Number(l.split('\t')[1]));
-if (ink.length !== probes.length) {
-  console.error(`probe pages ${ink.length} ≠ blocks ${probes.length}`);
-  process.exit(1);
-}
-const heights = new Map<string, number>();
-probes.forEach((p, i) => heights.set(`${p.si}:${p.bi}`, Math.max(0, ink[i] - PROBE_TOP)));
-
-// ── pass two: stack from the measurements, and check the foot ───────────────
-const pages = SHEETS.map((s, si) => {
-  let y = s.top;
-  const blocks = s.flow.map(([gap, b], bi) => {
-    y += gap;
-    const placed = { ...b, props: { ...b.props, y: Math.round(y * 10) / 10 } };
-    const h = heights.get(`${si}:${bi}`) ?? 0;
-    if (process.env.S1_HEIGHTS) {
-      const what = String((b.props as any).body ?? (b.props as any).heading ?? b.type).slice(0, 44);
-      console.log(`      ${String(bi).padStart(2)} ${b.type.padEnd(16)} +${String(gap).padStart(3)}  h=${h.toFixed(1).padStart(6)}  y=${y.toFixed(1).padStart(6)}  ${what.replace(/\n/g, ' ')}`);
-    }
-    y += h;
-    return placed;
-  });
-  const clear = s.name === 'Cover' ? 812 : FLOOR;
-  const verdict = y <= clear ? 'ok' : `OVERRUN ${(y - clear).toFixed(1)}pt`;
-  console.log(`${String(si + 1).padStart(2)} ${s.name.padEnd(34)} ends ${y.toFixed(1).padStart(6)}pt of ${clear}  ${verdict}`);
-  if (y > clear) process.exitCode = 1;
-  return {
-    id: id('page'), name: s.name, size: { width: 595, height: 842 },
-    ...(s.background ? { background: s.background } : {}),
-    blocks: [...blocks, ...s.pinned],
-  };
+// ── render, through the shared review harness ───────────────────────────────
+const { overruns, lost } = await measureAndRender(SHEETS, TOKENS, data, 's1-review', {
+  floor: FLOOR,
+  coverFloor: 812,
+  coverNames: ['Cover'],
+  showHeights: !!process.env.S1_HEIGHTS,
 });
-
-const schema = { name: 'S1 review — Annabelle on Chancery', tokens: TOKENS, pages };
-const compiled = await compileTemplateHtmlForPdf(schema as never, { data });
-const htmlPath = resolve(REPO, 'reports/html/s1-review.html');
-const pdfPath = resolve(REPO, 'reports/pdf/s1-review.pdf');
-writeFileSync(htmlPath, compiled.html);
-const warnings = weasy(htmlPath, pdfPath);
-
-// ── pass three: prove the content SURVIVED, not merely that it fitted ───────
-//
-// Owner correction C7.1: fitting on the page is not conservation. The
-// `decision-box` truncation found in S1 is the proof — a card that stops at
-// word 61 and prints an ellipsis clears the running foot perfectly.
-//
-// So every authored string is looked for in the rendered text. Comparison is
-// on letters and digits alone, because the extractor re-flows lines, turns a
-// non-breaking space into a space and can split a ligature; anything that
-// normalises away is presentation, and anything that does not is content.
-const printable = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '');
-// `-raw`, never `-layout`. Layout mode re-flows the page into visual columns
-// and interleaves a table's cells line by line, which splits every cell's
-// sentence across its neighbours — 27 of 152 strings here read as lost while
-// the pages were correct. Content order is what a conservation check needs.
-const rendered = printable(execFileSync('pdftotext', ['-raw', pdfPath, '-'], { encoding: 'utf8' }));
-
-const authored: Array<{ where: string; text: string }> = [];
-SHEETS.forEach((sheet) => {
-  const visit = (value: unknown, path: string) => {
-    if (typeof value === 'string') {
-      // Bindings, colours, fonts and enum-ish props are not prose.
-      if (value.length < 12 || value.startsWith('token:') || value.startsWith('#')
-        || value.startsWith('data:') || value.includes('{{')) return;
-      authored.push({ where: `${sheet.name} · ${path}`, text: value });
-      return;
-    }
-    if (Array.isArray(value)) { value.forEach((v, i) => visit(v, `${path}[${i}]`)); return; }
-    if (value && typeof value === 'object') {
-      for (const [k, v] of Object.entries(value)) {
-        if (k === 'src' || k === 'id' || k === 'type') continue;
-        visit(v, `${path}.${k}`);
-      }
-    }
-  };
-  [...sheet.flow.map(([, b]) => b), ...sheet.pinned].forEach((b) => visit(b.props, b.type));
-});
-
-const lost = authored.filter(({ text }) => !rendered.includes(printable(text)));
-console.log(`content conservation: ${authored.length - lost.length} of ${authored.length} authored strings present`);
-for (const { where, text } of lost) {
-  console.log(`  LOST  ${where}: ${JSON.stringify(text.slice(0, 90))}…`);
-}
-if (lost.length > 0) process.exitCode = 1;
-
-const info = execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' });
-console.log(`\npages=${info.match(/^Pages:\s+(\d+)/m)?.[1]}  size=${info.match(/^Page size:\s+(.+)$/m)?.[1]}  tagged=${info.match(/^Tagged:\s+(\S+)/m)?.[1]}`);
-if (warnings.length) {
-  console.log(`engine warnings (${warnings.length}) — each is a declaration the engine dropped:`);
-  for (const w of warnings) console.log(`  · ${w}`);
-}
-if (compiled.droppedAssets.length) console.log('dropped:', compiled.droppedAssets.map((d) => d.where).join(', '));
-console.log(pdfPath);
+process.exitCode = overruns === 0 && lost === 0 ? 0 : 1;
