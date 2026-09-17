@@ -22,6 +22,7 @@ import {
   infrastructureRules,
   renderInfrastructureOutlook,
 } from '../_shared/planning/infrastructureEvidence.pure.ts';
+import { withPlanningEvidence } from '../_shared/reports/location/planningEvidenceRecord.pure.ts';
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
@@ -6912,7 +6913,17 @@ YOUR DEDICATED PROPERTY PARTNER
         economic_data: enhancedData.economics || null,
         financial_calculations: enhancedData.financials || null,
         investment_score: enhancedData.investmentScore || null,
-        location_intelligence: measuredLocationIntelligence ?? enhancedData.locationIntelligence ?? null,
+        // …with the planning and development evidence this report was shown
+        // recorded beside it. It was retrieved on every run, rendered into two
+        // tables in the document, and persisted NOWHERE — so no projection,
+        // template binding, regeneration or fork could read a control the
+        // registers stated, and nothing could check a sentence against the
+        // evidence it was written from. See `planningEvidenceRecord.pure.ts`.
+        location_intelligence: withPlanningEvidence(
+          measuredLocationIntelligence ?? enhancedData.locationIntelligence ?? null,
+          planningFacts,
+          infrastructure,
+        ),
         // RF-7.2B.1 — what this report was shown, frozen at generation. Reopening
         // it must never re-read today's ABS or RBA tables and quietly restate the
         // document; the snapshot is what a later reader reconciles against.

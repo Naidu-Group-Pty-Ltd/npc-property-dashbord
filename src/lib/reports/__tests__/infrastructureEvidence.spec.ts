@@ -65,14 +65,36 @@ const WITH_PROJECTS = {
         newDwellingsTotal: 305, rowsWithDwellings: 12,
       },
       unclassified: { rows: 2, statedCostTotal: 0, rowsWithCost: 0, newDwellingsTotal: 0, rowsWithDwellings: 0 },
-      largestByCost: [
-        { cost: 18_400_000, types: ['Residential — multi dwelling'], suburb: 'Maryborough', status: 'Determined - Approved', determined: '2026-06-04', lodged: '2026-01-11', applicationClass: 'new' },
-        { cost: 6_900_000, types: ['Retail premises'], suburb: 'Pialba', status: 'Lodged', determined: null, lodged: '2026-05-22', applicationClass: 'new' },
+      // One entry per DEVELOPMENT, resolved to the parent application an
+      // amendment amends. See `daParentDevelopment.spec.ts`.
+      largestDevelopments: [
+        {
+          reference: '188/2026/HA', address: '4 KENT STREET MARYBOROUGH 4650', suburb: 'Maryborough',
+          statedCost: 18_400_000, newDwellings: 24, types: ['Residential — multi dwelling'],
+          status: 'Determined - Approved', latestDate: '2026-06-04', latestDateKind: 'determined',
+          rowsInWindow: 2, amendmentsInWindow: 1, parentOutsideWindow: false,
+        },
+        {
+          reference: '201/2026/HA', address: '10 MAIN STREET PIALBA 4655', suburb: 'Pialba',
+          statedCost: 6_900_000, newDwellings: null, types: ['Retail premises'],
+          status: 'Lodged', latestDate: '2026-05-22', latestDateKind: 'lodged',
+          rowsInWindow: 1, amendmentsInWindow: 0, parentOutsideWindow: false,
+        },
       ],
     },
   },
   fetchedAt: '2026-09-16T04:12:33.000Z',
 };
+
+/** A cell of the drawn table, by its heading rather than its position. */
+function drawnCell(evidence: Parameters<typeof renderInfrastructureOutlook>[0], name: string) {
+  const lines = renderInfrastructureOutlook(evidence).split('\n');
+  const headerAt = lines.findIndex((l) => l.startsWith('| Reference |'));
+  const headings = lines[headerAt].split('|').map((c) => c.trim());
+  const row = lines.find((l, i) => i > headerAt && l.split('|').map((c) => c.trim()).includes(name));
+  const cells = (row ?? '').split('|').map((c) => c.trim());
+  return (heading: string) => cells[headings.indexOf(heading)];
+}
 
 describe('a status is the publisher’s own word', () => {
   it('reads the ones that map, and only those', () => {
@@ -301,17 +323,49 @@ describe('the strategic designation the point sits inside', () => {
 
     // Read off the drawn row rather than the object, because the defect was
     // visible only in the table: the region must never appear in the Status
-    // column of the row whose name is the living area.
-    const row = renderInfrastructureOutlook(evidence)
-      .split('\n').find((l) => l.startsWith('| Maryborough Priority Living Area')) ?? '';
-    const cells = row.split('|').map((c) => c.trim());
-    expect(cells[3], 'the Status cell').not.toBe('Wide Bay Burnett');
-    expect(cells[5], 'the Where cell').toBe('Wide Bay Burnett');
+    // column of the row whose name is the living area. Columns are looked up
+    // by their HEADING rather than by position — the table has gained a
+    // Reference column since, and a magic index silently reads the neighbour.
+    const cell = drawnCell(evidence, 'Maryborough Priority Living Area');
+    expect(cell('Status')).not.toBe('Wide Bay Burnett');
+    expect(cell('Where')).toBe('Wide Bay Burnett');
   });
 
   it('still forbids quantifying an uplift from a designation', () => {
     const rules = infrastructureRules(evidence);
     expect(rules).toMatch(/Do NOT quantify an uplift/);
     expect(rules).toMatch(/only from items in the table/);
+  });
+});
+
+describe('what the brief asks for, per development', () => {
+  const evidence = buildInfrastructureEvidence({ planningData: WITH_PROJECTS });
+  const cell = drawnCell(evidence, 'Residential — multi dwelling');
+
+  it('names the development so a reader can look it up', () => {
+    // The table used to open on a joined list of development types with no
+    // number and no address, while the register carried both — so nothing in
+    // it could be checked against the council's own record.
+    expect(cell('Reference')).toBe('188/2026/HA');
+    expect(cell('Where')).toBe('4 KENT STREET MARYBOROUGH 4650');
+  });
+
+  it('says the figure is a cost and not funding', () => {
+    // Every register read here publishes the APPLICANT'S own stated cost of
+    // development and no funding at all. A dollar figure with nothing beside
+    // it reads as funding, and funding is one of the six things asked for.
+    expect(cell('Stated cost')).toBe('$18,400,000');
+    expect(cell('Funding')).toContain('Not stated');
+    expect(cell('Funding')).toContain('own cost of development');
+  });
+
+  it('says the register publishes no delivery date, on the row', () => {
+    // "Keep unknown timing explicit" — per entry, not once at the foot of the
+    // table where a reader scanning rows never reaches it.
+    expect(cell('Delivery timing')).toBe('Not published by this register');
+  });
+
+  it('counts the amendments in the entry rather than printing more entries', () => {
+    expect(cell('Type')).toBe('Development application · amended 1 time in this window');
   });
 });

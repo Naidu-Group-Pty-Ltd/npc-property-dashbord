@@ -522,14 +522,36 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
     : statusOf(activityRaw?.status) === 'stated' && activitySummary
       ? {
         label: 'Development applications',
-        value: str(activitySummary.headline)
-          ?? `${num(activitySummary.total) ?? 0} applications in the register window`,
+        /*
+         * ## The fabricated zero
+         *
+         * This read `summary.headline` and `summary.total`, and `DaSummary`
+         * has neither — its fields are `totalInPeriod`, `rowsRead`,
+         * `newApplications`, `amendments`, `unclassified`, `periodFrom` and
+         * `periodTo`. Both reads were `undefined`, so the `?? 0` fell
+         * through and the planning table printed **"0 applications in the
+         * register window"** on the Kellyville report, directly above an
+         * infrastructure block that said 171 and 278 applications for the
+         * same council over the same six months. One page, two numbers, one
+         * register: the reader cannot tell which is wrong, so both are
+         * worthless.
+         *
+         * It is the class `caseTenant.ts` documents — naming a field the
+         * object does not have and taking the fallback as an answer — and
+         * the fallback is what made it invisible: a real zero and a read
+         * that missed look identical.
+         *
+         * Counted from the same `newApplications` / `amendments` totals the
+         * infrastructure block reads, so the two cannot disagree, and the
+         * two classes are never added (see `classifyApplicationType`).
+         */
+        value: daActivityLine(activitySummary),
         status: 'stated' as const,
         note: null,
         source: str(activityRaw?.source),
         sourceUrl: portal,
         licence: str(activityRaw?.licence),
-        effectiveDate: str(activitySummary.to),
+        effectiveDate: str(activitySummary.periodTo),
         retrievedAt,
         standing: null,
       }
@@ -576,6 +598,41 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
 
 // ---------------------------------------------------------------------------
 // Rendering
+
+/**
+ * What the development-application register said, in one line.
+ *
+ * New proposals and amendments are counted separately and never added — an
+ * amendment restates the development it modifies, so a combined count is a
+ * number about nothing. Where the walk read fewer rows than the register
+ * states, the line says so rather than presenting a sample as the whole.
+ */
+export function daActivityLine(summary: Record<string, unknown>): string {
+  const rowsOf = (key: string): number | null => {
+    const t = summary[key];
+    return isRecord(t) ? num(t['rows']) : null;
+  };
+  const fresh = rowsOf('newApplications');
+  const amended = rowsOf('amendments');
+  const other = rowsOf('unclassified');
+  if (fresh === null && amended === null) {
+    return 'The register answered, and stated no application counts.';
+  }
+  const bits = [
+    `${(fresh ?? 0).toLocaleString('en-AU')} new application${(fresh ?? 0) === 1 ? '' : 's'}`,
+    `${(amended ?? 0).toLocaleString('en-AU')} amendment${(amended ?? 0) === 1 ? '' : 's'} of approved developments`,
+  ];
+  if (other && other > 0) bits.push(`${other.toLocaleString('en-AU')} of an unrecognised type`);
+  const from = auDate(str(summary['periodFrom']));
+  const to = auDate(str(summary['periodTo']));
+  const window = from && to ? `, lodged ${from} to ${to}` : '';
+  const read = num(summary['rowsRead']);
+  const total = num(summary['totalInPeriod']);
+  const sample = read !== null && total !== null && read < total
+    ? ` (read ${read.toLocaleString('en-AU')} of the ${total.toLocaleString('en-AU')} the register states)`
+    : '';
+  return `${bits.join(', ')}${window}${sample}`;
+}
 
 const INSTRUMENT_LABEL: Record<string, string> = {
   priority_development_area: 'Priority development area',

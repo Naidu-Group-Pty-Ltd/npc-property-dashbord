@@ -106,16 +106,96 @@ export interface DaSummary {
   /** The application types seen, so a new one is visible rather than silent. */
   byApplicationType: Array<{ type: string; klass: DaApplicationClass; count: number }>;
   topDevelopmentTypes: Array<{ type: string; count: number }>;
-  largestByCost: Array<{
-    cost: number;
-    types: string[];
-    suburb: string | null;
-    status: string | null;
-    determined: string | null;
-    lodged: string | null;
-    /** Carried so a modification can never be presented as a new project. */
-    applicationClass: DaApplicationClass;
-  }>;
+  /**
+   * The largest DEVELOPMENTS, not the largest rows. See `DaDevelopment`.
+   *
+   * `largestByCost` is gone rather than redefined, for the same reason the
+   * class totals replaced the combined ones: a list whose entries silently
+   * change from applications to developments is worse than one that stops
+   * compiling.
+   */
+  largestDevelopments: DaDevelopment[];
+}
+
+/**
+ * One development, however many times the register has been asked about it.
+ *
+ * ## The defect this ends
+ *
+ * Classifying by `ApplicationType` stopped a modification being ADDED to the
+ * headline. It did nothing about the LIST, which ranked rows: on the rendered
+ * report for 18 Annabelle Crescent, three of the five largest "projects" were
+ * `1382/2025/JP/A`, `/B` and `/C` — one data centre at 3 Brookhollow Avenue,
+ * Norwest, modified three times, printed three times at $93,180,778 each. A
+ * reader saw $279m of data centres where there is $93m of one.
+ *
+ * ## How the parent is known
+ *
+ * The council's own application number carries it. Measured live on
+ * 17 September 2026 over the whole six-month window for The Hills Shire
+ * Council — all 655 rows:
+ *
+ * | the register's own `ApplicationType` | segments in `CouncilApplicationNumber` | rows |
+ * | --- | ---: | ---: |
+ * | Development Application | 3 (`1472/2026/JP`) | 471 |
+ * | Modification Application | 4 (`1382/2025/JP/A`) | 172 |
+ * | Review of determination | 4 | 12 |
+ *
+ * The two signals agree on 655 of 655 rows, so the parent is read rather than
+ * guessed. 655 rows are **631 developments**; 20 carry more than one row, and
+ * 160 groups hold no new application at all because the development was
+ * approved before the window opened.
+ *
+ * ## Three rules
+ *
+ * 1. **Only an application the register itself calls an amendment may be
+ *    attached to a parent.** A new application's key is its own number,
+ *    whole, always. A council that numbers differently therefore degrades to
+ *    one entry per row — which is exactly today's behaviour — and can never
+ *    merge two real developments into one.
+ * 2. **Never group by address.** 4 Garthowen Crescent, Castle Hill carries
+ *    `366/2025/JP` and `323/2027/JP` in this same window: two different
+ *    developments at one address, $182m and $88m.
+ * 3. **Grouping is for the LIST, never for the headline.** The class totals
+ *    answer "what was newly proposed in this window"; a group answers "what
+ *    is this development". Summing the groups gives $1.92bn against the new
+ *    applications' $1.18bn, because 160 of them were approved earlier — a
+ *    true figure about a different question, and not one this summary states.
+ */
+export interface DaDevelopment {
+  /** The council's own number for the development — its identity. */
+  reference: string | null;
+  /** The address as the register gives it. */
+  address: string | null;
+  suburb: string | null;
+  /**
+   * The cost the register states MOST RECENTLY for this development.
+   *
+   * An amendment restates the whole cost rather than a delta, so the latest
+   * row is the register's current statement. It is the applicant's own stated
+   * cost of development — see `infrastructureEvidence.pure.ts`; it is not
+   * funding and no register here publishes any.
+   */
+  statedCost: number | null;
+  /** New dwellings, from the same row, on the same reasoning. */
+  newDwellings: number | null;
+  types: string[];
+  /** The register's own status word, from that same most recent row. */
+  status: string | null;
+  /** The most recent date the register carries, and which field it came from. */
+  latestDate: string | null;
+  latestDateKind: 'determined' | 'lodged' | null;
+  /** How many rows in this window belong to this development. */
+  rowsInWindow: number;
+  amendmentsInWindow: number;
+  /**
+   * No NEW application for this development falls inside the window — it was
+   * approved earlier and only its amendments are visible here. True of 160 of
+   * the 631 developments in the measured window, so it is the ordinary case
+   * rather than an anomaly, and a reader has to be told which they are
+   * looking at.
+   */
+  parentOutsideWindow: boolean;
 }
 
 /**
@@ -133,6 +213,32 @@ export function classifyApplicationType(applicationType: unknown): DaApplication
   if (t.startsWith('modification')) return 'amendment';
   if (t.startsWith('review of determination')) return 'amendment';
   return 'unclassified';
+}
+
+/**
+ * The development an application belongs to.
+ *
+ * An amendment's number is its parent's plus one trailing segment, so the
+ * parent is the number with that segment dropped. Only an application the
+ * register itself calls an amendment is attached this way (see
+ * `DaDevelopment`), so this can never merge two new applications, and a
+ * council whose numbering does not follow the pattern simply keeps one entry
+ * per row.
+ *
+ * A one-segment number has no parent to reach, so it stands for itself rather
+ * than collapsing to the empty string — which would put every such row in one
+ * group.
+ */
+export function parentApplicationKey(
+  councilApplicationNumber: unknown,
+  klass: DaApplicationClass,
+): string | null {
+  const raw = typeof councilApplicationNumber === 'string' ? councilApplicationNumber.trim() : '';
+  if (raw === '') return null;
+  if (klass !== 'amendment') return raw;
+  const segments = raw.split('/');
+  if (segments.length < 2) return raw;
+  return segments.slice(0, -1).join('/');
 }
 
 const num = (v: unknown): number | null =>
@@ -224,9 +330,14 @@ export function summariseDaRows(
     new: blank(), amendment: blank(), unclassified: blank(),
   };
 
-  const costed: DaSummary['largestByCost'] = [];
+  /**
+   * One entry per development, keyed by its parent application. A row with no
+   * number of any kind is keyed on its own position, so it stands alone
+   * rather than joining an "unnumbered" group with everything else like it.
+   */
+  const developments = new Map<string, DaDevelopment & { _sortDate: string }>();
 
-  for (const row of rows) {
+  rows.forEach((row, index) => {
     const klass = classifyApplicationType(row.ApplicationType);
     const bucket = totals[klass];
     bucket.rows += 1;
@@ -248,15 +359,6 @@ export function summariseDaRows(
     if (cost !== null && cost > 0) {
       bucket.statedCostTotal += cost;
       bucket.rowsWithCost += 1;
-      costed.push({
-        cost,
-        types,
-        suburb: str(row.Location?.[0]?.Suburb),
-        status: str(row.ApplicationStatus),
-        determined: str(row.DeterminationDate)?.slice(0, 10) ?? null,
-        lodged: str(row.LodgementDate)?.slice(0, 10) ?? null,
-        applicationClass: klass,
-      });
     }
 
     const dwellings = num(row.NumberOfNewDwellings);
@@ -264,7 +366,52 @@ export function summariseDaRows(
       bucket.newDwellingsTotal += dwellings;
       bucket.rowsWithDwellings += 1;
     }
-  }
+
+    // The development this row is about. Its cost, dwellings and status come
+    // from the row the register has most recently said something about,
+    // because an amendment restates the whole development rather than a
+    // delta — so the newest row IS the register's current statement and an
+    // older one is a superseded copy of it.
+    const determined = str(row.DeterminationDate)?.slice(0, 10) ?? null;
+    const lodged = str(row.LodgementDate)?.slice(0, 10) ?? null;
+    const key = parentApplicationKey(row.CouncilApplicationNumber, klass)
+      ?? str(row.PlanningPortalApplicationNumber)
+      ?? `\u0000row-${index}`;
+    const sortDate = determined ?? lodged ?? '';
+    const held = developments.get(key);
+    if (!held) {
+      developments.set(key, {
+        reference: str(row.CouncilApplicationNumber) === null ? null : key,
+        address: str(row.Location?.[0]?.FullAddress),
+        suburb: str(row.Location?.[0]?.Suburb),
+        statedCost: cost !== null && cost > 0 ? cost : null,
+        newDwellings: dwellings !== null && dwellings > 0 ? dwellings : null,
+        types: [...types],
+        status: str(row.ApplicationStatus),
+        latestDate: determined ?? lodged,
+        latestDateKind: determined ? 'determined' : (lodged ? 'lodged' : null),
+        rowsInWindow: 1,
+        amendmentsInWindow: klass === 'amendment' ? 1 : 0,
+        parentOutsideWindow: klass === 'amendment',
+        _sortDate: sortDate,
+      });
+    } else {
+      held.rowsInWindow += 1;
+      if (klass === 'amendment') held.amendmentsInWindow += 1;
+      else held.parentOutsideWindow = false;
+      for (const t of types) if (!held.types.includes(t)) held.types.push(t);
+      if (sortDate >= held._sortDate) {
+        held._sortDate = sortDate;
+        held.address = str(row.Location?.[0]?.FullAddress) ?? held.address;
+        held.suburb = str(row.Location?.[0]?.Suburb) ?? held.suburb;
+        held.status = str(row.ApplicationStatus) ?? held.status;
+        held.latestDate = determined ?? lodged ?? held.latestDate;
+        held.latestDateKind = determined ? 'determined' : (lodged ? 'lodged' : held.latestDateKind);
+        if (cost !== null && cost > 0) held.statedCost = cost;
+        if (dwellings !== null && dwellings > 0) held.newDwellings = dwellings;
+      }
+    }
+  });
 
   const sortDesc = <T,>(arr: T[], key: (t: T) => number) =>
     [...arr].sort((a, b) => key(b) - key(a));
@@ -285,6 +432,9 @@ export function summariseDaRows(
       (e) => e.count,
     ),
     topDevelopmentTypes: sortDesc([...byType.entries()].map(([type, count]) => ({ type, count })), (e) => e.count).slice(0, 6),
-    largestByCost: sortDesc(costed, (c) => c.cost).slice(0, 5),
+    largestDevelopments: sortDesc(
+      [...developments.values()].filter((d) => d.statedCost !== null),
+      (d) => d.statedCost ?? 0,
+    ).slice(0, 5).map(({ _sortDate, ...d }) => d),
   };
 }

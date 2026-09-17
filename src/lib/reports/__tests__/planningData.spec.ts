@@ -112,6 +112,10 @@ const ACT_PHILLIP = {
 /** One real application row from the Online DA response (fields we read). */
 const NSW_DA_ROW = {
   PlanningPortalApplicationNumber: 'PAN-650576',
+  // A modification's number is its parent's plus one segment — the register's
+  // own convention, agreed with its `ApplicationType` on 655 of 655 rows when
+  // measured live (see `parentApplicationKey`).
+  CouncilApplicationNumber: '412/2025/HA/A',
   LodgementDate: '2026-06-23',
   DeterminationDate: '2026-06-25',
   CostOfDevelopment: 958740.0,
@@ -332,16 +336,18 @@ describe('DA summary', () => {
     {
       ...NSW_DA_ROW,
       PlanningPortalApplicationNumber: 'PAN-000001',
+      CouncilApplicationNumber: '900/2026/HA',
       ApplicationType: 'Development Application',
       CostOfDevelopment: 12_500_000,
       NumberOfNewDwellings: 24,
       ApplicationStatus: 'Under Assessment',
       DevelopmentType: [{ DevelopmentType: 'Residential flat building' }],
-      Location: [{ Suburb: 'MUSWELLBROOK' }],
+      Location: [{ Suburb: 'MUSWELLBROOK', FullAddress: '2 MARKET STREET MUSWELLBROOK 2333' }],
     },
     {
       ...NSW_DA_ROW,
       PlanningPortalApplicationNumber: 'PAN-000002',
+      CouncilApplicationNumber: '901/2026/HA',
       ApplicationType: 'Some Future Application Kind',
       CostOfDevelopment: 400_000,
       NumberOfNewDwellings: 2,
@@ -382,14 +388,18 @@ describe('DA summary', () => {
     expect(summary.rowsRead).toBe(3);
   });
 
-  it('ranks the largest by stated cost, each carrying what it is', () => {
-    expect(summary.largestByCost[0].cost).toBe(12_500_000);
-    expect(summary.largestByCost[0].types).toContain('Residential flat building');
-    expect(summary.largestByCost[0].applicationClass).toBe('new');
-    // The modification is still listed — it is real activity — but it says so,
-    // so it cannot be read as a new project.
-    const mod = summary.largestByCost.find((l) => l.cost === 958_740);
-    expect(mod?.applicationClass).toBe('amendment');
+  it('ranks the largest DEVELOPMENTS, each carrying its own identity', () => {
+    expect(summary.largestDevelopments[0].statedCost).toBe(12_500_000);
+    expect(summary.largestDevelopments[0].reference).toBe('900/2026/HA');
+    expect(summary.largestDevelopments[0].address).toBe('2 MARKET STREET MUSWELLBROOK 2333');
+    expect(summary.largestDevelopments[0].types).toContain('Residential flat building');
+    // The modification is still listed — it is real activity — but it is
+    // filed under the development it modifies and says it was approved before
+    // this window, so it cannot be read as something newly proposed in it.
+    const mod = summary.largestDevelopments.find((d) => d.statedCost === 958_740);
+    expect(mod?.reference).toBe('412/2025/HA');
+    expect(mod?.amendmentsInWindow).toBe(1);
+    expect(mod?.parentOutsideWindow).toBe(true);
   });
 
   it('the prompt block labels applicant-stated costs and sampling', () => {

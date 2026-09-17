@@ -176,6 +176,31 @@ describe('S2 · the Client-Safe Gate removes exactly what Location scoring needs
   });
 });
 
+/**
+ * Every value assigned to `location_intelligence`, whole.
+ *
+ * Reads forward from the assignment, balancing brackets, and stops at the
+ * `,` or `;` that ends the expression — so a value spread over several lines
+ * is one string rather than a truncated first line.
+ */
+function persistedExpressions(src: string): string[] {
+  const out: string[] = [];
+  for (const m of src.matchAll(/(^\s*\/\/[^\n]*\n)?[\w.]*location_intelligence\s*[:=]\s*/gm)) {
+    if (m[1]) continue;
+    let i = m.index! + m[0].length;
+    let depth = 0;
+    const start = i;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if ('([{'.includes(c)) depth++;
+      else if (')]}'.includes(c)) { if (depth === 0) break; depth--; }
+      else if (depth === 0 && (c === ',' || c === ';')) break;
+    }
+    out.push(src.slice(start, i));
+  }
+  return out;
+}
+
 describe('S2 · the repair — the record keeps the measurement, every narrative boundary applies the gate', () => {
   const read = (file: string) =>
     readFileSync(resolve(process.cwd(), 'supabase/functions', file), 'utf8');
@@ -189,11 +214,23 @@ describe('S2 · the repair — the record keeps the measurement, every narrative
     // No write site may name the gated object on its own. Every assignment to
     // `location_intelligence` in the generator must go through the measured
     // copy first, or the resume re-serves a stripped enrichment again.
-    const writes = src.match(/location_intelligence:[^\n]*|\.location_intelligence = [^\n]*/g) ?? [];
-    const persisting = writes.filter((w) => !w.trimStart().startsWith('//'));
+    //
+    // Read as an EXPRESSION rather than as a line. This matched
+    // `location_intelligence:[^\n]*` and stopped at the first newline, so
+    // wrapping the value in a call — which is what recording the planning
+    // evidence beside it needed — made the guarantee invisible to its own
+    // check while the guarantee still held. A rule about which object is
+    // persisted cannot be enforced by where somebody put a line break.
+    const persisting = persistedExpressions(src);
     expect(persisting.length).toBeGreaterThan(0);
     for (const write of persisting) {
       expect(write).toContain('measuredLocationIntelligence');
+      // …and it is the FIRST thing the value resolves from, so the gated copy
+      // can only ever be the fallback.
+      expect(write.indexOf('measuredLocationIntelligence'))
+        .toBeLessThan(write.indexOf('enhancedData.locationIntelligence') === -1
+          ? Number.MAX_SAFE_INTEGER
+          : write.indexOf('enhancedData.locationIntelligence'));
     }
   });
 

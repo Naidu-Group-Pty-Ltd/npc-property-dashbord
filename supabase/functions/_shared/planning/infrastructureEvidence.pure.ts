@@ -107,6 +107,18 @@ export function readDeliveryStanding(raw: string | null): DeliveryStanding | nul
 export interface InfrastructureItem {
   /** What it is, in the publisher's own words. */
   name: string;
+  /**
+   * The publisher's own reference for it — a council application number, an
+   * instrument's identifier. Null where the publisher gave none.
+   *
+   * A reader asked to act on an entry has to be able to look it up, and the
+   * rendered table named a concatenated list of development types ("Alterations
+   * or additions to an existing building or structure, High technology
+   * industry, Data centre") with no number and no address, while the register
+   * carried both. Identity is the first of the six things the brief asks for
+   * per project.
+   */
+  reference: string | null;
   /** The kind of instrument or application. */
   kind: string;
   /** The publisher's status word, verbatim. Null where it stated none. */
@@ -118,8 +130,43 @@ export interface InfrastructureItem {
   date: string | null;
   /** Where, as the register states it. Null where it states nothing. */
   where: string | null;
-  /** Stated cost of development, where a register carries one. */
+  /** The full address the register states, where it states one. */
+  address: string | null;
+  /**
+   * The cost the register states, where it carries one.
+   *
+   * **It is a cost and not funding.** A development-application register
+   * carries the APPLICANT'S OWN stated cost of development; no register this
+   * platform reads publishes who is paying or whether anything is funded, and
+   * the brief asks for funding per project. Saying so is the only honest
+   * answer; printing a dollar figure with no qualifier lets it read as one.
+   */
   statedCost: number | null;
+  /**
+   * What the publisher says about WHEN this will be delivered.
+   *
+   * Null on every entry from a DA register, which publishes decision and
+   * lodgement dates and no delivery date at all. The brief requires unknown
+   * timing to be explicit, so this is rendered as its own statement per entry
+   * rather than left to a footnote at the end of the table.
+   */
+  statedDelivery: string | null;
+  /**
+   * Present ONLY for an entry that came from an application register.
+   *
+   * A development amended three times is one development, and the reader is
+   * told it was amended rather than shown three copies of it. Null on a
+   * gazetted instrument or a strategic designation, which are not
+   * applications and have no window — as a sub-object rather than three
+   * fields, so a reader can never take a `false` about something that was
+   * never asked.
+   */
+  applications: {
+    inWindow: number;
+    amendments: number;
+    /** No new application falls inside the window — it was approved earlier. */
+    approvedBeforeWindow: boolean;
+  } | null;
   /** The publisher and dataset. */
   source: string;
   licence: string | null;
@@ -195,7 +242,13 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
         dateLabel: str(raw.gazetted) ? 'Gazetted' : null,
         date: str(raw.gazetted),
         where: str(raw.detail),
+        // An instrument applies over an area rather than to an address, and
+        // no layer read here publishes a delivery date or a cost.
+        address: null,
+        reference: str(raw.reference),
         statedCost: null,
+        statedDelivery: null,
+        applications: null,
         source,
         licence,
         retrievedAt,
@@ -270,7 +323,14 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       // which is a layer or plan name: "Priority Living Area" is not a WHERE,
       // and on the regional-plan row it repeated the project's own name.
       where: str(raw.region),
+      // A designation covers an area rather than an address, states no cost,
+      // and publishes no delivery date — it says what the area is planned to
+      // BECOME, on a horizon nobody has dated.
+      address: null,
+      reference: str(raw.instrument),
       statedCost: null,
+      statedDelivery: null,
+      applications: null,
       source: str(raw.source) ?? 'state planning layers',
       licence: str(raw.licence),
       retrievedAt,
@@ -308,32 +368,44 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     if (cost !== null) {
       pipelineInvestment = { total: cost, rowsStating: num(newApps?.rowsWithCost) ?? 0 };
     }
-    for (const raw of Array.isArray(summary.largestByCost) ? summary.largestByCost as unknown[] : []) {
+    // One entry per DEVELOPMENT. `summariseDaRows` resolves an amendment to
+    // the parent application it amends (see `DaDevelopment`), because the
+    // list used to rank ROWS: three of the five largest "projects" on the
+    // rendered Kellyville report were 1382/2025/JP/A, /B and /C — one data
+    // centre at 3 Brookhollow Avenue, printed three times at $93,180,778.
+    for (const raw of Array.isArray(summary.largestDevelopments) ? summary.largestDevelopments as unknown[] : []) {
       if (!isRecord(raw)) continue;
       const types = Array.isArray(raw.types) ? (raw.types as unknown[]).map((t) => str(t)).filter((t): t is string => !!t) : [];
       const statedStatus = str(raw.status);
-      const determined = str(raw.determined);
-      const lodged = str(raw.lodged);
-      const klass = str(raw.applicationClass);
-      const isAmendment = klass === 'amendment';
+      const amendments = num(raw.amendmentsInWindow) ?? 0;
+      const approvedBefore = raw.parentOutsideWindow === true;
       items.push({
         name: types.length ? types.join(', ') : 'Development application',
-        // Named for what it is. A modification of an approved development is
-        // real activity and is carried, but it is not a new project and the
-        // reader is told which it is.
-        kind: isAmendment
-          ? 'Modification of an approved development'
-          : klass === 'unclassified'
-            ? 'Application (type not recognised)'
-            : 'Development application',
+        reference: str(raw.reference),
+        // Named for what the register holds. A development that reaches this
+        // window only through its amendments was approved before it, and a
+        // reader told "Development application" would read it as new. How
+        // many times it was amended is the cell's business, not the kind's.
+        kind: approvedBefore ? 'Approved development' : 'Development application',
         statedStatus,
         standing: readDeliveryStanding(statedStatus),
         // A determination date is when a decision was made; a lodgement date
         // is when one was asked for. Neither is a completion date (rule 3).
-        dateLabel: determined ? 'Determined' : lodged ? 'Lodged' : null,
-        date: determined ?? lodged,
+        dateLabel: raw.latestDateKind === 'determined'
+          ? 'Determined' : raw.latestDateKind === 'lodged' ? 'Lodged' : null,
+        date: str(raw.latestDate),
         where: str(raw.suburb),
-        statedCost: num(raw.cost),
+        address: str(raw.address),
+        statedCost: num(raw.statedCost),
+        // A DA register publishes no delivery date, for any application. Rule
+        // 3 already forbids reading a decision date as a completion date; this
+        // says the absence out loud per entry rather than once at the foot.
+        statedDelivery: null,
+        applications: {
+          inWindow: num(raw.rowsInWindow) ?? 1,
+          amendments,
+          approvedBeforeWindow: approvedBefore,
+        },
         source,
         licence,
         retrievedAt,
@@ -369,6 +441,34 @@ function auDate(iso: string | null): string | null {
 
 const money = (v: number): string => `$${Math.round(v).toLocaleString('en-AU')}`;
 
+/**
+ * The funding cell.
+ *
+ * Every register this platform reads publishes a COST and no funding at all —
+ * a development application states what the applicant says the work will
+ * cost, which says nothing about who is paying or whether anything is
+ * committed. The brief asks for funding per project, so the answer is stated
+ * rather than left as an empty cell a reader fills in from the figure beside
+ * it.
+ */
+function fundingCell(item: InfrastructureItem): string {
+  return item.statedCost !== null
+    ? 'Not stated — the figure is the applicant\u2019s own cost of development'
+    : 'Not stated by this register';
+}
+
+/**
+ * The type cell, and how many times the register was asked about it again.
+ *
+ * Three rows for one data centre is what this replaces, so the amendments are
+ * counted in the entry rather than printed as more entries.
+ */
+function kindCell(item: InfrastructureItem): string {
+  const a = item.applications;
+  if (!a || a.amendments < 1) return item.kind;
+  return `${item.kind} · amended ${a.amendments} time${a.amendments === 1 ? '' : 's'} in this window`;
+}
+
 /** The status cell: the publisher's word, and the reading where one is certain. */
 function statusCell(item: InfrastructureItem): string {
   if (!item.statedStatus) return 'Status not stated by the register';
@@ -388,13 +488,22 @@ export function renderInfrastructureOutlook(evidence: InfrastructureEvidence): s
   const lines: string[] = [];
 
   if (evidence.items.length) {
-    lines.push('| Project or instrument | Type | Status | Date recorded | Where | Stated cost |');
-    lines.push('|---|---|---|---|---|---|');
+    // The six things the brief asks for per project: identity, location,
+    // source date, recorded status, funding and published delivery timing.
+    // Identity is the publisher's own reference — the table used to open on a
+    // joined list of development types with no number and no address, so
+    // nothing in it could be looked up. Funding and timing get columns of
+    // their own precisely BECAUSE no register read here publishes either:
+    // an absence stated in a footnote is an absence most readers never see.
+    lines.push('| Reference | Project or instrument | Type | Status | Date recorded | Where | Stated cost | Funding | Delivery timing |');
+    lines.push('|---|---|---|---|---|---|---|---|---|');
     for (const i of evidence.items) {
       const when = i.date ? `${i.dateLabel ?? 'Recorded'} ${auDate(i.date)}` : 'No date stated';
+      const where = i.address ?? i.where ?? '—';
       lines.push(
-        `| ${i.name} | ${i.kind} | ${statusCell(i)} | ${when} | ${i.where ?? '—'} | `
-        + `${i.statedCost !== null ? money(i.statedCost) : '—'} |`,
+        `| ${i.reference ?? '—'} | ${i.name} | ${kindCell(i)} | ${statusCell(i)} | ${when} | ${where} | `
+        + `${i.statedCost !== null ? money(i.statedCost) : '—'} | ${fundingCell(i)} | `
+        + `${i.statedDelivery ?? 'Not published by this register'} |`,
       );
     }
     lines.push('');

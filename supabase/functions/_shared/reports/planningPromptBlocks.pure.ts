@@ -187,25 +187,36 @@ export function developmentActivityBlock(input: PlanningPromptInput): string {
     .slice(0, 6);
   if (typeBits.length > 0) parts.push(`- Most common development types: ${typeBits.join(', ')}`);
 
-  const largest = Array.isArray(s['largestByCost']) ? (s['largestByCost'] as Array<Record<string, unknown>>) : [];
+  // One line per DEVELOPMENT, not per application. This ranked rows, so on
+  // the Kellyville report three of the five largest "projects" were the same
+  // Norwest data centre, once for each time it had been modified.
+  const largest = Array.isArray(s['largestDevelopments']) ? (s['largestDevelopments'] as Array<Record<string, unknown>>) : [];
   const largestLines = largest
     .map((l) => {
-      const cost = num(l['cost']);
+      const cost = num(l['statedCost']);
       if (cost === null) return null;
       const types = Array.isArray(l['types']) ? (l['types'] as unknown[]).map(str).filter((t): t is string => t !== null) : [];
-      const klass = str(l['applicationClass']);
+      const amendments = num(l['amendmentsInWindow']) ?? 0;
       const bits = [
+        str(l['reference']),
         types.slice(0, 2).join(' / ') || null,
-        str(l['suburb']),
+        str(l['address']) ?? str(l['suburb']),
         str(l['status']),
-        // So the largest line cannot read as a new project when it is a change
-        // to one already approved.
-        klass === 'amendment' ? 'modification of an approved development' : null,
+        // So a development that reached this window only through its
+        // amendments cannot read as something newly proposed in it.
+        l['parentOutsideWindow'] === true ? 'approved before this window opened' : null,
+        amendments > 0 ? `amended ${fmtInt(amendments)} time${amendments === 1 ? '' : 's'} in this window` : null,
       ].filter((b): b is string => b !== null);
       return `  - ${fmtMoney(cost)}${bits.length ? ` — ${bits.join(', ')}` : ''}`;
     })
     .filter((l): l is string => l !== null);
-  if (largestLines.length > 0) parts.push(`- Largest applications by stated cost:\n${largestLines.join('\n')}`);
+  if (largestLines.length > 0) {
+    parts.push(
+      `- Largest developments by stated cost (one entry per development; a figure is the applicant's own `
+      + `stated cost of development and is NOT funding, and this register publishes no delivery date for `
+      + `any of them):\n${largestLines.join('\n')}`,
+    );
+  }
 
   if (sampled) {
     parts.push(`- Coverage note: aggregate figures above are computed over ${scope}.`);
