@@ -2265,6 +2265,27 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
      * reaches its bound.
      */
     let locationEnrichmentReused = false;
+    /**
+     * S2 — the enrichment as MEASURED, kept back from the Client-Safe Gate.
+     *
+     * The gate disowns four location paths, and three of them —
+     * `walkScore`, `commute` and `schools.schoolsWithin3km` — are exactly the
+     * three readings `verifiedLocationInputs` may count. That is correct for
+     * the NARRATIVE, which is what the gate is for; it is wrong for the
+     * RECORD, because the gated object is what used to be persisted as
+     * `location_intelligence`, and `assessEnrichmentReuse` checks the
+     * acquisition stamp — which survives the gate — so every later resume
+     * re-served the stripped copy and scored Location on an enrichment with
+     * nothing left in it to verify. The report then carried
+     * "No location readings (walk score, commute, schools) were presented for
+     * this run" beside a stamp reading `places: complete, commute: measured`,
+     * and its own remedy ("regenerate the report") reproduced the same result.
+     *
+     * So the gate's output still goes to the model and the record keeps what
+     * was measured. Nothing here widens what a client document may say: every
+     * narrative boundary applies `DISOWNED_LOCATION_PATHS` for itself.
+     */
+    let measuredLocationIntelligence: unknown = null;
     // Track which enhanced fields are already persisted on the report (so we don't overwrite them)
     let existingEnhancedFields: {
       investmentScore?: any;
@@ -4052,6 +4073,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       cashRateMonthlyAverage: null,
       capturedAt: new Date().toISOString(),
     });
+    // Kept BEFORE the assignment below: `safeGeneration.enhancedData` is the
+    // narrative input, and from here on `enhancedData.locationIntelligence` is
+    // missing the three readings the scorer needs. See the declaration.
+    measuredLocationIntelligence = enhancedData.locationIntelligence ?? null;
     enhancedData = safeGeneration.enhancedData as typeof enhancedData;
     const removedForNarrative = safeGeneration.removed.filter((r) => r.hadValue);
     console.log(
@@ -5720,7 +5745,11 @@ YOUR DEDICATED PROPERTY PARTNER
         // its bound and the amplification would return.
         if (enhancedData?.locationIntelligence
           && (!existingEnhancedFields.locationIntelligence || !locationEnrichmentReused)) {
-          earlyUpdate.location_intelligence = enhancedData.locationIntelligence;
+          // The measured object, not the gated one — see
+          // `measuredLocationIntelligence`. The fallback covers a path that
+          // reached here without the gate having run.
+          earlyUpdate.location_intelligence = measuredLocationIntelligence
+            ?? enhancedData.locationIntelligence;
         }
         // The snapshot goes down with the first enhanced write, so a run that is
         // killed at the wall-clock budget still leaves the provenance of what it
@@ -6041,7 +6070,8 @@ YOUR DEDICATED PROPERTY PARTNER
                 didAttachEnhancedData = true;
               }
               if (enhancedData.locationIntelligence) {
-                progressiveUpdatePayload.location_intelligence = enhancedData.locationIntelligence;
+                progressiveUpdatePayload.location_intelligence = measuredLocationIntelligence
+                  ?? enhancedData.locationIntelligence;
                 console.log('  ✓ Saving location_intelligence');
                 didAttachEnhancedData = true;
               }
@@ -6882,7 +6912,7 @@ YOUR DEDICATED PROPERTY PARTNER
         economic_data: enhancedData.economics || null,
         financial_calculations: enhancedData.financials || null,
         investment_score: enhancedData.investmentScore || null,
-        location_intelligence: enhancedData.locationIntelligence || null,
+        location_intelligence: measuredLocationIntelligence ?? enhancedData.locationIntelligence ?? null,
         // RF-7.2B.1 — what this report was shown, frozen at generation. Reopening
         // it must never re-read today's ABS or RBA tables and quietly restate the
         // document; the snapshot is what a later reader reconciles against.

@@ -351,7 +351,7 @@ const ASSESSMENT: Sheet = {
       accent: C.primary,
     })],
     [14, para(`The engine issues ${v2.grade}. On the composite alone it would issue ${v2.scoreGrade}; the evidence caps it, because a dimension that was not measured contributes nothing toward a higher grade. That cap is working as designed.`, { bodySize: 9 })],
-    [14, callout('What this means for this property', 'A grade built on 57% of its method is a statement about the evidence as much as the asset. Location — the second-largest dimension — returned nothing, on a property 90 m from a public school and 106 m from a bus stop. Until that is measured, this report states performance and coverage and stops short of a recommendation.')],
+    [14, callout('What this means for this property', 'A grade built on 57% of its method is a statement about the evidence as much as the asset. Location — the second-largest dimension — returned nothing, on a property 90 m from a public school and 106 m from a bus stop in a straight line. Until that is measured, this report states performance and coverage and stops short of a recommendation.')],
   ],
 };
 
@@ -364,32 +364,32 @@ const AMENITY: Sheet = {
     [0, eyebrow('PART 05 · AMENITY & ACCESS', C.muted)],
     [16, title('What is nearby, and how far')],
     [22, rule()],
-    [16, para('Two registers answer this page. The amenity register is an OpenStreetMap slice loaded on a schedule and read locally, so a count is what it holds rather than a live search; stops come from the Transport for NSW GTFS feed.')],
-    [14, eyebrow('NEAREST ON RECORD')],
+    [16, para('Two registers answer this page. The amenity register is an OpenStreetMap slice loaded on a schedule and read locally, so a count is what it holds rather than a live search; stops come from the Transport for NSW GTFS feed. EVERY DISTANCE HERE IS STRAIGHT-LINE from the verified coordinate — no walking or driving route is measured.')],
+    [12, eyebrow('NEAREST ON RECORD')],
     [10, B('data-table', {
       ...TABLE,
       headers: ['Category', 'Nearest on record', 'Distance', 'What it means, and its limit'],
       columnWidths: [0.14, 0.24, 0.1, 0.52],
       numericColumns: [2],
       rows: [
-        { cells: ['Schools', amen('Schools').nearest, km(amen('Schools').distance), 'Nearest of five the register holds. Proximity is not catchment.'] },
+        { cells: ['Schools', amen('Schools').nearest, km(amen('Schools').distance), 'Nearest of five held. Proximity is not catchment.'] },
         { cells: ['Healthcare', amen('Healthcare').nearest, km(amen('Healthcare').distance), 'An allied-health practice, not a medical centre; no hospital is held at this grain.'] },
-        { cells: ['Shopping', amen('Shopping').nearest, km(amen('Shopping').distance), 'A full-line supermarket inside a kilometre: everyday errands without a car trip.'] },
-        { cells: ['Recreation', amen('Recreation').nearest, km(amen('Recreation').distance), 'A local park for everyday use rather than a destination reserve.'] },
+        { cells: ['Shopping', amen('Shopping').nearest, km(amen('Shopping').distance), 'A full-line supermarket under a kilometre away in a straight line.'] },
+        { cells: ['Recreation', amen('Recreation').nearest, km(amen('Recreation').distance), 'A local park for everyday use, not a destination reserve.'] },
         { cells: [
           'Transport',
           li.transport?.detailedStops?.[0]?.name ?? '—',
           `${Math.round((li.transport?.detailedStops?.[0]?.metres ?? 0))} m`,
-          `Nearest of ${word(stops.length)} stops the record lists individually. Mode and service frequency are not published per stop, so neither is stated.`,
+          `The nearest of the ${word(stops.length)} stops this record names. Mode and service frequency are not published per stop, so neither is stated.`,
         ] },
       ],
       fontSize: 8.2,
     })],
     [14, B('text-block', {
       bodySize: 8.2, bodyFont: 'token:body', bodyLineHeight: 1.5, color: C.caution,
-      body: `Two counts on this page cannot be reconciled from the record, so neither is printed as a finding. The amenity register\u2019s own Public Transport category returned nought at this coordinate, while the GTFS feed lists ${word(stops.length)} stops with the nearest at ${nearestStopMetres} m. And the stored field named stopsWithin1km reads ${grouped(li.transport?.stopsWithin1km)} against a search radius of ${grouped(li.transport?.radiusMetres)} m, which the record never reconciles with its own list of ${word(stops.length)}. A category that returned nothing is not a measurement of nothing, and a count that contradicts its own list is not a count.`,
+      body: `Two figures here look like they disagree and do not. The stop register holds ${grouped(li.transport?.stopsWithin1km)} boarding places within ${grouped(li.transport?.radiusMetres)} m of this property \u2014 a station and its platforms counted once \u2014 and the ${word(stops.length)} above are the nearest of them, which is all this record names. Separately, the amenity register reports no public transport at all, because its transit category is rail, metro and tram STATIONS within two kilometres and matches no bus stop: that nought is true about stations and says nothing about buses.`,
     })],
-    [14, eyebrow('THE FIVE NEAREST SCHOOLS')],
+    [12, eyebrow('THE FIVE NEAREST SCHOOLS')],
     [10, B('data-table', {
       ...TABLE,
       headers: ['School', 'Distance'],
@@ -398,7 +398,7 @@ const AMENITY: Sheet = {
       rows: schools.map((s: any) => ({ cells: [s.name, `${s.distance.toFixed(2)} km`] })),
       fontSize: 8.2,
     })],
-    [14, callout('What this means, and what to do before contract', 'Everyday needs sit inside a kilometre, which suits the family tenant this dwelling is built for. Two limits matter: the register caps each category at ten, so a count of ten is a floor rather than a measurement, and no rating, ranking or catchment is published here. Before contract, confirm the catchment by address with the NSW School Finder and walk to the Windsor Road stop at the hour you would travel.')],
+    [12, callout('What this means, and what to do before contract', 'The nearest of every category sits within a kilometre in a straight line, which suits the family tenant this dwelling is built for. Three limits matter: the register caps each category at ten, so a count of ten is a floor rather than a measurement; no rating, ranking or catchment is published here; and no walking or driving route is measured, so a short straight line is not a short walk. Before contract, confirm the catchment by address with the NSW School Finder and travel to the Windsor Road stop at the hour you would use it.')],
     [16, provisional('S3 · S4', 'Named facilities and distances are read from the stored enrichment; the projection does not yet publish an amenity namespace.')],
   ],
 };
@@ -489,7 +489,7 @@ const RISK: Sheet = {
         { risk: 'Planning — subdivision and densification', rating: 'Moderate', confidence: 'Verified', why: 'R2 Low Density Residential, The Hills LEP 2019. 10\u00A0m height (cl.\u00A04.3) and a 700\u00A0m² minimum lot; the 765\u00A0m² lot is 65\u00A0m² above it.', ddAction: 'Confirm surveyed area and frontage against the minimum before assuming a split.' },
         { risk: 'Planning — floor space ratio', rating: 'Moderate', confidence: 'Unresolved', why: 'The register carrying this control answered here and published no figure, so the allowable footprint is unknown from mapping.', ddAction: 'Read the FSR from the s.10.7(2) certificate and the DCP.' },
         { risk: 'Supply — competing new dwellings', rating: 'Moderate', confidence: 'Verified', why: '680 new dwellings stated across 171 applications in The Hills Shire in the six months to 17\u00A0Sep\u00A02026.', ddAction: 'Count how many are comparable detached houses before setting rent and resale.' },
-        { risk: 'Transport — car reliance', rating: 'Moderate', confidence: 'Partly measured', why: `The record lists ${word(stops.length)} stops, the nearest at ${nearestStopMetres}\u00A0m. Mode and frequency are not published per stop.`, ddAction: 'Check Transport for NSW timetables for the routes on Windsor Road.' },
+        { risk: 'Transport — car reliance', rating: 'Moderate', confidence: 'Partly measured', why: `${grouped(li.transport?.stopsWithin1km)} boarding places within ${grouped(li.transport?.radiusMetres)}\u00A0m, nearest ${nearestStopMetres}\u00A0m in a straight line. Mode and frequency are not published per stop.`, ddAction: 'Check Transport for NSW timetables for the routes on Windsor Road.' },
       ],
     })],
     [12, callout('How to read this page', 'Nothing here is rated High, and nothing here is settled. Four of the five carry an outstanding check, and one — the floor space ratio — is unresolved rather than favourable. This is a conventional low-density holding with ordinary pre-contract work outstanding, not a cleared property.')],
@@ -577,6 +577,51 @@ const htmlPath = resolve(REPO, 'reports/html/s1-review.html');
 const pdfPath = resolve(REPO, 'reports/pdf/s1-review.pdf');
 writeFileSync(htmlPath, compiled.html);
 const warnings = weasy(htmlPath, pdfPath);
+
+// ── pass three: prove the content SURVIVED, not merely that it fitted ───────
+//
+// Owner correction C7.1: fitting on the page is not conservation. The
+// `decision-box` truncation found in S1 is the proof — a card that stops at
+// word 61 and prints an ellipsis clears the running foot perfectly.
+//
+// So every authored string is looked for in the rendered text. Comparison is
+// on letters and digits alone, because the extractor re-flows lines, turns a
+// non-breaking space into a space and can split a ligature; anything that
+// normalises away is presentation, and anything that does not is content.
+const printable = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '');
+// `-raw`, never `-layout`. Layout mode re-flows the page into visual columns
+// and interleaves a table's cells line by line, which splits every cell's
+// sentence across its neighbours — 27 of 152 strings here read as lost while
+// the pages were correct. Content order is what a conservation check needs.
+const rendered = printable(execFileSync('pdftotext', ['-raw', pdfPath, '-'], { encoding: 'utf8' }));
+
+const authored: Array<{ where: string; text: string }> = [];
+SHEETS.forEach((sheet) => {
+  const visit = (value: unknown, path: string) => {
+    if (typeof value === 'string') {
+      // Bindings, colours, fonts and enum-ish props are not prose.
+      if (value.length < 12 || value.startsWith('token:') || value.startsWith('#')
+        || value.startsWith('data:') || value.includes('{{')) return;
+      authored.push({ where: `${sheet.name} · ${path}`, text: value });
+      return;
+    }
+    if (Array.isArray(value)) { value.forEach((v, i) => visit(v, `${path}[${i}]`)); return; }
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        if (k === 'src' || k === 'id' || k === 'type') continue;
+        visit(v, `${path}.${k}`);
+      }
+    }
+  };
+  [...sheet.flow.map(([, b]) => b), ...sheet.pinned].forEach((b) => visit(b.props, b.type));
+});
+
+const lost = authored.filter(({ text }) => !rendered.includes(printable(text)));
+console.log(`content conservation: ${authored.length - lost.length} of ${authored.length} authored strings present`);
+for (const { where, text } of lost) {
+  console.log(`  LOST  ${where}: ${JSON.stringify(text.slice(0, 90))}…`);
+}
+if (lost.length > 0) process.exitCode = 1;
 
 const info = execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' });
 console.log(`\npages=${info.match(/^Pages:\s+(\d+)/m)?.[1]}  size=${info.match(/^Page size:\s+(.+)$/m)?.[1]}  tagged=${info.match(/^Tagged:\s+(\S+)/m)?.[1]}`);
