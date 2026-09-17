@@ -683,6 +683,26 @@ function absenceText(cell: PlanningCell): string {
  * about the property — whether it applies, under which instrument, to what
  * figure, current at what date — comes from the reading beside it.
  */
+/**
+ * The layers that were ASKED of a register that answered and matched nothing.
+ *
+ * One implementation, because it is stated twice: on the page as "Checked and
+ * not mapped at this coordinate", and in the rules as the closed list of
+ * absences the prose is permitted to repeat. Two copies of "which layers came
+ * back clear" is how a rule comes to permit a sentence the evidence does not.
+ *
+ * It is deliberately NOT the complement of `constraints` alone: a family is in
+ * this list only because it appears in `constraintsAsked`, which the service
+ * populates from the registers that answered. A layer nobody asked, and a
+ * layer whose register was unreachable, are both absent from it.
+ */
+export function checkedAndNotMapped(facts: PlanningFacts): string[] {
+  const found = new Set(facts.constraints.map((c) => c.family));
+  return facts.constraintsAsked
+    .filter((f) => !found.has(f))
+    .map((f) => CONSTRAINT_FAMILY_LABEL[f] ?? f);
+}
+
 export function renderConstraintRegister(facts: PlanningFacts): string {
   const lines: string[] = [];
   const readings = facts.constraints;
@@ -745,10 +765,7 @@ export function renderConstraintRegister(facts: PlanningFacts): string {
   // the rule the sanctions register and the PEP index both answer to, and the
   // reason an empty answer here is never printed on its own.
   if (facts.constraintsAsked.length) {
-    const found = new Set(readings.map((c) => c.family));
-    const clear = facts.constraintsAsked
-      .filter((f) => !found.has(f))
-      .map((f) => CONSTRAINT_FAMILY_LABEL[f] ?? f);
+    const clear = checkedAndNotMapped(facts);
     if (clear.length) {
       lines.push(
         `**Checked and not mapped at this coordinate:** ${clear.join(', ')}. `
@@ -896,6 +913,45 @@ export function planningFactBlocks(facts: PlanningFacts): string {
       + 'instrument. This holds in every section, and a figure found by live web search is still a figure '
       + 'this report did not retrieve.';
   }
+  /*
+   * Rule 4a — the one absence the prose MAY repeat, and only with its
+   * provenance.
+   *
+   * Rule 4 forbade writing that the property is not flood or bushfire
+   * affected, full stop. That was right when it was written and this module's
+   * own header had already recorded why it became wrong: *"we asked about
+   * bushfire and flood and neither applies" is a finding, and "nobody asked"
+   * is not.* Since §8 the evidence tells the two apart —
+   * `constraintsAsked` names what the answering registers were able to answer,
+   * and `constraintRegisters.unavailable` names what could not be reached — so
+   * a blanket prohibition now forbids the one statement the register actually
+   * supports.
+   *
+   * The Kellyville Compass shows what that costs. Twenty-one layers were asked
+   * of three NSW registers, all three answered, none was unavailable, and
+   * bushfire, flood and landslip matched nothing. The page said so precisely.
+   * The prose, forbidden to, wrote it anyway and wrote it worse:
+   * `✓ No bushfire or flood overlays mapped at this coordinate (verification
+   * still required)` — a tick, no register named, no currency date, no scale
+   * caveat. A prohibition with no permitted form is one a model routes around;
+   * the Compass document contract records the same lesson.
+   *
+   * So the permitted form is given, and the list is CLOSED and generated from
+   * the same `checkedAndNotMapped` the page prints. A layer that is not in it
+   * stays under rule 4.
+   */
+  const clear = checkedAndNotMapped(facts);
+  const clearLayerRule = clear.length
+    ? '4a. Exactly these layers were asked of a register that answered and matched nothing at this coordinate: '
+      + `${clear.join(', ')}. You may report ONE of those as not mapped, and only in a sentence that names the `
+      + `register (${facts.constraintRegisters.answered.join('; ') || 'the register named in the table'}), says it `
+      + 'is indicative at the scale it is published rather than a survey of the lot, and keeps the certificate as '
+      + 'what settles it. Do NOT draw it as a tick, a clearance, a reassurance or a strength, do not rate a risk '
+      + 'from it (see the risk table\u2019s own rule), and do not name a layer outside that list — anything else '
+      + 'falls under rule 4.'
+    : '4a. No layer was asked of an answering register and found clear at this coordinate, so there is no absence '
+      + 'you may report at all. Rule 4 governs every one of them.';
+
   const instrumentRule = facts.jurisdiction === 'NSW'
     ? '3. This property is in New South Wales, so the Local Environmental Plan, the Development Control Plan and '
       + 'the s10.7 certificate are the right instruments to name.'
@@ -914,10 +970,11 @@ export function planningFactBlocks(facts: PlanningFacts): string {
     + 'landscaping percentage, parking minimum or overlay finding that is not in the table. There is no typical '
     + 'value and no default. If it is not in the table it was not retrieved, and the correct sentence says so.',
     instrumentRule,
-    '4. An absence in the table is a statement about what was retrieved, never a finding about the land. Never write '
-    + 'that no overlay applies, that the property is not heritage listed, or that it is not flood or bushfire affected — '
-    + 'not in prose, not in a risk register row, not in a checklist, and not on the authority of a listing portal or a '
-    + 'property data site. Those report what they hold, not what the council scheme maps.',
+    '4. A layer this report did not reach supports nothing. Never write that no overlay applies, that the property '
+    + 'is not heritage listed, or that it is not flood or bushfire affected on the authority of a listing portal, a '
+    + 'property data site, a live web search or a register that was not asked — not in prose, not in a risk register '
+    + 'row, and not in a checklist. Those report what they hold, not what the council scheme maps.',
+    clearLayerRule,
     '5. A zone that admits a use is not approval for it. Describe any development potential as conditional and subject '
     + 'to assessment, and never quantify an uplift.',
     '6. Say plainly that this is desktop research and that the verification instrument is what settles it.',

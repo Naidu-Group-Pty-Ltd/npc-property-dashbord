@@ -203,7 +203,13 @@ describe('the planning half closes the same gap', () => {
   it('closes the rating as well as the statement', () => {
     // Rule 4 already forbade writing that no overlay applies, and the model
     // obeyed it — then rated a row Low from the same absence one line down.
-    expect(rules).toMatch(/An absence in the table is a statement about what was retrieved/);
+    //
+    // Asserted as the RULE, not the sentence: rule 4's wording was later
+    // rewritten (see `checkedAndNotMapped.spec.ts`) and a spec that pinned the
+    // old string would have read as a fixture to refresh rather than as a
+    // rule that still holds.
+    expect(rules).toMatch(/not flood or bushfire affected/);
+    expect(rules).toMatch(/not in a risk register/);
     expect(rules).toMatch(/absence may NOT be rated/);
     expect(rules).toMatch(/Not assessed/);
   });

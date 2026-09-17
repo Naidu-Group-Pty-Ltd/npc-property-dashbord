@@ -831,3 +831,88 @@ about a three-to-five-year hold is untouched.
 | `_shared/compassQAValidator.ts` + `src/lib/reports/compassQAValidator.ts` | Rule 12, `unpublished-delivery-horizon`. |
 | `src/lib/reports/__tests__/amendmentIsNotAProject.spec.ts` | 8 assertions. |
 | `src/lib/reports/__tests__/unpublishedDeliveryHorizon.spec.ts` | 9, including the two copies' byte-identity but for imports. |
+
+---
+
+## 11. The one absence the prose may repeat (17 Sep 2026)
+
+§9 and §10 both narrowed what a report may say. This one *widens* it, and the
+reason is the same rule read in the other direction.
+
+### 11.1 What rule 4 cost
+
+`planningFactBlocks` rule 4 read: *never write that no overlay applies, that
+the property is not heritage listed, or that it is not flood or bushfire
+affected.* Full stop. It was right when it was written — §8 records the
+measurement behind it: `layers=all` on the NSW Hazard service answers
+`{"results":[]}` because ArcGIS reads `all` as all VISIBLE and that group is
+hidden, so an empty answer to a question nobody asked read as a property with
+no bushfire and no flood.
+
+§8 also **fixed** that, and this module's own header had already written down
+what follows: *"we asked about bushfire and flood and neither applies" is a
+finding, and "nobody asked" is not.* `constraintsAsked` names what the
+answering registers could answer; `constraintRegisters.unavailable` names what
+could not be reached. The two are distinguishable in the data now, and a
+blanket prohibition forbids the one statement the register actually supports.
+
+For 18 Annabelle Crescent: **21 layers asked**, **three NSW registers
+answered**, **none unavailable**, and bushfire, flood and landslip matched
+nothing. The page said so exactly —
+
+> **Checked and not mapped at this coordinate:** floor space ratio, heritage,
+> … bushfire, flood, landslip, … Each of these was asked of a register that
+> answered, and no feature covers this point. A mapped layer is indicative at
+> the scale it is published; it is not a survey of the lot.
+
+— and the prose, forbidden to say it, said it anyway and said it worse:
+
+> `✓ No bushfire or flood overlays mapped at this coordinate (verification
+> still required)`
+
+A tick, no register named, no currency date, no scale caveat. **A prohibition
+with no demonstration of the permitted form is one a model routes around** —
+the Compass document contract's own lesson, and the third time this programme
+has met it.
+
+### 11.2 The split
+
+**Rule 4** keeps the prohibition it was written for, narrowed to what it was
+about: *a layer this report did not reach supports nothing* — not a listing
+portal, not a property data site, not a live web search, not a register that
+was not asked; not in prose, not in a risk register row, not in a checklist.
+
+**Rule 4a** gives the permitted form, and the list is **closed and generated**:
+
+> Exactly these layers were asked of a register that answered and matched
+> nothing at this coordinate: *heritage, bushfire, flood, landslip, …*. You may
+> report ONE of those as not mapped, and only in a sentence that names the
+> register (*NSW Planning Portal — Principal Planning Layers; … — Hazard; …
+> — Protection*), says it is indicative at the scale it is published rather
+> than a survey of the lot, and keeps the certificate as what settles it. Do
+> NOT draw it as a tick, a clearance, a reassurance or a strength, do not rate
+> a risk from it, and do not name a layer outside that list — anything else
+> falls under rule 4.
+
+Where nothing came back clear, 4a says so and hands over no list at all:
+*"No layer was asked of an answering register and found clear at this
+coordinate… Rule 4 governs every one of them."* That is 262 Pallas Street,
+whose enrichment carries no constraint reading.
+
+### 11.3 One implementation
+
+`checkedAndNotMapped(facts)` is exported and used twice: by
+`renderConstraintRegister` for the page, and by `planningFactBlocks` for the
+rule. **Two copies of "which layers came back clear" is how a rule comes to
+permit a sentence the evidence does not support**, and a spec asserts the rule
+names exactly what the page prints.
+
+It is deliberately not the complement of `constraints` alone: a family is in
+the list only because it is in `constraintsAsked`, which the service populates
+from the registers that answered. A layer nobody asked and a layer whose
+register was unreachable are both absent from it.
+
+| File | What changed |
+|---|---|
+| `_shared/planning/planningFacts.pure.ts` | `checkedAndNotMapped` extracted and exported; rule 4 narrowed; rule 4a generated from it. |
+| `src/lib/reports/__tests__/checkedAndNotMapped.spec.ts` | 10 assertions. |
