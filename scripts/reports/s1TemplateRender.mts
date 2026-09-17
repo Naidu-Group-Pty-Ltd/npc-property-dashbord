@@ -40,10 +40,35 @@ const ORG = {
   email_signature_website: 'npcservices.com.au',
   email_signature_address: 'Level 5 Nexus Norwest, 4 Columbia Ct, Norwest NSW 2153',
 };
+
+/**
+ * The workspace's own report settings, as `global_report_settings` holds them.
+ *
+ * `applyOrganisationProjection` takes these as its FOURTH argument, and passing
+ * three is why the first baseline printed no ABN and the generic five-line
+ * disclaimer instead of the configured nine-paragraph one. `contact_details`
+ * wins over the email-signature columns wherever both carry a field, which is
+ * the point of the Report Settings page.
+ */
+const SETTINGS = {
+  contact: {
+    company_name: 'Naidu Property Consulting Services',
+    abn: '50 684 555 771',
+    email: 'admin@npcservices.com.au',
+    phone: '02 8609 3299',
+    address: 'Level 5 Nexus Norwest, 4 Columbia Ct, Norwest NSW 2153',
+    website: 'www.npcservices.com.au',
+  },
+  disclaimer: {
+    is_enabled: true,
+    font_size: 'medium',
+    text: readFileSync(resolve(REPO, 'reports/fixtures/disclaimer.txt'), 'utf8'),
+  },
+};
 // A 1×1 transparent PNG stands in for the mark: the real asset is a repo file
 // and the print boundary refuses a network fetch, so a page that needs a mark
 // is judged on its layout rather than on the artwork.
-const MARK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=';
+const MARK = readFileSync(resolve(REPO, 'reports/fixtures/mark-monogram.txt'), 'utf8').trim();
 
 const flat = (o: unknown) => (o && typeof o === 'object' ? { ...(o as object) } : {});
 const data: Record<string, any> = {
@@ -54,7 +79,7 @@ const data: Record<string, any> = {
   brand: { tokens: {}, logo: null },
 };
 applyInvestmentProjection(data, row);
-applyOrganisationProjection(data, ORG as never, { mark: MARK, markMono: MARK });
+applyOrganisationProjection(data, ORG as never, { mark: MARK, markMono: MARK }, SETTINGS as never);
 
 const keys = process.argv.slice(2);
 const wanted = keys.length ? keys : ['pb-01'];
