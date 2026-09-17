@@ -127,7 +127,25 @@ export function ledgerForInput(input: LoanCalculationInput & { interestRate: num
     annualRatePercent: input.interestRate,
     termYears: input.loanTerm,
     loanType: input.loanType,
-    interestOnlyYears: input.interestOnlyYears ?? 0,
+    /*
+     * Passed through, NOT defaulted.
+     *
+     * This read `input.interestOnlyYears ?? 0`, which turns "no term was
+     * recorded" into "the term is zero" one line before `buildLoanLedger` can
+     * tell the two apart — so the distinction that module draws between an
+     * absence and a recorded zero was unreachable through the only path the
+     * calculator service uses. Measured on the 17 Sep 2026 regeneration of 262
+     * Pallas Street: the operator's overrides said `loanType: 'interest_only'`
+     * and named no term, and the stored row came back
+     * `interestOnlyPeriod: 0`, `interestOnlyPeriodAssumed: false`,
+     * `structure: "Principal and interest over 30 years"` and
+     * `annualPayment: 34,890` — the P&I figure, against $29,900 interest-only.
+     *
+     * `buildLoanLedger` already treats undefined and null as absent and an
+     * explicit 0 as principal and interest, so there is nothing to default
+     * here.
+     */
+    interestOnlyYears: input.interestOnlyYears,
   });
 }
 

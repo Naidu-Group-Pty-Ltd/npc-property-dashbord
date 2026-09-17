@@ -123,3 +123,52 @@ describe('an interest-only loan whose term nobody recorded', () => {
     expect(pi.interestOnlyYearsAssumed).toBe(false);
   });
 });
+
+describe('the one path the calculator service actually uses', () => {
+  /*
+   * `buildLoanLedger` drew the distinction between "no interest-only term was
+   * recorded" and "the term is zero", and `ledgerForInput` — the only way
+   * `financial-calculator-service` reaches it — erased that distinction one
+   * line earlier with `input.interestOnlyYears ?? 0`.
+   *
+   * Measured on the 17 Sep 2026 regeneration of 262 Pallas Street, AFTER the
+   * ledger fix shipped: `loanType: "interest_only"`, `interestOnlyPeriod: 0`,
+   * `interestOnlyPeriodAssumed: false`, `structure: "Principal and interest
+   * over 30 years"`, `annualPayment: 34,890`. A default at the boundary makes
+   * a careful rule downstream unreachable.
+   */
+  const base = { propertyValue: 575_000, deposit: 115_000, loanTerm: 30, interestRate: 6.5 };
+
+  it('assumes and discloses when the term is absent', async () => {
+    const { ledgerForInput } = await import('@/lib/reports/investment/financialEngine.pure');
+    for (const input of [
+      { ...base, loanType: 'interest_only' },
+      { ...base, loanType: 'interest_only', interestOnlyYears: null },
+    ]) {
+      const ledger = ledgerForInput(input as never);
+      expect(ledger.interestOnlyYears, JSON.stringify(input)).toBe(ASSUMED_INTEREST_ONLY_YEARS);
+      expect(ledger.interestOnlyYearsAssumed).toBe(true);
+      // $29,900, not the $34,890 the report printed.
+      expect(ledgerYear(ledger, 1)!.payments).toBeCloseTo(460_000 * 0.065, 0);
+      expect(describeLoanStructure(ledger)).toMatch(/term not recorded; assumed/);
+    }
+  });
+
+  it('still honours a recorded zero and a recorded term', async () => {
+    const { ledgerForInput } = await import('@/lib/reports/investment/financialEngine.pure');
+    const zero = ledgerForInput({ ...base, loanType: 'interest_only', interestOnlyYears: 0 } as never);
+    expect(zero.interestOnlyYears).toBe(0);
+    expect(zero.interestOnlyYearsAssumed).toBe(false);
+    expect(describeLoanStructure(zero)).toBe('Principal and interest over 30 years');
+    const three = ledgerForInput({ ...base, loanType: 'interest_only', interestOnlyYears: 3 } as never);
+    expect(three.interestOnlyYears).toBe(3);
+    expect(three.interestOnlyYearsAssumed).toBe(false);
+  });
+
+  it('changes nothing for a principal-and-interest loan', async () => {
+    const { ledgerForInput } = await import('@/lib/reports/investment/financialEngine.pure');
+    const pi = ledgerForInput({ ...base } as never);
+    expect(pi.interestOnlyYears).toBe(0);
+    expect(pi.interestOnlyYearsAssumed).toBe(false);
+  });
+});
