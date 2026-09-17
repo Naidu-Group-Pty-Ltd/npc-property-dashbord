@@ -59,10 +59,20 @@ import {
 import { compassSections } from '../../../../supabase/functions/_shared/compassSectionRegistry';
 
 const REPO = resolve(__dirname, '../../../..');
-const read = (p: string) => readFileSync(resolve(REPO, p), 'utf8');
+const readFile = (p: string) => readFileSync(resolve(REPO, p), 'utf8');
+const read = (p: string) => (p === FORK ? `${readFile(FORK)}\n${readFile(FORK_SPLIT)}` : readFile(p));
 
 const CONDENSE = 'supabase/functions/condense-investment-report/index.ts';
+/**
+ * The fork is two files: the handler and the composition it calls.
+ *
+ * `forkSplit.pure.ts` holds the routing, the section contracts, the composed
+ * chapters and the hygiene pass, which used to be 257 lines of `index.ts`. A
+ * rule about what the fork DOES is satisfied by either, so `read(FORK)`
+ * returns both — which also means the next move cannot silently pass.
+ */
 const FORK = 'supabase/functions/fork-investment-report/index.ts';
+const FORK_SPLIT = 'supabase/functions/_shared/reports/investment/forkSplit.pure.ts';
 const PROJECTION = 'supabase/functions/_shared/reportBindingProjection.pure.ts';
 
 /** Every (section, tier) placement in the registry, flattened. */

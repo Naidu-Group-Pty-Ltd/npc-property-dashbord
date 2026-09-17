@@ -305,7 +305,12 @@ describe('the Due Diligence scorer can actually score', () => {
 });
 
 describe('the engines stamp lineage and compose rather than slice', () => {
-  const fork = read('supabase/functions/fork-investment-report/index.ts');
+  // The handler AND the composition it calls: `forkSplit.pure.ts` holds the
+  // routing, the composed chapters and the hygiene pass that used to be 257
+  // lines of `index.ts`, and a rule about what the fork does is satisfied by
+  // either.
+  const fork = read('supabase/functions/fork-investment-report/index.ts')
+    + '\n' + read('supabase/functions/_shared/reports/investment/forkSplit.pure.ts');
   const condense = read('supabase/functions/condense-investment-report/index.ts');
 
   it('fork: composed chapters, hygiene, score fallback, engine + scope', () => {

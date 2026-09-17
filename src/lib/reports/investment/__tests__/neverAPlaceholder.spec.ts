@@ -184,7 +184,9 @@ describe('a heading with nothing under it is dropped', () => {
   it('the write paths apply it after the placeholder scrub', () => {
     for (const rel of [
       'supabase/functions/condense-investment-report/index.ts',
-      'supabase/functions/fork-investment-report/index.ts',
+      // The fork's hygiene pass moved to the composition module with the rest
+      // of its deterministic half; the rule is about the path, not the file.
+      'supabase/functions/_shared/reports/investment/forkSplit.pure.ts',
     ]) {
       expect(src(rel), rel).toContain('dropEmptySections(');
     }

@@ -37,7 +37,22 @@ const BRIDGE_SHAPE =
  * like the others here — eleven routes each carried a private copy.
  */
 const ALLOWED_IMPORT =
-  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|vizDirectives|vizFigures|reportDate)\.pure\.ts)$/;
+  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|vizDirectives|vizFigures|reportDate)\.pure\.ts|\.\.\/\.\.\/(?:reportSplitRegistry|compassPostProcessor)\.ts)$/;
+
+/**
+ * Two modules next door that are not named `.pure.ts` and are admitted anyway.
+ *
+ * `forkSplit.pure.ts` composes the two fork documents, and it cannot do that
+ * without the split registry (the routes, the titles, the lens preambles) or
+ * the editorial-label stripper the hygiene pass runs. Neither is optional and
+ * neither has a pure twin.
+ *
+ * The admission is CHECKED rather than asserted: the test below holds them to
+ * the same purity rule as a canonical module, so this list can only grow to
+ * things that would pass it. They are named individually — a pattern admitting
+ * `../../*.ts` would admit the whole `_shared` tree.
+ */
+const ADMITTED_NEIGHBOURS = ['reportSplitRegistry.ts', 'compassPostProcessor.ts'];
 
 describe('investment report — single source of truth', () => {
   it('has at least one canonical module', () => {
@@ -61,6 +76,16 @@ describe('investment report — single source of truth', () => {
       const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
       expect(code).not.toMatch(/export (?:const|function|class|interface|type|default)\b/);
       expect(code).not.toMatch(/^\s*import\b/m);
+    });
+  });
+
+  describe.each(ADMITTED_NEIGHBOURS)('admitted neighbour %s', (file) => {
+    it('is held to the same purity rule as a canonical module', () => {
+      const source = readFileSync(resolve(CANONICAL_DIR, '..', '..', file), 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      for (const forbidden of ['Date.now(', 'new Date(', 'Math.random(', 'fetch(', 'localStorage', 'Deno.']) {
+        expect(code, `${file} uses ${forbidden}`).not.toContain(forbidden);
+      }
     });
   });
 
