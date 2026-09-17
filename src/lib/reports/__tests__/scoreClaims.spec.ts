@@ -183,7 +183,16 @@ describe('an instruction never occupies a value slot', () => {
     const guardedRow = /\$\{propertyTypeLabel \? `\| Property Type \| \$\{propertyTypeLabel\} \|` : ''\}/g;
     expect([...generator.matchAll(rawRow)]).toHaveLength([...generator.matchAll(guardedRow)].length);
     expect([...generator.matchAll(guardedRow)].length).toBeGreaterThan(0);
-    expect(generator).toContain("${propertyTypeLabel ? `- Property Type: ${propertyTypeLabel}` : ''}");
+    // The rule generalised past the two cells above, because the block that
+    // carried `- Property Type: …` has since been removed with the rest of the
+    // legacy template: EVERY interpolation of the label is inside a ternary
+    // that tests it. A bare `${propertyTypeLabel}` anywhere prints an empty
+    // value slot when nothing resolved, which is the defect this pins.
+    for (const line of generator.split('\n')) {
+      if (!line.includes('${propertyTypeLabel}')) continue;
+      expect(line, 'an unguarded interpolation would print an empty value slot')
+        .toMatch(/propertyTypeLabel \?/);
+    }
     expect(generator, 'an unguarded line would print an empty value slot')
       .not.toMatch(/^- Property Type: \$\{propertyTypeLabel\}$/m);
   });

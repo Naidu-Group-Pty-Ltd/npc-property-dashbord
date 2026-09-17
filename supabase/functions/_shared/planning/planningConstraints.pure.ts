@@ -546,8 +546,13 @@ export function parseVicOverlays(body: unknown): ConstraintProbeOutcome {
   const readings = b.features.map((f): PlanningConstraintReading => {
     const p = f.properties ?? {};
     const scheme = attrStr(p['scheme_code']);
-    const cls = (scheme && VIC_OVERLAY_FAMILY[scheme.toUpperCase()])
-      ?? familyFromLabel(attrStr(p['zone_description']) ?? '');
+    // Written as two statements rather than one `&&`/`??` chain: `scheme && …`
+    // carries the empty string through, which `??` does not catch, so `cls`
+    // would be `''` and every field read off it `undefined`. `attrStr` never
+    // answers `''` today, but a classification must not rest on an invariant
+    // held in another function.
+    const schemeClass = scheme ? VIC_OVERLAY_FAMILY[scheme.toUpperCase()] : undefined;
+    const cls = schemeClass ?? familyFromLabel(attrStr(p['zone_description']) ?? '');
     const lga = attrStr(p['lga']);
     return {
       family: cls.family,

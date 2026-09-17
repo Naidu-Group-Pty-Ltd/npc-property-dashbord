@@ -205,6 +205,33 @@ already drops a tile whose bound value resolved to nothing, so the dashboard
 closes up around the figures the tier does publish; and the `toc` block reads
 the pages that actually rendered, so the contents list corrects itself.
 
+That second claim was then MEASURED rather than left as an expectation, and
+the measurement is the interesting half. Dropping the three pages does not
+finish the job: the masters are one design serving five tiers, so a page drawn
+on every tier may still bind a withheld figure somewhere inside it. Walked
+over all 50 masters, that is **three pages and four blocks**:
+
+| Page | Block | Withheld bindings |
+|---|---|---|
+| Cover | `kpi-grid` (fact band) | `financials.weeklyNet` |
+| Executive dashboard | `kpi-grid` (five variants) | eleven, incl. `grossYield`, `netYield`, `loanAmount`, `cashOnCash` |
+| Executive dashboard | `data-table` | `annualRepayment`, `loanAmount` |
+| Sources and methodology | `definition-list` | `assumptions.capitalGrowth`, `assumptions.interestRate` |
+
+All four close up, each by a rule its own renderer already carried and each
+written for this class of defect — a `kpi-grid` drops the tile and recomputes
+its column count from the survivors (so the cover band closes from four cells
+to three rather than leaving a gap), a `data-table` drops a row whose bound
+cells all resolved to nothing, and a `definition-list` drops an item whose
+definition is bound and empty.
+
+So the rule is not "no page may bind a withheld figure" — that would forbid
+one design serving five tiers, which is the point of the catalogue. It is
+that **a withheld figure may only ever sit somewhere that closes up around
+it**, and `reportBindingProjection.spec.ts` walks every master's every page
+and fails on any withheld binding outside those three block types, naming the
+master, the page, the block and the path.
+
 ### The one escape, and why it exists
 
 `projectInvestmentReport(row, { tier })` overrides the row's tier for exactly

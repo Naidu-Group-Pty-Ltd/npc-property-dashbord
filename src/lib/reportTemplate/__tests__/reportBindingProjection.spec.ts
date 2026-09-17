@@ -188,8 +188,24 @@ describe('after projection', () => {
     disclaimer: { text: 'As a Professional Property Consultant & Buyers Agent…', font_size: 'medium', is_enabled: true },
   };
 
+  /*
+   * Projected for the FINANCIAL tier, and that is the whole point of the
+   * parameter.
+   *
+   * `catalogueBindings()` reads every master in the catalogue, and those
+   * masters serve five tiers. The question this file asks is whether a bound
+   * path has a SOURCE IN THE RECORD — which is a fact about the row, not about
+   * which document draws it — so it has to be asked at the tier that publishes
+   * the most. The compass tier withholds the financial modelling by design
+   * (`TIER_CONTENT`), and asking here at the compass tier would report
+   * `financials.annualRepayment` as a binding with nowhere to come from, which
+   * is exactly the false claim the expected-absent list below must never make.
+   *
+   * What the compass withholds, and that no page is left with a hole by it, is
+   * pinned by its own describe block at the foot of this file.
+   */
   const data = applyOrganisationProjection(
-    applyInvestmentProjection(rawContext(), ROW),
+    applyInvestmentProjection(rawContext(), ROW, { tier: 'financial' }),
     ORGANISATION,
     { mark: MARK, markMono: MARK },
     SETTINGS,
@@ -368,7 +384,15 @@ describe('after projection', () => {
  * cannot foot.
  */
 describe('the cash flow table foots to the net position', () => {
-  const data = applyOrganisationProjection(applyInvestmentProjection({}, ROW), {});
+  /*
+   * At the FINANCIAL tier throughout this block, because that is the only tier
+   * on which the table is drawn: the masters' cash-flow pages are conditional
+   * on `report.drawsFinancialModelling`, and the compass tier withholds the
+   * eight components by design. Measuring the arithmetic at a tier that does
+   * not print the table would prove nothing about the document that does.
+   */
+  const TIER = { tier: 'financial' } as const;
+  const data = applyOrganisationProjection(applyInvestmentProjection({}, ROW, TIER), {});
   const ctx = { data, tokens: {} as any };
 
   /** Every master's "Cash flow" table, wherever in its schema it sits. */
@@ -415,7 +439,7 @@ describe('the cash flow table foots to the net position', () => {
         ...ROW.financial_calculations,
         annualCosts: { ...ROW.financial_calculations.annualCosts, landTax: 0, strataFees: 0, totalAnnual: 8402 },
       },
-    });
+    }, TIER);
     expect('annualOtherCosts' in (house.financials as object)).toBe(false);
     expect('weeklyOtherCosts' in (house.financials as object)).toBe(false);
   });
@@ -432,7 +456,7 @@ describe('the cash flow table foots to the net position', () => {
     const full = applyInvestmentProjection({}, {
       ...ROW,
       financial_calculations: { ...ROW.financial_calculations, assumptions: { ...ROW.financial_calculations.assumptions, occupancyWeeks: 52 } },
-    });
+    }, TIER);
     expect('annualVacancyAllowance' in (full.financials as object)).toBe(false);
   });
 
@@ -468,5 +492,83 @@ describe('the cash flow table foots to the net position', () => {
       }
     }
     expect(tablesChecked).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The compass tier withholds the financial modelling, and no page is left with
+ * a hole by it.
+ *
+ * `TIER_CONTENT` moved the modelling out of the Investment Compass and into the
+ * Financial Analysis, on the owner's instruction that each document have one
+ * purpose. The projection withholds the keys and three master pages are
+ * conditional on `report.drawsFinancialModelling`, so those pages are simply
+ * not drawn.
+ *
+ * The residual risk is the other kind of page: one that is drawn on every tier
+ * and binds a withheld figure somewhere inside it. An unresolved binding
+ * renders as the empty string, so what a reader would get is a label over
+ * nothing — "Loan repayments" beside a blank — which is the placeholder defect
+ * under a different name.
+ *
+ * Measured on this branch, that is three pages: the cover's fact band, the
+ * executive dashboard's KPI variants and table, and the methodology page's
+ * definition list. All three close up, each by a rule its own renderer already
+ * carried and each written for this class of defect:
+ *
+ *   - `kpi-grid`      drops a tile whose value is bound and resolved to nothing
+ *                     and recomputes its column count from the survivors, so
+ *                     the cover band closes from four cells to three.
+ *   - `data-table`    drops a row whose bound cells all resolved to nothing.
+ *   - `definition-list` drops an item whose definition is bound and empty.
+ *
+ * So the rule pinned here is not "no page binds a withheld figure" — that would
+ * forbid one design serving five tiers, which is the whole point of the
+ * catalogue. It is that a withheld figure may only ever sit somewhere that
+ * closes up around it.
+ */
+describe('a tier that withholds the modelling leaves no empty slot', () => {
+  /** Block types whose renderers drop an item that resolved to nothing. */
+  const CLOSES_UP = new Set(['kpi-grid', 'data-table', 'definition-list']);
+
+  const bindingsIn = (o: unknown): string[] =>
+    [...new Set([...JSON.stringify(o).matchAll(/\{\{\s*([a-zA-Z0-9_.]+)/g)].map((m) => m[1]))];
+
+  const compass = applyInvestmentProjection({}, ROW, { tier: 'compass' });
+  const financial = applyInvestmentProjection({}, ROW, { tier: 'financial' });
+
+  it('withholds the modelling on the compass and publishes it on the financial', () => {
+    const f = financial.financials as Record<string, unknown>;
+    const c = compass.financials as Record<string, unknown>;
+    // The figures the Financial Analysis exists for.
+    for (const key of ['grossYield', 'netYield', 'lvr', 'loanAmount', 'annualRepayment', 'weeklyNet']) {
+      expect(f[key], `financial tier: ${key}`).not.toBeUndefined();
+      expect(key in c, `compass tier: ${key} must be withheld`).toBe(false);
+    }
+    // And the two figures the Compass keeps, because they describe the
+    // property rather than a model of it: what it costs and what it rents for.
+    expect(c.purchasePrice).toBe(1290000);
+    expect(c.weeklyRent).toBe(920);
+    expect(compass.report.drawsFinancialModelling).toBe(false);
+    expect(financial.report.drawsFinancialModelling).toBe(true);
+  });
+
+  it('puts every withheld binding on a conditional page or in a block that closes up', () => {
+    const offences: string[] = [];
+    for (const t of INVESTMENT_COMPASS_TEMPLATES) {
+      for (const page of ((t.schema as Record<string, any>)?.pages ?? []) as any[]) {
+        // A page the compass never draws may bind anything.
+        if (String(page?.conditional ?? '').includes('drawsFinancialModelling')) continue;
+        for (const block of (page?.blocks ?? []) as any[]) {
+          if (CLOSES_UP.has(String(block?.type))) continue;
+          for (const path of bindingsIn(block)) {
+            if (resolves(financial, path) && !resolves(compass, path)) {
+              offences.push(`${t.name} · ${page?.name} · ${block?.type} · ${path}`);
+            }
+          }
+        }
+      }
+    }
+    expect([...new Set(offences)].sort()).toEqual([]);
   });
 });
