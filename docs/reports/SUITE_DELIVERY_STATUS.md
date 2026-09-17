@@ -37,6 +37,21 @@ been drawn end to end and read page by page, and that is S5's work.
 **Released** — nothing is. No production deploy, no migration, no historical
 report regenerated or rewritten.
 
+## Remaining delivery, by responsible stage
+
+**A binding that resolves is not a delivered report.** The five tier pages
+prove the projection publishes the right content per report; they do not prove
+a client receives it. Everything below is outstanding, and none of it is
+counted anywhere in the table above.
+
+| remaining work | stage | why it is not done |
+| --- | --- | --- |
+| **Template-content integration** — the approved structure, explanations and bindings moved into the masters the generation and export paths actually use | S4 | The treatment lives in the projection and the review scripts. A user generating a report today gets the masters' own copy. |
+| **Section navigation** — a contents page and bookmarks naming SECTIONS, resolving correctly after pagination and conditional content | S4 | Contents entries now link and land on the right page, but they name page archetypes ("The report (7)"), not sections. Bookmark labels are content fragments. |
+| **Full-document verification** — every page of all five reports, for both properties, read and reconciled | S5 | Four of the five have been seen on one composed page only. |
+| **Ten-year outlook sources** | S4, blocked | See `S4_INFRASTRUCTURE_SOURCE_COVERAGE.md`. Awaiting an owner decision on curation. |
+| **Frontend journey** — selection, editing, saving, reopening, preview, export, history, permissions | S5 | Not exercised end to end. |
+
 ## The honest gaps
 
 - Four of the five reports are visually verified on **one page**, not a
