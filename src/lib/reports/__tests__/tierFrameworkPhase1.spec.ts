@@ -311,7 +311,12 @@ describe('the engines stamp lineage and compose rather than slice', () => {
   // either.
   const fork = read('supabase/functions/fork-investment-report/index.ts')
     + '\n' + read('supabase/functions/_shared/reports/investment/forkSplit.pure.ts');
-  const condense = read('supabase/functions/condense-investment-report/index.ts');
+  // The handler AND the composition it calls: `condenseCompose.pure.ts` holds
+  // the composed sections, the registry trim, the declared-order assembly and
+  // the hygiene passes that used to be 156 lines of `index.ts`, and a rule
+  // about what condensation does is satisfied by either.
+  const condense = read('supabase/functions/condense-investment-report/index.ts')
+    + '\n' + read('supabase/functions/_shared/reports/investment/condenseCompose.pure.ts');
 
   it('fork: composed chapters, hygiene, score fallback, engine + scope', () => {
     expect(fork).toContain('composeFinancialChapters');
