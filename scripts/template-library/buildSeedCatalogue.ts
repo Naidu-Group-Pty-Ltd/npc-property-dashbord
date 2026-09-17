@@ -189,10 +189,26 @@ const REPO = resolve(__dirname, '../..');
  * `recommendation.gradedLine` / `.gradedDetailLine`, composed by the
  * projection from the score's own dimensions and absent when the record
  * cannot say them (scoreSections.pure.ts).
+ *
+ * ## v13 — the cash flow table foots
+ *
+ * `20261112000000` is recorded and `template_library_entries` holds 543 rows,
+ * so v12 has run and editing it would be inert. v13 carries the Financial
+ * position page's new lines: the engine subtracts eight annual cost components
+ * and the table drew four, so on 262 Pallas Street, Maryborough the rows came
+ * to $10,780 against a net position built on $12,880 — and the row that left
+ * water rates out was labelled "Council and water rates". The projection now
+ * folds water into that row and letting fees into management, and publishes
+ * land tax and strata (`financials.annualOtherCosts`) and the occupancy gap
+ * (`financials.annualVacancyAllowance`) as conditional rows that draw only
+ * where there is a figure to draw.
+ *
+ * Run the same one-query check before editing this file: if
+ * `20261202000000` is already recorded, the next change needs a v14.
  */
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261112000000_seed_template_library_v12_guarded_verdict_line.sql',
+  'supabase/migrations/20261202000000_seed_template_library_v13_cash_flow_foots.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

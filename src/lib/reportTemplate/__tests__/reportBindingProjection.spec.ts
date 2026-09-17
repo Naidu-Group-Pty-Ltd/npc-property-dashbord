@@ -18,6 +18,7 @@ import {
 import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
 import { OVERALL_GRADE_UNAVAILABLE } from '../../../../supabase/functions/_shared/reports/market/scoringInputPolicy.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/templates';
+import { visibleTableRows } from '../blocks/_data';
 
 /** Shaped exactly like a stored row. See the header. */
 const ROW = {
@@ -53,13 +54,23 @@ const ROW = {
     },
     income: { weeklyRent: 920 },
     keyMetrics: {
-      grossRentalYield: 3.71, netRentalYield: 2.44, cashOnCashReturn: 4.12,
-      weeklyNet: -184.5, annualNet: -9594, lvr: 80, totalInvestment: 1349640,
+      grossRentalYield: 3.71, netRentalYield: 2.95, cashOnCashReturn: -2.9,
+      weeklyNet: -753.5, annualNet: -39182, lvr: 80, totalInvestment: 1349640,
     },
     loanDetails: { loanAmount: 1032000, interestRate: 6.14, monthlyPayment: 6280, weeklyPayment: 1449, lvr: 80 },
+    /*
+     * All EIGHT components the engine subtracts, because that is what a stored
+     * row carries. This fixture held four and a `totalAnnual` that did not
+     * foot with them, and that is exactly the defect it was meant to guard:
+     * the projection published the same four, the masters bound the four, and
+     * the missing $2,328 sat inside "Net position" with no row naming it. On
+     * 262 Pallas Street, Maryborough the same gap was $2,100 of water rates
+     * and letting fees.
+     */
     annualCosts: {
-      councilRates: 1980, landlordInsurance: 720, propertyManagement: 2392,
-      maintenance: 1290, totalAnnual: 8710,
+      councilRates: 1980, waterRates: 1100, landlordInsurance: 720,
+      propertyManagement: 2392, lettingFees: 920, maintenance: 1290,
+      landTax: 1420, strataFees: 0, totalAnnual: 9822,
     },
     assumptions: { capitalGrowth: 4.2, cpiGrowth: 2.5, occupancyWeeks: 50 },
     cashFlow: { taxRate: null },
@@ -271,7 +282,7 @@ describe('after projection', () => {
 
   it('converts units without inventing a model', () => {
     // Weekly is annual/52 — arithmetic, not a forecast.
-    expect(data.financials.weeklyRates).toBeCloseTo(1980 / 52, 6);
+    expect(data.financials.weeklyRates).toBeCloseTo((1980 + 1100) / 52, 6);
     expect(data.financials.annualRepayment).toBe(6280 * 12);
     // `annualRent` is the CONTRACTUAL rent — 52 weeks — because that is the
     // basis the stored yields rest on (149 of 153 production reports) and what
@@ -337,5 +348,125 @@ describe('after projection', () => {
     expect(sparse.property.address).toBe('1 Test St');
     expect(Object.keys(sparse.financials)).toHaveLength(0);
     expect(sparse.risks).toEqual([]);
+  });
+});
+
+/**
+ * The cash flow table adds up.
+ *
+ * Measured on 262 Pallas Street, Maryborough (report
+ * `aa41bcec-5a5c-434d-9162-96deb50e9bdb`, 16 Sep 2026): the printed rows came
+ * to $10,780 a year against a "Net position" the engine built on $12,880, so
+ * a client reading page 5 was $2,100 short with no line to attribute it to.
+ * The engine subtracts eight annual components; the projection published four
+ * and the masters bound those four — and the row that was missing water rates
+ * was LABELLED "Council and water rates".
+ *
+ * These tests resolve the real masters' real rows against the projection and
+ * add them up, so a ninth component added upstream, a renamed key or a row
+ * dropped from a master fails here rather than shipping a table a reader
+ * cannot foot.
+ */
+describe('the cash flow table foots to the net position', () => {
+  const data = applyOrganisationProjection(applyInvestmentProjection({}, ROW), {});
+  const ctx = { data, tokens: {} as any };
+
+  /** Every master's "Cash flow" table, wherever in its schema it sits. */
+  function cashFlowTables(schema: unknown): any[] {
+    const found: any[] = [];
+    const walk = (node: any) => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node.headers) && node.headers[0] === 'Cash flow' && Array.isArray(node.rows)) found.push(node);
+      Object.values(node).forEach(walk);
+    };
+    walk(schema);
+    return found;
+  }
+
+  /** The number a bound annual cell resolves to, by the key it names. */
+  function annualOf(row: any): { label: string; key: string; value: number | undefined } {
+    const label = String(row.cells?.[0] ?? '');
+    const key = String(row.cells?.[2] ?? '').match(/financials\.([A-Za-z0-9_]+)/)?.[1] ?? '';
+    const value = (data.financials as Record<string, unknown>)[key];
+    return { label, key, value: typeof value === 'number' ? value : undefined };
+  }
+
+  it('publishes every component the engine subtracted', () => {
+    const c = ROW.financial_calculations.annualCosts;
+    const f = data.financials as Record<string, number>;
+    // Two join the row whose label already claimed them; two more are their
+    // own line. Nothing is dropped and nothing is counted twice.
+    expect(f.annualRates).toBe(c.councilRates + c.waterRates);
+    expect(f.annualManagement).toBe(c.propertyManagement + c.lettingFees);
+    expect(f.annualInsurance).toBe(c.landlordInsurance);
+    expect(f.annualMaintenance).toBe(c.maintenance);
+    expect(f.annualOtherCosts).toBe(c.landTax + c.strataFees);
+    expect(f.annualRates + f.annualInsurance + f.annualManagement + f.annualMaintenance + f.annualOtherCosts)
+      .toBe(c.totalAnnual);
+  });
+
+  it('draws the land tax row only where there is a figure to draw', () => {
+    // Both are nil on an ordinary house — 262 Pallas carries 0 and 0 — and a
+    // row reading "$0" is a line the reader has to discount rather than read.
+    const house = applyInvestmentProjection({}, {
+      ...ROW,
+      financial_calculations: {
+        ...ROW.financial_calculations,
+        annualCosts: { ...ROW.financial_calculations.annualCosts, landTax: 0, strataFees: 0, totalAnnual: 8402 },
+      },
+    });
+    expect('annualOtherCosts' in (house.financials as object)).toBe(false);
+    expect('weeklyOtherCosts' in (house.financials as object)).toBe(false);
+  });
+
+  it('names the vacancy assumption instead of hiding it in the rent', () => {
+    // `annualRent` stays contractual, because that is the basis the stored
+    // yields rest on. The difference the occupancy assumption makes is its own
+    // deduction, so the table can open on the contractual rent and still reach
+    // a net position the engine built on the occupied one.
+    const f = data.financials as Record<string, number>;
+    expect(f.annualRent).toBe(920 * 52);
+    expect(f.annualVacancyAllowance).toBe(920 * 52 - 920 * 50);
+    // At 52 weeks there is no gap, so no row and no key.
+    const full = applyInvestmentProjection({}, {
+      ...ROW,
+      financial_calculations: { ...ROW.financial_calculations, assumptions: { ...ROW.financial_calculations.assumptions, occupancyWeeks: 52 } },
+    });
+    expect('annualVacancyAllowance' in (full.financials as object)).toBe(false);
+  });
+
+  it('resolves every line the master draws', () => {
+    for (const t of INVESTMENT_COMPASS_TEMPLATES) {
+      for (const table of cashFlowTables(t.schema)) {
+        for (const { row } of visibleTableRows(table.rows, ctx)) {
+          const { label, key, value } = annualOf(row);
+          expect(key, `${t.name}: "${label}" binds no financials key`).not.toBe('');
+          expect(value, `${t.name}: "${label}" (financials.${key}) resolved to nothing`).toBeTypeOf('number');
+        }
+      }
+    }
+  });
+
+  it('adds up, on every master that draws it', () => {
+    const net = ROW.financial_calculations.keyMetrics.annualNet;
+    let tablesChecked = 0;
+    for (const t of INVESTMENT_COMPASS_TEMPLATES) {
+      for (const table of cashFlowTables(t.schema)) {
+        tablesChecked += 1;
+        let running = 0;
+        let stated: number | undefined;
+        for (const { row } of visibleTableRows(table.rows, ctx)) {
+          const { label, value } = annualOf(row);
+          if (value === undefined) continue;
+          if (label === 'Net position') { stated = value; continue; }
+          // Income adds; every other line is a deduction printed positive.
+          running += label === 'Rental income' ? value : -value;
+        }
+        expect(stated, `${t.name}: no net position row`).toBe(net);
+        expect(running, `${t.name}: the rows do not foot to the net position`).toBeCloseTo(net, 6);
+      }
+    }
+    expect(tablesChecked).toBeGreaterThan(0);
   });
 });

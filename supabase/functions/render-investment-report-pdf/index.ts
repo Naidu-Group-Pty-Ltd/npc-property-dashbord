@@ -1195,10 +1195,18 @@ function renderGaugeSvg(value: number, max = 100, label = "", caption = ""): str
     const x2 = cx + (r + 2)  * Math.cos(a), y2 = cy + (r + 2)  * Math.sin(a);
     return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${VIZ_RULE}" stroke-width="${i % 5 === 0 ? 1.4 : 0.6}"/>`;
   }).join("");
-  const band = v / max >= 0.8 ? "Strong"
+  // A verdict word, on a 0-100 score and nowhere else. These thresholds are
+  // calibrated for a score out of a hundred; applied to `v / max` for any
+  // other denominator they mint a grading no record holds — a SEIFA decile
+  // handed in as `{{gauge: 7/10}}` printed "7 / 10 · SOLID". Same guard as
+  // `renderGauge` in charts.pure.ts.
+  const banded = max === 100;
+  const band = !banded ? null
+             : v / max >= 0.8 ? "Strong"
              : v / max >= 0.65 ? "Solid"
              : v / max >= 0.5 ? "Mixed" : "Cautious";
-  const bandColor = v / max >= 0.65 ? VIZ_GOOD : v / max >= 0.5 ? VIZ_WARN : VIZ_RISK;
+  const bandColor = !banded ? VIZ_GOLD
+                  : v / max >= 0.65 ? VIZ_GOOD : v / max >= 0.5 ? VIZ_WARN : VIZ_RISK;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
     <defs>
       <linearGradient id="gauge-fill" x1="0" y1="0" x2="1" y2="0">
@@ -1209,7 +1217,7 @@ function renderGaugeSvg(value: number, max = 100, label = "", caption = ""): str
     ${valuePath ? `<path d="${valuePath}" stroke="url(#gauge-fill)" stroke-width="22" fill="none" stroke-linecap="round"/>` : ""}
     <g>${ticks}</g>
     <text x="${cx}" y="${cy - 6}" text-anchor="middle" font-family="Playfair Display,Georgia,serif" font-weight="800" font-size="62" fill="${VIZ_INK}" style="font-variant-numeric:lining-nums tabular-nums;">${Math.round(v)}</text>
-    <text x="${cx}" y="${cy + 20}" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" letter-spacing="2.6" fill="${VIZ_INK_MUTED}">${svgEscape(("/" + max + "  ·  " + band).toUpperCase())}</text>
+    <text x="${cx}" y="${cy + 20}" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" letter-spacing="2.6" fill="${VIZ_INK_MUTED}">${svgEscape((band ? "/" + max + "  ·  " + band : "/" + max).toUpperCase())}</text>
     <rect x="${cx - 38}" y="${cy + 30}" width="76" height="3" fill="${bandColor}" rx="1.5"/>
     ${label ? `<text x="${cx}" y="42" text-anchor="middle" font-family="Playfair Display,Georgia,serif" font-weight="700" font-size="18" fill="${VIZ_INK}">${svgEscape(label)}</text>` : ""}
     ${caption ? `<text x="${cx}" y="62" text-anchor="middle" font-family="Inter,sans-serif" font-size="9.5" fill="${VIZ_INK_MUTED}" letter-spacing="1.4">${svgLabelUpper(caption)}</text>` : ""}
@@ -2006,15 +2014,19 @@ function autoInjectVisualShortcodes(md: string): string {
     },
   );
 
-  // ── 2. SEIFA decile mentions → {{gauge: N/10 | LABEL | …}}
+  // ── 2. SEIFA decile mentions → {{bullet: N | max=10 | …}}
   //    Pattern: "SEIFA IRSAD decile 7/10" or "IRSAD score: 8 out of 10"
   out = out.replace(
     /(\b(?:SEIFA(?:\s+(?:IRSAD|IRSD|IEO|IER))?|IRSAD|IRSD|IEO|IER)\b[^\n.]{0,80}?\b(\d{1,2})\s*(?:\/|out of)\s*10\b)/gi,
     (full, _phrase, n) => {
       const v = parseInt(n, 10);
       if (!(v >= 1 && v <= 10)) return full;
-      // De-dupe: skip if a gauge for the same metric already follows nearby.
-      return `${full}\n\n{{gauge: ${v}/10 | Socio-economic decile | Higher = more advantaged}}\n`;
+      // A decile is a RANK, not a share. The gauge sweeps `value / max` of a
+      // ring, which is the grammar of a proportion, so decile 7 drew 70% of an
+      // arc for a number that is 70% of nothing — and printed a verdict word
+      // beside it from thresholds meant for a score out of a hundred.
+      // `bullet` marks a position on a banded track, which is what a rank is.
+      return `${full}\n\n{{bullet: ${v} | max=10 | label=Socio-economic decile | sub=Higher = more advantaged | ranges=3,7,10}}\n`;
     },
   );
 

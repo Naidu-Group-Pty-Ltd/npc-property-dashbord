@@ -11,6 +11,16 @@ import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS
 import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
 import { demographicsStatBlocks } from '../_shared/reports/censusPromptBlocks.pure.ts';
 import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure.ts';
+import {
+  buildPlanningFacts,
+  planningFactBlocks,
+  renderPlanningControls,
+} from '../_shared/planning/planningFacts.pure.ts';
+import {
+  buildInfrastructureEvidence,
+  infrastructureRules,
+  renderInfrastructureOutlook,
+} from '../_shared/planning/infrastructureEvidence.pure.ts';
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
@@ -47,7 +57,7 @@ import {
   projectionAssumptionLinesForPrompt,
   sensitivityRowsForPrompt,
 } from '../_shared/reports/investment/promptFinancials.pure.ts';
-import { recordedScoreValues } from '../_shared/reports/investment/scoreClaims.pure.ts';
+import { recordedScoreValues, suppressUnrecordedScores } from '../_shared/reports/investment/scoreClaims.pure.ts';
 import { investmentScorePromptBlock, overallRecommendationLine } from '../_shared/reports/investment/scorePromptBlock.pure.ts';
 import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/reports/market/domainEvidence.pure.ts';
 import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
@@ -1597,7 +1607,7 @@ VISUAL-FIRST RULES (CRITICAL):
 - Any composition / share-of-total (tenure mix, age bands, expense split, capital
   allocation) MUST use \`{{donut: …}}\` instead of a table.
 - Any suburb × metric matrix MUST use \`{{heatmap: …}}\`.
-- Any infrastructure/project pipeline MUST use \`{{timeline: …}}\`.
+- An infrastructure/project pipeline is drawn with \`{{timeline: …}}\` — and ONLY from items in the Infrastructure & Development Outlook table, using the dates that table carries. With no evidenced items, draw no timeline.
 - Any "subject suburb vs N nearby suburbs" comparison MUST use \`{{tiles: …}}\`.
 - Any trade-off between two dimensions (yield vs growth, risk vs return) MUST use
   \`{{quadrant: …}}\`. Highlight the subject property with a trailing \`*\`.
@@ -2456,16 +2466,14 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     const modelledBeds = effectiveIsLandOnly ? 0 : (effectiveBeds ?? 3);
     const modelledBaths = effectiveIsLandOnly ? 0 : (effectiveBaths ?? 2);
     
-    // Zoning effective values
-    const effectiveZoningCode = mergedOverrides.zoningCode || null;
-    const effectiveZoningDescription = mergedOverrides.zoningDescription || null;
-    const effectivePermittedUses = mergedOverrides.permittedUses || null;
-    const effectiveDevelopmentPotential = mergedOverrides.developmentPotential || null;
-    const effectiveZoningOverlays = mergedOverrides.zoningOverlays || null;
-    const effectiveMinimumLotSize = mergedOverrides.minimumLotSize || null;
-    const effectiveMaximumHeight = mergedOverrides.maximumHeight || null;
-    const effectiveFloorSpaceRatio = mergedOverrides.floorSpaceRatio || null;
-    const hasZoningData = effectiveZoningCode || effectiveZoningDescription || effectivePermittedUses || effectiveDevelopmentPotential;
+    // Zoning is resolved from the planning enrichment AND the operator's
+    // overrides together, by `buildPlanningFacts` below — which runs after the
+    // enrichment rather than here, because this point in the run is before a
+    // coordinate has been verified and therefore before anything could have
+    // been retrieved. Eight `effectiveZoning*` constants used to be computed
+    // here from the overrides alone and handed to a prompt that had no other
+    // source, which is why a report on a property whose zone the state's own
+    // layer would have answered printed placeholders instead.
     
     console.log('📊 EFFECTIVE VALUES (after merging overrides):');
     console.log(`  Purchase Price: $${effectivePurchasePrice?.toLocaleString()} ${mergedOverrides.purchasePrice ? '(OVERRIDE)' : '(from property)'}`);
@@ -4597,6 +4605,61 @@ Produce a comprehensive statewide investment analysis following the structure ab
     // record holding 0.21. See `_shared/reports/schoolDistance.pure.ts`.
     const storedSchools = enhancedData.locationIntelligence?.schools?.topSchools;
 
+    // The planning record this report may state.
+    //
+    // `planning-data-service` has answered since 2026-09-06 and the fetch
+    // above has always stored its answer on `enhancedData.planningData` —
+    // but the zoning SECTION of this prompt read none of it. It was a
+    // template of bracketed placeholders (`[XX]%` site coverage, `[X]m`
+    // setbacks, "Refer to LEP", "typically 450m²") handed to a model with
+    // nothing to fill them from, so the model filled them: 450 m², 8.5 m and
+    // 0.5:1 reached a client's document as though they were measurements.
+    // It also named New South Wales instruments on a Queensland property.
+    //
+    // The table below is composed from what was retrieved, the operator's
+    // audited overrides outrank it, and a control nobody published prints
+    // which absence it is rather than a number.
+    const planningFacts = buildPlanningFacts({
+      planningData: enhancedData.planningData,
+      overrides: {
+        zoningCode: mergedOverrides.zoningCode,
+        zoningDescription: mergedOverrides.zoningDescription,
+        permittedUses: mergedOverrides.permittedUses,
+        developmentPotential: mergedOverrides.developmentPotential,
+        zoningOverlays: mergedOverrides.zoningOverlays,
+        minimumLotSize: mergedOverrides.minimumLotSize,
+        maximumHeight: mergedOverrides.maximumHeight,
+        floorSpaceRatio: mergedOverrides.floorSpaceRatio,
+      },
+    });
+    const planningControlsTable = renderPlanningControls(planningFacts);
+    const planningSectionRules = planningFactBlocks(planningFacts);
+    // The infrastructure and development this report may describe.
+    //
+    // The same shape as the planning controls above: the enrichment already
+    // holds evidenced development facts — Queensland's declared instruments
+    // at this coordinate, New South Wales' DA register for this council — and
+    // the outlook sections used none of them. What the prompt offered instead
+    // was a worked example naming a metro line that opened in a year it
+    // invented, an opportunity bullet about "planned residential and
+    // commercial developments", and a directive requiring a pipeline ribbon
+    // whether or not a single project was evidenced.
+    const infrastructure = buildInfrastructureEvidence({ planningData: enhancedData.planningData });
+    const infrastructureTable = renderInfrastructureOutlook(infrastructure);
+    const infrastructureSectionRules = infrastructureRules(infrastructure);
+    console.log('🏗️ Infrastructure evidence:', {
+      items: infrastructure.items.length,
+      dwellings: infrastructure.pipelineDwellings?.total ?? null,
+      evidenced: infrastructure.anyEvidenced,
+    });
+    console.log('📐 Planning facts:', {
+      jurisdiction: planningFacts.jurisdiction,
+      council: planningFacts.council,
+      zone: planningFacts.zoning.value,
+      zoneStatus: planningFacts.zoning.status,
+      stated: planningFacts.anyStated,
+    });
+
     const _brandPp = await getBrandConfig();
     const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.
 Your role is to produce comprehensive, professional-grade investment reports following the EXACT structure, length, and format of our reference template.
@@ -4718,7 +4781,7 @@ The suburb's lifestyle is characterised by:
 
 **Public Transport Access:**
 
-A major infrastructure advancement occurred with the opening of [Station Name] in [Year], located at [specific location][citation]. This development has dramatically improved accessibility, providing commuters with access to the [Line Name] through [Connection Station]. The station includes [facilities - car park, bus connections] serving [list of destinations][citation].
+Write this from the named stations and counted stops in the transport reading above and from nothing else. Do NOT state that a station or line opened, name a connecting station or line, or describe station facilities: none of that is measured for this property, and an invented opening year reads exactly like a retrieved one.
 
 **Commute Performance:**
 
@@ -4952,107 +5015,17 @@ This valuation reflects typical [Suburb] [property type] prices for [configurati
 
 # Zoning & Planning Analysis
 
-${hasZoningData ? `**Zoning Classification:**
+${planningControlsTable}
 
-| Zoning Attribute | Details |
-|-----------------|---------|
-| Zoning Code | ${effectiveZoningCode || 'Not specified'} |
-| Category | ${effectiveZoningDescription || 'Not specified'} |
-| Permitted Uses | ${effectivePermittedUses ? effectivePermittedUses.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'Standard residential uses'} |
-| Development Potential | ${effectiveDevelopmentPotential ? effectiveDevelopmentPotential.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'Subject to council approval'} |
-| Planning Overlays | ${effectiveZoningOverlays ? effectiveZoningOverlays.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'No significant overlays identified'} |
-| Heritage Status | [Confirm heritage overlay status with local council] |
-| Conservation Areas | [Identify any environmental conservation restrictions] |
+${planningSectionRules}
 
-**Development Controls:**
+---
 
-| Control | Value | Investment Implication |
-|---------|-------|------------------------|
-| Minimum Lot Size | ${effectiveMinimumLotSize ? effectiveMinimumLotSize + ' m²' : 'Refer to LEP'} | [Assess subdivision feasibility] |
-| Maximum Building Height | ${effectiveMaximumHeight ? effectiveMaximumHeight + ' m' : 'Refer to LEP'} | [Multi-storey development potential] |
-| Floor Space Ratio (FSR) | ${effectiveFloorSpaceRatio ? effectiveFloorSpaceRatio + ':1' : 'Refer to LEP'} | [Maximum buildable area ratio] |
-| Site Coverage | [XX]% | [Permissible building footprint] |
-| Setbacks (Front) | [X]m | [Building positioning constraints] |
-| Setbacks (Side/Rear) | [X]m / [X]m | [Side and rear boundary requirements] |
-| Landscaping Requirements | [XX]% minimum | [Green space allocation] |
+# Infrastructure & Development Outlook
 
-**Local Environmental Plan (LEP) Analysis:**
+${infrastructureTable}
 
-The property falls under the [Council Name] Local Environmental Plan [Year]. Key considerations:
-
-- **Principal Permitted Uses:** Dwelling houses, secondary dwellings (granny flats), home occupations, home businesses
-- **Uses Requiring Consent:** Dual occupancy, attached dwellings, boarding houses, child care centres
-- **Prohibited Uses:** Commercial retail, industrial, intensive agriculture
-
-**Development Control Plan (DCP) Requirements:**
-
-- **Dwelling Design:** Character requirements, articulation, façade treatment
-- **Landscaping:** Deep soil zones, tree retention, canopy coverage targets
-- **Parking:** Minimum [X] off-street spaces per dwelling
-- **Stormwater:** On-site detention requirements, water sensitive urban design
-- **Private Open Space:** Minimum [XX]m² principal private open space
-
-**Strategic Planning Context:**
-
-- **Growth Corridor Status:** [Is the area within a designated growth corridor?]
-- **Urban Renewal Precinct:** [Proximity to renewal areas with potential upzoning]
-- **State Significant Development:** [Any state-level planning schemes affecting the area]
-- **Future Rezoning Potential:** [Analysis of strategic planning documents for potential uplift]
-
-**Zoning Investment Implications:**
-
-The ${effectiveZoningCode || 'residential'} zoning ${effectiveDevelopmentPotential && effectiveDevelopmentPotential !== 'none' ? 'provides potential for ' + effectiveDevelopmentPotential.replace(/_/g, ' ') + ', which could enhance long-term investment value through development upside' : 'is typical for the area and supports standard residential use, with limited immediate development potential'}. ${effectiveZoningOverlays && effectiveZoningOverlays !== 'none' ? 'The ' + effectiveZoningOverlays.replace(/_/g, ' ') + ' overlay may impact development options and should be factored into renovation or development plans. Additional consultant reports may be required for development applications.' : 'No significant planning overlays were identified that would restrict standard residential development.'}
-
-${effectivePermittedUses && (effectivePermittedUses.includes('dual') || effectivePermittedUses.includes('secondary') || effectivePermittedUses.includes('multi')) ? `**Value-Add Development Opportunities:**
-
-1. **Secondary Dwelling (Granny Flat):** Subject to lot size requirements, a secondary dwelling up to 60m² could provide rental income of approximately $[XXX]/week
-2. **Dual Occupancy Conversion:** If lot size permits, conversion to dual occupancy could increase property value by 30-50%
-3. **Subdivision Potential:** [Assess whether lot size supports Torrens title or strata subdivision]
-
-These development options require detailed feasibility analysis and council pre-lodgement consultation.` : ''}
-
-**Planning Risk Assessment:**
-
-| Risk Factor | Assessment | Mitigation Strategy |
-|-------------|------------|---------------------|
-| Rezoning Risk | Low/Medium/High | Monitor council strategic planning updates |
-| Heritage Overlay | [Confirm with council] | Obtain heritage impact assessment if required |
-| Bushfire Prone Land (mapping) | [Mapped: yes / no / not checked] — a bushfire-prone-land designation is NOT a BAL; a Bushfire Attack Level is a site-specific assessment and is stated only if one is held | Obtain a BAL assessment where the land is mapped; comply with AS3959 where a BAL applies |
-| Flood Affectation | [Check flood maps] | Obtain flood certificate, confirm habitable floor levels |
-
-**Recommendation:** Verify all zoning information with the [Council Name] planning portal before proceeding with any development applications. Obtain a Section 10.7 (formerly Section 149) Planning Certificate for comprehensive zoning confirmation.` : `**Zoning Information:**
-
-Specific zoning data was not provided for this property. For comprehensive investment analysis, verify the following with the local council:
-
-**Planning Certificate Requirements (Section 10.7):**
-
-| Certificate Type | Information Provided |
-|-----------------|---------------------|
-| Section 10.7(2) | Basic zoning classification |
-| Section 10.7(2)+(5) | Comprehensive: all planning restrictions, overlays, development contributions |
-
-**Key Zoning Verification Items:**
-
-1. **Current Zoning Classification:** Confirm zone code (e.g., R2, R3, R4 for residential)
-2. **Permitted Land Uses:** Primary and secondary dwelling entitlements
-3. **Development Controls:** Height limits, FSR, setbacks, minimum lot size
-4. **Planning Overlays:** Heritage, conservation, bushfire, flood, acoustic
-
-**Future Planning Considerations:**
-
-- Review council's Local Strategic Planning Statement (LSPS)
-- Check Housing Strategy for density targets
-- Identify proximity to nominated urban renewal precincts
-- Monitor state government planning initiatives (e.g., transit-oriented development, housing policy changes)
-
-**Development Potential Assessment:**
-
-- **Secondary Dwelling:** Check minimum lot size requirements (typically 450m²)
-- **Dual Occupancy:** Assess zoning permissions and lot size requirements
-- **Subdivision:** Review minimum lot sizes for new allotments
-- **Multi-Unit Development:** Confirm if R3/R4 rezoning potential exists
-
-**Note:** Zoning can significantly impact both development potential and long-term investment value. Strategic rezoning can deliver substantial capital uplift. We strongly recommend obtaining a Section 10.7(2)+(5) Planning Certificate and reviewing the council's strategic planning documents before finalising investment decisions.`}
+${infrastructureSectionRules}
 
 ---
 
@@ -5330,7 +5303,7 @@ ${investmentScorePromptBlock(enhancedData.investmentScore, { hasDocument: !!docu
 **Strengths (Minimum 10 bullet points required, each with 2-3 sentence explanation):**
 
 - **Exceptional location:** Walk score of [XX]/100 provides pedestrian accessibility without car dependency. This reduces transport costs and enhances lifestyle convenience for residents.
-- **Metro connectivity:** [Metro Line] opened [Year], fundamentally improving transport profile and CBD commute time to [XX] minutes. This infrastructure investment typically drives long-term capital growth.
+- **Transport access:** [Only if the transport reading above names stops or stations — state what it names and how far. Do not name a line, an opening year or a commute time, and do not claim that transport access drives capital growth.]
 - **Education infrastructure:** [XX] schools within postcode, with multiple highly-rated early learning facilities ([X.X] stars), supporting family demand. Quality schools are a primary driver of family property purchases.
 - **Employment dynamics:** Strong job growth (+[X.X]% annually, +[XX.X]% over 5 years) across professional services, healthcare, and education sectors. Employment growth directly correlates with housing demand.
 - **Population growth drivers:** Family-friendly positioning, quality schools, modern recreational facilities, and improved transport creating sustained rental and owner-occupier demand.
@@ -5359,7 +5332,7 @@ ${investmentScorePromptBlock(enhancedData.investmentScore, { hasDocument: !!docu
 - **Debt reduction:** Principal repayment over 30-year term builds equity; loan balance declining $[XXX,XXX] over 10 years creates wealth accumulation. This is forced savings discipline.
 - **Rental income growth:** Conservative [X-X]% annual rent increases provide inflation hedge; Year 10 rental income reaching $[XX,XXX]-$[XX,XXX] annually.
 - **Interest rate improvement:** Current [X.XX]% rate provides potential for downward movement; 1% decline improves cashflow by $[X,XXX] annually.
-- **Infrastructure development:** Planned residential and commercial developments in [Suburb] region support continued population growth and property appreciation.
+- **Development in the area:** [Only from the Infrastructure & Development Outlook table above — name an item and the status the register gave it. Do not claim it supports population growth or appreciation, and do not name a project that is not in that table.]
 - **Employment expansion:** Continued job growth in healthcare (+[X.X]%), professional services (+[X.X]%), and education creates sustained demand for rental properties.
 - **Family lifecycle demand:** Strong family positioning attracts growing cohort of families seeking suburban education and lifestyle amenities.
 - **Leverage amplification:** Capital appreciation on $[X.XX]m asset magnified through 80% financing; [X]% price growth on fully-leveraged position produces enhanced returns relative to deposit.
@@ -6967,6 +6940,32 @@ YOUR DEDICATED PROPERTY PARTNER
     // is more use to everyone than no report; `validation_flags` is where a
     // finding belongs, and the row carries the rest of its quality metadata
     // there already.
+    /*
+     * A score the record does not hold does not reach the page.
+     *
+     * `suppressUnrecordedScores` had exactly one call site — the condense
+     * fork — so the derived Briefing was cleaned and the parent, which is the
+     * document a client receives, was not. This route measured the same thing
+     * with `recordedScoreValues` and filed a FINDING: QA is recorded, never
+     * thrown, so the sentence carrying an invented "68/100" was detected and
+     * printed anyway.
+     *
+     * Run unconditionally, above the overlay branch, because a switch that
+     * turns a correctness control off is not a switch about formatting. The
+     * removal is by SENTENCE, and composed tables printing recorded figures
+     * are untouched.
+     */
+    const scoreGuard = suppressUnrecordedScores(reportContent, {
+      recorded: recordedScoreValues(enhancedData.investmentScore),
+    });
+    if (scoreGuard.removed.length) {
+      reportContent = scoreGuard.markdown;
+      console.log(
+        `✓ Score guard: ${scoreGuard.removed.length} unrecorded score claim(s) removed — `
+        + scoreGuard.removed.map((r) => JSON.stringify(r.text)).join(', '),
+      );
+    }
+
     let compassQa: ReturnType<typeof runQAValidation> | null = null;
     if (compass40OverlayActive) {
       const beforePost = reportContent.length;
@@ -7098,8 +7097,14 @@ YOUR DEDICATED PROPERTY PARTNER
         baths: effectiveBaths,
         carSpaces: mergedOverrides.carSpaces ?? propertyDetails?.carSpaces,
         yearBuilt: mergedOverrides.yearBuilt ?? propertyDetails?.yearBuilt,
-        zoning: effectiveZoningCode ?? propertyDetails?.zoning,
-        councilArea: mergedOverrides.councilArea ?? propertyDetails?.councilArea,
+        // An operator's own record first, then what the jurisdiction's layer
+        // answered, then whatever the listing carried. `spec_zoning` and
+        // `spec_council` were null on every report ever generated because
+        // only the first of those three was ever consulted.
+        zoning: mergedOverrides.zoningCode
+          ?? (planningFacts.zoning.status === 'stated' ? planningFacts.zoning.value : null)
+          ?? propertyDetails?.zoning,
+        councilArea: mergedOverrides.councilArea ?? planningFacts.council ?? propertyDetails?.councilArea,
       });
       
       // Prepare data sources tracking. Every source the generation ATTEMPTED
@@ -7127,7 +7132,26 @@ YOUR DEDICATED PROPERTY PARTNER
         employment: enhancedData.employmentData ? sourceStamp('abs_employment', 0.9) : null,
         climate: enhancedData.climateData ? sourceStamp('climate_service', 0.8) : null,
         riskAssessment: enhancedData.riskAssessment ? sourceStamp('risk_assessment', 0.85) : null,
-        investmentScore: enhancedData.investmentScore ? sourceStamp('scoring_engine', 1.0) : null
+        investmentScore: enhancedData.investmentScore ? sourceStamp('scoring_engine', 1.0) : null,
+        // Planning was fetched on every report and named in none of them, so
+        // the coverage disclosure counted a source the run had spent. It
+        // carries its own provenance rather than a bare confidence: which
+        // jurisdiction answered, which council, whether a zone was retrieved,
+        // and the retrieval stamp the readings were taken under.
+        planning: enhancedData.planningData ? {
+          source: 'jurisdiction_planning_layers',
+          confidence: planningFacts.zoning.status === 'stated' ? 0.9 : 0.5,
+          timestamp: planningFacts.retrievedAt ?? new Date().toISOString(),
+          jurisdiction: planningFacts.jurisdiction,
+          council: planningFacts.council,
+          zoneStatus: planningFacts.zoning.status,
+          zone: planningFacts.zoning.value,
+          zoneSource: planningFacts.zoning.source,
+          zoneLicence: planningFacts.zoning.licence,
+          zoneEffectiveDate: planningFacts.zoning.effectiveDate,
+          verification: planningFacts.verification,
+          verificationUrl: planningFacts.zoning.sourceUrl,
+        } : null
       };
 
       // Fact reconciliation: does the written analysis agree with the record
@@ -7296,6 +7320,17 @@ YOUR DEDICATED PROPERTY PARTNER
         // Right number, wrong label — grain, period or source (RF-7.2B.1 §7).
         ...claimFlags,
         ...governedFlags,
+        // A score the record does not hold, removed before the page was
+        // written. Disclosed rather than merely logged: the sentence carrying
+        // it is gone from the document, so the flag is the only trace a later
+        // reader has that it was ever there.
+        ...(scoreGuard.removed.length ? [{
+          type: 'unrecorded_score_claim',
+          severity: 'warning' as const,
+          field: 'report_content',
+          message: `${scoreGuard.removed.length} score claim(s) the record does not hold were removed from the narrative.`,
+          value: { claims: scoreGuard.removed.map((r) => r.text) },
+        }] : []),
         // Add quality-based validation flags
         ...(avgScore < 70 ? [{
           type: 'quality',

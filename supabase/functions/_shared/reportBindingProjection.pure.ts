@@ -171,6 +171,25 @@ function weekly(annual: number | undefined): number | undefined {
 }
 
 /**
+ * The sum of cost components, or undefined where the record states none.
+ *
+ * A component the record does not carry contributes nothing rather than
+ * zero — `rentalEvidence`'s rule applied to costs — so a sum over
+ * components that are all absent is itself absent, and `put` then omits the
+ * key rather than publishing a figure nobody stated. A component that IS
+ * present contributes even at zero, because a stated nil is a fact.
+ */
+function sumCosts(...parts: unknown[]): number | undefined {
+  let total: number | undefined;
+  for (const part of parts) {
+    const value = num(part);
+    if (value === undefined) continue;
+    total = (total ?? 0) + value;
+  }
+  return total;
+}
+
+/**
  * Assign only defined values.
  *
  * This is the whole "absent stays absent" rule in one function: writing
@@ -450,10 +469,42 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(property, 'configuration', configuration(spec));
 
   // ── financials ────────────────────────────────────────────────────────────
-  const annualRates = num(costs.councilRates);
+  // ── the cash-flow table has to FOOT ──────────────────────────────────────
+  //
+  // The engine subtracts EIGHT annual cost components from the net position
+  // (`financialEngine.calculateAnnualCosts`: council rates, water rates,
+  // landlord insurance, property management, maintenance, land tax, strata,
+  // letting fees). This projection published FOUR, and the masters bind
+  // exactly what is published — so "Net position" carried costs no row
+  // listed and the table could not be added up.
+  //
+  // Measured on 262 Pallas Street, Maryborough (16 Sep 2026): the printed
+  // rows came to $10,780 against a net position built on $12,880, and the
+  // $2,100 a reader could not find was `waterRates` 1,600 + `lettingFees`
+  // 500. Worse, the row is LABELLED "Council and water rates" while it bound
+  // `councilRates` alone, so the omission was hiding behind a label that
+  // promised the very figure it left out.
+  //
+  // Two of the eight now join the row whose label already claims them, and
+  // the rest are published in their own right:
+  //
+  //   * water rates join council rates — the row says "Council and water
+  //     rates" and now means it;
+  //   * letting fees join management — both are the managing agent's fee,
+  //     which is how a statement groups them;
+  //   * land tax and strata are their own line (`annualOtherCosts`), because
+  //     neither is maintenance and folding them anywhere would be a false
+  //     label. They are zero on a sub-threshold house and material on a unit.
+  //
+  // `reportBindingProjection.spec.ts` asserts the four printed lines plus
+  // the other line equal the engine's own `totalAnnual` over the stored
+  // shape, so a ninth component added upstream fails a test instead of
+  // silently reopening the gap.
+  const annualRates = sumCosts(costs.councilRates, costs.waterRates);
   const annualInsurance = num(costs.landlordInsurance);
-  const annualManagement = num(costs.propertyManagement);
+  const annualManagement = sumCosts(costs.propertyManagement, costs.lettingFees);
   const annualMaintenance = num(costs.maintenance);
+  const annualOtherCosts = sumCosts(costs.landTax, costs.strataFees);
   const weeklyRent = num(income.weeklyRent);
   const occupancyWeeks = num(assumptions.occupancyWeeks);
   const monthlyPayment = num(loan.monthlyPayment);
@@ -487,6 +538,21 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(financials, 'annualRent', rent.contractual);
   put(financials, 'annualRentAtOccupancy', rent.atOccupancy);
   put(financials, 'annualRentAtOccupancyLabel', rent.occupancyLabel);
+  // The gap between the two, as a deduction, so a cash flow table that opens
+  // on the contractual rent can still foot to the net position the engine
+  // built on the occupied one. `atOccupancy` is undefined at 52 weeks and
+  // where no assumption is carried, which is exactly when there is no gap to
+  // state — 62 of 153 reports assume under 52 and on those the income row and
+  // the net position were built on different rents with nothing between them
+  // to explain the difference.
+  put(financials, 'annualVacancyAllowance',
+    rent.contractual !== undefined && rent.atOccupancy !== undefined
+      ? rent.contractual - rent.atOccupancy
+      : undefined);
+  put(financials, 'weeklyVacancyAllowance',
+    rent.contractual !== undefined && rent.atOccupancy !== undefined
+      ? weekly(rent.contractual - rent.atOccupancy)
+      : undefined);
   // A yield rests on a rent. Where the record establishes none, these describe
   // nothing — and this projection is the widest of the four readers, feeding
   // every bound template AND the recorded-facts block the model is handed, so
@@ -501,7 +567,15 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(financials, 'lvr', num(metrics.lvr) ?? num(loan.lvr));
   put(financials, 'totalInvestment', num(metrics.totalInvestment));
   put(financials, 'weeklyRepayment', num(loan.weeklyPayment));
-  put(financials, 'annualRepayment', monthlyPayment === undefined ? undefined : monthlyPayment * 12);
+  // The ledger's own annual figure first. `monthlyPayment * 12` is a second
+  // opinion about a number `loanLedger` already computed and stored, and the
+  // two disagree wherever the schedule is not twelve equal months — an
+  // interest-only period, a rounded final instalment — while "Net position"
+  // below is built on the ledger's. A repayments row that cannot be
+  // subtracted from the rent to reach the net position is the same class of
+  // defect as the missing cost rows above.
+  put(financials, 'annualRepayment',
+    num(loan.annualPayment) ?? (monthlyPayment === undefined ? undefined : monthlyPayment * 12));
   put(financials, 'annualRates', annualRates);
   put(financials, 'weeklyRates', weekly(annualRates));
   put(financials, 'annualInsurance', annualInsurance);
@@ -510,6 +584,17 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(financials, 'weeklyManagement', weekly(annualManagement));
   put(financials, 'annualMaintenance', annualMaintenance);
   put(financials, 'weeklyMaintenance', weekly(annualMaintenance));
+  // Land tax and strata, under a label that is true of both, and published
+  // only where they come to something. Both are nil on an ordinary
+  // owner-occupier-grade house — 262 Pallas carries 0 and 0 — and a fifth row
+  // reading "$0" is a line the reader has to discount rather than read. It
+  // costs the reconciliation nothing: a suppressed line is nil, so the four
+  // printed rows still foot to the engine's total.
+  const otherCostsStated = annualOtherCosts === undefined || annualOtherCosts === 0
+    ? undefined
+    : annualOtherCosts;
+  put(financials, 'annualOtherCosts', otherCostsStated);
+  put(financials, 'weeklyOtherCosts', weekly(otherCostsStated));
   put(financials, 'annualCosts', num(costs.totalAnnual));
 
   // ── assumptions ───────────────────────────────────────────────────────────
