@@ -173,14 +173,30 @@ Two residuals, measured and left: the engine emits **two identical, co-located
 annotations per anchor** (harmless to a reader, and the file validates), and
 the **flowing** renderer's documents still carry no internal links at all.
 
-## 7 · Still open
+## 7 · The chips a colourway could not reach
+
+`_chips.html.ts` held eleven literal pairs with no token reference, so a
+family's ten palettes restyled the master and left every badge inside it the
+same six colours — on a catalogue that is 50 masters × 10 palettes precisely
+because a palette is meant to reach what the master draws. They resolve
+`token:chip*` now, with today's value as each fallback, which is the shape
+every other block in the tree already uses.
+
+They are **not** repointed at the design system's `positive` / `caution` /
+`negative` / `info`: those are different values (Chancery's `--color-positive`
+is `#157A3A` against the Strong chip's `#065F46`), so adopting them would
+change the drawn colour of every badge on a design already accepted. No
+colourway declares a `chip*` token, so every document renders as it did —
+asserted both ways, and the re-rendered review is still 161 of 161 authored
+strings and still PDF/UA-1.
+
+## 8 · Still open
 
 | | stage |
 | --- | --- |
 | The six review pages are a review artefact; their prose has not been moved into the masters. | S3 |
 | Bookmark LABELS on the template path are content fragments (`AVOID — Poor investment opportunity…`), not section names. The flowing path's are section names. | S3 |
 | The flowing renderer's documents carry no internal links. | S3 |
-| `_chips.html.ts` palettes read no token. | S3 |
 | The cover's title is positioned display type carrying no heading role, so the document's `h1` is emitted off the visual surface. The better fix is a semantic role on the title the masters already draw — a generator change. | S4 |
 | Report selection, editing, saving, reopening, previewing and exporting exercised end to end. | S5 |
 | The ten-year outlook's wider source work. | S4 |
