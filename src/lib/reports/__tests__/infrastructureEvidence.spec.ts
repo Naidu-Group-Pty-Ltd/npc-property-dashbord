@@ -1,0 +1,170 @@
+/**
+ * The infrastructure a report may describe.
+ *
+ * The prompt asked for a pipeline whether or not a single project was
+ * evidenced, and its own worked examples showed what that produces: a metro
+ * line that opened in a year the prompt left blank, "planned residential and
+ * commercial developments" in a suburb, and a `{{timeline:}}` ribbon with
+ * horizons nobody published — each carrying a claim about capital growth.
+ *
+ * The fixtures below are the two registers the enrichment already holds: the
+ * Queensland StatePlanning answer for 262 Pallas Street (an evidenced
+ * `none_at_point`) and a New South Wales DA register summary in the shape
+ * `summariseDaRows` produces.
+ */
+import { describe, expect, it } from 'vitest';
+import {
+  buildInfrastructureEvidence,
+  infrastructureRules,
+  readDeliveryStanding,
+  renderInfrastructureOutlook,
+} from '../../../../supabase/functions/_shared/planning/infrastructureEvidence.pure';
+
+const PALLAS = {
+  jurisdiction: 'QLD',
+  developmentInstruments: {
+    status: 'none_at_point',
+    note: 'The property lies inside no declared priority development area, state development area, coordinated '
+      + 'project or infrastructure designation (Queensland StatePlanning layers, checked at the coordinate).',
+  },
+  developmentActivity: {
+    status: 'not_served',
+    note: 'No state-wide development-application feed exists for this jurisdiction.',
+  },
+  fetchedAt: '2026-09-16T04:12:33.000Z',
+};
+
+const WITH_PROJECTS = {
+  jurisdiction: 'QLD',
+  developmentInstruments: {
+    status: 'ok',
+    source: 'Queensland StatePlanning layers',
+    licence: 'CC BY 4.0',
+    instruments: [
+      { kind: 'priority_development_area', name: 'Maryborough PDA', status: 'Declared', gazetted: '2024-11-08', detail: 'Whole of the town centre' },
+      { kind: 'coordinated_project', name: 'Northern rail link', status: 'Under construction', gazetted: '2025-03-02', detail: null },
+    ],
+  },
+  developmentActivity: {
+    status: 'ok',
+    source: 'NSW Planning Portal — Online DA API',
+    licence: 'CC BY 4.0',
+    summary: {
+      councilName: 'Fraser Coast Regional Council',
+      periodFrom: '2026-03-17', periodTo: '2026-09-16',
+      totalInPeriod: 62, rowsRead: 62,
+      statedCostTotal: 41_250_000, rowsWithCost: 48,
+      newDwellingsTotal: 214, rowsWithDwellings: 31,
+      largestByCost: [
+        { cost: 18_400_000, types: ['Residential — multi dwelling'], suburb: 'Maryborough', status: 'Determined - Approved', determined: '2026-06-04', lodged: '2026-01-11' },
+        { cost: 6_900_000, types: ['Retail premises'], suburb: 'Pialba', status: 'Lodged', determined: null, lodged: '2026-05-22' },
+      ],
+    },
+  },
+  fetchedAt: '2026-09-16T04:12:33.000Z',
+};
+
+describe('a status is the publisher’s own word', () => {
+  it('reads the ones that map, and only those', () => {
+    expect(readDeliveryStanding('Lodged')).toBe('proposed');
+    expect(readDeliveryStanding('Determined - Approved')).toBe('approved');
+    expect(readDeliveryStanding('Under construction')).toBe('under_construction');
+    expect(readDeliveryStanding('Withdrawn')).toBe('cancelled');
+    expect(readDeliveryStanding('On hold')).toBe('delayed');
+  });
+
+  it('never promotes an approval to funding or a start on site', () => {
+    // The three a reader most wants collapsed, and the three it would be most
+    // expensive to collapse wrongly.
+    expect(readDeliveryStanding('Approved')).toBe('approved');
+    expect(readDeliveryStanding('Funded')).toBe('funded');
+    expect(readDeliveryStanding('Approved in principle subject to funding')).toBe('approved');
+  });
+
+  it('answers nothing for a word it does not know', () => {
+    for (const word of ['Stage 2 endorsement', 'Referred', '', 'Q3']) {
+      expect(readDeliveryStanding(word), word).toBeNull();
+    }
+  });
+});
+
+describe('an evidenced negative', () => {
+  const evidence = buildInfrastructureEvidence({ planningData: PALLAS });
+
+  it('carries no items and says why, per register', () => {
+    expect(evidence.items).toEqual([]);
+    expect(evidence.anyEvidenced).toBe(false);
+    expect(evidence.absences).toHaveLength(2);
+    expect(evidence.absences[0]).toMatch(/no declared priority development area/);
+    expect(evidence.absences[1]).toMatch(/No state-wide development-application feed/);
+  });
+
+  it('forbids the whole pipeline rather than inviting a plausible one', () => {
+    const rules = infrastructureRules(evidence);
+    expect(rules).toMatch(/Do NOT name a project, a rail line, a station/);
+    expect(rules).toMatch(/Do NOT draw a `\{\{timeline: …\}\}` pipeline/);
+    expect(rules).toMatch(/Do NOT say that infrastructure supports, drives or underwrites capital growth/);
+  });
+
+  it('still states coverage, so a short list reads as a short search', () => {
+    const rendered = renderInfrastructureOutlook(evidence);
+    expect(rendered).toMatch(/council capital works programmes/);
+    expect(rendered).toMatch(/a statement about those registers rather than/);
+  });
+});
+
+describe('what the registers do answer', () => {
+  const evidence = buildInfrastructureEvidence({ planningData: WITH_PROJECTS });
+
+  it('names only what a register named', () => {
+    expect(evidence.items.map((i) => i.name)).toEqual([
+      'Maryborough PDA', 'Northern rail link',
+      'Residential — multi dwelling', 'Retail premises',
+    ]);
+    expect(evidence.anyEvidenced).toBe(true);
+  });
+
+  it('labels a date by what happened, never as a completion', () => {
+    const rendered = renderInfrastructureOutlook(evidence);
+    expect(rendered).toMatch(/Gazetted 8 Nov 2024/);
+    expect(rendered).toMatch(/Determined 4 Jun 2026/);
+    expect(rendered).toMatch(/Lodged 22 May 2026/);
+    expect(rendered).toMatch(/not a completion date/);
+    // Nothing anywhere is a forecast delivery date.
+    expect(rendered).not.toMatch(/due (in|by)|expected (in|by)|completion (in|by)/i);
+  });
+
+  it('prints the publisher’s word and the reading beside it', () => {
+    const rendered = renderInfrastructureOutlook(evidence);
+    expect(rendered).toContain('| Declared (Approved) |');
+    expect(rendered).toContain('| Determined - Approved (Approved) |');
+    // A word that already IS the reading is not doubled.
+    expect(rendered).toContain('| Under construction |');
+    expect(rendered).not.toContain('Under construction (Under construction)');
+  });
+
+  it('reads dwellings in the pipeline both ways', () => {
+    expect(evidence.pipelineDwellings).toMatchObject({ total: 214, rowsStating: 31 });
+    const rendered = renderInfrastructureOutlook(evidence);
+    expect(rendered).toMatch(/214 new dwellings/);
+    expect(rendered).toMatch(/\$41,250,000 of stated development cost/);
+    expect(rendered).toMatch(/competing supply/);
+    // And never as a claim about this address.
+    expect(rendered).toMatch(/not at this address/);
+  });
+
+  it('never lets the prose beside it quantify an uplift', () => {
+    const rules = infrastructureRules(evidence);
+    expect(rules).toMatch(/Do NOT quantify an uplift/);
+    expect(rules).toMatch(/An approval is not funding, funding is not a start on site/);
+    expect(rules).toMatch(/only from items in the table/);
+  });
+});
+
+describe('an enrichment that never ran', () => {
+  it('is the same refusal as an empty one, and says so', () => {
+    const evidence = buildInfrastructureEvidence({});
+    expect(evidence.enrichmentMissing).toBe(true);
+    expect(infrastructureRules(evidence)).toMatch(/nothing was retrieved/);
+  });
+});

@@ -16,6 +16,11 @@ import {
   planningFactBlocks,
   renderPlanningControls,
 } from '../_shared/planning/planningFacts.pure.ts';
+import {
+  buildInfrastructureEvidence,
+  infrastructureRules,
+  renderInfrastructureOutlook,
+} from '../_shared/planning/infrastructureEvidence.pure.ts';
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
@@ -1602,7 +1607,7 @@ VISUAL-FIRST RULES (CRITICAL):
 - Any composition / share-of-total (tenure mix, age bands, expense split, capital
   allocation) MUST use \`{{donut: …}}\` instead of a table.
 - Any suburb × metric matrix MUST use \`{{heatmap: …}}\`.
-- Any infrastructure/project pipeline MUST use \`{{timeline: …}}\`.
+- An infrastructure/project pipeline is drawn with \`{{timeline: …}}\` — and ONLY from items in the Infrastructure & Development Outlook table, using the dates that table carries. With no evidenced items, draw no timeline.
 - Any "subject suburb vs N nearby suburbs" comparison MUST use \`{{tiles: …}}\`.
 - Any trade-off between two dimensions (yield vs growth, risk vs return) MUST use
   \`{{quadrant: …}}\`. Highlight the subject property with a trailing \`*\`.
@@ -4629,6 +4634,24 @@ Produce a comprehensive statewide investment analysis following the structure ab
     });
     const planningControlsTable = renderPlanningControls(planningFacts);
     const planningSectionRules = planningFactBlocks(planningFacts);
+    // The infrastructure and development this report may describe.
+    //
+    // The same shape as the planning controls above: the enrichment already
+    // holds evidenced development facts — Queensland's declared instruments
+    // at this coordinate, New South Wales' DA register for this council — and
+    // the outlook sections used none of them. What the prompt offered instead
+    // was a worked example naming a metro line that opened in a year it
+    // invented, an opportunity bullet about "planned residential and
+    // commercial developments", and a directive requiring a pipeline ribbon
+    // whether or not a single project was evidenced.
+    const infrastructure = buildInfrastructureEvidence({ planningData: enhancedData.planningData });
+    const infrastructureTable = renderInfrastructureOutlook(infrastructure);
+    const infrastructureSectionRules = infrastructureRules(infrastructure);
+    console.log('🏗️ Infrastructure evidence:', {
+      items: infrastructure.items.length,
+      dwellings: infrastructure.pipelineDwellings?.total ?? null,
+      evidenced: infrastructure.anyEvidenced,
+    });
     console.log('📐 Planning facts:', {
       jurisdiction: planningFacts.jurisdiction,
       council: planningFacts.council,
@@ -4758,7 +4781,7 @@ The suburb's lifestyle is characterised by:
 
 **Public Transport Access:**
 
-A major infrastructure advancement occurred with the opening of [Station Name] in [Year], located at [specific location][citation]. This development has dramatically improved accessibility, providing commuters with access to the [Line Name] through [Connection Station]. The station includes [facilities - car park, bus connections] serving [list of destinations][citation].
+Write this from the named stations and counted stops in the transport reading above and from nothing else. Do NOT state that a station or line opened, name a connecting station or line, or describe station facilities: none of that is measured for this property, and an invented opening year reads exactly like a retrieved one.
 
 **Commute Performance:**
 
@@ -4995,6 +5018,14 @@ This valuation reflects typical [Suburb] [property type] prices for [configurati
 ${planningControlsTable}
 
 ${planningSectionRules}
+
+---
+
+# Infrastructure & Development Outlook
+
+${infrastructureTable}
+
+${infrastructureSectionRules}
 
 ---
 
@@ -5272,7 +5303,7 @@ ${investmentScorePromptBlock(enhancedData.investmentScore, { hasDocument: !!docu
 **Strengths (Minimum 10 bullet points required, each with 2-3 sentence explanation):**
 
 - **Exceptional location:** Walk score of [XX]/100 provides pedestrian accessibility without car dependency. This reduces transport costs and enhances lifestyle convenience for residents.
-- **Metro connectivity:** [Metro Line] opened [Year], fundamentally improving transport profile and CBD commute time to [XX] minutes. This infrastructure investment typically drives long-term capital growth.
+- **Transport access:** [Only if the transport reading above names stops or stations — state what it names and how far. Do not name a line, an opening year or a commute time, and do not claim that transport access drives capital growth.]
 - **Education infrastructure:** [XX] schools within postcode, with multiple highly-rated early learning facilities ([X.X] stars), supporting family demand. Quality schools are a primary driver of family property purchases.
 - **Employment dynamics:** Strong job growth (+[X.X]% annually, +[XX.X]% over 5 years) across professional services, healthcare, and education sectors. Employment growth directly correlates with housing demand.
 - **Population growth drivers:** Family-friendly positioning, quality schools, modern recreational facilities, and improved transport creating sustained rental and owner-occupier demand.
@@ -5301,7 +5332,7 @@ ${investmentScorePromptBlock(enhancedData.investmentScore, { hasDocument: !!docu
 - **Debt reduction:** Principal repayment over 30-year term builds equity; loan balance declining $[XXX,XXX] over 10 years creates wealth accumulation. This is forced savings discipline.
 - **Rental income growth:** Conservative [X-X]% annual rent increases provide inflation hedge; Year 10 rental income reaching $[XX,XXX]-$[XX,XXX] annually.
 - **Interest rate improvement:** Current [X.XX]% rate provides potential for downward movement; 1% decline improves cashflow by $[X,XXX] annually.
-- **Infrastructure development:** Planned residential and commercial developments in [Suburb] region support continued population growth and property appreciation.
+- **Development in the area:** [Only from the Infrastructure & Development Outlook table above — name an item and the status the register gave it. Do not claim it supports population growth or appreciation, and do not name a project that is not in that table.]
 - **Employment expansion:** Continued job growth in healthcare (+[X.X]%), professional services (+[X.X]%), and education creates sustained demand for rental properties.
 - **Family lifecycle demand:** Strong family positioning attracts growing cohort of families seeking suburban education and lifestyle amenities.
 - **Leverage amplification:** Capital appreciation on $[X.XX]m asset magnified through 80% financing; [X]% price growth on fully-leveraged position produces enhanced returns relative to deposit.

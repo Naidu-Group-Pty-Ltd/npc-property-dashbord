@@ -154,3 +154,68 @@ header, and `200` to the identical request without one. That is an artefact of
 the probe tool, not of the endpoint: the edge functions use `fetch` and the ACT
 adapter against `services1.arcgis.com` is verified working. Do not read a 400
 from a pg_net probe as evidence that a council's layer is unreachable.
+
+---
+
+## 5. Infrastructure and the future outlook
+
+Same shape, one section later. The enrichment already holds evidenced
+development facts — Queensland's declared instruments at the property's own
+coordinate, New South Wales' DA register for its council — and the outlook
+sections used none of them.
+
+What the prompt offered instead:
+
+- a SWOT strength reading *"**Metro connectivity:** [Metro Line] opened
+  [Year], fundamentally improving transport profile and CBD commute time to
+  [XX] minutes. This infrastructure investment typically drives long-term
+  capital growth"*;
+- an opportunity reading *"**Infrastructure development:** Planned residential
+  and commercial developments in [Suburb] region support continued population
+  growth and property appreciation"*;
+- a Location Overview paragraph opening *"A major infrastructure advancement
+  occurred with the opening of [Station Name] in [Year]"*, with the line, the
+  connecting station and the station's facilities all in brackets;
+- and a formatting directive: *"Any infrastructure/project pipeline MUST use
+  `{{timeline: …}}`"*, with a worked example carrying the horizons
+  `Existing / 0-2y / 3-5y / 5y+`.
+
+None of that is a question a model can answer from the record, so what came
+back was a plausible pipeline: named projects, horizons, and a causal claim
+about capital growth, with nothing behind any of it.
+
+`_shared/planning/infrastructureEvidence.pure.ts` composes what the registers
+actually said, and six rules hold it:
+
+1. **A project is named only where a register named it.** No inferred
+   pipeline, no horizon a publisher did not state.
+2. **A status is the publisher's own word.** The reader's vocabulary —
+   proposed, approved, funded, under construction, completed, delayed,
+   cancelled — is added in parentheses only where the word maps unambiguously.
+   Approval is never read as funding and funding is never read as a start on
+   site; those are the three a reader most wants collapsed and the three it
+   would be most expensive to collapse wrongly.
+3. **A completion date is never invented.** A gazettal or a determination is a
+   date something HAPPENED and is labelled as that.
+4. **An announcement is never a capital-growth claim.** Nothing composed here
+   quantifies an uplift, and the rules handed to the model forbid it in the
+   prose beside it.
+5. **Coverage is stated every time**, on a full list as well as an empty one:
+   council capital works, state and federal budget programmes, agency
+   announcements and anything outside the local government area asked about
+   are named as what these registers do not reach.
+6. **Development nearby cuts both ways.** Dwellings in the pipeline are
+   competing supply as well as a sign of confidence, and the reading says so.
+
+On 262 Pallas Street the honest answer is a short one: the StatePlanning
+layers returned an evidenced `none_at_point` and Queensland publishes no
+state-wide DA feed, so the section states both absences, states the coverage
+limitation, and forbids the prose beside it from naming a project, drawing a
+timeline or claiming that infrastructure underwrites growth.
+
+**The gap this leaves, named.** A council capital-works programme, a state
+budget infrastructure line and an agency project announcement are all real
+sources and none is integrated. The section says so on the page rather than
+letting a short list read as a quiet area, and wiring any of them is a
+separate piece of work with its own reachability and licensing measurement —
+the same standard `ZONING_BY_JURISDICTION.md` holds every other provider to.
