@@ -18,10 +18,10 @@ the preservation gate is green.
 | Template | **Chancery**, slug `investment-compass-pb-01-chancery` |
 | Template schema | sha256 `53f5fe7549a07387d174ead3b146079d6f02b054b0e932946058f92616fa4c2a` |
 | Template tokens | sha256 `5c1e4b9b9fad73daa05e508affabf35ee53b5d84987d278e43b30a673f5cc26d` |
-| Rendering commit | `067adc6b724ee0c08ad276c464edf48ba0b164fc` (branch `claude/adoring-hopper-g02tdt`) |
+| Rendering commit | `af346d0335b0f3d4c06b9722f92c36a24171cb29` (branch `claude/adoring-hopper-g02tdt`) |
 | Engine | WeasyPrint **69.0** — the version pinned in `weasyprint-service/requirements.txt` |
 | Engine options | `pdf_variant: pdf/ua-1`, `pdf_tags: true`, `optimize_images: true`, `output_intent: srgb`, `custom_metadata: true`, `presentational_hints: false` |
-| Output | `reports/pdf/s1-review.pdf` — 6 pages, A4 (595 × 842 pt), tagged |
+| Output | `reports/pdf/s1-review.pdf` — 6 pages, A4 (595 × 842 pt), tagged, 253,395 bytes, md5 `cee4ad64ee6ede31fba18f0eefea1ab3` |
 
 The binding context is built by `applyInvestmentProjection` and
 `applyOrganisationProjection` — the same two functions the Templates workflow
