@@ -547,10 +547,12 @@ export function renderPlanningControls(facts: PlanningFacts): string {
  */
 export function planningFactBlocks(facts: PlanningFacts): string {
   if (facts.enrichmentMissing) {
-    return 'PLANNING: no planning enrichment ran for this report. State in one sentence that zoning and '
-      + 'planning controls were not retrieved and must be confirmed with the local planning authority. '
-      + 'Do NOT print a zoning table, a control table, a minimum lot size, a height limit, a floor space '
-      + 'ratio, a setback, a site coverage figure or an overlay finding. Do NOT name a planning instrument.';
+    return 'PLANNING RULES FOR THE WHOLE REPORT — no planning enrichment ran. State in one sentence that '
+      + 'zoning and planning controls were not retrieved and must be confirmed with the local planning '
+      + 'authority. Do NOT print a zoning table, a control table, a minimum lot size, a height limit, a '
+      + 'floor space ratio, a setback, a site coverage figure or an overlay finding. Do NOT name a planning '
+      + 'instrument. This holds in every section, and a figure found by live web search is still a figure '
+      + 'this report did not retrieve.';
   }
   const instrumentRule = facts.jurisdiction === 'NSW'
     ? '3. This property is in New South Wales, so the Local Environmental Plan, the Development Control Plan and '
@@ -560,7 +562,10 @@ export function planningFactBlocks(facts: PlanningFacts): string {
       + 'those are New South Wales instruments and do not exist here. Name only the instrument in the verification '
       + 'sentence.';
   return [
-    'RULES FOR THIS SECTION — these override any example elsewhere in this prompt:',
+    'PLANNING RULES FOR THE WHOLE REPORT — they apply in every section, including risk registers, '
+    + 'checklists, summaries and verdicts, and they override any example elsewhere in this prompt AND '
+    + 'anything a live web search returns. A portal, a listing site or a news page is not a retrieval: '
+    + 'if a control is not in the table below, this report did not retrieve it.',
     '1. The planning controls table above is supplied complete. Reproduce it EXACTLY as given. Do not add a row, '
     + 'a column, a figure or a bracketed placeholder to it.',
     '2. Do NOT state a minimum lot size, maximum building height, floor space ratio, site coverage, setback, '
@@ -568,7 +573,9 @@ export function planningFactBlocks(facts: PlanningFacts): string {
     + 'value and no default. If it is not in the table it was not retrieved, and the correct sentence says so.',
     instrumentRule,
     '4. An absence in the table is a statement about what was retrieved, never a finding about the land. Never write '
-    + 'that no overlay applies, that the property is not heritage listed, or that it is not flood or bushfire affected.',
+    + 'that no overlay applies, that the property is not heritage listed, or that it is not flood or bushfire affected — '
+    + 'not in prose, not in a risk register row, not in a checklist, and not on the authority of a listing portal or a '
+    + 'property data site. Those report what they hold, not what the council scheme maps.',
     '5. A zone that admits a use is not approval for it. Describe any development potential as conditional and subject '
     + 'to assessment, and never quantify an uplift.',
     '6. Say plainly that this is desktop research and that the verification instrument is what settles it.',

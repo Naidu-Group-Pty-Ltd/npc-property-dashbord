@@ -219,3 +219,91 @@ sources and none is integrated. The section says so on the page rather than
 letting a short list read as a quiet area, and wiring any of them is a
 separate piece of work with its own reachability and licensing measurement —
 the same standard `ZONING_BY_JURISDICTION.md` holds every other provider to.
+
+---
+
+## 6. What the first regeneration found: a rule can reach the model and its evidence not
+
+262 Pallas Street was regenerated on 17 Sep 2026 (report
+`4640d10a-c2ba-4a5d-8c59-b697f3885d0e`) through the production resume path, on
+the deployed code. The placeholders were gone — no `450 m²`, no `[XX]%`, no
+Local Environmental Plan on a Queensland property, and no raw `~~[…]~~` array.
+The document still asserted, in its own voice:
+
+- *"low‑density residential zoning"*, on a property whose zone
+  `planning-data-service` had answered `not_served`;
+- *"no identified bushfire, flood or heritage overlays"*, sourced to a listing
+  portal's "flood risk — not detected";
+- *"Planning overlays under active review by Fraser Coast Regional Council"*,
+  naming TLPI 01/24 and Flood Hazard Resilient Precincts, marked **Verified**;
+- and a four-item `{{timeline: …}}` — Bruce Highway upgrades, a TAFE
+  manufacturing centre, a school amenities upgrade — on horizons no publisher
+  stated, from an enrichment that had answered `none_at_point`.
+
+**The enrichment was never the problem and neither were the rules.** The
+function logged `Planning facts: { jurisdiction: "QLD", council: "Fraser Coast
+Regional", zone: null, zoneStatus: "not_served" }` on all eleven sections. What
+the same log also shows, on every one of them, is this:
+
+```
+✂️ Base prompt for Risk Dashboard trimmed: 92129 → 52844 bytes
+✂️ Base prompt for Due Diligence Checklist trimmed: 92129 → 52831 bytes
+✂️ Base prompt for Final Recommendation trimmed: 92129 → 52852 bytes
+```
+
+`limitPromptContext` keeps 62% head and 38% tail. The planning controls table
+and the infrastructure register sat under two headings of their own about a
+quarter of the way into that base prompt — in the band it drops — while the
+rule that points at them (*"An infrastructure/project pipeline is drawn with
+`{{timeline: …}}` — and ONLY from items in the Infrastructure & Development
+Outlook table"*) lives in the section instructions, which are subtracted from
+the budget first and are never trimmed.
+
+So the model held a rule about a table that was not in front of it, under a
+truncation notice that says in as many words *"Prioritise extracted
+specifications and request fresh web research for missing details"*, with live
+search available. It did exactly that.
+
+Three things changed.
+
+1. **Pinned context.** `generateReportSection` takes a `pinnedContext`
+   argument. Its bytes come off the budget *before* the base prompt is measured
+   and it is concatenated *after* the trim, so it reaches every section whole —
+   and it is carried into the emergency compact prompt too, which is the one
+   that runs when the full prompt was refused and therefore exactly where a
+   correctness rule must not go missing. The planning table, the planning
+   rules, the infrastructure table and the infrastructure rules are its first
+   members, ~5.6 KB in total, and they are gone from the middle of
+   `propertyPrompt`. **What a client document may state about planning is not
+   allowed to depend on a byte boundary.**
+2. **The rules are the report's, not a section's.** They read `RULES FOR THIS
+   SECTION` while the Compass section list has no planning section at all —
+   Executive Verdict, Property & Locality Snapshot, Why This Location Matters,
+   Demographics & Demand Drivers, Amenity & Access, Market Positioning,
+   Property Fit, Risk Dashboard, Due Diligence Checklist, Final Recommendation.
+   They now say `FOR THE WHOLE REPORT` and name risk registers, checklists and
+   verdicts, because that is where the contradictions landed.
+3. **A web search is not a retrieval, and the rules say so.** This model
+   searches. Silence about that is what let a portal's "not detected" become
+   this report's finding about the land. Both rule sets now state that a
+   listing site, a news page, a budget page or an agency media release is not
+   an entry in the table, and rule 4 extends to risk-register rows and
+   checklists rather than prose alone.
+
+And the tables themselves are now **in the document**, appended verbatim after
+the post-processor under *"Planning controls and development registers"*, on
+property reports only. Asking a model to reproduce a table is how a table comes
+back paraphrased; this is the same composed markdown the prompt carries, and no
+word cap can trim a row of evidence out of it. The one consequence worth
+knowing is that it lands after `runQAValidation`, so the page estimate QA files
+is the prose's rather than the document's — the deliberate order, because the
+alternative is letting a word cap cut evidence.
+
+**Still not closed by this.** The narrative's market claims (a "0.6% vacancy
+rate", "double-digit annual growth") come from the same live search and are
+governed by a different control — `auditMarketClaims` — which is outside this
+document's scope. And the risk register's own **Verified / Unverified** column
+is written by the model: nothing yet derives it from whether the platform
+retrieved the underlying fact, so a desktop reading can still be labelled
+`Verified` by the writer. That is named here rather than left to be discovered,
+and it is the next piece of work in this area.

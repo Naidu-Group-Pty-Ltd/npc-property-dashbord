@@ -168,3 +168,34 @@ describe('an enrichment that never ran', () => {
     expect(infrastructureRules(evidence)).toMatch(/nothing was retrieved/);
   });
 });
+
+describe('the rules claim the whole report, and name live search', () => {
+  /*
+   * The 17 Sep 2026 regeneration of 262 Pallas Street drew this, from an
+   * enrichment that had answered `none_at_point`:
+   *
+   *   {{timeline: Existing "Bruce Highway & northern rail access…",
+   *     0-2y "Bruce Highway upgrades around Maryborough…",
+   *     0-2y "Manufacturing Centre of Excellence – Maryborough TAFE",
+   *     0-2y "One Mile State School amenities upgrade"}}
+   *
+   * Nothing there came from a register this platform reads; it came from the
+   * model's own live search, and the horizons came from nowhere at all. The
+   * rules had two gaps: they scoped themselves to a section that does not
+   * exist in the Compass list, and they never said that a budget page or a
+   * media release found by search is not an entry in the table.
+   */
+  it('on an empty register', () => {
+    const rules = infrastructureRules(buildInfrastructureEvidence({ planningData: PALLAS }));
+    expect(rules).toMatch(/FOR THE WHOLE REPORT/);
+    expect(rules).toMatch(/live web search/);
+    expect(rules).toMatch(/budget page, a news article or an agency media release/);
+  });
+
+  it('on a full one', () => {
+    const rules = infrastructureRules(buildInfrastructureEvidence({ planningData: WITH_PROJECTS }));
+    expect(rules).toMatch(/FOR THE WHOLE REPORT/);
+    expect(rules).toMatch(/live web search/);
+    expect(rules).not.toMatch(/INFRASTRUCTURE RULES — these override/);
+  });
+});

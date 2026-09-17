@@ -1691,6 +1691,25 @@ function limitPromptContext(value: string, maxBytes: number, label: string, mode
 async function generateReportSection(
   sectionDef: typeof REPORT_SECTIONS[0],
   basePrompt: string,
+  /**
+   * Context that may never be trimmed.
+   *
+   * The base prompt is ~92 KB and `limitPromptContext` cuts it to ~53 KB on
+   * EVERY section (62% head, 38% tail), so a block in the middle of it is
+   * dropped — measured on 262 Pallas Street, 17 Sep 2026, where every section
+   * logged `92129 → ~52830`. The planning controls table and the infrastructure
+   * evidence table sat in that middle while the rule that refers to them
+   * ("ONLY from items in the Infrastructure & Development Outlook table") sat
+   * in the section instructions, which are never trimmed. The model was left
+   * holding a rule about a table it could not see, and filled the gap from live
+   * web research: a zone, an overlay absence and a four-item delivery pipeline
+   * that no register in this platform had answered.
+   *
+   * What a client document may state about planning is not allowed to depend on
+   * a byte boundary, so this is budgeted for FIRST, placed after the trimmed
+   * base prompt, and carried into the emergency compact prompt as well.
+   */
+  pinnedContext: string,
   systemMessage: string,
   perplexityApiKey: string,
   previousSections: string,
@@ -1774,13 +1793,19 @@ ${sectionDef.id === 'section10' ? '10. MUST include the Investment Score Analysi
 ${EDITORIAL_PRIMITIVES_BLOCK}
 
 Generate the ${sectionDef.name} sections now:`;
+  // Pinned context is never trimmed: its bytes come off the budget before the
+  // base prompt is measured, and it is concatenated after the trim rather than
+  // inside it. See the parameter's own note for what reached a client document
+  // when this block was merely early in the base prompt.
+  const pinnedBlock = pinnedContext.trim() ? `\n\n---\n\n${pinnedContext.trim()}\n` : '';
+  const pinnedBytes = byteLength(pinnedBlock);
   const sectionInstructionBytes = byteLength(sectionInstructions);
-  const basePromptBudget = Math.max(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - 2_000);
+  const basePromptBudget = Math.max(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - pinnedBytes - 2_000);
   const safeBasePrompt = limitPromptContext(basePrompt, basePromptBudget, `Base prompt for ${sectionDef.name}`);
-  let sectionPrompt = `${safeBasePrompt}${sectionInstructions}`;
+  let sectionPrompt = `${safeBasePrompt}${pinnedBlock}${sectionInstructions}`;
   if (byteLength(sectionPrompt) > PERPLEXITY_SAFE_USER_MESSAGE_BYTES) {
-    const reducedBaseBudget = Math.max(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - 500);
-    sectionPrompt = `${limitPromptContext(basePrompt, reducedBaseBudget, `Base prompt fallback for ${sectionDef.name}`, 'head-tail')}${sectionInstructions}`;
+    const reducedBaseBudget = Math.max(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - pinnedBytes - 500);
+    sectionPrompt = `${limitPromptContext(basePrompt, reducedBaseBudget, `Base prompt fallback for ${sectionDef.name}`, 'head-tail')}${pinnedBlock}${sectionInstructions}`;
   }
   if (byteLength(sectionPrompt) > PERPLEXITY_SAFE_USER_MESSAGE_BYTES) {
     console.warn(`⚠️ Section instructions alone are close to Perplexity's message limit for ${sectionDef.name}; applying final tail-preserving trim.`);
@@ -1793,13 +1818,16 @@ Required headings:
 ${sectionDef.sections.map(s => `## ${s}`).join('\n')}
 
 Use Australian property advisory language, real web research via Perplexity, concise markdown, inline source names, and no placeholders. Keep figures internally consistent. If exact supplied context is unavailable because the source packet was too large, research the suburb/property details live and state uncertainty rather than inventing facts.
-
+${pinnedBlock}
 ${investmentScoreContext ? limitPromptContext(investmentScoreContext, 5_000, `Emergency investment score context for ${sectionDef.name}`, 'head') : ''}
 
 Previous-section consistency hints:
 ${previousSections ? sliceTailByBytes(previousSections, 4_000) : 'None'}
 
 Start now with the first heading.`;
+  // The compact prompt is the one that runs when the full one was refused as
+  // too large, so it is exactly where a correctness rule must not go missing.
+  // The pinned block sits in its head, which `head-tail` keeps.
   const emergencySectionPrompt = byteLength(emergencySectionPromptUnbounded) > PERPLEXITY_SAFE_USER_MESSAGE_BYTES
     ? limitPromptContext(emergencySectionPromptUnbounded, PERPLEXITY_SAFE_USER_MESSAGE_BYTES, `Emergency section prompt for ${sectionDef.name}`, 'head-tail')
     : emergencySectionPromptUnbounded;
@@ -4660,6 +4688,35 @@ Produce a comprehensive statewide investment analysis following the structure ab
       stated: planningFacts.anyStated,
     });
 
+    /**
+     * What this report may state about planning and infrastructure — pinned.
+     *
+     * These four pieces used to sit inside `propertyPrompt`, about a quarter of
+     * the way through it, under two headings of their own. That put them in the
+     * band `limitPromptContext` drops: the base prompt measured 92,129 bytes on
+     * 262 Pallas Street and every section trimmed it to ~52,830 (62% head, 38%
+     * tail), so the authority for the planning readings was cut while the rule
+     * that points at it survived in the section instructions, which are never
+     * trimmed. A model holding "name only items in the Infrastructure &
+     * Development Outlook table" with no such table in front of it filled the
+     * gap from live search, and the document asserted a zone, an absence of
+     * flood, bushfire and heritage overlays, and a four-item delivery pipeline
+     * — every one of them from a portal or a news page rather than from a
+     * register this platform read.
+     *
+     * Pinned context is budgeted for before the base prompt and concatenated
+     * after the trim, so it reaches every section whole. It is ~5.6 KB.
+     */
+    const pinnedPlanningContext = [
+      '# Zoning & Planning Analysis — the controls retrieved for this property',
+      planningControlsTable,
+      planningSectionRules,
+      '# Infrastructure & Development Outlook — what the registers answered',
+      infrastructureTable,
+      infrastructureSectionRules,
+    ].join('\n\n');
+    console.log(`📌 Pinned planning/infrastructure context: ${pinnedPlanningContext.length} chars`);
+
     const _brandPp = await getBrandConfig();
     const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.
 Your role is to produce comprehensive, professional-grade investment reports following the EXACT structure, length, and format of our reference template.
@@ -5013,21 +5070,10 @@ This valuation reflects typical [Suburb] [property type] prices for [configurati
 
 ---
 
-# Zoning & Planning Analysis
-
-${planningControlsTable}
-
-${planningSectionRules}
-
----
-
-# Infrastructure & Development Outlook
-
-${infrastructureTable}
-
-${infrastructureSectionRules}
-
----
+<!-- The planning controls and the infrastructure register are NOT here. They
+     are pinned context, appended to every section prompt after this one is
+     trimmed to fit, because this prompt is trimmed in the middle and that is
+     where they used to sit. See `pinnedPlanningContext`. -->
 
 # Purchase & Ongoing Costs (Annual)
 
@@ -5332,7 +5378,7 @@ ${investmentScorePromptBlock(enhancedData.investmentScore, { hasDocument: !!docu
 - **Debt reduction:** Principal repayment over 30-year term builds equity; loan balance declining $[XXX,XXX] over 10 years creates wealth accumulation. This is forced savings discipline.
 - **Rental income growth:** Conservative [X-X]% annual rent increases provide inflation hedge; Year 10 rental income reaching $[XX,XXX]-$[XX,XXX] annually.
 - **Interest rate improvement:** Current [X.XX]% rate provides potential for downward movement; 1% decline improves cashflow by $[X,XXX] annually.
-- **Development in the area:** [Only from the Infrastructure & Development Outlook table above — name an item and the status the register gave it. Do not claim it supports population growth or appreciation, and do not name a project that is not in that table.]
+- **Development in the area:** [Only from the Infrastructure & Development Outlook table in the planning context supplied with this section — name an item and the status the register gave it. Do not claim it supports population growth or appreciation, and do not name a project that is not in that table.]
 - **Employment expansion:** Continued job growth in healthcare (+[X.X]%), professional services (+[X.X]%), and education creates sustained demand for rental properties.
 - **Family lifecycle demand:** Strong family positioning attracts growing cohort of families seeking suburban education and lifestyle amenities.
 - **Leverage amplification:** Capital appreciation on $[X.XX]m asset magnified through 80% financing; [X]% price growth on fully-leveraged position produces enhanced returns relative to deposit.
@@ -6410,6 +6456,7 @@ YOUR DEDICATED PROPERTY PARTNER
         const result = await generateReportSection(
           sectionDef,
           prompt,
+          pinnedPlanningContext,
           systemMessage,
           perplexityApiKey,
           previousContext,
@@ -6995,6 +7042,34 @@ YOUR DEDICATED PROPERTY PARTNER
       }
     }
     // ========== END COMPASS POST-PROCESSOR + QA ==========
+
+    /*
+     * The planning and infrastructure evidence, on the page, verbatim.
+     *
+     * Handing a model a table and asking it to reproduce one is how a table
+     * comes back paraphrased, re-ordered or with a row the source never had.
+     * These two are composed by `renderPlanningControls` and
+     * `renderInfrastructureOutlook` from what the registers answered, and they
+     * are appended AFTER the post-processor so no word cap can trim a row of
+     * evidence out of a client's document.
+     *
+     * Property reports only: the readings are taken at the property's own
+     * coordinate, and a suburb or postcode report has no parcel to state them
+     * about.
+     *
+     * One consequence worth knowing: this lands after `runQAValidation`, so the
+     * page estimate that QA logs and files is the prose's, not the document's.
+     * That is the deliberate order — the alternative is letting a word cap trim
+     * a row of evidence — and the block is a fixed ~3.7 KB, about one page.
+     */
+    if (!isAreaReport) {
+      reportContent += `\n\n---\n\n## Planning controls and development registers\n\n`
+        + `### Planning controls retrieved for this property\n\n${planningControlsTable}\n\n`
+        + `### Infrastructure and development retrieved for this property\n\n${infrastructureTable}\n`;
+      console.log(
+        `📋 Appended retrieved planning + infrastructure evidence (${planningControlsTable.length + infrastructureTable.length} chars)`,
+      );
+    }
 
 
     // Extract citations and sources from the response
