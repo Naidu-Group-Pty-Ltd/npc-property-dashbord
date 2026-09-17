@@ -181,7 +181,7 @@ cannot split, and last-narrative-page tails.
 
 ## 4 · Two findings NOT acted on, and why
 
-### `runQAValidation` is called with the wrong tier
+### ~~`runQAValidation` is called with the wrong tier~~ — FIXED
 
 `condense-investment-report/index.ts` validates a Briefing and a Snapshot as
 **`'compass-40'`**. The validator knows two tiers, `compass-40` and
@@ -199,10 +199,33 @@ run. It blocks nothing — the report is logged and returned either way — whic
 is exactly what makes it the class this programme keeps finding: a check that
 always fails is no check, so it can never report a true one.
 
-Not fixed here because the remedy is a decision about the validator's
-vocabulary, not a call-site swap: either it learns two tiers (their section
-lists, their page bands, and that the financial exclusion does not apply to a
-Briefing), or the condense path stops calling it. Recorded for the owner.
+The first reading of this said the remedy was a decision. It is not: the
+rules divide more cleanly than the call implied. Most of them are about a
+REPORT rather than about a tier — no unresolved placeholder, no score the
+record does not hold, no editorial label, no duplicate heading, no promise of
+a table with no table — and every one is exactly what you want asserted on a
+condensed document. Only three are tier-bound, and two were already guarded
+to `compass-40`.
+
+So `QATier` admits `briefing` and `snapshot`, the handler passes the tier it
+is PRODUCING, and the three tier-bound rules read what each tier declares.
+Two rules carry it. **A tier with no declared page band gets no page-band
+finding** — a Briefing's length is governed by the registry trim and the
+post-processor's word caps, and inventing a band would be a threshold nobody
+measured. **A tier with no section registry runs no per-section check**, which
+is also the fix for a second, quieter fault in the same line: the old
+`tier === 'compass-40' ? COMPASS : FINANCIAL` handed a Briefing the
+**Financial Analysis** registry, so its word caps were being applied to a
+document that never declared them.
+
+All four S5 condensed documents now report `passed: true` with an empty
+findings list, and the checks that do apply pass genuinely rather than being
+switched off. `qaTierVocabulary.spec.ts` pins both halves — and the half that
+matters is the second, which shows each report-level rule still biting on a
+Briefing, because admitting a tier would be worse than the fault if it had
+quietly turned the validator off. It also asserts the two copies of the
+validator (the edge module and the frontend panel's mirror) stay
+byte-identical but for one import path.
 
 ### "Five dimensions, weighted" over a table of three
 

@@ -7,8 +7,37 @@
  *   • Deno tests (compassPostProcessor_test.ts)
  *   • Frontend QA panel (mirror in src/lib/reports/)
  *
+ * ## A tier it does not know is a tier it must not judge
+ *
+ * It took two tier values and `condense-investment-report` called it with
+ * `'compass-40'` for a Briefing and for a Snapshot — neither of which is a
+ * Compass. Every condensation therefore logged and returned a report that
+ * could not pass: a page band for a 40-page document over a 12-page tier,
+ * eleven `financial-exclusion` errors on the financial chapters the
+ * condensation DELIBERATELY attaches, and four to six
+ * `missing-protected-section` errors naming Compass sections a condensed tier
+ * never declares. Sixteen errors on a correct Briefing, every run. It blocks
+ * nothing, which is what made it the familiar fault: a check that always
+ * fails can never report a true one.
+ *
+ * The rules divide more cleanly than that call implied. Most of them are
+ * about a REPORT rather than about a tier — no unresolved placeholder, no
+ * score the record does not hold, no editorial label, no duplicate heading,
+ * no promise of a table with no table — and every one of those is exactly
+ * what you want asserted on a condensed document. Only three are tier-bound,
+ * and two were already guarded.
+ *
+ * So the condensed tiers are admitted and the three tier-bound rules answer
+ * to what each tier actually declares. **A tier with no declared page band
+ * gets no page-band finding**: a Briefing's length is governed by the
+ * registry trim and the post-processor's word caps, and inventing a band for
+ * it would be a threshold nobody measured. **A tier with no section registry
+ * runs no per-section check**, for the same reason — the condensed tiers
+ * declare their headings in `sectionRegistry.pure.ts` and no word caps in
+ * this shape.
+ *
  * Checks:
- *   1. Page band: Compass 20–26, Financial 18–22
+ *   1. Page band: Compass 20–26, Financial 18–22, condensed tiers none
  *   2. Financial content exclusion from Compass (no yield/LVR/cashflow tables)
  *   2b. No unresolved placeholders
  *   2c. No editorial commentary label survives, in any form
@@ -50,6 +79,15 @@ const PAIR_HEADING = /^(?:#{2,4}\s+|\*\*)?strengths?\s*(?:and|&)\s*(?:limitation
 const PAIR_SECOND_LABEL = /^(?:#{3,5}\s+|\*\*)?(?:limitations?|weaknesses|considerations|watch[- ]?points)\b\*{0,2}:?\s*$/i;
 
 
+/**
+ * The tiers this may be asked about.
+ *
+ * `briefing` and `snapshot` are the condensed tiers. They are admitted so the
+ * condense path can name what it is producing instead of borrowing a
+ * Compass's rules; see the note at the head of this file.
+ */
+export type QATier = 'compass-40' | 'financial-analysis' | 'briefing' | 'snapshot';
+
 export type QASeverity = 'error' | 'warning' | 'info';
 
 export interface QAFinding {
@@ -60,7 +98,7 @@ export interface QAFinding {
 }
 
 export interface QAReport {
-  tier: 'compass-40' | 'financial-analysis';
+  tier: QATier;
   estimatedPages: number;
   wordCount: number;
   passed: boolean;
@@ -119,7 +157,7 @@ function normalize(h: string): string {
   return h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-function findDef(heading: string, registry: CompassSectionDefinition[]) {
+function findDef(heading: string, registry: readonly CompassSectionDefinition[]) {
   const target = normalize(heading);
   return registry.find(
     (s) =>
@@ -155,27 +193,45 @@ export interface QAContext {
   recordedScores?: number[];
 }
 
+/**
+ * The sections a tier declares WITH word caps. A tier absent here runs no
+ * per-section check rather than being judged against another tier's list —
+ * which is what `tier === 'compass-40' ? COMPASS : FINANCIAL` did, handing a
+ * Briefing the Financial Analysis registry.
+ */
+const SECTION_REGISTRY: Partial<Record<QATier, readonly CompassSectionDefinition[]>> = {
+  'compass-40': COMPASS_40_SECTIONS,
+  'financial-analysis': FINANCIAL_ANALYSIS_SECTIONS,
+};
+
+/**
+ * The page band a tier declares. `undefined` is a real answer and means no
+ * finding, never a default band — see the head of this file.
+ */
+const PAGE_BAND: Partial<Record<QATier, { min: number; max: number }>> = {
+  'compass-40': COMPASS_PAGE_BAND,
+  'financial-analysis': { min: 18, max: 22 },
+};
+
 export function runQAValidation(
   markdown: string,
-  tier: 'compass-40' | 'financial-analysis',
+  tier: QATier,
   context: QAContext = {},
 ): QAReport {
   const findings: QAFinding[] = [];
-  const registry =
-    tier === 'compass-40' ? COMPASS_40_SECTIONS : FINANCIAL_ANALYSIS_SECTIONS;
+  const registry = SECTION_REGISTRY[tier] ?? [];
   const wordCount = countWords(markdown);
   const estimatedPages = estimatePages(markdown);
 
-  // Rule 1 — page band
-  const band =
-    tier === 'compass-40' ? COMPASS_PAGE_BAND : { min: 18, max: 22 };
-  if (estimatedPages < band.min) {
+  // Rule 1 — page band, for a tier that declares one
+  const band = PAGE_BAND[tier];
+  if (band && estimatedPages < band.min) {
     findings.push({
       rule: 'page-band',
       severity: 'warning',
       message: `Estimated ${estimatedPages} pages, below target min ${band.min}.`,
     });
-  } else if (estimatedPages > band.max) {
+  } else if (band && estimatedPages > band.max) {
     findings.push({
       rule: 'page-band',
       severity: 'error',

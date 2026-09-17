@@ -625,7 +625,13 @@ IMPORTANT:
       hygiene = composed.hygiene;
       postProcessReport = composed.postProcessReport;
       const recordedScores = composed.recordedScores;
-      qaReport = runQAValidation(condensedContent, 'compass-40', { recordedScores });
+      // The tier this run is PRODUCING, not the tier its parent was. This
+      // said `'compass-40'` and so asserted a Compass's rules over a Briefing
+      // and a Snapshot: a 40-page band on a 12-page tier, a financial
+      // exclusion over the financial chapters the composition above just
+      // attached, and Compass protected sections a condensed tier never
+      // declares. Sixteen errors on a correct Briefing, on every run.
+      qaReport = runQAValidation(condensedContent, targetTier, { recordedScores });
       console.log('Hygiene:', JSON.stringify(hygiene));
       if (postProcessReport) console.log('Post-processor report:', JSON.stringify(postProcessReport, null, 2));
       console.log('QA report:', JSON.stringify(qaReport, null, 2));

@@ -66,7 +66,10 @@ for (const subject of ['annabelle', 'pallas']) {
       financialCalculations: parent.financial_calculations,
       parentContent: typeof parent.report_content === 'string' ? parent.report_content : undefined,
     });
-    const qa = runQAValidation(composed.markdown, 'compass-40', { recordedScores: composed.recordedScores });
+    // The tier being produced. This said `'compass-40'` because the handler
+    // did, which is how the harness came to reproduce the fault it was meant
+    // to observe: sixteen Compass findings on a correct Briefing.
+    const qa = runQAValidation(composed.markdown, tier, { recordedScores: composed.recordedScores });
 
     // The row the function would persist: the parent's record, the tier's
     // content, both linkage columns.
