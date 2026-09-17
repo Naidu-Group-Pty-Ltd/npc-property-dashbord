@@ -355,21 +355,24 @@ export function renderInfrastructureOutlook(evidence: InfrastructureEvidence): s
 export function infrastructureRules(evidence: InfrastructureEvidence): string {
   if (evidence.enrichmentMissing || !evidence.anyEvidenced) {
     return [
-      'INFRASTRUCTURE — nothing was retrieved for this property.',
+      'INFRASTRUCTURE RULES FOR THE WHOLE REPORT — nothing was retrieved for this property. They apply in '
+      + 'every section and override anything a live web search returns.',
       '1. Say in one sentence that no infrastructure project or development instrument was retrieved for this '
       + 'location, and that this is a statement about the registers searched rather than a finding that nothing '
       + 'is planned.',
       '2. Do NOT name a project, a rail line, a station, a hospital, a road upgrade, a town-centre renewal or a '
-      + 'delivery horizon. Do NOT draw a `{{timeline: …}}` pipeline. There is nothing to put in it.',
+      + 'delivery horizon — not from a budget page, a news article or an agency media release found by search. '
+      + 'Do NOT draw a `{{timeline: …}}` pipeline. There is nothing to put in it.',
       '3. Do NOT say that infrastructure supports, drives or underwrites capital growth for this property. That is '
       + 'a causal claim, and there is no project here to hang it on.',
     ].join('\n');
   }
   return [
-    'INFRASTRUCTURE RULES — these override any example elsewhere in this prompt:',
+    'INFRASTRUCTURE RULES FOR THE WHOLE REPORT — they apply in every section and override any example '
+    + 'elsewhere in this prompt AND anything a live web search returns:',
     '1. The evidenced table above is supplied complete. Name only the projects in it. Do NOT add a rail line, a '
-    + 'station, a hospital, a road upgrade or a town-centre renewal that is not in it, and do not invent a '
-    + 'bracketed placeholder for one.',
+    + 'station, a hospital, a road upgrade or a town-centre renewal that is not in it — including one found by '
+    + 'live web search — and do not invent a bracketed placeholder for one.',
     '2. Use each item\'s status as the table states it. An approval is not funding, funding is not a start on site, '
     + 'and none of them is a completion. Do NOT state or imply a completion date; the dates above are dates a '
     + 'decision or declaration was recorded.',

@@ -57,7 +57,7 @@ import {
   projectionAssumptionLinesForPrompt,
   sensitivityRowsForPrompt,
 } from '../_shared/reports/investment/promptFinancials.pure.ts';
-import { recordedScoreValues, suppressUnrecordedScores } from '../_shared/reports/investment/scoreClaims.pure.ts';
+import { recordedScoreValues, suppressUnrecordedScores, suppressUnrecordedVerdictVisuals } from '../_shared/reports/investment/scoreClaims.pure.ts';
 import { investmentScorePromptBlock, overallRecommendationLine } from '../_shared/reports/investment/scorePromptBlock.pure.ts';
 import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/reports/market/domainEvidence.pure.ts';
 import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
@@ -1601,7 +1601,7 @@ VISUAL-FIRST RULES (CRITICAL):
   and never restates it afterwards.
 - Any "median grew from X to Y" / trend sentence MUST include either \`~~[…]~~\` inline or a \`::: stat\` callout nearby.
 - Any "subject vs suburb vs metro/state" comparison MUST use \`{{bars: Subject X, Suburb Y, Metro Z | title=…}}\`.
-- Investment Score, Affordability, Risk, Suitability, Confidence, and similar 0-100 ratings MUST use \`{{gauge: …}}\`.
+- A 0-100 rating is drawn with \`{{gauge: …}}\` — and ONLY where the score is one supplied to you above (the Investment Score and the dimensions the engine actually scored). Do NOT mint a rating for appeal, suitability, confidence, affordability, land quality or any other attribute: where no score was supplied, state the finding in words and draw no gauge. The same holds for every number in a \`{{wheel: …}}\`. An invented dial is drawn with a verdict band beside it and reads to a client exactly like a measurement.
 - Any list of 3+ ranked metrics MUST be rendered as \`{{bars: …}}\` instead of a table.
 - Any "X of Y households / dwellings / buyers" stat MUST use \`{{pictograph: …}}\`.
 - Any composition / share-of-total (tenure mix, age bands, expense split, capital
@@ -1691,6 +1691,25 @@ function limitPromptContext(value: string, maxBytes: number, label: string, mode
 async function generateReportSection(
   sectionDef: typeof REPORT_SECTIONS[0],
   basePrompt: string,
+  /**
+   * Context that may never be trimmed.
+   *
+   * The base prompt is ~92 KB and `limitPromptContext` cuts it to ~53 KB on
+   * EVERY section (62% head, 38% tail), so a block in the middle of it is
+   * dropped — measured on 262 Pallas Street, 17 Sep 2026, where every section
+   * logged `92129 → ~52830`. The planning controls table and the infrastructure
+   * evidence table sat in that middle while the rule that refers to them
+   * ("ONLY from items in the Infrastructure & Development Outlook table") sat
+   * in the section instructions, which are never trimmed. The model was left
+   * holding a rule about a table it could not see, and filled the gap from live
+   * web research: a zone, an overlay absence and a four-item delivery pipeline
+   * that no register in this platform had answered.
+   *
+   * What a client document may state about planning is not allowed to depend on
+   * a byte boundary, so this is budgeted for FIRST, placed after the trimmed
+   * base prompt, and carried into the emergency compact prompt as well.
+   */
+  pinnedContext: string,
   systemMessage: string,
   perplexityApiKey: string,
   previousSections: string,
@@ -1774,13 +1793,19 @@ ${sectionDef.id === 'section10' ? '10. MUST include the Investment Score Analysi
 ${EDITORIAL_PRIMITIVES_BLOCK}
 
 Generate the ${sectionDef.name} sections now:`;
+  // Pinned context is never trimmed: its bytes come off the budget before the
+  // base prompt is measured, and it is concatenated after the trim rather than
+  // inside it. See the parameter's own note for what reached a client document
+  // when this block was merely early in the base prompt.
+  const pinnedBlock = pinnedContext.trim() ? `\n\n---\n\n${pinnedContext.trim()}\n` : '';
+  const pinnedBytes = byteLength(pinnedBlock);
   const sectionInstructionBytes = byteLength(sectionInstructions);
-  const basePromptBudget = Math.max(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - 2_000);
+  const basePromptBudget = Math.max(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - pinnedBytes - 2_000);
   const safeBasePrompt = limitPromptContext(basePrompt, basePromptBudget, `Base prompt for ${sectionDef.name}`);
-  let sectionPrompt = `${safeBasePrompt}${sectionInstructions}`;
+  let sectionPrompt = `${safeBasePrompt}${pinnedBlock}${sectionInstructions}`;
   if (byteLength(sectionPrompt) > PERPLEXITY_SAFE_USER_MESSAGE_BYTES) {
-    const reducedBaseBudget = Math.max(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - 500);
-    sectionPrompt = `${limitPromptContext(basePrompt, reducedBaseBudget, `Base prompt fallback for ${sectionDef.name}`, 'head-tail')}${sectionInstructions}`;
+    const reducedBaseBudget = Math.max(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - pinnedBytes - 500);
+    sectionPrompt = `${limitPromptContext(basePrompt, reducedBaseBudget, `Base prompt fallback for ${sectionDef.name}`, 'head-tail')}${pinnedBlock}${sectionInstructions}`;
   }
   if (byteLength(sectionPrompt) > PERPLEXITY_SAFE_USER_MESSAGE_BYTES) {
     console.warn(`⚠️ Section instructions alone are close to Perplexity's message limit for ${sectionDef.name}; applying final tail-preserving trim.`);
@@ -1793,13 +1818,16 @@ Required headings:
 ${sectionDef.sections.map(s => `## ${s}`).join('\n')}
 
 Use Australian property advisory language, real web research via Perplexity, concise markdown, inline source names, and no placeholders. Keep figures internally consistent. If exact supplied context is unavailable because the source packet was too large, research the suburb/property details live and state uncertainty rather than inventing facts.
-
+${pinnedBlock}
 ${investmentScoreContext ? limitPromptContext(investmentScoreContext, 5_000, `Emergency investment score context for ${sectionDef.name}`, 'head') : ''}
 
 Previous-section consistency hints:
 ${previousSections ? sliceTailByBytes(previousSections, 4_000) : 'None'}
 
 Start now with the first heading.`;
+  // The compact prompt is the one that runs when the full one was refused as
+  // too large, so it is exactly where a correctness rule must not go missing.
+  // The pinned block sits in its head, which `head-tail` keeps.
   const emergencySectionPrompt = byteLength(emergencySectionPromptUnbounded) > PERPLEXITY_SAFE_USER_MESSAGE_BYTES
     ? limitPromptContext(emergencySectionPromptUnbounded, PERPLEXITY_SAFE_USER_MESSAGE_BYTES, `Emergency section prompt for ${sectionDef.name}`, 'head-tail')
     : emergencySectionPromptUnbounded;
@@ -4437,7 +4465,21 @@ Produce a comprehensive statewide investment analysis following the structure ab
     // ============================================================================
     // STANDARDIZED PROPERTY TYPE - Consistent terminology throughout report
     // ============================================================================
-    const rawPropertyType = propertyDetails?.propertyType?.toLowerCase() || '';
+    /*
+     * The type the prompt is told, and the type the record holds, are one
+     * answer.
+     *
+     * This read `propertyDetails?.propertyType` alone. Every Compass report is
+     * finished by the resume worker, which calls back with `{reportId,
+     * propertyAddress, continueFrom}` and no `propertyDetails` at all — so on
+     * the run that writes the document, this was always `''`. On 262 Pallas
+     * Street the operator had recorded `propertyType: 'house'`, the spec column
+     * stored `"house"` and page 3 of the PDF printed it, while the model was
+     * told the type was not stated and wrote a paragraph about the record not
+     * stating it. `sourcePropertyType` is the one answer this module already
+     * resolved (request first, then the operator's overrides).
+     */
+    const rawPropertyType = (typeof sourcePropertyType === 'string' ? sourcePropertyType : '').toLowerCase();
     const isStrataProperty = rawPropertyType.includes('unit') || rawPropertyType.includes('apartment') || 
                             rawPropertyType.includes('flat') || rawPropertyType.includes('townhouse') ||
                             rawPropertyType.includes('villa') || rawPropertyType.includes('studio');
@@ -4468,8 +4510,32 @@ Produce a comprehensive statewide investment analysis following the structure ab
     // preferences") after earlier ones had named a strata townhouse from the
     // listing. Where the record holds no type, the model is told that, and
     // told to carry whatever type the documents state through every section.
-    const propertyTypeLabel = resolvedPropertyType
-      ?? 'Not stated in the record — if the property documents name the dwelling type, use that exact type in every section; never write "Residential Property"';
+    /*
+     * An instruction must never occupy a value slot.
+     *
+     * `propertyTypeLabel` used to BE the instruction when nothing resolved, and
+     * it was interpolated into `| Property Type | … |` table cells and a
+     * `- Property Type: …` line. On the 17 Sep 2026 regeneration of 262 Pallas
+     * Street the model did the only reasonable thing with a value it was handed
+     * and quoted it back:
+     *
+     *   The property type is recorded as **"Not stated in the record — if the
+     *   property documents name the dwelling type, use that exact type in every
+     *   section, never write 'Residential Property'"**, signalling that all
+     *   future references in this report will follow the formal dwelling
+     *   description…
+     *
+     * — a prompt directive printed as a fact about somebody's house. So the
+     * value slot now carries the fact or NOTHING (the row and the line are
+     * omitted, per the standing rule that an absence is omitted rather than
+     * worded), and the instruction lives in the rules where it always belonged.
+     */
+    const propertyTypeLabel = resolvedPropertyType ?? '';
+    const propertyTypeRule = resolvedPropertyType
+      ? `3. PROPERTY TYPE: Use the standardized property type "${resolvedPropertyType}" consistently throughout the report - never switch terminology.`
+      : '3. PROPERTY TYPE: the record does not state the dwelling type. Do NOT name one, do NOT write "Residential Property", '
+        + 'and do NOT print a property-type row, cell or bullet at all — leave it out with the sentence that would have carried '
+        + 'it. If the property documents name the dwelling type, use that exact type in every section.';
 
     console.log(`🏠 Property Type Standardization: "${rawPropertyType}" → "${resolvedPropertyType ?? '(unknown — stored as null)'}" (isStrata: ${isStrataProperty})`);
     
@@ -4660,6 +4726,35 @@ Produce a comprehensive statewide investment analysis following the structure ab
       stated: planningFacts.anyStated,
     });
 
+    /**
+     * What this report may state about planning and infrastructure — pinned.
+     *
+     * These four pieces used to sit inside `propertyPrompt`, about a quarter of
+     * the way through it, under two headings of their own. That put them in the
+     * band `limitPromptContext` drops: the base prompt measured 92,129 bytes on
+     * 262 Pallas Street and every section trimmed it to ~52,830 (62% head, 38%
+     * tail), so the authority for the planning readings was cut while the rule
+     * that points at it survived in the section instructions, which are never
+     * trimmed. A model holding "name only items in the Infrastructure &
+     * Development Outlook table" with no such table in front of it filled the
+     * gap from live search, and the document asserted a zone, an absence of
+     * flood, bushfire and heritage overlays, and a four-item delivery pipeline
+     * — every one of them from a portal or a news page rather than from a
+     * register this platform read.
+     *
+     * Pinned context is budgeted for before the base prompt and concatenated
+     * after the trim, so it reaches every section whole. It is ~5.6 KB.
+     */
+    const pinnedPlanningContext = [
+      '# Zoning & Planning Analysis — the controls retrieved for this property',
+      planningControlsTable,
+      planningSectionRules,
+      '# Infrastructure & Development Outlook — what the registers answered',
+      infrastructureTable,
+      infrastructureSectionRules,
+    ].join('\n\n');
+    console.log(`📌 Pinned planning/infrastructure context: ${pinnedPlanningContext.length} chars`);
+
     const _brandPp = await getBrandConfig();
     const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.
 Your role is to produce comprehensive, professional-grade investment reports following the EXACT structure, length, and format of our reference template.
@@ -4667,7 +4762,7 @@ Your role is to produce comprehensive, professional-grade investment reports fol
 **CRITICAL CALCULATION RULES:**
 1. OCCUPANCY ASSUMPTION: The recorded occupancy is ${effectiveOccupancyRate} weeks per year. Every cash-flow figure uses rent collected over ${effectiveOccupancyRate} weeks; the yields are stated on the contractual rent (52 weeks) before finance and tax, and you must say so wherever you quote a yield. Never present the two rents as one figure.
 2. YIELD VALUES: Use the pre-calculated yield values provided below EXACTLY - do NOT recalculate or estimate yields.
-3. PROPERTY TYPE: Use the standardized property type "${propertyTypeLabel}" consistently throughout the report - never switch terminology.
+${propertyTypeRule}
 
 **PRE-CALCULATED FINANCIAL VALUES (USE THESE EXACTLY - DO NOT RECALCULATE):**
 - Gross Rental Yield: ${statedYield(preCalculatedGrossYield)}
@@ -4693,7 +4788,7 @@ ${absentRentDirective(rentalEvidence)}
 ${propertyDetails ? `**Property Details Provided:**
 - Price: $${propertyDetails.price?.toLocaleString() || 'Not specified'}
 - Weekly Rent: $${propertyDetails.weeklyRent || 'Not specified'}
-- Property Type: ${propertyTypeLabel}
+${propertyTypeLabel ? `- Property Type: ${propertyTypeLabel}` : ''}
 - Bedrooms: ${propertyDetails.beds || 'Not specified'}
 - Bathrooms: ${propertyDetails.baths || 'Not specified'}
 ${landAreaReading ? `- ${landAreaReading.label}: ${landAreaReading.value}${landAreaReading.note ? ` — ${landAreaReading.note}` : ''}` : ''}
@@ -4726,7 +4821,7 @@ This executive summary provides a high-level overview of the investment opportun
 | Attribute | Value |
 |-----------|-------|
 | Property Address | ${formattedInput} |
-| Property Type | ${propertyTypeLabel} |
+${propertyTypeLabel ? `| Property Type | ${propertyTypeLabel} |` : ''}
 | Purchase Price | $${effectivePurchasePrice?.toLocaleString() || 'X,XXX,XXX'} |
 | Estimated Weekly Rent | ${quotedWeeklyRent ? `$${quotedWeeklyRent}` : 'Not established'} |
 | Gross Rental Yield | ${statedYield(preCalculatedGrossYield)} |
@@ -4965,7 +5060,7 @@ Based on ${documentContent ? 'the provided property listing data' : 'location in
 
 | Property Characteristic | ${documentContent ? 'Value' : 'Estimated Value'} |
 |------------------------|-------|
-| Property Type | ${propertyTypeLabel} |
+${propertyTypeLabel ? `| Property Type | ${propertyTypeLabel} |` : ''}
 ${[
   // A specification table states facts. Where the record holds none, the row
   // is OMITTED — it is not filled with an instruction to estimate one.
@@ -4992,7 +5087,7 @@ ${[
   ['Condition', propertyDetails?.condition ?? null],
 ].filter(([, v]) => v !== null && v !== undefined && v !== '')
  .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
-${isStrataProperty ? `| Strata Type | ${propertyTypeLabel} within strata scheme |` : ''}
+${isStrataProperty && propertyTypeLabel ? `| Strata Type | ${propertyTypeLabel} within strata scheme |` : ''}
 ${landAreaReading?.note ? `\n_${landAreaReading.note}_\n` : ''}
 
 The table above contains every physical attribute on record for this property.
@@ -5013,21 +5108,10 @@ This valuation reflects typical [Suburb] [property type] prices for [configurati
 
 ---
 
-# Zoning & Planning Analysis
-
-${planningControlsTable}
-
-${planningSectionRules}
-
----
-
-# Infrastructure & Development Outlook
-
-${infrastructureTable}
-
-${infrastructureSectionRules}
-
----
+<!-- The planning controls and the infrastructure register are NOT here. They
+     are pinned context, appended to every section prompt after this one is
+     trimmed to fit, because this prompt is trimmed in the middle and that is
+     where they used to sit. See pinnedPlanningContext in the handler. -->
 
 # Purchase & Ongoing Costs (Annual)
 
@@ -5076,7 +5160,7 @@ The rental analysis below is based on suburb-level median rental data and the sp
 
 | Property Type | Estimated Weekly Rent | Annual Rental Income |
 |--------------|----------------------|---------------------|
-| ${effectiveBeds || 'X'}-Bed ${propertyTypeLabel} | ${quotedWeeklyRent ? `$${quotedWeeklyRent} - $${quotedWeeklyRent + 50}` : 'Not established'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()} - $${(annualRentIncome + (50 * effectiveOccupancyRate)).toLocaleString()}` : 'Not established'} |
+| ${[effectiveBeds ? `${effectiveBeds}-bed` : null, propertyTypeLabel || 'dwelling'].filter(Boolean).join(' ')} | ${quotedWeeklyRent ? `$${quotedWeeklyRent} - $${quotedWeeklyRent + 50}` : 'Not established'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()} - $${(annualRentIncome + (50 * effectiveOccupancyRate)).toLocaleString()}` : 'Not established'} |
 
 **Selected Rental Assumption:** ${rentalEvidence.established ? `$${quotedWeeklyRent}/week × ${effectiveOccupancyRate} weeks = $${annualRentIncome.toLocaleString()} annually (${effectiveOccupancyRate === 52 ? '100% occupancy' : `${((effectiveOccupancyRate/52)*100).toFixed(0)}% occupancy`})` : 'No rental evidence was available for this property, so no rental income is assumed and no yield is stated.'}
 
@@ -5332,7 +5416,7 @@ ${investmentScorePromptBlock(enhancedData.investmentScore, { hasDocument: !!docu
 - **Debt reduction:** Principal repayment over 30-year term builds equity; loan balance declining $[XXX,XXX] over 10 years creates wealth accumulation. This is forced savings discipline.
 - **Rental income growth:** Conservative [X-X]% annual rent increases provide inflation hedge; Year 10 rental income reaching $[XX,XXX]-$[XX,XXX] annually.
 - **Interest rate improvement:** Current [X.XX]% rate provides potential for downward movement; 1% decline improves cashflow by $[X,XXX] annually.
-- **Development in the area:** [Only from the Infrastructure & Development Outlook table above — name an item and the status the register gave it. Do not claim it supports population growth or appreciation, and do not name a project that is not in that table.]
+- **Development in the area:** [Only from the Infrastructure & Development Outlook table in the planning context supplied with this section — name an item and the status the register gave it. Do not claim it supports population growth or appreciation, and do not name a project that is not in that table.]
 - **Employment expansion:** Continued job growth in healthcare (+[X.X]%), professional services (+[X.X]%), and education creates sustained demand for rental properties.
 - **Family lifecycle demand:** Strong family positioning attracts growing cohort of families seeking suburban education and lifestyle amenities.
 - **Leverage amplification:** Capital appreciation on $[X.XX]m asset magnified through 80% financing; [X]% price growth on fully-leveraged position produces enhanced returns relative to deposit.
@@ -6410,6 +6494,7 @@ YOUR DEDICATED PROPERTY PARTNER
         const result = await generateReportSection(
           sectionDef,
           prompt,
+          pinnedPlanningContext,
           systemMessage,
           perplexityApiKey,
           previousContext,
@@ -6965,6 +7050,27 @@ YOUR DEDICATED PROPERTY PARTNER
         + scoreGuard.removed.map((r) => JSON.stringify(r.text)).join(', '),
       );
     }
+    /*
+     * The same rule, on the two primitives a model draws as a verdict.
+     *
+     * The sentence guard above skips any line beginning `{{`, on the reasoning
+     * that a directive is composed from recorded numbers. That is true of the
+     * ones the generator writes and false of the ones the MODEL writes: on 262
+     * Pallas Street it drew `{{gauge: 85 | Land Appeal}}`, `{{gauge: 82 |
+     * Large-block lifestyle appeal}}` and a five-value risk `{{wheel}}` on a
+     * record that issues no grade at all — and a gauge over 100 prints a
+     * verdict band, so "85 · STRONG" reached the page as a measurement.
+     */
+    const visualGuard = suppressUnrecordedVerdictVisuals(reportContent, {
+      recorded: recordedScoreValues(enhancedData.investmentScore),
+    });
+    if (visualGuard.removed.length) {
+      reportContent = visualGuard.markdown;
+      console.log(
+        `✓ Visual guard: ${visualGuard.removed.length} unrecorded verdict visual(s) removed — `
+        + visualGuard.removed.map((r) => `${r.kind}(${r.values.join(',')})`).join(', '),
+      );
+    }
 
     let compassQa: ReturnType<typeof runQAValidation> | null = null;
     if (compass40OverlayActive) {
@@ -6995,6 +7101,34 @@ YOUR DEDICATED PROPERTY PARTNER
       }
     }
     // ========== END COMPASS POST-PROCESSOR + QA ==========
+
+    /*
+     * The planning and infrastructure evidence, on the page, verbatim.
+     *
+     * Handing a model a table and asking it to reproduce one is how a table
+     * comes back paraphrased, re-ordered or with a row the source never had.
+     * These two are composed by `renderPlanningControls` and
+     * `renderInfrastructureOutlook` from what the registers answered, and they
+     * are appended AFTER the post-processor so no word cap can trim a row of
+     * evidence out of a client's document.
+     *
+     * Property reports only: the readings are taken at the property's own
+     * coordinate, and a suburb or postcode report has no parcel to state them
+     * about.
+     *
+     * One consequence worth knowing: this lands after `runQAValidation`, so the
+     * page estimate that QA logs and files is the prose's, not the document's.
+     * That is the deliberate order — the alternative is letting a word cap trim
+     * a row of evidence — and the block is a fixed ~3.7 KB, about one page.
+     */
+    if (!isAreaReport) {
+      reportContent += `\n\n---\n\n## Planning controls and development registers\n\n`
+        + `### Planning controls retrieved for this property\n\n${planningControlsTable}\n\n`
+        + `### Infrastructure and development retrieved for this property\n\n${infrastructureTable}\n`;
+      console.log(
+        `📋 Appended retrieved planning + infrastructure evidence (${planningControlsTable.length + infrastructureTable.length} chars)`,
+      );
+    }
 
 
     // Extract citations and sources from the response

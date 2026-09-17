@@ -1560,8 +1560,8 @@ the deposit plus the acquisition lines).
 Read [`docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md`](./docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md)
 before touching `_shared/planning/planningFacts.pure.ts`,
 `_shared/planning/infrastructureEvidence.pure.ts`, the
-`# Zoning & Planning Analysis` or `# Infrastructure & Development Outlook`
-blocks in `generate-investment-report`, or `dataSources.planning`.
+`pinnedPlanningContext` in `generate-investment-report`, or
+`dataSources.planning`.
 `planning-data-service` has worked since 2026-09-06 and the generator has
 always stored its answer on `enhancedData.planningData` — **and the zoning
 section read none of it**. On 262 Pallas Street, Maryborough the row carries
@@ -1587,6 +1587,70 @@ funding never as a start on site), a gazettal or determination is labelled as
 a date something HAPPENED rather than a completion, and the coverage
 limitation — council capital works, budget programmes, agency announcements —
 is stated on a full list as well as an empty one.
+
+**The first regeneration then found that a rule can reach the model and its
+evidence not** (§6 of the same doc). Regenerated 17 Sep 2026 the placeholders
+were gone and the document still said *"low-density residential zoning"*,
+*"no identified bushfire, flood or heritage overlays"* (sourced to a listing
+portal) and drew a four-item `{{timeline:}}` of road, TAFE and school projects
+on horizons nobody published — from an enrichment that had answered
+`not_served` and `none_at_point` on all eleven sections. The base prompt is
+**92,129 bytes and `limitPromptContext` trims it to ~52,830 on every section**
+(62% head, 38% tail): the two tables sat in the dropped middle while the rule
+pointing at them sat in the section instructions, which are budgeted for first
+and never trimmed — under a truncation notice that tells the model to
+"request fresh web research for missing details", with live search available.
+Three rules follow. **What a client document may state about planning may not
+depend on a byte boundary** — `generateReportSection` takes a `pinnedContext`
+whose bytes come off the budget BEFORE the base prompt is measured and which is
+concatenated AFTER the trim, carried into the emergency compact prompt too,
+because that is the prompt that runs when the full one was refused. **The rules
+are the report's, not a section's**: they said "RULES FOR THIS SECTION" on a
+Compass list that has no planning section, so the contradictions landed in the
+risk register and the checklist. And **a web search is not a retrieval** — a
+listing site, a news page, a budget page or an agency media release is not an
+entry in the table, said in the rules because this model searches. The two
+tables are also appended to the document verbatim after the post-processor
+(property reports only), because asking a model to reproduce a table is how a
+table comes back paraphrased.
+
+**The pages then found three more** (§7 of the same doc, from all 29 pages of
+the regenerated report drawn through the Chancery master). **A dial the record
+cannot back**: page 9 drew a gauge reading `85 · /100 · STRONG` titled *Land
+Appeal*, page 18 a second at 82, page 20 a five-value risk `{{wheel}}` — eight
+numbers, none in `investment_score`, on a record that issues no grade — because
+the prompt said "Investment Score, Affordability, Risk, Suitability, Confidence,
+and similar 0-100 ratings MUST use `{{gauge}}`". That line is narrowed and
+`suppressUnrecordedVerdictVisuals` checks it was obeyed, on `gauge` and `wheel`
+alone: `bars`, `tiles`, `heatmap`, `donut` and `pictograph` carry measured
+series and dropping those on a number match takes real data off the page.
+**An instruction must never occupy a value slot** — `propertyTypeLabel` WAS the
+sentence "Not stated in the record — … never write 'Residential Property'" when
+nothing resolved, interpolated into `| Property Type | … |` cells, and the model
+quoted it back as the property's recorded attribute; the slot carries the fact
+or nothing now. And **the type was known all along**: `rawPropertyType` read
+`propertyDetails?.propertyType` alone, while every Compass report is finished by
+the resume worker, which calls back with `{reportId, propertyAddress,
+continueFrom}` and no `propertyDetails` — so it was `''` on the run that writes
+the document, on every report. It reads `sourcePropertyType` now. Four residuals
+are named in the doc rather than guessed at: clipped labels in three primitives,
+a timeline drawing horizons no item reaches, a model-written `Verified` evidence
+chip, and two sections drawn twice.
+
+**An interest-only loan whose term nobody recorded.** Read the note on
+`ASSUMED_INTEREST_ONLY_YEARS` in `_shared/reports/investment/loanLedger.pure.ts`
+before touching `buildLoanLedger` or `describeLoanStructure`. The same
+regeneration stored `loanType: "interest_only"` beside `structure: "Principal
+and interest over 30 years"` and `annualPayment: 34,890` — the P&I figure,
+$4,990 a year above the interest-only one — because the operator's overrides
+named the product and not the term, so the ledger read the absence as a zero
+and overruled them silently. `readBaseFinancials` has assumed five years since
+QA-04 and disclosed it, so **one loan was being described two ways by two
+modules**; the constant now lives in the ledger and the cash flow imports it.
+Two rules: **an EXPLICIT zero still means principal and interest** ("none" and
+"not recorded" are different statements), and **an assumed term says so in the
+sentence a reader sees** — `interestOnlyYearsAssumed` rides the ledger and
+`loanDetails.interestOnlyPeriodAssumed` is published beside the figure.
 
 ## The cash flow table adds up
 Read §1 of the same doc's companion rule in

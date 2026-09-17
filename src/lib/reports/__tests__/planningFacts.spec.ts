@@ -16,6 +16,7 @@
  * on a Queensland property.
  */
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   buildPlanningFacts,
   planningFactBlocks,
@@ -191,5 +192,90 @@ describe('an enrichment that never ran', () => {
     const rules = planningFactBlocks(facts);
     expect(rules).toMatch(/Do NOT print a zoning table/);
     expect(rules).toMatch(/Do NOT name a planning instrument/);
+  });
+});
+
+describe('the rules reach the model, and they are not a section’s rules', () => {
+  /*
+   * Measured on the 17 Sep 2026 regeneration of 262 Pallas Street (report
+   * 4640d10a). The enrichment ran on every section — the function logged
+   * `Planning facts: { jurisdiction: "QLD", council: "Fraser Coast Regional",
+   * zone: null, zoneStatus: "not_served" }` eleven times — and the document
+   * still asserted "low-density residential zoning" and "no identified
+   * bushfire, flood or heritage overlays", sourced to a listing portal, plus a
+   * four-item `{{timeline:}}` pipeline with 0-2y horizons no register carries.
+   *
+   * Two causes, one fix each.
+   *
+   * The base prompt measured 92,129 bytes and every section logged
+   * `92129 → ~52,830`: `limitPromptContext` keeps 62% head and 38% tail, so the
+   * planning table sat in the dropped middle while the rule pointing AT it sat
+   * in the section instructions, which are never trimmed. And the rules called
+   * themselves "RULES FOR THIS SECTION" on a report whose section list has no
+   * planning section at all.
+   */
+  const facts = buildPlanningFacts({ planningData: PALLAS });
+
+  it('claims the whole report, not a section', () => {
+    const rules = planningFactBlocks(facts);
+    expect(rules).toMatch(/FOR THE WHOLE REPORT/);
+    expect(rules, 'there is no planning section in the Compass list to scope these to')
+      .not.toMatch(/RULES FOR THIS SECTION/);
+    expect(planningFactBlocks(buildPlanningFacts({}))).toMatch(/FOR THE WHOLE REPORT/);
+  });
+
+  it('says a web search is not a retrieval', () => {
+    // The model has live search. Silence about that is what let a portal's
+    // "flood risk — not detected" become this report's finding about the land.
+    const rules = planningFactBlocks(facts);
+    expect(rules).toMatch(/live web search/);
+    expect(rules).toMatch(/listing portal|listing site/);
+    expect(planningFactBlocks(buildPlanningFacts({}))).toMatch(/live web search/);
+  });
+});
+
+describe('what the generator does with them', () => {
+  const generator = readFileSync(
+    'supabase/functions/generate-investment-report/index.ts',
+    'utf8',
+  );
+
+  it('pins them instead of burying them in a prompt it trims', () => {
+    // The blocks must NOT be interpolated into `propertyPrompt`: that string is
+    // the one `limitPromptContext` cuts in the middle.
+    const prompt = generator.slice(
+      generator.indexOf('const propertyPrompt = `'),
+      generator.indexOf('// Select the appropriate prompt'),
+    );
+    for (const name of ['planningControlsTable', 'planningSectionRules', 'infrastructureTable', 'infrastructureSectionRules']) {
+      expect(prompt, `${name} must not sit inside the trimmed base prompt`).not.toContain(`\${${name}}`);
+    }
+    expect(generator).toMatch(/const pinnedPlanningContext = \[/);
+    expect(generator).toMatch(/generateReportSection\(\s*\n\s*sectionDef,\s*\n\s*prompt,\s*\n\s*pinnedPlanningContext,/);
+  });
+
+  it('takes the pinned bytes off the budget before the base prompt is measured', () => {
+    // Budgeting for it AFTER the trim would put it back over the ceiling; not
+    // budgeting for it at all would push the same bytes out of the tail.
+    expect(generator).toMatch(
+      /const basePromptBudget = Math\.max\(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - pinnedBytes - 2_000\)/,
+    );
+    expect(generator).toMatch(/let sectionPrompt = `\$\{safeBasePrompt\}\$\{pinnedBlock\}\$\{sectionInstructions\}`/);
+    // And the compact retry — the prompt that runs when the full one was
+    // refused — carries it too.
+    const emergency = generator.slice(
+      generator.indexOf('const emergencySectionPromptUnbounded'),
+      generator.indexOf('const emergencySectionPrompt ='),
+    );
+    expect(emergency).toContain('${pinnedBlock}');
+  });
+
+  it('puts the two tables in the document rather than asking for them back', () => {
+    const append = generator.slice(generator.indexOf('END COMPASS POST-PROCESSOR'));
+    expect(append).toMatch(/## Planning controls and development registers/);
+    expect(append).toContain('${planningControlsTable}');
+    expect(append).toContain('${infrastructureTable}');
+    // Property reports only: a suburb report has no parcel to state them about.
+    expect(append).toMatch(/if \(!isAreaReport\) \{/);
   });
 });
