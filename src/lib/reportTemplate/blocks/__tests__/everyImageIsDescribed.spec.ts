@@ -68,6 +68,16 @@ describe('every image the print path draws is described', () => {
     expect(html).toContain('&quot;');
   });
 
+  it('falls back to the block\'s own designer label before giving up', () => {
+    // Not a guess: the label is text a person wrote about this block. The
+    // catalogue's cover monogram is named "Brand mark", and on the 36-page
+    // Templates render that is the difference between a reader hearing
+    // "Brand mark" and hearing that the description is missing. After this the
+    // production document carries zero undescribed images.
+    const src = readFileSync(resolve(DIR, 'image.html.ts'), 'utf8');
+    expect(code(src)).toMatch(/alt:[^,]*\|\|\s*block\.name/);
+  });
+
   it('names a missing description rather than inventing a plausible one', () => {
     // A picture nobody described is a gap. A gap that reads as a description
     // is worse than one that reads as a gap.

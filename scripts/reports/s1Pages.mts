@@ -218,7 +218,10 @@ const COVER: Sheet = {
   background: { color: 'token:bg' },
   top: 300,
   pinned: [
-    B('image', { src: MARK, fit: 'contain', placeholder: false, x: PAD, y: PAD, width: 46, height: 37 }),
+    B('image', { src: MARK, fit: 'contain', placeholder: false, x: PAD, y: PAD, width: 46, height: 37 },
+      // The block's name is what the image block reads for its alternative
+      // text when nothing else describes the picture.
+      { name: 'Naidu Property Consulting Services brand mark' }),
     B('text-block', { body: 'Naidu Property Consulting Services', bodySize: 8.5, bodyFont: 'token:display', bodyTracking: 0.26, color: C.text, y: 112 }),
     B('divider', { color: C.primary, thickness: 1, y: 140, width: 64, x: PAD }),
     B('text-block', { body: 'Prepared 17 September 2026   ·   Private and confidential', bodySize: 6.5, bodyFont: 'token:mono', bodyTracking: 0.16, color: C.mutedOnField, y: 800 }),

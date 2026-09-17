@@ -51,8 +51,8 @@ const TABLE = {
 };
 
 let n = 0;
-const B = (type: string, props: Record<string, unknown>) =>
-  ({ id: `s3-${type}-${++n}`, type, props: { x: PAD, width: W, ...props }, overlays: [] });
+const B = (type: string, props: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+  ({ id: `s3-${type}-${++n}`, type, props: { x: PAD, width: W, ...props }, overlays: [], ...extra });
 const eyebrow = (text: string, color = C.accentOnField) =>
   B('text-block', { body: text, bodySize: 6.5, bodyFont: 'token:mono', bodyTracking: 0.28, color });
 const title = (text: string, size = 20) =>
@@ -70,7 +70,8 @@ const sheetFor = (tier: ReportTier, index: number): Sheet => ({
   name: `${tier} · ${documentTitleForTier(tier)}`,
   top: PAD,
   pinned: [
-    B('image', { src: MARK, fit: 'contain', placeholder: false, x: PAD, y: FOOT_RULE + 4, width: 22, height: 18 }),
+    B('image', { src: MARK, fit: 'contain', placeholder: false, x: PAD, y: FOOT_RULE + 4, width: 22, height: 18 },
+      { name: 'Naidu Property Consulting Services brand mark' }),
     B('divider', { color: C.line, thickness: 0.6, width: W, y: FOOT_RULE }),
     B('text-block', {
       body: '{{property.address}} · {{report.documentTitle}}',
