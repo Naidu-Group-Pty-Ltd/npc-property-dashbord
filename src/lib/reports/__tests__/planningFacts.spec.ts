@@ -111,8 +111,37 @@ describe('what the report may state about planning', () => {
     expect(facts.overlays.value).toBeNull();
     expect(facts.overlays.status).toBe('not_integrated');
     const rendered = renderPlanningControls(facts);
-    expect(rendered).toMatch(/only that none was looked up/);
+    // The rule, not the wording. With no register reached, the page must say
+    // the council scheme was NOT READ — and must never phrase that as a
+    // finding. Queensland gets its own sentence because the reason is
+    // jurisdictional (zoning and overlays are per-council there), and a
+    // reader sent to "no integrated layer" would not know to ask the council.
+    expect(rendered).toMatch(/has not been read|none was looked up|was not (read|retrieved|checked)/i);
+    expect(rendered).toMatch(/nothing here says whether a (council )?overlay applies/i);
     expect(rendered).not.toMatch(/no significant overlays/i);
+    expect(rendered).not.toMatch(/no overlays? (apply|applies|identified|were found)/i);
+  });
+
+  it('states an absent overlay register as unchecked, and a present one as checked', () => {
+    // The distinction the whole register turns on. Nothing asked is not the
+    // same reading as asked-and-clear, and only the second may be said out
+    // loud — the confident-clear-against-nothing failure the sanctions
+    // register shipped once.
+    const asked = buildPlanningFacts({
+      planningData: {
+        ...(PALLAS as Record<string, unknown>),
+        constraints: [],
+        constraintsAsked: ['bushfire', 'flood'],
+        constraintRegisters: { answered: ['Queensland FloodCheck'], unavailable: [] },
+      },
+    });
+    expect(asked.overlays.status).toBe('none_at_point');
+    const rendered = renderPlanningControls(asked);
+    expect(rendered).toMatch(/Checked and not mapped at this coordinate/);
+    expect(rendered).toMatch(/bushfire/);
+    expect(rendered).toMatch(/flood/);
+    // Still never a clearance: a layer is indicative at its own scale.
+    expect(rendered).toMatch(/not a survey of the lot/);
   });
 
   it('keeps the five absences apart', () => {
