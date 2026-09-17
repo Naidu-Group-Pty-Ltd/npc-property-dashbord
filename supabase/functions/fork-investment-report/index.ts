@@ -356,7 +356,7 @@ Deno.serve(async (req) => {
       financialCalculations: parent.financial_calculations,
       financialScore,
       composeFinancial: variants.includes('financial'),
-      generatedOn: new Date(),
+      generatedOn: new Date().toISOString(),
     });
     const financialOut = docs.financial;
     const dueDiligenceOut = docs.dueDiligence;

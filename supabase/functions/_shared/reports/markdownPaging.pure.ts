@@ -309,16 +309,39 @@ export function packMarkdownPages(
     if (!current.length) return;
     let peeled: MarkdownBlock[] = [];
     if (options.keepWithNext) {
-      // Peel a trailing heading / lead-in so it opens the next page instead of
-      // closing this one. At most two blocks (a heading over a lead-in), and
-      // never the whole page.
-      while (current.length > 1 && peeled.length < 2) {
-        const last = current[current.length - 1];
-        if (last.kind !== 'heading' && !leadsIn(last)) break;
-        peeled.unshift(current.pop()!);
+      /*
+       * A page that is NOTHING but a heading is the defect this option exists
+       * to prevent, produced by this option.
+       *
+       * Measured on the Financial report for 18 Annabelle Crescent (17 Sep
+       * 2026): pages 16 and 18 carried `Base case` and `Optimistic` and
+       * nothing else — a heading above a running foot, its scenario table on
+       * the page after. The sequence is the peel's own: a heading is peeled
+       * off a full page onto a fresh one, the block that follows still does
+       * not fit beside it, and the guard below — `current.length > 1`, there
+       * so a page is never carried whole and the packer cannot loop — then
+       * refuses to peel it a second time.
+       *
+       * So a page made ENTIRELY of keep-with-next blocks is carried whole.
+       * It cannot loop: whatever comes next is not peelable, so the page
+       * holding it has a non-peelable block and is pushed.
+       */
+      const peelable = (b: MarkdownBlock) => b.kind === 'heading' || leadsIn(b);
+      if (current.length <= 2 && current.every(peelable)) {
+        peeled = current.splice(0, current.length);
+      } else {
+        // Peel a trailing heading / lead-in so it opens the next page instead
+        // of closing this one. At most two blocks (a heading over a lead-in),
+        // and never the whole page.
+        while (current.length > 1 && peeled.length < 2) {
+          const last = current[current.length - 1];
+          if (last.kind !== 'heading' && !leadsIn(last)) break;
+          peeled.unshift(current.pop()!);
+        }
       }
     }
-    pages.push(current);
+    // …and a page carried away whole leaves nothing to push.
+    if (current.length) pages.push(current);
     // A floated figure is earlier content than anything peeled, so it leads.
     current = [...floated, ...peeled];
     floated = [];

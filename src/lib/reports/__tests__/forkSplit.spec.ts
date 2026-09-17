@@ -74,7 +74,7 @@ const compose = (over: Record<string, unknown> = {}) => composeForkDocuments({
   financialCalculations: FINANCIALS,
   financialScore: {},
   composeFinancial: true,
-  generatedOn: new Date('2026-09-17T00:00:00Z'),
+  generatedOn: '2026-09-17',
   ...over,
 });
 

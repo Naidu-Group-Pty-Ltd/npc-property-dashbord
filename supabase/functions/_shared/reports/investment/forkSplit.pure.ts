@@ -41,6 +41,7 @@ import {
 import { dropEmptySections, stripPlaceholderRows } from './derivedHygiene.pure.ts';
 import { scrubBlocks } from './blockHygiene.pure.ts';
 import { stripEditorialLabelsFromMarkdown } from '../../compassPostProcessor.ts';
+import { formatReportDate } from '../reportDate.pure.ts';
 import {
   riskDashboardContract,
   socioeconomicContract,
@@ -288,13 +289,13 @@ function renderVariantMarkdown(
   variant: ForkVariant,
   propertyAddress: string,
   sections: AssembledSection[],
-  generatedOn: Date,
+  generatedOn: string,
 ): string {
   const title = variant === 'financial' ? registry.finTitle : registry.plddTitle;
   const subtitle = variant === 'financial' ? registry.finSubtitle : registry.plddSubtitle;
   const footer = variant === 'financial' ? registry.finFooter : registry.plddFooter;
 
-  const cover = `# ${title}\n\n_${subtitle}_\n\n**Property:** ${propertyAddress}\n\n**Generated:** ${generatedOn.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}\n\n---\n\n`;
+  const cover = `# ${title}\n\n_${subtitle}_\n\n**Property:** ${propertyAddress}\n\n**Generated:** ${formatReportDate(generatedOn)}\n\n---\n\n`;
 
   const body = sections
     .map((s) => `## ${s.heading}\n\n${s.body.trim()}\n`)
@@ -348,9 +349,15 @@ export function composeForkDocuments(input: {
    * (`investmentSourceOfTruth.spec.ts`), and the rule is the right one — a
    * document that cannot be produced twice with the same bytes cannot be
    * diffed, which is why neither fork document had ever been compared with
-   * anything. The handler passes `new Date()`.
+   * anything. The handler passes today's.
+   *
+   * An ISO date rather than a `Date`, and printed by `formatReportDate` rather
+   * than `toLocaleDateString` — `oneDateFormatter.spec.ts` forbids a report
+   * module reaching for the platform formatter, and it is right: that is how
+   * an Australian reporting entity's document came to print `8/29/2029`. The
+   * printed words are identical (`17 September 2026`).
    */
-  generatedOn: Date;
+  generatedOn: string;
 }): ForkDocuments {
   const generatedOn = input.generatedOn;
   const { sections } = splitIntoSections(input.parentContent || '');
